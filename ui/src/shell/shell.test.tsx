@@ -51,7 +51,8 @@ describe("app shell", () => {
       ["Dashboards", "No dashboards yet"],
       ["Explore", "Explore is not available yet"],
       ["Data sources", "No data sources yet"],
-      ["Administration", "Nothing to manage yet"],
+      // The administration opens on its overview of sections, headed by the organization.
+      ["Administration", "Organization “Analytical Engines”"],
     ];
     for (const [link, emptyTitle] of pages) {
       await user.click(within(nav).getByRole("link", { name: link }));
@@ -84,7 +85,9 @@ describe("app shell", () => {
     });
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     if (shown) {
-      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+      expect(
+        await screen.findByRole("navigation", { name: "Administration sections" }),
+      ).toBeTruthy();
       expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
     } else {
       expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
@@ -113,7 +116,9 @@ describe("app shell", () => {
       );
       const nav = screen.getByRole("navigation", { name: "Main navigation" });
       expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
-      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+      expect(
+        await screen.findByRole("navigation", { name: "Administration sections" }),
+      ).toBeTruthy();
     },
   );
 
