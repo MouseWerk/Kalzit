@@ -40,7 +40,7 @@ async fn start(dir: &Path, tweak: impl FnOnce(&mut Config)) -> granit::server::R
     config.tls.cert_file = Some(dir.join("cert.pem"));
     config.tls.key_file = Some(dir.join("key.pem"));
     tweak(&mut config);
-    granit::server::start(config, Some("code".into())).await.unwrap()
+    granit::server::start(config, Some("tls-test-setup-code-0123".into())).await.unwrap()
 }
 
 #[tokio::test]
@@ -68,6 +68,41 @@ async fn https_serves_and_http_redirects() {
     let res = client.get(format!("http://127.0.0.1:{}/healthz", http.port())).send().await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
+    server.shutdown();
+    server.wait().await.unwrap();
+}
+
+#[tokio::test]
+async fn redirect_respects_public_url_proxies_and_bad_hosts() {
+    let dir = tempfile::tempdir().unwrap();
+    let cert = self_signed();
+    write_cert(dir.path(), &cert);
+    let server = start(dir.path(), |c| {
+        c.server.public_url = Some("https://kalzit.example.com".into());
+        c.security.trusted_proxies = vec!["127.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    let http = format!("http://127.0.0.1:{}", server.http_addr.unwrap().port());
+    let client = client_trusting(&cert);
+
+    // Behind a port mapping the bound HTTPS port is wrong for users; public_url is right.
+    let res = client.get(format!("{http}/explore?q=1")).send().await.unwrap();
+    assert_eq!(res.headers().get("location").unwrap(), "https://kalzit.example.com/explore?q=1");
+
+    // A trusted proxy that already terminated TLS gets the app, not another redirect.
+    let res = client.get(format!("{http}/api/setup")).header("x-forwarded-proto", "https").send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    server.shutdown();
+    server.wait().await.unwrap();
+
+    let server = start(dir.path(), |_| {}).await;
+    let http = format!("http://127.0.0.1:{}", server.http_addr.unwrap().port());
+    let res = client.get(format!("{http}/")).header("host", "evil.example/x").send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = client.get(format!("{http}/a")).header("host", "[::1]:8080").send().await.unwrap();
+    let https_port = server.https_addr.unwrap().port();
+    assert_eq!(res.headers().get("location").unwrap().to_str().unwrap(), format!("https://[::1]:{https_port}/a"));
     server.shutdown();
     server.wait().await.unwrap();
 }

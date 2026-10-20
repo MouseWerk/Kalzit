@@ -9,20 +9,21 @@ use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use granit::app::{AppState, router};
-use granit::clock::ManualClock;
+use granit::clock::{Clock, ManualClock};
 use granit::config::Config;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-const SETUP_CODE: &str = "test-setup-code";
+const SETUP_CODE: &str = "test-setup-code-0123456789";
 const PASSWORD: &str = "Grün und sicher 2026";
 const HOUR_MS: i64 = 3_600_000;
 
 struct TestApp {
     app: Router,
     clock: Arc<ManualClock>,
-    _dir: tempfile::TempDir,
+    state: AppState,
+    dir: tempfile::TempDir,
 }
 
 struct Reply {
@@ -48,15 +49,25 @@ async fn test_app(peer: &str, tweak: impl FnOnce(&mut Config)) -> TestApp {
 
 async fn test_app_on(db_url: Option<String>, peer: &str, tweak: impl FnOnce(&mut Config)) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
+    build(dir, db_url, peer, Some(SETUP_CODE.into()), tweak).await
+}
+
+async fn build(
+    dir: tempfile::TempDir,
+    db_url: Option<String>,
+    peer: &str,
+    setup_code: Option<String>,
+    tweak: impl FnOnce(&mut Config),
+) -> TestApp {
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.database.url = db_url;
     tweak(&mut config);
     let pool = granit::db::connect(&config.database_url(), 4).await.unwrap();
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
-    let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let state = AppState::new(config, pool, clock.clone(), setup_code).await.unwrap();
     let peer: SocketAddr = peer.parse().unwrap();
-    TestApp { app: router(state).layer(MockConnectInfo(peer)), clock, _dir: dir }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir }
 }
 
 impl TestApp {
@@ -273,6 +284,162 @@ async fn health_ready_and_unknown_api_routes() {
 }
 
 #[tokio::test]
+async fn generated_setup_code_lives_in_a_private_file_until_setup() {
+    let t = build(tempfile::tempdir().unwrap(), None, "127.0.0.1:50000", None, |_| {}).await;
+    let file = t.dir.path().join("setup-token.txt");
+    let code = std::fs::read_to_string(&file).unwrap().trim().to_string();
+    assert_eq!(code.len(), 29, "{code}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    let r = t
+        .post(
+            "/api/setup",
+            json!({ "token": code.to_uppercase(), "orgName": "A", "name": "B", "email": "b@example.de",
+                    "password": PASSWORD }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(!file.exists(), "the code must be gone once setup is done");
+
+    // A stray file from an interrupted run is removed when the server starts with users present.
+    std::fs::write(&file, "old code\n").unwrap();
+    let pool = t.state.db.clone();
+    AppState::new((*t.state.config).clone(), pool, t.clock.clone(), None).await.unwrap();
+    assert!(!file.exists());
+}
+
+#[tokio::test]
+async fn weak_fixed_setup_codes_are_refused_at_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    let pool = granit::db::connect(&config.database_url(), 1).await.unwrap();
+    for weak in ["----", "short-code"] {
+        let clock = Arc::new(ManualClock::new(0));
+        assert!(AppState::new(config.clone(), pool.clone(), clock, Some(weak.into())).await.is_err(), "{weak}");
+    }
+}
+
+#[tokio::test]
+async fn parallel_wrong_passwords_cannot_exceed_the_limit() {
+    let t = test_app("127.0.0.1:50000", |c| c.security.login_max_failures = 3).await;
+    t.setup().await;
+    // All requests are in flight at once, so each reaches the limiter before any password check
+    // has finished.
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..20 {
+        let app = t.app.clone();
+        set.spawn(async move {
+            let body = json!({ "email": "joerg@example.de", "password": "falsch falsch falsch" });
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/login")
+                .header(header::HOST, "granit.test")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            app.oneshot(req).await.unwrap().status()
+        });
+    }
+    let statuses = set.join_all().await;
+    let unauthorized = statuses.iter().filter(|s| **s == StatusCode::UNAUTHORIZED).count();
+    let limited = statuses.iter().filter(|s| **s == StatusCode::TOO_MANY_REQUESTS).count();
+    assert_eq!((unauthorized, limited), (3, 17));
+}
+
+#[tokio::test]
+async fn behind_a_trusted_proxy_the_real_client_is_limited() {
+    let t = test_app("10.0.0.1:50000", |c| {
+        c.security.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        c.security.login_max_failures = 2;
+    })
+    .await;
+    t.setup().await;
+    let body = json!({ "email": "niemand@example.de", "password": "falsch falsch falsch" });
+    // The client changes its own X-Forwarded-For line each time; the proxy's line stays.
+    for spoof in ["1.1.1.1", "2.2.2.2"] {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/auth/login")
+            .header(header::HOST, "granit.test")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", spoof)
+            .header("x-forwarded-for", "203.0.113.5")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        assert_eq!(t.app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    }
+    let other_email = json!({ "email": "jemand@example.de", "password": "falsch falsch falsch" });
+    let r = t
+        .send(Method::POST, "/api/auth/login", Some(other_email), &[("x-forwarded-for", "9.9.9.9, 203.0.113.5")])
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "the client address 203.0.113.5 is used up");
+}
+
+#[tokio::test]
+async fn cookie_is_secure_behind_a_trusted_tls_proxy() {
+    let t =
+        test_app("[::ffff:10.0.0.1]:50000", |c| c.security.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()]).await;
+    let r = t
+        .send(
+            Method::POST,
+            "/api/setup",
+            Some(json!({ "token": SETUP_CODE, "orgName": "A", "name": "B", "email": "b@example.de",
+                         "password": PASSWORD })),
+            &[("x-forwarded-proto", "https")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap().contains("; Secure"));
+}
+
+#[tokio::test]
+async fn huge_emails_are_refused_without_tracking() {
+    let t = test_app("127.0.0.1:50000", |c| c.security.login_max_failures = 1).await;
+    t.setup().await;
+    let huge = format!("{}@example.de", "a".repeat(300_000));
+    for _ in 0..3 {
+        assert_eq!(t.login(&huge, "x").await.code(), "invalid_credentials");
+    }
+}
+
+#[tokio::test]
+async fn signing_in_again_ends_the_previous_session_of_this_browser() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let first = t.setup().await.session_cookie();
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
+    let second = t.send(Method::POST, "/api/auth/login", Some(body), &[("cookie", &first)]).await;
+    assert_eq!(second.status, StatusCode::OK);
+    assert_eq!(t.get("/api/me", Some(&first)).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(t.get("/api/me", Some(&second.session_cookie())).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn ended_sessions_are_cleaned_up() {
+    let t = test_app("127.0.0.1:50000", |c| c.sessions.lifetime_hours = 1).await;
+    t.setup().await;
+    t.login("joerg@example.de", PASSWORD).await;
+    let cfg = &t.state.config.sessions;
+    assert_eq!(granit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 0);
+    t.clock.advance_ms(HOUR_MS);
+    assert_eq!(granit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 2);
+}
+
+#[tokio::test]
+async fn public_url_origin_ignores_default_port_but_not_scheme() {
+    let t = test_app("127.0.0.1:50000", |c| c.server.public_url = Some("https://kalzit.example:443".into())).await;
+    t.setup().await;
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
+    let ok = t.send(Method::POST, "/api/auth/login", Some(body.clone()), &[("origin", "https://Kalzit.example")]).await;
+    assert_eq!(ok.status, StatusCode::OK);
+    let http = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "http://kalzit.example")]).await;
+    assert_eq!(http.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn migrations_are_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     // Spaces, umlauts and a '#' in the path must survive the URL round trip.
@@ -298,10 +465,21 @@ async fn postgres_setup_and_login() {
     let sep = if base.contains('?') { '&' } else { '?' };
     let url = format!("{base}{sep}options=-csearch_path%3D{schema}");
 
-    let t = test_app_on(Some(url), "127.0.0.1:50000", |_| {}).await;
+    let t = test_app_on(Some(url), "127.0.0.1:50000", |c| c.sessions.idle_timeout_hours = 2).await;
     let setup = t.setup().await;
     assert_eq!(setup.status, StatusCode::OK, "{}", setup.body);
-    assert_eq!(t.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    assert_eq!(t.setup().await.code(), "setup_done");
+    let cookie = t.login("joerg@example.de", PASSWORD).await.session_cookie();
+    let me = t.get("/api/me", Some(&cookie)).await;
+    assert_eq!((me.status, me.body["orgs"][0]["role"].as_str()), (StatusCode::OK, Some("owner")));
+    t.send(Method::POST, "/api/auth/logout", None, &[("cookie", &cookie)]).await;
+    assert_eq!(t.get("/api/me", Some(&cookie)).await.status, StatusCode::UNAUTHORIZED);
+
+    let idle = t.login("joerg@example.de", PASSWORD).await.session_cookie();
+    t.clock.advance_ms(3 * HOUR_MS);
+    let ended = granit::auth::session::delete_ended(&t.state.db, &t.state.config.sessions, t.clock.now_ms());
+    assert!(ended.await.unwrap() >= 1);
+    assert_eq!(t.get("/api/me", Some(&idle)).await.status, StatusCode::UNAUTHORIZED);
     drop(t);
 
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
