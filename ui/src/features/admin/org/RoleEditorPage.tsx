@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
@@ -14,6 +14,14 @@ import { nameMessage } from "../validation";
 import { useRoles } from "./shared";
 
 const ROLE_ERRORS: ErrorTexts = { ...GRANT_ERRORS, conflict: "admin.roles.nameTaken" };
+
+const roleRoute = getRouteApi("/_app/admin/roles/$roleId");
+
+/** The role page as a route; keyed, so moving between roles starts with fresh state. */
+export function RoleRoutePage() {
+  const { roleId } = roleRoute.useParams();
+  return <RoleEditorPage key={roleId} roleId={roleId} />;
+}
 
 /** A role's permissions, grouped by area; `roleId` "new" starts a new custom role. */
 export function RoleEditorPage({ roleId }: { roleId: string }) {

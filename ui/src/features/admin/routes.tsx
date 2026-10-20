@@ -1,110 +1,92 @@
-import { createRoute } from "@tanstack/react-router";
+import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
-import { AdminLayout, AdminOverview } from "./AdminLayout";
-import { AccountPage } from "./account/AccountPage";
-import { AuditPage } from "./org/AuditPage";
-import { MembersPage } from "./org/MembersPage";
-import { OrgSettingsPage } from "./org/OrgSettingsPage";
-import { RoleEditorPage } from "./org/RoleEditorPage";
-import { RolesPage } from "./org/RolesPage";
-import { TeamPage } from "./org/TeamPage";
-import { TeamsPage } from "./org/TeamsPage";
-import { OrgsPage } from "./server/OrgsPage";
-import { ServerAuditPage } from "./server/ServerAuditPage";
-import { ServerSettingsPage } from "./server/ServerSettingsPage";
-import { UsersPage } from "./server/UsersPage";
 
 // The admin area's pages: the administration with its sections, and the user's own account
 // (self service for everyone, kept in this area because it shares the access model and texts).
+// They load on first use, so people who never open them do not download them.
+
 const adminRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/admin",
-  component: AdminLayout,
+  component: lazyRouteComponent(() => import("./AdminLayout"), "AdminLayout"),
 });
 
 const overviewRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/",
-  component: AdminOverview,
+  component: lazyRouteComponent(() => import("./AdminLayout"), "AdminOverview"),
 });
 
 const membersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/members",
-  component: MembersPage,
+  component: lazyRouteComponent(() => import("./org/MembersPage"), "MembersPage"),
 });
 
 const teamsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/teams",
-  component: TeamsPage,
+  component: lazyRouteComponent(() => import("./org/TeamsPage"), "TeamsPage"),
 });
 
 const teamRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/teams/$teamId",
-  component: function TeamRoutePage() {
-    const { teamId } = teamRoute.useParams();
-    // Keyed, so moving between teams starts with fresh state.
-    return <TeamPage key={teamId} teamId={teamId} />;
-  },
+  component: lazyRouteComponent(() => import("./org/TeamPage"), "TeamRoutePage"),
 });
 
 const rolesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/roles",
-  component: RolesPage,
+  component: lazyRouteComponent(() => import("./org/RolesPage"), "RolesPage"),
 });
 
 const roleRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/roles/$roleId",
-  component: function RoleRoutePage() {
-    const { roleId } = roleRoute.useParams();
-    return <RoleEditorPage key={roleId} roleId={roleId} />;
-  },
+  component: lazyRouteComponent(() => import("./org/RoleEditorPage"), "RoleRoutePage"),
 });
 
 const orgSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/settings",
-  component: OrgSettingsPage,
+  component: lazyRouteComponent(() => import("./org/OrgSettingsPage"), "OrgSettingsPage"),
 });
 
 const auditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/audit",
-  component: AuditPage,
+  component: lazyRouteComponent(() => import("./org/AuditPage"), "AuditPage"),
 });
 
 const usersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/users",
-  component: UsersPage,
+  component: lazyRouteComponent(() => import("./server/UsersPage"), "UsersPage"),
 });
 
 const orgsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/organizations",
-  component: OrgsPage,
+  component: lazyRouteComponent(() => import("./server/OrgsPage"), "OrgsPage"),
 });
 
 const serverSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/settings",
-  component: ServerSettingsPage,
+  component: lazyRouteComponent(() => import("./server/ServerSettingsPage"), "ServerSettingsPage"),
 });
 
 const serverAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/audit",
-  component: ServerAuditPage,
+  component: lazyRouteComponent(() => import("./server/ServerAuditPage"), "ServerAuditPage"),
 });
 
 const accountRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/account",
-  component: AccountPage,
+  component: lazyRouteComponent(() => import("./account/AccountPage"), "AccountPage"),
 });
 
 export const adminRoutes = [

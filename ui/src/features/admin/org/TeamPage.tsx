@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { getRouteApi, Link } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
 import {
@@ -31,6 +31,14 @@ const TEAM_ROLE_TEXT = {
   member: "admin.teams.teamRole.member",
   maintainer: "admin.teams.teamRole.maintainer",
 } as const;
+
+const teamRoute = getRouteApi("/_app/admin/teams/$teamId");
+
+/** The team page as a route; keyed, so moving between teams starts with fresh state. */
+export function TeamRoutePage() {
+  const { teamId } = teamRoute.useParams();
+  return <TeamPage key={teamId} teamId={teamId} />;
+}
 
 /** One team: its members with their team role, and the roles the team gives its members. */
 export function TeamPage({ teamId }: { teamId: string }) {
