@@ -196,9 +196,14 @@ impl Config {
             };
             let key = &lower[section.len() + 1..];
             let default = defaults.get(*section).and_then(|t| t.get(key));
-            let value = env_value(&name, &raw, default, key)?;
             let table = doc.entry(section.to_string()).or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let toml::Value::Table(table) = table else { bail!("[{section}] is not a table") };
+            // An empty optional setting (`GRANIT_DATABASE_URL=` in docker-compose) means "not set".
+            if default.is_none() && raw.trim().is_empty() {
+                table.remove(key);
+                continue;
+            }
+            let value = env_value(&name, &raw, default, key)?;
             table.insert(key.to_string(), value);
         }
         let config: Config = toml::Value::Table(doc).try_into().context("reading settings")?;
@@ -226,9 +231,11 @@ impl Config {
             bail!("log.format must be \"text\" or \"json\"");
         }
         if let Some(url) = &self.server.public_url {
+            // The origin check and the HTTPS redirect both rely on this exact shape.
             let host =
                 url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).map(|h| h.trim_end_matches('/'));
-            if host.is_none_or(|h| h.is_empty() || h.contains('/')) {
+            let plain = host.is_some_and(|h| !h.is_empty() && !h.contains(['/', '?', '#']));
+            if !plain || crate::net::parse_origin(url).is_none() {
                 bail!("server.public_url must be a scheme and host like https://kalzit.example.com, without a path");
             }
         }
@@ -394,6 +401,16 @@ mod tests {
     }
 
     #[test]
+    fn empty_optional_variables_mean_unset() {
+        let c = Config::from_sources(
+            "[database]\nurl = \"postgres://db/x\"\n",
+            env(&[("GRANIT_DATABASE_URL", ""), ("GRANIT_TLS_CERT_FILE", "  ")]),
+        )
+        .unwrap();
+        assert!(c.database.url.is_none() && c.tls.cert_file.is_none());
+    }
+
+    #[test]
     fn out_of_range_values_are_rejected() {
         for toml in [
             "[security]\nlogin_max_failures = 0\n",
@@ -401,6 +418,9 @@ mod tests {
             "[database]\nmax_connections = 0\n",
             "[server]\npublic_url = \"https://\"\n",
             "[server]\npublic_url = \"https://x.example/sub\"\n",
+            "[server]\npublic_url = \"https://user@x.example\"\n",
+            "[server]\npublic_url = \"https://x.example:abc\"\n",
+            "[server]\npublic_url = \"https://x.example?x=1\"\n",
             "[sessions]\nlifetime_hours = 9999999999\n",
             "[log]\nlevel = \"granit=nonsense[\"\n",
         ] {

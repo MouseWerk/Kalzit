@@ -57,7 +57,7 @@ pub fn spawn_session_cleanup(state: crate::app::AppState) {
             match crate::auth::session::delete_ended(&state.db, &state.config.sessions, now).await {
                 Ok(0) => {}
                 Ok(n) => tracing::debug!("removed {n} ended sessions"),
-                Err(e) => tracing::warn!("removing ended sessions: {}", e.message),
+                Err(e) => tracing::warn!("removing ended sessions failed, will retry in an hour: {e}"),
             }
         }
     });

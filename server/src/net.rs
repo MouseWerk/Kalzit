@@ -125,7 +125,7 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
 
 /// An origin as (scheme, host, port), lowercased and with the scheme's default port filled in,
 /// so `https://Kalzit.example:443` and `https://kalzit.example` compare equal.
-fn parse_origin(url: &str) -> Option<(String, String, u16)> {
+pub(crate) fn parse_origin(url: &str) -> Option<(String, String, u16)> {
     let (scheme, rest) = url.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
     let default_port = match scheme.as_str() {
@@ -139,11 +139,14 @@ fn parse_origin(url: &str) -> Option<(String, String, u16)> {
 }
 
 /// Without `public_url` the scheme cannot be compared reliably (a TLS proxy may not be listed as
-/// trusted), so the Origin's host and port must match the Host header.
+/// trusted), so the Origin's host and port must match the Host header. A Host without a port
+/// means the default port of the Origin's scheme, never "any port": another service on
+/// `kalzit.example:8080` is a different origin.
 fn origin_matches_host(origin: &str, host_header: &str) -> bool {
-    let Some((_, host, port)) = parse_origin(origin) else { return false };
+    let Some((scheme, host, port)) = parse_origin(origin) else { return false };
     let Some((h, p)) = split_host_port(host_header) else { return false };
-    h == host && p.unwrap_or(port) == port
+    let default_port = if scheme == "https" { 443 } else { 80 };
+    h == host && p.unwrap_or(default_port) == port
 }
 
 /// `host`, `host:port`, `[v6]`, `[v6]:port`; lowercased. Rejects user info and paths.
@@ -286,6 +289,8 @@ mod tests {
         assert!(origin_matches_host("http://[::1]:3000", "[::1]:3000"));
         assert!(!origin_matches_host("https://evil.example", "kalzit.example"));
         assert!(!origin_matches_host("http://localhost:3001", "localhost:3000"));
+        assert!(!origin_matches_host("http://kalzit.example:8080", "kalzit.example"));
+        assert!(!origin_matches_host("https://kalzit.example:9999", "kalzit.example"));
         assert!(!origin_matches_host("null", "kalzit.example"));
     }
 }

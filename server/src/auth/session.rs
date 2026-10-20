@@ -73,7 +73,7 @@ pub async fn lookup(db: &AnyPool, cfg: &SessionConfig, now_ms: i64, token: &str)
 }
 
 /// Removes every session past its lifetime or idle limit; returns how many.
-pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> ApiResult<u64> {
+pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> Result<u64, sqlx::Error> {
     let idle_ms = cfg.idle_timeout_hours as i64 * HOUR_MS;
     // With the idle timeout off, the second condition compares against a time no session has.
     let idle_cutoff = if idle_ms > 0 { now_ms - idle_ms } else { i64::MIN };
