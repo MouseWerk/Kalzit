@@ -7,17 +7,19 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum::extract::Request;
 use axum::http::{StatusCode, Uri, header};
+use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Extension, Router};
 use axum_server::Handle;
 use axum_server::tls_rustls::RustlsConfig;
 use tokio::task::JoinSet;
+use tower::ServiceExt;
 
 use crate::app::{AppState, router};
 use crate::clock::SystemClock;
 use crate::config::Config;
-use crate::net::ListenerTls;
+use crate::net::{self, ListenerTls, RequestInfo};
 use crate::routes::health;
 use crate::{db, tls};
 
@@ -74,6 +76,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     tracing::info!("database ready ({})", db::redact(&config.database_url()));
 
     let state = AppState::new(config.clone(), pool, Arc::new(SystemClock), setup_code).await?;
+    db::spawn_session_cleanup(state.clone());
     let app = router(state.clone());
     let mut running = Running { http_addr: None, https_addr: None, handles: Vec::new(), listeners: JoinSet::new() };
 
@@ -92,7 +95,9 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     }
     if let Some(addr) = config.http_addr() {
         let http_app = match running.https_addr {
-            Some(https) if config.server.redirect_http_to_https => redirect_router(https.port(), state),
+            Some(https) if config.server.redirect_http_to_https => {
+                redirect_router(app.clone(), https.port(), state.clone())
+            }
             _ => app.clone(),
         };
         let service = http_app.layer(Extension(ListenerTls(false))).into_make_service_with_connect_info::<SocketAddr>();
@@ -119,34 +124,49 @@ async fn listening(running: &mut Running, handle: &Handle<SocketAddr>) -> Result
     }
 }
 
-/// Plain HTTP when HTTPS is on: health endpoints answer, everything else moves to HTTPS.
-fn redirect_router(https_port: u16, state: AppState) -> Router {
+/// Plain HTTP when HTTPS is on: health endpoints answer, everything else moves to HTTPS. A
+/// request that a trusted proxy already received over HTTPS is served normally, otherwise a TLS
+/// proxy in front of the HTTP port would loop forever.
+fn redirect_router(app: Router, https_port: u16, state: AppState) -> Router {
+    let public = state.config.server.public_url.clone().filter(|u| u.starts_with("https://"));
     Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
-        .fallback(move |req: Request| async move { redirect_to_https(&req, https_port) })
+        .fallback(move |Extension(info): Extension<RequestInfo>, req: Request| {
+            let app = app.clone();
+            let public = public.clone();
+            async move {
+                if info.https {
+                    return app.oneshot(req).await.unwrap_or_else(|never| match never {});
+                }
+                redirect_to_https(&req, https_port, public.as_deref())
+            }
+        })
+        .layer(from_fn_with_state(state.clone(), net::request_info))
         .with_state(state)
 }
 
-fn redirect_to_https(req: &Request, https_port: u16) -> Response {
-    let Some(host) = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()) else {
-        return (StatusCode::BAD_REQUEST, "missing Host header").into_response();
-    };
-    let hostname = strip_port(host);
-    let authority = if https_port == 443 { hostname.to_string() } else { format!("{hostname}:{https_port}") };
+/// The target is `public_url` when it is an HTTPS URL (correct behind port mappings such as
+/// Docker `-p 443:3443`), otherwise the requested host on the HTTPS listener's port.
+fn redirect_to_https(req: &Request, https_port: u16, public_url: Option<&str>) -> Response {
     let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
-    match format!("https://{authority}{path}").parse::<Uri>() {
+    let target = match public_url {
+        Some(public) => format!("{}{path}", public.trim_end_matches('/')),
+        None => {
+            let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok());
+            let Some((hostname, _)) = host.and_then(net::split_host_port) else {
+                return (StatusCode::BAD_REQUEST, "missing or invalid Host header").into_response();
+            };
+            match https_port {
+                443 => format!("https://{hostname}{path}"),
+                port => format!("https://{hostname}:{port}{path}"),
+            }
+        }
+    };
+    match target.parse::<Uri>() {
         Ok(uri) => Redirect::permanent(&uri.to_string()).into_response(),
-        Err(_) => (StatusCode::BAD_REQUEST, "invalid Host header").into_response(),
+        Err(_) => (StatusCode::BAD_REQUEST, "invalid request target").into_response(),
     }
-}
-
-/// `example.com:80` -> `example.com`, `[::1]:80` -> `[::1]`.
-fn strip_port(host: &str) -> &str {
-    if let Some(end) = host.rfind(']') {
-        return &host[..=end];
-    }
-    host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
 }
 
 async fn wait_for_stop_signal() {
@@ -173,18 +193,5 @@ async fn wait_for_stop_signal() {
     tokio::select! {
         () = ctrl_c => {}
         () = terminate => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::strip_port;
-
-    #[test]
-    fn strips_ports_from_hosts() {
-        assert_eq!(strip_port("example.com:80"), "example.com");
-        assert_eq!(strip_port("example.com"), "example.com");
-        assert_eq!(strip_port("[::1]:3000"), "[::1]");
-        assert_eq!(strip_port("[::1]"), "[::1]");
     }
 }
