@@ -12,8 +12,14 @@ where it is more specific.
 
 - Commits are authored as `Maurice Kleindienst <kleindiema@gmail.com>` (see owner.md). No co-author
   or session trailers, no assistant or model names in commits, code, comments or docs.
-- No pull requests unless asked. No force push, branch deletion or history rewrite without an
-  explicit request.
+- Work like a professional team: every change goes through a feature branch (`m<n>/<topic>`,
+  `fix/<topic>`) and a pull request into `main`. Parallel work runs in sub-agents with their own
+  worktrees; the orchestrator integrates, opens the PR and runs a review agent on it.
+- PRs are squash-merged (PR title becomes the commit subject); the branch is deleted after merge.
+  `main` is protected: no direct push, no force push, merge only with green CI on Windows and
+  Linux. The orchestrator merges once CI is green and the review agent has no open findings, and
+  sends the owner a short summary per PR.
+- No force push, history rewrite or deletion of unmerged branches without an explicit request.
 - Secrets only in the OS credential store or the environment's secret settings.
 - Positioning: a platform for visualizing and analyzing data in general, not only monitoring.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
