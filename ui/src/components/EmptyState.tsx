@@ -1,0 +1,22 @@
+import type { ReactNode } from "react";
+import { Icon, type IconName } from "./Icon";
+
+interface EmptyStateProps {
+  icon: IconName;
+  title: string;
+  children: ReactNode;
+  actions?: ReactNode;
+}
+
+export function EmptyState({ icon, title, children, actions }: EmptyStateProps) {
+  return (
+    <section className="empty-state" aria-label={title}>
+      <div className="empty-state__icon">
+        <Icon name={icon} />
+      </div>
+      <h2 className="empty-state__title">{title}</h2>
+      <p className="empty-state__text">{children}</p>
+      {actions === undefined ? null : <div className="empty-state__actions">{actions}</div>}
+    </section>
+  );
+}
