@@ -1,3 +1,4 @@
+pub mod admin_settings;
 pub mod auth;
 pub mod health;
 pub mod orgs;
@@ -12,7 +13,15 @@ use crate::error::{ApiError, ApiResult};
 
 /// Every API route, from each area's table. New areas add their `routes()` here.
 pub fn all() -> Vec<table::RouteDef> {
-    [setup::routes(), auth::routes(), orgs::routes()].into_iter().flatten().collect()
+    [
+        setup::routes(),
+        auth::routes(),
+        orgs::routes(),
+        admin_settings::routes(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 const MAX_NAME_CHARS: usize = 100;
