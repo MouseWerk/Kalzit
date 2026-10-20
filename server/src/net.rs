@@ -42,30 +42,59 @@ pub async fn request_info(State(state): State<AppState>, mut req: Request, next:
     next.run(req).await
 }
 
-fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[IpNet]) -> RequestInfo {
+pub(crate) fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[IpNet]) -> RequestInfo {
+    // Dual-stack sockets on Linux report IPv4 peers as ::ffff:a.b.c.d; compare them as IPv4 so
+    // `10.0.0.0/8` matches the same proxy on Linux and Windows.
+    let peer = peer.to_canonical();
     let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
-    let header_str = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::trim);
-    let host = header_str("host").map(str::to_string);
+    let host = single_header(headers, "host");
     if !is_trusted(&peer) {
         return RequestInfo { client_ip: peer, https: tls, host };
     }
-    // Walk X-Forwarded-For from the right: the first address that is not one of our proxies is
-    // the client. Anything further left was supplied by the client and cannot be trusted.
-    let client_ip = header_str("x-forwarded-for")
-        .map(|v| {
-            v.split(',')
-                .rev()
-                .filter_map(|s| s.trim().parse::<IpAddr>().ok())
-                .find(|ip| !is_trusted(ip))
-                .unwrap_or(peer)
-        })
-        .unwrap_or(peer);
-    let https = match header_str("x-forwarded-proto") {
-        Some(proto) => proto.eq_ignore_ascii_case("https"),
+    // Proxies either extend one X-Forwarded-For line or add another (HAProxy), so all lines are
+    // read in order. Walk from the right: each trusted hop vouches for the entry to its left. The
+    // first untrusted address is the client. An entry that is not an address ends the walk at the
+    // last hop we could vouch for, so client-supplied garbage cannot shift the result.
+    let forwarded: Vec<&str> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut client_ip = peer;
+    for entry in forwarded.iter().rev() {
+        let Some(ip) = parse_forwarded_ip(entry) else { break };
+        client_ip = ip;
+        if !is_trusted(&ip) {
+            break;
+        }
+    }
+    // The leftmost scheme is the one the user's browser spoke to the first proxy.
+    let https = match single_header(headers, "x-forwarded-proto") {
+        Some(proto) => proto.split(',').next().is_some_and(|p| p.trim().eq_ignore_ascii_case("https")),
         None => tls,
     };
-    let host = header_str("x-forwarded-host").map(str::to_string).or(host);
+    let host = single_header(headers, "x-forwarded-host")
+        .and_then(|h| h.split(',').next().map(|h| h.trim().to_string()))
+        .or(host);
     RequestInfo { client_ip, https, host }
+}
+
+fn single_header(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers.get(name).and_then(|v| v.to_str().ok()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// `203.0.113.5`, `203.0.113.5:51234` (IIS ARR), `2001:db8::1` or `[2001:db8::1]:443`.
+fn parse_forwarded_ip(entry: &str) -> Option<IpAddr> {
+    let entry = entry.trim_matches('"');
+    entry
+        .parse::<IpAddr>()
+        .ok()
+        .or_else(|| entry.parse::<SocketAddr>().ok().map(|s| s.ip()))
+        .or_else(|| entry.strip_prefix('[')?.strip_suffix(']')?.parse().ok())
+        .map(|ip: IpAddr| ip.to_canonical())
 }
 
 /// Rejects state-changing requests whose `Origin` is not this server. Together with
@@ -78,27 +107,64 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
     let Some(origin) = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
         return next.run(req).await;
     };
-    let info = req.extensions().get::<RequestInfo>();
+    let host = req.extensions().get::<RequestInfo>().and_then(|i| i.host.as_deref());
     let allowed = match &state.config.server.public_url {
-        Some(public) => same_origin_authority(origin, public),
-        None => info.and_then(|i| i.host.as_deref()).is_some_and(|host| origin_authority(origin) == Some(host)),
+        Some(public) => matches!((parse_origin(origin), parse_origin(public)), (Some(a), Some(b)) if a == b),
+        None => host.is_some_and(|h| origin_matches_host(origin, h)),
     };
     if !allowed {
+        tracing::warn!(
+            origin,
+            host,
+            "rejected a cross-origin request; behind a reverse proxy, set server.public_url or security.trusted_proxies"
+        );
         return ApiError::forbidden("cross-origin request rejected").into_response();
     }
     next.run(req).await
 }
 
-fn origin_authority(origin: &str) -> Option<&str> {
-    let rest = origin.split_once("://")?.1;
-    Some(rest.split('/').next().unwrap_or(rest))
+/// An origin as (scheme, host, port), lowercased and with the scheme's default port filled in,
+/// so `https://Kalzit.example:443` and `https://kalzit.example` compare equal.
+fn parse_origin(url: &str) -> Option<(String, String, u16)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "http" => 80,
+        "https" => 443,
+        _ => return None,
+    };
+    let authority = rest.split('/').next()?;
+    let (host, port) = split_host_port(authority)?;
+    Some((scheme, host, port.unwrap_or(default_port)))
 }
 
-fn same_origin_authority(origin: &str, public_url: &str) -> bool {
-    match (origin_authority(origin), origin_authority(public_url)) {
-        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        _ => false,
+/// Without `public_url` the scheme cannot be compared reliably (a TLS proxy may not be listed as
+/// trusted), so the Origin's host and port must match the Host header.
+fn origin_matches_host(origin: &str, host_header: &str) -> bool {
+    let Some((_, host, port)) = parse_origin(origin) else { return false };
+    let Some((h, p)) = split_host_port(host_header) else { return false };
+    h == host && p.unwrap_or(port) == port
+}
+
+/// `host`, `host:port`, `[v6]`, `[v6]:port`; lowercased. Rejects user info and paths.
+pub(crate) fn split_host_port(authority: &str) -> Option<(String, Option<u16>)> {
+    if authority.is_empty() || authority.contains(['@', '/', ' ']) {
+        return None;
     }
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let (h, after) = rest.split_once(']')?;
+        (format!("[{h}]"), after.strip_prefix(':'))
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), Some(p)),
+            None => (authority.to_string(), None),
+        }
+    };
+    let port = match port {
+        Some(p) => Some(p.parse::<u16>().ok()?),
+        None => None,
+    };
+    (!host.is_empty()).then(|| (host.to_ascii_lowercase(), port))
 }
 
 // Inline scripts and styles are not allowed; React sets styles through the CSSOM, which CSP permits.
@@ -157,10 +223,69 @@ mod tests {
         assert!(info.https);
     }
 
+    fn trusted() -> Vec<IpNet> {
+        vec!["10.0.0.0/8".parse().unwrap()]
+    }
+
     #[test]
-    fn origin_authority_compares_host_and_port() {
-        assert!(same_origin_authority("https://granit.example.com", "https://granit.example.com/"));
-        assert!(!same_origin_authority("https://evil.example", "https://granit.example.com"));
-        assert_eq!(origin_authority("http://localhost:3000"), Some("localhost:3000"));
+    fn every_forwarded_for_line_is_read() {
+        // HAProxy adds a second line instead of extending the client's one.
+        let mut h = HeaderMap::new();
+        h.append("x-forwarded-for", HeaderValue::from_static("1.1.1.1"));
+        h.append("x-forwarded-for", HeaderValue::from_static("203.0.113.5"));
+        assert_eq!(resolve(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn forwarded_entries_with_ports_are_understood() {
+        for (xff, client) in [
+            ("1.1.1.1, 203.0.113.5:51234", "203.0.113.5"),
+            ("1.1.1.1, [2001:db8::7]:443", "2001:db8::7"),
+            ("\"2001:db8::8\"", "2001:db8::8"),
+        ] {
+            let h = headers(&[("x-forwarded-for", xff)]);
+            assert_eq!(resolve(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip(client), "{xff}");
+        }
+    }
+
+    #[test]
+    fn garbage_in_forwarded_for_does_not_reach_further_left() {
+        let h = headers(&[("x-forwarded-for", "6.6.6.6, unknown, 10.0.0.9")]);
+        assert_eq!(resolve(ip("10.0.0.1"), false, &h, &trusted()).client_ip, ip("10.0.0.9"));
+    }
+
+    #[test]
+    fn ipv4_mapped_peers_match_ipv4_proxies() {
+        let h = headers(&[("x-forwarded-for", "203.0.113.5"), ("x-forwarded-proto", "https")]);
+        let info = resolve(ip("::ffff:10.0.0.1"), false, &h, &trusted());
+        assert_eq!(info.client_ip, ip("203.0.113.5"));
+        assert!(info.https);
+        let alone = resolve(ip("::ffff:203.0.113.9"), false, &HeaderMap::new(), &trusted());
+        assert_eq!(alone.client_ip, ip("203.0.113.9"));
+    }
+
+    #[test]
+    fn leftmost_forwarded_proto_wins() {
+        let h = headers(&[("x-forwarded-proto", "https, http")]);
+        assert!(resolve(ip("10.0.0.1"), false, &h, &trusted()).https);
+    }
+
+    #[test]
+    fn origins_are_normalized() {
+        assert_eq!(parse_origin("https://Kalzit.Example:443"), parse_origin("https://kalzit.example/"));
+        assert_ne!(parse_origin("http://kalzit.example"), parse_origin("https://kalzit.example"));
+        assert_eq!(parse_origin("ftp://kalzit.example"), None);
+        assert_eq!(parse_origin("https://user@kalzit.example"), None);
+    }
+
+    #[test]
+    fn origin_against_host_header() {
+        assert!(origin_matches_host("http://localhost:3000", "localhost:3000"));
+        assert!(origin_matches_host("https://Kalzit.example", "kalzit.example"));
+        assert!(origin_matches_host("https://kalzit.example", "kalzit.example:443"));
+        assert!(origin_matches_host("http://[::1]:3000", "[::1]:3000"));
+        assert!(!origin_matches_host("https://evil.example", "kalzit.example"));
+        assert!(!origin_matches_host("http://localhost:3001", "localhost:3000"));
+        assert!(!origin_matches_host("null", "kalzit.example"));
     }
 }
