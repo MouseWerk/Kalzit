@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use granit::config::Config;
+use kalzit::config::Config;
 use reqwest::{Certificate, Client, StatusCode, redirect};
 
 struct TestCert {
@@ -31,7 +31,7 @@ fn client_trusting(cert: &TestCert) -> Client {
         .unwrap()
 }
 
-async fn start(dir: &Path, tweak: impl FnOnce(&mut Config)) -> granit::server::Running {
+async fn start(dir: &Path, tweak: impl FnOnce(&mut Config)) -> kalzit::server::Running {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut config = Config::default();
     config.paths.data_dir = dir.join("data");
@@ -40,7 +40,7 @@ async fn start(dir: &Path, tweak: impl FnOnce(&mut Config)) -> granit::server::R
     config.tls.cert_file = Some(dir.join("cert.pem"));
     config.tls.key_file = Some(dir.join("key.pem"));
     tweak(&mut config);
-    granit::server::start(config, Some("tls-test-setup-code-0123".into())).await.unwrap()
+    kalzit::server::start(config, Some("tls-test-setup-code-0123".into())).await.unwrap()
 }
 
 #[tokio::test]
@@ -161,7 +161,7 @@ async fn busy_port_is_reported() {
     let mut config = Config::default();
     config.paths.data_dir = dir.path().join("data");
     config.server.http_addr = format!("127.0.0.1:{port}");
-    let err = match granit::server::start(config, None).await {
+    let err = match kalzit::server::start(config, None).await {
         Ok(_) => panic!("binding a busy port must fail"),
         Err(e) => format!("{e:#}"),
     };

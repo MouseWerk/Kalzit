@@ -1,6 +1,6 @@
-# Granit UI
+# Kalzit UI
 
-The web interface of Granit: React 19 with the React Compiler, TypeScript, Vite, TanStack Router
+The web interface of Kalzit: React 19 with the React Compiler, TypeScript, Vite, TanStack Router
 and TanStack Query. No CSS framework, no component library, no web fonts. The production build in
 `dist/` is embedded in the server binary and served from the same origin as the API.
 

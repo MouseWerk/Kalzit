@@ -16,14 +16,14 @@ describe("route guards", () => {
   it("sends every page to setup while setup is needed", async () => {
     installFakeServer({ setupNeeded: true });
     const { location } = renderApp("/dashboards");
-    expect(await screen.findByRole("heading", { name: "Set up Granit" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Set up Kalzit" })).toBeTruthy();
     expect(location().pathname).toBe("/setup");
   });
 
   it("sends the login page to setup while setup is needed", async () => {
     installFakeServer({ setupNeeded: true });
     const { location } = renderApp("/login");
-    await screen.findByRole("heading", { name: "Set up Granit" });
+    await screen.findByRole("heading", { name: "Set up Kalzit" });
     expect(location().pathname).toBe("/setup");
   });
 
@@ -163,7 +163,7 @@ describe("route guards", () => {
   it("asks only for the setup status while setup is needed", async () => {
     const server = installFakeServer({ setupNeeded: true });
     renderApp("/dashboards");
-    await screen.findByRole("heading", { name: "Set up Granit" });
+    await screen.findByRole("heading", { name: "Set up Kalzit" });
     expect(server.calls.map((call) => call.path)).not.toContain("/api/me");
   });
 
@@ -305,7 +305,7 @@ describe("setup", () => {
     server.state.setupNeeded = false;
     await user.click(screen.getByRole("button", { name: "Set up" }));
 
-    const message = await screen.findByText("Granit is already set up. Sign in with your account.");
+    const message = await screen.findByText("Kalzit is already set up. Sign in with your account.");
     expect(message.closest('[role="alert"]')).toBeTruthy();
     await user.click(screen.getByRole("link", { name: "Go to sign in" }));
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();

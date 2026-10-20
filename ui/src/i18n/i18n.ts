@@ -13,7 +13,7 @@ export type MessageParams = Readonly<Record<string, string | number>>;
 // parity test.
 export const catalogs: Record<Language, Record<MessageKey, string>> = { de, en };
 
-export const LANGUAGE_STORAGE_KEY = "granit.language";
+export const LANGUAGE_STORAGE_KEY = "kalzit.language";
 const FALLBACK_LANGUAGE: Language = "en";
 
 function isLanguage(value: unknown): value is Language {

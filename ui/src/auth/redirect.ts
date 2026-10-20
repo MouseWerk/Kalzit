@@ -1,6 +1,6 @@
 // Any absolute URL resolves against this placeholder origin; if the origin changes, the value
 // pointed somewhere else and is rejected. ".invalid" can never be a real host (RFC 2606).
-const BASE = "http://granit.invalid";
+const BASE = "http://kalzit.invalid";
 
 const AUTH_PATHS = new Set(["/login", "/setup"]);
 

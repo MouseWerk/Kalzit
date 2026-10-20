@@ -52,7 +52,7 @@ describe("app shell", () => {
     for (const [link, emptyTitle] of pages) {
       await user.click(within(nav).getByRole("link", { name: link }));
       expect(await screen.findByRole("heading", { level: 2, name: emptyTitle })).toBeTruthy();
-      expect(document.title).toBe(`${link} – Granit`);
+      expect(document.title).toBe(`${link} – Kalzit`);
     }
   });
 

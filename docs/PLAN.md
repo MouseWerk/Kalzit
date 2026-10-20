@@ -1,6 +1,8 @@
-# Granit: Plan
+# Kalzit: Plan
 
-Granit ist eine selbst gehostete Plattform zur Visualisierung und Auswertung von Daten, im
+Arbeitstitel war Granit; der Produktname ist Kalzit (siehe Abschnitt 13).
+
+Kalzit ist eine selbst gehostete Plattform zur Visualisierung und Auswertung von Daten, im
 Funktionsumfang von Grafana (Dashboards, Datenquellen, Rollen, Teams, Plugins), neu entworfen. Sie
 richtet sich nicht nur an Monitoring, sondern an jede Art von Daten: Geschäftsdaten, Produktdaten,
 Beziehungsnetze, Metriken. Der Unterschied: Dokumentdatenbanken (MongoDB) und Graphdatenbanken
@@ -9,7 +11,7 @@ Baum von Dokumenten, ein Ergebnis aus Neo4j bleibt ein Graph aus Knoten und Kant
 intern in eine Tabelle gepresst. Daneben werden alle üblichen Quellen unterstützt (MySQL,
 PostgreSQL, SQL Server, Prometheus, ...). Server läuft auf Windows und Linux.
 
-Grundlage: https://github.com/mauricekleindienst/AICodeGuidelines. Granit ist eine Neuentwicklung,
+Grundlage: https://github.com/mauricekleindienst/AICodeGuidelines. Kalzit ist eine Neuentwicklung,
 kein Fork: kein Grafana-Code, kein Grafana-Name oder -Logo im Produkt. Lizenz: AGPL-3.0. Betrieb:
 nur selbst gehostet, keine Cloud-Variante.
 
@@ -19,7 +21,7 @@ nur selbst gehostet, keine Cloud-Variante.
 
 Grafana normalisiert jedes Ergebnis zu einem DataFrame (Spalten mit gleich langen Feldern).
 Verschachtelte Dokumente werden dabei flachgeklopft, Graphen zu zwei Tabellen ("nodes", "edges")
-zerlegt. Genau das baut Granit nicht nach.
+zerlegt. Genau das baut Kalzit nicht nach.
 
 Jede Abfrage liefert einen **Result Envelope** mit genau einer Form:
 
@@ -119,7 +121,7 @@ Dashboards zeigen, die Auswertung beantwortet Fragen. Beides arbeitet auf densel
 
 ## 3. Datenquellen
 
-Neben den nativen Dokument- und Graph-Quellen unterstützt Granit alle üblichen Standards. Jede Quelle
+Neben den nativen Dokument- und Graph-Quellen unterstützt Kalzit alle üblichen Standards. Jede Quelle
 liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen sind von Natur aus
 `frame`.
 
@@ -226,12 +228,12 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 
 ## 8. Windows- und Linux-Server
 
-- **Ein Binary** `granit` mit eingebetteter Weboberfläche, für Windows x64, Linux x64 und Linux
+- **Ein Binary** `kalzit` mit eingebetteter Weboberfläche, für Windows x64, Linux x64 und Linux
   arm64.
-- **Windows**: `granit service install|uninstall|start|stop` als Windows-Dienst, Daten unter
-  `%ProgramData%\Granit`, Logs zusätzlich ins Ereignisprotokoll, Installer als MSI (ohne
+- **Windows**: `kalzit service install|uninstall|start|stop` als Windows-Dienst, Daten unter
+  `%ProgramData%\Kalzit`, Logs zusätzlich ins Ereignisprotokoll, Installer als MSI (ohne
   kostenpflichtiges Code-Signing), winget-Paket.
-- **Linux**: `.deb` und `.rpm` mit systemd-Unit, `/etc/granit`, `/var/lib/granit`, eigener
+- **Linux**: `.deb` und `.rpm` mit systemd-Unit, `/etc/kalzit`, `/var/lib/kalzit`, eigener
   Systembenutzer; Docker-Image.
 - **Geheimnisse** (Datenquellen-Passwörter, Signaturschlüssel): verschlüsselt in der Datenbank, der
   Hauptschlüssel aus dem OS-Speicher: Windows DPAPI/Credential Manager, Linux systemd-credentials
@@ -243,14 +245,14 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 
 ### Server-Einstellungen
 
-Einstellungen kommen aus drei Quellen mit fester Rangfolge: Umgebungsvariable (`GRANIT_*`) vor
-Konfigurationsdatei (`granit.toml`) vor Datenbank (in der UI geändert). Was per Datei oder
+Einstellungen kommen aus drei Quellen mit fester Rangfolge: Umgebungsvariable (`KALZIT_*`) vor
+Konfigurationsdatei (`kalzit.toml`) vor Datenbank (in der UI geändert). Was per Datei oder
 Umgebung gesetzt ist, zeigt die UI gesperrt mit Hinweis auf die Quelle. Netzwerk- und
 TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich aus).
 
 | Bereich | Einstellungen |
 |---|---|
-| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/granit`), HTTP → HTTPS-Umleitung |
+| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/kalzit`), HTTP → HTTPS-Umleitung |
 | TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt, minimale TLS-Version 1.2, HTTP/2 |
 | Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*` nur von diesen (`Forwarded` nach RFC 7239 folgt in M5), Beispielkonfigurationen für nginx, Caddy, IIS, Traefik |
 | Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, CORS (aus), erlaubte Einbettung (`frame-ancestors`), Login-Ratenlimit |
@@ -355,3 +357,5 @@ Getroffen (stehen auch in `CLAUDE.md`):
 8. Mehrere Organisationen pro Installation.
 9. Alerting in M6, nach dem Kern.
 10. Öffentliches Repository auf GitHub.
+11. Produktname Kalzit (statt Arbeitstitel Granit).
+12. Website mit Astro und ausdrucksstarker Bewegung, angelehnt an die Referenz des Inhabers; Hosting wird später entschieden.

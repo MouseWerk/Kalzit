@@ -1,5 +1,5 @@
 //! API behaviour through the real router and a real database (SQLite; PostgreSQL when
-//! `GRANIT_TEST_POSTGRES_URL` is set).
+//! `KALZIT_TEST_POSTGRES_URL` is set).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -8,10 +8,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
-use granit::app::{AppState, router};
-use granit::clock::{Clock, ManualClock};
-use granit::config::Config;
 use http_body_util::BodyExt;
+use kalzit::app::{AppState, router};
+use kalzit::clock::{Clock, ManualClock};
+use kalzit::config::Config;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -63,7 +63,7 @@ async fn build(
     config.paths.data_dir = dir.path().to_path_buf();
     config.database.url = db_url;
     tweak(&mut config);
-    let pool = granit::db::connect(&config.database_url(), 4).await.unwrap();
+    let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let state = AppState::new(config, pool, clock.clone(), setup_code).await.unwrap();
     let peer: SocketAddr = peer.parse().unwrap();
@@ -72,7 +72,7 @@ async fn build(
 
 impl TestApp {
     async fn send(&self, method: Method, path: &str, body: Option<Value>, headers: &[(&str, &str)]) -> Reply {
-        let mut req = Request::builder().method(method).uri(path).header(header::HOST, "granit.test");
+        let mut req = Request::builder().method(method).uri(path).header(header::HOST, "kalzit.test");
         for (k, v) in headers {
             req = req.header(*k, *v);
         }
@@ -255,19 +255,19 @@ async fn cross_origin_writes_are_rejected() {
     let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
     let evil = t.send(Method::POST, "/api/auth/login", Some(body.clone()), &[("origin", "https://evil.example")]).await;
     assert_eq!((evil.status, evil.code()), (StatusCode::FORBIDDEN, "cross_origin"));
-    let same = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "http://granit.test")]).await;
+    let same = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "http://kalzit.test")]).await;
     assert_eq!(same.status, StatusCode::OK);
 }
 
 #[tokio::test]
 async fn public_url_decides_the_allowed_origin() {
-    let t = test_app("127.0.0.1:50000", |c| c.server.public_url = Some("https://granit.example.com".into())).await;
+    let t = test_app("127.0.0.1:50000", |c| c.server.public_url = Some("https://kalzit.example.com".into())).await;
     t.setup().await;
     let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
     let host_only =
-        t.send(Method::POST, "/api/auth/login", Some(body.clone()), &[("origin", "http://granit.test")]).await;
+        t.send(Method::POST, "/api/auth/login", Some(body.clone()), &[("origin", "http://kalzit.test")]).await;
     assert_eq!(host_only.status, StatusCode::FORBIDDEN);
-    let public = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "https://granit.example.com")]).await;
+    let public = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "https://kalzit.example.com")]).await;
     assert_eq!(public.status, StatusCode::OK);
 }
 
@@ -333,7 +333,7 @@ async fn weak_fixed_setup_codes_are_refused_at_start() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
-    let pool = granit::db::connect(&config.database_url(), 1).await.unwrap();
+    let pool = kalzit::db::connect(&config.database_url(), 1).await.unwrap();
     for weak in ["----", "short-code"] {
         let clock = Arc::new(ManualClock::new(0));
         assert!(AppState::new(config.clone(), pool.clone(), clock, Some(weak.into())).await.is_err(), "{weak}");
@@ -354,7 +354,7 @@ async fn parallel_wrong_passwords_cannot_exceed_the_limit() {
             let req = Request::builder()
                 .method(Method::POST)
                 .uri("/api/auth/login")
-                .header(header::HOST, "granit.test")
+                .header(header::HOST, "kalzit.test")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .unwrap();
@@ -381,7 +381,7 @@ async fn behind_a_trusted_proxy_the_real_client_is_limited() {
         let req = Request::builder()
             .method(Method::POST)
             .uri("/api/auth/login")
-            .header(header::HOST, "granit.test")
+            .header(header::HOST, "kalzit.test")
             .header(header::CONTENT_TYPE, "application/json")
             .header("x-forwarded-for", spoof)
             .header("x-forwarded-for", "203.0.113.5")
@@ -440,9 +440,9 @@ async fn ended_sessions_are_cleaned_up() {
     t.setup().await;
     t.login("joerg@example.de", PASSWORD).await;
     let cfg = &t.state.config.sessions;
-    assert_eq!(granit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 0);
+    assert_eq!(kalzit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 0);
     t.clock.advance_ms(HOUR_MS);
-    assert_eq!(granit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 2);
+    assert_eq!(kalzit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 2);
 }
 
 #[tokio::test]
@@ -462,19 +462,19 @@ async fn migrations_are_idempotent() {
     // Spaces, umlauts and a '#' in the path must survive the URL round trip.
     let folder = dir.path().join("Daten mit Ümlaut #1");
     std::fs::create_dir_all(&folder).unwrap();
-    let url = granit::config::sqlite_url(&folder.join("granit.db"));
-    granit::db::connect(&url, 1).await.unwrap().close().await;
-    granit::db::connect(&url, 1).await.unwrap().close().await;
+    let url = kalzit::config::sqlite_url(&folder.join("kalzit.db"));
+    kalzit::db::connect(&url, 1).await.unwrap().close().await;
+    kalzit::db::connect(&url, 1).await.unwrap().close().await;
 }
 
 /// The same flow on PostgreSQL, in a throwaway schema so the test database is left as it was.
 #[tokio::test]
 async fn postgres_setup_and_login() {
-    let Ok(base) = std::env::var("GRANIT_TEST_POSTGRES_URL") else {
-        eprintln!("GRANIT_TEST_POSTGRES_URL not set, PostgreSQL test not run");
+    let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
+        eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL test not run");
         return;
     };
-    let schema = format!("granit_test_{}", uuid::Uuid::now_v7().simple());
+    let schema = format!("kalzit_test_{}", uuid::Uuid::now_v7().simple());
     sqlx::any::install_default_drivers();
     let admin = sqlx::AnyPool::connect(&base).await.unwrap();
     // The schema name is a fixed prefix plus UUID hex digits, so it is safe to splice in.
@@ -494,7 +494,7 @@ async fn postgres_setup_and_login() {
 
     let idle = t.login("joerg@example.de", PASSWORD).await.session_cookie();
     t.clock.advance_ms(3 * HOUR_MS);
-    let ended = granit::auth::session::delete_ended(&t.state.db, &t.state.config.sessions, t.clock.now_ms());
+    let ended = kalzit::auth::session::delete_ended(&t.state.db, &t.state.config.sessions, t.clock.now_ms());
     assert!(ended.await.unwrap() >= 1);
     assert_eq!(t.get("/api/me", Some(&idle)).await.status, StatusCode::UNAUTHORIZED);
     drop(t);

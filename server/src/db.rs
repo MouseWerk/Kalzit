@@ -69,11 +69,11 @@ mod tests {
 
     #[test]
     fn redact_hides_password() {
-        assert_eq!(redact("postgres://granit:s3cr3t@db:5432/granit"), "postgres://granit:***@db:5432/granit");
-        assert_eq!(redact("sqlite:data/granit.db?mode=rwc"), "sqlite:data/granit.db?mode=rwc");
+        assert_eq!(redact("postgres://kalzit:s3cr3t@db:5432/kalzit"), "postgres://kalzit:***@db:5432/kalzit");
+        assert_eq!(redact("sqlite:data/kalzit.db?mode=rwc"), "sqlite:data/kalzit.db?mode=rwc");
         assert_eq!(
-            redact("postgres://db/granit?user=u&Password=secret&sslmode=require"),
-            "postgres://db/granit?user=u&Password=***&sslmode=require"
+            redact("postgres://db/kalzit?user=u&Password=secret&sslmode=require"),
+            "postgres://db/kalzit?user=u&Password=***&sslmode=require"
         );
     }
 }

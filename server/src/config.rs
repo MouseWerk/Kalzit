@@ -1,4 +1,4 @@
-//! Server configuration: defaults, then `granit.toml`, then `GRANIT_<SECTION>_<KEY>` environment
+//! Server configuration: defaults, then `kalzit.toml`, then `KALZIT_<SECTION>_<KEY>` environment
 //! variables. Network and TLS settings are only configurable here, never in the UI, so a wrong
 //! value cannot lock the admin out of the settings page.
 
@@ -9,9 +9,9 @@ use anyhow::{Context, Result, bail};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
-const ENV_PREFIX: &str = "GRANIT_";
+const ENV_PREFIX: &str = "KALZIT_";
 const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log"];
-/// `GRANIT_*` variables that are not settings. Any other `GRANIT_*` name is a typo and an error.
+/// `KALZIT_*` variables that are not settings. Any other `KALZIT_*` name is a typo and an error.
 const OTHER_VARIABLES: &[&str] = &["CONFIG", "SETUP_TOKEN", "TEST_POSTGRES_URL"];
 /// Settings without a default value; they do not appear in the serialized defaults.
 const OPTIONAL_KEYS: &[&str] = &["public_url", "cert_file", "key_file", "url"];
@@ -37,7 +37,7 @@ pub struct ServerConfig {
     pub http_addr: String,
     /// HTTPS listener; needs `tls.cert_file` and `tls.key_file`. Empty string disables it.
     pub https_addr: String,
-    /// The URL users open, e.g. `https://granit.example.com`. Used for the origin check and links.
+    /// The URL users open, e.g. `https://kalzit.example.com`. Used for the origin check and links.
     pub public_url: Option<String>,
     /// When HTTPS is on, answer plain HTTP with a redirect (health endpoints stay reachable).
     pub redirect_http_to_https: bool,
@@ -93,7 +93,7 @@ pub struct PathsConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
-    /// A tracing filter, e.g. "info" or "granit=debug,info".
+    /// A tracing filter, e.g. "info" or "kalzit=debug,info".
     pub level: String,
     /// "text" or "json".
     pub format: String,
@@ -174,12 +174,12 @@ impl Config {
             env.push((name.to_string(), value));
         }
         Self::from_sources(&text, env).with_context(|| match &file {
-            Some(p) => format!("in configuration {} or GRANIT_* variables", p.display()),
-            None => "in GRANIT_* variables".into(),
+            Some(p) => format!("in configuration {} or KALZIT_* variables", p.display()),
+            None => "in KALZIT_* variables".into(),
         })
     }
 
-    /// Merges a TOML document with `GRANIT_<SECTION>_<KEY>` variables and validates the result.
+    /// Merges a TOML document with `KALZIT_<SECTION>_<KEY>` variables and validates the result.
     pub fn from_sources(toml_text: &str, env: impl IntoIterator<Item = (String, String)>) -> Result<Self> {
         let mut doc: toml::Table = toml::from_str(toml_text).context("parsing TOML")?;
         let defaults = toml::Table::try_from(Config::default()).context("serializing the defaults")?;
@@ -198,7 +198,7 @@ impl Config {
             let default = defaults.get(*section).and_then(|t| t.get(key));
             let table = doc.entry(section.to_string()).or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let toml::Value::Table(table) = table else { bail!("[{section}] is not a table") };
-            // An empty optional setting (`GRANIT_DATABASE_URL=` in docker-compose) means "not set".
+            // An empty optional setting (`KALZIT_DATABASE_URL=` in docker-compose) means "not set".
             if default.is_none() && raw.trim().is_empty() {
                 table.remove(key);
                 continue;
@@ -264,11 +264,11 @@ impl Config {
         self.server.https_addr.parse().ok()
     }
 
-    /// The database URL, defaulting to `granit.db` in the data directory.
+    /// The database URL, defaulting to `kalzit.db` in the data directory.
     pub fn database_url(&self) -> String {
         match &self.database.url {
             Some(url) => url.clone(),
-            None => sqlite_url(&self.paths.data_dir.join("granit.db")),
+            None => sqlite_url(&self.paths.data_dir.join("kalzit.db")),
         }
     }
 }
@@ -281,8 +281,8 @@ pub fn sqlite_url(path: &Path) -> String {
     format!("sqlite:{path}?mode=rwc")
 }
 
-/// Converts an environment value to the type the setting has, so `GRANIT_TLS_MIN_VERSION=1.3`
-/// stays the string "1.3" and `GRANIT_SERVER_REDIRECT_HTTP_TO_HTTPS=off` becomes a bool.
+/// Converts an environment value to the type the setting has, so `KALZIT_TLS_MIN_VERSION=1.3`
+/// stays the string "1.3" and `KALZIT_SERVER_REDIRECT_HTTP_TO_HTTPS=off` becomes a bool.
 fn env_value(name: &str, raw: &str, default: Option<&toml::Value>, key: &str) -> Result<toml::Value> {
     let trimmed = raw.trim();
     Ok(match default {
@@ -315,13 +315,13 @@ fn env_value(name: &str, raw: &str, default: Option<&toml::Value>, key: &str) ->
 }
 
 fn default_config_paths() -> Vec<PathBuf> {
-    let mut paths = vec![PathBuf::from("granit.toml")];
+    let mut paths = vec![PathBuf::from("kalzit.toml")];
     #[cfg(windows)]
     if let Some(program_data) = std::env::var_os("ProgramData") {
-        paths.push(PathBuf::from(program_data).join("Granit").join("granit.toml"));
+        paths.push(PathBuf::from(program_data).join("Kalzit").join("kalzit.toml"));
     }
     #[cfg(unix)]
-    paths.push(PathBuf::from("/etc/granit/granit.toml"));
+    paths.push(PathBuf::from("/etc/kalzit/kalzit.toml"));
     paths
 }
 
@@ -344,7 +344,7 @@ mod tests {
     fn environment_wins_over_file() {
         let c = Config::from_sources(
             "[server]\nhttp_addr = \"127.0.0.1:4000\"\n",
-            env(&[("GRANIT_SERVER_HTTP_ADDR", "127.0.0.1:5000"), ("GRANIT_SESSIONS_LIFETIME_HOURS", "12")]),
+            env(&[("KALZIT_SERVER_HTTP_ADDR", "127.0.0.1:5000"), ("KALZIT_SESSIONS_LIFETIME_HOURS", "12")]),
         )
         .unwrap();
         assert_eq!(c.server.http_addr, "127.0.0.1:5000");
@@ -356,8 +356,8 @@ mod tests {
         let c = Config::from_sources(
             "",
             env(&[
-                ("GRANIT_SECURITY_TRUSTED_PROXIES", "[\"10.0.0.0/8\", \"::1/128\"]"),
-                ("GRANIT_SECURITY_HSTS", "false"),
+                ("KALZIT_SECURITY_TRUSTED_PROXIES", "[\"10.0.0.0/8\", \"::1/128\"]"),
+                ("KALZIT_SECURITY_HSTS", "false"),
             ]),
         )
         .unwrap();
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn unrelated_environment_is_ignored() {
-        assert!(Config::from_sources("", env(&[("GRANIT_CONFIG", "x"), ("PATH", "y")])).is_ok());
+        assert!(Config::from_sources("", env(&[("KALZIT_CONFIG", "x"), ("PATH", "y")])).is_ok());
     }
 
     #[test]
@@ -375,11 +375,11 @@ mod tests {
         let c = Config::from_sources(
             "",
             env(&[
-                ("GRANIT_TLS_MIN_VERSION", "1.3"),
-                ("GRANIT_PATHS_DATA_DIR", "2024"),
-                ("GRANIT_SERVER_REDIRECT_HTTP_TO_HTTPS", "off"),
-                ("GRANIT_SECURITY_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.0.0/16"),
-                ("GRANIT_SERVER_PUBLIC_URL", "https://kalzit.example.com"),
+                ("KALZIT_TLS_MIN_VERSION", "1.3"),
+                ("KALZIT_PATHS_DATA_DIR", "2024"),
+                ("KALZIT_SERVER_REDIRECT_HTTP_TO_HTTPS", "off"),
+                ("KALZIT_SECURITY_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.0.0/16"),
+                ("KALZIT_SERVER_PUBLIC_URL", "https://kalzit.example.com"),
             ]),
         )
         .unwrap();
@@ -392,11 +392,11 @@ mod tests {
 
     #[test]
     fn misspelled_variables_are_rejected() {
-        for name in ["GRANIT_SERVR_HTTP_ADDR", "GRANIT_SERVER_HTTP_PORT"] {
+        for name in ["KALZIT_SERVR_HTTP_ADDR", "KALZIT_SERVER_HTTP_PORT"] {
             let err = Config::from_sources("", env(&[(name, "1")])).unwrap_err();
             assert!(format!("{err:#}").contains(name), "{err:#}");
         }
-        let err = Config::from_sources("", env(&[("GRANIT_SESSIONS_LIFETIME_HOURS", "viele")])).unwrap_err();
+        let err = Config::from_sources("", env(&[("KALZIT_SESSIONS_LIFETIME_HOURS", "viele")])).unwrap_err();
         assert!(format!("{err:#}").contains("whole number"), "{err:#}");
     }
 
@@ -404,7 +404,7 @@ mod tests {
     fn empty_optional_variables_mean_unset() {
         let c = Config::from_sources(
             "[database]\nurl = \"postgres://db/x\"\n",
-            env(&[("GRANIT_DATABASE_URL", ""), ("GRANIT_TLS_CERT_FILE", "  ")]),
+            env(&[("KALZIT_DATABASE_URL", ""), ("KALZIT_TLS_CERT_FILE", "  ")]),
         )
         .unwrap();
         assert!(c.database.url.is_none() && c.tls.cert_file.is_none());
@@ -422,7 +422,7 @@ mod tests {
             "[server]\npublic_url = \"https://x.example:abc\"\n",
             "[server]\npublic_url = \"https://x.example?x=1\"\n",
             "[sessions]\nlifetime_hours = 9999999999\n",
-            "[log]\nlevel = \"granit=nonsense[\"\n",
+            "[log]\nlevel = \"kalzit=nonsense[\"\n",
         ] {
             assert!(Config::from_sources(toml, env(&[])).is_err(), "{toml}");
         }
@@ -447,8 +447,8 @@ mod tests {
 
     #[test]
     fn sqlite_url_uses_forward_slashes() {
-        let c = Config::from_sources("[paths]\ndata_dir = 'C:\\ProgramData\\Granit'\n", env(&[])).unwrap();
-        assert_eq!(c.database_url(), "sqlite:C:/ProgramData/Granit/granit.db?mode=rwc");
+        let c = Config::from_sources("[paths]\ndata_dir = 'C:\\ProgramData\\Kalzit'\n", env(&[])).unwrap();
+        assert_eq!(c.database_url(), "sqlite:C:/ProgramData/Kalzit/kalzit.db?mode=rwc");
         assert_eq!(sqlite_url(Path::new("/srv/a?b#c%d.db")), "sqlite:/srv/a%3Fb%23c%25d.db?mode=rwc");
     }
 }

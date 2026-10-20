@@ -1,6 +1,6 @@
-# Granit
+# Kalzit
 
-Granit is a self-hosted platform for visualizing and analyzing data: dashboards, data sources,
+Kalzit is a self-hosted platform for visualizing and analyzing data: dashboards, data sources,
 organizations, teams, roles and plugins. Document databases (MongoDB) and graph databases (Neo4j,
 Memgraph) are native data shapes with their own views, not tables in disguise. All common sources
 (PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Prometheus, Elasticsearch and more) are supported

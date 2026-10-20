@@ -24,7 +24,7 @@ catalog.
 | Eigentümer | Owner | Feste Rolle: volle Rechte, auch über Admins. | Besitzer |
 | Recht | Permission | Einzelne Erlaubnis wie `dashboards:write`. | Berechtigung (als Name eines Rechts) |
 | Server-Admin | Server admin | Verwaltet die ganze Installation über alle Organisationen hinweg. | Superuser, Root |
-| Datenquelle | Data source | Verbindung zu einer Datenbank oder einem Dienst, den Granit abfragt. | Datasource, Datenbankquelle, Connector |
+| Datenquelle | Data source | Verbindung zu einer Datenbank oder einem Dienst, den Kalzit abfragt. | Datasource, Datenbankquelle, Connector |
 | Abfrage | Query | Eine Anfrage an eine Datenquelle (SQL, Pipeline, Cypher, PromQL, ...). | Query (im Deutschen) |
 | Dashboard | Dashboard | Seite mit Panels, abgelegt in Ordnern, mit Verlauf. | Übersichtsseite, Board |
 | Ordner | Folder | Enthält Dashboards; Rechte am Ordner gelten für seinen Inhalt. | Verzeichnis |

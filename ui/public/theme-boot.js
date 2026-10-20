@@ -5,7 +5,7 @@
   const themes = ["system", "light", "dark", "contrast"];
   let theme = "system";
   try {
-    const stored = window.localStorage.getItem("granit.theme");
+    const stored = window.localStorage.getItem("kalzit.theme");
     if (themes.includes(stored)) {
       theme = stored;
     }

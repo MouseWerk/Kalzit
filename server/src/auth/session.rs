@@ -7,7 +7,7 @@ use sqlx::AnyPool;
 use crate::config::SessionConfig;
 use crate::error::ApiResult;
 
-pub const COOKIE_NAME: &str = "granit_session";
+pub const COOKIE_NAME: &str = "kalzit_session";
 /// `last_seen_at` is written at most this often, so reads do not turn into writes.
 const TOUCH_INTERVAL_MS: i64 = 5 * 60 * 1000;
 const HOUR_MS: i64 = 3_600_000;
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn reads_session_cookie_among_others() {
         let mut h = HeaderMap::new();
-        h.insert(header::COOKIE, HeaderValue::from_static("theme=dark; granit_session=abc123; x=1"));
+        h.insert(header::COOKIE, HeaderValue::from_static("theme=dark; kalzit_session=abc123; x=1"));
         assert_eq!(read_cookie(&h).as_deref(), Some("abc123"));
     }
 
