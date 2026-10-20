@@ -44,9 +44,12 @@ pub async fn me(db: &AnyPool, user: SessionUser) -> ApiResult<Me> {
 /// address; this only rejects obvious typos.
 pub fn normalize_email(raw: &str) -> ApiResult<String> {
     let email = raw.trim().to_lowercase();
+    // The UI applies exactly these rules before sending; keep both in step.
     let valid = email.chars().count() <= MAX_EMAIL_CHARS
-        && !email.chars().any(char::is_whitespace)
-        && matches!(email.split_once('@'), Some((local, domain)) if !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.'));
+        && !email.chars().any(|c| c.is_whitespace() || c.is_control())
+        && matches!(email.split_once('@'), Some((local, domain))
+            if !local.is_empty() && !domain.contains('@') && domain.contains('.')
+                && !domain.starts_with('.') && !domain.ends_with('.'));
     if valid { Ok(email) } else { Err(ApiError::validation("email is not a valid address")) }
 }
 
@@ -73,7 +76,9 @@ mod tests {
     #[test]
     fn email_is_normalized() {
         assert_eq!(normalize_email("  Jörg@Example.DE ").unwrap(), "jörg@example.de");
-        for bad in ["", "a", "a@b", "@b.de", "a@.de", "a@b.", "a b@c.de"] {
+        for bad in
+            ["", "a", "a@b", "@b.de", "a@.de", "a@b.", "a b@c.de", "a@b@c.de", "ada@exa\u{0}mple.com", "a\u{85}b@c.de"]
+        {
             assert!(normalize_email(bad).is_err(), "{bad}");
         }
     }
