@@ -10,8 +10,9 @@
   }
 
   html {
-    -webkit-text-size-adjust: none;
-    text-size-adjust: none;
+    /* 100%, not none: none would also block the user's own text zoom on phones (WCAG 1.4.4). */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   body {

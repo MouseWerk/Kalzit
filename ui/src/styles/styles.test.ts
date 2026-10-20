@@ -245,6 +245,16 @@ describe("motion and typography", () => {
     }
   });
 
+  it("never blocks the user's text zoom", () => {
+    for (const rule of allRules()) {
+      for (const { property, value } of rule.declarations) {
+        if (property.endsWith("text-size-adjust")) {
+          expect(value, where(rule, property)).not.toBe("none");
+        }
+      }
+    }
+  });
+
   it("loads no web fonts and nothing from other hosts", () => {
     for (const { name, source } of files) {
       expect(/@font-face|url\(\s*["']?(https?:)?\/\//.test(source), name).toBe(false);
