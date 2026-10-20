@@ -47,10 +47,21 @@
       color var(--duration-fast) var(--easing);
   }
 
+  /* Busy and disabled states get their own colors instead of opacity, which would fail AA. */
   .button:disabled,
   .button[aria-disabled="true"] {
     cursor: not-allowed;
-    opacity: 0.6;
+  }
+
+  .button--primary:disabled,
+  .button--primary[aria-disabled="true"] {
+    background: var(--accent-busy);
+    color: var(--on-accent-busy);
+  }
+
+  .button--secondary:disabled,
+  .button--secondary[aria-disabled="true"] {
+    color: var(--text-muted);
   }
 
   .button--primary {
@@ -58,7 +69,7 @@
     color: var(--on-accent);
   }
 
-  .button--primary:hover:not(:disabled) {
+  .button--primary:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--accent-hover);
   }
 
@@ -68,7 +79,7 @@
     color: var(--text);
   }
 
-  .button--secondary:hover:not(:disabled) {
+  .button--secondary:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--bg-hover);
   }
 

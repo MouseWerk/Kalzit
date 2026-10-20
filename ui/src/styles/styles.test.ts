@@ -245,6 +245,16 @@ describe("motion and typography", () => {
     }
   });
 
+  it("dims nothing with opacity, which would take text below AA", () => {
+    for (const rule of allRules()) {
+      for (const { property, value } of rule.declarations) {
+        if (property === "opacity") {
+          expect(Number(value), where(rule, `${property}: ${value}`)).toBe(1);
+        }
+      }
+    }
+  });
+
   it("never blocks the user's text zoom", () => {
     for (const rule of allRules()) {
       for (const { property, value } of rule.declarations) {
@@ -332,6 +342,7 @@ describe("contrast in every theme", () => {
     ["--text-muted", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], TEXT],
     ["--accent-text", ["--bg", "--bg-surface", "--bg-raised", "--danger-bg"], TEXT],
     ["--on-accent", ["--accent", "--accent-hover"], TEXT],
+    ["--on-accent-busy", ["--accent-busy"], TEXT],
     ["--danger-text", ["--bg", "--bg-surface", "--bg-raised", "--danger-bg"], TEXT],
     ["--success-text", ["--bg", "--bg-surface", "--bg-raised"], TEXT],
     // Non-text UI that carries meaning: input borders, the focus ring, the primary button fill.
