@@ -180,15 +180,28 @@ pub enum Resource<'a> {
     Datasource(&'a str),
 }
 
-/// Checks `permission` on one resource. Today the org-wide permission decides; resource grants
-/// (migration 0003) extend it, e.g. a viewer with an `edit` grant on one folder. Every handler
-/// that acts on a single resource calls this, so the grants take effect without touching it.
+/// Checks `permission` on one resource: `not_found` when the caller may not even see it (a
+/// restricted folder they have no grant for), `forbidden` when they see it but may not do this.
+/// Today the org-wide permissions decide; resource grants and restricted folders (migration 0003)
+/// are added here, so handlers that call this get them without a change.
 pub async fn check_resource(
     _db: &sqlx::AnyPool,
     ctx: &OrgCtx,
     permission: Permission,
-    _resource: Resource<'_>,
+    resource: Resource<'_>,
 ) -> ApiResult<()> {
+    let can_see = match resource {
+        Resource::Folder(_) => ctx.permissions.contains(&Permission::FoldersRead),
+        Resource::Dashboard(_) => ctx.permissions.contains(&Permission::DashboardsRead),
+        // Viewers use data sources only through dashboards, so they need not see them.
+        Resource::Datasource(_) => {
+            ctx.permissions.contains(&Permission::DatasourcesRead)
+                || ctx.permissions.contains(&Permission::DatasourcesQuery)
+        }
+    };
+    if !can_see {
+        return Err(ApiError::not_found());
+    }
     ctx.check(permission)
 }
 
@@ -200,7 +213,8 @@ pub enum GrantSource {
     OrgRole { role: String },
 }
 
-pub fn explain(ctx: &OrgCtx, permission: Permission) -> Vec<GrantSource> {
+/// `resource` narrows the answer to grants on that resource once grants exist.
+pub fn explain(ctx: &OrgCtx, permission: Permission, _resource: Option<Resource<'_>>) -> Vec<GrantSource> {
     if ctx.permissions.contains(&permission) {
         vec![GrantSource::OrgRole { role: ctx.role.clone() }]
     } else {
@@ -258,7 +272,19 @@ mod tests {
                 "teams:read users:read"
             )
         );
-        // Every permission belongs to exactly the roles listed above; owner holds them all.
+        // The whole catalog by name: a new permission fails this test until someone decides which
+        // roles get it (admin and owner would otherwise receive it silently).
+        let all: Vec<&str> = Permission::ALL.iter().map(|p| p.as_str()).collect();
+        assert_eq!(
+            all.join(" "),
+            concat!(
+                "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
+                "folders:permissions datasources:query datasources:read datasources:write datasources:permissions ",
+                "analyses:read analyses:write data:export annotations:write teams:read teams:write teams:members ",
+                "users:read users:invite users:write roles:read roles:write serviceaccounts:write audit:read ",
+                "plugins:configure settings:read settings:write org:write org:delete"
+            )
+        );
         assert_eq!(BuiltinRole::Owner.permissions().len(), Permission::ALL.len());
         let admin_missing: Vec<_> =
             Permission::ALL.iter().filter(|p| !BuiltinRole::Admin.permissions().contains(p)).collect();
@@ -274,5 +300,39 @@ mod tests {
     #[test]
     fn unknown_roles_grant_nothing() {
         assert!(BuiltinRole::parse("superuser").is_none());
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    fn ctx(role: BuiltinRole) -> OrgCtx {
+        OrgCtx {
+            user: SessionUser { id: "u".into(), email: "u@example.de".into(), name: "U".into(), is_server_admin: 0 },
+            org_id: "o".into(),
+            role: role.as_str().into(),
+            permissions: role.permissions(),
+        }
+    }
+
+    #[tokio::test]
+    async fn hidden_resources_are_not_found_and_visible_ones_forbidden() {
+        sqlx::any::install_default_drivers();
+        let db = sqlx::AnyPool::connect("sqlite::memory:").await.unwrap();
+        let viewer = ctx(BuiltinRole::Viewer);
+        // A viewer sees dashboards but may not change them.
+        let e = check_resource(&db, &viewer, Permission::DashboardsWrite, Resource::Dashboard("d")).await.unwrap_err();
+        assert_eq!(e.code, "forbidden");
+        // A viewer does not see data sources at all.
+        let e = check_resource(&db, &viewer, Permission::DatasourcesRead, Resource::Datasource("s")).await.unwrap_err();
+        assert_eq!(e.code, "not_found");
+        let editor = ctx(BuiltinRole::Editor);
+        assert!(check_resource(&db, &editor, Permission::DatasourcesQuery, Resource::Datasource("s")).await.is_ok());
+        assert_eq!(
+            explain(&editor, Permission::DashboardsWrite, None),
+            [GrantSource::OrgRole { role: "editor".into() }]
+        );
+        assert!(explain(&viewer, Permission::DashboardsWrite, None).is_empty());
     }
 }
