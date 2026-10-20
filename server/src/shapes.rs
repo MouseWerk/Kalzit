@@ -43,10 +43,11 @@ impl QueryResult {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Frame {
-    pub fields: Vec<Field>,
+    // Private, so every frame goes through `Frame::new` and its length check.
+    fields: Vec<Field>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
-    pub meta: Option<FrameMeta>,
+    meta: Option<FrameMeta>,
 }
 
 impl Frame {
@@ -59,6 +60,19 @@ impl Frame {
             }
         }
         Ok(Self { fields, meta: None })
+    }
+
+    pub fn with_meta(mut self, meta: FrameMeta) -> Self {
+        self.meta = Some(meta);
+        self
+    }
+
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
+    pub fn meta(&self) -> Option<&FrameMeta> {
+        self.meta.as_ref()
     }
 
     pub fn rows(&self) -> usize {
@@ -119,6 +133,7 @@ pub struct Field {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub unit: Option<String>,
+    /// One value per row; `null` where the row has no value.
     #[cfg_attr(test, ts(type = "unknown[]"))]
     pub values: Vec<Value>,
     /// Series labels, e.g. from Prometheus.
@@ -131,7 +146,7 @@ pub struct Field {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentSet {
-    /// Documents with typed values (see [`typed`]) where JSON has no type for them.
+    /// Documents with typed values (see `typed`) where JSON has no type for them.
     #[cfg_attr(test, ts(type = "unknown[]"))]
     pub documents: Vec<Value>,
     /// Sampled from the result: every field path with its types and how many documents have it.
@@ -223,6 +238,111 @@ pub struct GraphSchema {
     pub property_keys: BTreeMap<String, Vec<String>>,
 }
 
+/// `POST /api/orgs/{orgId}/query`: free queries, for members with `datasources:query`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QueryRequest {
+    pub queries: Vec<QueryItem>,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    /// Dashboard variables; they become bind parameters, never text in the query.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QueryItem {
+    pub ref_id: String,
+    pub datasource_id: String,
+    /// The source's own query (SQL text, PromQL, a pipeline); each plugin defines its form.
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub query: Value,
+    /// Continues a `DocumentSet` from its `nextCursor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub limit: Option<u32>,
+}
+
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`: runs the panel's
+/// stored queries; all a viewer can run (`dashboards:read` on that dashboard).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelQueryRequest {
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+}
+
+/// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct TimeRange {
+    pub from: i64,
+    pub to: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct QueryResponse {
+    /// One entry per `refId`; one failing query does not fail the others.
+    pub results: BTreeMap<String, QueryOutcome>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(untagged)]
+pub enum QueryOutcome {
+    Ok { result: QueryResult },
+    Err { error: ErrorBody },
+}
+
+/// The body of every error answer: `{"error": ErrorBody}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ErrorEnvelope {
+    pub error: ErrorBody,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ErrorBody {
+    pub code: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub field: Option<String>,
+}
+
+/// Every list answer. `nextCursor` is opaque; order is stable (newest first unless a route says
+/// otherwise), `limit` defaults to 50 and above 200 is a `validation` error.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}
+
 /// A value JSON cannot express by itself (ObjectId, date, decimal, binary, int64), kept with its
 /// database type instead of being flattened to a string.
 pub fn typed(kind: &str, value: impl Into<String>) -> Value {
@@ -278,7 +398,8 @@ mod tests {
     /// Keeps `ui/src/api/generated/shapes.ts` in step with these types.
     #[test]
     fn generated_typescript_is_current() {
-        let cfg = ts_rs::Config::default();
+        // Times are Unix milliseconds, well inside the 2^53 range of a JavaScript number.
+        let cfg = ts_rs::Config::default().with_large_int("number");
         let decls = [
             Shape::decl(&cfg),
             QueryResult::decl(&cfg),
@@ -297,6 +418,15 @@ mod tests {
             Edge::decl(&cfg),
             GraphPath::decl(&cfg),
             GraphSchema::decl(&cfg),
+            QueryRequest::decl(&cfg),
+            QueryItem::decl(&cfg),
+            PanelQueryRequest::decl(&cfg),
+            TimeRange::decl(&cfg),
+            QueryResponse::decl(&cfg),
+            QueryOutcome::decl(&cfg),
+            ErrorEnvelope::decl(&cfg),
+            ErrorBody::decl(&cfg),
+            Page::<()>::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

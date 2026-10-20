@@ -18,7 +18,11 @@ export type NoticeSeverity = "info" | "warning";
 
 export type FieldType = "time" | "number" | "int64" | "string" | "bool" | "json";
 
-export type Field = { name: string, type: FieldType, unit?: string, values: unknown[], 
+export type Field = { name: string, type: FieldType, unit?: string, 
+/**
+ * One value per row; `null` where the row has no value.
+ */
+values: unknown[], 
 /**
  * Series labels, e.g. from Prometheus.
  */
@@ -26,7 +30,7 @@ labels?: { [key in string]: string }, };
 
 export type DocumentSet = { 
 /**
- * Documents with typed values (see [`typed`]) where JSON has no type for them.
+ * Documents with typed values (see `typed`) where JSON has no type for them.
  */
 documents: unknown[], 
 /**
@@ -69,3 +73,37 @@ export type GraphSchema = { labels: Array<string>, edgeTypes: Array<string>,
  * Property keys seen per label.
  */
 propertyKeys: { [key in string]: Array<string> }, };
+
+export type QueryRequest = { queries: Array<QueryItem>, timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, 
+/**
+ * Dashboard variables; they become bind parameters, never text in the query.
+ */
+variables: Record<string, unknown>, };
+
+export type QueryItem = { refId: string, datasourceId: string, 
+/**
+ * The source's own query (SQL text, PromQL, a pipeline); each plugin defines its form.
+ */
+query: unknown, 
+/**
+ * Continues a `DocumentSet` from its `nextCursor`.
+ */
+cursor?: string, limit?: number, };
+
+export type PanelQueryRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, };
+
+export type TimeRange = { from: number, to: number, };
+
+export type QueryResponse = { 
+/**
+ * One entry per `refId`; one failing query does not fail the others.
+ */
+results: { [key in string]: QueryOutcome }, };
+
+export type QueryOutcome = { result: QueryResult, } | { error: ErrorBody, };
+
+export type ErrorEnvelope = { error: ErrorBody, };
+
+export type ErrorBody = { code: string, message: string, field?: string, };
+
+export type Page<T> = { items: Array<T>, nextCursor: string | null, };
