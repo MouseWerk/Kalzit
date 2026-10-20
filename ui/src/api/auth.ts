@@ -7,7 +7,8 @@ export type OrgRole = (typeof ORG_ROLES)[number];
 export interface OrgMembership {
   id: string;
   name: string;
-  role: OrgRole;
+  /** One of the fixed roles, or the name of a custom role (planned), which grants no extras here. */
+  role: OrgRole | (string & {});
 }
 
 export interface Me {
@@ -40,7 +41,8 @@ function isOrgMembership(value: unknown): value is OrgMembership {
     isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.name === "string" &&
-    (ORG_ROLES as readonly unknown[]).includes(value.role)
+    // Any string: an unknown (custom) role must not make the whole user unreadable.
+    typeof value.role === "string"
   );
 }
 
