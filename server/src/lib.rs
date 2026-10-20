@@ -11,6 +11,7 @@ pub mod db;
 pub mod error;
 pub mod extract;
 pub mod net;
+pub mod paging;
 pub mod routes;
 pub mod server;
 pub mod settings;
