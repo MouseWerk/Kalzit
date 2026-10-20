@@ -18,6 +18,12 @@ static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
     hash_blocking(&hex::encode(random)).unwrap_or_default()
 });
 
+/// Builds the dummy hash at start, so the first sign-in with an unknown email is not slower than
+/// the others (which would reveal that the email has no account).
+pub async fn prewarm() {
+    let _ = tokio::task::spawn_blocking(|| LazyLock::force(&DUMMY_HASH).len()).await;
+}
+
 fn hash_blocking(password: &str) -> Result<String, String> {
     Argon2::default().hash_password(password.as_bytes()).map(|h| h.to_string()).map_err(|e| e.to_string())
 }

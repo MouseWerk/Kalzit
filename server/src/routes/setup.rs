@@ -23,6 +23,8 @@ use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 
 pub const TOKEN_FILE: &str = "setup-token.txt";
+/// A fixed code from the environment must not be guessable; the generated one has 24 hex digits.
+const MIN_FIXED_CODE_CHARS: usize = 16;
 
 pub struct SetupGate {
     /// `None` once setup is done. The lock also serializes concurrent setup attempts.
@@ -44,7 +46,15 @@ impl SetupGate {
             return Ok(Self { state: Mutex::new(None) });
         }
         let gate = match fixed_code {
-            Some(code) => OpenGate { code_hash: hash_code(&code), file: None },
+            Some(code) => {
+                if normalize_code(&code).len() < MIN_FIXED_CODE_CHARS {
+                    anyhow::bail!(
+                        "GRANIT_SETUP_TOKEN needs at least {MIN_FIXED_CODE_CHARS} letters or digits; \
+                         leave it unset to get a generated code"
+                    );
+                }
+                OpenGate { code_hash: hash_code(&code), file: None }
+            }
             None => {
                 let code = generate_code();
                 let file = data_dir.join(TOKEN_FILE);
@@ -71,22 +81,32 @@ fn generate_code() -> String {
 }
 
 /// Dashes, spaces and case do not matter when typing the code.
-fn hash_code(code: &str) -> String {
-    let normalized: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase();
-    hex::encode(Sha256::digest(normalized.as_bytes()))
+fn normalize_code(code: &str) -> String {
+    code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase()
 }
 
+fn hash_code(code: &str) -> String {
+    hex::encode(Sha256::digest(normalize_code(code).as_bytes()))
+}
+
+/// Creates the file so that only the server's own user can read it. On Unix it is created with
+/// mode 0600 (no window in which it is world-readable) and never through a pre-existing symlink.
+/// On Windows it inherits the data directory's ACL; the service installer (M5) restricts that
+/// directory to the service account and administrators.
 fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, content)?;
+    remove_file_if_present(path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    Ok(())
+    options.open(path)?.write_all(content.as_bytes())
 }
 
 fn remove_file_if_present(path: &Path) {
@@ -95,6 +115,16 @@ fn remove_file_if_present(path: &Path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => tracing::warn!("removing {}: {e}", path.display()),
     }
+}
+
+fn close_gate(gate: &mut Option<OpenGate>) {
+    if let Some(file) = gate.take().and_then(|g| g.file) {
+        remove_file_if_present(&file);
+    }
+}
+
+fn setup_done() -> ApiError {
+    ApiError::new(StatusCode::CONFLICT, "setup_done", "setup is already complete")
 }
 
 pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -118,7 +148,7 @@ pub async fn complete(
 ) -> ApiResult<impl IntoResponse> {
     let now = state.clock.now_ms();
     let limit_key = format!("setup-ip:{}", info.client_ip);
-    if state.login_limiter.is_blocked(&limit_key, now) {
+    if !state.login_limiter.try_acquire(&[&limit_key], now) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -128,12 +158,12 @@ pub async fn complete(
 
     let mut gate = state.setup.state.lock().await;
     let Some(open) = gate.as_ref() else {
-        return Err(ApiError::new(StatusCode::CONFLICT, "setup_done", "setup is already complete"));
+        return Err(setup_done());
     };
     if hash_code(&req.token) != open.code_hash {
-        state.login_limiter.record_failure(&limit_key, now);
         return Err(ApiError::new(StatusCode::FORBIDDEN, "invalid_setup_token", "the setup code is not correct"));
     }
+    state.login_limiter.refund(&limit_key);
 
     let org_name = clean_name(&req.org_name, "organization name")?;
     let name = clean_name(&req.name, "name")?;
@@ -146,7 +176,9 @@ pub async fn complete(
     let mut tx = state.db.begin().await?;
     let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(&mut *tx).await?;
     if users > 0 {
-        return Err(ApiError::new(StatusCode::CONFLICT, "setup_done", "setup is already complete"));
+        // Another server on the same database finished setup first; this one is done too.
+        close_gate(&mut gate);
+        return Err(setup_done());
     }
     sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, $2, $3)")
         .bind(&org_id)
@@ -173,9 +205,7 @@ pub async fn complete(
         .await?;
     tx.commit().await?;
 
-    if let Some(file) = gate.take().and_then(|g| g.file) {
-        remove_file_if_present(&file);
-    }
+    close_gate(&mut gate);
     drop(gate);
     tracing::info!(user = %user_id, org = %org_id, "setup complete");
 

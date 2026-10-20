@@ -29,6 +29,7 @@ pub struct AppState {
 impl AppState {
     pub async fn new(config: Config, db: AnyPool, clock: Arc<dyn Clock>, setup_code: Option<String>) -> Result<Self> {
         let setup = SetupGate::init(&db, &config.paths.data_dir, setup_code).await?;
+        crate::auth::password::prewarm().await;
         let sec = &config.security;
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
         Ok(Self { db, config: Arc::new(config), clock, login_limiter: Arc::new(login_limiter), setup: Arc::new(setup) })
