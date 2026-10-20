@@ -27,6 +27,12 @@ where it is more specific.
   explicit, visible projection steps in the query, never implicit in the backend.
 - Data sources are read-only by default; write queries are rejected server-side.
 - Windows and Linux servers are both first-class: CI, e2e and releases run on both.
+- Frontend uses the current stack as of October 2026 (React 19 with React Compiler, TypeScript 7,
+  Vite 8, TanStack Router and Query, Biome, Vitest, Playwright) and modern CSS without a framework.
+- Full role system on server and organization level, and complete server settings (HTTP/HTTPS,
+  TLS, proxies, sessions, mail, appearance, operations); see `docs/PLAN.md` sections 6 and 8.
+- Settings apply instantly with undo, except forms with dependent fields that need a connection
+  test (SMTP, OIDC, LDAP): those use one explicit Save with a clear error per field.
 
 ## Code rules
 

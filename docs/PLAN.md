@@ -174,18 +174,37 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 
 ## 6. Organisationen, Teams, Rollen
 
-- **Modell**: Organisation → Teams → Benutzer; Ordner → Dashboards; Datenquellen gehören zur
-  Organisation.
-- **Rollen**: Betrachter, Bearbeiter, Admin, Eigentümer als feste Rollen, dazu **eigene Rollen**
-  aus feingranularen Rechten (`dashboards:read`, `dashboards:write`, `datasources:query`,
-  `datasources:manage`, `teams:manage`, `plugins:install`, ...).
-- **Vererbung**: Rechte an Ordnern gelten für enthaltene Dashboards; Rechte pro Datenquelle
-  (wer darf abfragen, wer darf bearbeiten).
-- **Prüfung immer auf dem Server**, pro Anfrage und pro Ressource (Guideline: nie nur im UI).
-- **Anmeldung**: lokale Benutzer (Argon2), OIDC (Entra ID, Keycloak, Google), LDAP inkl. Active
-  Directory (wichtig für Windows-Umgebungen), Team-Zuordnung aus Gruppen.
+- **Modell**: Server → Organisationen → Teams → Benutzer; Ordner (verschachtelt) → Dashboards und
+  gespeicherte Auswertungen; Datenquellen gehören zur Organisation.
+- **Zwei Ebenen von Rollen**:
+  - *Server-Ebene*: Server-Admin (Server-Einstellungen, Organisationen, alle Benutzer, Plugins,
+    Lizenz- und Systeminfo) und normale Benutzer.
+  - *Organisations-Ebene*: Eigentümer, Admin, Bearbeiter, Betrachter als feste Rollen, dazu
+    **eigene Rollen** aus feingranularen Rechten.
+- **Rechte-Katalog** (Aktion:Ressource, mit Bereich): `dashboards:read|write|delete|share`,
+  `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
+  `analyses:read|write`, `data:export`, `teams:read|write|members`, `users:read|invite|write`,
+  `roles:read|write`, `serviceaccounts:write`, `annotations:write`, `audit:read`,
+  `plugins:install|configure`, `settings:read|write`. Bereich: alle, ein Ordner, eine Datenquelle,
+  ein Team.
+- **Zuweisung** an Benutzer, Teams und Dienstkonten; effektive Rechte sind die Vereinigung aus
+  Rolle, Team-Rollen und direkten Freigaben. Ein "Warum darf ich das?"-Dialog zeigt die Herkunft
+  jedes Rechts.
+- **Vererbung**: Rechte an Ordnern gelten für Unterordner und enthaltene Dashboards; Rechte pro
+  Datenquelle (wer darf abfragen, wer darf bearbeiten). Kein Recht ohne Grundlage: Standard ist
+  "kein Zugriff".
+- **Schutzregeln**: der letzte Eigentümer einer Organisation und der letzte Server-Admin können
+  nicht entfernt oder herabgestuft werden; niemand kann sich selbst mehr Rechte geben, als er hat.
+- **Prüfung immer auf dem Server**, pro Anfrage und pro Ressource (Guideline: nie nur im UI). Ein
+  Guard-Test stellt sicher, dass jede Route eine Rechteprüfung deklariert.
+- **Anmeldung**: lokale Benutzer (Argon2id), OIDC (Entra ID, Keycloak, Google, Authentik), LDAP
+  inkl. Active Directory (wichtig für Windows-Umgebungen), SAML später; Rollen- und Team-Zuordnung
+  aus Gruppen; Zwei-Faktor mit TOTP und Passkeys (WebAuthn), erzwingbar pro Organisation.
+- **Benutzerverwaltung**: Einladung per Mail-Link (nur Hash gespeichert, läuft ab), Passwort
+  vergessen, Konto sperren, Sitzungen ansehen und beenden ("überall abmelden").
 - **Dienstkonten und API-Tokens**: nur Hash gespeichert, Ablaufdatum, Bereich (Scopes).
-- **Audit-Log**: wer hat was wann geändert (Dashboards, Rechte, Datenquellen, Plugins).
+- **Audit-Log**: wer hat was wann geändert (Anmeldungen, Rechte, Dashboards, Datenquellen,
+  Plugins, Einstellungen), durchsuchbar, Aufbewahrungsdauer einstellbar, Export.
 
 ## 7. Plugins
 
@@ -222,6 +241,34 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 - **CI-Matrix**: jeder Build, jeder Unit- und jeder e2e-Test läuft auf `ubuntu-latest` **und**
   `windows-latest`. Ein Release nur, wenn beide grün sind.
 
+### Server-Einstellungen
+
+Einstellungen kommen aus drei Quellen mit fester Rangfolge: Umgebungsvariable (`GRANIT_*`) vor
+Konfigurationsdatei (`granit.toml`) vor Datenbank (in der UI geändert). Was per Datei oder
+Umgebung gesetzt ist, zeigt die UI gesperrt mit Hinweis auf die Quelle. Netzwerk- und
+TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich aus).
+
+| Bereich | Einstellungen |
+|---|---|
+| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/granit`), HTTP → HTTPS-Umleitung |
+| TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt, minimale TLS-Version 1.2, HTTP/2 |
+| Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*`/`Forwarded` nur von diesen, Beispielkonfigurationen für nginx, Caddy, IIS, Traefik |
+| Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, CORS (aus), erlaubte Einbettung (`frame-ancestors`), Login-Ratenlimit |
+| Sitzungen | Dauer, Leerlauf-Timeout, gleichzeitige Sitzungen, "Angemeldet bleiben" |
+| Passwörter | Mindestlänge, Prüfung gegen bekannte geleakte Passwörter (k-Anonymität, abschaltbar), 2FA-Pflicht |
+| Anmeldung | lokale Anmeldung an/aus, OIDC, LDAP/AD, Selbstregistrierung (aus), Standardrolle neuer Benutzer |
+| Mail (SMTP) | Server, Port, STARTTLS/TLS, Absender, Testmail senden |
+| Darstellung | Standardsprache, Standardthema (hell, dunkel, System, Kontrast), Startseite, Logo und Name (Branding) |
+| Daten | Datenbank (SQLite/PostgreSQL), Abfrage-Timeouts und Limits global, Cache, Aufbewahrung von Verlauf, Audit-Log und Papierkorb |
+| Betrieb | Log-Level und -Format (Text/JSON), Health (`/healthz`), Readiness (`/readyz`), Prometheus-Metriken (`/metrics`, optional geschützt), Backup-Zeitplan und -Ziel |
+| Plugins | Katalog an/aus, unsignierte Plugins erlauben (aus), Plugin-Verzeichnis |
+| Updates | Prüfung auf neue Versionen (aus, opt-in), keine Telemetrie |
+| Info | Version, Build, Lizenz (AGPL-3.0 mit Link zum Quellcode, wie die Lizenz es bei Netzwerknutzung verlangt), Systemstatus |
+
+Jede Änderung in der UI landet im Audit-Log; Einstellungen mit mehreren abhängigen Feldern (SMTP,
+OIDC, LDAP) haben einen expliziten Speichern-Knopf mit Verbindungstest, alle anderen gelten sofort
+mit Rückgängig (Ausnahme nach `design/principles.md`, in `CLAUDE.md` festgehalten).
+
 ## 9. Technik
 
 | Bereich | Wahl | Begründung |
@@ -229,7 +276,10 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | Server | Rust (axum, tokio, sqlx) | Ein natives Binary für Windows und Linux, Windows-Dienst ohne Zusatz, bekannter Stack aus Arcalo |
 | Treiber | `mongodb` (offiziell), `neo4rs` (Bolt, auch Memgraph), `sqlx` (PostgreSQL, MySQL/MariaDB, SQLite), `tiberius` (SQL Server), HTTP-Client-Factory für API-Quellen | Native Typen bleiben erhalten (BSON, Bolt-Strukturen, SQL-Typen) |
 | Eigene Daten | SQLite (Standard, ein Server), PostgreSQL (mehrere Instanzen/HA) | Kein Pflicht-Datenbankserver für kleine Installationen |
-| Frontend | React + TypeScript + Vite | Größtes Ökosystem für Panels und Plugin-Autoren |
+| Frontend | React 19.3 mit React Compiler 1.0, TypeScript 7 (nativer Compiler), Vite 8 (Rolldown), TanStack Router und Query | Stand Oktober 2026; größtes Ökosystem für Panels und Plugin-Autoren, typsichere Routen |
+| CSS | Eigene Tokens in modernem CSS: OKLCH-Farben, `light-dark()`, Cascade Layers, Container Queries, View Transitions, Popover-API und Anchor Positioning | Kein CSS-Framework nötig, Guard-Tests prüfen die Regeln |
+| Werkzeuge | Biome (Format und Lint), Vitest 5, Playwright | Schnell, wenige Abhängigkeiten |
+| HTTPS | rustls (kein OpenSSL, identisch auf Windows und Linux) | Keine Systembibliothek nötig |
 | Zeitreihen | uPlot | Sehr schnell bei vielen Punkten |
 | Graphen | Sigma.js + Graphology (WebGL), ELK für Hierarchie-Layouts | Zehntausende Knoten flüssig |
 | Diagramme sonst | ECharts | Balken, Heatmaps, Verteilungen |
@@ -266,9 +316,12 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 
 ## 12. Meilensteine
 
-1. **M0 Fundament**: Repository, `CLAUDE.md`, CI-Matrix Windows/Linux, Server-Gerüst, eigene
-   Datenbank mit Migrationen (SQLite/PostgreSQL), lokale Anmeldung, Design-Tokens, i18n, Guard-Tests.
-2. **M1 Kern**: Organisationen, Teams, Rollen und Rechte; Ordner und Dashboards mit Verlauf;
+1. **M0 Fundament**: Repository, `CLAUDE.md`, CI-Matrix Windows/Linux, Server-Gerüst mit HTTP und
+   HTTPS (eigenes Zertifikat), Proxy-Unterstützung, Sicherheits-Header, Health/Readiness, eigene
+   Datenbank mit Migrationen (SQLite/PostgreSQL), Ersteinrichtung, lokale Anmeldung,
+   Design-Tokens, i18n, Guard-Tests.
+2. **M1 Kern**: Organisationen, Teams, vollständiges Rollen- und Rechtesystem, Benutzerverwaltung,
+   Server-Einstellungen in der UI, Audit-Log; Ordner und Dashboards mit Verlauf;
    Datenquellen-Verwaltung mit verschlüsselten Zugangsdaten; Query-API mit Result Envelope und
    Plugin-Schnittstelle (intern); PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Prometheus;
    Zeitreihe, Stat, Balken, Tabelle; Explore, berechnete Felder, Statistik, Export.
@@ -279,7 +332,7 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Pfad-Panel, Explorer-Modus, Graph-Aggregationen, Variablen über Formen hinweg.
 5. **M4 Plugins**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK, Beispiel-Plugins
    (eine Datenquelle, ein Panel).
-6. **M5 Betrieb**: OIDC, LDAP/AD, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
+6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
    Docker, Backup und Wiederherstellung, HA mit PostgreSQL; InfluxDB, Loki, ClickHouse.
 7. **M6 Ausbau**: Alerting, Freigabe-Links, Provisioning als Code, Import von Grafana-Dashboards
    (soweit sinnvoll); Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
