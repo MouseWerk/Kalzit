@@ -71,7 +71,8 @@ Guards that keep this airtight:
   `Authenticated` routes must be on the reviewed lists in the test.
 - An API test calls every declared organization and admin route without a session (401), as a
   member of another organization (404) and as a non-admin (403).
-- Clippy forbids `Router::route`, `nest`, `merge` and `route_service` outside the router assembly
+- Clippy forbids `Router::route`, `route_service`, `nest`, `nest_service`, `merge` and
+  `fallback_service` outside the router assembly
   (`clippy.toml`), so a route cannot be added past the tables.
 - `orgId` must be a canonical UUID (lowercase, hyphenated); anything else is `not_found` without
   a lookup.
