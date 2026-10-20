@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import de from "./de.json";
-import en from "./en.json";
+import { de, en } from "./catalogs";
 import {
   detectLanguage,
   getLanguage,

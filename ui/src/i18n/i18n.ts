@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { readPreference, writePreference } from "../lib/storage";
-import de from "./de.json";
-import en from "./en.json";
+import { de, en } from "./catalogs";
 
 export const LANGUAGES = ["de", "en"] as const;
 export type Language = (typeof LANGUAGES)[number];
