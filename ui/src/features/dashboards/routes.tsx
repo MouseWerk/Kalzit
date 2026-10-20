@@ -1,6 +1,6 @@
 import { createRoute } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
-import { DashboardsPage } from "../../pages/PlaceholderPages";
+import { DashboardsPage } from "./DashboardsPage";
 
 // The dashboards area's pages. Nested routes of this area go here too.
 const dashboardsRoute = createRoute({

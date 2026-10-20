@@ -171,8 +171,8 @@ describe("glossary", () => {
   it("names the setup code as the glossary does", () => {
     expect(de["setup.token"]).toBe("Einrichtungscode");
     expect(en["setup.token"]).toBe("Setup code");
-    expect(de["nav.dataSources"]).toBe("Datenquellen");
-    expect(en["nav.dataSources"]).toBe("Data sources");
+    expect(de["datasources.nav"]).toBe("Datenquellen");
+    expect(en["datasources.nav"]).toBe("Data sources");
   });
 });
 

@@ -1,1 +1,7 @@
-{}
+{
+  "dashboards.nav": "Dashboards",
+  "dashboards.title": "Dashboards",
+  "dashboards.lead": "Dashboards show panels with your data, sorted into folders.",
+  "dashboards.empty.title": "No dashboards yet",
+  "dashboards.empty.text": "Dashboards are not available yet. Once they are, you will find them here, sorted into folders."
+}

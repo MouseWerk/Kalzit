@@ -1,6 +1,6 @@
 import { createRoute } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
-import { AdminPage } from "../../pages/PlaceholderPages";
+import { AdminPage } from "./AdminPage";
 
 // The admin area's pages. Nested routes of this area go here too.
 const adminRoute = createRoute({

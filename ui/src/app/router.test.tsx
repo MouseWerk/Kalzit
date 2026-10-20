@@ -144,16 +144,14 @@ describe("route guards", () => {
   });
 
   it("notices a changed role at the next navigation", async () => {
-    const server = installFakeServer({ signedIn: true });
+    // Not a server admin, so the entry depends on the organization's permissions alone.
+    const owner = { ...TEST_USER, isServerAdmin: false };
+    const server = installFakeServer({ signedIn: true, user: owner });
     const { user } = renderApp("/");
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
-    expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
+    expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
 
-    server.state.user = {
-      ...TEST_USER,
-      isServerAdmin: false,
-      orgs: [{ id: "o1", name: "Org", role: "viewer" }],
-    };
+    server.state.user = { ...owner, orgs: [{ id: "o1", name: "Org", role: "viewer" }] };
     await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
     await waitFor(() =>
       expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull(),
