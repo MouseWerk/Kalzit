@@ -12,6 +12,7 @@ pub mod extract;
 pub mod net;
 pub mod routes;
 pub mod server;
+pub mod settings;
 pub mod shapes;
 pub mod tls;
 pub mod web;
