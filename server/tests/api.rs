@@ -151,6 +151,23 @@ async fn setup_rejects_wrong_code_and_weak_password() {
         )
         .await;
     assert_eq!((weak.status, weak.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"));
+    assert_eq!(weak.body["error"]["field"], "password");
+    for (body, field) in [
+        (
+            json!({ "token": SETUP_CODE, "orgName": " ", "name": "B", "email": "b@example.de", "password": PASSWORD }),
+            "orgName",
+        ),
+        (
+            json!({ "token": SETUP_CODE, "orgName": "A", "name": "x".repeat(101), "email": "b@example.de", "password": PASSWORD }),
+            "name",
+        ),
+        (
+            json!({ "token": SETUP_CODE, "orgName": "A", "name": "B", "email": "admin@localhost", "password": PASSWORD }),
+            "email",
+        ),
+    ] {
+        assert_eq!(t.post("/api/setup", body).await.body["error"]["field"], field);
+    }
     assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true }));
 }
 
