@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use axum::Router;
 use axum::extract::{FromRequestParts, Path, Request, State};
+use axum::http::{Method, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::MethodRouter;
@@ -15,29 +16,40 @@ use crate::authz::{Access, OrgCtx, effective_permissions};
 use crate::error::ApiError;
 
 pub struct RouteDef {
+    /// The HTTP method `handler` answers; kept so tests can call every declared route.
+    pub method: Method,
     /// Relative to `/api`, with axum path parameters (`/orgs/{orgId}/teams`).
     pub path: &'static str,
     pub access: Access,
-    pub method: MethodRouter<AppState>,
+    pub handler: MethodRouter<AppState>,
 }
 
-pub fn route(path: &'static str, access: Access, method: MethodRouter<AppState>) -> RouteDef {
-    RouteDef { path, access, method }
+/// `route(Method::GET, "/orgs/{orgId}", Access::OrgMember, get(handler))`.
+pub fn route(method: Method, path: &'static str, access: Access, handler: MethodRouter<AppState>) -> RouteDef {
+    RouteDef { method, path, access, handler }
 }
 
 /// Builds the API router. Several methods on one path may have different access rules, so each
 /// method router gets its own layer before they are merged.
+#[expect(clippy::disallowed_methods, reason = "this is where route tables become routes, with their access layer")]
 pub fn build(defs: Vec<RouteDef>, state: &AppState) -> Router<AppState> {
     let mut by_path: BTreeMap<&'static str, MethodRouter<AppState>> = BTreeMap::new();
     for def in defs {
-        let layered = def.method.route_layer(from_fn_with_state((state.clone(), def.access), enforce));
+        let layered = def.handler.route_layer(from_fn_with_state((state.clone(), def.access), enforce));
         let merged = match by_path.remove(def.path) {
             Some(existing) => existing.merge(layered),
             None => layered,
         };
         by_path.insert(def.path, merged);
     }
-    by_path.into_iter().fold(Router::new(), |router, (path, method)| router.route(path, method))
+    // A method nobody declared answers in the API's error format, not with an empty 405.
+    by_path
+        .into_iter()
+        .fold(Router::new(), |router, (path, method)| router.route(path, method.fallback(method_not_allowed)))
+}
+
+async fn method_not_allowed() -> ApiError {
+    ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "this method is not supported here")
 }
 
 async fn enforce(State((state, access)): State<(AppState, Access)>, req: Request, next: Next) -> Response {
@@ -65,6 +77,10 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
                 .await
                 .map_err(|_| ApiError::not_found())?;
             let org_id = params.get("orgId").ok_or_else(ApiError::not_found)?.clone();
+            // Organization ids are UUIDs; anything else cannot exist, so it needs no lookup.
+            if uuid::Uuid::parse_str(&org_id).is_err() {
+                return Err(ApiError::not_found());
+            }
             let ctx = org_ctx(state, user.clone(), org_id).await?;
             if let Access::Org(permission) = access {
                 ctx.check(permission)?;

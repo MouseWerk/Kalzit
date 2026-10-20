@@ -36,6 +36,7 @@ impl AppState {
     }
 }
 
+#[expect(clippy::disallowed_methods, reason = "assembles the route tables with the unversioned health endpoints")]
 pub fn router(state: AppState) -> Router {
     let api = routes::table::build(routes::all(), &state).fallback(|| async { ApiError::not_found() });
 

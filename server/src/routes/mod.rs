@@ -103,20 +103,39 @@ mod tests {
 mod access_guard {
     use crate::authz::Access;
 
-    /// Every organization-scoped route must check membership; a route under /orgs/{orgId} that is
-    /// public or only needs a session would leak another organization's data.
+    /// Routes anyone may call. Adding one here is a reviewed decision.
+    const PUBLIC: &[&str] = &["/setup", "/auth/login", "/auth/logout"];
+    /// Routes for any signed-in user, regardless of organization.
+    const AUTHENTICATED: &[&str] = &["/me"];
+
+    /// The path layout decides the access rule, so a route cannot be scoped to an organization
+    /// without the membership check, and an org route cannot be declared public by mistake.
     #[test]
-    fn org_routes_require_membership() {
+    fn every_route_has_the_access_its_path_implies() {
         for def in super::all() {
-            if def.path.starts_with("/orgs/{orgId}") {
+            let segments: Vec<&str> = def.path.trim_start_matches('/').split('/').collect();
+            let first = segments[0];
+            match def.access {
+                Access::Public => assert!(PUBLIC.contains(&def.path), "{} is public but not listed", def.path),
+                Access::Authenticated => {
+                    assert!(AUTHENTICATED.contains(&def.path), "{} needs a session but is not listed", def.path)
+                }
+                Access::ServerAdmin => assert_eq!(first, "admin", "{}: ServerAdmin routes live under /admin", def.path),
+                Access::OrgMember | Access::Org(_) => assert!(
+                    first == "orgs" && segments.get(1) == Some(&"{orgId}"),
+                    "{}: organization routes are /orgs/{{orgId}}/...",
+                    def.path
+                ),
+            }
+            if first == "orgs" {
                 assert!(
                     matches!(def.access, Access::Org(_) | Access::OrgMember),
-                    "{} must use Access::Org or Access::OrgMember",
+                    "{} lacks the membership check",
                     def.path
                 );
             }
-            if def.path.starts_with("/admin") {
-                assert!(matches!(def.access, Access::ServerAdmin), "{} must use Access::ServerAdmin", def.path);
+            if first == "admin" {
+                assert!(matches!(def.access, Access::ServerAdmin), "{} must be ServerAdmin", def.path);
             }
         }
     }

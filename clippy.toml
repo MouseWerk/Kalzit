@@ -1,0 +1,8 @@
+# API routes are declared in route tables (server/src/routes/table.rs), which enforce each route's
+# access rule. Registering routes directly would bypass that; only the router assembly may.
+disallowed-methods = [
+    { path = "axum::routing::Router::route", reason = "declare the route in a route table so its access is enforced" },
+    { path = "axum::routing::Router::route_service", reason = "declare the route in a route table so its access is enforced" },
+    { path = "axum::routing::Router::nest", reason = "declare the route in a route table so its access is enforced" },
+    { path = "axum::routing::Router::merge", reason = "declare the route in a route table so its access is enforced" },
+]

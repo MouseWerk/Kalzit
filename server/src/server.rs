@@ -127,6 +127,7 @@ async fn listening(running: &mut Running, handle: &Handle<SocketAddr>) -> Result
 /// Plain HTTP when HTTPS is on: health endpoints answer, everything else moves to HTTPS. A
 /// request that a trusted proxy already received over HTTPS is served normally, otherwise a TLS
 /// proxy in front of the HTTP port would loop forever.
+#[expect(clippy::disallowed_methods, reason = "the HTTP redirect listener has only the health endpoints")]
 fn redirect_router(app: Router, https_port: u16, state: AppState) -> Router {
     let public = state.config.server.public_url.clone().filter(|u| u.starts_with("https://"));
     Router::new()

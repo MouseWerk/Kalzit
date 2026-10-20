@@ -473,8 +473,13 @@ async fn org_routes_check_membership_and_report_permissions() {
 
     // Another organization the owner does not belong to looks like it does not exist.
     let db = &t.state.db;
-    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('other', 'Andere', 0)").execute(db).await.unwrap();
-    let other = t.get("/api/orgs/other", Some(&cookie)).await;
+    let other_id = uuid::Uuid::now_v7().to_string();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+        .bind(&other_id)
+        .execute(db)
+        .await
+        .unwrap();
+    let other = t.get(&format!("/api/orgs/{other_id}"), Some(&cookie)).await;
     assert_eq!((other.status, other.code()), (StatusCode::NOT_FOUND, "not_found"));
 
     // A viewer sees the org with a narrow permission set.
@@ -483,6 +488,46 @@ async fn org_routes_check_membership_and_report_permissions() {
     assert_eq!(viewer.body["role"], "viewer");
     let perms = viewer.body["permissions"].as_array().unwrap();
     assert!(perms.iter().all(|p| p != "dashboards:write" && p != "users:write"), "{perms:?}");
+}
+
+/// Every declared organization or admin route refuses strangers before its handler runs: no
+/// session answers 401, a member of another organization 404, a non-admin on /admin 403.
+#[tokio::test]
+async fn every_declared_route_enforces_its_access() {
+    use kalzit::authz::Access;
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let cookie = t.setup().await.session_cookie();
+    sqlx::query("UPDATE users SET is_server_admin = 0").execute(&t.state.db).await.unwrap();
+    let foreign_org = uuid::Uuid::now_v7().to_string();
+    let any_id = uuid::Uuid::now_v7().to_string();
+    let mut checked = 0;
+    for def in kalzit::routes::all() {
+        let path = format!("/api{}", def.path)
+            .replace("{orgId}", &foreign_org)
+            .split('/')
+            .map(|s| if s.starts_with('{') { any_id.as_str() } else { s })
+            .collect::<Vec<_>>()
+            .join("/");
+        let body = (def.method != Method::GET).then(|| json!({}));
+        let (anon_status, member_status) = match def.access {
+            Access::Org(_) | Access::OrgMember => (StatusCode::UNAUTHORIZED, StatusCode::NOT_FOUND),
+            Access::ServerAdmin => (StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN),
+            Access::Public | Access::Authenticated => continue,
+        };
+        let anon = t.send(def.method.clone(), &path, body.clone(), &[]).await;
+        assert_eq!(anon.status, anon_status, "{} {path} without a session", def.method);
+        let member = t.send(def.method.clone(), &path, body, &[("cookie", &cookie)]).await;
+        assert_eq!(member.status, member_status, "{} {path} as a stranger: {}", def.method, member.body);
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+#[tokio::test]
+async fn unsupported_methods_answer_in_the_error_format() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let r = t.send(Method::DELETE, "/api/me", None, &[]).await;
+    assert_eq!((r.status, r.code()), (StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"));
 }
 
 #[tokio::test]
