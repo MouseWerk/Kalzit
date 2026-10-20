@@ -68,10 +68,13 @@ async fn change_password(
 ) -> ApiResult<StatusCode> {
     let now = state.clock.now_ms();
     // A stolen session must not become a way to guess the password at full speed.
+    let wrong_current = || ApiError::validation("the current password is not correct").with_field("current");
+    // No password can be this long, so it is refused before it costs a hash or an attempt.
+    if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
+        return Err(wrong_current());
+    }
     let limit_key = format!("password:{}", user.id);
-    if req.current.chars().count() > password::MAX_PASSWORD_CHARS
-        || !state.login_limiter.try_acquire(&[&limit_key], now)
-    {
+    if !state.login_limiter.try_acquire(&[&limit_key], now) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -81,7 +84,7 @@ async fn change_password(
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
     if !password::verify(req.current, stored).await {
-        return Err(ApiError::validation("the current password is not correct").with_field("current"));
+        return Err(wrong_current());
     }
     state.login_limiter.reset(&limit_key);
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
