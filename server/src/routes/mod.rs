@@ -103,10 +103,10 @@ mod tests {
 mod access_guard {
     use crate::authz::Access;
 
-    /// Routes anyone may call. Adding one here is a reviewed decision.
-    const PUBLIC: &[&str] = &["/setup", "/auth/login", "/auth/logout"];
+    /// Routes anyone may call, as "METHOD path". Adding one here is a reviewed decision.
+    const PUBLIC: &[&str] = &["GET /setup", "POST /setup", "POST /auth/login", "POST /auth/logout"];
     /// Routes for any signed-in user, regardless of organization.
-    const AUTHENTICATED: &[&str] = &["/me"];
+    const AUTHENTICATED: &[&str] = &["GET /me"];
 
     /// The path layout decides the access rule, so a route cannot be scoped to an organization
     /// without the membership check, and an org route cannot be declared public by mistake.
@@ -115,10 +115,11 @@ mod access_guard {
         for def in super::all() {
             let segments: Vec<&str> = def.path.trim_start_matches('/').split('/').collect();
             let first = segments[0];
+            let key = format!("{} {}", def.method, def.path);
             match def.access {
-                Access::Public => assert!(PUBLIC.contains(&def.path), "{} is public but not listed", def.path),
+                Access::Public => assert!(PUBLIC.contains(&key.as_str()), "{key} is public but not listed"),
                 Access::Authenticated => {
-                    assert!(AUTHENTICATED.contains(&def.path), "{} needs a session but is not listed", def.path)
+                    assert!(AUTHENTICATED.contains(&key.as_str()), "{key} needs a session but is not listed")
                 }
                 Access::ServerAdmin => assert_eq!(first, "admin", "{}: ServerAdmin routes live under /admin", def.path),
                 Access::OrgMember | Access::Org(_) => assert!(

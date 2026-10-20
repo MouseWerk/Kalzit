@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use axum::Router;
 use axum::extract::{FromRequestParts, Path, Request, State};
+use axum::handler::Handler;
 use axum::http::{Method, StatusCode};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
-use axum::routing::MethodRouter;
+use axum::routing::{MethodFilter, MethodRouter, on};
 
 use crate::app::AppState;
 use crate::auth::{CurrentUser, SessionUser};
@@ -16,17 +17,23 @@ use crate::authz::{Access, OrgCtx, effective_permissions};
 use crate::error::ApiError;
 
 pub struct RouteDef {
-    /// The HTTP method `handler` answers; kept so tests can call every declared route.
+    /// The one HTTP method this route answers; tests call every declared route with it.
     pub method: Method,
     /// Relative to `/api`, with axum path parameters (`/orgs/{orgId}/teams`).
     pub path: &'static str,
     pub access: Access,
-    pub handler: MethodRouter<AppState>,
+    handler: MethodRouter<AppState>,
 }
 
-/// `route(Method::GET, "/orgs/{orgId}", Access::OrgMember, get(handler))`.
-pub fn route(method: Method, path: &'static str, access: Access, handler: MethodRouter<AppState>) -> RouteDef {
-    RouteDef { method, path, access, handler }
+/// `route(Method::GET, "/orgs/{orgId}", Access::OrgMember, handler)`. The method router is built
+/// here from `method`, so a route cannot answer a method it did not declare.
+pub fn route<H, T>(method: Method, path: &'static str, access: Access, handler: H) -> RouteDef
+where
+    H: Handler<T, AppState>,
+    T: 'static,
+{
+    let filter = MethodFilter::try_from(method.clone()).expect("route tables use standard HTTP methods");
+    RouteDef { method, path, access, handler: on(filter, handler) }
 }
 
 /// Builds the API router. Several methods on one path may have different access rules, so each
@@ -77,8 +84,9 @@ async fn authorize(state: &AppState, access: Access, req: Request) -> Result<Req
                 .await
                 .map_err(|_| ApiError::not_found())?;
             let org_id = params.get("orgId").ok_or_else(ApiError::not_found)?.clone();
-            // Organization ids are UUIDs; anything else cannot exist, so it needs no lookup.
-            if uuid::Uuid::parse_str(&org_id).is_err() {
+            // Organization ids are canonical UUIDs (lowercase, hyphenated); anything else cannot
+            // exist, so it needs no lookup.
+            if uuid::Uuid::parse_str(&org_id).map(|u| u.hyphenated().to_string()).ok().as_deref() != Some(&org_id) {
                 return Err(ApiError::not_found());
             }
             let ctx = org_ctx(state, user.clone(), org_id).await?;

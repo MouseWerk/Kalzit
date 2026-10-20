@@ -2,7 +2,6 @@
 
 use axum::extract::State;
 use axum::http::Method;
-use axum::routing::get;
 use axum::{Extension, Json};
 use serde::Serialize;
 
@@ -12,7 +11,7 @@ use crate::authz::{Access, OrgCtx};
 use crate::error::ApiResult;
 
 pub fn routes() -> Vec<RouteDef> {
-    vec![route(Method::GET, "/orgs/{orgId}", Access::OrgMember, get(current))]
+    vec![route(Method::GET, "/orgs/{orgId}", Access::OrgMember, current)]
 }
 
 #[derive(Serialize)]

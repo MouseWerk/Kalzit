@@ -120,10 +120,9 @@ fn remove_file_if_present(path: &Path) {
 pub fn routes() -> Vec<super::table::RouteDef> {
     use crate::authz::Access::Public;
     use axum::http::Method;
-    use axum::routing::{get, post};
     vec![
-        super::table::route(Method::GET, "/setup", Public, get(status)),
-        super::table::route(Method::POST, "/setup", Public, post(complete)),
+        super::table::route(Method::GET, "/setup", Public, status),
+        super::table::route(Method::POST, "/setup", Public, complete),
     ]
 }
 
