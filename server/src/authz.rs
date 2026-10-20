@@ -313,8 +313,12 @@ pub struct RoleInfo {
     pub permissions: BTreeSet<Permission>,
 }
 
-/// Resolves a role key within `org_id`; `None` when there is no such role there.
-pub async fn resolve_role(db: &sqlx::AnyPool, org_id: &str, key: &str) -> ApiResult<Option<RoleInfo>> {
+/// Resolves a role key within `org_id`; `None` when there is no such role there. Works on the pool
+/// or inside a transaction (`&mut *tx`).
+pub async fn resolve_role<'c, E>(db: E, org_id: &str, key: &str) -> ApiResult<Option<RoleInfo>>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
     if let Some(builtin) = BuiltinRole::parse(key) {
         return Ok(Some(RoleInfo {
             key: key.to_string(),
@@ -421,9 +425,7 @@ struct GrantRow {
 
 impl GrantRow {
     fn permissions(&self) -> BTreeSet<Permission> {
-        ResourceType::parse(&self.resource_type)
-            .and_then(|t| level_permissions(t, &self.level))
-            .unwrap_or_default()
+        ResourceType::parse(&self.resource_type).and_then(|t| level_permissions(t, &self.level)).unwrap_or_default()
     }
 
     fn source(&self) -> GrantSource {
@@ -571,7 +573,8 @@ pub async fn explain(
     if permissions_on(&ctx.permissions, resource.resource_type(), &facts).is_none() {
         return Err(ApiError::not_found());
     }
-    let mut out: Vec<GrantSource> = if role_applies(&ctx.permissions, &facts) { from_roles.collect() } else { Vec::new() };
+    let mut out: Vec<GrantSource> =
+        if role_applies(&ctx.permissions, &facts) { from_roles.collect() } else { Vec::new() };
     out.extend(facts.grants.iter().filter(|g| g.permissions().contains(&permission)).map(GrantRow::source));
     Ok(out)
 }
@@ -785,7 +788,10 @@ mod resource_tests {
             assert_eq!(ResourceType::parse(t.as_str()), Some(t));
         }
         assert_eq!(level_permissions(ResourceType::Dashboard, "view").unwrap(), [DashboardsRead].into());
-        assert_eq!(level_permissions(ResourceType::Datasource, "query").unwrap(), [DatasourcesQuery, DatasourcesRead].into());
+        assert_eq!(
+            level_permissions(ResourceType::Datasource, "query").unwrap(),
+            [DatasourcesQuery, DatasourcesRead].into()
+        );
         assert!(level_permissions(ResourceType::Folder, "edit").unwrap().contains(&DashboardsWrite));
         // Levels are per type: data sources have no "view", folders no "query".
         assert!(level_permissions(ResourceType::Datasource, "view").is_none());
@@ -823,7 +829,11 @@ mod resource_tests {
         assert!(permissions_on(&editor, ResourceType::Folder, &restricted).is_none());
         assert!(permissions_on(&editor, ResourceType::Dashboard, &restricted).is_none());
         let admin = BuiltinRole::Admin.permissions();
-        assert!(permissions_on(&admin, ResourceType::Dashboard, &restricted).unwrap().contains(&Permission::DashboardsWrite));
+        assert!(
+            permissions_on(&admin, ResourceType::Dashboard, &restricted)
+                .unwrap()
+                .contains(&Permission::DashboardsWrite)
+        );
         // With a view grant, an editor sees it but the role's write permission does not apply.
         let granted = ResourceFacts { restricted: true, grants: vec![grant("folder", "f", "view")] };
         let held = permissions_on(&editor, ResourceType::Folder, &granted).unwrap();
@@ -833,7 +843,8 @@ mod resource_tests {
     #[tokio::test]
     async fn custom_and_team_roles_add_up() {
         let db = db().await;
-        exec(&db, "INSERT INTO roles (id, org_id, name, description, created_at) VALUES ('r1', 'o', 'Auditor', '', 0)").await;
+        exec(&db, "INSERT INTO roles (id, org_id, name, description, created_at) VALUES ('r1', 'o', 'Auditor', '', 0)")
+            .await;
         exec(&db, "INSERT INTO role_permissions (role_id, permission) VALUES ('r1', 'audit:read')").await;
         // Names the server does not know (from a newer or older version) grant nothing.
         exec(&db, "INSERT INTO role_permissions (role_id, permission) VALUES ('r1', 'rockets:launch')").await;
@@ -843,7 +854,8 @@ mod resource_tests {
         assert!(effective_permissions(&db, "u", "other", "r1").await.unwrap().is_empty());
 
         exec(&db, "INSERT INTO teams (id, org_id, name, created_at) VALUES ('t1', 'o', 'Betrieb', 0)").await;
-        exec(&db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)").await;
+        exec(&db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)")
+            .await;
         exec(&db, "INSERT INTO team_roles (team_id, role) VALUES ('t1', 'editor')").await;
         let held = effective_permissions(&db, "u", "o", "r1").await.unwrap();
         assert!(held.contains(&Permission::AuditRead) && held.contains(&Permission::DashboardsWrite));
@@ -868,7 +880,8 @@ mod resource_tests {
         let db = db().await;
         let viewer = ctx(BuiltinRole::Viewer);
         exec(&db, "INSERT INTO teams (id, org_id, name, created_at) VALUES ('t1', 'o', 'Betrieb', 0)").await;
-        exec(&db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)").await;
+        exec(&db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)")
+            .await;
         for sql in [
             "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
              VALUES ('g1', 'o', 'user', 'u', 'dashboard', 'd1', 'edit', 0)",
@@ -888,8 +901,11 @@ mod resource_tests {
             let r = check_resource(&db, &viewer, Permission::DashboardsWrite, Resource::Dashboard(dashboard)).await;
             assert_eq!(r.is_ok(), allowed, "{dashboard}");
         }
-        let sources = explain(&db, &viewer, Permission::DashboardsWrite, Some(Resource::Dashboard("d2"))).await.unwrap();
-        assert!(matches!(&sources[..], [GrantSource::Grant { grant_id, subject_type, .. }] if grant_id == "g2" && subject_type == "team"));
+        let sources =
+            explain(&db, &viewer, Permission::DashboardsWrite, Some(Resource::Dashboard("d2"))).await.unwrap();
+        assert!(
+            matches!(&sources[..], [GrantSource::Grant { grant_id, subject_type, .. }] if grant_id == "g2" && subject_type == "team")
+        );
         // Reading comes from the role and the grant alike.
         let sources = explain(&db, &viewer, Permission::DashboardsRead, Some(Resource::Dashboard("d1"))).await.unwrap();
         assert_eq!(sources.len(), 2, "{sources:?}");
