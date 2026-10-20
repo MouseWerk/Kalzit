@@ -42,13 +42,14 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_USER: kalzit
-          POSTGRES_PASSWORD: kalzit
           POSTGRES_DB: kalzit
+          # A throwaway container reachable only from this job; no password to leak or flag.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U kalzit" --health-interval 2s --health-timeout 5s --health-retries 20
     env:
-      KALZIT_TEST_POSTGRES_URL: postgres://kalzit:kalzit@localhost:5432/kalzit
+      KALZIT_TEST_POSTGRES_URL: postgres://kalzit@localhost:5432/kalzit
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
