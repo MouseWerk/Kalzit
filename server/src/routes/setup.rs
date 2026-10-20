@@ -117,6 +117,12 @@ fn remove_file_if_present(path: &Path) {
     }
 }
 
+pub fn routes() -> Vec<super::table::RouteDef> {
+    use crate::authz::Access::Public;
+    use axum::routing::{get, post};
+    vec![super::table::route("/setup", Public, get(status)), super::table::route("/setup", Public, post(complete))]
+}
+
 fn close_gate(gate: &mut Option<OpenGate>) {
     if let Some(file) = gate.take().and_then(|g| g.file) {
         remove_file_if_present(&file);

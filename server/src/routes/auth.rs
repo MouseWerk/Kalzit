@@ -30,6 +30,18 @@ struct LoginRow {
     disabled: i64,
 }
 
+pub fn routes() -> Vec<super::table::RouteDef> {
+    use super::table::route;
+    use crate::authz::Access::{Authenticated, Public};
+    use axum::routing::{get, post};
+    vec![
+        route("/auth/login", Public, post(login)),
+        // Signing out works without a valid session too: it clears the cookie either way.
+        route("/auth/logout", Public, post(logout)),
+        route("/me", Authenticated, get(current)),
+    ]
+}
+
 fn rate_limited() -> ApiError {
     ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "too many failed sign-ins, wait a few minutes")
 }

@@ -1,12 +1,19 @@
 pub mod auth;
 pub mod health;
+pub mod orgs;
 pub mod setup;
+pub mod table;
 
 use serde::Serialize;
 use sqlx::AnyPool;
 
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
+
+/// Every API route, from each area's table. New areas add their `routes()` here.
+pub fn all() -> Vec<table::RouteDef> {
+    [setup::routes(), auth::routes(), orgs::routes()].into_iter().flatten().collect()
+}
 
 const MAX_NAME_CHARS: usize = 100;
 /// RFC 5321 limit for a forward path.
@@ -89,5 +96,28 @@ mod tests {
         assert!(clean_name("   ", "name").is_err());
         assert!(clean_name(&"x".repeat(101), "name").is_err());
         assert!(clean_name("a\u{0007}b", "name").is_err());
+    }
+}
+
+#[cfg(test)]
+mod access_guard {
+    use crate::authz::Access;
+
+    /// Every organization-scoped route must check membership; a route under /orgs/{orgId} that is
+    /// public or only needs a session would leak another organization's data.
+    #[test]
+    fn org_routes_require_membership() {
+        for def in super::all() {
+            if def.path.starts_with("/orgs/{orgId}") {
+                assert!(
+                    matches!(def.access, Access::Org(_) | Access::OrgMember),
+                    "{} must use Access::Org or Access::OrgMember",
+                    def.path
+                );
+            }
+            if def.path.starts_with("/admin") {
+                assert!(matches!(def.access, Access::ServerAdmin), "{} must use Access::ServerAdmin", def.path);
+            }
+        }
     }
 }

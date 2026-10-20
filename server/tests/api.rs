@@ -457,6 +457,35 @@ async fn public_url_origin_ignores_default_port_but_not_scheme() {
 }
 
 #[tokio::test]
+async fn org_routes_check_membership_and_report_permissions() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let owner = t.setup().await;
+    let cookie = owner.session_cookie();
+    let org_id = owner.body["orgs"][0]["id"].as_str().unwrap().to_string();
+
+    let org = t.get(&format!("/api/orgs/{org_id}"), Some(&cookie)).await;
+    assert_eq!(org.status, StatusCode::OK, "{}", org.body);
+    assert_eq!(org.body["role"], "owner");
+    let perms: Vec<&str> = org.body["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+    assert!(perms.contains(&"org:delete") && perms.contains(&"dashboards:write"));
+
+    assert_eq!(t.get(&format!("/api/orgs/{org_id}"), None).await.code(), "unauthenticated");
+
+    // Another organization the owner does not belong to looks like it does not exist.
+    let db = &t.state.db;
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('other', 'Andere', 0)").execute(db).await.unwrap();
+    let other = t.get("/api/orgs/other", Some(&cookie)).await;
+    assert_eq!((other.status, other.code()), (StatusCode::NOT_FOUND, "not_found"));
+
+    // A viewer sees the org with a narrow permission set.
+    sqlx::query("UPDATE org_members SET role = 'viewer'").execute(db).await.unwrap();
+    let viewer = t.get(&format!("/api/orgs/{org_id}"), Some(&cookie)).await;
+    assert_eq!(viewer.body["role"], "viewer");
+    let perms = viewer.body["permissions"].as_array().unwrap();
+    assert!(perms.iter().all(|p| p != "dashboards:write" && p != "users:write"), "{perms:?}");
+}
+
+#[tokio::test]
 async fn migrations_are_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     // Spaces, umlauts and a '#' in the path must survive the URL round trip.
