@@ -92,7 +92,18 @@ describe("app shell", () => {
     }
   });
 
-  it.each(["users:read", "settings:read"])(
+  it("hides administration from a custom role with users:read only, as editors have", async () => {
+    await openShell(
+      "/admin",
+      { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "sharer" }] },
+      { sharer: ["users:read", "dashboards:share"] },
+    );
+    expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull();
+  });
+
+  it.each(["users:write", "settings:read", "roles:write", "audit:read"])(
     "shows administration for a custom role with %s",
     async (permission) => {
       await openShell(

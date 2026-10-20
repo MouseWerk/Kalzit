@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { Me } from "../api/auth";
+import type { Permission } from "../api/generated/shapes";
 
 /**
  * An in-memory stand-in for the Kalzit server's auth routes, installed as the global fetch.
@@ -17,12 +18,22 @@ export interface FakeServerOptions {
 }
 
 // A representative excerpt of the built-in roles, enough for what the UI decides on.
-const ADMIN_PERMISSIONS = ["users:read", "users:write", "settings:read", "settings:write"];
-const READ_PERMISSIONS = ["dashboards:read", "folders:read", "analyses:read"];
-export const BUILT_IN_ROLE_PERMISSIONS: Record<string, string[]> = {
+// Editors hold users:read so they can pick people to share with; that must not open the
+// administration.
+const ADMIN_PERMISSIONS: Permission[] = [
+  "users:read",
+  "users:write",
+  "roles:read",
+  "roles:write",
+  "audit:read",
+  "settings:read",
+  "settings:write",
+];
+const READ_PERMISSIONS: Permission[] = ["dashboards:read", "folders:read", "analyses:read"];
+export const BUILT_IN_ROLE_PERMISSIONS: Record<string, Permission[]> = {
   owner: [...ADMIN_PERMISSIONS, ...READ_PERMISSIONS, "org:delete"],
   admin: [...ADMIN_PERMISSIONS, ...READ_PERMISSIONS],
-  editor: [...READ_PERMISSIONS, "dashboards:write", "datasources:query"],
+  editor: [...READ_PERMISSIONS, "dashboards:write", "datasources:query", "users:read"],
   viewer: READ_PERMISSIONS,
 };
 

@@ -5,5 +5,5 @@
   "admin.empty.title": "Noch nichts zu verwalten",
   "admin.empty.text": "Die Verwaltung von Organisationen, Teams, Benutzern und Rollen ist noch nicht verfügbar.",
   "admin.forbidden.title": "Kein Zugriff",
-  "admin.forbidden.text": "Die Verwaltung können nur Server-Admins öffnen und Mitglieder, die Benutzer oder Einstellungen der Organisation sehen dürfen."
+  "admin.forbidden.text": "Die Verwaltung können nur Server-Admins und Admins der Organisation öffnen."
 }

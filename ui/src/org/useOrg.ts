@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import type { Me, OrgMembership } from "../api/auth";
+import type { Permission } from "../api/generated/shapes";
 import { orgQuery } from "../api/orgs";
 
 const appRoute = getRouteApi("/_app");
@@ -19,8 +20,11 @@ export function useCurrentOrg(): OrgMembership | undefined {
 }
 
 export interface OrgPermissions {
-  /** True when the permission is granted in the current organization. */
-  has: (permission: string) => boolean;
+  /**
+   * True when the permission is granted in the current organization. Typed with the generated
+   * permission catalog, so a misspelled permission fails the typecheck.
+   */
+  has: (permission: Permission) => boolean;
   /** Whether the user is a server admin; that is server-wide, not an org permission. */
   isServerAdmin: boolean;
   /** False until the permissions arrived; hide actions until then rather than flash them. */
@@ -38,7 +42,8 @@ export function useOrgPermissions(): OrgPermissions {
     ...orgQuery(org?.id ?? ""),
     enabled: org !== undefined,
   });
-  const granted = new Set(query.data?.permissions ?? []);
+  // Strings, not Permission: the server may grant permissions newer than this UI knows.
+  const granted = new Set<string>(query.data?.permissions ?? []);
   return {
     has: (permission) => granted.has(permission),
     isServerAdmin: me.isServerAdmin,
