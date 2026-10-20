@@ -1,6 +1,8 @@
 pub mod admin_settings;
 pub mod audit;
 pub mod auth;
+pub mod dashboards;
+pub mod folders;
 pub mod health;
 pub mod orgs;
 pub mod setup;
@@ -20,6 +22,8 @@ pub fn all() -> Vec<table::RouteDef> {
         orgs::routes(),
         admin_settings::routes(),
         audit::routes(),
+        folders::routes(),
+        dashboards::routes(),
     ]
     .into_iter()
     .flatten()

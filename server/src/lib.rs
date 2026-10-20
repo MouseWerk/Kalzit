@@ -10,6 +10,7 @@ pub mod dashboards;
 pub mod db;
 pub mod error;
 pub mod extract;
+pub mod folders;
 pub mod net;
 pub mod paging;
 pub mod routes;
