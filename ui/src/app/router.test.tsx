@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { request } from "../api/client";
 import { expectConsoleOutput } from "../test/console";
@@ -68,7 +68,22 @@ describe("route guards", () => {
     expect(location().pathname).toBe("/explore");
   });
 
-  it("shows a translated error page when the server cannot be reached, and retries", async () => {
+  it("shows the error page when the server cannot be reached, and recovers on retry", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.state.offline = true;
+    expectConsoleOutput(/Failed to fetch/, /Error in route match/);
+    const { user } = renderApp("/");
+    expect(
+      await screen.findByText(
+        "The server cannot be reached. Check that it is running, then try again.",
+      ),
+    ).toBeTruthy();
+    server.state.offline = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: `Welcome, ${TEST_USER.name}` })).toBeTruthy();
+  });
+
+  it("shows an unknown server error as an internal error, and recovers on retry", async () => {
     const server = installFakeServer({ signedIn: true });
     server.failNext("/api/setup", 502, "not-a-known-code");
     // React and the router report the error that reached the error boundary.
@@ -96,6 +111,43 @@ describe("route guards", () => {
 
     await waitFor(() => expect(location().pathname).toBe("/login"));
     expect(location().search).toEqual({ redirect: "/dashboards" });
+  });
+
+  it("notices a session that ended on the server at the next navigation", async () => {
+    const server = installFakeServer({ signedIn: true });
+    const { user, location } = renderApp("/dashboards");
+    await screen.findByRole("heading", { level: 1, name: "Dashboards" });
+
+    server.state.signedIn = false;
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    await user.click(within(nav).getByRole("link", { name: "Explore" }));
+
+    await screen.findByRole("heading", { name: "Sign in" });
+    expect(location().search).toEqual({ redirect: "/explore" });
+  });
+
+  it("notices a changed role at the next navigation", async () => {
+    const server = installFakeServer({ signedIn: true });
+    const { user } = renderApp("/");
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
+
+    server.state.user = {
+      ...TEST_USER,
+      isServerAdmin: false,
+      orgs: [{ id: "o1", name: "Org", role: "viewer" }],
+    };
+    await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
+    await waitFor(() =>
+      expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull(),
+    );
+  });
+
+  it("asks only for the setup status while setup is needed", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    renderApp("/dashboards");
+    await screen.findByRole("heading", { name: "Set up Granit" });
+    expect(server.calls.map((call) => call.path)).not.toContain("/api/me");
   });
 
   it("shows unknown addresses as not found", async () => {

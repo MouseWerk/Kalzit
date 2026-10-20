@@ -26,7 +26,8 @@ export const TEST_PASSWORD = "correct horse battery";
 export const TEST_SETUP_TOKEN = "setup-token-for-tests";
 
 export interface FakeServer {
-  state: { setupNeeded: boolean; signedIn: boolean; user: Me };
+  /** `offline` makes every request fail the way fetch does when nothing answers. */
+  state: { setupNeeded: boolean; signedIn: boolean; user: Me; offline: boolean };
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
   failNext: (path: string, status: number, code: string, method?: string) => void;
@@ -52,6 +53,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       setupNeeded: options.setupNeeded ?? false,
       signedIn: options.signedIn ?? false,
       user: options.user ?? TEST_USER,
+      offline: false,
     },
     calls: [],
     failNext: (path, status, code, method) =>
@@ -114,6 +116,9 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       const method = init?.method ?? "GET";
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
       server.calls.push({ method, path, body });
+      if (server.state.offline) {
+        throw new TypeError("Failed to fetch");
+      }
       return handle(path, method, body);
     }),
   );

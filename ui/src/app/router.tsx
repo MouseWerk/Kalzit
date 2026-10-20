@@ -43,6 +43,14 @@ async function isSetupNeeded(queryClient: QueryClient): Promise<boolean> {
   return status.needed;
 }
 
+/**
+ * Asks the server on every guarded navigation instead of trusting the cache, so a revoked
+ * session or a changed role takes effect on the next page change, not after the cache expires.
+ */
+function currentUser(queryClient: QueryClient) {
+  return queryClient.fetchQuery({ ...meQuery, staleTime: 0 });
+}
+
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Outlet,
   errorComponent: ErrorPage,
@@ -68,7 +76,7 @@ const loginRoute = createRoute({
     if (await isSetupNeeded(context.queryClient)) {
       throw redirect({ to: "/setup", replace: true });
     }
-    const me = await context.queryClient.ensureQueryData(meQuery);
+    const me = await currentUser(context.queryClient);
     if (me !== null) {
       throw redirect({ href: search.redirect ?? "/", replace: true });
     }
@@ -84,7 +92,7 @@ const appRoute = createRoute({
     if (await isSetupNeeded(context.queryClient)) {
       throw redirect({ to: "/setup", replace: true });
     }
-    const me = await context.queryClient.ensureQueryData(meQuery);
+    const me = await currentUser(context.queryClient);
     if (me === null) {
       const back = safeRedirect(location.href);
       throw redirect({
