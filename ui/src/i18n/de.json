@@ -57,6 +57,7 @@
   "errors.forbidden": "Dafür fehlt dir die Berechtigung.",
   "errors.invalid_credentials": "E-Mail-Adresse oder Passwort stimmt nicht.",
   "errors.rate_limited": "Zu viele Versuche. Warte einen Moment und versuch es dann noch einmal.",
+  "errors.cross_origin": "Der Server hat die Anfrage abgelehnt, weil diese Adresse nicht zu seiner Konfiguration passt. Wenn der Server hinter einem Reverse Proxy läuft, setz in seiner Konfiguration server.public_url oder security.trusted_proxies.",
   "errors.setup_done": "Granit ist bereits eingerichtet. Melde dich mit deinem Konto an.",
   "errors.invalid_setup_token": "Der Einrichtungscode stimmt nicht. Kopier ihn noch einmal aus „setup-token.txt“.",
   "errors.not_found": "Das wurde nicht gefunden.",

@@ -196,6 +196,20 @@ describe("setup", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("Setup code"));
   });
 
+  it("explains a cross-origin rejection of the setup request", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    server.failNext("/api/setup", 403, "cross_origin", "POST");
+    const { user } = renderApp("/setup");
+    await user.type(await screen.findByLabelText("Setup code"), TEST_SETUP_TOKEN);
+    await user.type(screen.getByLabelText("Organization name"), "Org");
+    await user.type(screen.getByLabelText("Your name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "long enough password");
+    await user.click(screen.getByRole("button", { name: "Set up" }));
+    const message = await screen.findByText(/set server\.public_url or security\.trusted_proxies/);
+    expect(message.closest('[role="alert"]')).toBeTruthy();
+  });
+
   it("offers the way to sign in when someone else finished setup first", async () => {
     const server = installFakeServer({ setupNeeded: true });
     const { user } = renderApp("/setup");
@@ -233,6 +247,16 @@ describe("login", () => {
       await screen.findByText("Too many attempts. Wait a moment, then try again."),
     ).toBeTruthy();
     expect(screen.queryByText(/server message/)).toBeNull();
+  });
+
+  it("explains a cross-origin rejection with the settings to fix", async () => {
+    const server = installFakeServer();
+    server.failNext("/api/auth/login", 403, "cross_origin");
+    const { user } = renderApp("/login");
+    await signIn(user);
+    expect(
+      await screen.findByText(/set server\.public_url or security\.trusted_proxies/),
+    ).toBeTruthy();
   });
 
   it("validates the email address before sending", async () => {

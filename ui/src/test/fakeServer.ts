@@ -28,8 +28,8 @@ export const TEST_SETUP_TOKEN = "setup-token-for-tests";
 export interface FakeServer {
   state: { setupNeeded: boolean; signedIn: boolean; user: Me };
   calls: { method: string; path: string; body: unknown }[];
-  /** Makes the next request to `path` answer with this status and error code. */
-  failNext: (path: string, status: number, code: string) => void;
+  /** Makes the next request to `path` (with `method`, if given) answer with this error. */
+  failNext: (path: string, status: number, code: string, method?: string) => void;
 }
 
 function json(status: number, body: unknown): Response {
@@ -46,7 +46,7 @@ function error(status: number, code: string): Response {
 export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
   const password = options.password ?? TEST_PASSWORD;
   const setupToken = options.setupToken ?? TEST_SETUP_TOKEN;
-  const failures = new Map<string, { status: number; code: string }>();
+  const failures = new Map<string, { status: number; code: string; method?: string }>();
   const server: FakeServer = {
     state: {
       setupNeeded: options.setupNeeded ?? false,
@@ -54,12 +54,13 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       user: options.user ?? TEST_USER,
     },
     calls: [],
-    failNext: (path, status, code) => failures.set(path, { status, code }),
+    failNext: (path, status, code, method) =>
+      failures.set(path, method === undefined ? { status, code } : { status, code, method }),
   };
 
   async function handle(path: string, method: string, body: unknown): Promise<Response> {
     const failure = failures.get(path);
-    if (failure !== undefined) {
+    if (failure !== undefined && (failure.method === undefined || failure.method === method)) {
       failures.delete(path);
       return error(failure.status, failure.code);
     }

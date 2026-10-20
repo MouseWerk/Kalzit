@@ -65,6 +65,7 @@ describe("request", () => {
     "forbidden",
     "invalid_credentials",
     "rate_limited",
+    "cross_origin",
     "setup_done",
     "invalid_setup_token",
     "not_found",
