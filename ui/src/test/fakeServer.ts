@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
+import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
 
 /**
  * An in-memory stand-in for the Kalzit server's auth routes, installed as the global fetch.
@@ -150,7 +151,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       const roles = options.rolePermissions ?? BUILT_IN_ROLE_PERMISSIONS;
       return json(200, { ...membership, permissions: roles[membership.role] ?? [] });
     }
-    return error(404, "not_found");
+    return handleAdminRoute(server, path, method, body) ?? error(404, "not_found");
   }
 
   vi.stubGlobal(
