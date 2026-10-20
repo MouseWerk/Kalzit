@@ -40,13 +40,13 @@ catalog.
 | Einrichtung | Setup | Der erste Start: erste Organisation und erstes Konto anlegen. | Installation (für diesen Schritt), Onboarding |
 | Einrichtungscode | Setup code | Einmaliger Code aus `setup-token.txt` im Datenordner des Servers. | Setup-Token, Einrichtungstoken, Setup token |
 | Datenordner | Data folder | Ordner des Servers mit Datenbank, Schlüsseln und `setup-token.txt`. | Datenverzeichnis |
-| Anmelden | Sign in | Mit E-Mail-Adresse und Passwort einloggen. | Einloggen, Login (als Verb), Log in |
+| Anmelden | Sign in | Sich mit E-Mail-Adresse und Passwort beim Server ausweisen. | Einloggen, Login (als Verb), Log in |
 | Abmelden | Sign out | Die Sitzung beenden. | Ausloggen, Log out |
 | Sitzung | Session | Die Anmeldung im Browser, bis zum Abmelden oder Ablauf. | |
 | E-Mail-Adresse | Email address | Kennung zum Anmelden. | Mail-Adresse, E-mail |
 | Verwaltung | Administration | Bereich für Organisationen, Teams, Benutzer und Rollen. | Administration (im Deutschen), Admin-Bereich |
 | Darstellung | Theme | System, Hell, Dunkel, Hoher Kontrast. | Thema, Design (für das Theme) |
-| Computer | Computer | Der Rechner des Benutzers oder Servers. | Rechner |
+| Computer | Computer | Das Gerät, auf dem der Browser oder der Server läuft. | Rechner |
 
 ## Schreibweise / Style
 

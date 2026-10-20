@@ -134,6 +134,25 @@ describe("glossary", () => {
     expect(avoid).toContainEqual({ word: "Rechner", languages: ["de", "en"] });
   });
 
+  it("does not use its own words to avoid in its definitions", () => {
+    for (const line of glossary.split("\n")) {
+      const cells = line.split("|").map((cell) => cell.trim());
+      if (cells.length !== 6 || cells[1] === "Deutsch" || cells[1]?.startsWith("---")) {
+        continue;
+      }
+      // Code spans such as `setup-token.txt` are file names, not wording.
+      const meaning = (cells[3] ?? "").replace(/`[^`]*`/g, "");
+      for (const { word, languages } of avoid) {
+        if (languages.length === 2) {
+          const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          // Case-insensitive: "einloggen" in a sentence is the avoided "Einloggen".
+          const pattern = new RegExp(`(^|[^\\p{L}-])${escaped}($|[^\\p{L}-])`, "iu");
+          expect(pattern.test(meaning), `"${word}" in: ${meaning}`).toBe(false);
+        }
+      }
+    }
+  });
+
   it("words to avoid appear in no catalog", () => {
     for (const { word, languages } of avoid) {
       // Whole words only; a hyphen joins words, so "Mail-Adresse" does not match "E-Mail-Adresse".
