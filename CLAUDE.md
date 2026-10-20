@@ -12,10 +12,24 @@ where it is more specific.
 
 - Commits are authored as `Maurice Kleindienst <kleindiema@gmail.com>` (see owner.md). No co-author
   or session trailers, no assistant or model names in commits, code, comments or docs.
-- No pull requests unless asked. No force push, branch deletion or history rewrite without an
-  explicit request.
+- Work like a professional team: every change goes through a feature branch (`m<n>/<topic>`,
+  `fix/<topic>`) and a pull request into `main`. Parallel work runs in sub-agents with their own
+  worktrees; the orchestrator integrates, opens the PR and runs a review agent on it.
+- PRs are squash-merged (PR title becomes the commit subject); the branch is deleted after merge.
+  `main` is protected: no direct push, no force push, merge only with green CI on Windows and
+  Linux. The orchestrator merges once CI is green and the review agent has no open findings, and
+  sends the owner a short summary per PR.
+- No force push, history rewrite or deletion of unmerged branches without an explicit request.
 - Secrets only in the OS credential store or the environment's secret settings.
+- Product name: Kalzit (calcite, the "sunstone" that makes hidden structure visible). It replaces
+  the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, repository and texts
+  are renamed in their own pull request.
 - Positioning: a platform for visualizing and analyzing data in general, not only monitoring.
+- UI wording: "Explore" stays untranslated in German; "Start" for Home, "Verwaltung" for
+  Administration. The UI palette is retuned to Kalzit together with the website.
+- Website: Astro, look inspired by the owner's reference (warm muted palette, atmospheric
+  landscape fading into black, fine grid, light display headline, monospace eyebrow, dark product
+  frame). No company logo strips, no invented figures. Hosting is decided later.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. Alerting comes in M6, after the core.
 - First graph sources: Neo4j and Memgraph. All common standard sources are supported too
@@ -27,6 +41,12 @@ where it is more specific.
   explicit, visible projection steps in the query, never implicit in the backend.
 - Data sources are read-only by default; write queries are rejected server-side.
 - Windows and Linux servers are both first-class: CI, e2e and releases run on both.
+- Frontend uses the current stack as of October 2026 (React 19 with React Compiler, TypeScript 7,
+  Vite 8, TanStack Router and Query, Biome, Vitest, Playwright) and modern CSS without a framework.
+- Full role system on server and organization level, and complete server settings (HTTP/HTTPS,
+  TLS, proxies, sessions, mail, appearance, operations); see `docs/PLAN.md` sections 6 and 8.
+- Settings apply instantly with undo, except forms with dependent fields that need a connection
+  test (SMTP, OIDC, LDAP): those use one explicit Save with a clear error per field.
 
 ## Code rules
 
