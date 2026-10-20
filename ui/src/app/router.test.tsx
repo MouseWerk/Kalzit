@@ -248,6 +248,21 @@ describe("setup", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("Setup code"));
   });
 
+  it("marks the setup field a server validation error names", async () => {
+    const server = installFakeServer({ setupNeeded: true });
+    server.failNext("/api/setup", 400, "validation", "POST", "name");
+    const { user } = renderApp("/setup");
+    await user.type(await screen.findByLabelText("Setup code"), TEST_SETUP_TOKEN);
+    await user.type(screen.getByLabelText("Organization name"), "Org");
+    await user.type(screen.getByLabelText("Your name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "long enough password");
+    await user.click(screen.getByRole("button", { name: "Set up" }));
+    const name = screen.getByLabelText("Your name");
+    await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
+    expect(document.activeElement).toBe(name);
+  });
+
   it("explains a cross-origin rejection of the setup request", async () => {
     const server = installFakeServer({ setupNeeded: true });
     server.failNext("/api/setup", 403, "cross_origin", "POST");
@@ -308,6 +323,19 @@ describe("login", () => {
     await signIn(user);
     expect(
       await screen.findByText(/set server\.public_url or security\.trusted_proxies/),
+    ).toBeTruthy();
+  });
+
+  it("marks and focuses the field a server validation error names", async () => {
+    const server = installFakeServer();
+    server.failNext("/api/auth/login", 400, "validation", "POST", "email");
+    const { user } = renderApp("/login");
+    await signIn(user);
+    const email = screen.getByLabelText("Email address");
+    await waitFor(() => expect(email.getAttribute("aria-invalid")).toBe("true"));
+    expect(document.activeElement).toBe(email);
+    expect(
+      screen.getByText("The server did not accept this value. Check it and try again."),
     ).toBeTruthy();
   });
 

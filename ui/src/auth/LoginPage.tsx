@@ -10,6 +10,7 @@ import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AuthLayout } from "./AuthLayout";
 import {
   type FieldErrors,
+  fieldFromServer,
   firstInvalid,
   type LoginField,
   preventComposingSubmit,
@@ -45,6 +46,13 @@ export function LoginPage() {
       await router.navigate({ href: search.redirect ?? "/", replace: true });
     },
     onError: (error) => {
+      const rejected = fieldFromServer(FIELD_ORDER, error);
+      if (rejected !== undefined) {
+        setErrors({ [rejected]: { key: "validation.serverRejected" } });
+        refs[rejected].current?.focus();
+      } else if (errorCode(error) === "validation") {
+        refs.email.current?.focus();
+      }
       // Wrong credentials: keep the email, let the user retype the password right away.
       if (errorCode(error) === "invalid_credentials") {
         refs.password.current?.select();
@@ -80,11 +88,13 @@ export function LoginPage() {
   }
 
   const fieldError = (field: LoginField) => {
-    const key = errors[field];
-    return key === undefined ? undefined : t(key);
+    const error = errors[field];
+    return error === undefined ? undefined : t(error.key, error.params);
   };
   const serverError: MessageKey | null =
-    signIn.error === null ? null : `errors.${errorCode(signIn.error)}`;
+    signIn.error === null || fieldFromServer(FIELD_ORDER, signIn.error) !== undefined
+      ? null
+      : `errors.${errorCode(signIn.error)}`;
 
   return (
     <AuthLayout title={t("login.title")} lead={t("login.lead")}>

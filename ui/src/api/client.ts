@@ -29,12 +29,18 @@ export class ApiError extends Error {
   readonly code: ErrorCode;
   /** HTTP status, or 0 when no response arrived. */
   readonly status: number;
+  /**
+   * The input field a `validation` error is about, when the server names one (an optional
+   * `field` next to code and message); forms use it to mark and focus that field.
+   */
+  readonly field: string | undefined;
 
-  constructor(code: ErrorCode, status: number, message: string) {
+  constructor(code: ErrorCode, status: number, message: string, field?: string) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.field = field;
   }
 }
 
@@ -75,7 +81,13 @@ export function errorFromResponse(status: number, body: unknown): ApiError {
   if (isRecord(error)) {
     const code = error.code;
     const message = typeof error.message === "string" ? error.message : "";
-    return new ApiError(isServerErrorCode(code) ? code : codeForStatus(status), status, message);
+    const field = typeof error.field === "string" ? error.field : undefined;
+    return new ApiError(
+      isServerErrorCode(code) ? code : codeForStatus(status),
+      status,
+      message,
+      field,
+    );
   }
   return new ApiError(codeForStatus(status), status, `HTTP ${status}`);
 }

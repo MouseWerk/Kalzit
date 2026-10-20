@@ -30,7 +30,7 @@ export interface FakeServer {
   state: { setupNeeded: boolean; signedIn: boolean; user: Me; offline: boolean };
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
-  failNext: (path: string, status: number, code: string, method?: string) => void;
+  failNext: (path: string, status: number, code: string, method?: string, field?: string) => void;
 }
 
 function json(status: number, body: unknown): Response {
@@ -40,14 +40,20 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-function error(status: number, code: string): Response {
-  return json(status, { error: { code, message: `server message for ${code}` } });
+function error(status: number, code: string, field?: string): Response {
+  const message = `server message for ${code}`;
+  return json(status, {
+    error: field === undefined ? { code, message } : { code, message, field },
+  });
 }
 
 export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
   const password = options.password ?? TEST_PASSWORD;
   const setupToken = options.setupToken ?? TEST_SETUP_TOKEN;
-  const failures = new Map<string, { status: number; code: string; method?: string }>();
+  const failures = new Map<
+    string,
+    { status: number; code: string; method?: string | undefined; field?: string | undefined }
+  >();
   const server: FakeServer = {
     state: {
       setupNeeded: options.setupNeeded ?? false,
@@ -56,15 +62,15 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       offline: false,
     },
     calls: [],
-    failNext: (path, status, code, method) =>
-      failures.set(path, method === undefined ? { status, code } : { status, code, method }),
+    failNext: (path, status, code, method, field) =>
+      failures.set(path, { status, code, method, field }),
   };
 
   async function handle(path: string, method: string, body: unknown): Promise<Response> {
     const failure = failures.get(path);
     if (failure !== undefined && (failure.method === undefined || failure.method === method)) {
       failures.delete(path);
-      return error(failure.status, failure.code);
+      return error(failure.status, failure.code, failure.field);
     }
     const { state } = server;
     const input = (body ?? {}) as Record<string, unknown>;

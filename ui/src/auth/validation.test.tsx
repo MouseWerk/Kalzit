@@ -1,9 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 import { safeRedirect } from "./redirect";
 import {
   characterCount,
+  fieldFromServer,
   firstInvalid,
+  MAX_NAME_LENGTH,
+  MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   preventComposingSubmit,
   validateLogin,
@@ -18,6 +22,8 @@ const VALID_SETUP = {
   password: "a".repeat(MIN_PASSWORD_LENGTH),
 };
 
+const keyOf = (message: { key: string } | undefined) => message?.key;
+
 describe("validateSetup", () => {
   it("accepts a complete form", () => {
     expect(validateSetup(VALID_SETUP)).toEqual({});
@@ -27,19 +33,26 @@ describe("validateSetup", () => {
     expect(
       validateSetup({ token: " ", orgName: "\t", name: "", email: "  ", password: "" }),
     ).toEqual({
-      token: "validation.tokenRequired",
-      orgName: "validation.orgNameRequired",
-      name: "validation.nameRequired",
-      email: "validation.emailRequired",
-      password: "validation.passwordRequired",
+      token: { key: "validation.tokenRequired" },
+      orgName: { key: "validation.orgNameRequired" },
+      name: { key: "validation.nameRequired" },
+      email: { key: "validation.emailRequired" },
+      password: { key: "validation.passwordRequired" },
     });
   });
 
-  it("needs at least 12 characters for the password", () => {
-    expect(validateSetup({ ...VALID_SETUP, password: "a".repeat(11) }).password).toBe(
-      "validation.passwordTooShort",
-    );
+  it("needs 12 to 1024 characters for the password and says the limit", () => {
+    expect(validateSetup({ ...VALID_SETUP, password: "a".repeat(11) }).password).toEqual({
+      key: "validation.passwordTooShort",
+      params: { count: 12 },
+    });
     expect(validateSetup({ ...VALID_SETUP, password: "a".repeat(12) }).password).toBeUndefined();
+    expect(
+      validateSetup({ ...VALID_SETUP, password: "a".repeat(MAX_PASSWORD_LENGTH) }).password,
+    ).toBeUndefined();
+    expect(
+      validateSetup({ ...VALID_SETUP, password: "a".repeat(MAX_PASSWORD_LENGTH + 1) }).password,
+    ).toEqual({ key: "validation.passwordTooLong", params: { count: 1024 } });
   });
 
   it("counts characters, not UTF-16 units", () => {
@@ -47,9 +60,12 @@ describe("validateSetup", () => {
     const elevenWide = "\u{1D538}".repeat(11);
     expect(elevenWide.length).toBe(22);
     expect(characterCount(elevenWide)).toBe(11);
-    expect(validateSetup({ ...VALID_SETUP, password: elevenWide }).password).toBe(
+    expect(keyOf(validateSetup({ ...VALID_SETUP, password: elevenWide }).password)).toBe(
       "validation.passwordTooShort",
     );
+    // 1024 wide characters are 2048 UTF-16 units and still allowed.
+    const maxWide = "\u{1D538}".repeat(MAX_PASSWORD_LENGTH);
+    expect(validateSetup({ ...VALID_SETUP, password: maxWide }).password).toBeUndefined();
     expect(validateSetup({ ...VALID_SETUP, password: "Passwörter-äö" }).password).toBeUndefined();
   });
 
@@ -57,12 +73,36 @@ describe("validateSetup", () => {
     expect(validateSetup({ ...VALID_SETUP, password: " ".repeat(12) }).password).toBeUndefined();
   });
 
-  it.each(["no-at-sign", "two@@example.com", "spa ce@example.com", "@example.com", "ada@"])(
-    "rejects the email address %s",
-    (email) => {
-      expect(validateSetup({ ...VALID_SETUP, email }).email).toBe("validation.emailInvalid");
+  it("allows names and organization names of 1 to 100 characters after trimming", () => {
+    const longest = "\u{1D538}".repeat(MAX_NAME_LENGTH);
+    expect(validateSetup({ ...VALID_SETUP, name: `  ${longest}  `, orgName: "A" })).toEqual({});
+    const tooLong = validateSetup({ ...VALID_SETUP, name: `${longest}x`, orgName: `${longest}x` });
+    expect(tooLong.name).toEqual({ key: "validation.tooLong", params: { count: 100 } });
+    expect(tooLong.orgName).toEqual({ key: "validation.tooLong", params: { count: 100 } });
+  });
+
+  it.each(["Ada\nLovelace", "Ada\u0000", "Org\tName"])(
+    "rejects control characters inside %j",
+    (value) => {
+      const result = validateSetup({ ...VALID_SETUP, name: value, orgName: value });
+      expect(keyOf(result.name)).toBe("validation.controlCharacters");
+      expect(keyOf(result.orgName)).toBe("validation.controlCharacters");
     },
   );
+
+  it.each([
+    "no-at-sign",
+    "two@@example.com",
+    "spa ce@example.com",
+    "@example.com",
+    "ada@",
+    "ada@localhost",
+    "ada@.example.com",
+    "ada@example.com.",
+    "ada@exa\u0000mple.com",
+  ])("rejects the email address %j", (email) => {
+    expect(keyOf(validateSetup({ ...VALID_SETUP, email }).email)).toBe("validation.emailInvalid");
+  });
 
   it.each(["ada@example.com", "a+tag@sub.example.co.uk", "zoë@exämple.de", " ada@example.com "])(
     "accepts the email address %s",
@@ -79,9 +119,19 @@ describe("validateLogin", () => {
 
   it("requires both fields", () => {
     expect(validateLogin({ email: "", password: "" })).toEqual({
-      email: "validation.emailRequired",
-      password: "validation.passwordRequired",
+      email: { key: "validation.emailRequired" },
+      password: { key: "validation.passwordRequired" },
     });
+  });
+});
+
+describe("fieldFromServer", () => {
+  it("returns the field a validation error names, if the form has it", () => {
+    const order = ["email", "password"] as const;
+    expect(fieldFromServer(order, new ApiError("validation", 400, "", "email"))).toBe("email");
+    expect(fieldFromServer(order, new ApiError("validation", 400, "", "token"))).toBeUndefined();
+    expect(fieldFromServer(order, new ApiError("validation", 400, ""))).toBeUndefined();
+    expect(fieldFromServer(order, new ApiError("forbidden", 403, "", "email"))).toBeUndefined();
   });
 });
 
@@ -89,8 +139,8 @@ describe("firstInvalid", () => {
   it("follows the order of the form, not of the error object", () => {
     expect(
       firstInvalid(["token", "name", "password"], {
-        password: "validation.passwordRequired",
-        name: "validation.nameRequired",
+        password: { key: "validation.passwordRequired" },
+        name: { key: "validation.nameRequired" },
       }),
     ).toBe("name");
     expect(firstInvalid(["token"], {})).toBeUndefined();

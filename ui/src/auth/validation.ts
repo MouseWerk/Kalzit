@@ -1,10 +1,20 @@
 import type { KeyboardEvent } from "react";
-import type { MessageKey } from "../i18n/i18n";
+import { isApiError } from "../api/client";
+import type { MessageKey, MessageParams } from "../i18n/i18n";
 
-/** Same minimum the server enforces for new passwords. */
+// The same limits the server enforces (server validation of setup and accounts); the UI checks
+// them first so the user learns about a problem without a round trip.
 export const MIN_PASSWORD_LENGTH = 12;
+export const MAX_PASSWORD_LENGTH = 1024;
+export const MAX_NAME_LENGTH = 100;
 
-export type FieldErrors<Field extends string> = Partial<Record<Field, MessageKey>>;
+/** A message for one field, with the values its placeholders need. */
+export interface FieldMessage {
+  key: MessageKey;
+  params?: MessageParams;
+}
+
+export type FieldErrors<Field extends string> = Partial<Record<Field, FieldMessage>>;
 
 export type LoginField = "email" | "password";
 export type SetupField = "token" | "orgName" | "name" | "email" | "password";
@@ -23,27 +33,72 @@ export interface SetupValues {
 }
 
 /**
- * Counts characters as the user sees them in most cases (code points, not UTF-16 units), so an
- * emoji or a character outside the BMP counts once, as it does on the server.
+ * Counts characters as code points, not UTF-16 units, so a character outside the BMP counts
+ * once, as it does on the server.
  */
 export function characterCount(value: string): number {
   return Array.from(value).length;
 }
 
-// Deliberately loose: one "@" with something on both sides. The server has the final word; the
-// UI only catches obvious typos without rejecting unusual but valid addresses.
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+$/;
+const CONTROL = /\p{Cc}/u;
 
-function emailError(email: string): MessageKey | undefined {
+function message(key: MessageKey, params?: MessageParams): FieldMessage {
+  return params === undefined ? { key } : { key, params };
+}
+
+// Loose on purpose, like the server: one "@", no spaces, and a domain with a dot that neither
+// starts nor ends with one. Unusual but valid addresses must not be rejected.
+function emailError(email: string): FieldMessage | undefined {
   const trimmed = email.trim();
   if (trimmed === "") {
-    return "validation.emailRequired";
+    return message("validation.emailRequired");
   }
-  return EMAIL_SHAPE.test(trimmed) ? undefined : "validation.emailInvalid";
+  const at = trimmed.indexOf("@");
+  const local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1);
+  const valid =
+    at > 0 &&
+    !domain.includes("@") &&
+    !/\s/.test(trimmed) &&
+    !CONTROL.test(trimmed) &&
+    local !== "" &&
+    domain.includes(".") &&
+    !domain.startsWith(".") &&
+    !domain.endsWith(".");
+  return valid ? undefined : message("validation.emailInvalid");
+}
+
+/** Names and organization names: 1 to 100 characters after trimming, no control characters. */
+function nameError(value: string, required: MessageKey): FieldMessage | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return message(required);
+  }
+  if (CONTROL.test(trimmed)) {
+    return message("validation.controlCharacters");
+  }
+  if (characterCount(trimmed) > MAX_NAME_LENGTH) {
+    return message("validation.tooLong", { count: MAX_NAME_LENGTH });
+  }
+  return undefined;
+}
+
+function newPasswordError(password: string): FieldMessage | undefined {
+  const length = characterCount(password);
+  if (length === 0) {
+    return message("validation.passwordRequired");
+  }
+  if (length < MIN_PASSWORD_LENGTH) {
+    return message("validation.passwordTooShort", { count: MIN_PASSWORD_LENGTH });
+  }
+  if (length > MAX_PASSWORD_LENGTH) {
+    return message("validation.passwordTooLong", { count: MAX_PASSWORD_LENGTH });
+  }
+  return undefined;
 }
 
 function withoutEmpty<Field extends string>(
-  errors: Record<Field, MessageKey | undefined>,
+  errors: Record<Field, FieldMessage | undefined>,
 ): FieldErrors<Field> {
   const result: FieldErrors<Field> = {};
   for (const field of Object.keys(errors) as Field[]) {
@@ -59,24 +114,29 @@ export function validateLogin(values: LoginValues): FieldErrors<LoginField> {
   return withoutEmpty<LoginField>({
     email: emailError(values.email),
     // No length rule here: an existing password is whatever the server accepted back then.
-    password: values.password === "" ? "validation.passwordRequired" : undefined,
+    password: values.password === "" ? message("validation.passwordRequired") : undefined,
   });
 }
 
 export function validateSetup(values: SetupValues): FieldErrors<SetupField> {
-  let password: MessageKey | undefined;
-  if (values.password === "") {
-    password = "validation.passwordRequired";
-  } else if (characterCount(values.password) < MIN_PASSWORD_LENGTH) {
-    password = "validation.passwordTooShort";
-  }
   return withoutEmpty<SetupField>({
-    token: values.token.trim() === "" ? "validation.tokenRequired" : undefined,
-    orgName: values.orgName.trim() === "" ? "validation.orgNameRequired" : undefined,
-    name: values.name.trim() === "" ? "validation.nameRequired" : undefined,
+    token: values.token.trim() === "" ? message("validation.tokenRequired") : undefined,
+    orgName: nameError(values.orgName, "validation.orgNameRequired"),
+    name: nameError(values.name, "validation.nameRequired"),
     email: emailError(values.email),
-    password,
+    password: newPasswordError(values.password),
   });
+}
+
+/** The form field a server `validation` error names, if it is one of this form's fields. */
+export function fieldFromServer<Field extends string>(
+  order: readonly Field[],
+  error: unknown,
+): Field | undefined {
+  if (!isApiError(error, "validation")) {
+    return undefined;
+  }
+  return order.find((field) => field === error.field);
 }
 
 /** The first field with an error, in the order the form shows them. */

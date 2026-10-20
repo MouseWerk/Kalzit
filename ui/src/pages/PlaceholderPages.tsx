@@ -1,4 +1,4 @@
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { canAdminister } from "../api/auth";
 import { EmptyState } from "../components/EmptyState";
 import { Page } from "../components/Page";
@@ -13,15 +13,8 @@ export function HomePage() {
   const { me } = appRoute.useRouteContext();
   return (
     <Page title={t("home.welcome", { name: me.name })} lead={t("home.lead")}>
-      <EmptyState
-        icon="dashboards"
-        title={t("home.empty.title")}
-        actions={
-          <Link to="/data-sources" className="button button--secondary">
-            {t("home.empty.action")}
-          </Link>
-        }
-      >
+      {/* No call to action yet: every page it could lead to is still a placeholder. */}
+      <EmptyState icon="dashboards" title={t("home.empty.title")}>
         {t("home.empty.text")}
       </EmptyState>
     </Page>

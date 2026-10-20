@@ -10,7 +10,9 @@ import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AuthLayout } from "./AuthLayout";
 import {
   type FieldErrors,
+  fieldFromServer,
   firstInvalid,
+  MIN_PASSWORD_LENGTH,
   preventComposingSubmit,
   type SetupField,
   type SetupValues,
@@ -50,9 +52,15 @@ export function SetupPage() {
     },
     onError: (error) => {
       const code = errorCode(error);
+      const rejected = fieldFromServer(FIELD_ORDER, error);
       if (code === "invalid_setup_token") {
         // A wrong code belongs to its field, so it is shown and announced there.
-        setErrors({ token: "errors.invalid_setup_token" });
+        setErrors({ token: { key: "errors.invalid_setup_token" } });
+        refs.token.current?.focus();
+      } else if (rejected !== undefined) {
+        setErrors({ [rejected]: { key: "validation.serverRejected" } });
+        refs[rejected].current?.focus();
+      } else if (code === "validation") {
         refs.token.current?.focus();
       } else if (code === "setup_done") {
         queryClient.setQueryData(setupStatusQuery.queryKey, { needed: false });
@@ -93,15 +101,19 @@ export function SetupPage() {
   }
 
   const fieldError = (field: SetupField) => {
-    const key = errors[field];
-    return key === undefined ? undefined : t(key);
+    const error = errors[field];
+    return error === undefined ? undefined : t(error.key, error.params);
   };
 
   const code = setup.error === null ? null : errorCode(setup.error);
   let formError: string | null = null;
   if (code === "setup_done") {
     formError = t("errors.setup_done");
-  } else if (code !== null && code !== "invalid_setup_token") {
+  } else if (
+    code !== null &&
+    code !== "invalid_setup_token" &&
+    fieldFromServer(FIELD_ORDER, setup.error) === undefined
+  ) {
     formError = t(`errors.${code}`);
   }
 
@@ -173,7 +185,7 @@ export function SetupPage() {
         <TextField
           ref={refs.password}
           label={t("setup.password")}
-          hint={t("setup.passwordHint")}
+          hint={t("setup.passwordHint", { count: MIN_PASSWORD_LENGTH })}
           type="password"
           name="new-password"
           autoComplete="new-password"
