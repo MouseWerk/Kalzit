@@ -59,7 +59,7 @@ fn main() -> ExitCode {
 }
 
 fn init_logging(cfg: &LogConfig) {
-    let filter = EnvFilter::try_new(&cfg.level).unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_new(&cfg.level).expect("log.level is checked in Config::validate");
     let builder = tracing_subscriber::fmt().with_env_filter(filter);
     if cfg.format == "json" {
         builder.json().init();
