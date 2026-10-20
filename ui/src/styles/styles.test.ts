@@ -1,21 +1,26 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { contrastRatio } from "../test/contrast";
-import { parseCss, type StyleRule, stripComments } from "../test/cssParse";
+import { listCssFiles, parseCss, type StyleRule, stripComments } from "../test/cssParse";
 
 /**
  * Design rules as tests (AICodeGuidelines design/guard-tests.md). Rules that are not tested come
  * back, so each rule of design/principles.md that can be read from the stylesheets is checked here.
  */
 
-const STYLES_DIR = import.meta.dirname;
-const TOKENS_FILE = "tokens.css";
+// Every stylesheet under src, not only src/styles: areas keep their CSS next to their code
+// (features/<area>/...) and must follow the same rules. Names are paths relative to src.
+const SRC_DIR = resolve(import.meta.dirname, "..");
+const TOKENS_FILE = "styles/tokens.css";
+const INDEX_FILE = "styles/index.css";
 const LAYER_ORDER = ["reset", "tokens", "base", "components", "utilities"];
 
-const files = readdirSync(STYLES_DIR)
-  .filter((name) => name.endsWith(".css"))
-  .map((name) => ({ name, source: readFileSync(resolve(STYLES_DIR, name), "utf8") }));
+const files = listCssFiles(SRC_DIR).map((name) => ({
+  name,
+  source: readFileSync(resolve(SRC_DIR, name), "utf8"),
+}));
 
 const rulesByFile = files.map(({ name, source }) => ({ name, rules: parseCss(source) }));
 
@@ -31,16 +36,29 @@ function where(rule: { file: string; selector: string }, property: string): stri
 
 describe("stylesheet integrity", () => {
   it("finds the stylesheets", () => {
-    expect(files.map(({ name }) => name).sort()).toEqual(
-      [
-        "base.css",
-        "components.css",
-        "index.css",
-        "reset.css",
-        "tokens.css",
-        "utilities.css",
-      ].sort(),
+    expect(files.map(({ name }) => name)).toEqual(
+      expect.arrayContaining([
+        "styles/base.css",
+        "styles/components.css",
+        "styles/index.css",
+        "styles/reset.css",
+        "styles/tokens.css",
+        "styles/utilities.css",
+      ]),
     );
+  });
+
+  it("finds stylesheets in nested folders, such as an area's", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kalzit-css-"));
+    try {
+      mkdirSync(join(dir, "features", "graph"), { recursive: true });
+      writeFileSync(join(dir, "features", "graph", "graph.css"), "");
+      writeFileSync(join(dir, "top.css"), "");
+      writeFileSync(join(dir, "notes.txt"), "");
+      expect(listCssFiles(dir)).toEqual(["features/graph/graph.css", "top.css"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it.each(files)("$name has balanced braces and parentheses", ({ source }) => {
@@ -54,18 +72,20 @@ describe("stylesheet integrity", () => {
   });
 
   it("declares the layer order before anything else", () => {
-    const index = stripComments(files.find(({ name }) => name === "index.css")?.source ?? "");
+    const index = stripComments(files.find(({ name }) => name === INDEX_FILE)?.source ?? "");
     const first = index.trim().split(";")[0]?.replace(/\s+/g, " ");
     expect(first).toBe(`@layer ${LAYER_ORDER.join(", ")}`);
   });
 
-  it("puts every rule of a file into that file's layer", () => {
+  it("puts every rule of a file into that file's layer, area styles into components", () => {
     for (const { name, rules } of rulesByFile) {
-      if (name === "index.css") {
+      if (name === INDEX_FILE) {
         expect(rules).toHaveLength(0);
         continue;
       }
-      const layer = name.replace(/\.css$/, "");
+      const layer = name.startsWith("styles/")
+        ? name.replace(/^styles\//, "").replace(/\.css$/, "")
+        : "components";
       expect(LAYER_ORDER).toContain(layer);
       for (const rule of rules) {
         expect(rule.context[0], `${name}: ${rule.selector}`).toBe(`@layer ${layer}`);
@@ -201,7 +221,7 @@ describe("no accent frames for states", () => {
 });
 
 describe("small screens", () => {
-  const rules = rulesByFile.find(({ name }) => name === "components.css")?.rules ?? [];
+  const rules = rulesByFile.find(({ name }) => name === "styles/components.css")?.rules ?? [];
   const inMedia = (media: string, selector: string) =>
     rules.find((rule) => rule.selector === selector && rule.context.includes(media))
       ?.declarations ?? [];
