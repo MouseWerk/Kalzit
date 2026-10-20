@@ -16,6 +16,7 @@ import {
   preventComposingSubmit,
   type SetupField,
   type SetupValues,
+  trimWhitespace,
   validateSetup,
 } from "./validation";
 
@@ -81,10 +82,10 @@ export function SetupPage() {
       return;
     }
     setup.mutate({
-      token: values.token.trim(),
-      orgName: values.orgName.trim(),
-      name: values.name.trim(),
-      email: values.email.trim(),
+      token: trimWhitespace(values.token),
+      orgName: trimWhitespace(values.orgName),
+      name: trimWhitespace(values.name),
+      email: trimWhitespace(values.email),
       password: values.password,
     });
   }

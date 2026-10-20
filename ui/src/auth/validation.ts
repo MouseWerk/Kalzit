@@ -46,10 +46,20 @@ function message(key: MessageKey, params?: MessageParams): FieldMessage {
   return params === undefined ? { key } : { key, params };
 }
 
-// Loose on purpose, like the server: one "@", no spaces, and a domain with a dot that neither
-// starts nor ends with one. Unusual but valid addresses must not be rejected.
-function emailError(email: string): FieldMessage | undefined {
-  const trimmed = email.trim();
+// Unicode White_Space, the set Rust's char::is_whitespace and str::trim use on the server. JS's
+// \s and String.prototype.trim differ: they include U+FEFF and leave out U+0085.
+const WHITE_SPACE = /\p{White_Space}/u;
+const EDGE_WHITE_SPACE = /^\p{White_Space}+|\p{White_Space}+$/gu;
+
+/** Trims exactly what the server trims. */
+export function trimWhitespace(value: string): string {
+  return value.replace(EDGE_WHITE_SPACE, "");
+}
+
+// The server's rule for a new account: one "@", no white space or control characters, and a
+// domain with a dot that neither starts nor ends with one.
+function newEmailError(email: string): FieldMessage | undefined {
+  const trimmed = trimWhitespace(email);
   if (trimmed === "") {
     return message("validation.emailRequired");
   }
@@ -59,7 +69,7 @@ function emailError(email: string): FieldMessage | undefined {
   const valid =
     at > 0 &&
     !domain.includes("@") &&
-    !/\s/.test(trimmed) &&
+    !WHITE_SPACE.test(trimmed) &&
     !CONTROL.test(trimmed) &&
     local !== "" &&
     domain.includes(".") &&
@@ -70,7 +80,7 @@ function emailError(email: string): FieldMessage | undefined {
 
 /** Names and organization names: 1 to 100 characters after trimming, no control characters. */
 function nameError(value: string, required: MessageKey): FieldMessage | undefined {
-  const trimmed = value.trim();
+  const trimmed = trimWhitespace(value);
   if (trimmed === "") {
     return message(required);
   }
@@ -110,9 +120,19 @@ function withoutEmpty<Field extends string>(
   return result;
 }
 
+// Sign-in only catches an obvious slip: the server checks no shape at login, and a stricter UI
+// could lock out someone whose address an older rule accepted.
+function loginEmailError(email: string): FieldMessage | undefined {
+  const trimmed = trimWhitespace(email);
+  if (trimmed === "") {
+    return message("validation.emailRequired");
+  }
+  return trimmed.includes("@") ? undefined : message("validation.emailInvalid");
+}
+
 export function validateLogin(values: LoginValues): FieldErrors<LoginField> {
   return withoutEmpty<LoginField>({
-    email: emailError(values.email),
+    email: loginEmailError(values.email),
     // No length rule here: an existing password is whatever the server accepted back then.
     password: values.password === "" ? message("validation.passwordRequired") : undefined,
   });
@@ -120,10 +140,10 @@ export function validateLogin(values: LoginValues): FieldErrors<LoginField> {
 
 export function validateSetup(values: SetupValues): FieldErrors<SetupField> {
   return withoutEmpty<SetupField>({
-    token: values.token.trim() === "" ? message("validation.tokenRequired") : undefined,
+    token: trimWhitespace(values.token) === "" ? message("validation.tokenRequired") : undefined,
     orgName: nameError(values.orgName, "validation.orgNameRequired"),
     name: nameError(values.name, "validation.nameRequired"),
-    email: emailError(values.email),
+    email: newEmailError(values.email),
     password: newPasswordError(values.password),
   });
 }

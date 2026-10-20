@@ -14,6 +14,7 @@ import {
   firstInvalid,
   type LoginField,
   preventComposingSubmit,
+  trimWhitespace,
   validateLogin,
 } from "./validation";
 
@@ -73,7 +74,7 @@ export function LoginPage() {
       refs[invalid].current?.focus();
       return;
     }
-    signIn.mutate({ email: email.trim(), password });
+    signIn.mutate({ email: trimWhitespace(email), password });
   }
 
   function edit(field: LoginField, setValue: (value: string) => void) {

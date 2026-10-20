@@ -10,6 +10,7 @@ import {
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   preventComposingSubmit,
+  trimWhitespace,
   validateLogin,
   validateSetup,
 } from "./validation";
@@ -100,19 +101,47 @@ describe("validateSetup", () => {
     "ada@.example.com",
     "ada@example.com.",
     "ada@exa\u0000mple.com",
+    // U+0085 (next line) is white space for the server, though not for JS's \s.
+    "ada@exa\u0085mple.com",
+    "ad\u2003a@example.com",
   ])("rejects the email address %j", (email) => {
     expect(keyOf(validateSetup({ ...VALID_SETUP, email }).email)).toBe("validation.emailInvalid");
   });
 
-  it.each(["ada@example.com", "a+tag@sub.example.co.uk", "zoë@exämple.de", " ada@example.com "])(
-    "accepts the email address %s",
-    (email) => {
-      expect(validateSetup({ ...VALID_SETUP, email }).email).toBeUndefined();
-    },
-  );
+  it.each([
+    "ada@example.com",
+    "a+tag@sub.example.co.uk",
+    "zoë@exämple.de",
+    " ada@example.com ",
+    "\u0085ada@example.com\u3000",
+    // U+FEFF is no white space for the server, though JS's \s matches it.
+    "ada@exa\uFEFFmple.com",
+  ])("accepts the email address %j", (email) => {
+    expect(validateSetup({ ...VALID_SETUP, email }).email).toBeUndefined();
+  });
+});
+
+describe("trimWhitespace", () => {
+  it("trims Unicode White_Space like the server, keeping U+FEFF", () => {
+    expect(trimWhitespace("\u0085\u00a0 Ada \u3000\n")).toBe("Ada");
+    expect(trimWhitespace("\uFEFFAda\uFEFF")).toBe("\uFEFFAda\uFEFF");
+  });
 });
 
 describe("validateLogin", () => {
+  it.each(["ada@localhost", "two@@example.com", "ada@example.com."])(
+    "accepts %s, since sign-in checks no address shape",
+    (email) => {
+      expect(validateLogin({ email, password: "x" })).toEqual({});
+    },
+  );
+
+  it("only asks for an @ in the address", () => {
+    expect(keyOf(validateLogin({ email: "ada", password: "x" }).email)).toBe(
+      "validation.emailInvalid",
+    );
+  });
+
   it("has no length rule for an existing password", () => {
     expect(validateLogin({ email: "ada@example.com", password: "short" })).toEqual({});
   });
