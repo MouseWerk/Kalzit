@@ -6,6 +6,7 @@ pub mod auth;
 pub mod authz;
 pub mod clock;
 pub mod config;
+pub mod dashboards;
 pub mod db;
 pub mod error;
 pub mod extract;
