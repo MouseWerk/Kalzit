@@ -6,7 +6,7 @@ use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use serde::Deserialize;
 
-use super::{Me, me};
+use super::{MAX_EMAIL_CHARS, Me, me};
 use crate::app::AppState;
 use crate::auth::{CurrentUser, SessionUser, password, session};
 use crate::error::{ApiError, ApiResult};
@@ -43,18 +43,21 @@ fn invalid_credentials() -> ApiError {
 pub async fn login(
     State(state): State<AppState>,
     Extension(info): Extension<RequestInfo>,
+    headers: HeaderMap,
     JsonBody(req): JsonBody<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let now = state.clock.now_ms();
+    // No account can have such an email or password, so these are refused before they cost a
+    // hash or a rate-limit entry.
     let email = req.email.trim().to_lowercase();
+    if email.chars().count() > MAX_EMAIL_CHARS || req.password.chars().count() > password::MAX_PASSWORD_CHARS {
+        return Err(invalid_credentials());
+    }
     let email_key = format!("email:{email}");
     let ip_key = format!("ip:{}", info.client_ip);
     let limiter = &state.login_limiter;
-    if limiter.is_blocked(&email_key, now) || limiter.is_blocked(&ip_key, now) {
+    if !limiter.try_acquire(&[&email_key, &ip_key], now) {
         return Err(rate_limited());
-    }
-    if req.password.chars().count() > password::MAX_PASSWORD_CHARS {
-        return Err(invalid_credentials());
     }
 
     let row: Option<LoginRow> =
@@ -65,13 +68,16 @@ pub async fn login(
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
     let ok = password::verify(req.password, stored).await;
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
-        limiter.record_failure(&email_key, now);
-        limiter.record_failure(&ip_key, now);
         tracing::info!(client = %info.client_ip, "failed sign-in");
         return Err(invalid_credentials());
     };
     limiter.reset(&email_key);
+    limiter.refund(&ip_key);
 
+    // Signing in again replaces the session this browser had, instead of leaving it behind.
+    if let Some(old) = session::read_cookie(&headers) {
+        session::delete(&state.db, &old).await?;
+    }
     let token = session::create(&state.db, &state.config.sessions, now, &row.id).await?;
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
     let mut headers = HeaderMap::new();

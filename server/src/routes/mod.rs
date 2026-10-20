@@ -10,7 +10,7 @@ use crate::error::{ApiError, ApiResult};
 
 const MAX_NAME_CHARS: usize = 100;
 /// RFC 5321 limit for a forward path.
-const MAX_EMAIL_CHARS: usize = 254;
+pub const MAX_EMAIL_CHARS: usize = 254;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
