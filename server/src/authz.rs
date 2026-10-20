@@ -53,7 +53,6 @@ permissions! {
     RolesWrite => "roles:write",
     ServiceAccountsWrite => "serviceaccounts:write",
     AuditRead => "audit:read",
-    PluginsInstall => "plugins:install",
     PluginsConfigure => "plugins:configure",
     SettingsRead => "settings:read",
     SettingsWrite => "settings:write",
@@ -61,7 +60,7 @@ permissions! {
     OrgDelete => "org:delete",
 }
 
-/// The four roles every organization has. Custom roles (migration 0002) add to these.
+/// The four roles every organization has. Custom roles (migration 0003) add to these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinRole {
     Owner,
@@ -90,32 +89,54 @@ impl BuiltinRole {
         }
     }
 
+    /// Pinned by a test, so a permission added to the catalog is granted to a role only by an
+    /// explicit edit here.
     pub fn permissions(self) -> BTreeSet<Permission> {
         use Permission::*;
-        match self {
-            Self::Owner => Permission::ALL.iter().copied().collect(),
-            Self::Admin => Permission::ALL.iter().copied().filter(|p| *p != OrgDelete).collect(),
-            Self::Editor => [
-                DashboardsRead,
-                DashboardsWrite,
-                DashboardsDelete,
-                DashboardsShare,
-                FoldersRead,
-                FoldersWrite,
-                DatasourcesQuery,
-                DatasourcesRead,
-                AnalysesRead,
-                AnalysesWrite,
-                DataExport,
-                AnnotationsWrite,
-                TeamsRead,
-                UsersRead,
-            ]
-            .into(),
-            // Viewers query data sources only through what they may see; resource checks narrow
-            // this to the data sources of dashboards they can read.
-            Self::Viewer => [DashboardsRead, FoldersRead, AnalysesRead, DatasourcesQuery, TeamsRead].into(),
+        let viewer = [DashboardsRead, FoldersRead, AnalysesRead, TeamsRead];
+        let editor_extra = [
+            DashboardsWrite,
+            DashboardsDelete,
+            // Share means granting access to users and teams of the same organization. Public
+            // links for people without an account are a separate permission (M6).
+            DashboardsShare,
+            FoldersWrite,
+            DatasourcesQuery,
+            DatasourcesRead,
+            AnalysesWrite,
+            DataExport,
+            AnnotationsWrite,
+            // Needed to pick people and teams when sharing.
+            UsersRead,
+        ];
+        let admin_extra = [
+            FoldersPermissions,
+            DatasourcesWrite,
+            DatasourcesPermissions,
+            TeamsWrite,
+            TeamsMembers,
+            UsersInvite,
+            UsersWrite,
+            RolesRead,
+            RolesWrite,
+            ServiceAccountsWrite,
+            AuditRead,
+            PluginsConfigure,
+            SettingsRead,
+            SettingsWrite,
+            OrgWrite,
+        ];
+        let mut set: BTreeSet<Permission> = viewer.into();
+        if matches!(self, Self::Editor | Self::Admin | Self::Owner) {
+            set.extend(editor_extra);
         }
+        if matches!(self, Self::Admin | Self::Owner) {
+            set.extend(admin_extra);
+        }
+        if self == Self::Owner {
+            set.insert(OrgDelete);
+        }
+        set
     }
 }
 
@@ -150,8 +171,45 @@ impl OrgCtx {
     }
 }
 
+/// A resource inside an organization that grants can be attached to. The caller resolves the id
+/// within `ctx.org_id` first (an id from another organization is `not_found`).
+#[derive(Clone, Copy, Debug)]
+pub enum Resource<'a> {
+    Folder(&'a str),
+    Dashboard(&'a str),
+    Datasource(&'a str),
+}
+
+/// Checks `permission` on one resource. Today the org-wide permission decides; resource grants
+/// (migration 0003) extend it, e.g. a viewer with an `edit` grant on one folder. Every handler
+/// that acts on a single resource calls this, so the grants take effect without touching it.
+pub async fn check_resource(
+    _db: &sqlx::AnyPool,
+    ctx: &OrgCtx,
+    permission: Permission,
+    _resource: Resource<'_>,
+) -> ApiResult<()> {
+    ctx.check(permission)
+}
+
+/// Why the caller holds a permission, for the "why can I do this" dialog.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum GrantSource {
+    /// The member's role in the organization.
+    OrgRole { role: String },
+}
+
+pub fn explain(ctx: &OrgCtx, permission: Permission) -> Vec<GrantSource> {
+    if ctx.permissions.contains(&permission) {
+        vec![GrantSource::OrgRole { role: ctx.role.clone() }]
+    } else {
+        Vec::new()
+    }
+}
+
 /// The permissions a member holds in an organization. Today the built-in role decides; custom
-/// roles, team roles and resource grants (migration 0002) are added here.
+/// roles and team roles (migration 0003) are added here.
 pub async fn effective_permissions(
     _db: &sqlx::AnyPool,
     _user_id: &str,
@@ -186,6 +244,31 @@ mod tests {
         assert!(!admin.contains(&Permission::OrgDelete) && owner.contains(&Permission::OrgDelete));
         assert!(!editor.contains(&Permission::UsersWrite));
         assert!(!viewer.contains(&Permission::DashboardsWrite));
+    }
+
+    #[test]
+    fn role_sets_are_pinned() {
+        let names = |r: BuiltinRole| r.permissions().iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ");
+        assert_eq!(names(BuiltinRole::Viewer), "dashboards:read folders:read analyses:read teams:read");
+        assert_eq!(
+            names(BuiltinRole::Editor),
+            concat!(
+                "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
+                "datasources:query datasources:read analyses:read analyses:write data:export annotations:write ",
+                "teams:read users:read"
+            )
+        );
+        // Every permission belongs to exactly the roles listed above; owner holds them all.
+        assert_eq!(BuiltinRole::Owner.permissions().len(), Permission::ALL.len());
+        let admin_missing: Vec<_> =
+            Permission::ALL.iter().filter(|p| !BuiltinRole::Admin.permissions().contains(p)).collect();
+        assert_eq!(admin_missing, [&Permission::OrgDelete]);
+    }
+
+    #[test]
+    fn viewers_cannot_run_their_own_queries() {
+        // Viewers see dashboards; the server runs the stored panel queries for them.
+        assert!(!BuiltinRole::Viewer.permissions().contains(&Permission::DatasourcesQuery));
     }
 
     #[test]
