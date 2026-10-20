@@ -126,6 +126,23 @@ describe("route guards", () => {
     expect(location().search).toEqual({ redirect: "/explore" });
   });
 
+  it("asks the server for the user on a click, but not when a link is only preloaded", async () => {
+    const server = installFakeServer({ signedIn: true });
+    const { app, user } = renderApp("/dashboards");
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    const meCalls = () => server.calls.filter((call) => call.path === "/api/me").length;
+    const before = meCalls();
+
+    // What hovering a link does (defaultPreload "intent"), awaited so the check is not racy.
+    await user.hover(within(nav).getByRole("link", { name: "Explore" }));
+    await app.router.preloadRoute({ to: "/explore" });
+    expect(meCalls()).toBe(before);
+
+    await user.click(within(nav).getByRole("link", { name: "Explore" }));
+    await screen.findByRole("heading", { level: 1, name: "Explore" });
+    expect(meCalls()).toBe(before + 1);
+  });
+
   it("notices a changed role at the next navigation", async () => {
     const server = installFakeServer({ signedIn: true });
     const { user } = renderApp("/");

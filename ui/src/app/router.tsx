@@ -44,11 +44,15 @@ async function isSetupNeeded(queryClient: QueryClient): Promise<boolean> {
 }
 
 /**
- * Asks the server on every guarded navigation instead of trusting the cache, so a revoked
- * session or a changed role takes effect on the next page change, not after the cache expires.
+ * Asks the server on every real navigation instead of trusting the cache, so a revoked session
+ * or a changed role takes effect on the next page change, not after the cache expires. Preloads
+ * (hovering a link) use the cache: they would otherwise send a request per hover, and the real
+ * navigation that may follow checks again anyway.
  */
-function currentUser(queryClient: QueryClient) {
-  return queryClient.fetchQuery({ ...meQuery, staleTime: 0 });
+function currentUser(queryClient: QueryClient, preload: boolean) {
+  return preload
+    ? queryClient.ensureQueryData(meQuery)
+    : queryClient.fetchQuery({ ...meQuery, staleTime: 0 });
 }
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
@@ -72,11 +76,11 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   validateSearch: parseLoginSearch,
-  beforeLoad: async ({ context, search }) => {
+  beforeLoad: async ({ context, search, preload }) => {
     if (await isSetupNeeded(context.queryClient)) {
       throw redirect({ to: "/setup", replace: true });
     }
-    const me = await currentUser(context.queryClient);
+    const me = await currentUser(context.queryClient, preload);
     if (me !== null) {
       throw redirect({ href: search.redirect ?? "/", replace: true });
     }
@@ -88,11 +92,11 @@ const loginRoute = createRoute({
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "_app",
-  beforeLoad: async ({ context, location }) => {
+  beforeLoad: async ({ context, location, preload }) => {
     if (await isSetupNeeded(context.queryClient)) {
       throw redirect({ to: "/setup", replace: true });
     }
-    const me = await currentUser(context.queryClient);
+    const me = await currentUser(context.queryClient, preload);
     if (me === null) {
       const back = safeRedirect(location.href);
       throw redirect({
