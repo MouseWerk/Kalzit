@@ -524,6 +524,28 @@ async fn every_declared_route_enforces_its_access() {
 }
 
 #[tokio::test]
+async fn setup_and_sign_ins_are_audited_without_personal_data() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    t.setup().await;
+    t.login("joerg@example.de", "falsch falsch falsch").await;
+    t.login("niemand@example.de", "falsch falsch falsch").await;
+    t.login("joerg@example.de", PASSWORD).await;
+    let rows: Vec<(String, Option<String>, String)> =
+        sqlx::query_as("SELECT action, actor_user_id, summary FROM audit_events ORDER BY created_at, id")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    let actions: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(actions, ["setup.completed", "auth.sign_in_failed", "auth.sign_in_failed", "auth.signed_in"]);
+    for (_, _, summary) in &rows {
+        assert!(!summary.contains('@'), "no email in audit summaries: {summary}");
+    }
+    assert!(rows[1].2.contains("userId"), "a failed sign-in of a known account names the account id");
+    assert_eq!(rows[2].2, "{}", "an unknown email leaves no trace of what was typed");
+    assert!(rows[3].1.is_some());
+}
+
+#[tokio::test]
 async fn unsupported_methods_answer_in_the_error_format() {
     let t = test_app("127.0.0.1:50000", |_| {}).await;
     let r = t.send(Method::DELETE, "/api/me", None, &[]).await;

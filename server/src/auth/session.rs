@@ -24,7 +24,12 @@ pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
-pub async fn create(db: &AnyPool, cfg: &SessionConfig, now_ms: i64, user_id: &str) -> ApiResult<String> {
+/// Works on the pool or inside a transaction (`&mut *tx`), so a sign-in can write its session
+/// and its audit entry together.
+pub async fn create<'c, E>(db: E, cfg: &SessionConfig, now_ms: i64, user_id: &str) -> ApiResult<String>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
     let token = hex::encode(rand::random::<[u8; 32]>());
     let expires = now_ms + cfg.lifetime_hours as i64 * HOUR_MS;
     sqlx::query(
@@ -85,7 +90,10 @@ pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> Res
     Ok(done.rows_affected())
 }
 
-pub async fn delete(db: &AnyPool, token: &str) -> ApiResult<()> {
+pub async fn delete<'c, E>(db: E, token: &str) -> ApiResult<()>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
     sqlx::query("DELETE FROM sessions WHERE token_hash = $1").bind(hash_token(token)).execute(db).await?;
     Ok(())
 }
