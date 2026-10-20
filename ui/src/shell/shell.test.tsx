@@ -6,11 +6,11 @@ import { renderApp } from "../test/renderApp";
 import { THEME_STORAGE_KEY } from "../theme/theme";
 
 async function openShell(path = "/", user = TEST_USER) {
-  installFakeServer({ signedIn: true, user });
+  const server = installFakeServer({ signedIn: true, user });
   const rendered = renderApp(path);
   await screen.findByRole("navigation", { name: "Main navigation" });
   const menuButton = screen.getByRole("button", { name: /Account/ });
-  return { ...rendered, menuButton };
+  return { ...rendered, menuButton, server };
 }
 
 describe("app shell", () => {
@@ -152,5 +152,29 @@ describe("user menu", () => {
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
     expect(location().pathname).toBe("/login");
+  });
+
+  it("shows who is signed in at the top of the menu", async () => {
+    const { user, menuButton } = await openShell();
+    await user.click(menuButton);
+    const menu = screen.getByRole("menu", { name: "Account" });
+    expect(within(menu).getByText(TEST_USER.name)).toBeTruthy();
+    expect(within(menu).getByText(TEST_USER.email)).toBeTruthy();
+  });
+
+  it("reports a failed sign-out next to the menu and clears it on the next attempt", async () => {
+    const { user, menuButton, server } = await openShell();
+    server.failNext("/api/auth/logout", 500, "internal");
+    await user.click(menuButton);
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+
+    const message = await screen.findByText(/Something went wrong on the server/);
+    const alert = message.closest('[role="alert"]');
+    expect(alert).toBeTruthy();
+    // Outside the anchor that holds the button, so it cannot push the button onto a new row.
+    expect(alert?.closest(".menu-anchor")).toBeNull();
+
+    await user.click(menuButton);
+    expect(screen.queryByText(/Something went wrong on the server/)).toBeNull();
   });
 });

@@ -62,6 +62,8 @@ export function UserMenu({ me }: { me: Me }) {
   });
 
   function openMenu(target: FocusTarget) {
+    // A sign-out error from an earlier attempt is stale once the user acts again.
+    signOut.reset();
     setFocusTarget(target);
     setOpen(true);
   }
@@ -144,78 +146,87 @@ export function UserMenu({ me }: { me: Me }) {
       : t(isApiError(signOut.error) ? `errors.${signOut.error.code}` : "errors.internal");
 
   return (
-    <div className="menu-anchor" ref={anchorRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        className="user-button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => (open ? closeMenu(false) : openMenu("first"))}
-        onKeyDown={onButtonKeyDown}
-      >
-        <span className="user-button__avatar" aria-hidden="true">
-          {initialOf(me.name)}
-        </span>
-        <span className="user-button__text">
-          <span className="user-button__name truncate">{me.name}</span>
-          <span className="user-button__email truncate">{me.email}</span>
-        </span>
-        <span className="visually-hidden">{t("userMenu.label")}</span>
-      </button>
-
-      {open ? (
-        <div
-          ref={menuRef}
-          id={menuId}
-          role="menu"
-          aria-label={t("userMenu.label")}
-          className="menu"
-          onKeyDown={onMenuKeyDown}
+    <>
+      <div className="menu-anchor" ref={anchorRef}>
+        <button
+          ref={buttonRef}
+          type="button"
+          className="user-button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
+          onClick={() => (open ? closeMenu(false) : openMenu("first"))}
+          onKeyDown={onButtonKeyDown}
         >
-          <MenuGroup labelId={themeLabelId} label={t("theme.label")}>
-            {THEMES.map((option) => (
-              <RadioItem
-                key={option}
-                checked={theme === option}
-                onSelect={() => choose(() => setTheme(option))}
-              >
-                {t(`theme.${option}`)}
-              </RadioItem>
-            ))}
-          </MenuGroup>
-          <hr className="menu__separator" />
-          <MenuGroup labelId={languageLabelId} label={t("language.label")}>
-            {LANGUAGES.map((option) => (
-              <RadioItem
-                key={option}
-                checked={language === option}
-                lang={option}
-                onSelect={() => choose(() => setLanguage(option))}
-              >
-                {t(`language.${option}`)}
-              </RadioItem>
-            ))}
-          </MenuGroup>
-          <hr className="menu__separator" />
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            className="menu__item"
-            onClick={() => {
-              closeMenu(true);
-              signOut.mutate();
-            }}
+          <span className="user-button__avatar" aria-hidden="true">
+            {initialOf(me.name)}
+          </span>
+          <span className="user-button__text">
+            <span className="user-button__name truncate">{me.name}</span>
+            <span className="user-button__email truncate">{me.email}</span>
+          </span>
+          <span className="visually-hidden">{t("userMenu.label")}</span>
+        </button>
+
+        {open ? (
+          <div
+            ref={menuRef}
+            id={menuId}
+            role="menu"
+            aria-label={t("userMenu.label")}
+            className="menu"
+            onKeyDown={onMenuKeyDown}
           >
-            <Icon name="signOut" />
-            {t("userMenu.signOut")}
-          </button>
-        </div>
-      ) : null}
-      <FormAlert>{signOutError}</FormAlert>
-    </div>
+            {/* Who is signed in; the button shows only the initial on small screens. */}
+            <div className="menu__account">
+              <span className="menu__account-name">{me.name}</span>
+              <span className="menu__account-email">{me.email}</span>
+            </div>
+            <hr className="menu__separator" />
+            <MenuGroup labelId={themeLabelId} label={t("theme.label")}>
+              {THEMES.map((option) => (
+                <RadioItem
+                  key={option}
+                  checked={theme === option}
+                  onSelect={() => choose(() => setTheme(option))}
+                >
+                  {t(`theme.${option}`)}
+                </RadioItem>
+              ))}
+            </MenuGroup>
+            <hr className="menu__separator" />
+            <MenuGroup labelId={languageLabelId} label={t("language.label")}>
+              {LANGUAGES.map((option) => (
+                <RadioItem
+                  key={option}
+                  checked={language === option}
+                  lang={option}
+                  onSelect={() => choose(() => setLanguage(option))}
+                >
+                  {t(`language.${option}`)}
+                </RadioItem>
+              ))}
+            </MenuGroup>
+            <hr className="menu__separator" />
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              className="menu__item"
+              onClick={() => {
+                closeMenu(true);
+                signOut.mutate();
+              }}
+            >
+              <Icon name="signOut" />
+              {t("userMenu.signOut")}
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {/* Outside the anchor, so a message never pushes the account button onto its own row. */}
+      <FormAlert className="shell__alert">{signOutError}</FormAlert>
+    </>
   );
 }
 

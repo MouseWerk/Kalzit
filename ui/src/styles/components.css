@@ -496,6 +496,11 @@
       order: 2;
     }
 
+    .shell__alert {
+      flex: 1 0 100%;
+      order: 4;
+    }
+
     .user-button__text {
       display: none;
     }
@@ -505,6 +510,33 @@
       inset-inline: auto 0;
       width: 15rem;
     }
+  }
+
+  .menu__account {
+    display: grid;
+    padding: var(--space-2);
+    overflow-wrap: anywhere;
+  }
+
+  .menu__account-name {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .menu__account-email {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /*
+   * The sign-out alert stays in the accessibility tree while empty (so it can announce), but
+   * takes no room in the sidebar's flex layout until there is a message.
+   */
+  .shell__alert:empty {
+    position: absolute;
+  }
+
+  .shell__alert:not(:empty) {
+    margin-block-end: 0;
   }
 
   .menu__group {

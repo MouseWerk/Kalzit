@@ -6,10 +6,14 @@ import { Icon } from "./Icon";
  * the form is visible, because screen readers only announce changes inside a region that already
  * existed; the visible notice is rendered inside it only when there is something to say.
  */
-export function FormAlert({ children }: { children?: ReactNode }) {
+export function FormAlert({ children, className }: { children?: ReactNode; className?: string }) {
   const empty = children === null || children === undefined || children === false;
   return (
-    <div className="form-alert" role="alert" aria-atomic="true">
+    <div
+      className={className === undefined ? "form-alert" : `form-alert ${className}`}
+      role="alert"
+      aria-atomic="true"
+    >
       {empty ? null : (
         <div className="notice notice--danger">
           <Icon name="alert" />
