@@ -3,6 +3,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, createRoute, Outlet, redirect } from "@tanstack/react-router";
 import { meQuery, setupStatusQuery } from "../api/auth";
+import { ORG_QUERY_KEY } from "../api/orgs";
 import { LoginPage } from "../auth/LoginPage";
 import { safeRedirect } from "../auth/redirect";
 import { SetupPage } from "../auth/SetupPage";
@@ -92,6 +93,10 @@ export const appRoute = createRoute({
         search: back === undefined || back === "/" ? {} : { redirect: back },
         replace: true,
       });
+    }
+    if (!preload) {
+      // Permissions can change with the role, like the session; refresh them in the background.
+      void context.queryClient.invalidateQueries({ queryKey: [ORG_QUERY_KEY] });
     }
     return { me };
   },

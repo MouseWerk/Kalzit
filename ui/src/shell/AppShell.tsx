@@ -1,27 +1,13 @@
 import { getRouteApi, Link, Outlet } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { canAdminister } from "../api/auth";
-import { Icon, type IconName } from "../components/Icon";
-import { type MessageKey, useI18n } from "../i18n/i18n";
+import { Icon } from "../components/Icon";
+import { NAV_ITEMS } from "../features/nav";
+import { useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
+import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
 import { UserMenu } from "./UserMenu";
 
 const appRoute = getRouteApi("/_app");
-
-interface NavItem {
-  to: "/" | "/dashboards" | "/explore" | "/data-sources" | "/admin";
-  label: MessageKey;
-  icon: IconName;
-}
-
-const NAV_ITEMS: readonly NavItem[] = [
-  { to: "/", label: "nav.home", icon: "home" },
-  { to: "/dashboards", label: "nav.dashboards", icon: "dashboards" },
-  { to: "/explore", label: "nav.explore", icon: "explore" },
-  { to: "/data-sources", label: "nav.dataSources", icon: "dataSources" },
-];
-
-const ADMIN_ITEM: NavItem = { to: "/admin", label: "nav.admin", icon: "admin" };
 
 /**
  * Sidebar, account menu and the page outlet. F6 and Shift+F6 move focus between the navigation
@@ -32,8 +18,9 @@ export function AppShell() {
   const { me } = appRoute.useRouteContext();
   const navRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLElement>(null);
-  const items = canAdminister(me) ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS;
-  const currentOrg = me.orgs[0];
+  const permissions = useOrgPermissions();
+  const items = NAV_ITEMS.filter((item) => item.visible?.(permissions) ?? true);
+  const currentOrg = currentOrgOf(me);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -90,7 +77,7 @@ export function AppShell() {
                   to={item.to}
                   className="nav-link"
                   title={t(item.label)}
-                  activeOptions={{ exact: item.to === "/" }}
+                  activeOptions={{ exact: item.exact === true }}
                 >
                   <Icon name={item.icon} />
                   <span className="nav-link__label">{t(item.label)}</span>

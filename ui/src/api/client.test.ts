@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { canAdminister, fetchMe, isMe, login } from "./auth";
+import { fetchMe, isMe, login } from "./auth";
 import { ApiError, errorFromResponse, request } from "./client";
 
 function respond(status: number, body: string | null, contentType = "application/json") {
@@ -134,10 +134,8 @@ describe("auth responses", () => {
     expect(isMe(me)).toBe(true);
   });
 
-  it("accepts a custom role name, which gives no administration rights", () => {
-    const custom = { ...me, orgs: [{ id: "o1", name: "Org", role: "data-steward" }] };
-    expect(isMe(custom)).toBe(true);
-    expect(canAdminister(custom)).toBe(false);
+  it("accepts a custom role name", () => {
+    expect(isMe({ ...me, orgs: [{ id: "o1", name: "Org", role: "data-steward" }] })).toBe(true);
   });
 
   it("rejects a Me with a malformed role or missing fields", () => {

@@ -4,6 +4,26 @@
  * nothing more; it is not a general CSS parser.
  */
 
+import { readdirSync } from "node:fs";
+import { join, relative } from "node:path";
+
+/** Every .css file below `root`, as sorted paths relative to it with forward slashes. */
+export function listCssFiles(root: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+      } else if (entry.name.endsWith(".css")) {
+        found.push(relative(root, path).replaceAll("\\", "/"));
+      }
+    }
+  };
+  walk(root);
+  return found.sort();
+}
+
 export interface Declaration {
   property: string;
   value: string;
