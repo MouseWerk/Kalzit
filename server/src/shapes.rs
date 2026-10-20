@@ -39,7 +39,7 @@ impl QueryResult {
 }
 
 /// Columnar table: every field holds one value per row.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Frame {
@@ -48,6 +48,26 @@ pub struct Frame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     meta: Option<FrameMeta>,
+}
+
+/// What arrives from outside (plugins, fixtures) before the length check.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UncheckedFrame {
+    fields: Vec<Field>,
+    #[serde(default)]
+    meta: Option<FrameMeta>,
+}
+
+impl<'de> Deserialize<'de> for Frame {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = UncheckedFrame::deserialize(deserializer)?;
+        let frame = Frame::new(raw.fields).map_err(serde::de::Error::custom)?;
+        Ok(match raw.meta {
+            Some(meta) => frame.with_meta(meta),
+            None => frame,
+        })
+    }
 }
 
 impl Frame {
@@ -282,6 +302,12 @@ pub struct QueryItem {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PanelQueryRequest {
     pub time_range: TimeRange,
+    /// Continues the `DocumentSet` of a target, by `refId`.
+    #[serde(default)]
+    pub cursors: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub limit: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub interval_ms: Option<u64>,
@@ -326,6 +352,7 @@ pub struct ErrorEnvelope {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ErrorBody {
+    #[cfg_attr(test, ts(type = "ErrorCode"))]
     pub code: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -388,6 +415,11 @@ mod tests {
         assert!(Frame::new(vec![field("a", 2), field("b", 3)]).is_err());
         assert_eq!(Frame::new(vec![field("a", 2), field("b", 2)]).unwrap().rows(), 2);
         assert_eq!(Frame::new(vec![]).unwrap().rows(), 0);
+        let ragged = json!({ "fields": [
+            { "name": "a", "type": "number", "values": [1, 2] },
+            { "name": "b", "type": "number", "values": [1] }
+        ] });
+        assert!(serde_json::from_value::<Frame>(ragged).is_err());
     }
 
     #[test]
@@ -431,6 +463,12 @@ mod tests {
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",
         );
+        let union = |name: &str, values: Vec<&str>| {
+            let parts: Vec<String> = values.iter().map(|v| format!("\"{v}\"")).collect();
+            format!("export type {name} = {};\n\n", parts.join(" | "))
+        };
+        out.push_str(&union("ErrorCode", crate::error::ERROR_CODES.to_vec()));
+        out.push_str(&union("Permission", crate::authz::Permission::ALL.iter().map(|p| p.as_str()).collect()));
         for decl in decls {
             out.push_str("export ");
             out.push_str(&decl);

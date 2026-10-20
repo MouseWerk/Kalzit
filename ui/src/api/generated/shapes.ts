@@ -1,5 +1,9 @@
 // Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.
 
+export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "setup_done" | "invalid_setup_token" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "internal";
+
+export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
+
 export type Shape = "frame" | "documents" | "graph";
 
 export type QueryResult = { "shape": "frame", frame: Frame, } | { "shape": "documents", documents: DocumentSet, } | { "shape": "graph", graph: GraphSet, };
@@ -90,7 +94,11 @@ query: unknown,
  */
 cursor?: string, limit?: number, };
 
-export type PanelQueryRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, };
+export type PanelQueryRequest = { timeRange: TimeRange, 
+/**
+ * Continues the `DocumentSet` of a target, by `refId`.
+ */
+cursors: { [key in string]: string }, limit?: number, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, };
 
 export type TimeRange = { from: number, to: number, };
 
@@ -104,6 +112,6 @@ export type QueryOutcome = { result: QueryResult, } | { error: ErrorBody, };
 
 export type ErrorEnvelope = { error: ErrorBody, };
 
-export type ErrorBody = { code: string, message: string, field?: string, };
+export type ErrorBody = { code: ErrorCode, message: string, field?: string, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
