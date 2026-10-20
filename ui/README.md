@@ -17,7 +17,7 @@ and TanStack Query. No CSS framework, no component library, no web fonts. The pr
 | `npm run check` | Biome lint, format and import order together |
 | `npm test` | Vitest: unit, component and guard tests |
 
-Start the server first (it listens on port 3000), then `npm run dev`. On a fresh data folder the UI
+Node 26 or newer. Start the server first (it listens on port 3000), then `npm run dev`. On a fresh data folder the UI
 opens the setup page; the setup code is in `setup-token.txt` in the server's data folder.
 
 ## Structure
@@ -53,3 +53,11 @@ src/
 - Network access only through `src/api/client.ts`; no inline script, style or handlers in
   `index.html`.
 - Any console warning or error during a test fails it, unless the test declares it as expected.
+
+## Expected browser console entry
+
+Signed out, the sign-in page asks `GET /api/me` whether a session exists. The server answers 401
+`unauthenticated`, and browsers log that as "Failed to load resource" however the app handles it.
+This one request is expected; end-to-end tests allow-list exactly it. While setup is still
+needed, the UI asks only `GET /api/setup` and never calls `/api/me`, so the setup page loads
+without that entry.

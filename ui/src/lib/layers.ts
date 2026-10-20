@@ -11,8 +11,10 @@ interface Layer {
 
 const stack: Layer[] = [];
 
+// Registered in the capture phase on the document, so it runs before any element handler; an
+// Escape that confirms an input method composition is left alone.
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) {
+  if (event.key !== "Escape" || event.isComposing) {
     return;
   }
   const top = stack.at(-1);
