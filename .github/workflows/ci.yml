@@ -72,7 +72,7 @@ jobs:
         shell: bash
         working-directory: .
         run: echo "present=$([ -f ui/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         if: steps.has_ui.outputs.present == 'true'
         with:
           node-version: 26
