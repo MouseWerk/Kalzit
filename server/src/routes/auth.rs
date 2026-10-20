@@ -33,12 +33,13 @@ struct LoginRow {
 pub fn routes() -> Vec<super::table::RouteDef> {
     use super::table::route;
     use crate::authz::Access::{Authenticated, Public};
+    use axum::http::Method;
     use axum::routing::{get, post};
     vec![
-        route("/auth/login", Public, post(login)),
+        route(Method::POST, "/auth/login", Public, post(login)),
         // Signing out works without a valid session too: it clears the cookie either way.
-        route("/auth/logout", Public, post(logout)),
-        route("/me", Authenticated, get(current)),
+        route(Method::POST, "/auth/logout", Public, post(logout)),
+        route(Method::GET, "/me", Authenticated, get(current)),
     ]
 }
 
@@ -91,6 +92,17 @@ pub async fn login(
         session::delete(&state.db, &old).await?;
     }
     let token = session::create(&state.db, &state.config.sessions, now, &row.id).await?;
+    let event = crate::audit::AuditEvent {
+        org_id: None,
+        actor_user_id: Some(&row.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action: "auth.signed_in",
+        resource_type: Some("user"),
+        resource_id: Some(&row.id),
+        summary: serde_json::json!({}),
+        at_ms: now,
+    };
+    crate::audit::record(&mut *state.db.acquire().await?, &event).await?;
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));

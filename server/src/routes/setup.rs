@@ -119,8 +119,12 @@ fn remove_file_if_present(path: &Path) {
 
 pub fn routes() -> Vec<super::table::RouteDef> {
     use crate::authz::Access::Public;
+    use axum::http::Method;
     use axum::routing::{get, post};
-    vec![super::table::route("/setup", Public, get(status)), super::table::route("/setup", Public, post(complete))]
+    vec![
+        super::table::route(Method::GET, "/setup", Public, get(status)),
+        super::table::route(Method::POST, "/setup", Public, post(complete)),
+    ]
 }
 
 fn close_gate(gate: &mut Option<OpenGate>) {
@@ -209,6 +213,17 @@ pub async fn complete(
         .bind(now)
         .execute(&mut *tx)
         .await?;
+    let event = crate::audit::AuditEvent {
+        org_id: Some(&org_id),
+        actor_user_id: Some(&user_id),
+        actor_address: Some(info.client_ip.to_string()),
+        action: "setup.completed",
+        resource_type: Some("org"),
+        resource_id: Some(&org_id),
+        summary: json!({}),
+        at_ms: now,
+    };
+    crate::audit::record(&mut tx, &event).await?;
     tx.commit().await?;
 
     close_gate(&mut gate);
