@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::get;
 use sqlx::AnyPool;
 use tower_http::trace::TraceLayer;
 
@@ -14,7 +14,7 @@ use crate::clock::Clock;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::routes::setup::SetupGate;
-use crate::routes::{auth, health, setup};
+use crate::routes::{self, health};
 use crate::{net, web};
 
 #[derive(Clone)]
@@ -36,13 +36,9 @@ impl AppState {
     }
 }
 
+#[expect(clippy::disallowed_methods, reason = "assembles the route tables with the unversioned health endpoints")]
 pub fn router(state: AppState) -> Router {
-    let api = Router::new()
-        .route("/setup", get(setup::status).post(setup::complete))
-        .route("/auth/login", post(auth::login))
-        .route("/auth/logout", post(auth::logout))
-        .route("/me", get(auth::current))
-        .fallback(|| async { ApiError::not_found() });
+    let api = routes::table::build(routes::all(), &state).fallback(|| async { ApiError::not_found() });
 
     // Layers run outside-in from the last one added: trace, request info, security headers,
     // origin check, then the route.

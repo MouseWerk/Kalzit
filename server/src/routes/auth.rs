@@ -30,6 +30,18 @@ struct LoginRow {
     disabled: i64,
 }
 
+pub fn routes() -> Vec<super::table::RouteDef> {
+    use super::table::route;
+    use crate::authz::Access::{Authenticated, Public};
+    use axum::http::Method;
+    vec![
+        route(Method::POST, "/auth/login", Public, login),
+        // Signing out works without a valid session too: it clears the cookie either way.
+        route(Method::POST, "/auth/logout", Public, logout),
+        route(Method::GET, "/me", Authenticated, current),
+    ]
+}
+
 fn rate_limited() -> ApiError {
     ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "too many failed sign-ins, wait a few minutes")
 }
@@ -67,18 +79,40 @@ pub async fn login(
             .await?;
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
     let ok = password::verify(req.password, stored).await;
+    let audit = |action: &'static str, user_id: Option<String>| crate::audit::AuditEvent {
+        org_id: None,
+        actor_user_id: None,
+        actor_address: Some(info.client_ip.to_string()),
+        action,
+        resource_type: Some("user"),
+        resource_id: None,
+        summary: match user_id {
+            Some(id) => serde_json::json!({ "userId": id }),
+            None => serde_json::json!({}),
+        },
+        at_ms: now,
+    };
+    let known_id = row.as_ref().map(|r| r.id.clone());
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
+        // The id of an existing account is recorded, never the email that was typed.
+        crate::audit::record(&mut *state.db.acquire().await?, &audit("auth.sign_in_failed", known_id)).await?;
         return Err(invalid_credentials());
     };
     limiter.reset(&email_key);
     limiter.refund(&ip_key);
 
+    let mut tx = state.db.begin().await?;
     // Signing in again replaces the session this browser had, instead of leaving it behind.
     if let Some(old) = session::read_cookie(&headers) {
-        session::delete(&state.db, &old).await?;
+        session::delete(&mut *tx, &old).await?;
     }
-    let token = session::create(&state.db, &state.config.sessions, now, &row.id).await?;
+    let token = session::create(&mut *tx, &state.config.sessions, now, &row.id).await?;
+    let mut event = audit("auth.signed_in", None);
+    event.actor_user_id = Some(&row.id);
+    event.resource_id = Some(&row.id);
+    crate::audit::record(&mut tx, &event).await?;
+    tx.commit().await?;
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));

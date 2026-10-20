@@ -27,14 +27,18 @@ index.html            No inline script or style (CSP script-src 'self'; style-sr
 public/theme-boot.js  Applies the stored theme before the first paint
 src/
   main.tsx            Entry
-  app/                Query client, router, route guards
+  app/                Query client, router, base routes and the sign-in guard (_app)
   api/client.ts       The only HTTP client; maps every failure to ApiError with a code
   api/auth.ts         Setup, sign in, sign out, current user; response shape checks
+  api/orgs.ts         The current organization with its permissions
   auth/               Setup and sign-in pages, validation, safe redirect after sign in
+  features/<area>/    One folder per area: routes.tsx, nav.ts (its navigation entry), pages
+  features/nav.ts     The navigation entries of all areas, in display order
+  org/                Current organization and useOrgPermissions() for hiding actions
   shell/              App shell: sidebar, account menu, theme and language choice
-  pages/              Placeholder pages with empty states, not found, error page
+  pages/              Home, not found, error page
   components/         Small shared pieces: text field, form alert, empty state, icons
-  i18n/               de.json, en.json and the lookup module (default from the browser)
+  i18n/               <lang>/core.json and <lang>/<area>.json, combined in catalogs.ts
   theme/              Theme store: system, light, dark, high contrast
   lib/                Escape layer stack, preference storage, document title
   styles/             tokens.css (all colors, weights, radii, layers), layered stylesheets
@@ -43,9 +47,14 @@ src/
 
 ## Rules the tests enforce
 
+- Each area's catalog holds only keys starting with `<area>.`, no key sits in two files, and
+  German and English files match key for key.
+- Every page except setup and sign-in hangs under the `_app` sign-in guard route.
 - Both catalogs have the same keys and placeholders, no emoji, no space before an ellipsis, no
   leftovers of the other language; German uses „du“ and „…“ quotes; words listed under „Nicht
   verwenden / Avoid“ in `docs/glossary.md` appear nowhere.
+- The design rules below cover every stylesheet under `src`, area styles included (in the
+  components layer).
 - Literal colors, font weights, z-index layers and radii only in `tokens.css`; spacing and font
   sizes from tokens; no accent or status colored frames on hover, focus, selected or current
   states; no colored bars on the left; focus ring only from `--focus-outline` on `:focus-visible`;

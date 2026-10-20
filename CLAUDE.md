@@ -27,9 +27,17 @@ where it is more specific.
 - Positioning: a platform for visualizing and analyzing data in general, not only monitoring.
 - UI wording: "Explore" stays untranslated in German; "Start" for Home, "Verwaltung" for
   Administration. The UI palette is retuned to Kalzit together with the website.
-- Website: Astro, look inspired by the owner's reference (warm muted palette, atmospheric
-  landscape fading into black, fine grid, light display headline, monospace eyebrow, dark product
-  frame). No company logo strips, no invented figures. Hosting is decided later.
+- Repositories live in the MouseWerk organization: `MouseWerk/Kalzit` (public, AGPL) and the website
+  in its own private repository `MouseWerk/kalzit-website` (Astro; composition follows the owner's
+  reference 1:1 with a licensed Unsplash photo, no company logo strips, no invented figures; root
+  path, intended domain kalzit.dev; hosting decided later).
+- Viewers run only the stored queries of dashboards they may read; free queries need
+  `datasources:query` (editor and up). `dashboards:share` is org-internal; public links are a
+  separate permission (M6).
+- Data sources may target private networks and localhost; Kalzit's own data and database,
+  metadata addresses and SQLite files outside admin-allowed directories are always refused.
+- The secrets key comes from `KALZIT_SECRETS_KEY`, systemd credentials (Linux) or DPAPI (Windows);
+  a 0600 key file in the data directory with a log warning is the last resort.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. Alerting comes in M6, after the core.
 - First graph sources: Neo4j and Memgraph. All common standard sources are supported too

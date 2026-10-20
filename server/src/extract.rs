@@ -16,7 +16,15 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for JsonBody<T> {
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         match Json::<T>::from_request(req, state).await {
             Ok(Json(value)) => Ok(Self(value)),
-            Err(rejection) => Err(ApiError::new(rejection.status(), "validation", rejection.body_text())),
+            Err(rejection) => {
+                let status = rejection.status();
+                let code = if status == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+                    "payload_too_large"
+                } else {
+                    "validation"
+                };
+                Err(ApiError::new(status, code, rejection.body_text()))
+            }
         }
     }
 }

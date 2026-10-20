@@ -1,0 +1,7 @@
+{
+  "explore.nav": "Explore",
+  "explore.title": "Explore",
+  "explore.lead": "Ask your data questions without building a dashboard first.",
+  "explore.empty.title": "Explore is not available yet",
+  "explore.empty.text": "Here you will run ad hoc queries against your data sources, with a history of earlier queries."
+}

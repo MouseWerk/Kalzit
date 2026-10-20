@@ -1,12 +1,19 @@
 pub mod auth;
 pub mod health;
+pub mod orgs;
 pub mod setup;
+pub mod table;
 
 use serde::Serialize;
 use sqlx::AnyPool;
 
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
+
+/// Every API route, from each area's table. New areas add their `routes()` here.
+pub fn all() -> Vec<table::RouteDef> {
+    [setup::routes(), auth::routes(), orgs::routes()].into_iter().flatten().collect()
+}
 
 const MAX_NAME_CHARS: usize = 100;
 /// RFC 5321 limit for a forward path.
@@ -89,5 +96,48 @@ mod tests {
         assert!(clean_name("   ", "name").is_err());
         assert!(clean_name(&"x".repeat(101), "name").is_err());
         assert!(clean_name("a\u{0007}b", "name").is_err());
+    }
+}
+
+#[cfg(test)]
+mod access_guard {
+    use crate::authz::Access;
+
+    /// Routes anyone may call, as "METHOD path". Adding one here is a reviewed decision.
+    const PUBLIC: &[&str] = &["GET /setup", "POST /setup", "POST /auth/login", "POST /auth/logout"];
+    /// Routes for any signed-in user, regardless of organization.
+    const AUTHENTICATED: &[&str] = &["GET /me"];
+
+    /// The path layout decides the access rule, so a route cannot be scoped to an organization
+    /// without the membership check, and an org route cannot be declared public by mistake.
+    #[test]
+    fn every_route_has_the_access_its_path_implies() {
+        for def in super::all() {
+            let segments: Vec<&str> = def.path.trim_start_matches('/').split('/').collect();
+            let first = segments[0];
+            let key = format!("{} {}", def.method, def.path);
+            match def.access {
+                Access::Public => assert!(PUBLIC.contains(&key.as_str()), "{key} is public but not listed"),
+                Access::Authenticated => {
+                    assert!(AUTHENTICATED.contains(&key.as_str()), "{key} needs a session but is not listed")
+                }
+                Access::ServerAdmin => assert_eq!(first, "admin", "{}: ServerAdmin routes live under /admin", def.path),
+                Access::OrgMember | Access::Org(_) => assert!(
+                    first == "orgs" && segments.get(1) == Some(&"{orgId}"),
+                    "{}: organization routes are /orgs/{{orgId}}/...",
+                    def.path
+                ),
+            }
+            if first == "orgs" {
+                assert!(
+                    matches!(def.access, Access::Org(_) | Access::OrgMember),
+                    "{} lacks the membership check",
+                    def.path
+                );
+            }
+            if first == "admin" {
+                assert!(matches!(def.access, Access::ServerAdmin), "{} must be ServerAdmin", def.path);
+            }
+        }
     }
 }

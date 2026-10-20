@@ -457,6 +457,102 @@ async fn public_url_origin_ignores_default_port_but_not_scheme() {
 }
 
 #[tokio::test]
+async fn org_routes_check_membership_and_report_permissions() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let owner = t.setup().await;
+    let cookie = owner.session_cookie();
+    let org_id = owner.body["orgs"][0]["id"].as_str().unwrap().to_string();
+
+    let org = t.get(&format!("/api/orgs/{org_id}"), Some(&cookie)).await;
+    assert_eq!(org.status, StatusCode::OK, "{}", org.body);
+    assert_eq!(org.body["role"], "owner");
+    let perms: Vec<&str> = org.body["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+    assert!(perms.contains(&"org:delete") && perms.contains(&"dashboards:write"));
+
+    assert_eq!(t.get(&format!("/api/orgs/{org_id}"), None).await.code(), "unauthenticated");
+
+    // Another organization the owner does not belong to looks like it does not exist.
+    let db = &t.state.db;
+    let other_id = uuid::Uuid::now_v7().to_string();
+    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+        .bind(&other_id)
+        .execute(db)
+        .await
+        .unwrap();
+    let other = t.get(&format!("/api/orgs/{other_id}"), Some(&cookie)).await;
+    assert_eq!((other.status, other.code()), (StatusCode::NOT_FOUND, "not_found"));
+
+    // A viewer sees the org with a narrow permission set.
+    sqlx::query("UPDATE org_members SET role = 'viewer'").execute(db).await.unwrap();
+    let viewer = t.get(&format!("/api/orgs/{org_id}"), Some(&cookie)).await;
+    assert_eq!(viewer.body["role"], "viewer");
+    let perms = viewer.body["permissions"].as_array().unwrap();
+    assert!(perms.iter().all(|p| p != "dashboards:write" && p != "users:write"), "{perms:?}");
+}
+
+/// Every declared organization or admin route refuses strangers before its handler runs: no
+/// session answers 401, a member of another organization 404, a non-admin on /admin 403.
+#[tokio::test]
+async fn every_declared_route_enforces_its_access() {
+    use kalzit::authz::Access;
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let cookie = t.setup().await.session_cookie();
+    sqlx::query("UPDATE users SET is_server_admin = 0").execute(&t.state.db).await.unwrap();
+    let foreign_org = uuid::Uuid::now_v7().to_string();
+    let any_id = uuid::Uuid::now_v7().to_string();
+    let mut checked = 0;
+    for def in kalzit::routes::all() {
+        let path = format!("/api{}", def.path)
+            .replace("{orgId}", &foreign_org)
+            .split('/')
+            .map(|s| if s.starts_with('{') { any_id.as_str() } else { s })
+            .collect::<Vec<_>>()
+            .join("/");
+        let body = (def.method != Method::GET).then(|| json!({}));
+        let (anon_status, member_status) = match def.access {
+            Access::Org(_) | Access::OrgMember => (StatusCode::UNAUTHORIZED, StatusCode::NOT_FOUND),
+            Access::ServerAdmin => (StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN),
+            Access::Public | Access::Authenticated => continue,
+        };
+        let anon = t.send(def.method.clone(), &path, body.clone(), &[]).await;
+        assert_eq!(anon.status, anon_status, "{} {path} without a session", def.method);
+        let member = t.send(def.method.clone(), &path, body, &[("cookie", &cookie)]).await;
+        assert_eq!(member.status, member_status, "{} {path} as a stranger: {}", def.method, member.body);
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+#[tokio::test]
+async fn setup_and_sign_ins_are_audited_without_personal_data() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    t.setup().await;
+    t.login("joerg@example.de", "falsch falsch falsch").await;
+    t.login("niemand@example.de", "falsch falsch falsch").await;
+    t.login("joerg@example.de", PASSWORD).await;
+    let rows: Vec<(String, Option<String>, String)> =
+        sqlx::query_as("SELECT action, actor_user_id, summary FROM audit_events ORDER BY created_at, id")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    let actions: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(actions, ["setup.completed", "auth.sign_in_failed", "auth.sign_in_failed", "auth.signed_in"]);
+    for (_, _, summary) in &rows {
+        assert!(!summary.contains('@'), "no email in audit summaries: {summary}");
+    }
+    assert!(rows[1].2.contains("userId"), "a failed sign-in of a known account names the account id");
+    assert_eq!(rows[2].2, "{}", "an unknown email leaves no trace of what was typed");
+    assert!(rows[3].1.is_some());
+}
+
+#[tokio::test]
+async fn unsupported_methods_answer_in_the_error_format() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    let r = t.send(Method::DELETE, "/api/me", None, &[]).await;
+    assert_eq!((r.status, r.code()), (StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"));
+}
+
+#[tokio::test]
 async fn migrations_are_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     // Spaces, umlauts and a '#' in the path must survive the URL round trip.

@@ -5,8 +5,12 @@ import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { THEME_STORAGE_KEY } from "../theme/theme";
 
-async function openShell(path = "/", user = TEST_USER) {
-  const server = installFakeServer({ signedIn: true, user });
+async function openShell(path = "/", user = TEST_USER, rolePermissions?: Record<string, string[]>) {
+  const server = installFakeServer({
+    signedIn: true,
+    user,
+    ...(rolePermissions === undefined ? {} : { rolePermissions }),
+  });
   const rendered = renderApp(path);
   await screen.findByRole("navigation", { name: "Main navigation" });
   const menuButton = screen.getByRole("button", { name: /Account/ });
@@ -65,6 +69,70 @@ describe("app shell", () => {
     expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull();
+  });
+
+  it.each([
+    ["owner", true],
+    ["admin", true],
+    ["editor", false],
+  ])("shows administration to a member with role %s: %s", async (role, shown) => {
+    // On the admin page, whose body only appears once the permissions are known.
+    await openShell("/admin", {
+      ...TEST_USER,
+      isServerAdmin: false,
+      orgs: [{ id: "o1", name: "Org", role }],
+    });
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    if (shown) {
+      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+      expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
+    } else {
+      expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
+      expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull();
+    }
+  });
+
+  it("hides administration from a custom role with users:read only, as editors have", async () => {
+    await openShell(
+      "/admin",
+      { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "sharer" }] },
+      { sharer: ["users:read", "dashboards:share"] },
+    );
+    expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull();
+  });
+
+  it.each(["users:write", "settings:read", "roles:write", "audit:read"])(
+    "shows administration for a custom role with %s",
+    async (permission) => {
+      await openShell(
+        "/admin",
+        { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
+        { steward: [permission] },
+      );
+      const nav = screen.getByRole("navigation", { name: "Main navigation" });
+      expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
+      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+    },
+  );
+
+  it("shows administration to a server admin who belongs to no organization", async () => {
+    await openShell("/", { ...TEST_USER, isServerAdmin: true, orgs: [] });
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
+  });
+
+  it("asks for the current organization, the first membership", async () => {
+    const { server } = await openShell("/", {
+      ...TEST_USER,
+      orgs: [
+        { id: "first", name: "First", role: "viewer" },
+        { id: "second", name: "Second", role: "owner" },
+      ],
+    });
+    await waitFor(() => expect(server.calls.map((call) => call.path)).toContain("/api/orgs/first"));
+    expect(server.calls.map((call) => call.path)).not.toContain("/api/orgs/second");
   });
 
   it("moves focus to the content with the skip link", async () => {

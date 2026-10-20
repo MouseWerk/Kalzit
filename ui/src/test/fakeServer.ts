@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { Me } from "../api/auth";
+import type { Permission } from "../api/generated/shapes";
 
 /**
  * An in-memory stand-in for the Kalzit server's auth routes, installed as the global fetch.
@@ -12,7 +13,29 @@ export interface FakeServerOptions {
   user?: Me;
   password?: string;
   setupToken?: string;
+  /** Permissions per role name; defaults follow the built-in roles in docs/ARCHITECTURE.md. */
+  rolePermissions?: Record<string, string[]>;
 }
+
+// A representative excerpt of the built-in roles, enough for what the UI decides on.
+// Editors hold users:read so they can pick people to share with; that must not open the
+// administration.
+const ADMIN_PERMISSIONS: Permission[] = [
+  "users:read",
+  "users:write",
+  "roles:read",
+  "roles:write",
+  "audit:read",
+  "settings:read",
+  "settings:write",
+];
+const READ_PERMISSIONS: Permission[] = ["dashboards:read", "folders:read", "analyses:read"];
+export const BUILT_IN_ROLE_PERMISSIONS: Record<string, Permission[]> = {
+  owner: [...ADMIN_PERMISSIONS, ...READ_PERMISSIONS, "org:delete"],
+  admin: [...ADMIN_PERMISSIONS, ...READ_PERMISSIONS],
+  editor: [...READ_PERMISSIONS, "dashboards:write", "datasources:query", "users:read"],
+  viewer: READ_PERMISSIONS,
+};
 
 export const TEST_USER: Me = {
   id: "u1",
@@ -111,6 +134,21 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     }
     if (path === "/api/me" && method === "GET") {
       return state.signedIn ? json(200, state.user) : error(401, "unauthenticated");
+    }
+    const orgPath = /^\/api\/orgs\/([^/]+)$/.exec(path);
+    if (orgPath !== null && method === "GET") {
+      if (!state.signedIn) {
+        return error(401, "unauthenticated");
+      }
+      // Not a member answers not_found, as the server does, so ids cannot be probed.
+      const membership = state.user.orgs.find(
+        (org) => org.id === decodeURIComponent(orgPath[1] ?? ""),
+      );
+      if (membership === undefined) {
+        return error(404, "not_found");
+      }
+      const roles = options.rolePermissions ?? BUILT_IN_ROLE_PERMISSIONS;
+      return json(200, { ...membership, permissions: roles[membership.role] ?? [] });
     }
     return error(404, "not_found");
   }

@@ -1,0 +1,9 @@
+{
+  "admin.nav": "Administration",
+  "admin.title": "Administration",
+  "admin.lead": "Organizations, teams, users and roles.",
+  "admin.empty.title": "Nothing to manage yet",
+  "admin.empty.text": "Managing organizations, teams, users and roles is not available yet.",
+  "admin.forbidden.title": "No access",
+  "admin.forbidden.text": "Only server admins and organization admins can open the administration."
+}

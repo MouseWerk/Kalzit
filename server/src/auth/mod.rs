@@ -16,6 +16,10 @@ impl FromRequestParts<AppState> for CurrentUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        // The access layer already looked the session up for this request.
+        if let Some(user) = parts.extensions.get::<SessionUser>() {
+            return Ok(CurrentUser(user.clone()));
+        }
         let token = session::read_cookie(&parts.headers).ok_or_else(ApiError::unauthenticated)?;
         let now = state.clock.now_ms();
         session::lookup(&state.db, &state.config.sessions, now, &token)

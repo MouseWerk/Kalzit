@@ -90,11 +90,6 @@ export async function fetchMe(): Promise<Me | null> {
   }
 }
 
-/** Whether the user may see the administration area; the server checks every request anyway. */
-export function canAdminister(me: Me): boolean {
-  return me.isServerAdmin || me.orgs.some((org) => org.role === "owner" || org.role === "admin");
-}
-
 export const setupStatusQuery = queryOptions({
   queryKey: ["setup"],
   queryFn: fetchSetupStatus,

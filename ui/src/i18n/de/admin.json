@@ -1,0 +1,9 @@
+{
+  "admin.nav": "Verwaltung",
+  "admin.title": "Verwaltung",
+  "admin.lead": "Organisationen, Teams, Benutzer und Rollen.",
+  "admin.empty.title": "Noch nichts zu verwalten",
+  "admin.empty.text": "Die Verwaltung von Organisationen, Teams, Benutzern und Rollen ist noch nicht verfügbar.",
+  "admin.forbidden.title": "Kein Zugriff",
+  "admin.forbidden.text": "Die Verwaltung können nur Server-Admins und Admins der Organisation öffnen."
+}

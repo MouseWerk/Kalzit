@@ -1,0 +1,7 @@
+{
+  "datasources.nav": "Data sources",
+  "datasources.title": "Data sources",
+  "datasources.lead": "Connections to the databases and services that Kalzit queries.",
+  "datasources.empty.title": "No data sources yet",
+  "datasources.empty.text": "Adding data sources is not available yet. PostgreSQL, MySQL, MongoDB, Neo4j and more will be listed here."
+}
