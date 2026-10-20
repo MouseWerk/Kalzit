@@ -11,13 +11,20 @@ pub struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
+    /// The request field a `validation` error is about (its JSON name), so the UI can mark it.
+    pub field: Option<&'static str>,
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into() }
+        Self { status, code, message: message.into(), field: None }
+    }
+
+    pub fn with_field(mut self, field: &'static str) -> Self {
+        self.field = Some(field);
+        self
     }
 
     pub fn validation(message: impl Into<String>) -> Self {
@@ -51,7 +58,11 @@ impl From<sqlx::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = json!({ "error": { "code": self.code, "message": self.message } });
+        let mut error = json!({ "code": self.code, "message": self.message });
+        if let Some(field) = self.field {
+            error["field"] = json!(field);
+        }
+        let body = json!({ "error": error });
         (self.status, Json(body)).into_response()
     }
 }

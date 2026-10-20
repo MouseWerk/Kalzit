@@ -165,10 +165,10 @@ pub async fn complete(
     }
     state.login_limiter.refund(&limit_key);
 
-    let org_name = clean_name(&req.org_name, "organization name")?;
-    let name = clean_name(&req.name, "name")?;
-    let email = normalize_email(&req.email)?;
-    password::check_policy(&req.password).map_err(ApiError::validation)?;
+    let org_name = clean_name(&req.org_name, "organization name").map_err(|e| e.with_field("orgName"))?;
+    let name = clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
+    let email = normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
+    password::check_policy(&req.password).map_err(|e| ApiError::validation(e).with_field("password"))?;
     let hash = password::hash(req.password).await.map_err(|e| ApiError::internal("hashing password", e))?;
 
     let org_id = new_id();
