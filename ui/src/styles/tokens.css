@@ -1,0 +1,153 @@
+/*
+ * Design tokens. The only file allowed to hold literal colors, font weights, z-index layers and
+ * radii (enforced by styles.test.ts). Colors use light-dark(), so one declaration covers both
+ * color schemes; the theme only decides which scheme applies (data-theme on <html>).
+ *
+ * Contrast targets (checked by styles.test.ts for every theme and scheme): text 4.5:1 on every
+ * background it sits on, meaningful non-text UI (input borders, focus ring) 3:1.
+ */
+@layer tokens {
+  :root {
+    color-scheme: light dark;
+
+    /* Neutral surfaces, a cool granite gray. */
+    --bg: light-dark(oklch(98.6% 0.003 260), oklch(18.5% 0.006 260));
+    --bg-surface: light-dark(oklch(96.4% 0.004 260), oklch(21% 0.007 260));
+    --bg-raised: light-dark(oklch(100% 0 0), oklch(24% 0.008 260));
+    --bg-hover: light-dark(oklch(93.2% 0.006 260), oklch(27.5% 0.009 260));
+    --bg-active: light-dark(oklch(90.6% 0.008 260), oklch(31% 0.011 260));
+    --border: light-dark(oklch(89.5% 0.006 260), oklch(31% 0.009 260));
+    --border-strong: light-dark(oklch(60% 0.012 260), oklch(58% 0.012 260));
+
+    --text: light-dark(oklch(22% 0.012 260), oklch(94.5% 0.004 260));
+    --text-muted: light-dark(oklch(47% 0.014 260), oklch(74% 0.01 260));
+
+    /* Accent: primary actions and links only, never frames for states. */
+    --accent: light-dark(oklch(47% 0.13 255), oklch(76% 0.1 255));
+    --accent-hover: light-dark(oklch(42% 0.13 255), oklch(82% 0.08 255));
+    --on-accent: light-dark(oklch(100% 0 0), oklch(18% 0.02 260));
+    /* A busy primary button ("Wird eingerichtet…") stays readable; opacity would drop below AA. */
+    --accent-busy: light-dark(oklch(88% 0.04 255), oklch(36% 0.06 255));
+    --on-accent-busy: light-dark(oklch(30% 0.06 255), oklch(90% 0.03 255));
+    --accent-text: light-dark(oklch(46% 0.14 255), oklch(79% 0.1 255));
+
+    /* Status colors go into icons, small text and tinted fills. */
+    --danger-text: light-dark(oklch(49% 0.17 27), oklch(77% 0.13 25));
+    --danger-bg: light-dark(oklch(95.6% 0.022 27), oklch(26% 0.045 25));
+    --success-text: light-dark(oklch(47% 0.11 150), oklch(78% 0.13 150));
+
+    --shadow-color: light-dark(oklch(0% 0 0 / 0.12), oklch(0% 0 0 / 0.5));
+    --shadow-menu: 0 4px 16px var(--shadow-color), 0 1px 3px var(--shadow-color);
+
+    /* Focus: neutral, from one token, only on :focus-visible. */
+    --focus-ring: light-dark(oklch(38% 0.012 260), oklch(84% 0.008 260));
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+    --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
+
+    /* Typography: system fonts only, no downloads. */
+    --font-sans:
+      system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell,
+      "Helvetica Neue", Arial, sans-serif;
+    --font-mono:
+      ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.8125rem;
+    --font-size-md: 0.9375rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.5rem;
+    --line-height-tight: 1.25;
+    --line-height: 1.5;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    /* Spacing on a 4 px grid. */
+    --space-0: 0;
+    --space-px: 1px;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+
+    --border-width: 1px;
+
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
+    --radius-pill: 999px;
+
+    /* Layers, lowest first. */
+    --z-base: 0;
+    --z-sticky: 10;
+    --z-menu: 100;
+    --z-dialog: 200;
+    --z-toast: 300;
+    --z-skip-link: 400;
+
+    --sidebar-width: 15rem;
+    --content-max-width: 72rem;
+    --auth-card-width: 26rem;
+    --control-height: 2.25rem;
+    --icon-size: 1.125rem;
+
+    --duration-fast: 120ms;
+    --duration-normal: 180ms;
+    --easing: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+  /*
+   * High contrast follows the system's light or dark preference and pushes every pair well past
+   * AA: pure black and white text, strong borders, a dark or light fill for active rows.
+   */
+  :root[data-theme="contrast"] {
+    color-scheme: light dark;
+
+    --bg: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --bg-surface: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --bg-raised: light-dark(oklch(100% 0 0), oklch(14% 0 0));
+    --bg-hover: light-dark(oklch(91% 0.004 260), oklch(26% 0.006 260));
+    --bg-active: light-dark(oklch(85% 0.006 260), oklch(34% 0.008 260));
+    --border: light-dark(oklch(35% 0 0), oklch(75% 0 0));
+    --border-strong: light-dark(oklch(20% 0 0), oklch(88% 0 0));
+
+    --text: light-dark(oklch(0% 0 0), oklch(100% 0 0));
+    --text-muted: light-dark(oklch(28% 0.01 260), oklch(88% 0.006 260));
+
+    --accent: light-dark(oklch(36% 0.15 255), oklch(84% 0.09 255));
+    --accent-hover: light-dark(oklch(30% 0.14 255), oklch(90% 0.06 255));
+    --on-accent: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --accent-busy: light-dark(oklch(86% 0.05 255), oklch(32% 0.08 255));
+    --on-accent-busy: light-dark(oklch(12% 0.04 255), oklch(98% 0.01 255));
+    --accent-text: light-dark(oklch(36% 0.16 255), oklch(86% 0.09 255));
+
+    --danger-text: light-dark(oklch(40% 0.17 27), oklch(85% 0.1 25));
+    --danger-bg: light-dark(oklch(94% 0.03 27), oklch(22% 0.06 25));
+    --success-text: light-dark(oklch(36% 0.1 150), oklch(86% 0.12 150));
+
+    --focus-ring: light-dark(oklch(0% 0 0), oklch(100% 0 0));
+    --focus-ring-width: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --duration-fast: 0ms;
+      --duration-normal: 0ms;
+    }
+  }
+}
