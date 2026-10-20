@@ -15,7 +15,7 @@ export interface AppOptions {
   retry?: boolean;
 }
 
-export interface GranitApp {
+export interface KalzitApp {
   queryClient: QueryClient;
   router: AppRouter;
 }
@@ -25,7 +25,7 @@ export interface GranitApp {
  * `unauthenticated` (an expired session) drops the cached user and sends the user to sign in,
  * returning to the current page afterwards.
  */
-export function createApp(options: AppOptions = {}): GranitApp {
+export function createApp(options: AppOptions = {}): KalzitApp {
   let router: AppRouter | undefined;
 
   function onError(error: unknown) {
@@ -61,7 +61,7 @@ export function createApp(options: AppOptions = {}): GranitApp {
   return { queryClient, router };
 }
 
-export function App({ app }: { app: GranitApp }) {
+export function App({ app }: { app: KalzitApp }) {
   return (
     <QueryClientProvider client={app.queryClient}>
       <RouterProvider router={app.router} />

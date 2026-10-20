@@ -777,39 +777,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "granit"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "axum-server",
- "clap",
- "hex",
- "http-body-util",
- "ipnet",
- "mime_guess",
- "rand",
- "rcgen",
- "reqwest",
- "rust-embed",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "sqlx",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "tower",
- "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "h2"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1192,6 +1159,39 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kalzit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "axum-server",
+ "clap",
+ "hex",
+ "http-body-util",
+ "ipnet",
+ "mime_guess",
+ "rand",
+ "rcgen",
+ "reqwest",
+ "rust-embed",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

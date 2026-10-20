@@ -1,6 +1,6 @@
-# Working on Granit
+# Working on Kalzit
 
-Granit is a self-hosted dashboard and observability platform (dashboards, data sources, roles,
+Kalzit is a self-hosted dashboard and observability platform (dashboards, data sources, roles,
 teams, plugins) where document databases (MongoDB) and graph databases (Neo4j, Memgraph) are native
 data shapes, not converted to tables, next to all common SQL and metrics sources. Server runs on
 Windows and Linux. Planned stack: Rust server
@@ -22,8 +22,8 @@ where it is more specific.
 - No force push, history rewrite or deletion of unmerged branches without an explicit request.
 - Secrets only in the OS credential store or the environment's secret settings.
 - Product name: Kalzit (calcite, the "sunstone" that makes hidden structure visible). It replaces
-  the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, repository and texts
-  are renamed in their own pull request.
+  the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, `kalzit.toml`,
+  repository and texts carry the new name.
 - Positioning: a platform for visualizing and analyzing data in general, not only monitoring.
 - UI wording: "Explore" stays untranslated in German; "Start" for Home, "Verwaltung" for
   Administration. The UI palette is retuned to Kalzit together with the website.

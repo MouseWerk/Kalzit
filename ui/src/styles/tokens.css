@@ -10,7 +10,7 @@
   :root {
     color-scheme: light dark;
 
-    /* Neutral surfaces, a cool granite gray. */
+    /* Neutral surfaces, a cool stone gray. */
     --bg: light-dark(oklch(98.6% 0.003 260), oklch(18.5% 0.006 260));
     --bg-surface: light-dark(oklch(96.4% 0.004 260), oklch(21% 0.007 260));
     --bg-raised: light-dark(oklch(100% 0 0), oklch(24% 0.008 260));

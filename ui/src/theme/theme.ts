@@ -6,7 +6,7 @@ export const THEMES = ["system", "light", "dark", "contrast"] as const;
 export type Theme = (typeof THEMES)[number];
 
 // public/theme-boot.js reads the same key before the first paint; a test keeps both in sync.
-export const THEME_STORAGE_KEY = "granit.theme";
+export const THEME_STORAGE_KEY = "kalzit.theme";
 
 function isTheme(value: unknown): value is Theme {
   return (THEMES as readonly unknown[]).includes(value);

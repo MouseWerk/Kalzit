@@ -2,7 +2,7 @@ import { vi } from "vitest";
 import type { Me } from "../api/auth";
 
 /**
- * An in-memory stand-in for the Granit server's auth routes, installed as the global fetch.
+ * An in-memory stand-in for the Kalzit server's auth routes, installed as the global fetch.
  * It follows the server contract (status codes, error envelope, cookie session) closely enough
  * for the UI's guards and forms; the real server is covered by its own tests and the e2e suite.
  */

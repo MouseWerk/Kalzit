@@ -53,7 +53,7 @@ impl Running {
 
 /// Runs the server until Ctrl+C or SIGTERM.
 pub async fn run(config: Config) -> Result<()> {
-    let setup_code = std::env::var("GRANIT_SETUP_TOKEN").ok().filter(|s| !s.trim().is_empty());
+    let setup_code = std::env::var("KALZIT_SETUP_TOKEN").ok().filter(|s| !s.trim().is_empty());
     let running = start(config, setup_code).await?;
     let handles = running.handles.clone();
     tokio::spawn(async move {

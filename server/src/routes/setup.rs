@@ -37,7 +37,7 @@ struct OpenGate {
 }
 
 impl SetupGate {
-    /// Opens the gate when the database has no users. `fixed_code` (from `GRANIT_SETUP_TOKEN`)
+    /// Opens the gate when the database has no users. `fixed_code` (from `KALZIT_SETUP_TOKEN`)
     /// replaces the generated code, for automated installs and tests; then no file is written.
     pub async fn init(db: &AnyPool, data_dir: &Path, fixed_code: Option<String>) -> Result<Self> {
         let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(db).await?;
@@ -49,7 +49,7 @@ impl SetupGate {
             Some(code) => {
                 if normalize_code(&code).len() < MIN_FIXED_CODE_CHARS {
                     anyhow::bail!(
-                        "GRANIT_SETUP_TOKEN needs at least {MIN_FIXED_CODE_CHARS} letters or digits; \
+                        "KALZIT_SETUP_TOKEN needs at least {MIN_FIXED_CODE_CHARS} letters or digits; \
                          leave it unset to get a generated code"
                     );
                 }
@@ -61,7 +61,7 @@ impl SetupGate {
                 write_private(&file, &format!("{code}\n"))
                     .with_context(|| format!("writing the setup code to {}", file.display()))?;
                 tracing::info!(
-                    "first start: open Granit in the browser and enter the setup code from {}",
+                    "first start: open Kalzit in the browser and enter the setup code from {}",
                     file.display()
                 );
                 OpenGate { code_hash: hash_code(&code), file: Some(file) }

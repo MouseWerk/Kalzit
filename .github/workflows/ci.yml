@@ -41,14 +41,14 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: granit
-          POSTGRES_PASSWORD: granit
-          POSTGRES_DB: granit
+          POSTGRES_USER: kalzit
+          POSTGRES_PASSWORD: kalzit
+          POSTGRES_DB: kalzit
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U granit" --health-interval 2s --health-timeout 5s --health-retries 20
+          --health-cmd "pg_isready -U kalzit" --health-interval 2s --health-timeout 5s --health-retries 20
     env:
-      GRANIT_TEST_POSTGRES_URL: postgres://granit:granit@localhost:5432/granit
+      KALZIT_TEST_POSTGRES_URL: postgres://kalzit:kalzit@localhost:5432/kalzit
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

@@ -1,4 +1,4 @@
-//! Granit server: a self-hosted platform for visualizing and analyzing data.
+//! Kalzit server: a self-hosted platform for visualizing and analyzing data.
 
 pub mod app;
 pub mod auth;
