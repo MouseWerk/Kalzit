@@ -25,6 +25,11 @@ where it is more specific.
   the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, repository and texts
   are renamed in their own pull request.
 - Positioning: a platform for visualizing and analyzing data in general, not only monitoring.
+- UI wording: "Explore" stays untranslated in German; "Start" for Home, "Verwaltung" for
+  Administration. The UI palette is retuned to Kalzit together with the website.
+- Website: Astro, look inspired by the owner's reference (warm muted palette, atmospheric
+  landscape fading into black, fine grid, light display headline, monospace eyebrow, dark product
+  frame). No company logo strips, no invented figures. Hosting is decided later.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. Alerting comes in M6, after the core.
 - First graph sources: Neo4j and Memgraph. All common standard sources are supported too
