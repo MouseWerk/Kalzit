@@ -3,21 +3,35 @@
  * headers and error mapping live in one place (a guard test fails on `fetch(` anywhere else).
  */
 
-/** Error codes the server sends in `{"error":{"code","message"}}`. */
-export const SERVER_ERROR_CODES = [
-  "validation",
-  "unauthenticated",
-  "forbidden",
-  "invalid_credentials",
-  "rate_limited",
-  "cross_origin",
-  "setup_done",
-  "invalid_setup_token",
-  "not_found",
-  "internal",
-] as const;
+import type { ErrorCode as GeneratedErrorCode } from "./generated/shapes";
 
-export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];
+/** Error codes the server sends in `{"error":{"code","message","field"?}}`, generated from it. */
+export type ServerErrorCode = GeneratedErrorCode;
+
+// The runtime check needs values, the generated file has only types. A Record over the generated
+// union makes the typecheck fail when the server adds or drops a code and this is not updated.
+const SERVER_ERROR_CODE_SET: Record<ServerErrorCode, true> = {
+  validation: true,
+  unauthenticated: true,
+  forbidden: true,
+  not_found: true,
+  method_not_allowed: true,
+  payload_too_large: true,
+  conflict: true,
+  version_conflict: true,
+  rate_limited: true,
+  cross_origin: true,
+  invalid_credentials: true,
+  setup_done: true,
+  invalid_setup_token: true,
+  datasource_error: true,
+  datasource_target_blocked: true,
+  query_timeout: true,
+  query_rejected: true,
+  internal: true,
+};
+
+export const SERVER_ERROR_CODES = Object.keys(SERVER_ERROR_CODE_SET) as ServerErrorCode[];
 
 /**
  * Codes the client adds itself: `network` when the server could not be reached at all,
@@ -49,7 +63,7 @@ export function isApiError(error: unknown, code?: ErrorCode): error is ApiError 
 }
 
 function isServerErrorCode(value: unknown): value is ServerErrorCode {
-  return (SERVER_ERROR_CODES as readonly unknown[]).includes(value);
+  return typeof value === "string" && Object.hasOwn(SERVER_ERROR_CODE_SET, value);
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,6 +82,12 @@ function codeForStatus(status: number): ServerErrorCode {
       return "forbidden";
     case 404:
       return "not_found";
+    case 405:
+      return "method_not_allowed";
+    case 409:
+      return "conflict";
+    case 413:
+      return "payload_too_large";
     case 429:
       return "rate_limited";
     default:

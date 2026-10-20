@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { generatedUnion } from "../test/generated";
 import { fetchMe, isMe, login } from "./auth";
-import { ApiError, errorFromResponse, request } from "./client";
+import { ApiError, errorFromResponse, request, SERVER_ERROR_CODES } from "./client";
 
 function respond(status: number, body: string | null, contentType = "application/json") {
   const fetchMock = vi.fn(
@@ -59,18 +60,11 @@ describe("request", () => {
     expect(error.message).toBe("bad login");
   });
 
-  it.each([
-    "validation",
-    "unauthenticated",
-    "forbidden",
-    "invalid_credentials",
-    "rate_limited",
-    "cross_origin",
-    "setup_done",
-    "invalid_setup_token",
-    "not_found",
-    "internal",
-  ])("keeps the known code %s", async (code) => {
+  it("knows exactly the server's error codes", () => {
+    expect([...SERVER_ERROR_CODES].sort()).toEqual(generatedUnion("ErrorCode").sort());
+  });
+
+  it.each(generatedUnion("ErrorCode"))("keeps the server code %s", async (code) => {
     respond(400, JSON.stringify({ error: { code, message: "" } }));
     expect((await failure(request("GET", "/api/x"))).code).toBe(code);
   });
@@ -85,6 +79,9 @@ describe("request", () => {
     [401, "unauthenticated"],
     [403, "forbidden"],
     [404, "not_found"],
+    [405, "method_not_allowed"],
+    [409, "conflict"],
+    [413, "payload_too_large"],
     [429, "rate_limited"],
     [500, "internal"],
     [502, "internal"],

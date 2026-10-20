@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { generatedUnion } from "../test/generated";
 import { de, en } from "./catalogs";
 import {
   detectLanguage,
@@ -173,6 +174,19 @@ describe("glossary", () => {
     expect(en["setup.token"]).toBe("Setup code");
     expect(de["datasources.nav"]).toBe("Datenquellen");
     expect(en["datasources.nav"]).toBe("Data sources");
+  });
+});
+
+describe("error texts", () => {
+  // The UI shows its own text per code, never the server's message alone.
+  it.each(generatedUnion("ErrorCode"))("has a German and English text for %s", (code) => {
+    expect(de).toHaveProperty([`errors.${code}`]);
+    expect(en).toHaveProperty([`errors.${code}`]);
+  });
+
+  it.each(["network", "invalid_response"])("has texts for the client code %s", (code) => {
+    expect(de).toHaveProperty([`errors.${code}`]);
+    expect(en).toHaveProperty([`errors.${code}`]);
   });
 });
 
