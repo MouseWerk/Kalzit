@@ -366,6 +366,10 @@
       flex-wrap: wrap;
       gap: var(--space-1);
     }
+
+    .shell__main {
+      padding: var(--space-6) var(--space-4) var(--space-10);
+    }
   }
 
   /* Phones: icons only; the label stays as the accessible name and the title as a tooltip. */
@@ -381,10 +385,6 @@
       overflow: hidden;
       clip-path: inset(50%);
       white-space: nowrap;
-    }
-
-    .shell__main {
-      padding: var(--space-6) var(--space-4) var(--space-10);
     }
   }
 

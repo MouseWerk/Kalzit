@@ -213,6 +213,16 @@ describe("small screens", () => {
     expect(nav.find((d) => d.property.startsWith("overflow"))?.value).toBe("visible");
   });
 
+  it("uses the compact page padding for the whole single-column layout", () => {
+    const main = inMedia("@media (max-width: 48rem)", ".shell__main");
+    expect(main.some((d) => d.property === "padding")).toBe(true);
+    // The phone query only turns navigation labels into icons; layout belongs to 48rem.
+    const phone = rules
+      .filter((rule) => rule.context.includes("@media (max-width: 25rem)"))
+      .map((rule) => rule.selector);
+    expect(phone.sort()).toEqual([".nav-link__label", ".shell__nav-list"]);
+  });
+
   it("shows only icons on phones, keeping the label for screen readers", () => {
     const label = inMedia("@media (max-width: 25rem)", ".nav-link__label");
     expect(label).toContainEqual({ property: "clip-path", value: "inset(50%)" });
