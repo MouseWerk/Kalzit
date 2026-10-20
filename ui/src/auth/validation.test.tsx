@@ -143,6 +143,12 @@ describe("safeRedirect", () => {
     "/\\evil.example/",
     "\\\\evil.example",
     "/\tevil",
+    // Dot segments that collapse into a protocol-relative URL after normalization.
+    "/..//evil.example/x",
+    "/.//evil.example",
+    "/%2e%2e//evil.example",
+    "/%2E%2E//evil.example",
+    "/a/../..//evil.example",
     "javascript:alert(1)",
     "dashboards",
     "",

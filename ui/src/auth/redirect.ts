@@ -26,5 +26,11 @@ export function safeRedirect(value: unknown): string | undefined {
   if (url.origin !== BASE || AUTH_PATHS.has(url.pathname)) {
     return undefined;
   }
-  return `${url.pathname}${url.search}${url.hash}`;
+  // Dot segments collapse while parsing ("/..//evil.example" becomes "//evil.example"), so the
+  // normalized result is checked again: a leading "//" would leave the site when navigated to.
+  const normalized = `${url.pathname}${url.search}${url.hash}`;
+  if (normalized.startsWith("//") || normalized.includes("\\")) {
+    return undefined;
+  }
+  return normalized;
 }
