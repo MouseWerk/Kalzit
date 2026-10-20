@@ -27,12 +27,13 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   `/api/admin/...`, the signed-in user under `/api/me`.
 - Errors: `{"error": {"code", "message", "field"?}}` (`ErrorEnvelope`). `code` is stable and
   translated by the UI; `message` is English for logs and API clients; `field` names the request
-  field of a `validation` error. Codes: `validation`, `unauthenticated`, `forbidden`,
+  field of a `validation` error. The list lives in `error::ERROR_CODES`; the UI's `ErrorCode`
+  type is generated from it and every code has a translation (tested). Codes: `validation`, `unauthenticated`, `forbidden`,
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
   `rate_limited`, `cross_origin`, `invalid_credentials`, `setup_done`, `invalid_setup_token`,
   `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `internal`.
 - A resource the caller may not see answers `not_found`, so ids cannot be probed: other
-  organizations, and resources inside the caller's organization that a grant hides. `forbidden`
+  organizations, and restricted folders (and their dashboards) the caller has no grant for. `forbidden`
   is for what the caller can see but not do. `/api/admin` answers `forbidden` to signed-in
   non-admins: that the admin area exists is no secret.
 - Lists answer `Page<T>`: `{"items": [...], "nextCursor": string | null}`. `?limit=` defaults to
@@ -72,7 +73,8 @@ Guards that keep this airtight:
   member of another organization (404) and as a non-admin (403).
 - Clippy forbids `Router::route`, `nest`, `merge` and `route_service` outside the router assembly
   (`clippy.toml`), so a route cannot be added past the tables.
-- `orgId` must be a UUID; anything else is `not_found` without a lookup.
+- `orgId` must be a canonical UUID (lowercase, hyphenated); anything else is `not_found` without
+  a lookup.
 - Single resources: after the org-level rule, handlers call
   `authz::check_resource(&db, &ctx, permission, Resource::Folder(id))` (also `Dashboard`,
   `Datasource`).
@@ -96,14 +98,23 @@ Guards that keep this airtight:
     for admins.
   - `admin`: everything except `org:delete`. `owner`: everything.
 - **Custom roles**: a named set of permissions per organization.
+- **Restricted folders**: a folder can be marked restricted. Then only members with a grant on it
+  (directly, through a team or a role), admins and owners see it and its subfolders and
+  dashboards; for everyone else they do not exist (`not_found`). Unrestricted folders follow the
+  role defaults. Grants can extend a member's rights on any folder, dashboard or data source.
 - **Grants**: a member's org role, plus the roles of their teams, plus resource grants
   (`resource_grants`: subject user/team/role, resource folder/dashboard/datasource, level
   `view|edit|admin` for folders and dashboards, `query|edit|admin` for data sources). Effective
   permission = union. Folder grants inherit to subfolders and dashboards. `resource_grants` has no
   foreign keys (it points at three tables); purging a resource deletes its grants in the same
   transaction.
-- `ctx.check(permission)`, `authz::check_resource(...)`, `authz::explain(&ctx, permission)` (the
-  grants that allow it, for the "why can I" dialog).
+- `ctx.check(permission)`; `authz::check_resource(&db, &ctx, permission, resource)` answers
+  `not_found` when the caller cannot see the resource and `forbidden` when they see it but may not
+  do this; `authz::explain(&ctx, permission, Option<Resource>)` lists the grants that allow it
+  (the "why can I" dialog).
+- Administration in the UI is shown to server admins and to members holding an admin-level
+  permission (`users:write`, `settings:read`, `roles:write`, `audit:read`); editors do not see it,
+  although they may read the user list to share dashboards.
 - The last owner of an organization and the last server admin cannot be removed or demoted;
   nobody can grant permissions they do not hold.
 - Server admins administer the server, they are not automatically members of every organization.
@@ -132,7 +143,11 @@ type QueryResult =
 - Query API: `POST /api/orgs/{orgId}/query` (`QueryRequest`, needs `datasources:query`) and
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
   (`PanelQueryRequest`, runs the panel's stored queries, needs `dashboards:read` on that
-  dashboard). Both answer `QueryResponse`: per `refId` either `{result}` or `{error}`. Queries run
+  dashboard). Because stored queries run with the viewer's rights, **saving a dashboard checks
+  `datasources:query` on every data source its panels and variables use** (stream B), so an editor
+  cannot reach a data source through a panel they could not query directly. Query-type dashboard
+  variables run the same way through
+  `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` (stream C). Both answer `QueryResponse`: per `refId` either `{result}` or `{error}`. Queries run
   in parallel with a per-user concurrency limit and are cancelled when the client goes away.
   `QueryItem.cursor`/`limit` page through a `DocumentSet` (M2).
 
@@ -159,9 +174,18 @@ type QueryResult =
   `fd00:ec2::254`), and SQLite files outside the directories a server admin allowed
   (`datasources.sqlite_dirs`, empty by default, never including the data directory). A server
   admin can additionally restrict sources to a list of allowed hosts and networks
-  (`datasources.allowed_targets`). Names are resolved and checked at connect time, on every
-  connect (DNS rebinding). Every HTTP-based source uses the one HTTP client factory (proxy,
-  certificates, timeouts, target check); a guard test fails if a source builds its own client.
+  (`datasources.allowed_targets`). Rules that make this hold:
+  - Names are resolved once per connect, the resolved address is checked, and the driver connects
+    to that address (the name is kept only for TLS server name checks), so DNS rebinding cannot
+    swap the target.
+  - Every HTTP-based source uses the one HTTP client factory (proxy, certificates, timeouts, target
+    check on every redirect); a guard test fails if a source builds its own client.
+  - "Kalzit's own PostgreSQL" is detected after connecting by comparing
+    `pg_control_system().system_identifier` and `current_database()` with Kalzit's own connection,
+    not by host name (aliases such as `localhost`, `::1` or a container name).
+  - SQLite paths are canonicalized (symlinks and junctions resolved) before the directory check.
+  - MySQL/MariaDB clients run with `local_infile` disabled, so a hostile server cannot ask Kalzit
+    to send local files; a test covers it.
 - **Read-only.** The real defence is a read-only, least-privilege database login; the settings
   form says so for every engine. On top of it, SQL sources accept one `SELECT`/`WITH` statement
   (parsed with `sqlparser`) and reject `INTO` (`INTO OUTFILE`, `SELECT ... INTO table`), locking
@@ -220,14 +244,18 @@ type QueryResult =
 ## Settings and audit
 
 - `server_settings` (key, JSON value, version, updated_by, updated_at) and `org_settings` (org
-  id, key, ...). A registry in code lists every setting with scope (server or organization),
-  type, default, validation and whether it may be changed in the UI; read with
-  `settings::get(&state, key)` / `settings::get_org(&state, org_id, key)`. Effective server value =
+  id, key, ...). `settings::REGISTRY` lists every setting with scope (server or organization),
+  default and whether the UI may change it; read with `settings::get(&state, key)` /
+  `settings::get_org(&state, org_id, key)`. The foundation ships the registry and both functions
+  answering defaults; stream B adds the layers and tables behind the same signatures. Effective server value =
   environment > file > database > default; `GET /api/admin/settings` reports value and source,
   and settings from the environment or file are read-only in the UI.
 - `audit_events`: written with `audit::record(&mut tx, &AuditEvent { .. })` inside the
   transaction of the change. Actions are `<area>.<verb>` (`setup.completed`, `auth.signed_in`,
-  `team.created`). Summaries hold ids and changed field names, never secrets.
+  `auth.sign_in_failed`, `team.created`). Summaries hold ids and changed field names, never
+  secrets and never what a user typed (a failed sign-in records the account id if it exists, not
+  the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
+  since they hold client addresses.
 
 ## Migrations
 
@@ -255,8 +283,13 @@ changed only by the orchestrator.
 | D: admin UI | `ui/src/features/admin/`, `ui/src/i18n/*/admin.json` |
 | E: data UI | `ui/src/features/datasources/`, `ui/src/features/dashboards/`, `ui/src/features/explore/`, `ui/src/panels/`, their catalog files |
 
-Shared, orchestrator only: `routes/mod.rs` (one line per new route table), `lib.rs`,
-`Cargo.toml`, `ui/package.json`, `ui/src/features/nav.ts`, this document.
+Shared, orchestrator only (a stream that needs a change there asks for it, with the exact edit):
+`routes/mod.rs` (one line per new route table), `lib.rs`, `Cargo.toml`, `config.rs`, `app.rs`
+(`AppState`), `error.rs` (including `ERROR_CODES`), `shapes.rs` and its generated
+`ui/src/api/generated/shapes.ts`, `settings.rs` registry entries (stream B owns the rest of the
+file), `ui/package.json`, `ui/src/api/client.ts`, `ui/src/i18n/catalogs.ts`,
+`ui/src/i18n/*/core.json`, `ui/src/features/nav.ts`, this document. Stream C reads settings only
+through `settings::get`; new registry entries are requested from the orchestrator.
 
 ## UI structure
 
