@@ -31,6 +31,15 @@ describe("app shell", () => {
     expect(within(nav).getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
   });
 
+  it("gives every navigation link a name and a tooltip for the icon-only phone layout", async () => {
+    await openShell();
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    for (const link of within(nav).getAllByRole("link")) {
+      expect(link.getAttribute("title")).toBe(link.textContent);
+      expect(link.querySelector(".nav-link__label")?.textContent).toBe(link.textContent);
+    }
+  });
+
   it("shows the empty states of the placeholder pages", async () => {
     const { user } = await openShell();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });

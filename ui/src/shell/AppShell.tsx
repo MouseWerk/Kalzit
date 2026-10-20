@@ -85,9 +85,15 @@ export function AppShell() {
           <ul className="shell__nav-list">
             {items.map((item) => (
               <li key={item.to}>
-                <Link to={item.to} className="nav-link" activeOptions={{ exact: item.to === "/" }}>
+                {/* The title is the tooltip when narrow screens show only the icon. */}
+                <Link
+                  to={item.to}
+                  className="nav-link"
+                  title={t(item.label)}
+                  activeOptions={{ exact: item.to === "/" }}
+                >
                   <Icon name={item.icon} />
-                  <span className="truncate">{t(item.label)}</span>
+                  <span className="nav-link__label">{t(item.label)}</span>
                 </Link>
               </li>
             ))}

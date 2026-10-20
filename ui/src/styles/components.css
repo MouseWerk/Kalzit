@@ -354,16 +354,33 @@
       min-width: 0;
     }
 
+    /* The links wrap instead of scrolling, so no label is ever cut off at the edge. */
     .shell__nav {
       flex: 1 0 100%;
       order: 3;
-      overflow-x: auto;
-      overflow-y: hidden;
+      overflow: visible;
     }
 
     .shell__nav-list {
       display: flex;
+      flex-wrap: wrap;
       gap: var(--space-1);
+    }
+  }
+
+  /* Phones: icons only; the label stays as the accessible name and the title as a tooltip. */
+  @media (max-width: 25rem) {
+    .shell__nav-list {
+      justify-content: space-between;
+    }
+
+    .nav-link__label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
 
     .shell__main {

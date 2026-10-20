@@ -200,6 +200,26 @@ describe("no accent frames for states", () => {
   });
 });
 
+describe("small screens", () => {
+  const rules = rulesByFile.find(({ name }) => name === "components.css")?.rules ?? [];
+  const inMedia = (media: string, selector: string) =>
+    rules.find((rule) => rule.selector === selector && rule.context.includes(media))
+      ?.declarations ?? [];
+
+  it("wraps the navigation instead of scrolling it, so no label is cut", () => {
+    const list = inMedia("@media (max-width: 48rem)", ".shell__nav-list");
+    expect(list).toContainEqual({ property: "flex-wrap", value: "wrap" });
+    const nav = inMedia("@media (max-width: 48rem)", ".shell__nav");
+    expect(nav.find((d) => d.property.startsWith("overflow"))?.value).toBe("visible");
+  });
+
+  it("shows only icons on phones, keeping the label for screen readers", () => {
+    const label = inMedia("@media (max-width: 25rem)", ".nav-link__label");
+    expect(label).toContainEqual({ property: "clip-path", value: "inset(50%)" });
+    expect(label.some((d) => d.property === "display" && d.value === "none")).toBe(false);
+  });
+});
+
 describe("motion and typography", () => {
   it("animates no layout properties", () => {
     const LAYOUT = /\b(width|height|margin|padding|top|left|right|bottom|inset|font-size|all)\b/;
