@@ -21,6 +21,9 @@ where it is more specific.
   sends the owner a short summary per PR.
 - No force push, history rewrite or deletion of unmerged branches without an explicit request.
 - Secrets only in the OS credential store or the environment's secret settings.
+- Product name: Kalzit (calcite, the "sunstone" that makes hidden structure visible). It replaces
+  the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, repository and texts
+  are renamed in their own pull request.
 - Positioning: a platform for visualizing and analyzing data in general, not only monitoring.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. Alerting comes in M6, after the core.
