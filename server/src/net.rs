@@ -118,7 +118,13 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
             host,
             "rejected a cross-origin request; behind a reverse proxy, set server.public_url or security.trusted_proxies"
         );
-        return ApiError::forbidden("cross-origin request rejected").into_response();
+        // Its own code, so the UI can tell the admin which setting to check instead of "no access".
+        return ApiError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "cross_origin",
+            "cross-origin request rejected; behind a reverse proxy set server.public_url or security.trusted_proxies",
+        )
+        .into_response();
     }
     next.run(req).await
 }

@@ -237,7 +237,7 @@ async fn cross_origin_writes_are_rejected() {
     t.setup().await;
     let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
     let evil = t.send(Method::POST, "/api/auth/login", Some(body.clone()), &[("origin", "https://evil.example")]).await;
-    assert_eq!((evil.status, evil.code()), (StatusCode::FORBIDDEN, "forbidden"));
+    assert_eq!((evil.status, evil.code()), (StatusCode::FORBIDDEN, "cross_origin"));
     let same = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "http://granit.test")]).await;
     assert_eq!(same.status, StatusCode::OK);
 }
