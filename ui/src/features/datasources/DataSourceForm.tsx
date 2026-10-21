@@ -24,6 +24,7 @@ import {
   type Health,
   kindsQuery,
   type SettingSpec,
+  sourceAccess,
   updateDatasource,
 } from "./api";
 import "./datasources.css";
@@ -64,7 +65,14 @@ function serverFieldText(
     return { field, text: t("datasources.secret.reenter") };
   }
   if (error.code === "datasource_target_blocked") {
-    return { field, text: t("errors.datasource_target_blocked") };
+    // A SQLite path has its own rules (allowed folders, not Kalzit's data); say those.
+    return {
+      field,
+      text:
+        field === "path"
+          ? t("datasources.form.pathBlocked")
+          : t("errors.datasource_target_blocked"),
+    };
   }
   if (error.code === "conflict" && field === "name") {
     return { field, text: t("datasources.form.nameTaken") };
@@ -239,9 +247,12 @@ function EditDataSource({ orgId }: { orgId: string }) {
   if (kind === undefined) {
     return <FormAlert>{t("datasources.form.unknownKind")}</FormAlert>;
   }
-  // Testing needs datasources:query, which admins hold with the built-in roles; a custom role
-  // may allow changing sources without querying them.
-  const canTest = permissions.has("datasources:query");
+  // The source's own rights (grants included), else the org role. Testing needs query, which
+  // admins hold with the built-in roles; a custom role may allow changing without querying.
+  const access = sourceAccess(source.data.access, permissions);
+  const canTest = access.query;
+  // Where the source connects needs the org-wide write or an admin grant (permissions).
+  const targetLocked = !(permissions.has("datasources:write") || access.permissions);
 
   return (
     <div className="ds-edit">
@@ -253,7 +264,9 @@ function EditDataSource({ orgId }: { orgId: string }) {
         error={save.error}
         submitLabel={t("datasources.form.save")}
         onSubmit={(output) => save.mutate(output)}
-        {...(canTest
+        readOnly={!access.write}
+        targetLocked={targetLocked}
+        {...(canTest && access.write
           ? {
               onSubmitAndTest: (output: FormOutput) =>
                 save.mutate(output, { onSuccess: () => test.mutate() }),
@@ -263,16 +276,33 @@ function EditDataSource({ orgId }: { orgId: string }) {
         testing={test.isPending}
         saved={save.isSuccess}
       />
+      {canTest && !access.write ? (
+        <div className="form__actions">
+          <button
+            type="button"
+            className="button button--secondary"
+            disabled={test.isPending}
+            onClick={() => test.mutate()}
+          >
+            {test.isPending ? t("datasources.health.testing") : t("datasources.health.test")}
+          </button>
+        </div>
+      ) : null}
       <HealthResult health={health} error={test.error} />
       <div className="ds-edit__footer">
-        <AccessButton resource={{ kind: "datasource", id: datasourceId, name: source.data.name }} />
-        <button
-          type="button"
-          className="button button--secondary"
-          onClick={() => setConfirmDelete(true)}
-        >
-          {t("datasources.delete")}
-        </button>
+        <AccessButton
+          resource={{ kind: "datasource", id: datasourceId, name: source.data.name }}
+          allowed={source.data.access?.permissions}
+        />
+        {access.write ? (
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setConfirmDelete(true)}
+          >
+            {t("datasources.delete")}
+          </button>
+        ) : null}
       </div>
       {confirmDelete ? (
         <ConfirmDialog
@@ -358,6 +388,10 @@ interface SettingsFormProps {
   onTest?: () => void;
   testing?: boolean;
   saved?: boolean;
+  /** The caller may use the source but not change it: fields show, nothing can be saved. */
+  readOnly?: boolean;
+  /** The caller may change the source but not where it connects: target fields are locked. */
+  targetLocked?: boolean;
 }
 
 /**
@@ -391,6 +425,8 @@ function SettingsForm({
   onTest,
   testing = false,
   saved = false,
+  readOnly = false,
+  targetLocked = false,
 }: SettingsFormProps) {
   const { t } = useI18n();
   const plain = kind.settings.filter((spec) => !spec.secret);
@@ -569,6 +605,11 @@ function SettingsForm({
         <Icon name="lock" />
         <span>{readOnlyHint(t, kind)}</span>
       </div>
+      {readOnly ? (
+        <p className="field__hint">{t("datasources.form.readOnlyAccess")}</p>
+      ) : targetLocked && plain.some((spec) => spec.target) ? (
+        <p className="field__hint">{t("datasources.form.targetLocked")}</p>
+      ) : null}
       <FormAlert>
         {error === null || server !== null
           ? null
@@ -586,6 +627,7 @@ function SettingsForm({
         error={fieldError("name")}
         autoComplete="off"
         required
+        disabled={readOnly}
       />
       {plain.map((spec) => (
         <SettingField
@@ -594,55 +636,60 @@ function SettingsForm({
           value={values[spec.name] ?? ""}
           error={fieldError(spec.name)}
           onChange={(value) => change(spec.name, value)}
+          disabled={readOnly || (targetLocked && spec.target)}
         />
       ))}
-      {secret.map((spec) => (
-        <SecretField
-          key={spec.name}
-          spec={spec}
-          state={secrets[spec.name] ?? { mode: "keep" }}
-          stored={initial?.secrets[spec.name]?.set === true}
-          error={fieldError(spec.name)}
-          onChange={(state) => {
-            setSecrets((current) => ({ ...current, [spec.name]: state }));
-            setDirty(true);
-          }}
-        />
-      ))}
-      <div className="form__actions">
-        <button
-          type="submit"
-          className="button button--primary"
-          disabled={busy}
-          aria-disabled={busy}
-        >
-          {busy ? t("datasources.form.saving") : submitLabel}
-        </button>
-        {onTest === undefined ? null : (
+      {readOnly
+        ? null
+        : secret.map((spec) => (
+            <SecretField
+              key={spec.name}
+              spec={spec}
+              state={secrets[spec.name] ?? { mode: "keep" }}
+              stored={initial?.secrets[spec.name]?.set === true}
+              error={fieldError(spec.name)}
+              onChange={(state) => {
+                setSecrets((current) => ({ ...current, [spec.name]: state }));
+                setDirty(true);
+              }}
+            />
+          ))}
+      {readOnly ? null : (
+        <div className="form__actions">
           <button
-            type="button"
-            className="button button--secondary"
-            disabled={busy || testing}
-            onClick={() => {
-              if (dirty) {
-                // Tests run against what is stored, so unsaved changes are saved first.
-                submit(true);
-              } else {
-                onTest();
-              }
-            }}
+            type="submit"
+            className="button button--primary"
+            disabled={busy}
+            aria-disabled={busy}
           >
-            {testing
-              ? t("datasources.health.testing")
-              : dirty
-                ? t("datasources.health.saveAndTest")
-                : t("datasources.health.test")}
+            {busy ? t("datasources.form.saving") : submitLabel}
           </button>
-        )}
-        <span className="ds-form__saved" role="status">
-          {saved && !dirty ? t("datasources.form.saved") : ""}
-        </span>
-      </div>
+          {onTest === undefined ? null : (
+            <button
+              type="button"
+              className="button button--secondary"
+              disabled={busy || testing}
+              onClick={() => {
+                if (dirty) {
+                  // Tests run against what is stored, so unsaved changes are saved first.
+                  submit(true);
+                } else {
+                  onTest();
+                }
+              }}
+            >
+              {testing
+                ? t("datasources.health.testing")
+                : dirty
+                  ? t("datasources.health.saveAndTest")
+                  : t("datasources.health.test")}
+            </button>
+          )}
+          <span className="ds-form__saved" role="status">
+            {saved && !dirty ? t("datasources.form.saved") : ""}
+          </span>
+        </div>
+      )}
     </form>
   );
 }
@@ -652,11 +699,13 @@ function SettingField({
   value,
   error,
   onChange,
+  disabled = false,
 }: {
   spec: SettingSpec;
   value: string | boolean;
   error: string | undefined;
   onChange: (value: string | boolean) => void;
+  disabled?: boolean;
 }) {
   const { t } = useI18n();
   const id = useId();
@@ -678,6 +727,7 @@ function SettingField({
             id={id}
             type="checkbox"
             checked={value === true}
+            disabled={disabled}
             onChange={(event) => onChange(event.currentTarget.checked)}
           />
           {label}
@@ -696,6 +746,7 @@ function SettingField({
           id={id}
           className="select"
           value={String(value)}
+          disabled={disabled}
           onChange={(event) => onChange(event.currentTarget.value)}
           aria-invalid={error === undefined ? undefined : true}
           aria-describedby={error === undefined ? undefined : errorId}
@@ -725,6 +776,7 @@ function SettingField({
           className="input input--mono ds-textarea"
           rows={5}
           value={String(value)}
+          disabled={disabled}
           spellCheck={false}
           onChange={(event) => onChange(event.currentTarget.value)}
           aria-invalid={error === undefined ? undefined : true}
@@ -744,6 +796,7 @@ function SettingField({
       inputMode={spec.type === "number" ? "numeric" : undefined}
       autoComplete="off"
       spellCheck={false}
+      disabled={disabled}
     />
   );
 }

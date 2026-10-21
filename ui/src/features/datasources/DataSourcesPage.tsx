@@ -17,6 +17,7 @@ import {
   type Health,
   kindsQuery,
   restoreDatasource,
+  sourceAccess,
 } from "./api";
 import { HealthResult } from "./DataSourceForm";
 import "./datasources.css";
@@ -36,23 +37,16 @@ export function DataSourcesPage() {
         {t("datasources.noOrg.text")}
       </EmptyState>
     );
-  } else if (trash !== true || permissions.has("datasources:write")) {
-    // Every member may ask: the list holds the sources the caller may read or query, through
-    // the role or a grant on the source, and is empty otherwise.
+  } else {
+    // Every member may ask: the list holds the sources the caller may read or query, and the
+    // trash those they may restore, through the role or a grant on the source.
     body = (
       <DataSourceList
         key={trash === true ? "trash" : "list"}
         orgId={org.id}
         trash={trash === true}
-        canWrite={permissions.has("datasources:write")}
-        canTest={permissions.has("datasources:query")}
+        canCreate={permissions.has("datasources:write")}
       />
-    );
-  } else if (permissions.loaded) {
-    body = (
-      <EmptyState icon="lock" title={t("datasources.forbidden.title")}>
-        {t("datasources.forbidden.text")}
-      </EmptyState>
     );
   }
   return (
@@ -68,15 +62,15 @@ export function DataSourcesPage() {
 function DataSourceList({
   orgId,
   trash,
-  canWrite,
-  canTest,
+  canCreate,
 }: {
   orgId: string;
   trash: boolean;
-  canWrite: boolean;
-  canTest: boolean;
+  /** Adding a source needs the org-wide `datasources:write`; a grant is always on one source. */
+  canCreate: boolean;
 }) {
   const { t, language } = useI18n();
+  const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
   const navigate = listRoute.useNavigate();
   const { deleted } = listRoute.useSearch();
@@ -98,6 +92,10 @@ function DataSourceList({
     },
   });
   const kindName = (kind: string) => kinds.data?.find((k) => k.kind === kind)?.name ?? kind;
+  const items = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const accessOf = (source: DatasourceSummary) => sourceAccess(source.access, permissions);
+  // The trash lists what the caller may restore: offer it to those who may change a source.
+  const canSeeTrash = canCreate || items.some((source) => accessOf(source).write);
   const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
 
   const toolbar = trash ? (
@@ -106,11 +104,13 @@ function DataSourceList({
         {t("datasources.trash.back")}
       </Link>
     </div>
-  ) : canWrite ? (
+  ) : canCreate || canSeeTrash ? (
     <div className="toolbar">
-      <Link to="/data-sources/new" search={{}} className="button button--primary">
-        {t("datasources.add")}
-      </Link>
+      {canCreate ? (
+        <Link to="/data-sources/new" search={{}} className="button button--primary">
+          {t("datasources.add")}
+        </Link>
+      ) : null}
       <Link to="/data-sources" search={{ trash: true }} className="versions__back">
         {t("datasources.trash.link")}
       </Link>
@@ -139,7 +139,6 @@ function DataSourceList({
   if (list.isError) {
     return <FormAlert>{errorMessage(t, list.error)}</FormAlert>;
   }
-  const items = list.data.pages.flatMap((page) => page.items);
   if (items.length === 0) {
     return (
       <>
@@ -151,7 +150,7 @@ function DataSourceList({
           </EmptyState>
         ) : (
           <EmptyState icon="dataSources" title={t("datasources.empty.title")}>
-            {canWrite ? t("datasources.empty.text") : t("datasources.empty.textReadOnly")}
+            {canCreate ? t("datasources.empty.text") : t("datasources.empty.textReadOnly")}
           </EmptyState>
         )}
       </>
@@ -183,8 +182,8 @@ function DataSourceList({
               source={source}
               kindName={kindName(source.kind)}
               date={dateFormat.format(trash ? (source.deletedAt ?? 0) : source.createdAt)}
-              link={canWrite && !trash}
-              canTest={canTest && !trash}
+              link={accessOf(source).write && !trash}
+              canTest={accessOf(source).query && !trash}
               onRestore={trash ? () => restore.mutate(source.id) : undefined}
             />
           ))}

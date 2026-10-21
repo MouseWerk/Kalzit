@@ -112,5 +112,8 @@
   "datasources.kinds.sqlite.hint": "Kalzit opens SQLite files read-only, and only from folders a server admin allowed.",
   "datasources.kinds.prometheus.hint": "Use credentials that can only read, if your server needs any.",
   "datasources.secret.reenter": "The connection target changed, so enter this again (or remove it) before saving. Kalzit never sends a stored secret to a new target unasked.",
-  "datasources.form.targetForbidden": "You may change this data source's name, limits and secrets, but not where it connects (host, port, user, TLS, URL or path). That needs data source admin rights; ask an admin."
+  "datasources.form.targetForbidden": "You may change this data source's name, limits and secrets, but not where it connects (host, port, user, TLS, URL or path). That needs data source admin rights; ask an admin.",
+  "datasources.form.readOnlyAccess": "You may use this data source but not change it. An admin can give you edit access.",
+  "datasources.form.targetLocked": "You may change the name, limits and secrets. Where the source connects (host, port, user, TLS, URL or path) only a data source admin can change.",
+  "datasources.form.pathBlocked": "Kalzit may not open this file. It has to exist, lie in a folder the server admin allowed for SQLite and outside Kalzit's own data folder, and be on a local drive."
 }

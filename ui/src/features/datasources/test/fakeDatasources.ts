@@ -153,6 +153,8 @@ export interface FakeDatasourcesState {
   respond: (item: QueryItem, range: TimeRange) => QueryOutcome | Promise<QueryOutcome>;
   /** Grants on data sources for the caller, by data source id. */
   grants: Record<string, "query" | "edit" | "admin">;
+  /** Whether answers carry `access` (stream C's addition); false plays an older server. */
+  sendAccess: boolean;
   /** Every request body of the free query route, in order. */
   queries: Record<string, unknown>[];
 }
@@ -275,7 +277,7 @@ export async function answerQuery(
   return state.respond(item, range);
 }
 
-function publicView(ds: StoredDatasource) {
+function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
   const secrets = Object.fromEntries(Object.keys(ds.secrets).map((name) => [name, { set: true }]));
   const view: Record<string, unknown> = {
     id: ds.id,
@@ -288,6 +290,9 @@ function publicView(ds: StoredDatasource) {
   };
   if (ds.deletedAt !== undefined) {
     view.deletedAt = ds.deletedAt;
+  }
+  if (access !== undefined) {
+    view.access = access;
   }
   return view;
 }
@@ -397,6 +402,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     health: {},
     respond: defaultOutcome,
     grants: {},
+    sendAccess: true,
     queries: [],
   };
 
@@ -421,6 +427,17 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return granted || role;
     };
     const sees = (id: string) => may(id, "read") || may(id, "query");
+    // The `access` object of list and detail answers, unless the test plays an older server.
+    const accessOf = (id: string) =>
+      state.sendAccess
+        ? {
+            read: sees(id),
+            query: may(id, "query"),
+            write: may(id, "write"),
+            permissions: level(id) === "admin" || can("datasources:permissions"),
+          }
+        : undefined;
+    const view = (ds: StoredDatasource) => publicView(ds, accessOf(ds.id));
 
     if (parts[0] === "datasource-kinds" && parts.length === 1 && method === "GET") {
       return json(200, { items: FAKE_KINDS, nextCursor: null });
@@ -481,6 +498,8 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
           createdAt: ds.createdAt,
         };
         if (ds.deletedAt !== undefined) item.deletedAt = ds.deletedAt;
+        const access = accessOf(ds.id);
+        if (access !== undefined) item.access = access;
         return item;
       });
       const next = start + limit < all.length ? String(start + limit) : null;
@@ -524,7 +543,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         updatedAt: now,
       };
       state.datasources.push(stored);
-      return json(201, publicView(stored));
+      return json(201, view(stored));
     }
     const ds = state.datasources.find((d) => d.id === decodeURIComponent(parts[1] ?? ""));
     const inTrash = ds?.deletedAt !== undefined;
@@ -535,7 +554,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return error(404, "not_found");
     }
     if (parts.length === 2 && method === "GET") {
-      return may(ds.id, "read") ? json(200, publicView(ds)) : error(403, "forbidden");
+      return may(ds.id, "read") ? json(200, view(ds)) : error(403, "forbidden");
     }
     if (parts[2] === "schema" && method === "GET") {
       return may(ds.id, "query") ? json(200, state.schemas[ds.id]) : error(403, "forbidden");
@@ -602,7 +621,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         }
       }
       ds.updatedAt = Date.now();
-      return json(200, publicView(ds));
+      return json(200, view(ds));
     }
     if (parts.length === 2 && method === "DELETE") {
       ds.deletedAt = Date.now();
@@ -613,7 +632,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         return error(404, "not_found");
       }
       delete ds.deletedAt;
-      return json(200, publicView(ds));
+      return json(200, view(ds));
     }
     return undefined;
   }

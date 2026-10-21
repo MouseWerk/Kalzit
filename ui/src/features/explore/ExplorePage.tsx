@@ -20,7 +20,7 @@ import {
 } from "../dashboards/timeRange";
 import { errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
-import { datasourcesQuery, kindsQuery, runQuery } from "../datasources/api";
+import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
@@ -49,10 +49,17 @@ export function ExplorePage() {
   useDocumentTitle("explore.title");
   const org = useCurrentOrg();
   const permissions = useOrgPermissions();
+  const orgWide = permissions.has("datasources:query");
+  // Without the org-wide permission, a `query` grant on one source is enough for Explore.
+  const sources = useQuery({
+    ...datasourcesQuery(org?.id ?? ""),
+    enabled: org !== undefined && permissions.loaded && !orgWide,
+  });
+  const granted = sources.data?.some((source) => source.access?.query === true) ?? false;
   let body = null;
-  if (org !== undefined && permissions.has("datasources:query")) {
+  if (org !== undefined && (orgWide || granted)) {
     body = <Explore orgId={org.id} />;
-  } else if (permissions.loaded) {
+  } else if (permissions.loaded && (org === undefined || !sources.isPending)) {
     body = (
       <EmptyState icon="lock" title={t("explore.forbidden.title")}>
         {t("explore.forbidden.text")}
@@ -82,7 +89,10 @@ function Explore({ orgId }: { orgId: string }) {
   const [adding, setAdding] = useState(false);
   const tabsId = useId();
 
-  const list = datasources.data ?? [];
+  // Only the sources the caller may query (the role or a grant).
+  const list = (datasources.data ?? []).filter(
+    (source) => sourceAccess(source.access, permissions).query,
+  );
   const datasource = list.find((d) => d.id === chosen) ?? list[0];
   const query =
     datasource === undefined ? null : (queries[datasource.id] ?? emptyQuery(datasource.kind));

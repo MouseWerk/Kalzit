@@ -112,5 +112,8 @@
   "datasources.kinds.sqlite.hint": "Kalzit öffnet SQLite-Dateien nur lesend, und nur aus Ordnern, die ein Server-Admin freigegeben hat.",
   "datasources.kinds.prometheus.hint": "Verwende Zugangsdaten, die nur lesen dürfen, falls dein Server welche verlangt.",
   "datasources.secret.reenter": "Das Verbindungsziel hat sich geändert. Gib diesen Wert erneut ein (oder entferne ihn), bevor du speicherst. Kalzit schickt ein gespeichertes Geheimnis nie ungefragt an ein neues Ziel.",
-  "datasources.form.targetForbidden": "Du darfst Name, Limits und Geheimnisse dieser Datenquelle ändern, aber nicht, wohin sie sich verbindet (Host, Port, Benutzer, TLS, URL oder Pfad). Dafür brauchst du Admin-Rechte auf der Datenquelle; frag einen Admin."
+  "datasources.form.targetForbidden": "Du darfst Name, Limits und Geheimnisse dieser Datenquelle ändern, aber nicht, wohin sie sich verbindet (Host, Port, Benutzer, TLS, URL oder Pfad). Dafür brauchst du Admin-Rechte auf der Datenquelle; frag einen Admin.",
+  "datasources.form.readOnlyAccess": "Du darfst diese Datenquelle nutzen, aber nicht ändern. Ein Admin kann dir Bearbeitungszugriff geben.",
+  "datasources.form.targetLocked": "Du darfst Name, Limits und Geheimnisse ändern. Wohin sich die Datenquelle verbindet (Host, Port, Benutzer, TLS, URL oder Pfad), ändert nur ein Admin der Datenquelle.",
+  "datasources.form.pathBlocked": "Kalzit darf diese Datei nicht öffnen. Die Datei muss existieren, in einem Ordner liegen, den der Server-Admin für SQLite freigegeben hat, außerhalb von Kalzits eigenem Datenordner, und auf einem lokalen Laufwerk."
 }

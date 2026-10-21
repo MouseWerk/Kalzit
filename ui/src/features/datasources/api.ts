@@ -1,6 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord, request } from "../../api/client";
-import type { Page, QueryRequest, QueryResponse, Shape } from "../../api/generated/shapes";
+import type {
+  Page,
+  Permission,
+  QueryRequest,
+  QueryResponse,
+  Shape,
+} from "../../api/generated/shapes";
 
 /*
  * Data sources and free queries as docs/api/datasources.md (stream C) specifies them. Every call
@@ -62,6 +68,18 @@ export interface DatasourceKind {
   settings: SettingSpec[];
 }
 
+/**
+ * What the caller may do with one source, grants included: `read` (see it), `query` (free
+ * queries, schema, health), `write` (change and delete it), `permissions` (manage its grants and
+ * change where it connects).
+ */
+export interface DatasourceAccess {
+  read: boolean;
+  query: boolean;
+  write: boolean;
+  permissions: boolean;
+}
+
 export interface DatasourceSummary {
   id: string;
   name: string;
@@ -69,6 +87,8 @@ export interface DatasourceSummary {
   createdAt: number;
   /** Set for items of the trash. */
   deletedAt?: number;
+  /** Absent from servers that do not send it yet; `sourceAccess` then uses the org role. */
+  access?: DatasourceAccess;
 }
 
 export interface Datasource {
@@ -78,6 +98,38 @@ export interface Datasource {
   settings: Record<string, unknown>;
   /** Only the secret fields that have a value. */
   secrets: Record<string, { set: boolean }>;
+  access?: DatasourceAccess;
+}
+
+/**
+ * The caller's rights on one source: the server's `access` when it sent one, else the
+ * organization permissions, which a grant can only extend.
+ */
+export function sourceAccess(
+  access: DatasourceAccess | undefined,
+  permissions: { has: (permission: Permission) => boolean },
+): DatasourceAccess {
+  return (
+    access ?? {
+      read: permissions.has("datasources:read"),
+      query: permissions.has("datasources:query"),
+      write: permissions.has("datasources:write"),
+      permissions: permissions.has("datasources:permissions"),
+    }
+  );
+}
+
+function parseAccess(value: unknown): DatasourceAccess | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const flag = (name: string) => value[name] === true;
+  return {
+    read: flag("read"),
+    query: flag("query"),
+    write: flag("write"),
+    permissions: flag("permissions"),
+  };
 }
 
 export interface Health {
@@ -189,6 +241,10 @@ function parseSummary(value: unknown): DatasourceSummary | null {
   if (typeof value.deletedAt === "number") {
     summary.deletedAt = value.deletedAt;
   }
+  const access = parseAccess(value.access);
+  if (access !== undefined) {
+    summary.access = access;
+  }
   return summary;
 }
 
@@ -209,6 +265,7 @@ function parseDatasource(value: unknown): Datasource {
     kind: summary.kind,
     settings: value.settings,
     secrets,
+    ...(summary.access === undefined ? {} : { access: summary.access }),
   };
 }
 

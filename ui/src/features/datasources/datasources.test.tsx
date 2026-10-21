@@ -88,6 +88,43 @@ describe("data source list", () => {
     expect(within(table).getByText("Sales DB")).toBeTruthy();
     expect(within(table).queryByText("Metrics")).toBeNull();
   });
+
+  it("lets a viewer with an edit grant change and test that one source", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PG_ID] = "edit";
+    renderApp("/data-sources");
+    const table = await screen.findByRole("table");
+    // The source's own `access` decides, not the viewer role.
+    expect(within(table).getByRole("link", { name: "Sales DB" })).toBeTruthy();
+    expect(
+      within(table).getByRole("button", { name: "Test connection of “Sales DB”" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Trash" })).toBeTruthy();
+    // Adding a source stays an org-wide right.
+    expect(screen.queryByRole("link", { name: "Add data source" })).toBeNull();
+  });
+
+  it("opens Explore for a viewer with a query grant, with only that source", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PG_ID] = "query";
+    renderApp("/explore");
+    const picker = await screen.findByRole("combobox", { name: "Data source" });
+    expect(
+      within(picker)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Sales DB"]);
+  });
+
+  it("follows the org role when the server sends no access flags", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PG_ID] = "edit";
+    server.areas.datasources.sendAccess = false;
+    renderApp("/data-sources");
+    const table = await screen.findByRole("table");
+    expect(within(table).queryByRole("link", { name: "Sales DB" })).toBeNull();
+    expect(within(table).getByText("Sales DB")).toBeTruthy();
+  });
 });
 
 describe("adding a data source", () => {
@@ -251,9 +288,56 @@ describe("editing a data source", () => {
     });
   });
 
-  it("explains that an edit grant may not change where a source connects", async () => {
+  it("locks the target fields for an edit grant and still saves the name", async () => {
     const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
     server.areas.datasources.grants[PROM_ID] = "edit";
+    const { user } = renderApp(`/data-sources/${PROM_ID}`);
+    const url = await screen.findByRole("textbox", { name: "URL" });
+    expect(url).toHaveProperty("disabled", true);
+    expect(screen.getByText(/only a data source admin can change/)).toBeTruthy();
+    const name = screen.getByRole("textbox", { name: "Name" });
+    expect(name).toHaveProperty("disabled", false);
+    await user.clear(name);
+    await user.paste("Metrics 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    expect(server.areas.datasources.datasources.find((d) => d.id === PROM_ID)?.name).toBe(
+      "Metrics 2",
+    );
+    // Write includes moving it to the trash; managing access needs admin rights on it.
+    expect(screen.getByRole("button", { name: "Delete…" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
+  });
+
+  it("says what a refused SQLite path needs", async () => {
+    const { server, user } = open("/data-sources/ds-lite");
+    server.areas.datasources.datasources.push({
+      id: "ds-lite",
+      name: "Shop",
+      kind: "sqlite",
+      settings: { path: "/data/shop.db" },
+      secrets: {},
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const path = await screen.findByRole("textbox", { name: "Absolute path of the database file" });
+    server.failNext(
+      "/api/orgs/o1/datasources/ds-lite",
+      422,
+      "datasource_target_blocked",
+      "PATCH",
+      "path",
+    );
+    await user.clear(path);
+    await user.paste("/etc/shadow.db");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/folder the server admin allowed for SQLite/)).toBeTruthy();
+  });
+
+  it("explains a target change refused after the admin grant was lowered", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PROM_ID] = "admin";
     const { user } = renderApp(`/data-sources/${PROM_ID}`);
     // The name is no target, so the edit grant is enough for it.
     const name = await screen.findByRole("textbox", { name: "Name" });
@@ -261,8 +345,9 @@ describe("editing a data source", () => {
     await user.type(name, "Metrics 2");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("Saved.");
-    // The saved source loads again into a fresh form.
+    // The saved source loads again into a fresh form; meanwhile an admin lowers the grant.
     const url = await screen.findByRole("textbox", { name: "URL" });
+    server.areas.datasources.grants[PROM_ID] = "edit";
     await user.clear(url);
     await user.type(url, "http://prometheus-2:9090");
     await user.click(screen.getByRole("button", { name: "Save" }));
