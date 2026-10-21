@@ -17,6 +17,9 @@ use tower::ServiceExt;
 
 const SETUP_CODE: &str = "test-setup-code-0123456789";
 const PASSWORD: &str = "Grün und sicher 2026";
+/// Small, so tests with more parallel requests than connections show a handler that needs a
+/// second connection while holding a lock.
+const POOL_SIZE: u32 = 4;
 
 struct TestApp {
     app: Router,
@@ -51,7 +54,7 @@ async fn test_app(db_url: Option<String>) -> TestApp {
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.database.url = db_url;
-    let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
+    let pool = kalzit::db::connect(&config.database_url(), POOL_SIZE).await.unwrap();
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
@@ -871,6 +874,79 @@ async fn users_manage_their_own_name_password_and_sessions() {
     assert!(t.audit_summaries().await.iter().all(|s| !s.contains("Passwort")), "no passwords in audit summaries");
 }
 
+/// Disabling an owner of two organizations while members change in both at the same moment: no
+/// deadlock or 500, and each organization keeps an enabled owner. On PostgreSQL this needs the
+/// disable path to lock the organizations before their owner rows, like member changes do.
+async fn check_disable_races_member_changes(t: &TestApp, admin: &Session) {
+    let ada = t.user(admin, "Ada", "ada.race@example.de").await;
+    let r = t.post("/api/admin/orgs", json!({ "name": "Erste", "ownerUserId": admin.user_id }), admin).await;
+    let first_org = r.body["id"].as_str().unwrap().to_string();
+    let first_org = first_org.as_str();
+    let r = t.post("/api/admin/orgs", json!({ "name": "Zweite", "ownerUserId": ada.user_id }), admin).await;
+    let second_org = r.body["id"].as_str().unwrap().to_string();
+    let add = |email: &str| json!({ "email": email, "role": "owner" });
+    let r = t.post(&format!("/api/orgs/{second_org}/members"), add("joerg@example.de"), &ada).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let r = t.post(&format!("/api/orgs/{first_org}/members"), add("ada.race@example.de"), admin).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    let demote = |org: &str, who: &Session| format!("/api/orgs/{org}/members/{}", who.user_id);
+    let calls = vec![
+        (Method::PATCH, format!("/api/admin/users/{}", ada.user_id), json!({ "disabled": true }), admin.clone()),
+        (Method::PATCH, demote(first_org, &ada), json!({ "role": "admin" }), admin.clone()),
+        (Method::PATCH, demote(&second_org, &ada), json!({ "role": "admin" }), admin.clone()),
+        (Method::PATCH, demote(&second_org, admin), json!({ "role": "admin" }), ada.clone()),
+    ];
+    let replies = t.parallel(calls).await;
+    let fine = [StatusCode::OK, StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN, StatusCode::CONFLICT];
+    assert!(replies.iter().all(|(s, _)| fine.contains(s)), "{replies:?}");
+    for org in [first_org, second_org.as_str()] {
+        let (owners,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM org_members m JOIN users u ON u.id = m.user_id \
+             WHERE m.org_id = $1 AND m.role = 'owner' AND u.disabled = 0",
+        )
+        .bind(org)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+        assert!(owners >= 1, "{org} lost its last enabled owner: {replies:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabling_an_owner_races_member_changes_cleanly() {
+    let t = test_app(None).await;
+    let (admin, _) = t.setup().await;
+    check_disable_races_member_changes(&t, &admin).await;
+}
+
+/// Handlers that hold the organization lock must not need a second connection: with more
+/// parallel writes than pool connections, every one still succeeds, without waiting for timeouts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parallel_grant_deletes_do_not_drain_the_pool() {
+    let parallel = 3 * POOL_SIZE as usize;
+    let t = test_app(None).await;
+    let (owner, org) = t.setup().await;
+    let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
+    let mut calls = Vec::new();
+    for _ in 0..parallel {
+        let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
+                            "resourceId": uuid(), "level": "edit" });
+        let r = t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await;
+        assert_eq!(r.status, StatusCode::CREATED);
+        let path = format!("/api/orgs/{org}/grants/{}", r.body["id"].as_str().unwrap());
+        calls.push((Method::DELETE, path, Value::Null, owner.clone()));
+    }
+    let started = std::time::Instant::now();
+    let replies = t.parallel(calls).await;
+    let elapsed = started.elapsed();
+    assert!(replies.iter().all(|(s, _)| *s == StatusCode::NO_CONTENT), "{replies:?}");
+    // A drained pool shows as waits for SQLite's 5 s busy timeout or the pool's acquire timeout.
+    assert!(elapsed < std::time::Duration::from_secs(4), "took {elapsed:?}");
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resource_grants").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(left, 0);
+}
+
 #[tokio::test]
 async fn removing_a_member_needs_what_they_hold_through_teams_and_grants() {
     let t = test_app(None).await;
@@ -1064,6 +1140,7 @@ async fn postgres_access_model() {
     assert_eq!(t.get("/api/me/sessions", &vic).await.body["items"].as_array().unwrap().len(), 1);
     let r = t.patch(&format!("/api/admin/users/{}", owner.user_id), json!({ "disabled": true }), &owner).await;
     assert_eq!(r.code(), "conflict");
+    check_disable_races_member_changes(&t, &owner).await;
     check_concurrent_owner_demotions(&t, &owner, &org).await;
     check_concurrent_admin_revocations(&t, &owner).await;
     drop(t);

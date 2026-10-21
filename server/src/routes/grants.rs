@@ -7,7 +7,7 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::support::{Actor, Paging, QueryParams, audit};
+use super::support::{Actor, Paging, QueryParams, audit, conflict};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{
@@ -249,30 +249,51 @@ async fn create(
     Ok((status, Json(grant)))
 }
 
+/// How often a grant deletion re-checks a grant whose level changed under it before giving up.
+const MAX_DELETE_ATTEMPTS: u32 = 3;
+
 async fn delete(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
     Path((_, grant_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
-    // The level checked is the one deleted: a concurrent change of the grant waits for this.
-    lock_org(&mut tx, &ctx.org_id).await?;
-    let row: Option<(String, String, String)> =
-        sqlx::query_as("SELECT resource_type, resource_id, level FROM resource_grants WHERE org_id = $1 AND id = $2")
-            .bind(&ctx.org_id)
-            .bind(&grant_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let Some((resource_type, resource_id, level)) = row else { return Err(ApiError::not_found()) };
-    let resource_type = ResourceType::parse(&resource_type).ok_or_else(ApiError::not_found)?;
-    let held = managed_resource(&state, &ctx, Resource::new(resource_type, &resource_id)).await?;
-    ensure_holds(&held, &level_permissions(resource_type, &level).unwrap_or_default())?;
-    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND id = $2")
+    // The checks read through the pool, so they run before the transaction: a handler holding the
+    // organization lock must not wait for a second connection while other writers hold theirs
+    // waiting for the lock. The delete then removes the grant only at the level that was checked;
+    // if it changed meanwhile, the checks run again.
+    let mut attempts = 0;
+    let (mut tx, resource_type, resource_id) = loop {
+        let row: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT resource_type, resource_id, level FROM resource_grants WHERE org_id = $1 AND id = $2",
+        )
         .bind(&ctx.org_id)
         .bind(&grant_id)
-        .execute(&mut *tx)
+        .fetch_optional(&state.db)
         .await?;
+        let Some((resource_type, resource_id, level)) = row else { return Err(ApiError::not_found()) };
+        let resource_type = ResourceType::parse(&resource_type).ok_or_else(ApiError::not_found)?;
+        let held = managed_resource(&state, &ctx, Resource::new(resource_type, &resource_id)).await?;
+        ensure_holds(&held, &level_permissions(resource_type, &level).unwrap_or_default())?;
+
+        let mut tx = state.db.begin().await?;
+        lock_org(&mut tx, &ctx.org_id).await?;
+        let done = sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND id = $2 AND level = $3")
+            .bind(&ctx.org_id)
+            .bind(&grant_id)
+            .bind(&level)
+            .execute(&mut *tx)
+            .await?;
+        if done.rows_affected() == 1 {
+            break (tx, resource_type, resource_id);
+        }
+        // Deleted (the next round answers not_found) or changed meanwhile.
+        drop(tx);
+        attempts += 1;
+        if attempts == MAX_DELETE_ATTEMPTS {
+            return Err(conflict("the grant keeps changing; try again"));
+        }
+    };
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "grantId": grant_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "grant.deleted", (resource_type.as_str(), &resource_id), summary).await?;
