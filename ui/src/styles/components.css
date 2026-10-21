@@ -83,6 +83,16 @@
     background: var(--bg-hover);
   }
 
+  /* Destructive actions: the danger tint as a fill, never a frame. */
+  .button--danger {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+  }
+
+  .button--danger:hover:not(:disabled, [aria-disabled="true"]) {
+    color: var(--text);
+  }
+
   .button--block {
     width: 100%;
   }
@@ -580,6 +590,8 @@
     background: transparent;
     color: var(--text);
     text-align: start;
+    /* The account item is a link; it looks like the other items. */
+    text-decoration: none;
   }
 
   .menu__item:hover,

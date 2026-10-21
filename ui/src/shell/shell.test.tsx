@@ -51,7 +51,8 @@ describe("app shell", () => {
       ["Dashboards", "No dashboards yet"],
       ["Explore", "Explore is not available yet"],
       ["Data sources", "No data sources yet"],
-      ["Administration", "Nothing to manage yet"],
+      // The administration opens on its overview of sections, headed by the organization.
+      ["Administration", "Organization “Analytical Engines”"],
     ];
     for (const [link, emptyTitle] of pages) {
       await user.click(within(nav).getByRole("link", { name: link }));
@@ -84,7 +85,9 @@ describe("app shell", () => {
     });
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     if (shown) {
-      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+      expect(
+        await screen.findByRole("navigation", { name: "Administration sections" }),
+      ).toBeTruthy();
       expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
     } else {
       expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
@@ -113,7 +116,9 @@ describe("app shell", () => {
       );
       const nav = screen.getByRole("navigation", { name: "Main navigation" });
       expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
-      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+      expect(
+        await screen.findByRole("navigation", { name: "Administration sections" }),
+      ).toBeTruthy();
     },
   );
 
@@ -160,7 +165,7 @@ describe("user menu", () => {
     const menu = screen.getByRole("menu", { name: "Account" });
     expect(menuButton.getAttribute("aria-expanded")).toBe("true");
     const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]'));
-    expect(items).toHaveLength(7);
+    expect(items).toHaveLength(8);
     expect(document.activeElement).toBe(items[0]);
 
     await user.keyboard("{ArrowDown}");
@@ -173,6 +178,22 @@ describe("user menu", () => {
     expect(document.activeElement).toBe(within(menu).getByRole("menuitem", { name: "Sign out" }));
 
     await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
+  });
+
+  it("opens the own account from the menu, by keyboard", async () => {
+    const { user, menuButton, location } = await openShell();
+    menuButton.focus();
+    await user.keyboard("{ArrowUp}");
+    const menu = screen.getByRole("menu", { name: "Account" });
+    // Second to last, right before Sign out.
+    await user.keyboard("{ArrowUp}");
+    const account = within(menu).getByRole("menuitem", { name: "Your account" });
+    expect(document.activeElement).toBe(account);
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { level: 1, name: "Your account" })).toBeTruthy();
+    expect(location().pathname).toBe("/account");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(menuButton);
   });

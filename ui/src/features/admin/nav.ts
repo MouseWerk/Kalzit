@@ -1,5 +1,5 @@
 import type { NavItem } from "../../shell/navItem";
-import { canOpenAdministration } from "./access";
+import { canOpenAdministration } from "./visibility";
 
 export const adminNav: NavItem = {
   to: "/admin",
