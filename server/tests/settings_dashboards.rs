@@ -140,6 +140,35 @@ impl TestApp {
         self.session_for(&id).await
     }
 
+    async fn user_id(&self, name: &str) -> String {
+        let (id,): (String,) =
+            sqlx::query_as("SELECT id FROM users WHERE name = $1").bind(name).fetch_one(&self.state.db).await.unwrap();
+        id
+    }
+
+    /// Grants `level` on a resource to a user, as the owner.
+    async fn grant(&self, user: &str, resource_type: &str, resource_id: &str, level: &str) -> Reply {
+        let user_id = self.user_id(user).await;
+        let body = json!({ "subjectType": "user", "subjectId": user_id, "resourceType": resource_type,
+                           "resourceId": resource_id, "level": level });
+        let r = self.post("~/grants", body, &self.owner).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+        r
+    }
+
+    async fn grants_on(&self, ids: &[&str]) -> i64 {
+        let mut total = 0;
+        for id in ids {
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resource_grants WHERE resource_id = $1")
+                .bind(*id)
+                .fetch_one(&self.state.db)
+                .await
+                .unwrap();
+            total += n;
+        }
+        total
+    }
+
     async fn actions(&self) -> Vec<String> {
         let rows: Vec<(String,)> = sqlx::query_as("SELECT action FROM audit_events ORDER BY created_at, id")
             .fetch_all(&self.state.db)
@@ -218,7 +247,11 @@ macro_rules! on_both_databases {
 }
 
 on_both_databases! {
-    server_settings_report_sources_and_save_with_versions: |c| c.sessions.lifetime_hours = 10;
+    // As if kalzit.toml set the lifetime.
+    server_settings_report_sources_and_save_with_versions: |c| {
+        c.sessions.lifetime_hours = 10;
+        c.file_keys.insert("sessions.lifetime_hours".into());
+    };
     writes_drop_the_settings_cache: |_| {};
     organization_settings_need_settings_permissions: |_| {};
     audit_views_filter_and_page_newest_first: |_| {};
@@ -233,6 +266,39 @@ on_both_databases! {
     separate_trashes_restore_separately: |_| {};
     concurrent_moves_never_build_a_cycle: |_| {};
     dashboards_cannot_slip_into_a_folder_being_trashed: |_| {};
+    grants_open_restricted_folders: |_| {};
+    purging_deletes_grants: |_| {};
+}
+
+/// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_server_runs_the_audit_retention() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    config.server.http_addr = "127.0.0.1:0".into();
+    let db = kalzit::db::connect(&config.database_url(), 1).await.unwrap();
+    sqlx::query("INSERT INTO audit_events (id, action, summary, created_at) VALUES ('old', 'auth.signed_in', '{}', 0)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let db = kalzit::db::connect(&config.database_url(), 1).await.unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let (old,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE id = 'old'").fetch_one(&db).await.unwrap();
+        if old == 0 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the retention did not delete the 1970 event within 20 s");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    db.close().await;
+    server.shutdown();
+    server.wait().await.unwrap();
 }
 
 fn model(title: &str) -> Value {
@@ -961,6 +1027,97 @@ async fn dashboard_lists_search_move_and_page(t: TestApp) {
     assert_eq!(nowhere.code(), "not_found");
     assert_eq!(t.get("~/dashboards?folderId=nope", &t.owner).await.code(), "not_found");
     assert_eq!(t.get("~/dashboards?limit=500", &t.owner).await.field(), "limit");
+}
+
+fn id_of(r: Reply) -> String {
+    assert!(r.status.is_success(), "{}", r.body);
+    r.body["id"].as_str().unwrap().to_string()
+}
+
+fn titles(r: &Reply) -> Vec<String> {
+    let mut out: Vec<String> =
+        r.body["items"].as_array().unwrap().iter().map(|d| d["title"].as_str().unwrap().to_string()).collect();
+    out.sort();
+    out
+}
+
+fn folder_names(nodes: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for n in nodes.as_array().unwrap() {
+        out.push(n["name"].as_str().unwrap().to_string());
+        out.extend(folder_names(&n["children"]));
+    }
+    out.sort();
+    out
+}
+
+/// Grants open restricted folders: the folder, its subfolders (unless a nearer restricted folder
+/// has no grant) and their dashboards, in single reads, lists and search alike.
+async fn grants_open_restricted_folders(t: TestApp) {
+    let vera = t.member("Vera", "viewer").await;
+    let walter = t.member("Walter", "viewer").await;
+    let secret = id_of(t.post("~/folders", json!({ "name": "Geheim", "restricted": true }), &t.owner).await);
+    let sub = id_of(t.post("~/folders", json!({ "name": "Unter", "parentId": secret }), &t.owner).await);
+    let inner =
+        id_of(t.post("~/folders", json!({ "name": "Innen", "parentId": sub, "restricted": true }), &t.owner).await);
+    let in_sub = id_of(t.post("~/dashboards", json!({ "folderId": sub, "model": model("Gehälter") }), &t.owner).await);
+    let in_inner = id_of(t.post("~/dashboards", json!({ "folderId": inner, "model": model("Boni") }), &t.owner).await);
+    t.grant("Vera", "folder", &secret, "view").await;
+
+    // Vera sees the granted folder and what lies below, except the nearer restricted folder.
+    assert_eq!(folder_names(&t.get("~/folders", &vera).await.body["items"]), ["Geheim", "Unter"]);
+    assert_eq!(titles(&t.get("~/dashboards", &vera).await), ["Gehälter"]);
+    assert_eq!(titles(&t.get("~/dashboards?q=geh%C3%A4", &vera).await), ["Gehälter"]);
+    assert_eq!(t.get(&format!("~/dashboards/{in_sub}"), &vera).await.status, StatusCode::OK);
+    assert_eq!(t.get(&format!("~/dashboards?folderId={sub}"), &vera).await.status, StatusCode::OK);
+    for path in [format!("~/dashboards/{in_inner}"), format!("~/dashboards?folderId={inner}")] {
+        assert_eq!(t.get(&path, &vera).await.code(), "not_found", "{path}");
+    }
+    // A view grant does not allow writing.
+    let save = t.put(&format!("~/dashboards/{in_sub}"), json!({ "model": model("x"), "version": 1 }), &vera).await;
+    assert_eq!(save.code(), "forbidden");
+
+    // Walter has no grant: nothing of it exists for him.
+    assert!(t.get("~/folders", &walter).await.body["items"].as_array().unwrap().is_empty());
+    assert!(t.get("~/dashboards?q=geh", &walter).await.body["items"].as_array().unwrap().is_empty());
+    assert_eq!(t.get(&format!("~/dashboards/{in_sub}"), &walter).await.code(), "not_found");
+
+    // A grant on one dashboard shows that dashboard, and not its folder.
+    t.grant("Walter", "dashboard", &in_inner, "view").await;
+    assert_eq!(titles(&t.get("~/dashboards", &walter).await), ["Boni"]);
+    assert_eq!(t.get(&format!("~/dashboards/{in_inner}"), &walter).await.status, StatusCode::OK);
+    assert!(t.get("~/folders", &walter).await.body["items"].as_array().unwrap().is_empty());
+
+    // A grant below the restricted folder shows that subfolder at the top, without its hidden parent.
+    t.grant("Walter", "folder", &sub, "view").await;
+    let tree = t.get("~/folders", &walter).await;
+    assert_eq!(tree.body["items"][0]["name"], "Unter", "{}", tree.body);
+    assert!(tree.body["items"][0]["parentId"].is_null());
+}
+
+/// Purging a folder or a dashboard deletes the grants on it and on everything purged with it.
+async fn purging_deletes_grants(t: TestApp) {
+    t.member("Vera", "viewer").await;
+    let top = id_of(t.post("~/folders", json!({ "name": "Oben" }), &t.owner).await);
+    let below = id_of(t.post("~/folders", json!({ "name": "Unten", "parentId": top }), &t.owner).await);
+    let inside = id_of(t.post("~/dashboards", json!({ "folderId": below, "model": model("Drin") }), &t.owner).await);
+    let alone = id_of(t.post("~/dashboards", json!({ "model": model("Allein") }), &t.owner).await);
+    let kept = id_of(t.post("~/dashboards", json!({ "model": model("Bleibt") }), &t.owner).await);
+    for (kind, id) in
+        [("folder", &top), ("folder", &below), ("dashboard", &inside), ("dashboard", &alone), ("dashboard", &kept)]
+    {
+        t.grant("Vera", kind, id, "view").await;
+    }
+    t.delete(&format!("~/folders/{top}"), &t.owner).await;
+    // In the trash the grants stay, so a restore brings the access back.
+    assert_eq!(t.grants_on(&[&top, &below, &inside]).await, 3);
+    assert_eq!(t.delete(&format!("~/folders/{top}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.grants_on(&[&top, &below, &inside]).await, 0);
+
+    t.delete(&format!("~/dashboards/{alone}"), &t.owner).await;
+    assert_eq!(t.delete(&format!("~/dashboards/{alone}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.grants_on(&[&alone]).await, 0);
+    assert_eq!(t.grants_on(&[&kept]).await, 1, "other grants stay");
 }
 
 async fn old_versions_beyond_the_retention_are_dropped(t: TestApp) {

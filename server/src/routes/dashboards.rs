@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use super::folders::double_option;
 use super::new_id;
+use super::support::{QueryParams, clean_text, conflict, decode_cursor, encode_cursor, page_limit};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
@@ -19,7 +20,6 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders::{self, Tree};
 use crate::net::RequestInfo;
-use crate::paging::{self, QueryParams};
 use crate::settings;
 use crate::shapes::Page;
 
@@ -130,10 +130,6 @@ fn event<'a>(
     }
 }
 
-fn conflict(message: &str) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "conflict", message)
-}
-
 async fn fetch(db: &sqlx::AnyPool, org_id: &str, id: &str) -> ApiResult<Option<DashboardRow>> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 AND id = $2")))
         .bind(org_id)
@@ -142,11 +138,10 @@ async fn fetch(db: &sqlx::AnyPool, org_id: &str, id: &str) -> ApiResult<Option<D
         .await?)
 }
 
-/// The dashboard in the path, if the caller sees it (its folder is visible) and may do
-/// `permission` on it.
+/// The dashboard in the path, if the caller sees it (`not_found` otherwise, also inside a
+/// restricted folder without access) and may do `permission` on it.
 async fn load(state: &AppState, ctx: &OrgCtx, id: &str, permission: Permission) -> ApiResult<DashboardRow> {
     let row = fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
-    folders::ensure_visible(&state.db, ctx, row.folder_id.as_deref()).await?;
     authz::check_resource(&state.db, ctx, permission, Resource::Dashboard(id)).await?;
     Ok(row)
 }
@@ -154,14 +149,14 @@ async fn load(state: &AppState, ctx: &OrgCtx, id: &str, permission: Permission) 
 /// Before the transaction: a folder named in a body is in this organization, visible, and the
 /// caller may put dashboards there.
 async fn authorize_folder(state: &AppState, ctx: &OrgCtx, folder_id: &str) -> ApiResult<()> {
-    folders::ensure_visible(&state.db, ctx, Some(folder_id)).await?;
     authz::check_resource(&state.db, ctx, Permission::DashboardsWrite, Resource::Folder(folder_id)).await
 }
 
-/// Inside a transaction that took `folders::lock_structure`: the folder still exists and is not
-/// in the trash, so no live dashboard ends up in a trashed or purged folder.
+/// Locks the organization (`authz::lock_org`, first statement of the transaction) and checks that
+/// the folder still exists and is not in the trash, so no live dashboard ends up in a trashed or
+/// purged folder.
 async fn lock_live_folder(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<()> {
-    folders::lock_structure(conn, org_id).await?;
+    authz::lock_org(conn, org_id).await?;
     let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
         .bind(org_id)
         .bind(folder_id)
@@ -213,15 +208,7 @@ fn parse_model(raw: Value) -> ApiResult<model::DashboardModel> {
 }
 
 fn clean_message(raw: Option<&str>) -> ApiResult<String> {
-    let message = raw.unwrap_or("").trim();
-    let invalid = message.chars().count() > MAX_MESSAGE_CHARS || message.chars().any(|c| c.is_control() && c != '\n');
-    if invalid {
-        return Err(ApiError::validation(format!(
-            "message takes up to {MAX_MESSAGE_CHARS} characters without control characters"
-        ))
-        .with_field("message"));
-    }
-    Ok(message.to_string())
+    clean_text(raw.unwrap_or(""), "message", MAX_MESSAGE_CHARS).map_err(|e| e.with_field("message"))
 }
 
 /// One save: what goes into the new version row.
@@ -272,8 +259,17 @@ async fn insert_version(
     Ok(())
 }
 
-/// Deletes the dashboards of one folder with their versions, inside the caller's transaction.
+/// Deletes the dashboards of one folder with their versions and grants, inside the caller's
+/// transaction.
 pub(super) async fn purge_in_folder(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<()> {
+    sqlx::query(
+        "DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id IN \
+         (SELECT id FROM dashboards WHERE org_id = $1 AND folder_id = $2)",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .execute(&mut *conn)
+    .await?;
     sqlx::query(
         "DELETE FROM dashboard_versions WHERE dashboard_id IN \
          (SELECT id FROM dashboards WHERE org_id = $1 AND folder_id = $2)",
@@ -308,18 +304,19 @@ fn like_contains(needle: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// Ordered by title, then id. Dashboards in folders the caller does not see are left out by the
-/// query itself, so every page is full.
+/// Ordered by title, then id. Dashboards the caller does not see (in a restricted folder without
+/// access, and no grant on the dashboard itself) are left out by the query itself, so every page
+/// is full.
 async fn list(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<DashboardSummary>>> {
-    let limit = paging::limit(q.limit)?;
-    let after: Option<(String, String)> = paging::decode_cursor(q.cursor.as_deref())?;
+    let limit = page_limit(q.limit)? as usize;
+    let after: Option<(String, String)> = decode_cursor(q.cursor.as_deref())?;
     if let Some(folder) = q.folder_id.as_deref() {
-        let tree = Tree::load(&state.db, &ctx.org_id).await?;
-        if !tree.rows.contains_key(folder) || !tree.visible(&ctx, folder) {
+        let tree = Tree::load(&mut *state.db.acquire().await?, &ctx).await?;
+        if !tree.rows.contains_key(folder) || !tree.visible(folder) {
             return Err(ApiError::not_found());
         }
     }
@@ -328,19 +325,22 @@ async fn list(
     let (after_title, after_id) = after.unzip();
     let mut items: Vec<DashboardSummary> = sqlx::query_as::<_, DashboardRow>(sqlx::AssertSqlSafe(format!(
         "{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
-         AND ((CAST($2 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($2 AS BIGINT) = 0 AND deleted_at IS NULL)) \
-         AND (CAST($3 AS TEXT) IS NULL OR folder_id = $3) \
-         AND (CAST($4 AS TEXT) IS NULL OR search_title LIKE $4 ESCAPE '\\') \
-         AND (CAST($5 AS BIGINT) = 1 OR folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders)) \
-         AND (CAST($6 AS TEXT) IS NULL OR title > $6 OR (title = $6 AND id > $7)) \
-         ORDER BY title, id LIMIT $8",
-        folders::HIDDEN_FOLDERS_CTE
+         AND ((CAST($5 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($5 AS BIGINT) = 0 AND deleted_at IS NULL)) \
+         AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
+         AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\') \
+         AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders) \
+              OR id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')) \
+         AND (CAST($8 AS TEXT) IS NULL OR title > $8 OR (title = $8 AND id > $9)) \
+         ORDER BY title, id LIMIT $10",
+        folders::VISIBILITY_CTE
     )))
     .bind(&ctx.org_id)
+    .bind(&ctx.user.id)
+    .bind(&ctx.role)
+    .bind(folders::sees_every_folder(&ctx))
     .bind(q.trashed.unwrap_or(false) as i64)
     .bind(q.folder_id.as_deref())
     .bind(pattern.as_deref())
-    .bind(folders::sees_restricted(&ctx) as i64)
     .bind(after_title.as_deref())
     .bind(after_id.as_deref())
     .bind(limit as i64 + 1)
@@ -352,7 +352,7 @@ async fn list(
     let more = items.len() > limit;
     items.truncate(limit);
     let next_cursor = match items.last() {
-        Some(last) if more => Some(paging::encode_cursor(&(&last.title, &last.id))),
+        Some(last) if more => Some(encode_cursor(&(&last.title, &last.id))),
         _ => None,
     };
     Ok(Json(Page { items, next_cursor }))
@@ -594,14 +594,19 @@ async fn purge(
     }
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
+    // Grant changes lock the organization too, so none lands on the dashboard while it goes.
+    authz::lock_org(&mut tx, &ctx.org_id).await?;
     sqlx::query("DELETE FROM dashboard_versions WHERE dashboard_id = $1").bind(&id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id = $2")
+        .bind(&ctx.org_id)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM dashboards WHERE org_id = $1 AND id = $2")
         .bind(&ctx.org_id)
         .bind(&id)
         .execute(&mut *tx)
         .await?;
-    // Grants on this dashboard (resource_grants, migration 0003) are deleted here as well once
-    // both streams are merged; the orchestrator adds that statement.
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.purged", &id, json!({}), now)).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
@@ -643,8 +648,8 @@ async fn versions(
     Path((_, id)): Path<(String, String)>,
     QueryParams(q): QueryParams<VersionsQuery>,
 ) -> ApiResult<Json<Page<VersionSummary>>> {
-    let limit = paging::limit(q.limit)?;
-    let before: Option<i64> = paging::decode_cursor(q.cursor.as_deref())?;
+    let limit = page_limit(q.limit)? as usize;
+    let before: Option<i64> = decode_cursor(q.cursor.as_deref())?;
     load(&state, &ctx, &id, Permission::DashboardsRead).await?;
     let mut items: Vec<VersionSummary> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {VERSION_COLUMNS} FROM dashboard_versions v LEFT JOIN users u ON u.id = v.author_id \
@@ -659,7 +664,7 @@ async fn versions(
     let more = items.len() > limit;
     items.truncate(limit);
     let next_cursor = match items.last() {
-        Some(last) if more => Some(paging::encode_cursor(&last.version)),
+        Some(last) if more => Some(encode_cursor(&last.version)),
         _ => None,
     };
     Ok(Json(Page { items, next_cursor }))

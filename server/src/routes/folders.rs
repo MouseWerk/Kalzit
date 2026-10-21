@@ -1,8 +1,8 @@
 //! Folders: the tree, create, rename, move, restrict, trash, restore and purge. Trashing a
 //! folder trashes everything below it; restoring brings back what was trashed with it.
 //!
-//! Every change of the structure runs in a transaction that starts with
-//! `folders::lock_structure` and reads the tree through it, so two concurrent moves cannot build
+//! Every change of the structure runs in a transaction that starts with `authz::lock_org` and
+//! reads the tree through it, so two concurrent moves cannot build
 //! a cycle and nothing lands in a folder that is being trashed or purged. Permission checks run
 //! before, against the pool: they may read grants and must not wait for a second connection
 //! while the transaction holds one.
@@ -14,6 +14,7 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 
+use super::support::{QueryParams, conflict};
 use super::table::{RouteDef, route};
 use super::{clean_name, new_id};
 use crate::app::AppState;
@@ -21,9 +22,8 @@ use crate::audit::{self, AuditEvent};
 use crate::authz::{self, Access, OrgCtx, Permission, Resource};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
-use crate::folders::{self, FolderRow, Tree};
+use crate::folders::{FolderRow, Tree};
 use crate::net::RequestInfo;
-use crate::paging::QueryParams;
 use crate::shapes::Page;
 
 pub fn routes() -> Vec<RouteDef> {
@@ -100,38 +100,34 @@ fn event<'a>(
     }
 }
 
-fn conflict(message: &str) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "conflict", message)
-}
-
 /// The folder in `tree` if the caller sees it: `not_found` otherwise, so hidden ids cannot be
 /// probed.
-fn visible_row<'t>(tree: &'t Tree, ctx: &OrgCtx, folder_id: &str) -> ApiResult<&'t FolderRow> {
+fn visible_row<'t>(tree: &'t Tree, folder_id: &str) -> ApiResult<&'t FolderRow> {
     match tree.rows.get(folder_id) {
-        Some(row) if tree.visible(ctx, folder_id) => Ok(row),
+        Some(row) if tree.visible(folder_id) => Ok(row),
         _ => Err(ApiError::not_found()),
     }
 }
 
 /// Before the transaction: the caller sees the folder and may do `permission` on it.
 async fn authorize(state: &AppState, ctx: &OrgCtx, folder_id: &str, permission: Permission) -> ApiResult<FolderRow> {
-    let tree = Tree::load(&state.db, &ctx.org_id).await?;
-    let row = visible_row(&tree, ctx, folder_id)?.clone();
+    let tree = Tree::load(&mut *state.db.acquire().await?, ctx).await?;
+    let row = visible_row(&tree, folder_id)?.clone();
     authz::check_resource(&state.db, ctx, permission, Resource::Folder(folder_id)).await?;
     Ok(row)
 }
 
 /// A parent named in a body, checked against the locked tree: visible and not trashed.
-fn check_parent(tree: &Tree, ctx: &OrgCtx, parent_id: &str) -> ApiResult<()> {
-    if visible_row(tree, ctx, parent_id)?.deleted_at.is_some() {
+fn check_parent(tree: &Tree, parent_id: &str) -> ApiResult<()> {
+    if visible_row(tree, parent_id)?.deleted_at.is_some() {
         return Err(ApiError::validation("the parent folder is in the trash").with_field("parentId"));
     }
     Ok(())
 }
 
-async fn locked_tree(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<Tree> {
-    folders::lock_structure(conn, org_id).await?;
-    Tree::load(conn, org_id).await
+async fn locked_tree(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Tree> {
+    authz::lock_org(conn, &ctx.org_id).await?;
+    Tree::load(conn, ctx).await
 }
 
 #[derive(Deserialize)]
@@ -146,8 +142,8 @@ async fn list(
     Extension(ctx): Extension<OrgCtx>,
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<FolderNode>>> {
-    let tree = Tree::load(&state.db, &ctx.org_id).await?;
-    let visible = |r: &&FolderRow| tree.visible(&ctx, &r.id);
+    let tree = Tree::load(&mut *state.db.acquire().await?, &ctx).await?;
+    let visible = |r: &&FolderRow| tree.visible(&r.id);
     if q.trashed.unwrap_or(false) {
         let mut roots: Vec<&FolderRow> = tree
             .rows
@@ -163,7 +159,22 @@ async fn list(
         let items = roots.into_iter().map(|r| FolderNode { folder: r.into(), children: Vec::new() }).collect();
         return Ok(Json(Page { items, next_cursor: None }));
     }
-    let active: Vec<&FolderRow> = tree.rows.values().filter(|r| r.deleted_at.is_none()).filter(visible).collect();
+    // A folder the caller reaches through a grant below a restricted folder they cannot see hangs
+    // at the top, without naming its hidden parent.
+    let active: Vec<FolderRow> = tree
+        .rows
+        .values()
+        .filter(|r| r.deleted_at.is_none())
+        .filter(visible)
+        .map(|r| {
+            let mut r = r.clone();
+            if r.parent_id.as_deref().is_some_and(|p| !tree.visible(p)) {
+                r.parent_id = None;
+            }
+            r
+        })
+        .collect();
+    let active: Vec<&FolderRow> = active.iter().collect();
     // The tree is one answer: folders are few compared with dashboards, and the UI shows them all.
     Ok(Json(Page { items: nest(&active, None), next_cursor: None }))
 }
@@ -212,9 +223,9 @@ async fn create(
         trash_batch: None,
     };
     let mut tx = state.db.begin().await?;
-    let tree = locked_tree(&mut tx, &ctx.org_id).await?;
+    let tree = locked_tree(&mut tx, &ctx).await?;
     if let Some(parent) = body.parent_id.as_deref() {
-        check_parent(&tree, &ctx, parent)?;
+        check_parent(&tree, parent)?;
         tree.check_placement(None, parent)?;
     }
     sqlx::query(
@@ -268,8 +279,8 @@ async fn update(
     }
 
     let mut tx = state.db.begin().await?;
-    let tree = locked_tree(&mut tx, &ctx.org_id).await?;
-    let current = visible_row(&tree, &ctx, &folder_id)?.clone();
+    let tree = locked_tree(&mut tx, &ctx).await?;
+    let current = visible_row(&tree, &folder_id)?.clone();
     if current.deleted_at.is_some() {
         return Err(conflict("the folder is in the trash; restore it first"));
     }
@@ -288,9 +299,9 @@ async fn update(
     }
     if let Some(parent) = new_parent {
         if let Some(parent) = parent.as_deref() {
-            check_parent(&tree, &ctx, parent)?;
+            check_parent(&tree, parent)?;
             // Moving hidden content along would also let the depth check reveal its levels.
-            tree.check_subtree_visible(&ctx, &folder_id)?;
+            tree.check_subtree_visible(&folder_id)?;
             tree.check_placement(Some(&folder_id), parent)?;
         }
         next.parent_id = parent;
@@ -353,11 +364,11 @@ async fn trash(
 ) -> ApiResult<StatusCode> {
     authorize(&state, &ctx, &folder_id, Permission::FoldersWrite).await?;
     let mut tx = state.db.begin().await?;
-    let tree = locked_tree(&mut tx, &ctx.org_id).await?;
-    if visible_row(&tree, &ctx, &folder_id)?.deleted_at.is_some() {
+    let tree = locked_tree(&mut tx, &ctx).await?;
+    if visible_row(&tree, &folder_id)?.deleted_at.is_some() {
         return Ok(StatusCode::NO_CONTENT);
     }
-    tree.check_subtree_visible(&ctx, &folder_id)?;
+    tree.check_subtree_visible(&folder_id)?;
     let mut folders: Vec<&str> = vec![&folder_id];
     folders.extend(tree.descendants(&folder_id).into_iter().filter(|r| r.deleted_at.is_none()).map(|r| r.id.as_str()));
     let dashboards = count_dashboards(&mut tx, &ctx.org_id, &folders, false).await?;
@@ -401,8 +412,8 @@ async fn restore(
 ) -> ApiResult<Json<Folder>> {
     authorize(&state, &ctx, &folder_id, Permission::FoldersWrite).await?;
     let mut tx = state.db.begin().await?;
-    let tree = locked_tree(&mut tx, &ctx.org_id).await?;
-    let current = visible_row(&tree, &ctx, &folder_id)?.clone();
+    let tree = locked_tree(&mut tx, &ctx).await?;
+    let current = visible_row(&tree, &folder_id)?.clone();
     let Some(batch) = current.trash_batch.clone() else {
         return Ok(Json(Folder::from(&current)));
     };
@@ -410,7 +421,7 @@ async fn restore(
     if parent.is_some_and(|p| p.deleted_at.is_some()) {
         return Err(conflict("the parent folder is in the trash; restore it first"));
     }
-    tree.check_subtree_visible(&ctx, &folder_id)?;
+    tree.check_subtree_visible(&folder_id)?;
     // Everything trashed together with this folder lies below it: a batch starts at the folder
     // that was trashed, and its parts cannot be restored on their own while it is in the trash.
     let folders =
@@ -446,11 +457,11 @@ async fn purge(
 ) -> ApiResult<StatusCode> {
     authorize(&state, &ctx, &folder_id, Permission::FoldersWrite).await?;
     let mut tx = state.db.begin().await?;
-    let tree = locked_tree(&mut tx, &ctx.org_id).await?;
-    if visible_row(&tree, &ctx, &folder_id)?.deleted_at.is_none() {
+    let tree = locked_tree(&mut tx, &ctx).await?;
+    if visible_row(&tree, &folder_id)?.deleted_at.is_none() {
         return Err(conflict("only folders in the trash can be purged; move it to the trash first"));
     }
-    tree.check_subtree_visible(&ctx, &folder_id)?;
+    tree.check_subtree_visible(&folder_id)?;
     // Everything below goes, whatever its own state: nothing may be left without its folder.
     let mut folders: Vec<&str> = vec![&folder_id];
     folders.extend(tree.descendants(&folder_id).into_iter().map(|r| r.id.as_str()));
@@ -461,16 +472,20 @@ async fn purge(
     for folder in &folders {
         super::dashboards::purge_in_folder(&mut tx, &ctx.org_id, folder).await?;
     }
-    // Children before parents, so no folder is left pointing at a deleted one.
+    // Children before parents, so no folder is left pointing at a deleted one. Grants point at
+    // resources without a foreign key, so they go in the same transaction.
     for folder in folders.iter().rev() {
+        sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'folder' AND resource_id = $2")
+            .bind(&ctx.org_id)
+            .bind(*folder)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM folders WHERE org_id = $1 AND id = $2")
             .bind(&ctx.org_id)
             .bind(*folder)
             .execute(&mut *tx)
             .await?;
     }
-    // Grants on these folders (resource_grants, migration 0003) are deleted here as well once
-    // both streams are merged; the orchestrator adds that statement.
     let now = state.clock.now_ms();
     let summary = json!({ "folders": folders.len(), "dashboards": dashboards });
     audit::record(&mut tx, &event(&ctx, &info, "folder.purged", &folder_id, summary, now)).await?;

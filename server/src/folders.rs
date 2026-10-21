@@ -1,12 +1,12 @@
 //! Folder structure: ancestors, restriction and the tree of an organization. Authorization
-//! (`authz::check_resource`) uses `folder_is_restricted` and `folder_ancestors`; the folder and
-//! dashboard routes use the rest.
+//! (`authz::check_resource`) uses `folder_chain` and `dashboard_folder`; the folder and dashboard
+//! routes use the rest.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use sqlx::AnyPool;
 
-use crate::authz::{OrgCtx, Permission};
+use crate::authz::{self, OrgCtx};
 use crate::error::{ApiError, ApiResult};
 
 /// Folders nest at most this deep, so paths stay readable and every walk up the tree is short.
@@ -69,21 +69,52 @@ pub async fn folder_is_restricted(db: &AnyPool, org_id: &str, folder_id: &str) -
     Ok(folder_chain(db, org_id, folder_id).await?.iter().any(|l| l.restricted))
 }
 
-/// Serializes changes to an organization's folder structure (create under a parent, move,
-/// trash, restore, purge, and dashboards entering a folder). Must be the first statement of the
-/// transaction: on SQLite the write takes the database's write lock before anything is read, on
-/// PostgreSQL it locks the organization's row until the commit. Everything the change depends on
-/// is then read through the same transaction.
-pub async fn lock_structure(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<()> {
-    sqlx::query("UPDATE orgs SET name = name WHERE id = $1").bind(org_id).execute(conn).await?;
-    Ok(())
+/// SQL that decides which folders the caller sees, by the rule of `authz::check_resource`: the
+/// nearest restricted folder above (or at) a folder governs it, and only the caller's grants on
+/// folders from there down count; members whose org-wide permissions include
+/// `folders:permissions` see every folder. Defines `caller_grants(resource_type, resource_id)`
+/// (the grants of the caller, their teams and roles) and `hidden_folders(id)`. Binds `$1` the
+/// organization, `$2` the user id, `$3` the member's role key, `$4` 1 when the caller sees every
+/// folder; the query that uses it numbers its own parameters from `$5`.
+pub const VISIBILITY_CTE: &str = "WITH RECURSIVE \
+    caller_teams(id) AS (SELECT m.team_id FROM team_members m JOIN teams t ON t.id = m.team_id \
+        WHERE m.user_id = $2 AND t.org_id = $1), \
+    caller_grants(resource_type, resource_id) AS (SELECT g.resource_type, g.resource_id FROM resource_grants g \
+        WHERE g.org_id = $1 AND ((g.subject_type = 'user' AND g.subject_id = $2) \
+        OR (g.subject_type = 'team' AND g.subject_id IN (SELECT id FROM caller_teams)) \
+        OR (g.subject_type = 'role' AND (g.subject_id = $3 OR g.subject_id IN \
+            (SELECT r.role FROM team_roles r WHERE r.team_id IN (SELECT id FROM caller_teams)))))), \
+    folder_walk(id, restricted, granted, depth) AS ( \
+        SELECT f.id, CAST(f.restricted AS BIGINT), \
+            CAST(CASE WHEN f.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'folder') \
+                THEN 1 ELSE 0 END AS BIGINT), CAST(1 AS BIGINT) \
+        FROM folders f WHERE f.org_id = $1 AND f.parent_id IS NULL \
+        UNION ALL \
+        SELECT c.id, CAST(CASE WHEN c.restricted = 1 OR w.restricted = 1 THEN 1 ELSE 0 END AS BIGINT), \
+            CAST(CASE WHEN c.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'folder') THEN 1 \
+                WHEN c.restricted = 1 THEN 0 ELSE w.granted END AS BIGINT), w.depth + 1 \
+        FROM folders c JOIN folder_walk w ON c.parent_id = w.id WHERE w.depth < 64), \
+    hidden_folders(id) AS (SELECT id FROM folder_walk \
+        WHERE CAST($4 AS BIGINT) = 0 AND restricted = 1 AND granted = 0) ";
+
+/// The value of `$4` in `VISIBILITY_CTE` for the caller.
+pub fn sees_every_folder(ctx: &OrgCtx) -> i64 {
+    authz::role_sees_restricted(&ctx.permissions) as i64
 }
 
-/// The folders hidden from members without access to restricted folders: every restricted
-/// folder and everything below it. A CTE named `hidden_folders`, with `$1` the organization.
-pub const HIDDEN_FOLDERS_CTE: &str = "WITH RECURSIVE hidden_folders(id) AS ( \
-     SELECT id FROM folders WHERE org_id = $1 AND restricted = 1 \
-     UNION SELECT f.id FROM folders f JOIN hidden_folders h ON f.parent_id = h.id) ";
+/// The folders hidden from the caller (see `VISIBILITY_CTE`), read through `conn`: a pooled
+/// connection, or the transaction holding the organization's lock.
+pub async fn hidden_folder_ids(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<HashSet<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{VISIBILITY_CTE} SELECT id FROM hidden_folders")))
+            .bind(&ctx.org_id)
+            .bind(&ctx.user.id)
+            .bind(&ctx.role)
+            .bind(sees_every_folder(ctx))
+            .fetch_all(&mut *conn)
+            .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
 
 /// The folder a dashboard of the organization lives in (`None`: top level). `not_found` if the
 /// dashboard is not in the organization.
@@ -95,22 +126,6 @@ pub async fn dashboard_folder(db: &AnyPool, org_id: &str, dashboard_id: &str) ->
             .fetch_optional(db)
             .await?;
     row.map(|(folder,)| folder).ok_or_else(ApiError::not_found)
-}
-
-/// Whether the caller sees restricted folders without a grant on them. Grants on single folders
-/// (stream A, migration 0003) widen this; until then members who manage folder permissions
-/// (admins and owners) are the ones who see restricted folders.
-pub fn sees_restricted(ctx: &OrgCtx) -> bool {
-    ctx.permissions.contains(&Permission::FoldersPermissions)
-}
-
-/// `not_found` unless the caller may see `folder_id` (and with it the dashboards inside).
-pub async fn ensure_visible(db: &AnyPool, ctx: &OrgCtx, folder_id: Option<&str>) -> ApiResult<()> {
-    let Some(folder_id) = folder_id else { return Ok(()) };
-    if folder_is_restricted(db, &ctx.org_id, folder_id).await? && !sees_restricted(ctx) {
-        return Err(ApiError::not_found());
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -131,24 +146,28 @@ pub struct FolderRow {
 pub const FOLDER_COLUMNS: &str =
     "id, parent_id, name, restricted, version, created_by, created_at, updated_at, deleted_at, trash_batch";
 
-/// All folders of an organization, trashed ones included, for work on the whole tree in memory.
+/// All folders of an organization, trashed ones included, for work on the whole tree in memory,
+/// with the ones hidden from the caller.
 pub struct Tree {
     pub rows: HashMap<String, FolderRow>,
+    hidden: HashSet<String>,
 }
 
 impl Tree {
-    /// Reads through `db`: the pool, or the connection of a transaction holding `lock_structure`.
-    pub async fn load<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, org_id: &str) -> ApiResult<Self> {
+    /// Reads through `conn`: a pooled connection, or the transaction holding the organization's
+    /// lock (`authz::lock_org`), which must not touch the pool.
+    pub async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
         let rows: Vec<FolderRow> =
             sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {FOLDER_COLUMNS} FROM folders WHERE org_id = $1")))
-                .bind(org_id)
-                .fetch_all(db)
+                .bind(&ctx.org_id)
+                .fetch_all(&mut *conn)
                 .await?;
-        Ok(Self::from_rows(rows))
+        let hidden = hidden_folder_ids(conn, ctx).await?;
+        Ok(Self::from_rows(rows, hidden))
     }
 
-    pub fn from_rows(rows: Vec<FolderRow>) -> Self {
-        Self { rows: rows.into_iter().map(|r| (r.id.clone(), r)).collect() }
+    pub fn from_rows(rows: Vec<FolderRow>, hidden: HashSet<String>) -> Self {
+        Self { rows: rows.into_iter().map(|r| (r.id.clone(), r)).collect(), hidden }
     }
 
     /// The folder and its parents, nearest first (stops at a cycle or a missing parent).
@@ -174,16 +193,16 @@ impl Tree {
         self.nearest_restricted(id).is_some()
     }
 
-    /// Whether the caller sees the folder: see `ensure_visible`.
-    pub fn visible(&self, ctx: &OrgCtx, id: &str) -> bool {
-        sees_restricted(ctx) || !self.is_restricted(id)
+    /// Whether the caller sees the folder (see `VISIBILITY_CTE`).
+    pub fn visible(&self, id: &str) -> bool {
+        !self.hidden.contains(id)
     }
 
     /// `forbidden` if anything below `id` is hidden from the caller: a change of the whole
     /// subtree (trash, restore, purge, move) would act on content they cannot see, and its
     /// counts or depth would reveal it.
-    pub fn check_subtree_visible(&self, ctx: &OrgCtx, id: &str) -> ApiResult<()> {
-        if self.descendants(id).iter().all(|d| self.visible(ctx, &d.id)) {
+    pub fn check_subtree_visible(&self, id: &str) -> ApiResult<()> {
+        if self.descendants(id).iter().all(|d| self.visible(&d.id)) {
             Ok(())
         } else {
             Err(ApiError::forbidden("the folder contains content you cannot see"))
@@ -278,32 +297,131 @@ mod tests {
     }
 
     #[test]
-    fn subtrees_with_hidden_content_are_refused_to_members_who_cannot_see_it() {
-        use crate::authz::BuiltinRole;
-        let t = tree();
-        let editor = ctx(BuiltinRole::Editor);
-        assert_eq!(t.check_subtree_visible(&editor, "a").unwrap_err().code, "forbidden");
-        assert!(t.check_subtree_visible(&editor, "b").is_ok());
-        assert!(t.check_subtree_visible(&ctx(BuiltinRole::Admin), "a").is_ok());
+    fn subtrees_with_hidden_content_are_refused() {
+        let rows = || {
+            vec![
+                row("a", None, false),
+                row("b", Some("a"), false),
+                row("c", Some("b"), false),
+                row("d", Some("a"), true),
+                row("e", Some("d"), false),
+            ]
+        };
+        let hidden: HashSet<String> = ["d".to_string(), "e".to_string()].into();
+        let t = Tree::from_rows(rows(), hidden);
+        assert!(!t.visible("e") && t.visible("c"));
+        assert_eq!(t.check_subtree_visible("a").unwrap_err().code, "forbidden");
+        assert!(t.check_subtree_visible("b").is_ok());
+        assert!(Tree::from_rows(rows(), HashSet::new()).check_subtree_visible("a").is_ok());
     }
 
     #[test]
     fn the_nearest_restricted_folder_decides() {
-        let t = Tree::from_rows(vec![row("a", None, true), row("b", Some("a"), false), row("c", Some("b"), true)]);
+        let t = Tree::from_rows(
+            vec![row("a", None, true), row("b", Some("a"), false), row("c", Some("b"), true)],
+            HashSet::new(),
+        );
         assert_eq!(t.nearest_restricted("c").unwrap().id, "c");
         assert_eq!(t.nearest_restricted("b").unwrap().id, "a");
-        assert!(Tree::from_rows(vec![row("x", None, false)]).nearest_restricted("x").is_none());
+        assert!(Tree::from_rows(vec![row("x", None, false)], HashSet::new()).nearest_restricted("x").is_none());
     }
 
     /// a > b > c, a > d (restricted) > e
     fn tree() -> Tree {
-        Tree::from_rows(vec![
-            row("a", None, false),
-            row("b", Some("a"), false),
-            row("c", Some("b"), false),
-            row("d", Some("a"), true),
-            row("e", Some("d"), false),
-        ])
+        Tree::from_rows(
+            vec![
+                row("a", None, false),
+                row("b", Some("a"), false),
+                row("c", Some("b"), false),
+                row("d", Some("a"), true),
+                row("e", Some("d"), false),
+            ],
+            HashSet::new(),
+        )
+    }
+
+    /// The SQL that lists and searches must hide exactly what `check_resource` refuses: every
+    /// folder of a tree with nested restrictions and grants to a user, a team and a role.
+    #[tokio::test]
+    async fn the_visibility_query_agrees_with_check_resource() {
+        use crate::authz::{BuiltinRole, Permission, Resource, check_resource};
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        // r1 (restricted) > g (grant to the user) > r2 (restricted) > x
+        // r1 > y;  t (restricted, grant to the team) > t2;  v (restricted, grant to the role) > v2
+        // open > r3 (restricted, grant on open above it does not reach in) > z
+        // w (restricted) > w2 (grant to the user, below the governing folder) > w3
+        let statements = [
+            "INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)",
+            "INSERT INTO users (id, email, name, created_at) VALUES ('u', 'u@example.de', 'U', 0)",
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('team', 'o', 'T', 't', 0)",
+            "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('team', 'u', 'member', 0)",
+        ];
+        for sql in statements {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let folders = [
+            ("r1", None, 1),
+            ("g", Some("r1"), 0),
+            ("r2", Some("g"), 1),
+            ("x", Some("r2"), 0),
+            ("y", Some("r1"), 0),
+            ("t", None, 1),
+            ("t2", Some("t"), 0),
+            ("v", None, 1),
+            ("v2", Some("v"), 0),
+            ("open", None, 0),
+            ("r3", Some("open"), 1),
+            ("z", Some("r3"), 0),
+            ("w", None, 1),
+            ("w2", Some("w"), 0),
+            ("w3", Some("w2"), 0),
+        ];
+        for (id, parent, restricted) in folders {
+            sqlx::query(
+                "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) \
+                 VALUES ($1, 'o', $2, $1, $3, 1, 0, 0)",
+            )
+            .bind(id)
+            .bind(parent)
+            .bind(restricted)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        for (id, subject_type, subject, folder) in [
+            ("g1", "user", "u", "g"),
+            ("g2", "team", "team", "t"),
+            ("g3", "role", "viewer", "v"),
+            ("g4", "user", "u", "open"),
+            ("g5", "user", "u", "w2"),
+        ] {
+            sqlx::query(
+                "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, \
+                 level, created_at) VALUES ($1, 'o', $2, $3, 'folder', $4, 'view', 0)",
+            )
+            .bind(id)
+            .bind(subject_type)
+            .bind(subject)
+            .bind(folder)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        for role in [BuiltinRole::Viewer, BuiltinRole::Admin] {
+            let ctx = ctx(role);
+            let hidden = hidden_folder_ids(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            for (id, _, _) in folders {
+                let refused = check_resource(&db, &ctx, Permission::FoldersRead, Resource::Folder(id)).await.is_err();
+                assert_eq!(hidden.contains(id), refused, "{role:?} {id}");
+            }
+            if role == BuiltinRole::Viewer {
+                let mut hidden: Vec<_> = hidden.into_iter().collect();
+                hidden.sort();
+                assert_eq!(hidden, ["r1", "r2", "r3", "w", "x", "y", "z"]);
+            } else {
+                assert!(hidden.is_empty());
+            }
+        }
     }
 
     #[test]
@@ -326,7 +444,7 @@ mod tests {
         }
         rows.push(row("x", None, false));
         rows.push(row("y", Some("x"), false));
-        let t = Tree::from_rows(rows);
+        let t = Tree::from_rows(rows, HashSet::new());
         let deepest = format!("f{}", MAX_DEPTH - 1);
         assert!(t.check_placement(None, &deepest).is_err(), "an eleventh level");
         assert!(t.check_placement(None, &format!("f{}", MAX_DEPTH - 2)).is_ok());
@@ -348,7 +466,7 @@ mod tests {
 
     #[test]
     fn a_damaged_cycle_does_not_hang() {
-        let t = Tree::from_rows(vec![row("p", Some("q"), false), row("q", Some("p"), false)]);
+        let t = Tree::from_rows(vec![row("p", Some("q"), false), row("q", Some("p"), false)], HashSet::new());
         assert_eq!(t.ancestors("p").len(), 2);
         assert_eq!(t.descendants("p").len(), 1);
     }

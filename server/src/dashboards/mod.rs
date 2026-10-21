@@ -49,8 +49,8 @@ mod tests {
 
     #[tokio::test]
     async fn saving_needs_query_rights_on_every_source() {
-        sqlx::any::install_default_drivers();
-        let db = AnyPool::connect("sqlite::memory:").await.unwrap();
+        // One connection, so every query sees the same in-memory database with the migrations.
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
         let model = model::parse(json!({
             "schemaVersion": 1, "title": "T", "timeRange": { "from": "now-1h", "to": "now" },
             "variables": [ { "name": "v", "type": "query", "datasourceId": "ds-var" } ]

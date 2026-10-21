@@ -7,13 +7,13 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::support::{Paging, QueryParams};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{Access, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use crate::folders;
-use crate::paging::{self, QueryParams};
 use crate::settings;
 use crate::shapes::Page;
 
@@ -83,7 +83,13 @@ async fn list_org(
     if q.org_id.is_some() {
         return Err(ApiError::validation("orgId is a filter of the server view only").with_field("orgId"));
     }
-    list(&state, Some(ctx.org_id.as_str()), folders::sees_restricted(&ctx), q).await
+    let viewer = Viewer {
+        org_id: Some(&ctx.org_id),
+        user_id: &ctx.user.id,
+        role: &ctx.role,
+        sees_every_folder: folders::sees_every_folder(&ctx),
+    };
+    list(&state, viewer, q).await
 }
 
 async fn list_server(
@@ -94,64 +100,69 @@ async fn list_server(
     if org.as_deref().is_some_and(|o| o.trim().is_empty()) {
         return Err(ApiError::validation("orgId must not be empty").with_field("orgId"));
     }
-    list(&state, org.as_deref(), true, q).await
+    // Server administrators see every event; no folder is hidden from this view.
+    let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1 };
+    list(&state, viewer, q).await
 }
 
-/// Newest first; `org_id` `None` lists every event of the server, sign-ins included. Without
-/// `sees_restricted`, events about folders and dashboards inside restricted folders are left out,
-/// as the resources themselves are.
-async fn list(
-    state: &AppState,
-    org_id: Option<&str>,
-    sees_restricted: bool,
-    q: AuditQuery,
-) -> ApiResult<Json<Page<AuditItem>>> {
-    let limit = paging::limit(q.limit)?;
-    let after: Option<(i64, String)> = paging::decode_cursor(q.cursor.as_deref())?;
+/// Whose view of the log: the organization (`None`: the whole server) and, for hiding events about
+/// restricted folders and their dashboards, the parameters of `folders::VISIBILITY_CTE`.
+struct Viewer<'a> {
+    org_id: Option<&'a str>,
+    user_id: &'a str,
+    role: &'a str,
+    sees_every_folder: i64,
+}
+
+/// Newest first. Events about folders and dashboards the viewer cannot see are left out, as the
+/// resources themselves are; events of purged resources stay (they hold only ids).
+async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<Json<Page<AuditItem>>> {
+    let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     if let (Some(from), Some(to)) = (q.from, q.to)
         && from > to
     {
         return Err(ApiError::validation("from must not be after to").with_field("from"));
     }
-    let (after_ms, after_id) = after.unzip();
     // Absent filters are bound as NULL; the casts give PostgreSQL the parameter types.
     let rows: Vec<AuditRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.action, e.resource_type, \
          e.resource_id, e.summary, e.created_at \
          FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id \
          WHERE (CAST($1 AS TEXT) IS NULL OR e.org_id = $1) \
-         AND (CAST($2 AS TEXT) IS NULL OR e.actor_user_id = $2) \
-         AND (CAST($3 AS TEXT) IS NULL OR SUBSTR(e.action, 1, LENGTH(CAST($3 AS TEXT))) = $3) \
-         AND (CAST($4 AS TEXT) IS NULL OR e.resource_type = $4) \
-         AND (CAST($5 AS TEXT) IS NULL OR e.resource_id = $5) \
-         AND (CAST($6 AS BIGINT) IS NULL OR e.created_at >= $6) \
-         AND (CAST($7 AS BIGINT) IS NULL OR e.created_at < $7) \
-         AND (CAST($8 AS BIGINT) IS NULL OR e.created_at < $8 OR (e.created_at = $8 AND e.id < $9)) \
-         AND (CAST($11 AS BIGINT) = 1 OR NOT ( \
+         AND (CAST($5 AS TEXT) IS NULL OR e.actor_user_id = $5) \
+         AND (CAST($6 AS TEXT) IS NULL OR SUBSTR(e.action, 1, LENGTH(CAST($6 AS TEXT))) = $6) \
+         AND (CAST($7 AS TEXT) IS NULL OR e.resource_type = $7) \
+         AND (CAST($8 AS TEXT) IS NULL OR e.resource_id = $8) \
+         AND (CAST($9 AS BIGINT) IS NULL OR e.created_at >= $9) \
+         AND (CAST($10 AS BIGINT) IS NULL OR e.created_at < $10) \
+         AND (e.created_at < $11 OR (e.created_at = $11 AND e.id < $12)) \
+         AND NOT ( \
            (COALESCE(e.resource_type, '') = 'folder' \
             AND COALESCE(e.resource_id, '') IN (SELECT id FROM hidden_folders)) \
            OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
-             (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND d.folder_id IN (SELECT id FROM hidden_folders))))) \
-         ORDER BY e.created_at DESC, e.id DESC LIMIT $10",
-        folders::HIDDEN_FOLDERS_CTE
+             (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND d.folder_id IN (SELECT id FROM hidden_folders) \
+              AND d.id NOT IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')))) \
+         ORDER BY e.created_at DESC, e.id DESC LIMIT $13",
+        folders::VISIBILITY_CTE
     )))
-    .bind(org_id)
+    .bind(viewer.org_id)
+    .bind(viewer.user_id)
+    .bind(viewer.role)
+    .bind(viewer.sees_every_folder)
     .bind(q.actor.as_deref())
     .bind(q.action.as_deref().filter(|a| !a.is_empty()))
     .bind(q.resource_type.as_deref())
     .bind(q.resource_id.as_deref())
     .bind(q.from)
     .bind(q.to)
-    .bind(after_ms)
-    .bind(after_id.as_deref())
-    .bind(limit as i64 + 1)
-    .bind(sees_restricted as i64)
+    .bind(paging.before_time())
+    .bind(paging.before_id())
+    .bind(paging.fetch_limit())
     .fetch_all(&state.db)
     .await?;
 
-    let more = rows.len() > limit;
-    let mut items = Vec::with_capacity(limit);
-    for r in rows.into_iter().take(limit) {
+    let mut items = Vec::with_capacity(rows.len());
+    for r in rows {
         let summary = serde_json::from_str(&r.summary)
             .map_err(|e| ApiError::internal("audit", format!("summary of event {} is not JSON: {e}", r.id)))?;
         items.push(AuditItem {
@@ -167,11 +178,7 @@ async fn list(
             created_at: r.created_at,
         });
     }
-    let next_cursor = match items.last() {
-        Some(last) if more => Some(paging::encode_cursor(&(last.created_at, &last.id))),
-        _ => None,
-    };
-    Ok(Json(Page { items, next_cursor }))
+    Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
 }
 
 /// Deletes events older than `audit.retention_days` and records how many went. Answers the
@@ -253,9 +260,20 @@ mod tests {
         }
         let ids = |page: Page<AuditItem>| page.items.into_iter().map(|e| e.id).collect::<Vec<_>>();
         let query = || serde_json::from_value::<AuditQuery>(serde_json::json!({})).unwrap();
-        let limited = list(&state, Some("o"), false, query()).await.unwrap().0;
+        let viewer = || Viewer { org_id: Some("o"), user_id: "u", role: "viewer", sees_every_folder: 0 };
+        let limited = list(&state, viewer(), query()).await.unwrap().0;
         assert_eq!(ids(limited), ["6", "5", "4"]);
-        let all = list(&state, Some("o"), true, query()).await.unwrap().0;
-        assert_eq!(ids(all).len(), 6);
+        let admin = Viewer { sees_every_folder: 1, ..viewer() };
+        assert_eq!(ids(list(&state, admin, query()).await.unwrap().0).len(), 6);
+
+        // A grant on the inner folder shows it and its dashboard, not the restricted folder above.
+        sqlx::query(
+            "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
+             created_at) VALUES ('g', 'o', 'role', 'viewer', 'folder', 'inner', 'view', 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        assert_eq!(ids(list(&state, viewer(), query()).await.unwrap().0), ["6", "5", "4", "3", "2"]);
     }
 }
