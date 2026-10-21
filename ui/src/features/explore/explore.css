@@ -23,7 +23,7 @@
   }
 
   .explore__panel {
-    height: 24rem;
+    height: var(--size-result);
     padding: var(--space-3);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);

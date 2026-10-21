@@ -117,7 +117,7 @@
   .dialog {
     display: flex;
     flex-direction: column;
-    width: min(32rem, 100%);
+    width: min(var(--size-dialog-sm), 100%);
     max-height: calc(100dvh - var(--space-8));
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
@@ -126,7 +126,7 @@
   }
 
   .dialog--large {
-    width: min(72rem, 100%);
+    width: min(var(--size-dialog-lg), 100%);
   }
 
   .dialog__header {
@@ -161,7 +161,7 @@
 
   .browser {
     display: grid;
-    grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+    grid-template-columns: minmax(var(--size-sidebar-min), var(--size-column)) minmax(0, 1fr);
     gap: var(--space-6);
     align-items: start;
   }
@@ -195,7 +195,7 @@
   }
 
   .browser__search {
-    max-width: 24rem;
+    max-width: var(--size-text-max);
   }
 
   .browser__trash,
@@ -311,7 +311,7 @@
   }
 
   .variables__input {
-    width: 12rem;
+    width: var(--size-sidebar-min);
   }
 
   .dash-grid {
@@ -427,7 +427,7 @@
 
   .panel-editor {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+    grid-template-columns: minmax(0, 2fr) minmax(var(--size-column), 1fr);
     gap: var(--space-4);
   }
 
@@ -437,7 +437,7 @@
   }
 
   .panel-editor__viz {
-    height: 18rem;
+    height: var(--size-preview);
     padding: var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
@@ -506,7 +506,7 @@
 
   .variable-editor__row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-card-min), 1fr));
     gap: var(--space-3);
   }
 
@@ -519,7 +519,7 @@
 
   .time-dialog__presets {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--size-card-min), 1fr));
     gap: var(--space-1);
     list-style: none;
   }
@@ -556,7 +556,7 @@
 
   .conflict {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-column), 1fr));
     gap: var(--space-4);
   }
 
@@ -617,7 +617,7 @@
   }
 
   .inspect__code {
-    max-height: 16rem;
+    max-height: var(--size-list-max);
     padding: var(--space-3);
     border-radius: var(--radius-md);
     background: var(--bg-surface);

@@ -163,3 +163,28 @@
     }
   }
 }
+
+/*
+ * Sizes of recurring layout pieces (dialogs, side columns, editors), so no stylesheet carries
+ * one-off widths. Appended by the data areas.
+ */
+@layer tokens {
+  :root {
+    --size-label: 6rem;
+    --size-card-min: 9rem;
+    --size-sidebar-min: 12rem;
+    --size-field: 14rem;
+    --size-column: 16rem;
+    --size-list-max: 16rem;
+    --size-tooltip-max: 20rem;
+    --size-text-max: 24rem;
+    --size-form: 40rem;
+    --size-dialog-sm: 32rem;
+    --size-dialog-lg: 72rem;
+    --size-editor-min: 4.5rem;
+    --size-textarea-min: 7rem;
+    --size-legend-max: 4.5rem;
+    --size-preview: 18rem;
+    --size-result: 24rem;
+  }
+}

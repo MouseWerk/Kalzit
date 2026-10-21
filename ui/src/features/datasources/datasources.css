@@ -7,7 +7,7 @@
   }
 
   .ds-form {
-    max-width: 40rem;
+    max-width: var(--size-form);
   }
 
   .ds-form__kind {
@@ -38,7 +38,7 @@
 
   .ds-kinds__list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--size-field), 1fr));
     gap: var(--space-2);
     list-style: none;
   }
@@ -68,7 +68,7 @@
   }
 
   .ds-secret__status {
-    min-width: 6rem;
+    min-width: var(--size-label);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
@@ -102,7 +102,7 @@
   }
 
   .ds-textarea {
-    min-height: 7rem;
+    min-height: var(--size-textarea-min);
     resize: vertical;
   }
 
@@ -121,7 +121,7 @@
   }
 
   .query-editor__step {
-    min-width: 14rem;
+    min-width: var(--size-field);
   }
 
   .query-editor__help {
@@ -185,7 +185,7 @@
     position: relative;
     display: block;
     width: 100%;
-    min-height: 4.5rem;
+    min-height: var(--size-editor-min);
     border-color: var(--border-strong);
     background: transparent;
     color: transparent;
@@ -226,9 +226,9 @@
     inset-block-start: 100%;
     z-index: var(--z-menu);
     display: grid;
-    min-width: 16rem;
+    min-width: var(--size-column);
     max-width: 100%;
-    max-height: 16rem;
+    max-height: var(--size-list-max);
     margin-block-start: var(--space-1);
     padding: var(--space-1);
     border: var(--border-width) solid var(--border);
