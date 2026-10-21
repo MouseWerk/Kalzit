@@ -12,6 +12,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CompletionResult } from "./completion";
 import { type Token, tokenizePromql, tokenizeSql } from "./syntax";
+import "./editors.css";
 
 export type CodeLanguage = "sql" | "promql";
 

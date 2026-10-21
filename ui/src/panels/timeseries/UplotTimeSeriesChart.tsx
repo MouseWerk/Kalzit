@@ -6,6 +6,7 @@ import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { alignSeries } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
+import "../panels.css";
 
 /** The palette classes, one probe each. */
 const SERIES_CLASSES = Array.from({ length: SERIES_COLORS }, (_, i) => `series-${i + 1}`);

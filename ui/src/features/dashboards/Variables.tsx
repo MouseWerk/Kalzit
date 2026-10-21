@@ -8,6 +8,7 @@ import { fetchVariableOptions, type VariableOption } from "./api";
 import { currentValue, optionValues, storedQueryVariables, type VariableModel } from "./model";
 import type { TextRange } from "./timeRange";
 import { errorMessage } from "./ui/errors";
+import "./dashboards.css";
 
 /** The value each variable starts with: its stored current value, else the first fixed value. */
 export function initialVariables(variables: readonly VariableModel[]): Record<string, string> {

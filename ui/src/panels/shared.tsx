@@ -3,6 +3,7 @@ import type { Frame } from "../api/generated/shapes";
 import { useI18n } from "../i18n/i18n";
 import { rowCount } from "./frame";
 import "./panels.css";
+import "../features/dashboards/ui/shared.css";
 
 const EMPTY_REASONS = {
   noData: "dashboards.panels.empty.noData",

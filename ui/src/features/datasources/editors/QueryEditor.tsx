@@ -5,6 +5,8 @@ import { schemaQuery } from "../api";
 import { familyOf, type PromQuery, parsePromQuery, parseSqlQuery } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
 import { PROMQL_MACROS, promqlCompletions, SQL_MACROS, sqlCompletions } from "./completion";
+import "./editors.css";
+import "../../dashboards/ui/shared.css";
 
 export interface QueryEditorProps {
   orgId: string;

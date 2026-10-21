@@ -3,6 +3,7 @@ import { useI18n } from "../../i18n/i18n";
 import { useElementSize } from "../useElementSize";
 import { ChartShell, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
 import { niceTicks, type Scale, seriesPath, timeTicks, valueExtent } from "./series";
+import "../panels.css";
 
 const AXIS_LEFT = 56;
 const AXIS_BOTTOM = 22;

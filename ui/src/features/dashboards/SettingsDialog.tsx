@@ -16,6 +16,7 @@ import {
 } from "./model";
 import { REFRESH_CHOICES } from "./refresh";
 import { Dialog } from "./ui/Dialog";
+import "./dashboards.css";
 
 /** Variable names become bind parameters ($name); the server accepts identifiers only. */
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

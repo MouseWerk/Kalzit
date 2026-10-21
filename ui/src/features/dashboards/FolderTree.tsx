@@ -2,6 +2,7 @@ import type { KeyboardEvent } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import type { Folder } from "./api";
+import "./dashboards.css";
 
 export interface FolderNode {
   folder: Folder;

@@ -22,6 +22,7 @@ import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
 import { withEditorStyles } from "./editorStyles";
 import { type Token, tokenizePromql, tokenizeSql } from "./syntax";
+import "./editors.css";
 
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,

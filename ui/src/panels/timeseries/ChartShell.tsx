@@ -11,6 +11,7 @@ import { useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
+import "../panels.css";
 
 export interface TimeSeriesChartProps {
   series: readonly Series[];

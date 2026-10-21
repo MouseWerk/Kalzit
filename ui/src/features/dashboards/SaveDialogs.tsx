@@ -6,6 +6,7 @@ import type { Dashboard } from "./api";
 import { type Change, diffModels } from "./diff";
 import type { DashboardModel } from "./model";
 import { Dialog } from "./ui/Dialog";
+import "./dashboards.css";
 
 /** The server's limit on a version message (docs/api/settings-dashboards.md). */
 const MESSAGE_MAX = 500;
