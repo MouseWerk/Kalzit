@@ -166,7 +166,7 @@ describe("server users", () => {
 
   it("is hidden from members who are not server admins", async () => {
     await openAdmin("/admin", { isServerAdmin: false });
-    const sections = await screen.findByRole("navigation", { name: "Administration sections" });
+    const sections = await screen.findByRole("list", { name: "Administration sections" });
     expect(within(sections).queryByRole("link", { name: "Users" })).toBeNull();
     expect(within(sections).getByRole("link", { name: "Members" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Server" })).toBeNull();
@@ -251,7 +251,7 @@ describe("administration overview", () => {
 
   it("marks the current section in the section navigation", async () => {
     await openAdmin("/admin/teams");
-    const sections = await screen.findByRole("navigation", { name: "Administration sections" });
+    const sections = await screen.findByRole("list", { name: "Administration sections" });
     await waitFor(() =>
       expect(
         within(sections).getByRole("link", { name: "Teams" }).getAttribute("aria-current"),

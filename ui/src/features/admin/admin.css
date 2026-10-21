@@ -1,91 +1,13 @@
 /*
- * Administration and account: section navigation, lists of rows, dialogs, notices and the
+ * Administration and account: overview, lists of rows, dialogs, notices and the
  * settings and permission editors. Tokens only; states use a neutral tint and text weight.
  */
 @layer components {
-  /* Frame: section navigation next to the section */
-
-  .admin-layout {
-    display: grid;
-    grid-template-columns: 12rem minmax(0, 1fr);
-    align-items: start;
-    gap: var(--space-8);
-  }
-
-  .admin-layout__content {
-    min-width: 0;
-  }
-
-  .admin-nav {
-    display: grid;
-    gap: var(--space-4);
-    position: sticky;
-    inset-block-start: var(--space-4);
-  }
-
-  .admin-nav__group {
-    display: grid;
-    gap: var(--space-1);
-  }
-
-  .admin-nav__title {
-    padding-inline: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .admin-nav__list {
-    display: grid;
-    gap: var(--space-px);
-    padding: 0;
-    list-style: none;
-  }
-
-  .admin-nav__link {
-    display: block;
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-md);
-    color: var(--text-muted);
-    text-decoration: none;
-    transition:
-      background-color var(--duration-fast) var(--easing),
-      color var(--duration-fast) var(--easing);
-  }
-
-  .admin-nav__link:hover {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
-
-  .admin-nav__link[aria-current="page"] {
-    background: var(--bg-active);
-    color: var(--text);
-    font-weight: var(--font-weight-semibold);
-  }
-
-  @media (max-width: 48rem) {
-    .admin-layout {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-6);
-    }
-
-    .admin-nav {
-      position: static;
-    }
-
-    .admin-nav__list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-1);
-    }
-  }
-
   /* Overview */
 
   .admin-overview {
     display: grid;
-    gap: var(--space-8);
+    gap: var(--space-6);
   }
 
   .admin-overview__group {
@@ -105,7 +27,7 @@
     display: grid;
     height: 100%;
     gap: var(--space-1);
-    padding: var(--space-4);
+    padding: var(--space-3) var(--space-4);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
@@ -224,7 +146,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2) var(--space-4);
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-4);
   }
 
   .admin-row + .admin-row {
@@ -422,7 +344,7 @@
     max-height: calc(100dvh - var(--space-8));
     gap: var(--space-4);
     overflow-y: auto;
-    padding: var(--space-6);
+    padding: var(--space-5);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
@@ -513,7 +435,7 @@
 
   .admin-permissions {
     display: grid;
-    gap: var(--space-6);
+    gap: var(--space-5);
   }
 
   .admin-permissions__group {

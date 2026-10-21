@@ -85,9 +85,7 @@ describe("app shell", () => {
     });
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     if (shown) {
-      expect(
-        await screen.findByRole("navigation", { name: "Administration sections" }),
-      ).toBeTruthy();
+      expect(await screen.findByRole("list", { name: "Administration sections" })).toBeTruthy();
       expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
     } else {
       expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
@@ -116,11 +114,28 @@ describe("app shell", () => {
       );
       const nav = screen.getByRole("navigation", { name: "Main navigation" });
       expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
-      expect(
-        await screen.findByRole("navigation", { name: "Administration sections" }),
-      ).toBeTruthy();
+      // The entry appears once the permissions are known, as would "No access".
+      expect(screen.queryByRole("heading", { name: "No access" })).toBeNull();
     },
   );
+
+  it.each([
+    ["settings:read", "Organization settings"],
+    ["audit:read", "Audit log"],
+  ])("lists the section a custom role with %s may open", async (permission, section) => {
+    await openShell(
+      "/admin",
+      { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
+      { steward: [permission] },
+    );
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    const sections = await within(nav).findByRole("list", { name: "Administration sections" });
+    expect(
+      within(sections)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual([section]);
+  });
 
   it("shows administration to a server admin who belongs to no organization", async () => {
     await openShell("/", { ...TEST_USER, isServerAdmin: true, orgs: [] });

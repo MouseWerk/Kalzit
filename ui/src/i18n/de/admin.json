@@ -2,7 +2,6 @@
   "admin.nav": "Verwaltung",
   "admin.title": "Verwaltung",
   "admin.lead": "Organisationen, Teams, Benutzer und Rollen.",
-  "admin.sections": "Bereiche der Verwaltung",
   "admin.group.org": "Organisation",
   "admin.group.orgNamed": "Organisation „{name}“",
   "admin.group.server": "Server",

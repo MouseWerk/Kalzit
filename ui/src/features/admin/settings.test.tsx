@@ -219,7 +219,7 @@ describe("server settings", () => {
   it("is not offered to members who are not server admins", async () => {
     await openAdmin("/admin/server/settings", { isServerAdmin: false });
     expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
-    const sections = screen.getByRole("navigation", { name: "Administration sections" });
+    const sections = screen.getByRole("list", { name: "Administration sections" });
     expect(within(sections).queryByRole("link", { name: "Server settings" })).toBeNull();
   });
 });
