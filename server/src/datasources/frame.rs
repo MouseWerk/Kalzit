@@ -32,7 +32,16 @@ impl Drop for Budget {
 }
 
 fn reserve(counter: &AtomicUsize, bytes: usize) -> bool {
-    counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(bytes)).is_ok()
+    // A compare-exchange loop rather than `fetch_update`, which newer toolchains deprecate under
+    // another name; this compiles the same everywhere.
+    let mut left = counter.load(Ordering::SeqCst);
+    loop {
+        let Some(rest) = left.checked_sub(bytes) else { return false };
+        match counter.compare_exchange_weak(left, rest, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(now) => left = now,
+        }
+    }
 }
 
 impl ResponseBudget {
