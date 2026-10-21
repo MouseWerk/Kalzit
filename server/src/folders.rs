@@ -116,6 +116,61 @@ pub async fn hidden_folder_ids(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> 
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
+/// Whether a restricted folder governs `folder_id`, read through `conn` (the transaction that
+/// holds the organization's lock).
+pub async fn restricted_in(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<bool> {
+    let mut next = Some(folder_id.to_string());
+    let mut steps = 0;
+    while let Some(id) = next {
+        steps += 1;
+        if steps > MAX_DEPTH * 2 {
+            return Err(ApiError::internal("folders", format!("folder {folder_id} has a cycle among its parents")));
+        }
+        let row: Option<(Option<String>, i64)> =
+            sqlx::query_as("SELECT parent_id, restricted FROM folders WHERE org_id = $1 AND id = $2")
+                .bind(org_id)
+                .bind(&id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        let Some((parent, restricted)) = row else { return Ok(false) };
+        if restricted != 0 {
+            return Ok(true);
+        }
+        next = parent;
+    }
+    Ok(false)
+}
+
+/// Records that a purged folder (and the dashboards in it) was restricted content, so its audit
+/// events stay hidden from members without access to restricted folders once nothing is left to
+/// decide by. Runs in the purge's transaction, before the rows go.
+pub async fn tombstone_folder(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<()> {
+    sqlx::query("INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) VALUES ($1, 'folder', $2)")
+        .bind(org_id)
+        .bind(folder_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) \
+         SELECT org_id, 'dashboard', id FROM dashboards WHERE org_id = $1 AND folder_id = $2",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// See `tombstone_folder`, for one dashboard.
+pub async fn tombstone_dashboard(conn: &mut sqlx::AnyConnection, org_id: &str, dashboard_id: &str) -> ApiResult<()> {
+    sqlx::query("INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) VALUES ($1, 'dashboard', $2)")
+        .bind(org_id)
+        .bind(dashboard_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 /// The folder a dashboard of the organization lives in (`None`: top level). `not_found` if the
 /// dashboard is not in the organization.
 pub async fn dashboard_folder(db: &AnyPool, org_id: &str, dashboard_id: &str) -> ApiResult<Option<String>> {
@@ -191,6 +246,11 @@ impl Tree {
 
     pub fn is_restricted(&self, id: &str) -> bool {
         self.nearest_restricted(id).is_some()
+    }
+
+    /// The id of the restricted folder that governs `id` (see `nearest_restricted`).
+    pub fn governing(&self, id: &str) -> Option<&str> {
+        self.nearest_restricted(id).map(|r| r.id.as_str())
     }
 
     /// Whether the caller sees the folder (see `VISIBILITY_CTE`).
@@ -410,9 +470,13 @@ mod tests {
         for role in [BuiltinRole::Viewer, BuiltinRole::Admin] {
             let ctx = ctx(role);
             let hidden = hidden_folder_ids(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            // The in-memory index that lists use for `access` agrees as well, permission by permission.
+            let index = crate::authz::AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
             for (id, _, _) in folders {
                 let refused = check_resource(&db, &ctx, Permission::FoldersRead, Resource::Folder(id)).await.is_err();
                 assert_eq!(hidden.contains(id), refused, "{role:?} {id}");
+                let held = crate::authz::resource_permissions(&db, &ctx, Resource::Folder(id)).await.unwrap();
+                assert_eq!(index.folder(id), held, "{role:?} {id}");
             }
             if role == BuiltinRole::Viewer {
                 let mut hidden: Vec<_> = hidden.into_iter().collect();

@@ -1,6 +1,8 @@
 //! Reading the audit log (an organization's with `audit:read`, the whole server's for server
 //! administrators) and deleting events older than `audit.retention_days`.
 
+use std::collections::HashSet;
+
 use axum::extract::State;
 use axum::http::Method;
 use axum::{Extension, Json};
@@ -88,6 +90,7 @@ async fn list_org(
         user_id: &ctx.user.id,
         role: &ctx.role,
         sees_every_folder: folders::sees_every_folder(&ctx),
+        scrub: (folders::sees_every_folder(&ctx) == 0).then_some(&ctx),
     };
     list(&state, viewer, q).await
 }
@@ -101,7 +104,7 @@ async fn list_server(
         return Err(ApiError::validation("orgId must not be empty").with_field("orgId"));
     }
     // Server administrators see every event; no folder is hidden from this view.
-    let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1 };
+    let viewer = Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None };
     list(&state, viewer, q).await
 }
 
@@ -112,10 +115,12 @@ struct Viewer<'a> {
     user_id: &'a str,
     role: &'a str,
     sees_every_folder: i64,
+    /// The member whose hidden folders are not named in summaries; `None` names everything.
+    scrub: Option<&'a OrgCtx>,
 }
 
 /// Newest first. Events about folders and dashboards the viewer cannot see are left out, as the
-/// resources themselves are; events of purged resources stay (they hold only ids).
+/// resources themselves are, also once restricted content is purged (`restricted_tombstones`).
 async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<Json<Page<AuditItem>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     if let (Some(from), Some(to)) = (q.from, q.to)
@@ -142,6 +147,9 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
            OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
              (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND d.folder_id IN (SELECT id FROM hidden_folders) \
               AND d.id NOT IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')))) \
+         AND (CAST($4 AS BIGINT) = 1 OR NOT EXISTS (SELECT 1 FROM restricted_tombstones t \
+              WHERE t.org_id = e.org_id AND t.resource_type = COALESCE(e.resource_type, '') \
+              AND t.resource_id = COALESCE(e.resource_id, ''))) \
          ORDER BY e.created_at DESC, e.id DESC LIMIT $13",
         folders::VISIBILITY_CTE
     )))
@@ -161,10 +169,32 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
     .fetch_all(&state.db)
     .await?;
 
+    // Summaries name folders (`parentId`, `folderId`); those the viewer cannot see, or that were
+    // restricted when they were purged, are not named.
+    let unnamed: HashSet<String> = match viewer.scrub {
+        Some(ctx) => {
+            let mut conn = state.db.acquire().await?;
+            let mut ids = folders::hidden_folder_ids(&mut conn, ctx).await?;
+            let gone: Vec<(String,)> = sqlx::query_as(
+                "SELECT resource_id FROM restricted_tombstones WHERE org_id = $1 AND resource_type = 'folder'",
+            )
+            .bind(&ctx.org_id)
+            .fetch_all(&mut *conn)
+            .await?;
+            ids.extend(gone.into_iter().map(|(id,)| id));
+            ids
+        }
+        None => HashSet::new(),
+    };
     let mut items = Vec::with_capacity(rows.len());
     for r in rows {
-        let summary = serde_json::from_str(&r.summary)
+        let mut summary: Value = serde_json::from_str(&r.summary)
             .map_err(|e| ApiError::internal("audit", format!("summary of event {} is not JSON: {e}", r.id)))?;
+        for key in ["parentId", "folderId"] {
+            if summary.get(key).and_then(Value::as_str).is_some_and(|id| unnamed.contains(id)) {
+                summary[key] = Value::Null;
+            }
+        }
         items.push(AuditItem {
             id: r.id,
             org_id: r.org_id,
@@ -260,7 +290,7 @@ mod tests {
         }
         let ids = |page: Page<AuditItem>| page.items.into_iter().map(|e| e.id).collect::<Vec<_>>();
         let query = || serde_json::from_value::<AuditQuery>(serde_json::json!({})).unwrap();
-        let viewer = || Viewer { org_id: Some("o"), user_id: "u", role: "viewer", sees_every_folder: 0 };
+        let viewer = || Viewer { org_id: Some("o"), user_id: "u", role: "viewer", sees_every_folder: 0, scrub: None };
         let limited = list(&state, viewer(), query()).await.unwrap().0;
         assert_eq!(ids(limited), ["6", "5", "4"]);
         let admin = Viewer { sees_every_folder: 1, ..viewer() };

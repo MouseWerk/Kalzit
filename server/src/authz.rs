@@ -521,6 +521,99 @@ async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>
     Ok(narrow(&chain, grants))
 }
 
+/// What decides access to many folders and dashboards at once, read in three queries, so lists can
+/// say per row what the caller may do without a query per row. It applies the same rule as
+/// `check_resource` (`narrow` and `permissions_on`); a test keeps the two in step.
+pub struct AccessIndex {
+    org: BTreeSet<Permission>,
+    /// Folder id to (parent, restricted).
+    folders: std::collections::HashMap<String, (Option<String>, bool)>,
+    grants: Vec<GrantRow>,
+}
+
+impl AccessIndex {
+    /// Reads through `conn`: a pooled connection, or a transaction that holds `lock_org`.
+    pub async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
+        let folders: Vec<(String, Option<String>, i64)> =
+            sqlx::query_as("SELECT id, parent_id, restricted FROM folders WHERE org_id = $1")
+                .bind(&ctx.org_id)
+                .fetch_all(&mut *conn)
+                .await?;
+        let teams: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT t.id, r.role FROM team_members m JOIN teams t ON t.id = m.team_id \
+             LEFT JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2",
+        )
+        .bind(&ctx.user.id)
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let grants: Vec<GrantRow> = sqlx::query_as(
+            "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
+             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard') ORDER BY id",
+        )
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let team_ids: BTreeSet<&str> = teams.iter().map(|(id, _)| id.as_str()).collect();
+        let mut role_keys: BTreeSet<&str> = teams.iter().filter_map(|(_, r)| r.as_deref()).collect();
+        role_keys.insert(&ctx.role);
+        let grants = grants
+            .into_iter()
+            .filter(|g| match g.subject_type.as_str() {
+                "user" => g.subject_id == ctx.user.id,
+                "team" => team_ids.contains(g.subject_id.as_str()),
+                "role" => role_keys.contains(g.subject_id.as_str()),
+                _ => false,
+            })
+            .collect();
+        Ok(Self {
+            org: ctx.permissions.clone(),
+            folders: folders.into_iter().map(|(id, parent, r)| (id, (parent, r != 0))).collect(),
+            grants,
+        })
+    }
+
+    fn folder_links(&self, folder_id: &str, chain: &mut Vec<ChainLink>) {
+        let mut next = Some(folder_id.to_string());
+        while let Some(id) = next {
+            // A cycle cannot be stored (moves refuse it); the bound keeps a damaged table harmless.
+            if chain.len() > 64 {
+                break;
+            }
+            let Some((parent, restricted)) = self.folders.get(&id) else { break };
+            next = parent.clone();
+            chain.push(ChainLink { resource_type: ResourceType::Folder, id, restricted: *restricted });
+        }
+    }
+
+    /// What the caller may do on a folder, or `None` when they may not see it.
+    pub fn folder(&self, folder_id: &str) -> Option<BTreeSet<Permission>> {
+        let mut chain = Vec::new();
+        self.folder_links(folder_id, &mut chain);
+        self.decide(ResourceType::Folder, &chain)
+    }
+
+    /// What the caller may do on a dashboard in `folder_id`, or `None` when they may not see it.
+    pub fn dashboard(&self, dashboard_id: &str, folder_id: Option<&str>) -> Option<BTreeSet<Permission>> {
+        let mut chain =
+            vec![ChainLink { resource_type: ResourceType::Dashboard, id: dashboard_id.to_string(), restricted: false }];
+        if let Some(folder) = folder_id {
+            self.folder_links(folder, &mut chain);
+        }
+        self.decide(ResourceType::Dashboard, &chain)
+    }
+
+    fn decide(&self, resource_type: ResourceType, chain: &[ChainLink]) -> Option<BTreeSet<Permission>> {
+        let reaching = self
+            .grants
+            .iter()
+            .filter(|g| chain.iter().any(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id))
+            .cloned()
+            .collect();
+        permissions_on(&self.org, resource_type, &narrow(chain, reaching))
+    }
+}
+
 /// Whether org-wide permissions reach into restricted folders: only for members who manage folder
 /// permissions (admins and owners); everyone else needs a grant there. The listing SQL
 /// (`folders::VISIBILITY_CTE`) applies the same rule.

@@ -49,3 +49,13 @@ CREATE TABLE dashboard_versions (
     created_at    BIGINT NOT NULL,
     PRIMARY KEY (dashboard_id, version)
 );
+
+-- Folders and dashboards that were purged while a restricted folder governed them. Their audit
+-- events stay hidden from members without access to restricted folders, since nothing is left
+-- to decide that by. Ids only; the rows themselves are gone.
+CREATE TABLE restricted_tombstones (
+    org_id         TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    resource_type  TEXT NOT NULL,
+    resource_id    TEXT NOT NULL,
+    PRIMARY KEY (org_id, resource_type, resource_id)
+);
