@@ -31,7 +31,11 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   type is generated from it and every code has a translation (tested). Codes: `validation`, `unauthenticated`, `forbidden`,
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
   `rate_limited`, `cross_origin`, `invalid_credentials`, `setup_done`, `invalid_setup_token`,
-  `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `internal`.
+  `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `busy`, `internal`.
+  `busy` (503, with `Retry-After`) means the database could not give the request its lock in time;
+  nothing was changed and the request may be sent again. Lock contention is never `internal`.
+  SQLite runs in WAL mode, and transactions start with a write, so they wait for the write lock
+  instead of failing on a stale read snapshot.
 - A resource the caller may not see answers `not_found`, so ids cannot be probed: other
   organizations, and restricted folders (and their dashboards) the caller has no grant for. `forbidden`
   is for what the caller can see but not do. `/api/admin` answers `forbidden` to signed-in

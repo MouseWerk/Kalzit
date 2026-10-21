@@ -28,6 +28,7 @@ const SERVER_ERROR_CODE_SET: Record<ServerErrorCode, true> = {
   datasource_target_blocked: true,
   query_timeout: true,
   query_rejected: true,
+  busy: true,
   internal: true,
 };
 
@@ -101,6 +102,8 @@ function codeForStatus(status: number): ServerErrorCode {
       return "payload_too_large";
     case 429:
       return "rate_limited";
+    case 503:
+      return "busy";
     default:
       return "internal";
   }

@@ -27,6 +27,7 @@ pub const ERROR_CODES: &[&str] = &[
     "datasource_target_blocked",
     "query_timeout",
     "query_rejected",
+    "busy",
     "internal",
 ];
 
@@ -86,7 +87,40 @@ impl ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
+        if is_contention(&e) {
+            tracing::warn!("database busy, answering 503: {e}");
+            return Self::busy();
+        }
         Self::internal("database", e)
+    }
+}
+
+impl ApiError {
+    /// The database could not give this request its lock in time (other writers, a backup). The
+    /// request changed nothing; the client may simply send it again (`Retry-After`).
+    pub fn busy() -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "busy", "the database is busy; try again in a moment")
+    }
+}
+
+/// Lock contention, as opposed to a fault: SQLite's `SQLITE_BUSY` and `SQLITE_LOCKED` (with their
+/// extended codes), PostgreSQL's serialization failure, deadlock and lock timeout, and a pool that
+/// had no free connection in time.
+fn is_contention(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::PoolTimedOut => true,
+        sqlx::Error::Database(d) => {
+            if d.try_downcast_ref::<sqlx::sqlite::SqliteError>().is_some() {
+                // Extended result codes keep the primary code in the low byte.
+                let primary = d.code().and_then(|c| c.parse::<i32>().ok()).map(|c| c & 0xff);
+                matches!(primary, Some(5 | 6))
+            } else if d.try_downcast_ref::<sqlx::postgres::PgDatabaseError>().is_some() {
+                matches!(d.code().as_deref(), Some("40001" | "40P01" | "55P03"))
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
@@ -100,7 +134,12 @@ impl IntoResponse for ApiError {
         if let Some(current) = self.current {
             body["current"] = current;
         }
-        (self.status, Json(body)).into_response()
+        let mut res = (self.status, Json(body)).into_response();
+        if self.code == "busy" {
+            // Locks are held for milliseconds; a second is plenty before trying again.
+            res.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("1"));
+        }
+        res
     }
 }
 
@@ -117,6 +156,15 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"]["code"], "version_conflict");
         assert_eq!(body["current"]["version"], 4);
+    }
+
+    #[tokio::test]
+    async fn contention_is_busy_with_a_retry_hint_and_faults_stay_internal() {
+        let busy = ApiError::from(sqlx::Error::PoolTimedOut);
+        assert_eq!((busy.status, busy.code), (StatusCode::SERVICE_UNAVAILABLE, "busy"));
+        let res = busy.into_response();
+        assert_eq!(res.headers().get(axum::http::header::RETRY_AFTER).unwrap(), "1");
+        assert_eq!(ApiError::from(sqlx::Error::RowNotFound).code, "internal");
     }
 
     #[test]
