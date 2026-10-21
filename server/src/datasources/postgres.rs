@@ -12,6 +12,7 @@ use sqlx::postgres::types::PgInterval;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::{Column as _, Connection as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
+use super::Detail;
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -159,18 +160,22 @@ async fn check_identity(c: &mut sqlx::PgConnection, own: &(String, String)) -> R
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
         sqlx::Error::Configuration(inner) if inner.is::<OwnDatabase>() || inner.is::<super::targets::Blocked>() => {
-            SourceError::Blocked(inner.to_string())
+            SourceError::Blocked(super::blocked_detail(inner.as_ref()))
+        }
+        sqlx::Error::Configuration(inner) if inner.is::<IdentityUnknown>() => {
+            SourceError::failed("target.own_database_unverifiable", inner.to_string())
         }
         sqlx::Error::Database(db) => {
             if db.code().as_deref() == Some("57014") {
-                SourceError::Failed("the query was cancelled by the statement timeout".into())
+                SourceError::failed("query.statement_timeout", "the query was cancelled by the statement timeout")
             } else if db.code().as_deref() == Some("25006") {
-                SourceError::Rejected(format!("the query tried to write: {}", db.message()))
+                SourceError::rejected("query.write_refused", format!("the query tried to write: {}", db.message()))
+                    .with("detail", db.message())
             } else {
-                SourceError::Failed(db.message().to_string())
+                SourceError::from_source(db.message())
             }
         }
-        other => SourceError::Failed(other.to_string()),
+        other => SourceError::from_source(other.to_string()),
     }
 }
 
@@ -185,7 +190,8 @@ impl DataSourcePlugin for Postgres {
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
-        let s = Settings::deserialize(settings).map_err(|e| FieldError::new("settings", e.to_string()))?;
+        let s = Settings::deserialize(settings)
+            .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
         super::check_host("host", &s.host)?;
         super::check_port("port", s.port)?;
         super::check_pem("caCert", s.ca_cert.as_deref())?;
@@ -208,12 +214,8 @@ impl DataSourcePlugin for Postgres {
             Ok::<_, SourceError>((version, superuser))
         };
         match check.await {
-            Ok((version, false)) => Health { ok: true, message: format!("PostgreSQL {version}") },
-            Ok((version, true)) => Health {
-                ok: true,
-                message: format!("PostgreSQL {version}; the login is a superuser, use a read-only login instead"),
-            },
-            Err(e) => Health { ok: false, message: e.to_string() },
+            Ok((version, admin)) => Health::connected("PostgreSQL", &version, admin),
+            Err(e) => Health::failed(&e),
         }
     }
 
@@ -264,14 +266,15 @@ impl DataSourcePlugin for Postgres {
         frame.executed_query(prepared.sql.clone());
         for (col, d) in statement.columns().iter().zip(&decoders) {
             if matches!(d, Decoder::Unsupported) {
-                frame.notice(
-                    NoticeSeverity::Warning,
-                    format!(
-                        "{} has the type {}, which is not shown; cast it to text in the query",
-                        col.name(),
-                        col.type_info().name()
-                    ),
+                let message = format!(
+                    "{} has the type {}, which is not shown; cast it to text in the query",
+                    col.name(),
+                    col.type_info().name()
                 );
+                let detail = Detail::new("frame.type_unsupported", message)
+                    .with("column", col.name())
+                    .with("type", col.type_info().name());
+                frame.notice(NoticeSeverity::Warning, detail);
             }
         }
         let mut query = statement.query();

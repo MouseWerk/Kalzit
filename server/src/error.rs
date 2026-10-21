@@ -39,6 +39,16 @@ pub struct ApiError {
     pub field: Option<&'static str>,
     /// For `version_conflict`: the stored resource, sent next to `error` as `current`.
     pub current: Option<serde_json::Value>,
+    /// A finer, stable reason the UI translates (data source errors list theirs in
+    /// docs/api/datasources.md), with the values its text needs. Boxed, so every `ApiResult`
+    /// stays small.
+    pub reason: Option<Box<Reason>>,
+}
+
+#[derive(Debug, Default)]
+pub struct Reason {
+    pub code: String,
+    pub params: std::collections::BTreeMap<String, String>,
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -46,7 +56,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         debug_assert!(ERROR_CODES.contains(&code), "error code {code} is missing from ERROR_CODES");
-        Self { status, code, message: message.into(), field: None, current: None }
+        Self { status, code, message: message.into(), field: None, current: None, reason: None }
     }
 
     /// The caller edited an older version; `current` is the stored resource to merge with.
@@ -58,6 +68,29 @@ impl ApiError {
 
     pub fn with_field(mut self, field: &'static str) -> Self {
         self.field = Some(field);
+        self
+    }
+
+    /// Adds the reason code and its parameters.
+    pub fn with_reason(
+        mut self,
+        reason: impl Into<String>,
+        params: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        self.reason = Some(Box::new(Reason { code: reason.into(), params }));
+        self
+    }
+
+    /// Adds a reason code without parameters; `param` adds them one by one.
+    pub fn because(self, reason: &str) -> Self {
+        self.with_reason(reason, Default::default())
+    }
+
+    pub fn param(mut self, key: &str, value: impl ToString) -> Self {
+        debug_assert!(self.reason.is_some(), "param({key}) needs a reason first");
+        if let Some(r) = self.reason.as_mut() {
+            r.params.insert(key.to_string(), value.to_string());
+        }
         self
     }
 
@@ -95,6 +128,12 @@ impl IntoResponse for ApiError {
         let mut error = json!({ "code": self.code, "message": self.message });
         if let Some(field) = self.field {
             error["field"] = json!(field);
+        }
+        if let Some(reason) = self.reason {
+            error["reason"] = json!(reason.code);
+            if !reason.params.is_empty() {
+                error["params"] = json!(reason.params);
+            }
         }
         let mut body = json!({ "error": error });
         if let Some(current) = self.current {

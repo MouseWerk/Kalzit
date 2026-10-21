@@ -16,6 +16,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
+use super::Detail;
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -117,7 +118,7 @@ impl Drop for Lease<'_> {
 pub struct MsSql;
 
 fn failed(e: tiberius::error::Error) -> SourceError {
-    SourceError::Failed(e.to_string())
+    SourceError::from_source(e.to_string())
 }
 
 async fn pool(conn: &Connection) -> Result<Arc<Pool>, SourceError> {
@@ -129,7 +130,7 @@ async fn open(conn: &Connection) -> Result<Client, SourceError> {
     let s: Settings = conn.settings_as()?;
     let port = s.port.unwrap_or(1433) as u16;
     let (_, tcp) = conn.policy().connect(&s.host, port, CONNECT_TIMEOUT).await?;
-    tcp.set_nodelay(true).map_err(|e| SourceError::Failed(e.to_string()))?;
+    tcp.set_nodelay(true).map_err(|e| SourceError::from_source(e.to_string()))?;
     let mut config = tiberius::Config::new();
     config.host(&s.host);
     config.port(port);
@@ -144,13 +145,14 @@ async fn open(conn: &Connection) -> Result<Client, SourceError> {
     }
     let client = tokio::time::timeout(CONNECT_TIMEOUT, tiberius::Client::connect(config, tcp.compat_write()))
         .await
-        .map_err(|_| SourceError::Failed("SQL Server did not complete the login in time".into()))?
+        .map_err(|_| SourceError::failed("mssql.login_timeout", "SQL Server did not complete the login in time"))?
         .map_err(failed)?;
     Ok(client)
 }
 
 async fn lease<'p>(conn: &Connection, pool: &'p Pool) -> Result<Lease<'p>, SourceError> {
-    let permit = pool.slots.acquire().await.map_err(|_| SourceError::Failed("the pool is closed".into()))?;
+    let permit =
+        pool.slots.acquire().await.map_err(|_| SourceError::failed("server.shutting_down", "the pool is closed"))?;
     let idle = {
         let mut idle = pool.idle.lock().expect("pool lock");
         // Closed by dropping; an idle client has no statement to cancel.
@@ -180,7 +182,8 @@ impl DataSourcePlugin for MsSql {
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
-        let s = Settings::deserialize(settings).map_err(|e| FieldError::new("settings", e.to_string()))?;
+        let s = Settings::deserialize(settings)
+            .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
         super::check_host("host", &s.host)?;
         super::check_port("port", s.port)?;
         super::check_pem("caCert", s.ca_cert.as_deref())?;
@@ -202,18 +205,14 @@ impl DataSourcePlugin for MsSql {
                 .await
                 .map_err(failed)?;
             lease.release();
-            let row = row.ok_or_else(|| SourceError::Failed("no answer".into()))?;
+            let row = row.ok_or_else(|| SourceError::failed("source.no_answer", "no answer"))?;
             let version: Option<&str> = row.get(0);
             let sysadmin: Option<i32> = row.get(1);
             Ok::<_, SourceError>((version.unwrap_or("").to_string(), sysadmin == Some(1)))
         };
         match check.await {
-            Ok((version, false)) => Health { ok: true, message: format!("SQL Server {version}") },
-            Ok((version, true)) => Health {
-                ok: true,
-                message: format!("SQL Server {version}; the login is a sysadmin, use a read-only login instead"),
-            },
-            Err(e) => Health { ok: false, message: e.to_string() },
+            Ok((version, admin)) => Health::connected("SQL Server", &version, admin),
+            Err(e) => Health::failed(&e),
         }
     }
 
@@ -282,7 +281,10 @@ impl DataSourcePlugin for MsSql {
             frame.unwrap_or_else(|| FrameBuilder::new(Vec::new(), req.limits.max_rows, req.limits.budget.clone()));
         frame.executed_query(prepared.sql.clone());
         if binary {
-            frame.notice(NoticeSeverity::Warning, "binary values that are not text are shown empty");
+            frame.notice(
+                NoticeSeverity::Warning,
+                Detail::new("frame.binary_hidden", "binary values that are not text are shown empty"),
+            );
         }
         if stopped_early {
             // The rest of the result is still on the wire; closing the connection discards it

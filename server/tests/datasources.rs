@@ -246,11 +246,16 @@ async fn postgres_errors_never_show_the_password() {
         )
         .await;
     // The login works; then the database repeats a literal holding the password, case kept.
-    assert_eq!(t.health(&id).await["ok"], true);
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+    assert!(h["reason"].as_str().is_some_and(|r| r.starts_with("health.connected")), "{h}");
+    assert_eq!(h["params"]["engine"], "PostgreSQL", "{h}");
     let literal = format!("x{secret}x");
     let r = t.query(&id, json!({ "sql": format!("SELECT CAST('{literal}' AS integer)") })).await;
     assert_eq!(r["error"]["code"], "datasource_error", "{r}");
     assert!(r["error"]["message"].as_str().unwrap().contains("integer"), "{r}");
+    assert_eq!(r["error"]["reason"], "source.error", "{r}");
+    assert!(r["error"]["params"]["detail"].as_str().unwrap().contains("integer"), "{r}");
     assert!(!r.to_string().contains(&secret), "{r}");
     // A wrong password in an authentication error does not come back either.
     let wrong = format!("{secret}-falsch");
@@ -259,6 +264,7 @@ async fn postgres_errors_never_show_the_password() {
     assert!(!bad.to_string().contains(&wrong));
     let h = t.health(&id).await;
     assert_eq!(h["ok"], false, "{h}");
+    assert_eq!(h["reason"], "source.error", "{h}");
     assert!(!h.to_string().contains(&wrong), "{h}");
 }
 

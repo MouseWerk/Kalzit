@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::Value;
 
+use super::detail::Detail;
 use crate::shapes::{Field, FieldType, Frame, FrameMeta, Notice, NoticeSeverity};
 
 /// Bytes left for the results of one request; queries running in parallel draw from it. When
@@ -162,10 +163,10 @@ impl FrameBuilder {
     }
 
     /// Adds a notice once, however often it is reported.
-    pub fn notice(&mut self, severity: NoticeSeverity, text: impl Into<String>) {
-        let text = text.into();
-        if !self.notices.iter().any(|n| n.text == text) {
-            self.notices.push(Notice { severity, text });
+    pub fn notice(&mut self, severity: NoticeSeverity, detail: Detail) {
+        let params = (!detail.params.is_empty()).then_some(detail.params);
+        if !self.notices.iter().any(|n| n.code == detail.reason && n.params == params) {
+            self.notices.push(Notice { severity, code: detail.reason.to_string(), params, text: detail.message });
         }
     }
 
@@ -181,12 +182,13 @@ impl FrameBuilder {
             return false;
         }
         if self.rows >= self.max_rows {
-            self.truncate(format!("only the first {} rows are shown (row limit)", self.max_rows));
+            let message = format!("only the first {} rows are shown (row limit)", self.max_rows);
+            self.truncate(Detail::new("frame.row_limit", message).with("rows", self.max_rows));
             return false;
         }
         let size: usize = row.iter().map(json_size).sum::<usize>() + row.len();
         if !self.budget.take(size) {
-            self.truncate("the result was cut off at the response size limit".to_string());
+            self.truncate(Detail::new("frame.size_limit", "the result was cut off at the response size limit"));
             return false;
         }
         for (column, value) in self.columns.iter_mut().zip(row) {
@@ -196,7 +198,7 @@ impl FrameBuilder {
         true
     }
 
-    fn truncate(&mut self, notice: String) {
+    fn truncate(&mut self, notice: Detail) {
         self.truncated = true;
         self.notice(NoticeSeverity::Warning, notice);
     }

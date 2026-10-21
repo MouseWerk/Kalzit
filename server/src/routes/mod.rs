@@ -98,10 +98,15 @@ pub fn clean_name(raw: &str, what: &str) -> ApiResult<String> {
     let name = raw.trim();
     let chars = name.chars().count();
     if chars == 0 || chars > MAX_NAME_CHARS {
-        return Err(ApiError::validation(format!("{what} needs 1 to {MAX_NAME_CHARS} characters")));
+        return Err(ApiError::validation(format!("{what} needs 1 to {MAX_NAME_CHARS} characters"))
+            .because("request.name_length")
+            .param("field", what)
+            .param("max", MAX_NAME_CHARS));
     }
     if name.chars().any(char::is_control) {
-        return Err(ApiError::validation(format!("{what} contains control characters")));
+        return Err(ApiError::validation(format!("{what} contains control characters"))
+            .because("request.name_control_characters")
+            .param("field", what));
     }
     Ok(name.to_string())
 }

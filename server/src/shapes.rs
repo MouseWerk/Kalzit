@@ -118,6 +118,13 @@ pub struct FrameMeta {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Notice {
     pub severity: NoticeSeverity,
+    /// A stable code the UI translates (see docs/api/datasources.md).
+    pub code: String,
+    /// Values the code's text needs (`{column}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub params: Option<BTreeMap<String, String>>,
+    /// English fallback.
     pub text: String,
 }
 
@@ -388,6 +395,15 @@ pub struct ErrorBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub field: Option<String>,
+    /// A finer, stable reason the UI translates (see docs/api/datasources.md); `message` is the
+    /// English fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
+    /// Values the reason's text needs (`{name}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 /// Every list answer. `nextCursor` is opaque; order is stable (newest first unless a route says

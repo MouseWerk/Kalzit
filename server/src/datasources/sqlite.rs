@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
+use super::Detail;
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -50,14 +51,21 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlitePool>, SourceError> {
             .read_only(true)
             .create_if_missing(false)
             // Belt and braces next to the read-only open: refuse writes on the connection too.
-            .pragma("query_only", "ON");
+            .pragma("query_only", "ON")
+            // sqlx keeps the columns a cached statement was first prepared with, even after the
+            // file's schema changed (SQLite re-prepares the statement, sqlx keeps the old
+            // columns). The file belongs to someone else and may change at any time, so every
+            // query is prepared afresh: one prepare per query, next to its execution.
+            .statement_cache_capacity(0);
         SqlitePoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
             .idle_timeout(std::time::Duration::from_secs(300))
             .connect_with(options)
             .await
-            .map_err(|e| SourceError::Failed(format!("cannot open the SQLite file: {e}")))
+            .map_err(|e| {
+                SourceError::failed("sqlite.open_failed", format!("cannot open the SQLite file: {e}")).with("detail", e)
+            })
     })
     .await
 }
@@ -74,10 +82,10 @@ fn failed_within(timeout: std::time::Duration) -> impl Fn(sqlx::Error) -> Source
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
         sqlx::Error::Database(db) if db.message().contains("interrupted") => {
-            SourceError::Failed("the query was stopped (time limit or cancelled)".into())
+            SourceError::failed("query.stopped", "the query was stopped (time limit or cancelled)")
         }
-        sqlx::Error::Database(db) => SourceError::Failed(db.message().to_string()),
-        other => SourceError::Failed(other.to_string()),
+        sqlx::Error::Database(db) => SourceError::from_source(db.message()),
+        other => SourceError::from_source(other.to_string()),
     }
 }
 
@@ -116,10 +124,12 @@ impl DataSourcePlugin for Sqlite {
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
-        let s = Settings::deserialize(settings).map_err(|e| FieldError::new("path", e.to_string()))?;
+        let s = Settings::deserialize(settings)
+            .map_err(|e| FieldError::new("path", "settings.invalid", e.to_string()).with("detail", e))?;
         if !Path::new(&s.path).is_absolute() {
             return Err(FieldError::new(
                 "path",
+                "settings.path_relative",
                 "the path must be absolute, like /srv/daten/umsatz.db or C:\\Daten\\umsatz.db",
             ));
         }
@@ -134,8 +144,15 @@ impl DataSourcePlugin for Sqlite {
             Ok::<_, SourceError>(version)
         };
         match check.await {
-            Ok(version) => Health { ok: true, message: format!("SQLite {version}, opened read-only") },
-            Err(e) => Health { ok: false, message: e.to_string() },
+            Ok(version) => {
+                let mut health = Health::connected("SQLite", &version, false);
+                health.detail =
+                    Detail::new("health.connected_read_only", format!("SQLite {version}, opened read-only"))
+                        .with("engine", "SQLite")
+                        .with("version", version);
+                health
+            }
+            Err(e) => Health::failed(&e),
         }
     }
 
@@ -168,15 +185,17 @@ impl DataSourcePlugin for Sqlite {
         let mut c = pool.acquire().await.map_err(failed)?;
         let _guard = guard_statement(&mut c, req.limits.timeout).await?;
         let stopped = failed_within(req.limits.timeout);
+        // A connection prepares against the schema it parsed last and notices a change only when
+        // a statement reads a table, so a table recreated since would show its old declared
+        // types. Reading the schema table first makes it reload the schema if it changed.
+        sqlx::query("SELECT 1 FROM sqlite_schema LIMIT 1").fetch_optional(&mut *c).await.map_err(&stopped)?;
         let statement =
             (&mut *c).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(&stopped)?;
-        let mut columns: Vec<Column> = Vec::new();
-        let mut declared = Vec::new();
-        for col in statement.columns() {
-            let decl = col.type_info().name().to_ascii_uppercase();
-            columns.push(Column::new(col.name(), declared_type(&decl)));
-            declared.push(decl);
-        }
+        let columns: Vec<Column> = statement
+            .columns()
+            .iter()
+            .map(|col| Column::new(col.name(), declared_type(col.type_info().name())))
+            .collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
         frame.executed_query(prepared.sql.clone());
         let mut query = statement.query();
@@ -202,14 +221,20 @@ impl DataSourcePlugin for Sqlite {
     }
 }
 
-/// The field type a declared column type implies; `None` decides by the first value.
-fn declared_type(decl: &str) -> Option<FieldType> {
-    if decl.contains("BOOL") {
-        Some(FieldType::Bool)
-    } else if decl.contains("DATE") || decl.contains("TIME") {
-        Some(FieldType::Time)
-    } else {
-        None
+/// The field type a column's declared type implies, so a table without rows still answers its
+/// types. sqlx names the declared type by SQLite's affinity rules (`VARCHAR(20)` is `TEXT`,
+/// `DOUBLE` is `REAL`); without a declared type (an expression), or with one it cannot name
+/// (`NUMERIC`, `DECIMAL`), it reports the storage class of the first row, which before any row
+/// is `NULL`. `None` then decides by the first value, and a column without values is `string`.
+fn declared_type(name: &str) -> Option<FieldType> {
+    match name {
+        "INTEGER" => Some(FieldType::Int64),
+        "REAL" => Some(FieldType::Number),
+        "TEXT" => Some(FieldType::String),
+        "BOOLEAN" => Some(FieldType::Bool),
+        "DATE" | "TIME" | "DATETIME" => Some(FieldType::Time),
+        // Binary values are hidden with a notice; NUMERIC holds integers and reals alike.
+        _ => None,
     }
 }
 
@@ -254,7 +279,10 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
             _ => None,
         };
         let Some(natural) = natural else {
-            notices.push(format!("{} holds binary values, which are not shown", column.name));
+            notices.push(
+                Detail::new("frame.binary_hidden", format!("{} holds binary values, which are not shown", column.name))
+                    .with("column", &column.name),
+            );
             out.push(Value::Null);
             continue;
         };
@@ -265,7 +293,13 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
         });
         let value = convert(natural, field_type);
         if value.is_null() {
-            notices.push(format!("{} holds values that do not fit its type; they are shown empty", column.name));
+            notices.push(
+                Detail::new(
+                    "frame.value_mismatch",
+                    format!("{} holds values that do not fit its type; they are shown empty", column.name),
+                )
+                .with("column", &column.name),
+            );
         }
         out.push(value);
     }
@@ -302,6 +336,17 @@ fn convert(natural: Natural, field_type: FieldType) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_types() {
+        assert_eq!(declared_type("INTEGER"), Some(FieldType::Int64));
+        assert_eq!(declared_type("REAL"), Some(FieldType::Number));
+        assert_eq!(declared_type("TEXT"), Some(FieldType::String));
+        assert_eq!(declared_type("BOOLEAN"), Some(FieldType::Bool));
+        assert_eq!(declared_type("DATETIME"), Some(FieldType::Time));
+        assert_eq!(declared_type("NULL"), None);
+        assert_eq!(declared_type("BLOB"), None);
+    }
 
     #[test]
     fn date_texts() {

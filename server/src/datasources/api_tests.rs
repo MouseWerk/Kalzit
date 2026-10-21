@@ -367,19 +367,47 @@ async fn secrets_are_never_returned_and_follow_patch_semantics() {
 async fn settings_and_secrets_are_validated() {
     let t = T::new().await;
     let pg = |settings: Value, secrets: Value| json!({ "name": "X", "kind": "postgres", "settings": settings, "secrets": secrets });
-    for (body, field) in [
-        (json!({ "name": "X", "kind": "oracle", "settings": {} }), "kind"),
-        (json!({ "name": " ", "kind": "sqlite", "settings": { "path": "/x" } }), "name"),
-        (pg(json!({ "database": "d", "user": "u" }), json!({})), "host"),
-        (pg(json!({ "host": "h", "database": "d", "user": "u", "password": "x" }), json!({})), "password"),
-        (pg(json!({ "host": "h", "database": "d", "user": "u" }), json!({ "apiKey": "x" })), "secrets"),
-        (pg(json!({ "host": "h", "database": "d", "user": "u", "port": 70000 }), json!({})), "port"),
-        (json!({ "name": "P", "kind": "prometheus", "settings": { "url": "https://admin:pw@prom.intern" } }), "url"),
-        (json!({ "name": "S", "kind": "sqlite", "settings": { "path": "relativ.db" } }), "path"),
+    for (body, field, reason) in [
+        (json!({ "name": "X", "kind": "oracle", "settings": {} }), "kind", Some("datasource.kind_unknown")),
+        (json!({ "name": " ", "kind": "sqlite", "settings": { "path": "/x" } }), "name", Some("request.name_length")),
+        (pg(json!({ "database": "d", "user": "u" }), json!({})), "host", Some("settings.required")),
+        (
+            pg(json!({ "host": "h", "database": "d", "user": "u", "password": "x" }), json!({})),
+            "password",
+            Some("settings.secret_in_settings"),
+        ),
+        (
+            pg(json!({ "host": "h", "database": "d", "user": "u" }), json!({ "apiKey": "x" })),
+            "secrets",
+            Some("secrets.unknown"),
+        ),
+        (
+            pg(json!({ "host": "h", "database": "d", "user": "u", "port": 70000 }), json!({})),
+            "port",
+            Some("settings.port_invalid"),
+        ),
+        (
+            json!({ "name": "P", "kind": "prometheus", "settings": { "url": "https://admin:pw@prom.intern" } }),
+            "url",
+            Some("settings.url_credentials"),
+        ),
+        (
+            json!({ "name": "S", "kind": "sqlite", "settings": { "path": "relativ.db" } }),
+            "path",
+            Some("settings.path_relative"),
+        ),
     ] {
         let r = t.post("/datasources", body.clone()).await;
         assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{body}: {}", r.text);
         assert_eq!(r.body["error"]["field"], field, "{body}");
+        if let Some(reason) = reason {
+            assert_eq!(r.body["error"]["reason"], reason, "{body}: {}", r.text);
+            let param = if field == "kind" { "kind" } else { "field" };
+            if field == "name" {
+                assert_eq!(r.body["error"]["params"]["max"], "100", "{body}: {}", r.text);
+            }
+            assert!(r.body["error"]["params"][param].is_string(), "{body}: {}", r.text);
+        }
         assert!(!r.text.contains("admin:pw"));
     }
     let r = t.post("/datasources", json!({ "name": "X", "kind": "sqlite", "settings": {}, "extra": 1 })).await;
@@ -402,6 +430,7 @@ async fn blocked_targets_are_refused_when_saving_and_querying() {
             .await;
         assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"), "{}", r.text);
         assert_eq!(r.body["error"]["field"], "path");
+        assert_eq!(r.body["error"]["reason"], "target.sqlite_path_refused", "{}", r.text);
     }
     let meta = json!({ "name": "M", "kind": "prometheus", "settings": { "url": "http://169.254.169.254/" } });
     assert_eq!(t.post("/datasources", meta).await.code(), "datasource_target_blocked");
@@ -419,8 +448,10 @@ async fn blocked_targets_are_refused_when_saving_and_querying() {
     let r =
         t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT a FROM x" } }])).await;
     assert_eq!(r.body["results"]["A"]["error"]["code"], "datasource_target_blocked", "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "target.sqlite_path_refused", "{}", r.text);
     let h = t.post(&format!("/datasources/{id}/health"), json!({})).await;
     assert_eq!((h.body["ok"].as_bool(), h.body["code"].as_str()), (Some(false), Some("datasource_target_blocked")));
+    assert_eq!(h.body["reason"], "target.sqlite_path_refused", "{}", h.text);
 }
 
 #[tokio::test]
@@ -502,24 +533,41 @@ async fn writes_are_rejected_and_each_query_answers_on_its_own() {
     assert_eq!(r.status, StatusCode::OK);
     let res = &r.body["results"];
     assert_eq!(res["ok"]["result"]["frame"]["fields"][0]["values"], json!(["3"]));
-    for refid in ["del", "ext", "form"] {
+    for (refid, reason) in
+        [("del", "sql.not_select"), ("ext", "sql.function_not_allowed"), ("form", "query.invalid_form")]
+    {
         assert_eq!(res[refid]["error"]["code"], "query_rejected", "{refid}: {}", r.text);
+        assert_eq!(res[refid]["error"]["reason"], reason, "{refid}: {}", r.text);
     }
+    assert_eq!(res["ext"]["error"]["params"]["name"], "load_extension", "{}", r.text);
     assert_eq!(res["gone"]["error"]["code"], "not_found");
+    assert!(res["gone"]["error"].get("reason").is_none(), "the code says it all: {}", r.text);
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM verkauf")
         .fetch_one(&sqlx::SqlitePool::connect(&crate::config::sqlite_url(&file)).await.unwrap())
         .await
         .unwrap();
     assert_eq!(n, 3);
 
-    for bad in [
-        json!({ "queries": [], "timeRange": { "from": 0, "to": 1 } }),
-        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }, { "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 } }),
-        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 2, "to": 1 } }),
-        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 }, "extra": true }),
+    for (bad, reason) in [
+        (json!({ "queries": [], "timeRange": { "from": 0, "to": 1 } }), Some("query.count")),
+        (
+            json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }, { "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 } }),
+            Some("query.ref_id"),
+        ),
+        (
+            json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 2, "to": 1 } }),
+            Some("query.range_reversed"),
+        ),
+        (
+            json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 }, "extra": true }),
+            Some("request.body_invalid"),
+        ),
     ] {
         let r = t.send(Method::POST, &t.path("/query"), Some(bad.clone()), Some(&t.owner)).await;
         assert_eq!(r.code(), "validation", "{bad}: {}", r.text);
+        if let Some(reason) = reason {
+            assert_eq!(r.body["error"]["reason"], reason, "{bad}: {}", r.text);
+        }
     }
 }
 
@@ -540,7 +588,8 @@ async fn row_limits_truncate_with_a_notice() {
     let frame = &r.body["results"]["A"]["result"]["frame"];
     assert_eq!(frame["fields"][0]["values"].as_array().unwrap().len(), 2, "{}", r.text);
     assert_eq!(frame["meta"]["rowsTruncated"], true);
-    assert!(!frame["meta"]["notices"].as_array().unwrap().is_empty());
+    assert_eq!(frame["meta"]["notices"][0]["code"], "frame.row_limit", "{}", r.text);
+    assert_eq!(frame["meta"]["notices"][0]["params"]["rows"], "2", "{}", r.text);
 
     t.set("datasources.max_response_bytes", json!(20));
     let r = t
@@ -607,13 +656,55 @@ async fn a_dropped_request_cancels_its_queries() {
 }
 
 #[tokio::test]
+async fn empty_sqlite_tables_keep_their_declared_types() {
+    let t = T::new().await;
+    let file = t
+        .sqlite_file(
+            "leer.db",
+            "CREATE TABLE leer (i INTEGER, r REAL, s TEXT, d DATETIME, b BOOLEAN, v VARCHAR(20), f DOUBLE, n NUMERIC);",
+        )
+        .await;
+    let id = t.create_sqlite("Leer", &file).await;
+    let sql = "SELECT i, r, s, d, b, v, f, n, r * 2 AS e FROM leer";
+    let r = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }])).await;
+    let frame = &r.body["results"]["A"]["result"]["frame"];
+    let types: Vec<&str> =
+        frame["fields"].as_array().expect(&r.text).iter().map(|f| f["type"].as_str().unwrap()).collect();
+    // NUMERIC and the expression have no type SQLite can name before a row exists: the
+    // documented default, string.
+    assert_eq!(types, ["int64", "number", "string", "time", "bool", "string", "number", "string", "string"]);
+    assert_eq!(frame["fields"][1]["values"], json!([]));
+}
+
+#[tokio::test]
+async fn a_recreated_sqlite_table_answers_with_its_new_types() {
+    let t = T::new().await;
+    let file = t.sqlite_file("wandel.db", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('a');").await;
+    let id = t.create_sqlite("Wandel", &file).await;
+    let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT v FROM t" } }]);
+    let field = |r: &Reply| r.body["results"]["A"]["result"]["frame"]["fields"][0].clone();
+    let before = t.query(&t.owner, q.clone()).await;
+    assert_eq!(field(&before)["type"], "string", "{}", before.text);
+    // Recreated under the running server, whose pool keeps its connection open.
+    t.sqlite_file("wandel.db", "DROP TABLE t; CREATE TABLE t (v REAL); INSERT INTO t VALUES (1.5);").await;
+    let after = t.query(&t.owner, q).await;
+    assert_eq!(field(&after)["type"], "number", "{}", after.text);
+    assert_eq!(field(&after)["values"], json!([1.5]));
+}
+
+#[tokio::test]
 async fn health_and_schema_of_a_sqlite_file() {
     let t = T::new().await;
     let file = t.sqlite_file("umsatz.db", SALES).await;
     let id = t.create_sqlite("U", &file).await;
     let h = t.post(&format!("/datasources/{id}/health"), json!({})).await;
     assert_eq!(h.body["ok"], true, "{}", h.text);
+    // The UI translates the reason with its params; the message is the English fallback.
+    assert_eq!(h.body["reason"], "health.connected_read_only", "{}", h.text);
+    assert_eq!(h.body["params"]["engine"], "SQLite");
+    assert!(h.body["params"]["version"].as_str().is_some_and(|v| v.starts_with('3')), "{}", h.text);
     assert!(h.body["message"].as_str().unwrap().contains("read-only"));
+    assert!(h.body.get("code").is_none());
     assert!(h.body["latencyMs"].is_u64());
     let s = t.get(&format!("/datasources/{id}/schema")).await;
     assert_eq!(s.body["kind"], "tables", "{}", s.text);

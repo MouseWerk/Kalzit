@@ -45,11 +45,13 @@ const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
 
 fn field_error(e: FieldError) -> ApiError {
-    ApiError::validation(e.message).with_field(e.field)
+    ApiError::validation(e.detail.message).with_field(e.field).with_reason(e.detail.reason, e.detail.params)
 }
 
-fn blocked(message: String, field: &'static str) -> ApiError {
-    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked", message).with_field(field)
+fn blocked(detail: crate::datasources::Detail, field: &'static str) -> ApiError {
+    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked", detail.message)
+        .with_field(field)
+        .with_reason(detail.reason, detail.params)
 }
 
 #[derive(Serialize)]
@@ -103,23 +105,34 @@ async fn list(
     Extension(ctx): Extension<OrgCtx>,
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> ApiResult<Json<Page<ListItem>>> {
-    let Query(params) = params.map_err(|e| ApiError::validation(e.body_text()))?;
+    let Query(params) = params.map_err(|e| {
+        ApiError::validation(e.body_text()).because("request.query_invalid").param("detail", e.body_text())
+    })?;
     let limit = match params.limit.as_deref() {
         None => DEFAULT_LIMIT,
         Some(l) => match l.parse::<usize>() {
             Ok(n) if (1..=MAX_LIMIT).contains(&n) => n,
-            _ => return Err(ApiError::validation(format!("limit must be 1 to {MAX_LIMIT}")).with_field("limit")),
+            _ => {
+                return Err(ApiError::validation(format!("limit must be 1 to {MAX_LIMIT}"))
+                    .with_field("limit")
+                    .because("request.limit")
+                    .param("max", MAX_LIMIT));
+            }
         },
     };
     let trash = match params.trash.as_deref() {
         None | Some("false") => false,
         Some("true") => true,
-        Some(_) => return Err(ApiError::validation("trash must be true or false").with_field("trash")),
+        Some(_) => {
+            return Err(ApiError::validation("trash must be true or false")
+                .with_field("trash")
+                .because("request.trash"));
+        }
     };
     if let Some(c) = &params.cursor
         && uuid::Uuid::parse_str(c).is_err()
     {
-        return Err(ApiError::validation("cursor is not valid").with_field("cursor"));
+        return Err(ApiError::validation("cursor is not valid").with_field("cursor").because("request.cursor"));
     }
     // The role shows every source, or a grant shows that one: live sources with read or query
     // rights, trashed ones with the right to restore them (write).
@@ -219,11 +232,7 @@ async fn precheck_targets(state: &AppState, kind: &Kind, settings: &Value) -> Ap
 }
 
 fn conflict_on_name(e: sqlx::Error) -> ApiError {
-    if e.as_database_error().is_some_and(|d| d.is_unique_violation()) {
-        ApiError::new(StatusCode::CONFLICT, "conflict", "a data source with this name exists").with_field("name")
-    } else {
-        e.into()
-    }
+    if e.as_database_error().is_some_and(|d| d.is_unique_violation()) { name_conflict() } else { e.into() }
 }
 
 async fn name_taken(state: &AppState, org_id: &str, name: &str, except: &str) -> ApiResult<bool> {
@@ -239,7 +248,9 @@ async fn name_taken(state: &AppState, org_id: &str, name: &str, except: &str) ->
 }
 
 fn name_conflict() -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "conflict", "a data source with this name exists").with_field("name")
+    ApiError::new(StatusCode::CONFLICT, "conflict", "a data source with this name exists")
+        .with_field("name")
+        .because("datasource.name_taken")
 }
 
 #[derive(Deserialize)]
@@ -284,10 +295,12 @@ async fn create(
     JsonBody(body): JsonBody<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
-    let kind = state
-        .datasources
-        .kind(&body.kind)
-        .ok_or_else(|| ApiError::validation(format!("{} is not a data source kind", body.kind)).with_field("kind"))?;
+    let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
+        ApiError::validation(format!("{} is not a data source kind", body.kind))
+            .with_field("kind")
+            .because("datasource.kind_unknown")
+            .param("kind", &body.kind)
+    })?;
     let settings = kind.validate_settings(&body.settings).map_err(field_error)?;
     // A secret that is null on create is simply not set.
     let secrets: SecretPatch = body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect();
@@ -413,7 +426,9 @@ async fn update(
         {
             return Err(ApiError::forbidden(format!(
                 "changing {target} needs datasources:write for the organization or an admin grant on this source"
-            )));
+            ))
+            .because("datasource.target_change_forbidden")
+            .param("field", target));
         }
         for stored in secrets::set_fields(&state.db, &ds.id).await? {
             if !body.secrets.contains_key(&stored) {
@@ -421,7 +436,10 @@ async fn update(
                 return Err(ApiError::validation(format!(
                     "{target} changes where the data source connects; send {stored} again or remove it"
                 ))
-                .with_field(field));
+                .with_field(field)
+                .because("secrets.resend_on_target_change")
+                .param("field", target)
+                .param("secret", &stored));
             }
         }
     }

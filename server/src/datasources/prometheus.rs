@@ -15,6 +15,7 @@ use reqwest::{Method, Url};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::Detail;
 use super::frame::{Charge, Column, FrameBuilder};
 use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
@@ -75,19 +76,26 @@ struct Client {
     basic_token: Option<String>,
 }
 
-fn parse_url(raw: &str) -> Result<Url, String> {
-    let url = Url::parse(raw.trim()).map_err(|e| format!("the URL is not valid: {e}"))?;
+fn parse_url(raw: &str) -> Result<Url, Detail> {
+    let url = Url::parse(raw.trim())
+        .map_err(|e| Detail::new("settings.url_invalid", format!("the URL is not valid: {e}")).with("detail", e))?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err("the URL must start with http:// or https://".into());
+        return Err(Detail::new("settings.url_scheme", "the URL must start with http:// or https://"));
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err("the URL must not contain credentials; use the basic auth fields".into());
+        return Err(Detail::new(
+            "settings.url_credentials",
+            "the URL must not contain credentials; use the basic auth fields",
+        ));
     }
     if url.query().is_some() || url.fragment().is_some() {
-        return Err("the URL must not contain a query or fragment; tokens go in the bearer token field".into());
+        return Err(Detail::new(
+            "settings.url_query",
+            "the URL must not contain a query or fragment; tokens go in the bearer token field",
+        ));
     }
     if url.host_str().is_none() {
-        return Err("the URL needs a host".into());
+        return Err(Detail::new("settings.url_no_host", "the URL needs a host"));
     }
     Ok(url)
 }
@@ -104,7 +112,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             extra_root_pem: s.ca_cert,
             policy: Arc::new(conn.policy().clone()),
         })
-        .map_err(|e| SourceError::Failed(e.to_string()))?;
+        .map_err(|e| SourceError::Failed(e.detail()))?;
         let mut basic_token = None;
         let auth = match (s.basic_auth_user.filter(|u| !u.is_empty()), conn.secret("bearerToken")) {
             (Some(user), _) => {
@@ -117,13 +125,15 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             (None, Some(token)) => Some(format!("Bearer {token}")),
             (None, None) => None,
         };
-        let auth =
-            match auth {
-                Some(a) => Some(HeaderValue::from_str(&a).map_err(|_| {
-                    SourceError::Failed("the credentials contain characters a header cannot carry".into())
-                })?),
-                None => None,
-            };
+        let auth = match auth {
+            Some(a) => Some(HeaderValue::from_str(&a).map_err(|_| {
+                SourceError::failed(
+                    "prometheus.credentials_invalid",
+                    "the credentials contain characters a header cannot carry",
+                )
+            })?),
+            None => None,
+        };
         Ok(Client { http, base, auth, basic_token })
     })
     .await
@@ -140,7 +150,7 @@ impl Client {
     fn failed(&self, e: HttpError) -> SourceError {
         match e {
             HttpError::Blocked(b) => SourceError::Blocked(b.0),
-            other => SourceError::Failed(self.scrub(&other.to_string())),
+            other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
         }
     }
 
@@ -154,7 +164,7 @@ impl Client {
         max_bytes: usize,
         charge: Option<&mut Charge>,
     ) -> Result<(Value, Vec<String>), SourceError> {
-        let mut url = self.base.join(path).map_err(|e| SourceError::Failed(e.to_string()))?;
+        let mut url = self.base.join(path).map_err(|e| SourceError::failed("internal", e.to_string()))?;
         url.query_pairs_mut().extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())));
         let mut headers = HeaderMap::new();
         if let Some(auth) = &self.auth {
@@ -168,11 +178,18 @@ impl Client {
         }
         .map_err(|e| self.failed(e))?;
         let parsed: Value = serde_json::from_slice(&body).map_err(|_| {
-            SourceError::Failed(format!("the server answered {status} without a Prometheus API response"))
+            SourceError::failed(
+                "prometheus.not_an_api_response",
+                format!("the server answered {status} without a Prometheus API response"),
+            )
+            .with("status", status.as_u16())
         })?;
         if parsed["status"] != "success" {
             let message = parsed["error"].as_str().unwrap_or("unknown error");
-            return Err(SourceError::Failed(self.scrub(&format!("Prometheus answered {status}: {message}"))));
+            let message = self.scrub(message);
+            return Err(SourceError::failed("prometheus.error", format!("Prometheus answered {status}: {message}"))
+                .with("status", status.as_u16())
+                .with("detail", message));
         }
         let warnings = parsed["warnings"]
             .as_array()
@@ -193,8 +210,9 @@ impl DataSourcePlugin for Prometheus {
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
-        let s = Settings::deserialize(settings).map_err(|e| FieldError::new("settings", e.to_string()))?;
-        parse_url(&s.url).map_err(|m| FieldError::new("url", m))?;
+        let s = Settings::deserialize(settings)
+            .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
+        parse_url(&s.url).map_err(|d| FieldError { field: "url", detail: d.with("field", "url") })?;
         super::check_pem("caCert", s.ca_cert.as_deref())?;
         Ok(())
     }
@@ -206,8 +224,13 @@ impl DataSourcePlugin for Prometheus {
             Ok::<_, SourceError>(())
         };
         match check.await {
-            Ok(()) => Health { ok: true, message: "the Prometheus API answered".into() },
-            Err(e) => Health { ok: false, message: e.to_string() },
+            Ok(()) => Health {
+                ok: true,
+                code: None,
+                detail: Detail::new("health.prometheus_answered", "the Prometheus API answered")
+                    .with("engine", "Prometheus"),
+            },
+            Err(e) => Health::failed(&e),
         }
     }
 
@@ -249,7 +272,8 @@ impl DataSourcePlugin for Prometheus {
         let mut frame = to_frame(&data, &req)?;
         frame.executed_query(expr);
         for w in warnings {
-            frame.notice(NoticeSeverity::Info, c.scrub(&w));
+            let w = c.scrub(&w);
+            frame.notice(NoticeSeverity::Info, Detail::new("prometheus.warning", w.clone()).with("detail", w));
         }
         let frame = frame.finish();
         // The raw answer is gone now; only the frame's own charge remains.
@@ -280,7 +304,11 @@ fn variable_text(name: &str, value: &Value, in_list: bool) -> Result<String, Sou
             let parts: Vec<String> = items.iter().map(|v| variable_text(name, v, true)).collect::<Result<_, _>>()?;
             Ok(parts.join("|"))
         }
-        _ => Err(SourceError::Rejected(format!("variable {name} must be a string, number, boolean or a list of them"))),
+        _ => Err(SourceError::rejected(
+            "promql.variable_type",
+            format!("variable {name} must be a string, number, boolean or a list of them"),
+        )
+        .with("name", name)),
     }
 }
 
@@ -301,7 +329,11 @@ fn regex_escape(s: &str) -> String {
 fn escape_for(quote: char, name: &str, text: &str) -> Result<String, SourceError> {
     if quote == '`' {
         return if text.contains('`') {
-            Err(SourceError::Rejected(format!("variable {name} contains a backtick and cannot go into a `raw` string")))
+            Err(SourceError::rejected(
+                "promql.backtick",
+                format!("variable {name} contains a backtick and cannot go into a `raw` string"),
+            )
+            .with("name", name))
         } else {
             Ok(text.to_string())
         };
@@ -384,17 +416,23 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
             "__range" => duration(req.range.to.saturating_sub(req.range.from).max(1)),
             "__timeFrom" => seconds(req.range.from),
             "__timeTo" => seconds(req.range.to),
-            m if m.starts_with("__") => return Err(SourceError::Rejected(format!("unknown macro ${m}"))),
+            m if m.starts_with("__") => {
+                return Err(
+                    SourceError::rejected("promql.macro_unknown", format!("unknown macro ${m}")).with("name", m)
+                );
+            }
             name => {
                 let Some(q) = quote else {
-                    return Err(SourceError::Rejected(format!(
-                        "variable {name} must be inside a quoted label value, such as job=\"${name}\""
-                    )));
+                    return Err(SourceError::rejected(
+                        "promql.variable_outside_string",
+                        format!("variable {name} must be inside a quoted label value, such as job=\"${name}\""),
+                    )
+                    .with("name", name));
                 };
-                let value = req
-                    .variables
-                    .get(name)
-                    .ok_or_else(|| SourceError::Rejected(format!("variable {name} has no value")))?;
+                let value = req.variables.get(name).ok_or_else(|| {
+                    SourceError::rejected("promql.variable_missing", format!("variable {name} has no value"))
+                        .with("name", name)
+                })?;
                 // In a regex matcher a free value is matched literally, as list entries are; the
                 // values of checked (constant and custom) dashboard variables may be patterns.
                 let checked = req.identifier_variables.as_ref().is_some_and(|c| c.contains(name));
@@ -405,7 +443,7 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
         i = end;
     }
     if quote.is_some() {
-        return Err(SourceError::Rejected("unclosed quote in the query".into()));
+        return Err(SourceError::rejected("promql.unclosed_quote", "unclosed quote in the query"));
     }
     Ok(out)
 }
@@ -484,7 +522,8 @@ fn to_frame(data: &Value, req: &SourceQuery) -> Result<FrameBuilder, SourceError
             frame.push_row(vec![sample_time(&r[0]).map_or(Value::Null, |t| json!(t)), value]);
             Ok(frame)
         }
-        other => Err(SourceError::Failed(format!("unexpected result type {other:?}"))),
+        other => Err(SourceError::failed("prometheus.result_type", format!("unexpected result type {other:?}"))
+            .with("type", other)),
     }
 }
 
@@ -542,7 +581,7 @@ mod tests {
     #[test]
     fn urls_must_not_carry_credentials() {
         assert!(parse_url("https://prom.intern:9090/prometheus").is_ok());
-        assert!(parse_url("https://user:pw@prom.intern").unwrap_err().contains("credentials"));
+        assert!(parse_url("https://user:pw@prom.intern").unwrap_err().message.contains("credentials"));
         assert!(parse_url("https://prom.intern/?token=abc").is_err());
         assert!(parse_url("ftp://prom.intern").is_err());
         assert!(parse_url("prom.intern:9090").is_err());
