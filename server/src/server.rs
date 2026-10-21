@@ -25,6 +25,10 @@ use crate::{db, tls};
 
 /// Time in-flight requests get to finish after a stop signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+/// After a console close or shutdown event Windows ends the process within about five seconds;
+/// open requests get less, so the database is closed before that.
+#[cfg(windows)]
+const WINDOWS_CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 /// A started server: the bound addresses (useful with port 0) and the listener tasks.
 pub struct Running {
@@ -70,10 +74,10 @@ pub async fn run(config: Config) -> Result<()> {
     let running = start(config, setup_code).await?;
     let handles = running.handles.clone();
     tokio::spawn(async move {
-        wait_for_stop_signal().await;
+        let grace = wait_for_stop_signal().await;
         tracing::info!("stop signal received, finishing open requests");
         for handle in handles {
-            handle.graceful_shutdown(Some(SHUTDOWN_GRACE));
+            handle.graceful_shutdown(Some(grace));
         }
     });
     running.wait().await?;
@@ -190,7 +194,8 @@ fn redirect_to_https(req: &Request, https_port: u16, public_url: Option<&str>) -
     }
 }
 
-async fn wait_for_stop_signal() {
+/// Waits for a request to stop and answers how long open requests get to finish.
+async fn wait_for_stop_signal() -> Duration {
     let ctrl_c = async {
         if let Err(e) = tokio::signal::ctrl_c().await {
             tracing::warn!("cannot listen for Ctrl+C: {e}");
@@ -208,33 +213,36 @@ async fn wait_for_stop_signal() {
                 std::future::pending::<()>().await;
             }
         }
+        SHUTDOWN_GRACE
     };
-    // Closing the console window, signing off and shutting Windows down also stop the server
-    // gracefully, so the database is closed and its WAL checkpointed. Windows ends the process a
-    // few seconds after these events, so open requests may be cut short. Running as a Windows
-    // service needs a service control handler instead; that comes with the service installer.
+    // Closing the console window and shutting Windows down also stop the server gracefully, so the
+    // database is closed and its WAL checkpointed. Windows ends the process a few seconds after
+    // these events, so open requests get a short grace and the database is closed in time. Not
+    // signing off: behind a service wrapper, any user signing off would stop the server. Running
+    // as a Windows service needs a service control handler instead; that comes with the service
+    // installer.
     #[cfg(windows)]
     let terminate = async {
-        use tokio::signal::windows::{ctrl_close, ctrl_logoff, ctrl_shutdown};
-        match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
-            (Ok(mut close), Ok(mut logoff), Ok(mut shutdown)) => {
+        use tokio::signal::windows::{ctrl_close, ctrl_shutdown};
+        match (ctrl_close(), ctrl_shutdown()) {
+            (Ok(mut close), Ok(mut shutdown)) => {
                 tokio::select! {
                     _ = close.recv() => {}
-                    _ = logoff.recv() => {}
                     _ = shutdown.recv() => {}
                 }
             }
-            (close, logoff, shutdown) => {
-                let failed = [close.err(), logoff.err(), shutdown.err()].into_iter().flatten().next();
-                tracing::warn!("cannot listen for console close, logoff and shutdown: {failed:?}");
+            (close, shutdown) => {
+                let failed = [close.err(), shutdown.err()].into_iter().flatten().next();
+                tracing::warn!("cannot listen for console close and shutdown: {failed:?}");
                 std::future::pending::<()>().await;
             }
         }
+        WINDOWS_CLOSE_GRACE
     };
     #[cfg(not(any(unix, windows)))]
-    let terminate = std::future::pending::<()>();
+    let terminate = std::future::pending::<Duration>();
     tokio::select! {
-        () = ctrl_c => {}
-        () = terminate => {}
+        () = ctrl_c => SHUTDOWN_GRACE,
+        grace = terminate => grace,
     }
 }

@@ -300,8 +300,10 @@ type QueryResult =
   request answer `internal`, never `busy`. Clippy refuses sqlx's own `begin` and `commit`
   elsewhere (`clippy.toml`); the data source drivers' read-only transactions on the users'
   databases are the marked exceptions. A graceful stop (Ctrl+C, SIGTERM, and on Windows closing
-  the console, signing off or shutting down) closes the database, which folds the WAL back into
-  `kalzit.db`.
+  the console or shutting down, with a 3 s grace instead of 10 s) closes the database, which
+  folds the WAL back into `kalzit.db`.
+- Reads never wait on writers: the one write a read request makes, the session's last-seen time,
+  is best-effort (no free connection or more than 100 ms waiting for the lock: skipped).
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).

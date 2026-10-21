@@ -17,5 +17,6 @@ disallowed-methods = [
     { path = "sqlx_core::acquire::Acquire::begin", reason = "start transactions with db::begin" },
     { path = "sqlx_core::connection::Connection::begin", reason = "start transactions with db::begin" },
     { path = "sqlx_core::connection::Connection::begin_with", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::transaction::Transaction::begin", reason = "start transactions with db::begin" },
     { path = "sqlx_core::transaction::Transaction::commit", reason = "commit with db::commit" },
 ]
