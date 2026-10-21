@@ -54,14 +54,27 @@ export class ApiError extends Error {
    * next to `error`, so a conflict dialog can show it without fetching again.
    */
   readonly body: unknown;
+  /**
+   * How long the server asked to wait before trying again (`Retry-After`, in milliseconds), sent
+   * with `busy`: the request changed nothing and may be repeated.
+   */
+  readonly retryAfterMs: number | undefined;
 
-  constructor(code: ErrorCode, status: number, message: string, field?: string, body?: unknown) {
+  constructor(
+    code: ErrorCode,
+    status: number,
+    message: string,
+    field?: string,
+    body?: unknown,
+    retryAfterMs?: number,
+  ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
     this.field = field;
     this.body = body;
+    this.retryAfterMs = retryAfterMs;
   }
 
   /** The stored resource of a `version_conflict`, when the server sent one. */
@@ -109,8 +122,21 @@ function codeForStatus(status: number): ServerErrorCode {
   }
 }
 
+/** `Retry-After` in whole seconds (the form the server sends), as milliseconds. */
+function parseRetryAfter(header: string | null | undefined): number | undefined {
+  if (header == null || !/^\d+$/.test(header.trim())) {
+    return undefined;
+  }
+  return Number(header.trim()) * 1000;
+}
+
 /** Maps a non-2xx response body to an ApiError. Unknown codes fall back to the status. */
-export function errorFromResponse(status: number, body: unknown): ApiError {
+export function errorFromResponse(
+  status: number,
+  body: unknown,
+  retryAfter?: string | null,
+): ApiError {
+  const retryAfterMs = parseRetryAfter(retryAfter);
   const error = isRecord(body) ? body.error : undefined;
   if (isRecord(error)) {
     const code = error.code;
@@ -122,9 +148,17 @@ export function errorFromResponse(status: number, body: unknown): ApiError {
       message,
       field,
       body,
+      retryAfterMs,
     );
   }
-  return new ApiError(codeForStatus(status), status, `HTTP ${status}`, undefined, body);
+  return new ApiError(
+    codeForStatus(status),
+    status,
+    `HTTP ${status}`,
+    undefined,
+    body,
+    retryAfterMs,
+  );
 }
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -202,7 +236,7 @@ export async function request(
   }
 
   if (!response.ok) {
-    throw errorFromResponse(response.status, parsed);
+    throw errorFromResponse(response.status, parsed, response.headers.get("Retry-After"));
   }
   return parsed;
 }
