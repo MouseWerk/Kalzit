@@ -409,7 +409,7 @@ export interface Setting {
   updatedBy: string | null;
 }
 
-const isSetting = shape<Setting>({
+export const isSetting = shape<Setting>({
   key: isString,
   scope: oneOf("server", "org"),
   value: isAny,

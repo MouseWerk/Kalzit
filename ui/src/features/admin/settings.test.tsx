@@ -96,15 +96,32 @@ describe("organization settings", () => {
     );
   });
 
-  it("reports an error instead of a stale conflict when the settings cannot be read again", async () => {
+  it("takes the stored value from the conflict answer, without reading the list first", async () => {
     const { user, admin, server } = await openAdmin("/admin/settings");
     const field = await fieldOf(RANGE);
-    Object.assign(admin.orgSettings[0] ?? {}, { version: 2 });
+    Object.assign(admin.orgSettings[0] ?? {}, {
+      value: { from: "now-90d", to: "now" },
+      version: 4,
+    });
+    // The list would answer something else; the dialog must show the conflict's `current`.
     server.failNext("/api/orgs/o1/settings", 500, "internal", "GET");
     await user.clear(field);
     await user.type(field, '{{"from":"now-2d","to":"now"}');
     await user.tab();
-    expect(await screen.findByText(/Something went wrong on the server/)).toBeTruthy();
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(within(dialog).getByText('{"from":"now-90d","to":"now"}')).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
+    await waitFor(() => expect(admin.orgSettings[0]?.version).toBe(5));
+  });
+
+  it("reports an error instead of a stale conflict when the answer has no stored value", async () => {
+    const { user, server } = await openAdmin("/admin/settings");
+    const field = await fieldOf(RANGE);
+    server.failNext(`/api/orgs/o1/settings/${RANGE}`, 409, "version_conflict", "PATCH");
+    await user.clear(field);
+    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.tab();
+    expect(await screen.findByText(/The server sent an unexpected response/)).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "../../../i18n/i18n";
 import {
   adminKeys,
@@ -26,7 +26,6 @@ const SOURCE_TEXT = {
 export function ServerSettingsPage() {
   const { t } = useI18n();
   const access = useAdminAccess();
-  const queryClient = useQueryClient();
   const queryKey = adminKeys.serverSettings;
   const settings = useQuery({
     queryKey,
@@ -35,7 +34,6 @@ export function ServerSettingsPage() {
   });
   const changes = useSettingChanges({
     queryKey,
-    read: () => queryClient.getQueryData<Setting[]>(queryKey),
     patch: updateServerSetting,
   });
 

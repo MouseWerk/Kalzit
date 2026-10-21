@@ -3,7 +3,7 @@ import { type ReactNode, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { LANGUAGES, type MessageKey, useI18n } from "../../../i18n/i18n";
 import { THEMES } from "../../../theme/theme";
-import type { Setting } from "../api";
+import { isSetting, type Setting } from "../api";
 import { errorText, SETTING_ERRORS } from "../errors";
 import { Dialog } from "./Dialog";
 import { formatValue } from "./format";
@@ -37,12 +37,9 @@ const CHOICES: Record<string, readonly { value: string; label: MessageKey }[]> =
  */
 export function useSettingChanges({
   queryKey,
-  read,
   patch,
 }: {
   queryKey: QueryKey;
-  /** The settings as currently cached. */
-  read: () => readonly Setting[] | undefined;
   patch: (key: string, value: unknown, version: number) => Promise<Setting>;
 }) {
   const { t } = useI18n();
@@ -69,7 +66,7 @@ export function useSettingChanges({
           }),
       });
     },
-    onError: async (error, { key, value }) => {
+    onError: (error, { key, value }) => {
       if (isApiError(error, "validation") && error.field === "value") {
         notice.clear();
         setRejected({ key, message: errorText(t, error, SETTING_ERRORS) });
@@ -79,18 +76,20 @@ export function useSettingChanges({
         notice.showError(errorText(t, error, SETTING_ERRORS));
         return;
       }
-      notice.clear();
-      try {
-        await queryClient.refetchQueries({ queryKey }, { throwOnError: true });
-      } catch (refetchError) {
+      // The conflict answer carries the stored setting as `current`.
+      const stored = error.current;
+      if (!isSetting(stored) || stored.key !== key) {
         // Without the stored value there is nothing to compare; say so instead.
-        notice.showError(errorText(t, refetchError));
+        notice.showError(t("errors.invalid_response"));
         return;
       }
-      const stored = read()?.find((setting) => setting.key === key);
-      if (stored !== undefined) {
-        setConflict({ key, mine: value, stored: stored.value, version: stored.version });
-      }
+      notice.clear();
+      // Show the stored value in the list at once, then refresh the rest in the background.
+      queryClient.setQueryData<Setting[]>(queryKey, (settings) =>
+        settings?.map((setting) => (setting.key === key ? stored : setting)),
+      );
+      void queryClient.invalidateQueries({ queryKey });
+      setConflict({ key, mine: value, stored: stored.value, version: stored.version });
     },
   });
 
