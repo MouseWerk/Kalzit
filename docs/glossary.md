@@ -33,7 +33,7 @@ catalog.
 | Auswertung | Analysis | Gespeicherte Abfrage mit Schritten und Ansicht, teilbar im Team. | Analyse (als Name), Report |
 | Dokument | Document | Ein Eintrag aus einer Dokumentdatenbank (MongoDB), als Baum. | Datensatz (für Dokumente) |
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
-| Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph; dort „Vertex“). | Vertex, Ecke |
+| Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn TigerGraph „Vertex“ sagt. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |
 | Projektion | Projection | Sichtbarer Schritt, der eine Datenform in eine andere umwandelt. | Konvertierung |
 | Verlauf | History | Frühere Versionen oder Abfragen, wiederherstellbar. | Historie |

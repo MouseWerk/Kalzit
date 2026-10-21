@@ -1,10 +1,10 @@
 # Working on Kalzit
 
 Kalzit is a self-hosted dashboard and observability platform (dashboards, data sources, roles,
-teams, plugins) where document databases (MongoDB) and graph databases (Neo4j, Memgraph, TigerGraph) are native
-data shapes, not converted to tables, next to all common SQL and metrics sources. Server runs on
-Windows and Linux. Planned stack: Rust server
-(axum, sqlx), React + TypeScript UI embedded in one binary. Read `docs/PLAN.md` first. Follow
+teams, plugins) where document databases (MongoDB) and graph databases (Neo4j, Memgraph, TigerGraph)
+are native data shapes, not converted to tables, next to all common SQL and metrics sources. Server
+runs on Windows and Linux. Planned stack: Rust server (axum, sqlx), React + TypeScript UI embedded
+in one binary. Read `docs/PLAN.md` first. Follow
 https://github.com/mauricekleindienst/AICodeGuidelines (read its CLAUDE.md first); this file wins
 where it is more specific.
 
