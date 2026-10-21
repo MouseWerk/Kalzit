@@ -278,9 +278,10 @@ export function TeamPage({ teamId }: { teamId: string }) {
               <div className="admin-checks">
                 {offeredRoles.map((role) => {
                   const checked = assigned.includes(role.id);
-                  // Giving and taking a team role both need holding its permissions.
+                  // Giving and taking a team role both need holding its permissions, and the
+                  // server checks every role the team has now as well (docs/api/access.md, Teams).
                   const held = holdsRole(access, role.id, roles.data);
-                  const blocked = !canWrite || !held || (!checked && full);
+                  const blocked = !canWrite || !held || !holdsTeamRoles || (!checked && full);
                   return (
                     <label key={role.id} className="admin-check">
                       <input

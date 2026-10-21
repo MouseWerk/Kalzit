@@ -49,6 +49,7 @@ export const TEAM_ERRORS: ErrorTexts = {
 /** Roles: names, the role limit, and permissions the caller does not hold. */
 export const ROLE_ERRORS: ErrorTexts = {
   "conflict:name": "admin.roles.nameTaken",
+  "validation:name": "admin.roles.nameNotAllowed",
   conflict: "admin.roles.limit",
   forbidden: "admin.roles.cannotGrant",
 };

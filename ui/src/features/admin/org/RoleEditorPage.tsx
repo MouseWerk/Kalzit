@@ -1,6 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, type Ref, useId, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { isApiError } from "../../../api/client";
 import { characterCount, trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
@@ -16,6 +24,7 @@ import {
 } from "../api";
 import {
   holdsAll,
+  isBuiltInRole,
   isKnownPermission,
   OWNER_ONLY,
   PERMISSION_GROUPS,
@@ -111,7 +120,13 @@ function useNameError() {
   const { t } = useI18n();
   return (name: string) => {
     const problem = nameMessage(name);
-    return problem === undefined ? undefined : t(problem.key, problem.params);
+    if (problem !== undefined) {
+      return t(problem.key, problem.params);
+    }
+    // The server refuses the names of the built-in roles in any case (routes/roles.rs).
+    return isBuiltInRole(trimWhitespace(name).toLowerCase())
+      ? t("admin.roles.nameBuiltin")
+      : undefined;
   };
 }
 
@@ -279,6 +294,8 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
   const stored = inputOf(role);
   // What was last sent, so Enter followed by leaving the field does not save the same twice.
   const lastSent = useRef<RoleInput | null>(null);
+  // A change made while a save is on its way; sent when that save ends, the latest value winning.
+  const queued = useRef<Partial<RoleInput> | null>(null);
 
   const save = useMutation({
     mutationFn: async (input: { change: Partial<RoleInput>; expected?: RoleInput }) => {
@@ -327,8 +344,12 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
   });
 
   function apply(change: Partial<RoleInput>) {
+    if (save.isPending) {
+      queued.current = { ...queued.current, ...change };
+      return;
+    }
     const next = { ...stored, ...change };
-    if (save.isPending || sameRole(next, stored)) {
+    if (sameRole(next, stored)) {
       return;
     }
     if (lastSent.current !== null && sameRole(next, lastSent.current)) {
@@ -337,6 +358,17 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
     lastSent.current = next;
     save.mutate({ change });
   }
+
+  // Runs after the render that ends the save, so the queued change compares with the stored role.
+  const saving = save.isPending;
+  useEffect(() => {
+    if (saving || queued.current === null) {
+      return;
+    }
+    const change = queued.current;
+    queued.current = null;
+    apply(change);
+  });
 
   function commitName() {
     const problem = nameText(name);

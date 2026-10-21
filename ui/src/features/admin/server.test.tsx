@@ -30,7 +30,7 @@ describe("server users", () => {
   });
 
   it("asks before giving up one's own server admin role, starting on Cancel, without undo", async () => {
-    const { user, admin, server } = await openAdmin("/admin/server/users", {
+    const { user, admin, server, location } = await openAdmin("/admin/server/users", {
       isServerAdmin: true,
       setup: (state) => {
         // Another admin exists, so the server allows it.
@@ -51,10 +51,17 @@ describe("server users", () => {
     await user.click(
       within(list).getByRole("checkbox", { name: "Ada Lovelace is a server admin" }),
     );
+    const sessionReads = sent(server, "GET").filter((path) => path === "/api/me").length;
     await user.click(screen.getByRole("button", { name: "Stop being a server admin" }));
-    expect(await screen.findByText("Ada Lovelace is no longer a server admin.")).toBeTruthy();
+    await waitFor(() => expect(location().pathname).toBe("/admin"));
     expect(admin.users[0]?.isServerAdmin).toBe(false);
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    // The session is read again: the server sections and their controls are gone.
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Users" })).toBeNull());
+    expect(screen.queryByRole("list", { name: "Users" })).toBeNull();
+    expect(sent(server, "GET").filter((path) => path === "/api/me").length).toBeGreaterThan(
+      sessionReads,
+    );
   });
 
   it("explains that the last server admin stays", async () => {

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
+import { getRouteApi, useNavigate, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
+import { meQuery } from "../../../api/auth";
 import { isApiError } from "../../../api/client";
 import {
   type FieldErrors,
@@ -39,6 +40,8 @@ export function UsersPage() {
   const access = useAdminAccess();
   const { me } = appRoute.useRouteContext();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const navigate = useNavigate();
   const list = usePagedList(adminKeys.users, (cursor) => listUsers(cursor), access.isServerAdmin);
   const notice = useNotice();
   const [creating, setCreating] = useState(false);
@@ -87,11 +90,17 @@ export function UsersPage() {
       ),
     onSuccess: async (_, { kind, user }) => {
       setConfirming(null);
+      if (kind === "demoteSelf") {
+        // The server sections are gone now: the shell and the access checks read the user from
+        // the route context, which the guard fills again, and this page is no longer allowed.
+        await queryClient.invalidateQueries({ queryKey: meQuery.queryKey });
+        await router.invalidate();
+        await navigate({ to: "/admin" });
+        return;
+      }
       await refresh();
       notice.show({
-        message: t(kind === "lock" ? "admin.users.locked" : "admin.users.removedAdmin", {
-          name: user.name,
-        }),
+        message: t("admin.users.locked", { name: user.name }),
       });
     },
   });

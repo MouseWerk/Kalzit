@@ -101,6 +101,8 @@
   "admin.roles.name": "Name",
   "admin.roles.description": "Description",
   "admin.roles.nameTaken": "A role with this name already exists. Choose another name.",
+  "admin.roles.nameBuiltin": "The names owner, admin, editor and viewer belong to the built-in roles. Choose another name.",
+  "admin.roles.nameNotAllowed": "This name belongs to a built-in role or is not allowed. Choose another name.",
   "admin.roles.notHeld": "You can only give permissions you have yourself.",
   "admin.roles.cannotGrant": "You cannot give permissions you do not have yourself.",
   "admin.roles.unknownPermission": "A permission this version of the interface does not know yet.",
