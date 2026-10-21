@@ -120,7 +120,9 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
   const model = draft ?? dashboard.model;
   const [values, setValues] = useState(() => initialVariables(dashboard.model.variables));
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
-  const [clock, setClock] = useState(() => ({ now: Date.now(), run: 0 }));
+  // `run` re-runs the panels (refresh, auto refresh); `manual` counts only the Refresh button,
+  // which also reads variable options again.
+  const [clock, setClock] = useState(() => ({ now: Date.now(), run: 0, manual: 0 }));
   const [dialog, setDialog] = useState<
     | { kind: "panel"; panel: PanelModel; isNew: boolean }
     | { kind: "settings" }
@@ -148,7 +150,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
       ? { from: search.from, to: search.to }
       : model.timeRange;
   const resolved = resolveRange(textRange, clock.now);
-  const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1 }));
+  const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
 
   useEffect(() => {
     if (refresh <= 0) {
@@ -156,7 +158,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
     }
     // A tab in the background does not refresh; it catches up when it is shown again.
     let missed = false;
-    const run = () => setClock((c) => ({ now: Date.now(), run: c.run + 1 }));
+    const run = () => setClock((c) => ({ ...c, now: Date.now(), run: c.run + 1 }));
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         run();
@@ -231,7 +233,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
         replace: true,
       });
     }
-    setClock((c) => ({ now: Date.now(), run: c.run }));
+    setClock((c) => ({ ...c, now: Date.now() }));
   }
 
   function addPanel() {
@@ -407,7 +409,10 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
             dashboardId={dashboard.id}
             variables={model.variables}
             values={values}
+            textRange={textRange}
             range={resolved.range}
+            run={clock.manual}
+            stored={draft === null ? undefined : dashboard.model.variables}
             onChange={(name, value) => setValues((v) => ({ ...v, [name]: value }))}
           />
           {model.panels.length === 0 ? (

@@ -169,7 +169,84 @@ describe("dashboard view", () => {
     expect(screen.queryByRole("button", { name: "Add panel" })).toBeNull();
   });
 
-  it("reads query variable options from the QueryResponse of the options route", async () => {
+  it("asks the options route only with the variables a query mentions, and not as time passes", async () => {
+    const server = setup("viewer", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "country", type: "custom", options: ["at", "de"] },
+        { name: "unit", type: "custom", options: ["eur", "usd"] },
+        {
+          name: "city",
+          type: "query",
+          datasourceId: PG_ID,
+          query: { sql: "SELECT city FROM shops WHERE country = $country" },
+        },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [{ value: "graz", label: "Graz" }];
+    const { user } = renderApp("/dashboards/d-sales");
+    await screen.findByRole("option", { name: "Graz" });
+    const requests = server.areas.dashboards.variableRequests;
+    expect(requests).toHaveLength(1);
+    // Its own name is left out, and so is a variable the query does not mention.
+    expect(requests[0]?.body.variables).toEqual({ country: "at" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "unit" }), "usd");
+    await user.selectOptions(screen.getByRole("combobox", { name: "country" }), "de");
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]?.body.variables).toEqual({ country: "de" });
+
+    // Only "Refresh" or a new range reads them again.
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(requests).toHaveLength(3));
+  });
+
+  it("runs a changed query variable through the free query route in edit mode", async () => {
+    const server = setup("editor", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "city", type: "query", datasourceId: PG_ID, query: { sql: "SELECT city FROM a" } },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [{ value: "graz", label: "Graz" }];
+    const { user } = renderApp("/dashboards/d-sales");
+    await screen.findByRole("option", { name: "Graz" });
+    await user.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Query" }), {
+      target: { value: "SELECT name, score FROM customers" },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    // The fake answers that SQL with a table whose first field is ids and second names.
+    expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();
+    expect(server.areas.dashboards.variableRequests).toHaveLength(1);
+    expect(server.areas.datasources.queries.at(-1)).toMatchObject({
+      queries: [{ refId: "A", query: { sql: "SELECT name, score FROM customers" } }],
+    });
+  });
+
+  it("explains a variable the saved dashboard does not have", async () => {
+    const server = setup("viewer", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "city", type: "query", datasourceId: PG_ID, query: { sql: "SELECT city FROM a" } },
+      ],
+    };
+    server.failNext("/api/orgs/o1/dashboards/d-sales/variables/city/options", 404, "not_found");
+    renderApp("/dashboards/d-sales");
+    expect(
+      await screen.findByText(/This variable is not part of the saved dashboard/),
+    ).toBeTruthy();
+  });
+
+  it("reads query variable options from the options route", async () => {
     const server = setup("viewer", []);
     const stored = storedSales(server);
     latest(stored).model = {

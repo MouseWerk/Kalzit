@@ -53,6 +53,8 @@ export interface FakeDashboardsState {
   folders: StoredFolder[];
   dashboards: StoredDashboard[];
   variableOptions: Record<string, VariableOption[]>;
+  /** Every request of the options route, to check what was asked and how often. */
+  variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
   panelQueries: { dashboardId: string; panelId: string; body: PanelQueryRequest }[];
   /** Holds every panel query until the test calls `release`, to observe loading and limits. */
@@ -225,6 +227,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     folders: [],
     dashboards: [],
     variableOptions: {},
+    variableRequests: [],
     panelQueries: [],
     holdPanelQueries: false,
     release: () => {
@@ -422,28 +425,21 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       );
     }
     if (parts[2] === "variables" && parts[4] === "options" && method === "POST") {
-      // Answers a QueryResponse like every query route (docs/ARCHITECTURE.md): the values in the
-      // first field, their labels in the second.
+      // The decided contract: VariableOptionsRequest {timeRange, variables} without the
+      // variable's own name; the answer {options, truncated}; a variable the saved dashboard
+      // does not have is 404.
       const denied = needs("dashboards:read");
       if (denied !== null) return denied;
       const extra = unknownField(body, ["timeRange", "variables"]);
       if (extra !== undefined) return validation(extra);
-      const options = state.variableOptions[decodeURIComponent(parts[3] ?? "")] ?? [];
-      return json(200, {
-        results: {
-          A: {
-            result: {
-              shape: "frame",
-              frame: {
-                fields: [
-                  { name: "value", type: "string", values: options.map((o) => o.value) },
-                  { name: "label", type: "string", values: options.map((o) => o.label) },
-                ],
-              },
-            },
-          },
-        },
-      });
+      const name = decodeURIComponent(parts[3] ?? "");
+      const variable = latest(dashboard).model.variables.find((v) => v.name === name);
+      if (variable === undefined || variable.type !== "query") return error(404, "not_found");
+      if (name in ((body.variables ?? {}) as Record<string, unknown>))
+        return validation("variables");
+      state.variableRequests.push({ name, body });
+      const options = state.variableOptions[name] ?? [];
+      return json(200, { options, truncated: false });
     }
     if (parts[2] === "versions" && method === "GET") {
       const denied = needs("dashboards:read");

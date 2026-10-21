@@ -249,5 +249,6 @@
   "dashboards.panels.readoutHint": "Die Pfeiltasten links und rechts lesen die Werte zu einem Zeitpunkt vor; mit Umschalt in größeren Schritten.",
   "dashboards.panels.noValue": "kein Wert",
   "dashboards.folders.restrictedInheritedHint": "Eingeschränkt durch einen Ordner darüber: nur Mitglieder mit Zugriff, Admins und Eigentümer sehen ihn.",
-  "dashboards.panel.placed": "{title}: Spalte {column}, Zeile {row}, {width} Spalten breit, {height} Zeilen hoch."
+  "dashboards.panel.placed": "{title}: Spalte {column}, Zeile {row}, {width} Spalten breit, {height} Zeilen hoch.",
+  "dashboards.variables.notFound": "Diese Variable gehört nicht zum gespeicherten Dashboard. Speichere das Dashboard, oder lade die Seite neu, falls jemand sie entfernt hat."
 }

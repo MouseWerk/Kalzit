@@ -2,7 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useId, useState } from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { fetchVariableOptions } from "./api";
+import { ApiError, isApiError } from "../../api/client";
+import type { QueryResponse } from "../../api/generated/shapes";
+import { runQuery } from "../datasources/api";
+import { fetchVariableOptions, type VariableOption } from "./api";
+import type { TextRange } from "./timeRange";
 import { currentValue, optionValues, type VariableModel } from "./model";
 import { errorMessage } from "./ui/errors";
 
@@ -18,8 +22,53 @@ interface VariablesBarProps {
   dashboardId: string;
   variables: readonly VariableModel[];
   values: Record<string, string>;
+  /** The range as stored text; options are read again only when it changes, not as time moves. */
+  textRange: TextRange;
+  /** The resolved range of the last run, sent with the request. */
   range: TimeRange;
+  /** Bumped by "Refresh", which reads the options again too. */
+  run: number;
+  /**
+   * The saved variables, in edit mode. A new or changed query variable runs through the free
+   * query route; the options route only knows the saved dashboard.
+   */
+  stored?: readonly VariableModel[] | undefined;
   onChange: (name: string, value: string) => void;
+}
+
+/** Names a query mentions as $name, ${name} or ${name:format}. */
+export function referencedNames(query: unknown): Set<string> {
+  const text = JSON.stringify(query ?? null);
+  return new Set([...text.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? ""));
+}
+
+/** The first frame's first field as values, its second field (if any) as labels. */
+function optionsFromResponse(response: QueryResponse): VariableOption[] {
+  const outcome = Object.values(response.results)[0];
+  if (outcome === undefined) {
+    return [];
+  }
+  if ("error" in outcome) {
+    throw new ApiError(outcome.error.code, 200, outcome.error.message);
+  }
+  if (outcome.result.shape !== "frame") {
+    return [];
+  }
+  const [values, labels] = outcome.result.frame.fields;
+  const seen = new Set<string>();
+  const options: VariableOption[] = [];
+  (values?.values ?? []).forEach((raw, row) => {
+    if (raw === null || raw === undefined) {
+      return;
+    }
+    const value = String(raw);
+    if (!seen.has(value)) {
+      seen.add(value);
+      const label = labels?.values[row];
+      options.push({ value, label: label === null || label === undefined ? value : String(label) });
+    }
+  });
+  return options;
 }
 
 /** One control per dashboard variable, above the panels. */
@@ -28,7 +77,10 @@ export function VariablesBar({
   dashboardId,
   variables,
   values,
+  textRange,
   range,
+  run,
+  stored,
   onChange,
 }: VariablesBarProps) {
   const { t } = useI18n();
@@ -48,7 +100,14 @@ export function VariablesBar({
             variable={variable}
             value={values[variable.name] ?? ""}
             values={values}
+            textRange={textRange}
             range={range}
+            run={run}
+            draft={
+              stored !== undefined &&
+              JSON.stringify(stored.find((s) => s.name === variable.name)) !==
+                JSON.stringify(variable)
+            }
             onChange={(value) => onChange(variable.name, value)}
           />
         ))}
@@ -62,7 +121,10 @@ function VariableControl({
   variable,
   value,
   values,
+  textRange,
   range,
+  run,
+  draft,
   onChange,
 }: {
   orgId: string;
@@ -70,30 +132,66 @@ function VariableControl({
   variable: VariableModel;
   value: string;
   values: Record<string, string>;
+  textRange: TextRange;
   range: TimeRange;
+  run: number;
+  draft: boolean;
   onChange: (value: string) => void;
 }) {
   const { t } = useI18n();
   const id = useId();
   const [text, setText] = useState(value);
-  // Other variables can feed this one's query, so they are part of what it depends on.
-  const others = Object.fromEntries(
-    Object.entries(values).filter(([name]) => name !== variable.name),
+  // Only the variables this query mentions feed it; changing any other one asks nothing.
+  const mentioned = referencedNames(variable.query);
+  const inputs = Object.fromEntries(
+    Object.entries(values).filter(([name]) => name !== variable.name && mentioned.has(name)),
   );
   const options = useQuery({
-    queryKey: ["variable-options", orgId, dashboardId, variable.name, range.from, range.to, others],
-    queryFn: ({ signal }) =>
-      fetchVariableOptions(
+    queryKey: [
+      "variable-options",
+      orgId,
+      dashboardId,
+      variable.name,
+      draft ? variable : null,
+      textRange.from,
+      textRange.to,
+      run,
+      inputs,
+    ],
+    queryFn: async ({ signal }) => {
+      if (!draft) {
+        const answer = await fetchVariableOptions(
+          orgId,
+          dashboardId,
+          variable.name,
+          { timeRange: range, variables: inputs },
+          signal,
+        );
+        return answer.options;
+      }
+      const response = await runQuery(
         orgId,
-        dashboardId,
-        variable.name,
-        { timeRange: range, variables: others },
+        {
+          queries: [
+            { refId: "A", datasourceId: variable.datasourceId ?? "", query: variable.query },
+          ],
+          timeRange: range,
+          variables: inputs,
+        },
         signal,
-      ),
-    enabled: variable.type === "query",
-    staleTime: 60_000,
+      );
+      return optionsFromResponse(response);
+    },
+    enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
+    // Options belong to the stored range text; "Refresh" or a new range reads them again.
+    staleTime: Number.POSITIVE_INFINITY,
     retry: false,
   });
+  const optionsError = options.isError
+    ? isApiError(options.error, "not_found")
+      ? t("dashboards.variables.notFound")
+      : errorMessage(t, options.error)
+    : null;
   const label = variable.label ?? variable.name;
 
   let control: ReactNode;
@@ -125,7 +223,7 @@ function VariableControl({
         className="select"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
-        aria-describedby={options.isError ? `${id}-error` : undefined}
+        aria-describedby={optionsError === null ? undefined : `${id}-error`}
       >
         {known ? null : (
           <option value={value}>{value === "" ? t("dashboards.variables.none") : value}</option>
@@ -144,11 +242,11 @@ function VariableControl({
         {label}
       </label>
       {control}
-      {options.isError ? (
+      {optionsError === null ? null : (
         <span className="field__error" id={`${id}-error`}>
-          {errorMessage(t, options.error)}
+          {optionsError}
         </span>
-      ) : null}
+      )}
     </div>
   );
 }

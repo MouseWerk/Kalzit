@@ -266,8 +266,7 @@ function isQueryResponse(value: unknown): value is QueryResponse {
 }
 
 /**
- * Runs a panel's stored queries, as viewers do. The signal is checked before sending, so a query
- * that waited in line and is no longer needed never reaches the server.
+ * Runs a panel's stored queries, as viewers do. Aborting the signal cancels the request.
  */
 export async function runPanelQuery(
   orgId: string,
@@ -280,53 +279,43 @@ export async function runPanelQuery(
   return expectShape(await send("POST", path, body, signal), isQueryResponse, "panel query");
 }
 
-const cellText = (value: unknown): string | null =>
-  value === null || value === undefined
-    ? null
-    : typeof value === "object"
-      ? JSON.stringify(value)
-      : String(value);
-
 /**
- * The choices of a query variable. The route answers a `QueryResponse` like every query route
- * (docs/ARCHITECTURE.md): the first frame's first field holds the values, a second field, when
- * there is one, their labels. A failed query is reported like any other request error.
+ * `VariableOptionsRequest` (decided contract; the generated type follows from shapes.rs): the
+ * time range and the values of the other variables, the variable's own name left out.
  */
+export interface VariableOptionsRequest {
+  timeRange: TimeRange;
+  variables: Record<string, unknown>;
+}
+
+/** The answer of the options route; errors are ordinary HTTP errors. */
+export interface VariableOptionsResponse {
+  options: VariableOption[];
+  /** More options exist than the server sent. */
+  truncated: boolean;
+}
+
+function isVariableOptions(value: unknown): value is VariableOptionsResponse {
+  return (
+    isRecord(value) &&
+    typeof value.truncated === "boolean" &&
+    Array.isArray(value.options) &&
+    value.options.every(
+      (o) => isRecord(o) && typeof o.value === "string" && typeof o.label === "string",
+    )
+  );
+}
+
+/** The choices of a saved query variable, from `POST .../variables/{name}/options`. */
 export async function fetchVariableOptions(
   orgId: string,
   dashboardId: string,
   name: string,
-  body: { timeRange: TimeRange; variables: Record<string, unknown> },
+  body: VariableOptionsRequest,
   signal?: AbortSignal,
-): Promise<VariableOption[]> {
+): Promise<VariableOptionsResponse> {
   const path = orgPath(orgId, "dashboards", dashboardId, "variables", name, "options");
-  const response = expectShape(
-    await send("POST", path, body, signal),
-    isQueryResponse,
-    "variable options",
-  );
-  const outcomes = Object.values(response.results);
-  const failed = outcomes.find((o) => "error" in o);
-  const frame = outcomes.flatMap((o) =>
-    "result" in o && o.result.shape === "frame" ? [o.result.frame] : [],
-  )[0];
-  if (frame === undefined) {
-    if (failed !== undefined && "error" in failed) {
-      throw new ApiError(failed.error.code, 200, failed.error.message);
-    }
-    return [];
-  }
-  const [values, labels] = frame.fields;
-  const seen = new Set<string>();
-  const options: VariableOption[] = [];
-  (values?.values ?? []).forEach((raw, row) => {
-    const value = cellText(raw);
-    if (value !== null && !seen.has(value)) {
-      seen.add(value);
-      options.push({ value, label: cellText(labels?.values[row]) ?? value });
-    }
-  });
-  return options;
+  return expectShape(await send("POST", path, body, signal), isVariableOptions, "variable options");
 }
 
 export const FOLDERS_KEY = "folders";

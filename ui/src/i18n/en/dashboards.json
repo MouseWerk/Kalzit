@@ -249,5 +249,6 @@
   "dashboards.panels.readoutHint": "Left and right arrow keys read out the values at a point in time; Shift moves in larger steps.",
   "dashboards.panels.noValue": "no value",
   "dashboards.folders.restrictedInheritedHint": "Restricted through a folder above it: only members with access, admins and owners see it.",
-  "dashboards.panel.placed": "{title}: column {column}, row {row}, {width} columns wide, {height} rows high."
+  "dashboards.panel.placed": "{title}: column {column}, row {row}, {width} columns wide, {height} rows high.",
+  "dashboards.variables.notFound": "This variable is not part of the saved dashboard. Save the dashboard, or reload the page if someone removed it."
 }
