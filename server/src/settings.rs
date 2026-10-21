@@ -296,7 +296,7 @@ pub fn resolve(
             let value = (backed.read)(config);
             let source = if env(backed.env_var).is_some() {
                 Source::Env
-            } else if file_sets(def.key) || value != (def.default)() {
+            } else if file_sets(def.key) {
                 Source::File
             } else {
                 Source::Default
@@ -319,13 +319,6 @@ pub fn resolve(
         }
     }
     Ok(row((def.default)(), Source::Default))
-}
-
-/// Whether `kalzit.toml` sets a key. The configuration does not record which file keys it read
-/// yet, so a file value equal to the default reports `default` until it does; a value that
-/// differs is reported as `file` either way.
-fn config_file_sets(_key: &str) -> bool {
-    false
 }
 
 fn process_env(name: &str) -> Option<String> {
@@ -462,7 +455,9 @@ async fn stored_rows(state: &AppState, org_id: Option<&str>) -> ApiResult<Arc<Ha
 }
 
 fn resolved(state: &AppState, def: &SettingDef, stored: Option<&Stored>) -> ApiResult<Effective> {
-    resolve(def, &process_env, &config_file_sets, &state.config, stored).map_err(|e| ApiError::internal("settings", e))
+    // Configuration-backed settings carry the configuration's own `section.key` names.
+    let file_sets = |key: &str| state.config.file_keys.contains(key);
+    resolve(def, &process_env, &file_sets, &state.config, stored).map_err(|e| ApiError::internal("settings", e))
 }
 
 /// The effective value of a server setting.
@@ -652,7 +647,9 @@ mod tests {
         let mut config = Config::default();
         assert_eq!(resolve(def, &no_env, &|_: &str| false, &config, None).unwrap().source, Source::Default);
         config.sessions.lifetime_hours = 12;
-        let file = resolve(def, &no_env, &|_: &str| false, &config, Some(&stored(json!(99)))).unwrap();
+        let file =
+            resolve(def, &no_env, &|key: &str| key == "sessions.lifetime_hours", &config, Some(&stored(json!(99))))
+                .unwrap();
         assert_eq!((file.value, file.source), (json!(12), Source::File), "the database never applies here");
         let env = |name: &str| (name == "KALZIT_SESSIONS_LIFETIME_HOURS").then(|| "12".to_string());
         let from_env = resolve(def, &env, &|_: &str| false, &config, None).unwrap();
