@@ -66,6 +66,10 @@ pub struct Context<'a> {
     /// Names a variable used as an identifier (`${table:identifier}`) may take, from the
     /// source's schema. `None` when the query uses no identifier variables.
     pub identifiers: Option<&'a BTreeSet<String>>,
+    /// The variables that may be used as identifiers at all; `None` allows every variable
+    /// (free queries, where the caller writes the query anyway). A dashboard's stored queries
+    /// allow only variables whose value the server checked against the dashboard's own list.
+    pub identifier_variables: Option<&'a BTreeSet<String>>,
 }
 
 /// Functions that read or write files, reach other servers, run SQL given as text (which would
@@ -121,10 +125,23 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "pg_rotate_logfile",
     "pg_promote",
     "set_config",
-    "pg_advisory_lock",
-    "pg_advisory_lock_shared",
-    "pg_try_advisory_lock",
-    "pg_try_advisory_lock_shared",
+    "pg_switch_wal",
+    "pg_switch_xlog",
+    "pg_create_restore_point",
+    "pg_log_backend_memory_contexts",
+    "pg_backup_start",
+    "pg_backup_stop",
+    "pg_start_backup",
+    "pg_stop_backup",
+    "pg_wal_replay_pause",
+    "pg_wal_replay_resume",
+    "pg_notify",
+    "pg_import_system_collations",
+    "pg_sync_replication_slots",
+    "pg_replication_slot_advance",
+    "pg_logical_emit_message",
+    "nextval",
+    "setval",
     // SQL Server
     "openrowset",
     "opendatasource",
@@ -183,6 +200,7 @@ pub async fn prepare_query(
         interval_ms: req.interval_ms,
         variables: &req.variables,
         identifiers: identifiers.as_ref(),
+        identifier_variables: req.identifier_variables.as_ref(),
     };
     Ok(prepare(&query.sql, engine, &ctx)?)
 }
@@ -223,6 +241,12 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
                 out.push_str(&parts.join(", "));
             }
             Piece::Identifier(name) => {
+                if ctx.identifier_variables.is_some_and(|allowed| !allowed.contains(*name)) {
+                    return reject(format!(
+                        "variable {name} cannot be an identifier here; only custom and constant dashboard \
+                         variables can"
+                    ));
+                }
                 let value = variable(ctx, name)?;
                 let allowed = ctx.identifiers.ok_or_else(|| Rejected("identifier variables need the schema".into()))?;
                 let names: Vec<&Value> = match value {
@@ -319,6 +343,15 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                 Some(skip_block_comment(bytes, i, matches!(engine, Engine::Postgres | Engine::MsSql))?)
             }
             b'$' if engine == Engine::Postgres => dollar_quote_end(sql, i)?,
+            // U&"..." and U&'...' spell names and text with escapes the checker would not decode,
+            // so a forbidden function could hide behind them.
+            b'U' | b'u'
+                if engine == Engine::Postgres
+                    && bytes.get(i + 1) == Some(&b'&')
+                    && matches!(bytes.get(i + 2), Some(b'"' | b'\'')) =>
+            {
+                return reject("Unicode-escaped names and strings (U&\"...\", U&'...') are not allowed");
+            }
             _ => None,
         };
         if let Some(end) = skip_to {
@@ -563,6 +596,11 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
     if engine == Engine::MsSql && words.contains("next value for") {
         return reject("NEXT VALUE FOR changes a sequence and is not allowed");
     }
+    // Query hints (`OPTION (...)`) can take table locks (TABLE HINT) and the parser does not see
+    // them as such, so none are accepted.
+    if engine == Engine::MsSql && (words.contains("option (") || words.contains("option(")) {
+        return reject("query hints (OPTION (...)) are not allowed");
+    }
     let statements = Parser::parse_sql(dialect(engine).as_ref(), sql)
         .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
     let [statement] = statements.as_slice() else {
@@ -571,13 +609,54 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
     if !matches!(statement, Statement::Query(_)) {
         return reject("only SELECT and WITH queries are allowed");
     }
-    match statement.visit(&mut ReadOnlyCheck) {
+    match statement.visit(&mut ReadOnlyCheck { engine }) {
         ControlFlow::Break(reason) => Err(Rejected(reason)),
         ControlFlow::Continue(()) => Ok(()),
     }
 }
 
-struct ReadOnlyCheck;
+struct ReadOnlyCheck {
+    engine: Engine,
+}
+
+/// The only SQL Server table hints a read may carry: both read without taking locks.
+const ALLOWED_MSSQL_HINTS: &[&str] = &["nolock", "readuncommitted"];
+/// Every SQL Server table hint word, to recognize the old hint form `t (TABLOCKX)` among the
+/// arguments of a table-valued function call.
+const MSSQL_HINT_WORDS: &[&str] = &[
+    "nolock",
+    "readuncommitted",
+    "holdlock",
+    "nowait",
+    "paglock",
+    "readcommitted",
+    "readcommittedlock",
+    "readpast",
+    "repeatableread",
+    "rowlock",
+    "serializable",
+    "snapshot",
+    "tablock",
+    "tablockx",
+    "updlock",
+    "xlock",
+    "noexpand",
+    "forceseek",
+    "forcescan",
+    "keepidentity",
+    "keepdefaults",
+    "ignore_constraints",
+    "ignore_triggers",
+];
+
+/// The name of a table hint: `TABLOCKX`, or `INDEX` in `INDEX(ix)`.
+fn hint_name(hint: &Expr) -> String {
+    match hint {
+        Expr::Identifier(ident) => ident.value.to_ascii_lowercase(),
+        Expr::Function(f) => last_name_part(&f.name).unwrap_or_default(),
+        other => other.to_string().to_ascii_lowercase(),
+    }
+}
 
 fn last_name_part(name: &ObjectName) -> Option<String> {
     match name.0.last()? {
@@ -586,9 +665,26 @@ fn last_name_part(name: &ObjectName) -> Option<String> {
     }
 }
 
+/// Families of functions refused by prefix: statistics resets, advisory locks, replication
+/// slots and origins (creating, dropping, consuming changes), backups and WAL replay.
+const FORBIDDEN_PREFIXES: &[&str] = &[
+    "pg_stat_reset",
+    "pg_advisory",
+    "pg_try_advisory",
+    "pg_create_",
+    "pg_drop_",
+    "pg_copy_",
+    "pg_logical_slot_",
+    "pg_replication_origin",
+    "pg_backup_",
+    "pg_wal_replay_",
+    "lo_",
+    "dblink",
+];
+
 fn forbidden(name: &ObjectName) -> ControlFlow<String> {
     match last_name_part(name) {
-        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) => {
+        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p)) => {
             ControlFlow::Break(format!("{n} is not allowed: it reaches files, other servers or other sessions"))
         }
         _ => ControlFlow::Continue(()),
@@ -626,6 +722,26 @@ impl Visitor for ReadOnlyCheck {
 
     fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<String> {
         // `FROM LATERAL f(...)` and `FROM f(...)` are table factors, not expressions.
+        if let TableFactor::Table { with_hints, args, .. } = factor
+            && self.engine == Engine::MsSql
+        {
+            // Hints written `WITH (...)` and the old form `t (TABLOCKX)`, which parses like
+            // table function arguments.
+            let mut hints: Vec<String> = with_hints.iter().map(hint_name).collect();
+            if let Some(args) = args {
+                hints.extend(
+                    args.args
+                        .iter()
+                        .map(|a| a.to_string().to_ascii_lowercase())
+                        .filter(|a| MSSQL_HINT_WORDS.contains(&a.as_str())),
+                );
+            }
+            if let Some(bad) = hints.iter().find(|h| !ALLOWED_MSSQL_HINTS.contains(&h.as_str())) {
+                return ControlFlow::Break(format!(
+                    "the table hint {bad} is not allowed; only NOLOCK and READUNCOMMITTED are"
+                ));
+            }
+        }
         match factor {
             TableFactor::Function { name, .. } => forbidden(name),
             TableFactor::Table { name, args: Some(_), .. } => forbidden(name),
@@ -713,6 +829,7 @@ mod tests {
             interval_ms: 30_000,
             variables: vars,
             identifiers: None,
+            identifier_variables: None,
         }
     }
 
@@ -992,5 +1109,82 @@ mod tests {
         assert_eq!(format_interval(7_200_000), "2h");
         assert_eq!(format_interval(86_400_000), "1d");
         assert_eq!(format_interval(250), "250ms");
+    }
+
+    #[test]
+    fn postgres_unicode_escapes_are_refused() {
+        for sql in [r#"SELECT U&"pg_read_fil\0065"('/etc/passwd')"#, r#"SELECT u&"x" FROM t"#, "SELECT U&'\\0041' AS a"]
+        {
+            assert!(rejected(sql, Engine::Postgres).contains("Unicode"), "{sql}");
+        }
+        // Inside a string or comment the letters mean nothing.
+        accepted("SELECT 'U&\"x\"' AS a -- U&'y'\n", Engine::Postgres);
+        accepted("SELECT menu & 3 FROM t", Engine::Postgres);
+    }
+
+    #[test]
+    fn postgres_functions_with_side_effects_are_refused() {
+        for f in [
+            "pg_switch_wal()",
+            "pg_create_restore_point('x')",
+            "pg_stat_reset()",
+            "pg_stat_reset_shared('bgwriter')",
+            "pg_logical_slot_get_changes('s', NULL, NULL)",
+            "pg_logical_slot_peek_changes('s', NULL, NULL)",
+            "pg_create_logical_replication_slot('s', 'pgoutput')",
+            "pg_drop_replication_slot('s')",
+            "pg_replication_origin_create('o')",
+            "pg_log_backend_memory_contexts(1)",
+            "pg_backup_start('x')",
+            "pg_backup_stop()",
+            "pg_promote()",
+            "pg_reload_conf()",
+            "pg_rotate_logfile()",
+            "set_config('a', 'b', false)",
+            "pg_advisory_xact_lock(1)",
+            "pg_advisory_unlock_all()",
+            "pg_notify('c', 'p')",
+            "nextval('s')",
+            "setval('s', 1)",
+        ] {
+            let sql = format!("SELECT {f}");
+            assert!(rejected(&sql, Engine::Postgres).contains("not allowed"), "{sql}");
+        }
+        accepted("SELECT pg_size_pretty(1024), lower('A')", Engine::Postgres);
+    }
+
+    #[test]
+    fn sql_server_table_hints_are_limited_to_reads_without_locks() {
+        accepted("SELECT a FROM t WITH (NOLOCK)", Engine::MsSql);
+        accepted("SELECT a FROM t WITH (READUNCOMMITTED) JOIN u WITH (NOLOCK) ON t.id = u.id", Engine::MsSql);
+        for sql in [
+            "SELECT a FROM t WITH (TABLOCKX)",
+            "SELECT a FROM t WITH (HOLDLOCK)",
+            "SELECT a FROM t WITH (UPDLOCK, ROWLOCK)",
+            "SELECT a FROM t WITH (NOLOCK, XLOCK)",
+            "SELECT a FROM t JOIN u WITH (PAGLOCK) ON t.id = u.id",
+            "WITH c AS (SELECT 1 AS a) SELECT a FROM c WITH (TABLOCK)",
+            "SELECT a FROM t (TABLOCKX)",
+            "SELECT a FROM t OPTION (TABLE HINT (t, TABLOCKX))",
+        ] {
+            rejected(sql, Engine::MsSql);
+        }
+        // A table-valued function's arguments are not hints.
+        accepted("SELECT * FROM sys.dm_exec_sql_text(0x01)", Engine::MsSql);
+    }
+
+    #[test]
+    fn identifier_formatting_can_be_limited_to_checked_variables() {
+        let vars = BTreeMap::from([("spalte".to_string(), json!("land")), ("frei".to_string(), json!("land"))]);
+        let allowed_names: BTreeSet<String> = ["land".to_string()].into();
+        let checked: BTreeSet<String> = ["spalte".to_string()].into();
+        let mut c = ctx(&vars);
+        c.identifiers = Some(&allowed_names);
+        c.identifier_variables = Some(&checked);
+        assert!(prepare("SELECT ${spalte:identifier} FROM t", Engine::Postgres, &c).is_ok());
+        let e = prepare("SELECT ${frei:identifier} FROM t", Engine::Postgres, &c).unwrap_err();
+        assert!(e.0.contains("cannot be an identifier"), "{e}");
+        // As a plain value the same variable is fine.
+        assert!(prepare("SELECT 1 FROM t WHERE a = $frei", Engine::Postgres, &c).is_ok());
     }
 }

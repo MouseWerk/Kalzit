@@ -181,6 +181,8 @@ pub struct SourceQuery {
     pub interval_ms: u64,
     pub max_data_points: Option<u32>,
     pub variables: BTreeMap<String, Value>,
+    /// Variables that may be used as identifiers; `None` allows all (see `sql::Context`).
+    pub identifier_variables: Option<std::collections::BTreeSet<String>>,
     pub limits: Limits,
 }
 
@@ -880,6 +882,19 @@ fn outcome_error(code: &str, message: impl Into<String>) -> QueryOutcome {
     QueryOutcome::Err { error: ErrorBody { code: code.to_string(), message: message.into(), field: None } }
 }
 
+/// The longest interval a request may ask for: a year.
+pub const MAX_INTERVAL_MS: u64 = 365 * 24 * 3_600_000;
+
+/// `intervalMs`, when given, between 1 ms and a year.
+pub fn check_interval(interval_ms: Option<u64>) -> ApiResult<()> {
+    match interval_ms {
+        Some(ms) if !(1..=MAX_INTERVAL_MS).contains(&ms) => {
+            Err(ApiError::validation("intervalMs must be 1 ms to one year").with_field("intervalMs"))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// A time range within the years 1 to 9999, `from` not after `to`.
 pub fn check_range(range: TimeRange) -> ApiResult<()> {
     let inside = |t: i64| (MIN_TIME_MS..=MAX_TIME_MS).contains(&t);
@@ -933,6 +948,22 @@ pub async fn run_queries(
     max_data_points: Option<u32>,
     variables: &BTreeMap<String, Value>,
 ) -> QueryResponse {
+    run_queries_with(state, ctx, items, range, interval_ms, max_data_points, variables, None).await
+}
+
+/// `run_queries`, where only `identifier_variables` may be used as identifiers (a dashboard's
+/// stored queries pass the variables whose values the server checked).
+#[expect(clippy::too_many_arguments, reason = "the parts of one query request, passed through")]
+pub async fn run_queries_with(
+    state: &AppState,
+    ctx: &OrgCtx,
+    items: Vec<QueryItem>,
+    range: TimeRange,
+    interval_ms: Option<u64>,
+    max_data_points: Option<u32>,
+    variables: &BTreeMap<String, Value>,
+    identifier_variables: Option<&std::collections::BTreeSet<String>>,
+) -> QueryResponse {
     let interval = sql::interval_ms(range, interval_ms, max_data_points);
     let budget = match state.datasources.response_budget(state).await {
         Ok(b) => b,
@@ -945,7 +976,9 @@ pub async fn run_queries(
         let budget = budget.clone();
         async move {
             let ref_id = item.ref_id.clone();
-            let outcome = run_one(state, ctx, item, range, interval, max_data_points, variables, budget).await;
+            let outcome =
+                run_one(state, ctx, item, range, interval, max_data_points, variables, identifier_variables, budget)
+                    .await;
             (ref_id, outcome)
         }
     });
@@ -961,6 +994,7 @@ async fn run_one(
     interval_ms: u64,
     max_data_points: Option<u32>,
     variables: &BTreeMap<String, Value>,
+    identifier_variables: Option<&std::collections::BTreeSet<String>>,
     budget: ResponseBudget,
 ) -> QueryOutcome {
     let registry = &state.datasources;
@@ -991,6 +1025,7 @@ async fn run_one(
             interval_ms,
             max_data_points,
             variables: variables.clone(),
+            identifier_variables: identifier_variables.cloned(),
             limits,
         };
         let result = kind.plugin.query(&conn, req).await;
