@@ -134,8 +134,10 @@ describe("server users", () => {
     const dialog = screen.getByRole("dialog", { name: "New user" });
     await user.click(within(dialog).getByLabelText("Name"));
     await user.paste("Katherine Johnson");
-    await user.type(within(dialog).getByLabelText("Email address"), "katherine");
-    await user.type(within(dialog).getByLabelText("Password"), "short");
+    await user.click(within(dialog).getByLabelText("Email address"));
+    await user.paste("katherine");
+    await user.click(within(dialog).getByLabelText("Password"));
+    await user.paste("short");
     await user.click(within(dialog).getByRole("button", { name: "Create user" }));
     expect(within(dialog).getByText("Enter an email address like name@example.com.")).toBeTruthy();
     expect(within(dialog).getByText("The password needs at least 12 characters.")).toBeTruthy();

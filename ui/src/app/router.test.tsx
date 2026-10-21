@@ -7,8 +7,10 @@ import { renderApp } from "../test/renderApp";
 import { parseLoginSearch } from "./router";
 
 async function signIn(user: ReturnType<typeof renderApp>["user"], password = TEST_PASSWORD) {
-  await user.type(await screen.findByLabelText("Email address"), TEST_USER.email);
-  await user.type(screen.getByLabelText("Password"), password);
+  await user.click(await screen.findByLabelText("Email address"));
+  await user.paste(TEST_USER.email);
+  await user.click(screen.getByLabelText("Password"));
+  await user.paste(password);
   await user.click(screen.getByRole("button", { name: "Sign in" }));
 }
 
@@ -204,11 +206,16 @@ describe("setup", () => {
     const server = installFakeServer({ setupNeeded: true });
     const { user, location } = renderApp("/setup");
 
-    await user.type(await screen.findByLabelText("Setup code"), `  ${TEST_SETUP_TOKEN}  `);
-    await user.type(screen.getByLabelText("Organization name"), "Müller & Söhne");
-    await user.type(screen.getByLabelText("Your name"), "Zoë Ångström");
-    await user.type(screen.getByLabelText("Email address"), "zoe@example.com");
-    await user.type(screen.getByLabelText("Password"), "twelve chars");
+    await user.click(await screen.findByLabelText("Setup code"));
+    await user.paste(`  ${TEST_SETUP_TOKEN}  `);
+    await user.click(screen.getByLabelText("Organization name"));
+    await user.paste("Müller & Söhne");
+    await user.click(screen.getByLabelText("Your name"));
+    await user.paste("Zoë Ångström");
+    await user.click(screen.getByLabelText("Email address"));
+    await user.paste("zoe@example.com");
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste("twelve chars");
     await user.click(screen.getByRole("button", { name: "Set up" }));
 
     expect(await screen.findByRole("heading", { name: "Welcome, Zoë Ångström" })).toBeTruthy();
@@ -260,11 +267,16 @@ describe("setup", () => {
   it("puts a wrong setup code on its field", async () => {
     installFakeServer({ setupNeeded: true });
     const { user } = renderApp("/setup");
-    await user.type(await screen.findByLabelText("Setup code"), "wrong");
-    await user.type(screen.getByLabelText("Organization name"), "Org");
-    await user.type(screen.getByLabelText("Your name"), "Ada");
-    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
-    await user.type(screen.getByLabelText("Password"), "long enough password");
+    await user.click(await screen.findByLabelText("Setup code"));
+    await user.paste("wrong");
+    await user.click(screen.getByLabelText("Organization name"));
+    await user.paste("Org");
+    await user.click(screen.getByLabelText("Your name"));
+    await user.paste("Ada");
+    await user.click(screen.getByLabelText("Email address"));
+    await user.paste("ada@example.com");
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste("long enough password");
     await user.click(screen.getByRole("button", { name: "Set up" }));
 
     expect(
@@ -279,11 +291,16 @@ describe("setup", () => {
     const server = installFakeServer({ setupNeeded: true });
     server.failNext("/api/setup", 400, "validation", "POST", "name");
     const { user } = renderApp("/setup");
-    await user.type(await screen.findByLabelText("Setup code"), TEST_SETUP_TOKEN);
-    await user.type(screen.getByLabelText("Organization name"), "Org");
-    await user.type(screen.getByLabelText("Your name"), "Ada");
-    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
-    await user.type(screen.getByLabelText("Password"), "long enough password");
+    await user.click(await screen.findByLabelText("Setup code"));
+    await user.paste(TEST_SETUP_TOKEN);
+    await user.click(screen.getByLabelText("Organization name"));
+    await user.paste("Org");
+    await user.click(screen.getByLabelText("Your name"));
+    await user.paste("Ada");
+    await user.click(screen.getByLabelText("Email address"));
+    await user.paste("ada@example.com");
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste("long enough password");
     await user.click(screen.getByRole("button", { name: "Set up" }));
     const name = screen.getByLabelText("Your name");
     await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
@@ -294,11 +311,16 @@ describe("setup", () => {
     const server = installFakeServer({ setupNeeded: true });
     server.failNext("/api/setup", 403, "cross_origin", "POST");
     const { user } = renderApp("/setup");
-    await user.type(await screen.findByLabelText("Setup code"), TEST_SETUP_TOKEN);
-    await user.type(screen.getByLabelText("Organization name"), "Org");
-    await user.type(screen.getByLabelText("Your name"), "Ada");
-    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
-    await user.type(screen.getByLabelText("Password"), "long enough password");
+    await user.click(await screen.findByLabelText("Setup code"));
+    await user.paste(TEST_SETUP_TOKEN);
+    await user.click(screen.getByLabelText("Organization name"));
+    await user.paste("Org");
+    await user.click(screen.getByLabelText("Your name"));
+    await user.paste("Ada");
+    await user.click(screen.getByLabelText("Email address"));
+    await user.paste("ada@example.com");
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste("long enough password");
     await user.click(screen.getByRole("button", { name: "Set up" }));
     const message = await screen.findByText(/set server\.public_url or security\.trusted_proxies/);
     expect(message.closest('[role="alert"]')).toBeTruthy();
@@ -307,11 +329,16 @@ describe("setup", () => {
   it("offers the way to sign in when someone else finished setup first", async () => {
     const server = installFakeServer({ setupNeeded: true });
     const { user } = renderApp("/setup");
-    await user.type(await screen.findByLabelText("Setup code"), TEST_SETUP_TOKEN);
-    await user.type(screen.getByLabelText("Organization name"), "Org");
-    await user.type(screen.getByLabelText("Your name"), "Ada");
-    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
-    await user.type(screen.getByLabelText("Password"), "long enough password");
+    await user.click(await screen.findByLabelText("Setup code"));
+    await user.paste(TEST_SETUP_TOKEN);
+    await user.click(screen.getByLabelText("Organization name"));
+    await user.paste("Org");
+    await user.click(screen.getByLabelText("Your name"));
+    await user.paste("Ada");
+    await user.click(screen.getByLabelText("Email address"));
+    await user.paste("ada@example.com");
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste("long enough password");
     server.state.setupNeeded = false;
     await user.click(screen.getByRole("button", { name: "Set up" }));
 

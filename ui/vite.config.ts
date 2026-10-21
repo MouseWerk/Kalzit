@@ -29,12 +29,8 @@ export default defineConfig({
     unstubGlobals: true,
     // Half the cores: with every core busy, jsdom tests near the 5 s timeout under load.
     maxWorkers: "50%",
-    // A jsdom test takes about 1 s at most on an idle machine, but other work on it (builds,
-    // other test runs) slows tests several times; the default 5 s then fails sound tests. A
-    // test that hangs still fails.
-    testTimeout: 15_000,
-    // The reporter flags tests over 1 s. A flagged test is to be fixed (paste instead of type,
-    // smaller fixtures), not tolerated: the long timeout above is for a busy machine only.
+    // The reporter flags tests over 1 s as a warning. Speed up a flagged test (paste instead of
+    // type, smaller fixtures) rather than raising the 5 s default timeout.
     slowTestThreshold: 1000,
   },
 });
