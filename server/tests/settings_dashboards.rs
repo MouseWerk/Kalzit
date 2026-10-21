@@ -147,6 +147,38 @@ impl TestApp {
             .unwrap();
         rows.into_iter().map(|r| r.0).collect()
     }
+
+    /// A real folder and dashboard of another organization: (folder id, dashboard id).
+    async fn foreign_ids(&self) -> (String, String) {
+        let org = uuid::Uuid::now_v7().to_string();
+        let folder = uuid::Uuid::now_v7().to_string();
+        let dashboard = uuid::Uuid::now_v7().to_string();
+        sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+            .bind(&org)
+            .execute(&self.state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO folders (id, org_id, name, restricted, version, created_at, updated_at) \
+             VALUES ($1, $2, 'Fremd', 0, 1, 0, 0)",
+        )
+        .bind(&folder)
+        .bind(&org)
+        .execute(&self.state.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at) \
+             VALUES ($1, $2, $3, 'Fremd', 'fremd', 1, 0, 0)",
+        )
+        .bind(&dashboard)
+        .bind(&org)
+        .bind(&folder)
+        .execute(&self.state.db)
+        .await
+        .unwrap();
+        (folder, dashboard)
+    }
 }
 
 /// Every flow runs on SQLite, and on PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set (in a
@@ -156,14 +188,15 @@ macro_rules! on_both_databases {
         mod sqlite {
             use super::*;
             $(
-                #[tokio::test]
+                // Several worker threads, so the concurrency flows really run side by side.
+                #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
                 async fn $flow() {
                     super::$flow(test_app(None, $tweak).await).await
                 }
             )*
         }
 
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn postgres_flows() {
             let Ok(base) = std::env::var("KALZIT_TEST_POSTGRES_URL") else {
                 eprintln!("KALZIT_TEST_POSTGRES_URL not set, PostgreSQL flows not run");
@@ -196,6 +229,10 @@ on_both_databases! {
     dashboards_go_through_the_trash: |_| {};
     dashboard_lists_search_move_and_page: |_| {};
     old_versions_beyond_the_retention_are_dropped: |_| {};
+    subtrees_with_hidden_content_stay_out_of_reach: |_| {};
+    separate_trashes_restore_separately: |_| {};
+    concurrent_moves_never_build_a_cycle: |_| {};
+    dashboards_cannot_slip_into_a_folder_being_trashed: |_| {};
 }
 
 fn model(title: &str) -> Value {
@@ -351,6 +388,7 @@ async fn audit_views_filter_and_page_newest_first(t: TestApp) {
     let first_two: Vec<&Value> =
         dashboards.body["items"].as_array().unwrap().iter().chain(rest.body["items"].as_array().unwrap()).collect();
     let mut ids: Vec<&str> = first_two.iter().map(|e| e["id"].as_str().unwrap()).collect();
+    ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 3, "no event twice across pages");
 
@@ -380,6 +418,8 @@ async fn audit_views_filter_and_page_newest_first(t: TestApp) {
     assert_eq!(server.body["items"].as_array().unwrap().len(), 6);
     let one_org = t.get(&format!("/admin/audit?orgId={}", t.org), &t.owner).await;
     assert_eq!(one_org.body["items"].as_array().unwrap().len(), 5);
+    let empty = t.get("/admin/audit?orgId=", &t.owner).await;
+    assert_eq!((empty.code(), empty.field()), ("validation", "orgId"));
     assert_eq!(t.get("/admin/audit", &editor).await.code(), "forbidden");
 }
 
@@ -427,8 +467,15 @@ async fn folders_nest_move_without_cycles_and_go_through_the_trash(t: TestApp) {
     for bad in [json!({ "name": " ", "version": 1 }), json!({ "name": "x".repeat(101), "version": 1 })] {
         assert_eq!(t.patch(&format!("~/folders/{a_id}"), bad, &t.owner).await.field(), "name");
     }
-    let foreign_parent = t.post("~/folders", create("X", Some(&uuid::Uuid::now_v7().to_string())), &t.owner).await;
+    let (foreign_folder, _) = t.foreign_ids().await;
+    let foreign_parent = t.post("~/folders", create("X", Some(&foreign_folder)), &t.owner).await;
     assert_eq!(foreign_parent.code(), "not_found");
+    let foreign_move =
+        t.patch(&format!("~/folders/{a_id}"), json!({ "parentId": foreign_folder, "version": 1 }), &t.owner).await;
+    assert_eq!(foreign_move.code(), "not_found");
+    for path in [format!("~/folders/{foreign_folder}"), format!("~/folders/{foreign_folder}/purge")] {
+        assert_eq!(t.delete(&path, &t.owner).await.code(), "not_found", "{path}");
+    }
 
     // Move c to the top level, then rename it with a stale version.
     let moved = t.patch(&format!("~/folders/{c_id}"), json!({ "parentId": null, "version": 1 }), &t.owner).await;
@@ -467,7 +514,11 @@ async fn folders_nest_move_without_cycles_and_go_through_the_trash(t: TestApp) {
     t.delete(&format!("~/folders/{a_id}"), &t.owner).await;
     assert_eq!(t.delete(&format!("~/folders/{a_id}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.get(&format!("~/dashboards/{d_id}"), &t.owner).await.code(), "not_found");
-    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM folders").fetch_one(&t.state.db).await.unwrap();
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM folders WHERE org_id = $1")
+        .bind(&t.org)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
     assert_eq!(left, 1);
     let (versions,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM dashboard_versions").fetch_one(&t.state.db).await.unwrap();
@@ -482,6 +533,163 @@ async fn folders_nest_move_without_cycles_and_go_through_the_trash(t: TestApp) {
     assert_eq!(t.get("~/folders", &viewer).await.status, StatusCode::OK);
     assert_eq!(t.post("~/folders", create("V", None), &viewer).await.code(), "forbidden");
     assert_eq!(t.delete(&format!("~/folders/{c_id}"), &viewer).await.code(), "forbidden");
+}
+
+async fn subtrees_with_hidden_content_stay_out_of_reach(t: TestApp) {
+    let editor = t.member("Erika", "editor").await;
+    let parent =
+        t.post("~/folders", json!({ "name": "Team" }), &t.owner).await.body["id"].as_str().unwrap().to_string();
+    let secret =
+        t.post("~/folders", json!({ "name": "Geheim", "parentId": parent, "restricted": true }), &t.owner).await;
+    let secret_id = secret.body["id"].as_str().unwrap().to_string();
+    t.post("~/dashboards", json!({ "folderId": secret_id, "model": model("Gehälter") }), &t.owner).await;
+    t.post("~/dashboards", json!({ "folderId": parent, "model": model("Plan") }), &t.owner).await;
+    let elsewhere =
+        t.post("~/folders", json!({ "name": "Anderswo" }), &t.owner).await.body["id"].as_str().unwrap().to_string();
+
+    // The editor sees the parent but not what is inside the restricted child.
+    let refused = [
+        t.delete(&format!("~/folders/{parent}"), &editor).await,
+        t.patch(&format!("~/folders/{parent}"), json!({ "parentId": elsewhere, "version": 1 }), &editor).await,
+    ];
+    for r in refused {
+        assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", r.body);
+    }
+    // Renaming touches only the folder itself.
+    let renamed = t.patch(&format!("~/folders/{parent}"), json!({ "name": "Team 2", "version": 1 }), &editor).await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
+
+    assert_eq!(t.delete(&format!("~/folders/{parent}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    for r in [
+        t.post(&format!("~/folders/{parent}/restore"), json!({}), &editor).await,
+        t.delete(&format!("~/folders/{parent}/purge"), &editor).await,
+    ] {
+        assert_eq!(r.code(), "forbidden", "{}", r.body);
+    }
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dashboards").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(n, 2, "nothing was purged");
+    assert_eq!(t.delete(&format!("~/folders/{parent}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let (summary,): (String,) = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'folder.purged'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&summary).unwrap(), json!({ "folders": 2, "dashboards": 2 }));
+}
+
+async fn separate_trashes_restore_separately(t: TestApp) {
+    // The clock stands still: both trashes happen in the same millisecond.
+    let folder = t.post("~/folders", json!({ "name": "F" }), &t.owner).await.body["id"].as_str().unwrap().to_string();
+    let alone = t.post("~/dashboards", json!({ "folderId": folder, "model": model("Allein") }), &t.owner).await;
+    let alone_id = alone.body["id"].as_str().unwrap().to_string();
+    let along = t.post("~/dashboards", json!({ "folderId": folder, "model": model("Mit") }), &t.owner).await;
+    let along_id = along.body["id"].as_str().unwrap().to_string();
+    t.delete(&format!("~/dashboards/{alone_id}"), &t.owner).await;
+    t.delete(&format!("~/folders/{folder}"), &t.owner).await;
+    let restored = t.post(&format!("~/folders/{folder}/restore"), json!({}), &t.owner).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert!(t.get(&format!("~/dashboards/{along_id}"), &t.owner).await.body["deletedAt"].is_null());
+    assert!(
+        t.get(&format!("~/dashboards/{alone_id}"), &t.owner).await.body["deletedAt"].is_number(),
+        "trashed on its own, so it stays in the trash"
+    );
+}
+
+/// Opposite moves at the same time: one wins, the other sees the cycle.
+async fn concurrent_moves_never_build_a_cycle(t: TestApp) {
+    for round in 0..15 {
+        let a = t.post("~/folders", json!({ "name": format!("A{round}") }), &t.owner).await.body["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b = t.post("~/folders", json!({ "name": format!("B{round}") }), &t.owner).await.body["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (path_a, path_b) = (format!("~/folders/{a}"), format!("~/folders/{b}"));
+        let (ab, ba) = tokio::join!(
+            t.patch(&path_a, json!({ "parentId": b, "version": 1 }), &t.owner),
+            t.patch(&path_b, json!({ "parentId": a, "version": 1 }), &t.owner),
+        );
+        let mut statuses = [ab.status, ba.status];
+        statuses.sort();
+        assert_eq!(statuses, [StatusCode::OK, StatusCode::UNPROCESSABLE_ENTITY], "{} / {}", ab.body, ba.body);
+        let loser = if ab.status == StatusCode::OK { &ba } else { &ab };
+        assert_eq!(loser.field(), "parentId");
+    }
+    let tree = t.get("~/folders", &t.owner).await;
+    assert_eq!(tree.body["items"].as_array().unwrap().len(), 15, "every pair hangs together: {}", tree.body);
+    let created = t.post("~/dashboards", json!({ "model": model("Danach") }), &t.owner).await;
+    assert_eq!(created.status, StatusCode::CREATED);
+}
+
+/// Trash and purge racing with dashboards entering the folder: never a live dashboard in a
+/// trashed folder, never an internal error.
+async fn dashboards_cannot_slip_into_a_folder_being_trashed(t: TestApp) {
+    let moving = t.post("~/dashboards", json!({ "model": model("Wandert") }), &t.owner).await;
+    let moving_id = moving.body["id"].as_str().unwrap().to_string();
+    let mut version = 1;
+    for round in 0..15 {
+        let folder = t.post("~/folders", json!({ "name": format!("F{round}") }), &t.owner).await.body["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (folder_path, moving_path) = (format!("~/folders/{folder}"), format!("~/dashboards/{moving_id}"));
+        let (trashed, created, moved) = tokio::join!(
+            t.delete(&folder_path, &t.owner),
+            t.post("~/dashboards", json!({ "folderId": folder, "model": model("Neu") }), &t.owner),
+            t.put(&moving_path, json!({ "model": model("Wandert"), "version": version, "folderId": folder }), &t.owner),
+        );
+        assert_eq!(trashed.status, StatusCode::NO_CONTENT, "{}", trashed.body);
+        for r in [&created, &moved] {
+            assert!(
+                matches!(r.status, StatusCode::OK | StatusCode::CREATED) || r.field() == "folderId",
+                "{} {}",
+                r.status,
+                r.body
+            );
+        }
+        if moved.status == StatusCode::OK {
+            // It entered the folder before the trash, so it went to the trash with it.
+            let gone = t.get(&format!("~/dashboards/{moving_id}"), &t.owner).await;
+            assert!(gone.body["deletedAt"].is_number(), "{}", gone.body);
+            t.post(&format!("~/folders/{folder}/restore"), json!({}), &t.owner).await;
+            let body = json!({ "model": model("Wandert"), "version": version + 1, "folderId": null });
+            let back = t.put(&format!("~/dashboards/{moving_id}"), body, &t.owner).await;
+            assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+            version += 2;
+        }
+        let (live_in_trash,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM dashboards d JOIN folders f ON f.id = d.folder_id \
+             WHERE d.deleted_at IS NULL AND f.deleted_at IS NOT NULL",
+        )
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+        assert_eq!(live_in_trash, 0);
+
+        // Purging the folder while one of its dashboards is restored: one of them wins cleanly.
+        let inside = t.post("~/dashboards", json!({ "model": model("Drin") }), &t.owner).await.body["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let target = t.post("~/folders", json!({ "name": format!("G{round}") }), &t.owner).await.body["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        t.put(
+            &format!("~/dashboards/{inside}"),
+            json!({ "model": model("Drin"), "version": 1, "folderId": target }),
+            &t.owner,
+        )
+        .await;
+        t.delete(&format!("~/folders/{target}"), &t.owner).await;
+        let (purge_path, restore_path) =
+            (format!("~/folders/{target}/purge"), format!("~/dashboards/{inside}/restore"));
+        let (purged, restored) =
+            tokio::join!(t.delete(&purge_path, &t.owner), t.post(&restore_path, json!({}), &t.owner),);
+        assert_eq!(purged.status, StatusCode::NO_CONTENT, "{}", purged.body);
+        assert!(matches!(restored.code(), "conflict" | "not_found"), "{} {}", restored.status, restored.body);
+    }
 }
 
 async fn restricted_folders_do_not_exist_for_members_without_access(t: TestApp) {
@@ -527,6 +735,22 @@ async fn restricted_folders_do_not_exist_for_members_without_access(t: TestApp) 
     let move_in =
         t.patch(&format!("~/folders/{open_id}"), json!({ "parentId": inner_id, "version": 1 }), &editor).await;
     assert_eq!(move_in.code(), "not_found");
+
+    // Search and the trash do not reveal hidden content either.
+    for path in ["~/dashboards?q=geh", "~/dashboards?q=%C3%84lter"] {
+        assert!(t.get(path, &editor).await.body["items"].as_array().unwrap().is_empty(), "{path}");
+    }
+    assert_eq!(t.get("~/dashboards?q=geh", &t.owner).await.body["items"].as_array().unwrap().len(), 1);
+    t.delete(&format!("~/dashboards/{hidden_id}"), &t.owner).await;
+    let other = t.post("~/folders", json!({ "name": "Weg", "parentId": secret_id }), &t.owner).await;
+    t.delete(&format!("~/folders/{}", other.body["id"].as_str().unwrap()), &t.owner).await;
+    for who in [&editor, &viewer] {
+        assert!(t.get("~/dashboards?trashed=true", who).await.body["items"].as_array().unwrap().is_empty());
+        assert!(t.get("~/folders?trashed=true", who).await.body["items"].as_array().unwrap().is_empty());
+    }
+    assert_eq!(t.get("~/dashboards?trashed=true", &t.owner).await.body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(t.get("~/folders?trashed=true", &t.owner).await.body["items"].as_array().unwrap().len(), 1);
+    t.post(&format!("~/dashboards/{hidden_id}/restore"), json!({}), &t.owner).await;
 
     // Owners see everything; lifting the restriction shows the folder to everyone.
     assert_eq!(t.get(&format!("~/dashboards/{hidden_id}"), &t.owner).await.status, StatusCode::OK);
@@ -621,21 +845,26 @@ async fn dashboards_save_versions_and_refuse_stale_writes(t: TestApp) {
     );
     assert_eq!(t.post("~/dashboards", json!({ "model": model("x") }), &viewer).await.code(), "forbidden");
     assert_eq!(t.delete(&format!("~/dashboards/{id}"), &viewer).await.code(), "forbidden");
-    let other_org = uuid::Uuid::now_v7().to_string();
-    sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
-        .bind(&other_org)
-        .execute(&t.state.db)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO dashboards (id, org_id, title, version, created_at, updated_at) VALUES ('fremd', $1, 'Fremd', 1, 0, 0)",
-    )
-    .bind(&other_org)
-    .execute(&t.state.db)
-    .await
-    .unwrap();
-    assert_eq!(t.get("~/dashboards/fremd", &t.owner).await.code(), "not_found");
-    assert_eq!(t.delete("~/dashboards/fremd", &t.owner).await.code(), "not_found");
+    let (foreign_folder, foreign) = t.foreign_ids().await;
+    for r in [
+        t.get(&format!("~/dashboards/{foreign}"), &t.owner).await,
+        t.get(&format!("~/dashboards/{foreign}/versions"), &t.owner).await,
+        t.delete(&format!("~/dashboards/{foreign}"), &t.owner).await,
+        t.put(&format!("~/dashboards/{foreign}"), json!({ "model": model("x"), "version": 1 }), &t.owner).await,
+        t.post("~/dashboards", json!({ "folderId": foreign_folder, "model": model("x") }), &t.owner).await,
+        t.put(
+            &format!("~/dashboards/{id}"),
+            json!({ "model": model("x"), "version": 3, "folderId": foreign_folder }),
+            &t.owner,
+        )
+        .await,
+        t.get(&format!("~/dashboards?folderId={foreign_folder}"), &t.owner).await,
+    ] {
+        assert_eq!(r.code(), "not_found", "{}", r.body);
+    }
+    for odd in ["+1", "01"] {
+        assert_eq!(t.get(&format!("~/dashboards/{id}/versions/{odd}"), &t.owner).await.code(), "not_found", "{odd}");
+    }
 }
 
 async fn dashboards_go_through_the_trash(t: TestApp) {

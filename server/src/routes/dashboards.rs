@@ -151,20 +151,27 @@ async fn load(state: &AppState, ctx: &OrgCtx, id: &str, permission: Permission) 
     Ok(row)
 }
 
-/// A folder named in a body: in this organization, visible, not trashed, and the caller may put
-/// dashboards there.
-async fn check_folder(state: &AppState, ctx: &OrgCtx, folder_id: &str) -> ApiResult<()> {
-    let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
-        .bind(&ctx.org_id)
-        .bind(folder_id)
-        .fetch_optional(&state.db)
-        .await?;
-    let Some((deleted_at,)) = row else { return Err(ApiError::not_found()) };
+/// Before the transaction: a folder named in a body is in this organization, visible, and the
+/// caller may put dashboards there.
+async fn authorize_folder(state: &AppState, ctx: &OrgCtx, folder_id: &str) -> ApiResult<()> {
     folders::ensure_visible(&state.db, ctx, Some(folder_id)).await?;
-    if deleted_at.is_some() {
-        return Err(ApiError::validation("the folder is in the trash").with_field("folderId"));
-    }
     authz::check_resource(&state.db, ctx, Permission::DashboardsWrite, Resource::Folder(folder_id)).await
+}
+
+/// Inside a transaction that took `folders::lock_structure`: the folder still exists and is not
+/// in the trash, so no live dashboard ends up in a trashed or purged folder.
+async fn lock_live_folder(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<()> {
+    folders::lock_structure(conn, org_id).await?;
+    let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
+        .bind(org_id)
+        .bind(folder_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    match row {
+        None => Err(ApiError::not_found()),
+        Some((Some(_),)) => Err(ApiError::validation("the folder is in the trash").with_field("folderId")),
+        Some((None,)) => Ok(()),
+    }
 }
 
 fn stored_model(raw: &str) -> ApiResult<Value> {
@@ -295,57 +302,53 @@ pub struct ListQuery {
     cursor: Option<String>,
 }
 
-/// Ordered by title, then id. Hidden dashboards (in restricted folders the caller does not see)
-/// are skipped, so the scan reads further until the page is full.
+/// `%`, `_` and `\` match themselves in a `LIKE ... ESCAPE '\'` pattern.
+fn like_contains(needle: &str) -> String {
+    let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// Ordered by title, then id. Dashboards in folders the caller does not see are left out by the
+/// query itself, so every page is full.
 async fn list(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<DashboardSummary>>> {
     let limit = paging::limit(q.limit)?;
-    let mut after: Option<(String, String)> = paging::decode_cursor(q.cursor.as_deref())?;
-    let tree = Tree::load(&state.db, &ctx.org_id).await?;
-    if let Some(folder) = q.folder_id.as_deref()
-        && (!tree.rows.contains_key(folder) || !tree.visible(&ctx, folder))
-    {
-        return Err(ApiError::not_found());
-    }
-    let needle = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase);
-    let trashed = q.trashed.unwrap_or(false) as i64;
-    let batch = (limit + 1) as i64;
-    let mut items: Vec<DashboardSummary> = Vec::new();
-    loop {
-        let (after_title, after_id) = after.clone().unzip();
-        let rows: Vec<DashboardRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
-             AND ((CAST($2 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($2 AS BIGINT) = 0 AND deleted_at IS NULL)) \
-             AND (CAST($3 AS TEXT) IS NULL OR folder_id = $3) \
-             AND (CAST($4 AS TEXT) IS NULL OR title > $4 OR (title = $4 AND id > $5)) \
-             ORDER BY title, id LIMIT $6"
-        )))
-        .bind(&ctx.org_id)
-        .bind(trashed)
-        .bind(q.folder_id.as_deref())
-        .bind(after_title.as_deref())
-        .bind(after_id.as_deref())
-        .bind(batch)
-        .fetch_all(&state.db)
-        .await?;
-        let exhausted = (rows.len() as i64) < batch;
-        if let Some(last) = rows.last() {
-            after = Some((last.title.clone(), last.id.clone()));
-        }
-        for row in &rows {
-            let visible = row.folder_id.as_deref().is_none_or(|f| tree.visible(&ctx, f));
-            let matches = needle.as_deref().is_none_or(|n| row.title.to_lowercase().contains(n));
-            if visible && matches {
-                items.push(row.into());
-            }
-        }
-        if items.len() > limit || exhausted {
-            break;
+    let after: Option<(String, String)> = paging::decode_cursor(q.cursor.as_deref())?;
+    if let Some(folder) = q.folder_id.as_deref() {
+        let tree = Tree::load(&state.db, &ctx.org_id).await?;
+        if !tree.rows.contains_key(folder) || !tree.visible(&ctx, folder) {
+            return Err(ApiError::not_found());
         }
     }
+    // Lower case by Unicode rules on both sides: `search_title` is written by the server.
+    let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
+    let (after_title, after_id) = after.unzip();
+    let mut items: Vec<DashboardSummary> = sqlx::query_as::<_, DashboardRow>(sqlx::AssertSqlSafe(format!(
+        "{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
+         AND ((CAST($2 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($2 AS BIGINT) = 0 AND deleted_at IS NULL)) \
+         AND (CAST($3 AS TEXT) IS NULL OR folder_id = $3) \
+         AND (CAST($4 AS TEXT) IS NULL OR search_title LIKE $4 ESCAPE '\\') \
+         AND (CAST($5 AS BIGINT) = 1 OR folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders)) \
+         AND (CAST($6 AS TEXT) IS NULL OR title > $6 OR (title = $6 AND id > $7)) \
+         ORDER BY title, id LIMIT $8",
+        folders::HIDDEN_FOLDERS_CTE
+    )))
+    .bind(&ctx.org_id)
+    .bind(q.trashed.unwrap_or(false) as i64)
+    .bind(q.folder_id.as_deref())
+    .bind(pattern.as_deref())
+    .bind(folders::sees_restricted(&ctx) as i64)
+    .bind(after_title.as_deref())
+    .bind(after_id.as_deref())
+    .bind(limit as i64 + 1)
+    .fetch_all(&state.db)
+    .await?
+    .iter()
+    .map(DashboardSummary::from)
+    .collect();
     let more = items.len() > limit;
     items.truncate(limit);
     let next_cursor = match items.last() {
@@ -374,7 +377,7 @@ async fn create(
     let model = parse_model(body.model)?;
     let message = clean_message(body.message.as_deref())?;
     if let Some(folder) = body.folder_id.as_deref() {
-        check_folder(&state, &ctx, folder).await?;
+        authorize_folder(&state, &ctx, folder).await?;
     }
     check_dashboard_sources(&state.db, &ctx, &model).await?;
 
@@ -382,14 +385,18 @@ async fn create(
     let keep = version_retention(&state).await?;
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
+    if let Some(folder) = body.folder_id.as_deref() {
+        lock_live_folder(&mut tx, &ctx.org_id, folder).await?;
+    }
     sqlx::query(
-        "INSERT INTO dashboards (id, org_id, folder_id, title, version, created_by, created_at, updated_by, updated_at) \
-         VALUES ($1, $2, $3, $4, 1, $5, $6, $5, $6)",
+        "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_by, created_at, \
+         updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
     .bind(body.folder_id.as_deref())
     .bind(&model.title)
+    .bind(model.title.to_lowercase())
     .bind(&ctx.user.id)
     .bind(now)
     .execute(&mut *tx)
@@ -438,11 +445,17 @@ async fn write_version(
     let now = state.clock.now_ms();
     let next = row.version + 1;
     let mut tx = state.db.begin().await?;
+    if folder_id != row.folder_id.as_deref()
+        && let Some(folder) = folder_id
+    {
+        lock_live_folder(&mut tx, &ctx.org_id, folder).await?;
+    }
     let updated = sqlx::query(
-        "UPDATE dashboards SET title = $1, folder_id = $2, version = $3, updated_by = $4, updated_at = $5 \
-         WHERE org_id = $6 AND id = $7 AND version = $8 AND deleted_at IS NULL",
+        "UPDATE dashboards SET title = $1, search_title = $2, folder_id = $3, version = $4, updated_by = $5, \
+         updated_at = $6 WHERE org_id = $7 AND id = $8 AND version = $9 AND deleted_at IS NULL",
     )
     .bind(&new.model.title)
+    .bind(new.model.title.to_lowercase())
     .bind(folder_id)
     .bind(next)
     .bind(&ctx.user.id)
@@ -492,7 +505,7 @@ async fn save(
     if folder_id != row.folder_id
         && let Some(folder) = folder_id.as_deref()
     {
-        check_folder(&state, &ctx, folder).await?;
+        authorize_folder(&state, &ctx, folder).await?;
     }
     if body.version != row.version {
         return Err(ApiError::version_conflict(json!(view(&state, row).await?)));
@@ -514,12 +527,15 @@ async fn trash(
     }
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE dashboards SET deleted_at = $1 WHERE org_id = $2 AND id = $3 AND deleted_at IS NULL")
-        .bind(now)
-        .bind(&ctx.org_id)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE dashboards SET deleted_at = $1, trash_batch = $2 WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL",
+    )
+    .bind(now)
+    .bind(new_id())
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.trashed", &id, json!({}), now)).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
@@ -535,29 +551,35 @@ async fn restore(
     if row.deleted_at.is_none() {
         return Ok(Json(view(&state, row).await?));
     }
-    if let Some(folder) = row.folder_id.as_deref() {
-        let (deleted_at,): (Option<i64>,) =
-            sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
-                .bind(&ctx.org_id)
-                .bind(folder)
-                .fetch_one(&state.db)
-                .await?;
-        if deleted_at.is_some() {
-            return Err(conflict("the folder is in the trash; restore the folder first"));
-        }
-    }
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE dashboards SET deleted_at = NULL WHERE org_id = $1 AND id = $2")
-        .bind(&ctx.org_id)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
-    audit::record(&mut tx, &event(&ctx, &info, "dashboard.restored", &id, json!({}), now)).await?;
-    tx.commit().await?;
-    let mut restored = row;
-    restored.deleted_at = None;
-    Ok(Json(view(&state, restored).await?))
+    if let Some(folder) = row.folder_id.as_deref() {
+        match lock_live_folder(&mut tx, &ctx.org_id, folder).await {
+            Ok(()) => {}
+            Err(e) if e.code == "validation" => {
+                return Err(conflict("the folder is in the trash; restore the folder first"));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let restored = sqlx::query(
+        "UPDATE dashboards SET deleted_at = NULL, trash_batch = NULL \
+         WHERE org_id = $1 AND id = $2 AND deleted_at IS NOT NULL",
+    )
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if restored == 1 {
+        audit::record(&mut tx, &event(&ctx, &info, "dashboard.restored", &id, json!({}), now)).await?;
+        tx.commit().await?;
+    } else {
+        // Restored or purged by someone else meanwhile: answer what is stored now.
+        drop(tx);
+    }
+    let row = fetch(&state.db, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    Ok(Json(view(&state, row).await?))
 }
 
 async fn purge(
@@ -643,9 +665,16 @@ async fn versions(
     Ok(Json(Page { items, next_cursor }))
 }
 
+/// A version number as the API writes it: digits only, no sign, no leading zero, so one version
+/// has exactly one path.
+fn parse_version_number(raw: &str) -> Option<i64> {
+    let canonical = !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) && (raw == "0" || !raw.starts_with('0'));
+    if canonical { raw.parse().ok() } else { None }
+}
+
 /// One stored version with its model, or `not_found` (also for a number that is not a number).
 async fn load_version(state: &AppState, dashboard_id: &str, raw: &str) -> ApiResult<(VersionSummary, String)> {
-    let number: i64 = raw.parse().map_err(|_| ApiError::not_found())?;
+    let number = parse_version_number(raw).ok_or_else(ApiError::not_found)?;
     #[derive(sqlx::FromRow)]
     struct Row {
         #[sqlx(flatten)]
@@ -691,4 +720,23 @@ async fn restore_version(
     check_dashboard_sources(&state.db, &ctx, &model).await?;
     let new = NewVersion { model: &model, message: "", restored_from: Some(summary.version) };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_numbers_are_canonical() {
+        assert_eq!(parse_version_number("12"), Some(12));
+        assert_eq!(parse_version_number("0"), Some(0));
+        for bad in ["+1", "01", "-1", "", " 1", "1e2", "99999999999999999999"] {
+            assert_eq!(parse_version_number(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn search_patterns_match_wildcards_literally() {
+        assert_eq!(like_contains("50%_a\\b"), "%50\\%\\_a\\\\b%");
+    }
 }

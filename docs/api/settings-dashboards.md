@@ -27,8 +27,13 @@ Common shapes:
 
 Restricted folders: a folder with `restricted: true` and everything below it (subfolders and
 their dashboards) exist only for members who may manage folder permissions (`folders:permissions`:
-admins and owners) and, once resource grants arrive, members with a grant on it. For everyone
-else every route answers `404 not_found` for them and lists leave them out.
+admins and owners) and, once resource grants arrive, members with a grant on it. The nearest
+restricted folder above a resource decides: a restricted subfolder narrows access further. For
+everyone else every route answers `404 not_found` for them, lists and searches leave them out, and
+the organization's audit view leaves out the events about them.
+
+Actions on a whole subtree (trash, restore, purge, move) answer `403 forbidden` ("the folder
+contains content you cannot see") when anything below the folder is hidden from the caller.
 
 ## Settings
 
@@ -127,12 +132,13 @@ Query parameters (all optional): `actor` (user id), `action` (prefix: `dashboard
 ### `GET /orgs/{orgId}/audit`
 
 Permission `audit:read`. `Page<AuditEvent>` of this organization, newest first. `orgId` as a query
-parameter is `422 validation`.
+parameter is `422 validation`. Events about folders and dashboards the caller cannot see (see
+"Restricted folders") are left out; events of purged resources stay, since they hold only ids.
 
 ### `GET /admin/audit`
 
 Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included), newest first;
-`?orgId=` narrows it to one organization.
+`?orgId=` narrows it to one organization; an empty `orgId` is `422 validation` (field `orgId`).
 
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
@@ -166,7 +172,9 @@ Permission `folders:read`. Answers `Page<FolderNode>` (`nextCursor` always `null
 folders not in the trash that the caller sees, each level sorted by name (case-insensitive).
 
 `?trashed=true` answers the trash instead: one `FolderNode` (with empty `children`) per trashed
-subtree, its top folder, newest deletion first.
+subtree, its top folder, newest deletion first. What was trashed in one call is one subtree: a
+dashboard or subfolder trashed earlier on its own stays a separate entry and is not restored with
+its folder.
 
 ### `POST /orgs/{orgId}/folders`
 
@@ -184,29 +192,32 @@ string | null, "restricted"?: boolean}`; a missing field keeps its value, `"pare
 the folder to the top level. Answers the `Folder` (unchanged, with the same version, when nothing
 changed).
 
-Errors: `404 not_found`; `409 conflict` (folder in the trash); `422 validation` field `name`;
-`422 validation` field `parentId` (moving into itself or a subfolder, parent in the trash, or too
-deep); `404 not_found` (new parent not visible); `403 forbidden` (no `folders:write` on the new
-parent; changing `restricted` without `folders:permissions`); `409 version_conflict` with
-`current: Folder`.
+Errors, in this order: `422 validation` field `name`; `404 not_found` (folder or new parent not
+visible); `403 forbidden` (no `folders:write` on the new parent; changing `restricted` without
+`folders:permissions`); `409 conflict` (folder in the trash); `409 version_conflict` with
+`current: Folder`; `422 validation` field `parentId` (moving into itself or a subfolder, parent in
+the trash, or too deep); `403 forbidden` when moving a folder with content the caller cannot see.
 
 ### `DELETE /orgs/{orgId}/folders/{folderId}`
 
 Permission `folders:write` on the folder. Moves the folder, every subfolder and every dashboard in
 them to the trash (`204`). Needs `dashboards:delete` too when that includes dashboards
-(`403 forbidden` otherwise). Already in the trash: `204` without a change.
+(`403 forbidden` otherwise), and `403 forbidden` when content below is hidden from the caller.
+Already in the trash: `204` without a change.
 
 ### `POST /orgs/{orgId}/folders/{folderId}/restore`
 
 Permission `folders:write` on the folder. Takes the folder and whatever was trashed together with
 it out of the trash; answers the `Folder`. Not in the trash: the `Folder` unchanged. Errors:
-`409 conflict` when its parent is still in the trash.
+`409 conflict` when its parent is still in the trash; `403 forbidden` when content below is hidden
+from the caller.
 
 ### `DELETE /orgs/{orgId}/folders/{folderId}/purge`
 
 Permission `folders:write` on the folder. Deletes the folder for good with all its subfolders,
 dashboards and their versions (`204`). Needs `dashboards:delete` when dashboards are among them.
-Errors: `409 conflict` when the folder is not in the trash.
+Errors: `409 conflict` when the folder is not in the trash; `403 forbidden` when content below is
+hidden from the caller.
 
 ## Dashboards
 
@@ -238,13 +249,14 @@ interface Panel {
   title?: string;                               // up to 200 characters, default ""
   grid: { x: number; y: number; w: number; h: number };  // w 1 to 24, x + w <= 24, h 1 to 200, y <= 10000
   targets?: { refId: string; datasourceId: string; query: unknown }[];  // up to 50; refId unique per panel
-  transformations?: unknown[];                  // default []
+  transformations?: unknown[];                  // up to 50, default []
   options?: unknown;                            // default {}
   fieldConfig?: unknown;                        // default {}
 }
 ```
 
-Unknown fields are refused. The server stores the model with defaults filled in and answers it so.
+Unknown fields are refused. The server stores the model with defaults filled in and answers it so;
+stored that way it may take at most 1 MiB (1048576 bytes), else `422 validation` field `model`.
 A model with a lower `schemaVersion` is migrated on save and on read; a higher one ("comes from a
 newer Kalzit") is refused. Invalid models answer `422 validation` with field `model` and a message
 naming the place (`model.panels[0].grid: w must be 1 to 24`).
@@ -336,7 +348,8 @@ Permission `dashboards:read`. `Page<DashboardVersionSummary>`, newest version fi
 ### `GET /orgs/{orgId}/dashboards/{dashboardId}/versions/{version}`
 
 Permission `dashboards:read`. Answers the `DashboardVersion`; `404 not_found` for a version that
-does not exist (or was dropped by the retention) and for anything that is not a number.
+does not exist (or was dropped by the retention) and for anything but plain digits without a
+leading zero (`01` and `+1` are `404`).
 
 ### `POST /orgs/{orgId}/dashboards/{dashboardId}/versions/{version}/restore`
 

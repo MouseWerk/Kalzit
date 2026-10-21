@@ -24,13 +24,22 @@ async fn link(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Option<(
     Ok(row.map(|(parent, restricted)| (parent, restricted != 0)))
 }
 
-/// The folder and its parents, nearest first, with their own restricted flags.
-async fn chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Vec<(String, bool)>> {
-    let mut out: Vec<(String, bool)> = Vec::new();
+/// One folder of a chain and its own restricted flag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderLink {
+    pub id: String,
+    pub restricted: bool,
+}
+
+/// The folder itself first, then its parents up to the top level, with their own restricted
+/// flags. The nearest restricted folder in the chain decides who sees the folder: a restricted
+/// subfolder narrows access further. `not_found` if the folder is not in the organization.
+pub async fn folder_chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Vec<FolderLink>> {
+    let mut out: Vec<FolderLink> = Vec::new();
     let mut next = Some(folder_id.to_string());
     while let Some(id) = next {
         // Moves refuse cycles; this guard keeps a damaged table from hanging a request.
-        if out.len() > MAX_DEPTH * 2 || out.iter().any(|(seen, _)| *seen == id) {
+        if out.len() > MAX_DEPTH * 2 || out.iter().any(|seen| seen.id == id) {
             return Err(ApiError::internal("folders", format!("folder {folder_id} has a cycle among its parents")));
         }
         let Some((parent, restricted)) = link(db, org_id, &id).await? else {
@@ -42,7 +51,7 @@ async fn chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Vec<(St
                 ApiError::internal("folders", format!("parent {id} of folder {folder_id} is missing"))
             });
         };
-        out.push((id, restricted));
+        out.push(FolderLink { id, restricted });
         next = parent;
     }
     Ok(out)
@@ -51,14 +60,30 @@ async fn chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Vec<(St
 /// The folder itself first, then its parents up to the top level. `not_found` if the folder is
 /// not in the organization.
 pub async fn folder_ancestors(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Vec<String>> {
-    Ok(chain(db, org_id, folder_id).await?.into_iter().map(|(id, _)| id).collect())
+    Ok(folder_chain(db, org_id, folder_id).await?.into_iter().map(|l| l.id).collect())
 }
 
 /// Whether the folder is restricted, by its own flag or a restricted parent (restriction covers
 /// subfolders). `not_found` if the folder is not in the organization.
 pub async fn folder_is_restricted(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<bool> {
-    Ok(chain(db, org_id, folder_id).await?.iter().any(|(_, restricted)| *restricted))
+    Ok(folder_chain(db, org_id, folder_id).await?.iter().any(|l| l.restricted))
 }
+
+/// Serializes changes to an organization's folder structure (create under a parent, move,
+/// trash, restore, purge, and dashboards entering a folder). Must be the first statement of the
+/// transaction: on SQLite the write takes the database's write lock before anything is read, on
+/// PostgreSQL it locks the organization's row until the commit. Everything the change depends on
+/// is then read through the same transaction.
+pub async fn lock_structure(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<()> {
+    sqlx::query("UPDATE orgs SET name = name WHERE id = $1").bind(org_id).execute(conn).await?;
+    Ok(())
+}
+
+/// The folders hidden from members without access to restricted folders: every restricted
+/// folder and everything below it. A CTE named `hidden_folders`, with `$1` the organization.
+pub const HIDDEN_FOLDERS_CTE: &str = "WITH RECURSIVE hidden_folders(id) AS ( \
+     SELECT id FROM folders WHERE org_id = $1 AND restricted = 1 \
+     UNION SELECT f.id FROM folders f JOIN hidden_folders h ON f.parent_id = h.id) ";
 
 /// The folder a dashboard of the organization lives in (`None`: top level). `not_found` if the
 /// dashboard is not in the organization.
@@ -99,10 +124,12 @@ pub struct FolderRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
+    /// Shared by everything trashed in one go, so a restore brings back exactly that.
+    pub trash_batch: Option<String>,
 }
 
 pub const FOLDER_COLUMNS: &str =
-    "id, parent_id, name, restricted, version, created_by, created_at, updated_at, deleted_at";
+    "id, parent_id, name, restricted, version, created_by, created_at, updated_at, deleted_at, trash_batch";
 
 /// All folders of an organization, trashed ones included, for work on the whole tree in memory.
 pub struct Tree {
@@ -110,7 +137,8 @@ pub struct Tree {
 }
 
 impl Tree {
-    pub async fn load(db: &AnyPool, org_id: &str) -> ApiResult<Self> {
+    /// Reads through `db`: the pool, or the connection of a transaction holding `lock_structure`.
+    pub async fn load<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, org_id: &str) -> ApiResult<Self> {
         let rows: Vec<FolderRow> =
             sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {FOLDER_COLUMNS} FROM folders WHERE org_id = $1")))
                 .bind(org_id)
@@ -137,13 +165,29 @@ impl Tree {
         out
     }
 
+    /// The nearest restricted folder in the chain (the folder itself first): its grants decide.
+    pub fn nearest_restricted(&self, id: &str) -> Option<&FolderRow> {
+        self.ancestors(id).into_iter().find(|r| r.restricted != 0)
+    }
+
     pub fn is_restricted(&self, id: &str) -> bool {
-        self.ancestors(id).iter().any(|r| r.restricted != 0)
+        self.nearest_restricted(id).is_some()
     }
 
     /// Whether the caller sees the folder: see `ensure_visible`.
     pub fn visible(&self, ctx: &OrgCtx, id: &str) -> bool {
         sees_restricted(ctx) || !self.is_restricted(id)
+    }
+
+    /// `forbidden` if anything below `id` is hidden from the caller: a change of the whole
+    /// subtree (trash, restore, purge, move) would act on content they cannot see, and its
+    /// counts or depth would reveal it.
+    pub fn check_subtree_visible(&self, ctx: &OrgCtx, id: &str) -> ApiResult<()> {
+        if self.descendants(id).iter().all(|d| self.visible(ctx, &d.id)) {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden("the folder contains content you cannot see"))
+        }
     }
 
     fn children(&self) -> HashMap<&str, Vec<&FolderRow>> {
@@ -215,7 +259,40 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             deleted_at: None,
+            trash_batch: None,
         }
+    }
+
+    fn ctx(role: crate::authz::BuiltinRole) -> OrgCtx {
+        OrgCtx {
+            user: crate::auth::SessionUser {
+                id: "u".into(),
+                email: "u@example.de".into(),
+                name: "U".into(),
+                is_server_admin: 0,
+            },
+            org_id: "o".into(),
+            role: role.as_str().into(),
+            permissions: role.permissions(),
+        }
+    }
+
+    #[test]
+    fn subtrees_with_hidden_content_are_refused_to_members_who_cannot_see_it() {
+        use crate::authz::BuiltinRole;
+        let t = tree();
+        let editor = ctx(BuiltinRole::Editor);
+        assert_eq!(t.check_subtree_visible(&editor, "a").unwrap_err().code, "forbidden");
+        assert!(t.check_subtree_visible(&editor, "b").is_ok());
+        assert!(t.check_subtree_visible(&ctx(BuiltinRole::Admin), "a").is_ok());
+    }
+
+    #[test]
+    fn the_nearest_restricted_folder_decides() {
+        let t = Tree::from_rows(vec![row("a", None, true), row("b", Some("a"), false), row("c", Some("b"), true)]);
+        assert_eq!(t.nearest_restricted("c").unwrap().id, "c");
+        assert_eq!(t.nearest_restricted("b").unwrap().id, "a");
+        assert!(Tree::from_rows(vec![row("x", None, false)]).nearest_restricted("x").is_none());
     }
 
     /// a > b > c, a > d (restricted) > e
@@ -297,6 +374,9 @@ mod tests {
             .unwrap();
         }
         assert_eq!(folder_ancestors(&db, "o", "e").await.unwrap(), ["e", "d", "a"]);
+        let link = |id: &str, restricted| FolderLink { id: id.into(), restricted };
+        assert_eq!(folder_chain(&db, "o", "e").await.unwrap(), [link("e", false), link("d", true), link("a", false)]);
+        assert_eq!(folder_chain(&db, "p", "e").await.unwrap_err().code, "not_found");
         assert!(folder_is_restricted(&db, "o", "e").await.unwrap());
         assert!(!folder_is_restricted(&db, "o", "a").await.unwrap());
         // Another organization's folder does not exist from here.
