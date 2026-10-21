@@ -380,6 +380,23 @@ pub enum QueryOutcome {
 }
 
 /// The body of every error answer: `{"error": ErrorBody}`.
+/// What the caller may do on one data source, from their role and grants together; the routes
+/// decide by the same rules.
+///
+/// - `read`: open it (name, kind, settings without secrets).
+/// - `query`: run free queries in Explore, test the connection, read the schema.
+/// - `write`: change its name, limits and secrets, and trash and restore it.
+/// - `permissions`: the admin level: manage its grants and change where it connects (host,
+///   port, database, path, URL), with the secrets that go with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DatasourceAccess {
+    pub read: bool,
+    pub query: bool,
+    pub write: bool,
+    pub permissions: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ErrorEnvelope {
@@ -508,6 +525,7 @@ mod tests {
             ErrorEnvelope::decl(&cfg),
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),
+            DatasourceAccess::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

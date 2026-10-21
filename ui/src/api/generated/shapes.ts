@@ -157,3 +157,5 @@ reason?: string,
 params?: { [key in string]: string }, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
+
+export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, };

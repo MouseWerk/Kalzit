@@ -232,6 +232,54 @@ async fn postgres_refuses_kalzits_own_database() {
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
 }
 
+/// A constant, a custom and a textbox variable in one statement: each binds its own numbered
+/// parameter, on the panel route as through `/query`.
+#[tokio::test]
+async fn postgres_panels_bind_mixed_variables() {
+    let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
+    let (host, port, user, password, database) = parts(&url);
+    let t = T::new(None).await;
+    let id = t
+        .create(
+            "postgres",
+            json!({ "host": host, "port": port, "database": database, "user": user }),
+            secrets(password),
+        )
+        .await;
+    let sql = "SELECT v FROM (VALUES ('Schweiz'), ('Österreich'), ('Polen'), ('Italien'), ('Spanien')) AS t(v)                WHERE v IN ($k, $wahl, $frei) ORDER BY v";
+    let model = json!({
+        "schemaVersion": 1, "title": "V", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "k", "type": "constant", "current": "Schweiz" },
+            { "name": "wahl", "type": "custom", "options": ["Österreich", "Italien"] },
+            { "name": "frei", "type": "textbox" }
+        ],
+        "panels": [{
+            "id": "p", "type": "table", "title": "T", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let (status, dashboard) = t.send(Method::POST, "/dashboards", Some(json!({ "model": model }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{dashboard}");
+    let dashboard = dashboard["id"].as_str().unwrap();
+    let range = json!({ "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 });
+    let body = json!({ "timeRange": range, "variables": { "wahl": ["Österreich", "Italien"], "frei": "Polen" } });
+    let (status, r) = t.send(Method::POST, &format!("/dashboards/{dashboard}/panels/p/query"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    let frame = &r["results"]["A"]["result"]["frame"];
+    assert_eq!(frame["fields"][0]["values"], json!(["Italien", "Österreich", "Polen", "Schweiz"]), "{r}");
+    assert!(frame["meta"]["executedQuery"].as_str().unwrap().contains("IN ($1, $2, $3, $4)"), "{r}");
+
+    let free = json!({
+        "queries": [{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }],
+        "timeRange": range,
+        "variables": { "k": "Schweiz", "wahl": ["Österreich", "Italien"], "frei": "Polen" }
+    });
+    let (_, r) = t.send(Method::POST, "/query", Some(free)).await;
+    assert_eq!(r["results"]["A"]["result"]["frame"], *frame, "the same answer through /query: {r}");
+}
+
 #[tokio::test]
 async fn postgres_errors_never_show_the_password() {
     let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };

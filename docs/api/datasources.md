@@ -28,6 +28,9 @@ create, change and delete them. A member who may not see a source (a viewer with
 `404 not_found` for it, an empty list, and `not_found` per query; one who sees it but lacks the
 right gets `403 forbidden`. Viewers run queries through dashboards (see below).
 
+Every message these routes answer comes with a stable `reason` code and its `params`; the UI
+translates those, and the English `message` is only the fallback. See [Reasons](#reasons).
+
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
@@ -89,10 +92,11 @@ Query: `limit` (1 to 200, default 50), `cursor` (the previous page's `nextCursor
 Newest first.
 
 ```json
-{ "items": [{ "id": "0199…", "name": "Umsätze", "kind": "postgres", "createdAt": 1800000000000 }], "nextCursor": null }
+{ "items": [{ "id": "0199…", "name": "Umsätze", "kind": "postgres", "createdAt": 1800000000000,
+              "access": { "read": true, "query": true, "write": false, "permissions": false } }], "nextCursor": null }
 ```
 
-Items in the trash also carry `deletedAt`.
+Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
 
 ## One data source
 
@@ -106,11 +110,31 @@ Items in the trash also carry `deletedAt`.
   "settings": { "host": "db.intern", "port": 5432, "database": "shop", "user": "leser", "sslMode": "verify-full" },
   "secrets": { "password": { "set": true } },
   "createdAt": 1800000000000,
-  "updatedAt": 1800000000000
+  "updatedAt": 1800000000000,
+  "access": { "read": true, "query": true, "write": true, "permissions": true }
 }
 ```
 
 `secrets` lists only the secret fields that have a value. `deletedAt` appears only in the trash.
+
+### Access
+
+`access` (type `DatasourceAccess`, generated) says what the caller may do on this source, from
+their roles and grants together, by the same rules the routes check. List and detail answers
+agree; the list computes it for all rows at once.
+
+| Field | True when the caller holds | Allows |
+|---|---|---|
+| `read` | `datasources:read` on the source (role, or any grant) | `GET` of the source: name, kind, settings without secrets |
+| `query` | `datasources:query` on the source (role, or any grant) | free queries (`/query`, Explore), Test connection (`/health`), `/schema` |
+| `write` | `datasources:write` on the source (admin roles, or an `edit` or `admin` grant) | `PATCH` of the name, non-target settings, limits and secrets; `DELETE` (trash) and `restore` |
+| `permissions` | `datasources:permissions` on the source (admin roles, or an `admin` grant) | managing the source's grants, and changing `target` fields (host, port, database, user, TLS, URL, path) |
+
+A target change is also allowed with the org-wide `datasources:write` alone; the built-in roles
+give that only together with `datasources:permissions`, so for them `permissions` is the whole
+rule. A custom role with `datasources:write` but not `datasources:permissions` may change targets
+although `permissions` is false. Creating a source needs the org-wide `datasources:write` (the
+caller's role, not `access`).
 
 ### Create: `POST /orgs/{orgId}/datasources`
 
@@ -143,6 +167,9 @@ never sent to a new host without being entered again.
 (`404` when it is not in the trash). Purging is not available yet.
 
 ### Errors when saving
+
+Each row's `reason` is in [Reasons](#reasons) (`settings.*`, `secrets.*`, `target.*`,
+`request.*`, `datasource.*`).
 
 | Status, code | When | `field` |
 |---|---|---|
@@ -177,13 +204,21 @@ reported by the query, health and schema routes, not when saving.
 Body: none or `{}`. Always `200`, also when the source fails:
 
 ```json
-{ "ok": true, "message": "PostgreSQL 17.2", "latencyMs": 12 }
-{ "ok": false, "message": "password authentication failed for user \"leser\"", "latencyMs": 40, "code": "datasource_error" }
+{ "ok": true, "reason": "health.connected", "params": { "engine": "PostgreSQL", "version": "17.2" },
+  "message": "PostgreSQL 17.2", "latencyMs": 12 }
+{ "ok": false, "reason": "source.error", "params": { "detail": "password authentication failed for user \"leser\"" },
+  "message": "password authentication failed for user \"leser\"", "latencyMs": 40, "code": "datasource_error" }
 ```
 
-`code` (only when `ok` is false) is `datasource_error`, `datasource_target_blocked` or
-`query_timeout`. Messages never contain secrets. When the login has administrator rights
-(PostgreSQL superuser, SQL Server sysadmin), `ok` is true and the message advises a read-only login.
+- `reason` and `params` are what the UI shows (see [Reasons](#reasons)); `message` is the English
+  fallback. `params` is omitted when empty.
+- When `ok` is true, `reason` is `health.connected` (`engine`, `version`),
+  `health.connected_read_only` (SQLite: the file is opened read-only), `health.prometheus_answered`
+  (`engine`) or `health.connected_admin_login` (`engine`, `version`: the login has administrator
+  rights, PostgreSQL superuser or SQL Server sysadmin; the text should advise a read-only login).
+- `code` (only when `ok` is false) is `datasource_error`, `datasource_target_blocked` or
+  `query_timeout`, with the failure's reason.
+- Messages and params never contain secrets.
 
 ## Schema: `GET /orgs/{orgId}/datasources/{datasourceId}/schema`
 
@@ -222,7 +257,8 @@ Body `QueryRequest`, answer `QueryResponse` (types generated in `ui/src/api/gene
   (default 1000), rounded up to a familiar step (1 ms ... 1 week).
 - `limit` on a query lowers the row limit for it.
 - The answer is `200` with one entry per `refId`, either `{"result": QueryResult}` or
-  `{"error": {"code", "message"}}`; one failing query does not fail the others.
+  `{"error": {"code", "message", "reason", "params"}}`; one failing query does not fail the
+  others. `not_found` and `forbidden` carry no `reason`: the code says it all.
 
 Per-query error codes: `not_found` (no such data source in this organization), `forbidden`,
 `query_rejected` (not a single read-only `SELECT`/`WITH`, a forbidden function, a variable without
@@ -236,11 +272,22 @@ limit). Results are frames:
 
 - Field types: `time` (Unix ms), `number`, `int64` (decimal strings, e.g. `COUNT(*)` and `BIGINT`),
   `string`, `bool`, `json`; missing values are `null`. `NUMERIC`/`DECIMAL` are `number`.
+- SQLite types a column by its declared type, by SQLite's affinity rules: `INTEGER` (and every
+  type containing `INT`) is `int64`; `REAL`, `FLOAT`, `DOUBLE` are `number`; `TEXT`, `CHAR`,
+  `VARCHAR`, `CLOB` are `string`; `BOOLEAN` is `bool`; `DATE`, `TIME`, `DATETIME`, `TIMESTAMP` are
+  `time`. So a table without rows still answers its types. Columns without a declared type
+  (expressions such as `r * 2`), with `NUMERIC`/`DECIMAL` (which hold integers and reals alike) or
+  with an unknown type take the type of their first value; without any value they are `string`.
+  A value that does not fit the declared type is `null` with a `frame.value_mismatch` notice.
+- SQLite reads the file's current schema on every query, so a table recreated with other column
+  types answers with its new types at once.
 - `meta.executedQuery` is the statement as sent, with placeholders instead of values.
 - Hitting the row limit (`datasources.max_rows`, the source's `maxRows`, the query's `limit`) or the
   response size limit (`datasources.max_response_bytes`, shared by all queries of the request)
   cuts the frame: `meta.rowsTruncated` is true and `meta.notices` says why. Columns of types the
   server cannot show are `null` with a notice.
+- A notice is `{ "severity": "info" | "warning", "code", "params", "text" }`: `code` is a reason
+  from [Reasons](#reasons) (`frame.*`, `prometheus.warning`), `text` the English fallback.
 
 ### SQL kinds: `{"sql": "..."}`
 
@@ -363,6 +410,177 @@ that is not of type `query` is `422 validation`.
 - At most 10,000 options; `truncated` is true when that limit or the query's row limit cut the list.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
+
+## Reasons
+
+Errors carry `error.reason` and `error.params` next to `error.code` and `error.message`; health
+answers carry `reason` and `params`; notices carry `code` and `params`. Reasons are stable; the
+UI translates them (`params` fill the text, for example `{name}`), and `message`/`text` is the
+English fallback with the same content. `params` is omitted when empty, and its values are text.
+`detail` params hold a database's or a library's own wording (English, untranslated), scrubbed of
+secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `internal`,
+`unauthenticated` and `payload_too_large` carry no reason.
+
+### Requests and data sources
+
+| Reason | Params | When |
+|---|---|---|
+| `request.body_invalid` | `detail` | the JSON body is malformed, has unknown fields or wrong types |
+| `request.query_invalid` | `detail` | the list's query string has unknown parameters |
+| `request.limit` | `max` | `limit` outside 1 to `max` |
+| `request.trash` | | `trash` is not `true` or `false` |
+| `request.cursor` | | `cursor` is not valid |
+| `request.name_length` | `field`, `max` | the name is empty or longer than `max` characters |
+| `request.name_control_characters` | `field` | the name contains control characters |
+| `datasource.kind_unknown` | `kind` | no such data source kind |
+| `datasource.kind_unavailable` | `kind` | the stored source's kind is not available on this server |
+| `datasource.name_taken` | | another data source in use has this name (`409 conflict`) |
+| `datasource.target_change_forbidden` | `field` | `403 forbidden`: changing a target field needs the admin level |
+
+### Settings and secrets (`422 validation`, `field` set)
+
+Every reason here has the param `field` (the setting's name, or `settings`/`secrets`).
+
+| Reason | Params | When |
+|---|---|---|
+| `settings.not_object` | | `settings` is not an object |
+| `settings.too_large` | | the settings are too large |
+| `settings.unknown` | `name` | not a setting of this kind |
+| `settings.secret_in_settings` | | a secret was sent in `settings` |
+| `settings.expected_text` | `options` (empty) | the value must be text |
+| `settings.expected_number` | `options` (empty) | the value must be a whole number of at least 0 |
+| `settings.expected_bool` | `options` (empty) | the value must be true or false |
+| `settings.expected_option` | `options` (comma-separated) | the value must be one of `options` |
+| `settings.control_characters` | | the value contains control characters |
+| `settings.required` | | a required setting is missing |
+| `settings.out_of_range` | `min`, `max` (when bounded) | `queryTimeoutSecs` 1 to 3600, `maxRows` at least 1 |
+| `settings.host_credentials` | | the host contains credentials |
+| `settings.host_invalid` | | the host is not a host name or IP address |
+| `settings.port_invalid` | | the port is outside 1 to 65535 |
+| `settings.pem_invalid` | | `caCert` holds no PEM certificate |
+| `settings.path_relative` | | the SQLite path is not absolute |
+| `settings.url_invalid` | `detail` | the URL cannot be parsed |
+| `settings.url_scheme` | | the URL is not `http://` or `https://` |
+| `settings.url_credentials` | | the URL contains credentials |
+| `settings.url_query` | | the URL contains a query or fragment |
+| `settings.url_no_host` | | the URL has no host |
+| `settings.invalid` | `detail` | the settings do not fit the kind (other cases) |
+| `secrets.unknown` | `name` | not a secret of this kind |
+| `secrets.too_long` | | the secret is too long |
+| `secrets.resend_on_target_change` | `field`, `secret` | a target changed; send `secret` again or remove it |
+
+### Targets (`datasource_target_blocked`, or `datasource_error` where noted)
+
+| Reason | Params | When |
+|---|---|---|
+| `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
+| `target.sqlite_path_relative` | | the SQLite path is not absolute |
+| `target.metadata_address` | `address` or `host` | a link-local or cloud metadata address (also when a name resolves to one) |
+| `target.not_allowed` | `host` | the host is outside `datasources.allowed_targets` |
+| `target.scheme_not_allowed` | `scheme` | a URL scheme other than http(s) |
+| `target.own_database` | | the source is Kalzit's own database |
+| `target.own_database_unverifiable` | | `datasource_error`: a PostgreSQL-compatible server where Kalzit cannot verify that it is not its own database |
+| `target.unresolvable` | `host`, `detail` | `datasource_error`: the host name does not resolve |
+| `target.unreachable` | `host`, `detail` | `datasource_error`: no address of the host accepts a connection |
+
+### Queries (`query_rejected` unless noted)
+
+| Reason | Params | When |
+|---|---|---|
+| `query.invalid_form` | `detail` | the query object does not fit the kind (`{"sql"}`, `{"expr", ...}`) |
+| `query.count` | `max` | `422 validation`: not 1 to `max` queries |
+| `query.ref_id` | | `422 validation`: a `refId` is empty, longer than 64 characters or repeated |
+| `query.range_out_of_bounds` | | `422 validation`: `timeRange` outside the years 1 to 9999 |
+| `query.range_reversed` | | `422 validation`: `timeRange.from` after `timeRange.to` |
+| `query.interval_out_of_range` | | `422 validation`: `intervalMs` outside 1 ms to one year |
+| `query.time_out_of_range` | `time` | a bound time the database cannot hold |
+| `query.write_refused` | `detail` | the database refused a write (read-only transaction) |
+| `query.timeout` | `seconds` | `query_timeout`: the query ran past its time limit |
+| `query.statement_timeout` | | `datasource_error`: PostgreSQL cancelled it at its statement timeout |
+| `query.stopped` | | `datasource_error`: SQLite stopped the statement |
+| `sql.empty` | | the query is empty |
+| `sql.multiple_statements` | | more than one statement |
+| `sql.not_select` | | not a `SELECT`/`WITH` (also data-modifying `WITH`) |
+| `sql.select_into` | | `SELECT ... INTO` |
+| `sql.locking_clause` | | `FOR UPDATE`, `FOR SHARE` and similar |
+| `sql.function_not_allowed` | `name` | a file, network, session or side-effect function |
+| `sql.sequence` | | `NEXT VALUE FOR` (SQL Server) |
+| `sql.table_hint` | `hint` | a SQL Server table hint other than `NOLOCK`/`READUNCOMMITTED` |
+| `sql.legacy_table_hint` | `alias` | the old `t (HINT)` form |
+| `sql.query_hint` | | `OPTION (...)` |
+| `sql.executable_comment` | | MySQL `/*! ... */` |
+| `sql.unicode_escape` | | PostgreSQL `U&"..."`, `U&'...'` |
+| `sql.dash_comment_space` | | MySQL `--` followed by a non-ASCII space |
+| `sql.placeholder` | | hand-written `$1`, `?`, `@P1`, `:name` |
+| `sql.parse_error` | `detail` | the statement cannot be parsed for the check |
+| `sql.unclosed_quote`, `sql.unclosed_bracket`, `sql.unclosed_comment`, `sql.unclosed_dollar_quote`, `sql.unclosed_variable`, `sql.unclosed_time_filter` | | an unclosed string, `[...]`, comment, `$tag$`, `${...}` or `$__timeFilter(` |
+| `sql.macro_unknown` | `name` | an unknown `$__` macro |
+| `sql.time_filter_column` | | `$__timeFilter()` without a column |
+| `sql.variable_name_invalid` | `name` | an invalid name in `${...}` |
+| `sql.variable_format_unknown` | `format` | `${x:format}` other than `:identifier` |
+| `sql.variable_missing` | `name` | a variable without a value |
+| `sql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
+| `sql.identifier_variable_not_allowed` | `name` | `${x:identifier}` with a variable other than constant or custom (dashboard routes) |
+| `sql.identifier_unknown` | `name` | an identifier value that is not a table or column of the source |
+| `sql.identifier_needs_schema` | | identifier variables without the source's schema |
+| `promql.unclosed_quote` | | an unclosed quote in PromQL |
+| `promql.macro_unknown` | `name` | an unknown `$__` macro |
+| `promql.variable_outside_string` | `name` | a variable outside a quoted label value |
+| `promql.variable_missing` | `name` | a variable without a value |
+| `promql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
+| `promql.backtick` | `name` | a value with a backtick inside a `raw` string |
+
+### Dashboard variables (`422 validation`, `field: variables`, unless noted)
+
+| Reason | Params | When |
+|---|---|---|
+| `variables.too_many` | `max` | more than `max` variables |
+| `variables.name_invalid` | `name` | not a variable name |
+| `variables.too_large` | `bytes` | all values together exceed `bytes` |
+| `variables.unknown` | `name` | the dashboard has no such variable |
+| `variables.constant` | `name` | a value was sent for a constant |
+| `variables.not_an_option` | `name`, `value` | a custom variable's value outside its options |
+| `variables.value_type` | `name` | not a value or a list of values |
+| `variables.self_dependency` | `name` | the options request sends the variable's own value |
+| `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
+| `variables.not_a_frame` | | the variable's query does not answer a table (no `field`) |
+
+### Sources and the server (`datasource_error` unless noted)
+
+| Reason | Params | When |
+|---|---|---|
+| `source.error` | `detail` | the database or Prometheus answered an error |
+| `source.no_answer` | | the server sent no answer |
+| `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |
+| `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
+| `mssql.login_timeout` | | SQL Server did not complete the login in time |
+| `prometheus.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
+| `prometheus.error` | `status`, `detail` | Prometheus answered an error |
+| `prometheus.result_type` | `type` | an unexpected result type |
+| `http.timeout` | | the HTTP request timed out |
+| `http.too_large` | `bytes` | the answer exceeded `bytes` |
+| `http.failed` | `detail` | the HTTP request failed |
+| `secrets.unreadable` | | the source's secrets cannot be read |
+| `secrets.undecryptable` | `field` | a stored secret cannot be decrypted (key changed) |
+| `settings.stored_invalid` | | the stored settings no longer fit the kind |
+| `server.shutting_down` | | the server is shutting down |
+| `internal` | | an unexpected failure; see the server log |
+
+### Health and notices
+
+| Reason or notice code | Params | Meaning |
+|---|---|---|
+| `health.connected` | `engine`, `version` | connected (`ok: true`) |
+| `health.connected_admin_login` | `engine`, `version` | connected, but the login has administrator rights |
+| `health.connected_read_only` | `engine`, `version` | SQLite: connected, the file is opened read-only |
+| `health.prometheus_answered` | `engine` | the Prometheus API answered |
+| `frame.row_limit` | `rows` | notice: the result was cut at `rows` rows |
+| `frame.size_limit` | | notice: the result was cut at the response size limit |
+| `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
+| `frame.type_unsupported` | `column`, `type` | notice: a column type the server cannot show |
+| `frame.value_mismatch` | `column` | notice: SQLite values that do not fit the column's type are empty |
+| `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 
 ## Not here yet
 

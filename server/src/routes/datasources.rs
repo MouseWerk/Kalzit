@@ -2,7 +2,7 @@
 //! query editors. Secrets are written through `secrets` and never returned, only `{"set": true}`.
 //! Documented in docs/api/datasources.md.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -22,7 +22,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::secrets::{self, SecretPatch};
-use crate::shapes::{Page, Shape};
+use crate::shapes::{DatasourceAccess, Page, Shape};
 
 pub fn routes() -> Vec<RouteDef> {
     // Rights on one data source may come from the role or from a grant on it, so every route on a
@@ -89,6 +89,21 @@ struct ListItem {
     created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    access: DatasourceAccess,
+}
+
+/// The caller's access from what they hold on the source (role and grants together, as
+/// `resource_permissions` and the access index answer it). Changing where a source connects is
+/// also open to the org-wide datasources:write (see `update`), which the built-in roles only
+/// give together with datasources:permissions.
+fn access(held: Option<BTreeSet<Permission>>) -> DatasourceAccess {
+    let held = held.unwrap_or_default();
+    DatasourceAccess {
+        read: held.contains(&Permission::DatasourcesRead),
+        query: held.contains(&Permission::DatasourcesQuery),
+        write: held.contains(&Permission::DatasourcesWrite),
+        permissions: held.contains(&Permission::DatasourcesPermissions),
+    }
 }
 
 #[derive(Deserialize)]
@@ -144,11 +159,11 @@ async fn list(
         }
     };
     let org_wide = shows(&ctx.permissions);
+    // Also says per row what the caller may do, without a query per row.
+    let index = AccessIndex::load(&mut *state.db.acquire().await?, &ctx).await?;
     let granted: Vec<String> = if org_wide {
         Vec::new()
     } else {
-        let mut conn = state.db.acquire().await?;
-        let index = AccessIndex::load(&mut conn, &ctx).await?;
         index
             .granted_datasources()
             .into_iter()
@@ -190,7 +205,10 @@ async fn list(
     };
     let items = rows
         .into_iter()
-        .map(|(id, name, kind, created_at, deleted_at)| ListItem { id, name, kind, created_at, deleted_at })
+        .map(|(id, name, kind, created_at, deleted_at)| {
+            let access = access(index.datasource(&id));
+            ListItem { id, name, kind, created_at, deleted_at, access }
+        })
         .collect();
     Ok(Json(Page { items, next_cursor }))
 }
@@ -208,12 +226,15 @@ struct DatasourceView {
     updated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    access: DatasourceAccess,
 }
 
-async fn view(state: &AppState, ds: Datasource) -> ApiResult<DatasourceView> {
+async fn view(state: &AppState, ctx: &OrgCtx, ds: Datasource) -> ApiResult<DatasourceView> {
     let secrets =
         secrets::set_fields(&state.db, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
+    let access = access(resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?);
     Ok(DatasourceView {
+        access,
         id: ds.id,
         name: ds.name,
         kind: ds.kind,
@@ -334,7 +355,7 @@ async fn create(
     record(&mut tx, &event(&ctx, &info, "datasource.created", &id, summary, now)).await?;
     tx.commit().await?;
     let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
-    Ok((StatusCode::CREATED, Json(view(&state, ds).await?)))
+    Ok((StatusCode::CREATED, Json(view(&state, &ctx, ds).await?)))
 }
 
 /// A data source the caller may act on with `permission`, after the org-level rule.
@@ -362,7 +383,7 @@ async fn get_one(
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
-    Ok(Json(view(&state, ds).await?))
+    Ok(Json(view(&state, &ctx, ds).await?))
 }
 
 #[derive(Deserialize)]
@@ -445,7 +466,7 @@ async fn update(
     }
     changed.extend(body.secrets.keys().map(|k| format!("secrets.{k}")));
     if changed.is_empty() {
-        return Ok(Json(view(&state, ds).await?));
+        return Ok(Json(view(&state, &ctx, ds).await?));
     }
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
@@ -464,7 +485,7 @@ async fn update(
     tx.commit().await?;
     state.datasources.forget(&ds.id);
     let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &ds.id).await?;
-    Ok(Json(view(&state, ds).await?))
+    Ok(Json(view(&state, &ctx, ds).await?))
 }
 
 async fn delete(
@@ -510,7 +531,7 @@ async fn restore(
     record(&mut tx, &event(&ctx, &info, "datasource.restored", &ds.id, json!({}), now)).await?;
     tx.commit().await?;
     let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &ds.id).await?;
-    Ok(Json(view(&state, ds).await?))
+    Ok(Json(view(&state, &ctx, ds).await?))
 }
 
 async fn health(

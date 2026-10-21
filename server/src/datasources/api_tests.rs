@@ -1233,6 +1233,51 @@ async fn dashboard_variables_keep_to_the_dashboard() {
     }
 }
 
+/// A constant, a custom and a textbox variable in one statement each bind their own value, on
+/// the panel route as through `/query`.
+#[tokio::test]
+async fn constant_and_custom_variables_share_a_statement() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let sql = "SELECT id FROM verkauf WHERE land IN ($k, $wahl) OR land = $frei ORDER BY id";
+    let model = json!({
+        "schemaVersion": 1, "title": "V", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "k", "type": "constant", "current": { "value": "Schweiz" } },
+            { "name": "wahl", "type": "custom", "options": ["Österreich", "Deutschland"] },
+            { "name": "frei", "type": "textbox" }
+        ],
+        "panels": [{
+            "id": "p", "type": "table", "title": "T", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": sql } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let r = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let body = json!({ "timeRange": range(), "variables": { "wahl": "Österreich", "frei": "-" } });
+    let r = t.panel(&viewer, &dashboard, "p", body).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["1", "2"]), "{}", r.text);
+    let body = json!({ "timeRange": range(), "variables": { "wahl": ["Österreich", "Deutschland"], "frei": "-" } });
+    let r = t.panel(&viewer, &dashboard, "p", body).await;
+    let frame = r.body["results"]["A"]["result"]["frame"].clone();
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "2", "9007199254740993"]), "{}", r.text);
+    assert_eq!(
+        frame["meta"]["executedQuery"],
+        "SELECT id FROM verkauf WHERE land IN (?, ?, ?) OR land = ? ORDER BY id"
+    );
+    let free = json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": sql } }],
+        "timeRange": range(),
+        "variables": { "k": "Schweiz", "wahl": ["Österreich", "Deutschland"], "frei": "-" }
+    });
+    let r = t.send(Method::POST, &t.path("/query"), Some(free), Some(&t.owner)).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"], frame, "the same answer through /query: {}", r.text);
+}
+
 /// The same rules hold for a Prometheus panel: a custom variable keeps to its options.
 #[tokio::test]
 async fn prometheus_panels_keep_variables_to_the_dashboard() {
@@ -1311,6 +1356,65 @@ async fn variable_changes_recheck_every_stored_query() {
 
 /// An edit grant on a data source renames it and changes its limits, but where it connects is
 /// for administrators.
+/// List and detail answers say what the caller may do, from role and grants, and the routes
+/// agree with what they say.
+#[tokio::test]
+async fn answers_carry_the_callers_access() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let other = t.sqlite_file("anderes.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let access = |read: bool, query: bool, write: bool, permissions: bool| json!({ "read": read, "query": query, "write": write, "permissions": permissions });
+    let seen = |cookie: String| {
+        let t = &t;
+        let ds = ds.clone();
+        async move {
+            let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&cookie)).await;
+            let one = t.send(Method::GET, &t.path(&format!("/datasources/{ds}")), None, Some(&cookie)).await;
+            let listed = list.body["items"].as_array().unwrap().iter().find(|i| i["id"] == ds.as_str()).cloned();
+            assert_eq!(listed.as_ref().map(|i| &i["access"]), Some(&one.body["access"]), "{} {}", list.text, one.text);
+            one.body["access"].clone()
+        }
+    };
+    assert_eq!(seen(t.owner.clone()).await, access(true, true, true, true));
+    let editor = t.session_for_role("edda", Some("editor")).await;
+    assert_eq!(seen(editor.clone()).await, access(true, true, false, false));
+
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'vera@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
+    assert_eq!(list.body["items"], json!([]), "{}", list.text);
+    let grant = |level: &str| json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": ds, "level": level });
+    for (level, expected) in [
+        ("query", access(true, true, false, false)),
+        ("edit", access(true, true, true, false)),
+        ("admin", access(true, true, true, true)),
+    ] {
+        // A second grant for the same member replaces the first.
+        let r = t.post("/grants", grant(level)).await;
+        assert!(r.status.is_success(), "{}", r.text);
+        assert_eq!(seen(viewer.clone()).await, expected, "{level}");
+    }
+    // `permissions` is what changing the target needs; an edit grant alone is refused (see
+    // an_edit_grant_cannot_repoint_a_data_source).
+    let r = t
+        .send(
+            Method::PATCH,
+            &t.path(&format!("/datasources/{ds}")),
+            Some(json!({ "settings": { "path": other.to_string_lossy() } })),
+            Some(&viewer),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["access"], access(true, true, true, true));
+
+    // The trash says the same.
+    t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&viewer)).await;
+    let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&viewer)).await;
+    assert_eq!(trash.body["items"][0]["access"], access(true, true, true, true), "{}", trash.text);
+}
+
 #[tokio::test]
 async fn an_edit_grant_cannot_repoint_a_data_source() {
     let t = T::new().await;
