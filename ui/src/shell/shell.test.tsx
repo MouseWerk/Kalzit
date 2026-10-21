@@ -1,7 +1,8 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
+import { stubMatchMedia } from "../test/matchMedia";
 import { renderApp } from "../test/renderApp";
 import { THEME_STORAGE_KEY } from "../theme/theme";
 
@@ -36,11 +37,24 @@ describe("app shell", () => {
   });
 
   it("gives every navigation link a name and a tooltip for the icon-only phone layout", async () => {
+    stubMatchMedia(false);
+    try {
+      await openShell();
+      const nav = screen.getByRole("navigation", { name: "Main navigation" });
+      for (const link of within(nav).getAllByRole("link")) {
+        expect(link.getAttribute("title")).toBe(link.textContent);
+        expect(link.querySelector(".nav-link__label")?.textContent).toBe(link.textContent);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows no tooltips in the expanded sidebar, where every label is visible", async () => {
     await openShell();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     for (const link of within(nav).getAllByRole("link")) {
-      expect(link.getAttribute("title")).toBe(link.textContent);
-      expect(link.querySelector(".nav-link__label")?.textContent).toBe(link.textContent);
+      expect(link.getAttribute("title"), link.textContent ?? "").toBeNull();
     }
   });
 
@@ -104,20 +118,23 @@ describe("app shell", () => {
     expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull();
   });
 
-  it.each(["users:write", "settings:read", "roles:write", "audit:read"])(
-    "shows administration for a custom role with %s",
-    async (permission) => {
-      await openShell(
-        "/admin",
-        { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
-        { steward: [permission] },
-      );
-      const nav = screen.getByRole("navigation", { name: "Main navigation" });
-      expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
-      // The entry appears once the permissions are known, as would "No access".
-      expect(screen.queryByRole("heading", { name: "No access" })).toBeNull();
-    },
-  );
+  it.each([
+    // Change permissions without the matching read permission open no section.
+    ["users:write", "Nothing here for you yet"],
+    ["settings:read", "Organization “Org”"],
+    ["roles:write", "Nothing here for you yet"],
+    ["audit:read", "Organization “Org”"],
+  ])("shows administration for a custom role with %s", async (permission, overviewHeading) => {
+    await openShell(
+      "/admin",
+      { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
+      { steward: [permission] },
+    );
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: overviewHeading })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "No access" })).toBeNull();
+  });
 
   it.each([
     ["settings:read", "Organization settings"],

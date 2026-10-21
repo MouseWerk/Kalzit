@@ -27,6 +27,8 @@ export interface NavItem {
   visible?: (permissions: OrgPermissions) => boolean;
   /** Sub-pages; the entry becomes a disclosure that lists the visible ones. */
   children?: readonly NavChild[];
+  /** Accessible name of the sub-page list; defaults to "nav.children" with the entry's label. */
+  childrenLabel?: MessageKey;
 }
 
 export const HOME_NAV: NavItem = { to: "/", label: "nav.home", icon: "home", exact: true };

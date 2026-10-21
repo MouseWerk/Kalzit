@@ -12,6 +12,7 @@ import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
 import type { OrgPermissions } from "../org/useOrg";
+import { lastInputWasKeyboard } from "./inputModality";
 import { groupChildren, isWithin, type NavChild, type NavItem, visibleChildren } from "./navItem";
 import { readGroupExpanded, writeGroupExpanded } from "./sidebarState";
 
@@ -24,27 +25,30 @@ interface NavEntryProps {
   item: NavItem;
   /** True while the sidebar is the icon rail: children open in a flyout instead of a list. */
   rail: boolean;
+  /** True while the sidebar is a column; below, it is a bar on top that may show only icons. */
+  wide: boolean;
   permissions: OrgPermissions;
-  /** Tells the shell when a flyout opens or closes, so its shortcuts can tell it apart. */
-  onFlyoutChange: (open: boolean) => void;
+  /** Tells the shell when a flyout layer opens or closes, so its shortcuts can tell it apart. */
+  onFlyoutLayerChange: (open: boolean) => void;
 }
 
 /** One entry of the main navigation: a link, or a link with expandable sub-pages. */
-export function NavEntry({ item, rail, permissions, onFlyoutChange }: NavEntryProps) {
+export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }: NavEntryProps) {
   const { t } = useI18n();
   const children = visibleChildren(item, permissions);
   if (children.length === 0) {
+    const label = t(item.label);
     return (
       <li>
-        {/* The title is the tooltip when the rail or a phone shows only the icon. */}
+        {/* A tooltip only where the label is hidden: the rail, and phones (narrow layout). */}
         <Link
           to={item.to}
           className="nav-link"
-          title={t(item.label)}
+          title={rail || !wide ? label : undefined}
           activeOptions={{ exact: item.exact === true }}
         >
           <Icon name={item.icon} />
-          <span className="nav-link__label">{t(item.label)}</span>
+          <span className="nav-link__label">{label}</span>
         </Link>
       </li>
     );
@@ -53,9 +57,10 @@ export function NavEntry({ item, rail, permissions, onFlyoutChange }: NavEntryPr
     <NavGroup
       item={item}
       rail={rail}
+      wide={wide}
       childItems={children}
       permissions={permissions}
-      onFlyoutChange={onFlyoutChange}
+      onFlyoutLayerChange={onFlyoutLayerChange}
     />
   );
 }
@@ -63,15 +68,17 @@ export function NavEntry({ item, rail, permissions, onFlyoutChange }: NavEntryPr
 function NavGroup({
   item,
   rail,
+  wide,
   childItems,
-  onFlyoutChange,
+  onFlyoutLayerChange,
 }: NavEntryProps & { childItems: readonly NavChild[] }) {
   const { t } = useI18n();
   const pathname = useLocation({ select: (location) => location.pathname });
   const within = isWithin(pathname, item.to);
   const listId = useId();
   const label = t(item.label);
-  const childrenLabel = t("nav.children", { name: label });
+  const childrenLabel =
+    item.childrenLabel === undefined ? t("nav.children", { name: label }) : t(item.childrenLabel);
 
   // Open while the current page is inside the group; otherwise as the user left it.
   const [expanded, setExpanded] = useState(() => within || readGroupExpanded(item.to) === true);
@@ -89,7 +96,11 @@ function NavGroup({
     writeGroupExpanded(item.to, next);
   }
 
-  const flyout = useFlyout(rail, onFlyoutChange);
+  const flyout = useFlyout(rail, onFlyoutLayerChange);
+  // The bar on top has no chevrons, so the current group's sub-pages always show there.
+  const listShown = !rail && (expanded || (within && !wide));
+  // The entry is the page only on its own path; inside, it is marked while its child is hidden.
+  const current = within && pathname !== item.to && !listShown ? "true" : undefined;
 
   return (
     <li
@@ -102,14 +113,14 @@ function NavGroup({
       onBlur={flyout.onBlur}
     >
       <div className="nav-group__row">
-        {/* The entry itself is current only on its own page; inside, the child is the page. */}
         <Link
           ref={flyout.linkRef}
           to={item.to}
-          className="nav-link"
-          title={label}
+          className={within && listShown ? "nav-link nav-link--within" : "nav-link"}
+          title={rail || !wide ? label : undefined}
           activeOptions={{ exact: true }}
-          aria-current={within && pathname !== item.to ? "true" : undefined}
+          aria-current={current}
+          aria-expanded={rail ? flyout.open : undefined}
           onClick={() => flyout.close(false)}
         >
           <Icon name={item.icon} />
@@ -120,7 +131,7 @@ function NavGroup({
             type="button"
             className="nav-group__toggle"
             aria-expanded={expanded}
-            aria-controls={listId}
+            aria-controls={listShown ? listId : undefined}
             aria-label={childrenLabel}
             title={childrenLabel}
             onClick={toggle}
@@ -129,10 +140,8 @@ function NavGroup({
           </button>
         )}
       </div>
-      {!rail && expanded ? (
-        <ChildList id={listId} label={childrenLabel} childItems={childItems} />
-      ) : null}
-      {rail && flyout.open ? (
+      {listShown ? <ChildList id={listId} label={childrenLabel} childItems={childItems} /> : null}
+      {flyout.open ? (
         <div ref={flyout.panelRef} className="nav-flyout">
           <p className="nav-flyout__title" aria-hidden="true">
             {label}
@@ -166,7 +175,7 @@ function ChildList({
       {groupChildren(childItems).map(({ group, children }, index) => {
         const links = children.map((child) => (
           <li key={child.to}>
-            <Link to={child.to} className="nav-sublink" title={t(child.label)} onClick={onNavigate}>
+            <Link to={child.to} className="nav-sublink" onClick={onNavigate}>
               <span className="nav-sublink__label">{t(child.label)}</span>
             </Link>
           </li>
@@ -190,13 +199,26 @@ function ChildList({
   );
 }
 
+/** How the flyout was opened: a hover is a preview, keyboard focus makes it a layer. */
+type FlyoutMode = "hover" | "layer";
+
 /**
- * The rail's flyout: opens on hover or keyboard focus, closes when both leave, on Escape (focus
- * goes back to the entry) and on a click outside. It is a layer, so Escape reaches it first.
+ * The rail's flyout: opens on hover or focus, closes when both leave and on a click outside.
+ * Opened from the keyboard it is a layer, so Escape closes it (and focus goes back to the
+ * entry); a hover preview does not take Escape away from the page.
  */
-function useFlyout(rail: boolean, onFlyoutChange: (open: boolean) => void) {
-  const [requested, setRequested] = useState(false);
-  const open = rail && requested;
+function useFlyout(rail: boolean, onLayerChange: (open: boolean) => void) {
+  const [mode, setMode] = useState<FlyoutMode | null>(null);
+  // Leaving the rail forgets the flyout, so it does not come back when the rail returns.
+  const [wasRail, setWasRail] = useState(rail);
+  if (rail !== wasRail) {
+    setWasRail(rail);
+    if (!rail) {
+      setMode(null);
+    }
+  }
+  const open = rail && mode !== null;
+  const layer = rail && mode === "layer";
   const anchorRef = useRef<HTMLLIElement>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -211,7 +233,7 @@ function useFlyout(rail: boolean, onFlyoutChange: (open: boolean) => void) {
 
   function close(returnFocus: boolean) {
     cancelClose();
-    setRequested(false);
+    setMode(null);
     if (returnFocus && anchorRef.current?.contains(document.activeElement) === true) {
       returningFocus.current = true;
       linkRef.current?.focus();
@@ -219,16 +241,16 @@ function useFlyout(rail: boolean, onFlyoutChange: (open: boolean) => void) {
     }
   }
 
-  useEscapeLayer(open, () => close(true));
+  useEscapeLayer(layer, () => close(true));
 
-  const reportOpen = useEffectEvent((value: boolean) => onFlyoutChange(value));
+  const reportLayer = useEffectEvent((value: boolean) => onLayerChange(value));
   useEffect(() => {
-    if (!open) {
+    if (!layer) {
       return;
     }
-    reportOpen(true);
-    return () => reportOpen(false);
-  }, [open]);
+    reportLayer(true);
+    return () => reportLayer(false);
+  }, [layer]);
 
   useEffect(() => () => window.clearTimeout(closeTimer.current), []);
 
@@ -247,23 +269,35 @@ function useFlyout(rail: boolean, onFlyoutChange: (open: boolean) => void) {
     return () => document.removeEventListener("pointerdown", listener);
   }, [open]);
 
-  // Fixed to the window next to the rail, so the scrolling navigation does not clip it.
+  // Fixed to the window next to the rail, so the scrolling navigation does not clip it; placed
+  // again when the window changes size.
   useLayoutEffect(() => {
     if (!open) {
       return;
     }
-    const anchor = anchorRef.current;
-    const panel = panelRef.current;
-    if (anchor === null || panel === null) {
-      return;
+    function place() {
+      const anchor = anchorRef.current;
+      const panel = panelRef.current;
+      if (anchor === null || panel === null) {
+        return;
+      }
+      const rect = anchor.getBoundingClientRect();
+      const sidebar = anchor.closest(".shell__sidebar")?.getBoundingClientRect() ?? rect;
+      const height = panel.getBoundingClientRect().height;
+      const maxTop = window.innerHeight - height - FLYOUT_GAP_PX;
+      panel.style.top = `${Math.max(FLYOUT_GAP_PX, Math.min(rect.top, maxTop))}px`;
+      panel.style.left = `${sidebar.right + FLYOUT_GAP_PX}px`;
     }
-    const rect = anchor.getBoundingClientRect();
-    const sidebar = anchor.closest(".shell__sidebar")?.getBoundingClientRect() ?? rect;
-    const height = panel.getBoundingClientRect().height;
-    const maxTop = window.innerHeight - height - FLYOUT_GAP_PX;
-    panel.style.top = `${Math.max(FLYOUT_GAP_PX, Math.min(rect.top, maxTop))}px`;
-    panel.style.left = `${sidebar.right + FLYOUT_GAP_PX}px`;
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
   }, [open]);
+
+  function openAs(next: FlyoutMode) {
+    cancelClose();
+    // A hover never downgrades a flyout the keyboard opened.
+    setMode((previous) => (previous === "layer" ? "layer" : next));
+  }
 
   return {
     open,
@@ -275,26 +309,24 @@ function useFlyout(rail: boolean, onFlyoutChange: (open: boolean) => void) {
       if (!rail || event.pointerType === "touch") {
         return;
       }
-      cancelClose();
-      setRequested(true);
+      openAs("hover");
     },
     onPointerLeave() {
       if (!rail) {
         return;
       }
       cancelClose();
-      // Keyboard focus inside keeps it open.
+      // Focus inside keeps it open.
       if (anchorRef.current?.contains(document.activeElement) === true) {
         return;
       }
-      closeTimer.current = window.setTimeout(() => setRequested(false), FLYOUT_CLOSE_DELAY_MS);
+      closeTimer.current = window.setTimeout(() => setMode(null), FLYOUT_CLOSE_DELAY_MS);
     },
     onFocus() {
       if (!rail || returningFocus.current) {
         return;
       }
-      cancelClose();
-      setRequested(true);
+      openAs(lastInputWasKeyboard() ? "layer" : "hover");
     },
     onBlur(event: FocusEvent<HTMLLIElement>) {
       const next = event.relatedTarget;
@@ -302,7 +334,7 @@ function useFlyout(rail: boolean, onFlyoutChange: (open: boolean) => void) {
         return;
       }
       cancelClose();
-      setRequested(false);
+      setMode(null);
     },
   };
 }

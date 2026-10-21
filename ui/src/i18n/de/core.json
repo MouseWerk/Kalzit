@@ -8,7 +8,7 @@
   "nav.home": "Start",
   "nav.sidebar": "Seitenleiste",
   "nav.sidebarHint": "Seitenleiste ein- oder ausklappen ({shortcut})",
-  "nav.children": "Unterbereiche von {name}",
+  "nav.children": "Bereiche: {name}",
   "userMenu.label": "Konto",
   "userMenu.signOut": "Abmelden",
   "theme.label": "Darstellung",

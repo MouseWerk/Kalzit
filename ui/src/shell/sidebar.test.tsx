@@ -1,6 +1,8 @@
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
+import { openLayerCount } from "../lib/layers";
+import { stubMatchMedia } from "../test/matchMedia";
 import { renderApp } from "../test/renderApp";
 import { NAV_GROUPS_STORAGE_KEY, SIDEBAR_STORAGE_KEY } from "./sidebarState";
 
@@ -99,6 +101,47 @@ describe("collapsible sidebar", () => {
     expect(shell.dataset.sidebar).toBe("expanded");
   });
 
+  it("leaves Ctrl+B to code editors, also read-only ones", async () => {
+    const { user, shell } = await openShell();
+    const editor = document.createElement("div");
+    editor.className = "cm-editor";
+    const content = document.createElement("div");
+    content.tabIndex = 0;
+    editor.append(content);
+    document.body.append(editor);
+    try {
+      content.focus();
+      await user.keyboard("{Control>}b{/Control}");
+      expect(shell.dataset.sidebar).toBe("expanded");
+    } finally {
+      editor.remove();
+    }
+  });
+
+  it("takes the physical B key on layouts without a Latin B", async () => {
+    const { shell } = await openShell();
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "и", code: "KeyB", ctrlKey: true });
+    });
+    expect(shell.dataset.sidebar).toBe("collapsed");
+  });
+
+  it("has no rail on narrow screens, and Ctrl+B does nothing there", async () => {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
+    const layout = stubMatchMedia(false);
+    try {
+      const { user, shell } = await openShell();
+      expect(shell.dataset.sidebar).toBe("expanded");
+      await user.keyboard("{Control>}b{/Control}");
+      expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe("true");
+      // Wide again, the remembered rail comes back.
+      layout.set(true);
+      expect(shell.dataset.sidebar).toBe("collapsed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("ignores B with other modifiers", async () => {
     const { user, shell } = await openShell();
     await user.keyboard("{Control>}{Shift>}b{/Shift}{/Control}");
@@ -151,11 +194,18 @@ describe("sub-pages in the navigation", () => {
     const list = await within(nav).findByRole("list", { name: "Administration sections" });
     const roles = within(list).getByRole("link", { name: "Roles" });
     await waitFor(() => expect(roles.getAttribute("aria-current")).toBe("page"));
+    // With the current page in view, the entry is not marked a second time.
     const entry = within(nav).getByRole("link", { name: "Administration" });
+    expect(entry.getAttribute("aria-current")).toBeNull();
+    const chevron = within(nav).getByRole("button", { name: "Administration sections" });
+    expect(chevron.getAttribute("aria-controls")).toBe(list.id);
+
+    // Collapsed, the group hides the page, so the entry stands for it.
+    await user.click(chevron);
     expect(entry.getAttribute("aria-current")).toBe("true");
+    expect(chevron.hasAttribute("aria-controls")).toBe(false);
 
     // Navigating into the group from outside opens it again.
-    await user.click(within(nav).getByRole("button", { name: "Administration sections" }));
     await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards"));
     expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
@@ -179,6 +229,22 @@ describe("sub-pages in the navigation", () => {
     expect(within(list).queryByRole("list", { name: "Organization" })).toBeNull();
     const server = within(list).getByRole("list", { name: "Server" });
     expect(within(server).getAllByRole("link")).toHaveLength(4);
+  });
+
+  it("keeps the current group's sub-pages reachable when the layout narrows", async () => {
+    const layout = stubMatchMedia(true);
+    try {
+      const { user, nav } = await openShell("/admin/roles");
+      await within(nav).findByRole("list", { name: "Administration sections" });
+      await user.click(within(nav).getByRole("button", { name: "Administration sections" }));
+      expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
+      // The bar on top has no chevron to open it again, so it shows the current group's pages.
+      layout.set(false);
+      const list = within(nav).getByRole("list", { name: "Administration sections" });
+      expect(within(list).getByRole("link", { name: "Roles" })).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps entries without sub-pages plain links", async () => {
@@ -218,7 +284,12 @@ describe("flyout in the rail", () => {
   it("opens on keyboard focus, takes Tab into its links and closes on Escape", async () => {
     const { user, nav } = await openRail();
     const entry = within(nav).getByRole("link", { name: "Administration" });
-    act(() => entry.focus());
+    act(() => within(nav).getByRole("link", { name: "Data sources" }).focus());
+    await user.tab();
+    expect(document.activeElement).toBe(entry);
+    expect(entry.getAttribute("aria-expanded")).toBe("true");
+    // Opened from the keyboard, it is a layer that takes Escape.
+    expect(openLayerCount()).toBe(1);
     const list = within(nav).getByRole("list", { name: "Administration sections" });
     await user.tab();
     expect(document.activeElement).toBe(within(list).getByRole("link", { name: "Members" }));
@@ -226,6 +297,75 @@ describe("flyout in the rail", () => {
     await user.keyboard("{Escape}");
     expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
     expect(document.activeElement).toBe(entry);
+    expect(entry.getAttribute("aria-expanded")).toBe("false");
+    expect(openLayerCount()).toBe(0);
+  });
+
+  it("leaves Escape to the page while only a hover shows the flyout", async () => {
+    const { user, nav } = await openRail();
+    await user.hover(within(nav).getByRole("link", { name: "Administration" }));
+    expect(within(nav).getByRole("list", { name: "Administration sections" })).toBeTruthy();
+    expect(openLayerCount()).toBe(0);
+  });
+
+  it.each(["hover", "keyboard"])(
+    "stays closed after leaving and returning to the rail (opened by %s)",
+    async (how) => {
+      const { user, nav, shell } = await openRail();
+      const entry = within(nav).getByRole("link", { name: "Administration" });
+      if (how === "hover") {
+        await user.hover(entry);
+      } else {
+        act(() => within(nav).getByRole("link", { name: "Data sources" }).focus());
+        await user.tab();
+      }
+      expect(within(nav).getByRole("list", { name: "Administration sections" })).toBeTruthy();
+      await user.keyboard("{Control>}b{/Control}");
+      expect(shell.dataset.sidebar).toBe("expanded");
+      await user.keyboard("{Control>}b{/Control}");
+      expect(shell.dataset.sidebar).toBe("collapsed");
+      expect(document.querySelector(".nav-flyout")).toBeNull();
+      expect(openLayerCount()).toBe(0);
+    },
+  );
+
+  it("places the flyout next to the rail again when the window is resized", async () => {
+    const { user, nav } = await openRail();
+    let railRight = 56;
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const right = this.classList.contains("shell__sidebar") ? railRight : 0;
+      return DOMRect.fromRect({ x: 0, y: 100, width: right, height: 30 });
+    });
+    try {
+      await user.hover(within(nav).getByRole("link", { name: "Administration" }));
+      const flyout = document.querySelector<HTMLElement>(".nav-flyout");
+      expect(flyout?.style.left).toBe("60px");
+      railRight = 80;
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(flyout?.style.left).toBe("84px");
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  it("shows a tooltip on keyboard focus and names the account on its button", async () => {
+    const { user, nav } = await openRail();
+    act(() => within(nav).getByRole("link", { name: "Home" }).focus());
+    await user.tab();
+    expect(document.activeElement).toBe(within(nav).getByRole("link", { name: "Dashboards" }));
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
+    await user.tab();
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Explore");
+    // Entries with sub-pages show their flyout instead.
+    await user.tab();
+    await user.tab();
+    expect(document.activeElement).toBe(within(nav).getByRole("link", { name: "Administration" }));
+    expect(document.querySelector(".rail-tooltip")).toBeNull();
+    expect(screen.getByRole("button", { name: /Account/ }).title).toBe(TEST_USER.name);
   });
 
   it("navigates from the flyout and closes it", async () => {

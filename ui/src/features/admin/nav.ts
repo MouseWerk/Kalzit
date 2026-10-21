@@ -13,6 +13,7 @@ export const adminNav: NavItem = {
   label: "admin.nav",
   icon: "admin",
   visible: canOpenAdministration,
+  childrenLabel: "admin.sections",
   children: [
     ...sectionChildren(ORG_SECTIONS, "admin.group.org"),
     ...sectionChildren(SERVER_SECTIONS, "admin.group.server"),

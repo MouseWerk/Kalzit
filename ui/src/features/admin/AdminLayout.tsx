@@ -47,9 +47,17 @@ export function AdminOverview() {
   const access = useAdminAccess();
   const orgSections = ORG_SECTIONS.filter((section) => section.visible(access));
   const serverSections = SERVER_SECTIONS.filter((section) => section.visible(access));
+  // A role may hold a change permission without the matching read permission (users:write
+  // without users:read); then no section opens, and the page says so instead of staying blank.
+  const nothing = access.loaded && orgSections.length === 0 && serverSections.length === 0;
   return (
     <div className="admin-overview">
       <Notice notice={notice.notice} onDismiss={notice.clear} />
+      {nothing ? (
+        <EmptyState icon="lock" title={t("admin.overview.emptyTitle")}>
+          {t("admin.overview.emptyText")}
+        </EmptyState>
+      ) : null}
       <OverviewGroup
         title={
           access.orgName === undefined

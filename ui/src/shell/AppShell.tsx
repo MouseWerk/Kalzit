@@ -5,7 +5,9 @@ import { NAV_ITEMS } from "../features/nav";
 import { useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
+import { trackInputModality } from "./inputModality";
 import { NavEntry } from "./NavEntry";
+import { RailTooltip } from "./RailTooltip";
 import {
   isToggleShortcut,
   isTypingTarget,
@@ -28,6 +30,7 @@ export function AppShell() {
   const { me } = appRoute.useRouteContext();
   const navRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   const sidebarId = useId();
   const permissions = useOrgPermissions();
   const items = NAV_ITEMS.filter((item) => item.visible?.(permissions) ?? true);
@@ -37,10 +40,11 @@ export function AppShell() {
   // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse.
   const rail = collapsed && wide;
   const shortcut = sidebarShortcut();
-  // The rail's flyouts are layers for Escape, but not dialogs: F6 and Ctrl+B still work.
+  // A flyout opened from the keyboard is a layer for Escape, but not a dialog: F6 and Ctrl+B
+  // still work while it is open.
   const openFlyouts = useRef(0);
 
-  function onFlyoutChange(open: boolean) {
+  function onFlyoutLayerChange(open: boolean) {
     openFlyouts.current += open ? 1 : -1;
   }
 
@@ -86,6 +90,7 @@ export function AppShell() {
   });
 
   useEffect(() => {
+    trackInputModality();
     const listener = (event: KeyboardEvent) => onKeyDown(event);
     document.addEventListener("keydown", listener);
     return () => document.removeEventListener("keydown", listener);
@@ -102,7 +107,7 @@ export function AppShell() {
       <button type="button" className="skip-link" onClick={skipToContent}>
         {t("common.skipToContent")}
       </button>
-      <header id={sidebarId} className="shell__sidebar">
+      <header ref={sidebarRef} id={sidebarId} className="shell__sidebar">
         <div className="shell__top">
           <Link to="/" className="shell__brand" title={rail ? t("app.name") : undefined}>
             <span className="shell__brand-name">
@@ -135,13 +140,15 @@ export function AppShell() {
                 key={item.to}
                 item={item}
                 rail={rail}
+                wide={wide}
                 permissions={permissions}
-                onFlyoutChange={onFlyoutChange}
+                onFlyoutLayerChange={onFlyoutLayerChange}
               />
             ))}
           </ul>
         </nav>
-        <UserMenu me={me} />
+        <UserMenu me={me} rail={rail} />
+        <RailTooltip rail={rail} sidebarRef={sidebarRef} />
       </header>
       <main ref={mainRef} id="main" className="shell__main" tabIndex={-1}>
         <div className="shell__content">

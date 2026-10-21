@@ -70,15 +70,22 @@ export function sidebarShortcut(): { label: string; aria: string } {
   return isMac() ? { label: "⌘B", aria: "Meta+B" } : { label: "Ctrl+B", aria: "Control+B" };
 }
 
-/** Whether a key press asks to toggle the sidebar: Ctrl+B, or Cmd+B on macOS. */
+/**
+ * Whether a key press asks to toggle the sidebar: Ctrl+B, or Cmd+B on macOS. The physical key
+ * counts too, so the shortcut works on layouts without a Latin B (Cyrillic, Greek).
+ */
 export function isToggleShortcut(event: KeyboardEvent): boolean {
-  if (event.key.toLowerCase() !== "b" || event.altKey || event.shiftKey || event.isComposing) {
+  const isB = event.key.toLowerCase() === "b" || event.code === "KeyB";
+  if (!isB || event.altKey || event.shiftKey || event.isComposing) {
     return false;
   }
   return isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
-/** Whether the key press goes to something the user types into, where Ctrl+B means bold. */
+/**
+ * Whether the key press goes to something the user types into, where Ctrl+B means bold, or to a
+ * code editor (also a read-only one), which has its own key bindings.
+ */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
@@ -87,7 +94,8 @@ export function isTypingTarget(target: EventTarget | null): boolean {
     return true;
   }
   return (
-    target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !==
-    null
+    target.closest(
+      'input, textarea, select, [contenteditable]:not([contenteditable="false"]), .cm-editor',
+    ) !== null
   );
 }
