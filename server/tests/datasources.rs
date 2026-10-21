@@ -355,12 +355,15 @@ async fn mssql_reads_and_rolls_back() {
         "SELECT NEXT VALUE FOR dbo.s",
         "SELECT name FROM sys.objects OPTION/**/(TABLE HINT (sys.objects, TABLOCKX))",
         "SELECT o.name FROM sys.objects o (TABLOCKX)",
+        "SELECT j.[key] FROM sys.objects o CROSS APPLY OPENJSON('[1]') j OPTION (TABLE HINT (o, TABLOCKX))",
     ] {
         assert_eq!(t.query(&id, json!({ "sql": sql })).await["error"]["code"], "query_rejected", "{sql}");
     }
     for sql in [
         "SELECT TOP 1 name FROM sys.objects WITH (NOLOCK)",
         "SELECT TOP 1 'option (x)' AS a FROM sys.objects WITH (READUNCOMMITTED)",
+        "SELECT TOP 1 o.name FROM sys.objects o (NOLOCK)",
+        "SELECT TOP 1 [option].name FROM sys.objects AS [option] WITH (NOLOCK)",
     ] {
         let ok = t.query(&id, json!({ "sql": sql })).await;
         assert!(ok["result"].is_object(), "{sql}: {ok}");

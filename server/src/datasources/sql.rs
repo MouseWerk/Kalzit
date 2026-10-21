@@ -12,10 +12,13 @@ use std::ops::ControlFlow;
 
 use serde_json::Value;
 use sqlparser::ast::{
-    Expr, ObjectName, ObjectNamePart, Query, Select, SetExpr, Statement, TableFactor, Visit, Visitor,
+    BinaryOperator, Expr, ObjectName, ObjectNamePart, Query, Select, SetExpr, Statement, TableAlias, TableFactor,
+    Visit, Visitor,
 };
 use sqlparser::dialect::{Dialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
+use sqlparser::tokenizer::{Token, Tokenizer};
 
 use crate::shapes::TimeRange;
 
@@ -596,6 +599,20 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
     if engine == Engine::MsSql && words.contains("next value for") {
         return reject("NEXT VALUE FOR changes a sequence and is not allowed");
     }
+    // Query hints (`OPTION (...)`, which can take table locks) are refused as a keyword token,
+    // wherever the parser would put them; in strings, comments and quoted names (`[option]`) the
+    // word is no token and does not count.
+    if engine == Engine::MsSql {
+        let tokens = Tokenizer::new(&MsSqlDialect {}, sql)
+            .tokenize()
+            .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
+        let hint = tokens
+            .iter()
+            .any(|t| matches!(t, Token::Word(w) if w.keyword == Keyword::OPTION && w.quote_style.is_none()));
+        if hint {
+            return reject("query hints (OPTION (...)) are not allowed");
+        }
+    }
     let statements = Parser::parse_sql(dialect(engine).as_ref(), sql)
         .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
     let [statement] = statements.as_slice() else {
@@ -614,8 +631,30 @@ struct ReadOnlyCheck {
     engine: Engine,
 }
 
-/// The only SQL Server table hints a read may carry: reads without locks, and index choices.
-const ALLOWED_MSSQL_HINTS: &[&str] = &["nolock", "readuncommitted", "index", "noexpand"];
+/// The only SQL Server table hints a read may carry: reads without locks, and index and plan
+/// choices.
+const ALLOWED_MSSQL_HINTS: &[&str] = &["nolock", "readuncommitted", "index", "noexpand", "forceseek"];
+
+/// The alias of any table factor, whatever its kind (table, derived table, function, OPENJSON,
+/// pivot, nested join and the rest), so a hint list behind an alias is seen everywhere.
+fn factor_alias(factor: &TableFactor) -> Option<&TableAlias> {
+    match factor {
+        TableFactor::Table { alias, .. }
+        | TableFactor::Derived { alias, .. }
+        | TableFactor::TableFunction { alias, .. }
+        | TableFactor::Function { alias, .. }
+        | TableFactor::UNNEST { alias, .. }
+        | TableFactor::JsonTable { alias, .. }
+        | TableFactor::OpenJsonTable { alias, .. }
+        | TableFactor::NestedJoin { alias, .. }
+        | TableFactor::Pivot { alias, .. }
+        | TableFactor::Unpivot { alias, .. }
+        | TableFactor::MatchRecognize { alias, .. }
+        | TableFactor::XmlTable { alias, .. }
+        | TableFactor::SemanticView { alias, .. } => alias.as_ref(),
+        _ => None,
+    }
+}
 /// Every SQL Server table hint word, to recognize the old hint form `t (TABLOCKX)` among the
 /// arguments of a table-valued function call.
 const MSSQL_HINT_WORDS: &[&str] = &[
@@ -649,6 +688,8 @@ fn hint_name(hint: &Expr) -> String {
     match hint {
         Expr::Identifier(ident) => ident.value.to_ascii_lowercase(),
         Expr::Function(f) => last_name_part(&f.name).unwrap_or_default(),
+        // `INDEX = ix`, the other spelling of `INDEX(ix)`.
+        Expr::BinaryOp { left, op: BinaryOperator::Eq, .. } if matches!(**left, Expr::Identifier(_)) => hint_name(left),
         other => other.to_string().to_ascii_lowercase(),
     }
 }
@@ -724,18 +765,17 @@ impl Visitor for ReadOnlyCheck {
             // `FROM t OPTION (TABLE HINT (t, TABLOCKX))` and `FROM t x (TABLOCKX)` parse as
             // aliases with a column list; T-SQL has no such column lists on tables, so a query
             // hint or an old-style table hint is behind them.
-            let alias = match factor {
-                TableFactor::Table { alias, .. } | TableFactor::Derived { alias, .. } => alias.as_ref(),
-                _ => None,
-            };
-            if let Some(alias) = alias {
-                if alias.name.value.eq_ignore_ascii_case("option") {
+            if let Some(alias) = factor_alias(factor) {
+                if alias.name.value.eq_ignore_ascii_case("option") && alias.name.quote_style.is_none() {
                     return ControlFlow::Break("query hints (OPTION (...)) are not allowed".into());
                 }
+                // A column list naming only harmless hints is the old form of `WITH (NOLOCK)`.
                 let hinted = alias.columns.iter().any(|c| {
-                    c.data_type.is_some() || MSSQL_HINT_WORDS.contains(&c.name.value.to_ascii_lowercase().as_str())
+                    let name = c.name.value.to_ascii_lowercase();
+                    c.data_type.is_some()
+                        || (MSSQL_HINT_WORDS.contains(&name.as_str()) && !ALLOWED_MSSQL_HINTS.contains(&name.as_str()))
                 });
-                if hinted && matches!(factor, TableFactor::Table { .. }) {
+                if hinted {
                     return ControlFlow::Break(format!(
                         "the table hints after {} are not allowed; write WITH (NOLOCK) instead",
                         alias.name.value
@@ -1199,8 +1239,22 @@ mod tests {
         ] {
             rejected(sql, Engine::MsSql);
         }
-        // Harmless hints and the words in a literal.
+        // OPTION after any kind of table, and hint lists behind other table factors.
+        for sql in [
+            "SELECT a FROM t CROSS APPLY OPENJSON(t.j) OPTION (TABLE HINT (t, TABLOCKX))",
+            "SELECT a FROM t CROSS APPLY OPENJSON(t.j) AS j OPTION (MAXDOP 1)",
+            "SELECT a FROM t WHERE a = 1 OPTION (TABLE HINT (t, TABLOCKX))",
+            "SELECT a FROM (SELECT 1 AS a) d (TABLOCKX)",
+        ] {
+            assert!(!rejected(sql, Engine::MsSql).is_empty(), "{sql}");
+        }
+        // Harmless hints and forms.
         accepted("SELECT a FROM t WITH (INDEX(ix), NOLOCK)", Engine::MsSql);
+        accepted("SELECT a FROM t WITH (INDEX = ix)", Engine::MsSql);
+        accepted("SELECT a FROM t WITH (FORCESEEK)", Engine::MsSql);
+        accepted("SELECT a FROM t x (NOLOCK)", Engine::MsSql);
+        accepted("SELECT [option].a FROM t AS [option]", Engine::MsSql);
+        accepted("SELECT a FROM t -- option (x)\n", Engine::MsSql);
         accepted("SELECT a FROM v WITH (NOEXPAND)", Engine::MsSql);
         accepted("SELECT 'option (x)' AS a FROM t", Engine::MsSql);
         accepted("SELECT a FROM (VALUES (1)) AS v (a)", Engine::MsSql);
