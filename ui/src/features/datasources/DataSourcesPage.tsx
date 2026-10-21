@@ -20,7 +20,6 @@ import {
 } from "./api";
 import { HealthResult } from "./DataSourceForm";
 import "./datasources.css";
-import { canSeeDatasources } from "./nav";
 
 const listRoute = getRouteApi("/_app/data-sources");
 
@@ -37,10 +36,9 @@ export function DataSourcesPage() {
         {t("datasources.noOrg.text")}
       </EmptyState>
     );
-  } else if (
-    canSeeDatasources(permissions) &&
-    (trash !== true || permissions.has("datasources:write"))
-  ) {
+  } else if (trash !== true || permissions.has("datasources:write")) {
+    // Every member may ask: the list holds the sources the caller may read or query, through
+    // the role or a grant on the source, and is empty otherwise.
     body = (
       <DataSourceList
         key={trash === true ? "trash" : "list"}

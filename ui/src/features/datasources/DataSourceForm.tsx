@@ -179,14 +179,15 @@ function NewDataSource({ orgId }: { orgId: string }) {
 export function EditDataSourcePage() {
   const { t } = useI18n();
   useDocumentTitle("datasources.edit.title");
-  const { org, permissions, canWrite } = useWriteAccess();
-  let body = null;
-  if (org !== undefined && canWrite) {
-    body = <EditDataSource orgId={org.id} />;
-  } else if (permissions.loaded) {
-    body = <NoAccess />;
-  }
-  return <Page title={t("datasources.edit.title")}>{body}</Page>;
+  const org = useCurrentOrg();
+  // A grant on this source can allow editing without the org-wide permission, so the server
+  // decides: it answers 404 for a source the caller may not see and 403 for a change they may
+  // not make.
+  return (
+    <Page title={t("datasources.edit.title")}>
+      {org === undefined ? null : <EditDataSource orgId={org.id} />}
+    </Page>
+  );
 }
 
 function EditDataSource({ orgId }: { orgId: string }) {
@@ -407,6 +408,8 @@ function SettingsForm({
     ),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Whether the last submit changed a target field, to explain a 403 for it.
+  const [movedTarget, setMovedTarget] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [focusInvalid, setFocusInvalid] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
@@ -416,6 +419,8 @@ function SettingsForm({
     error,
     secret.map((spec) => spec.name),
   );
+  // An edit grant may change everything but where the source connects (docs/api/datasources.md).
+  const targetRefused = isApiError(error, "forbidden") && movedTarget;
   const fieldError = (field: string) =>
     errors[field] ?? (server?.field === field ? server.text : undefined);
 
@@ -475,6 +480,7 @@ function SettingsForm({
       settings !== undefined &&
       stored !== undefined &&
       plain.some((spec) => spec.target && !sameJson(settings?.[spec.name], stored[spec.name]));
+    setMovedTarget(movesTarget);
     const reenter: string[] = [];
     const secretOutput: Record<string, string | null> = {};
     for (const spec of secret) {
@@ -563,7 +569,13 @@ function SettingsForm({
         <Icon name="lock" />
         <span>{readOnlyHint(t, kind)}</span>
       </div>
-      <FormAlert>{error !== null && server === null ? errorMessage(t, error) : null}</FormAlert>
+      <FormAlert>
+        {error === null || server !== null
+          ? null
+          : targetRefused
+            ? t("datasources.form.targetForbidden")
+            : errorMessage(t, error)}
+      </FormAlert>
       <TextField
         label={t("datasources.form.name")}
         value={name}

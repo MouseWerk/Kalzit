@@ -474,6 +474,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
                 dashboardId: dashboard.id,
                 range: resolved.range,
                 variables: values,
+                saved: dashboard.model.variables,
                 source: "stored",
                 run: clock.run,
               }}

@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
-import { PG_ID } from "./test/fakeDatasources";
+import { PG_ID, PROM_ID } from "./test/fakeDatasources";
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
@@ -70,12 +70,23 @@ describe("data source list", () => {
     expect(screen.getByText("password authentication failed")).toBeTruthy();
   });
 
-  it("hides the area from viewers and explains it on direct access", async () => {
+  it("shows viewers without a grant an empty list and no Explore", async () => {
     open("/data-sources", "viewer");
-    expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
+    // The server lists only what the caller may read, so a viewer without a grant sees nothing.
+    expect(await screen.findByRole("heading", { name: "No data sources yet" })).toBeTruthy();
+    expect(screen.getByText(/An admin adds data sources here/)).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
-    expect(within(nav).queryByRole("link", { name: "Data sources" })).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Data sources" })).toBeTruthy();
     expect(within(nav).queryByRole("link", { name: "Explore" })).toBeNull();
+  });
+
+  it("lists a source granted to a viewer and nothing else", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PG_ID] = "query";
+    renderApp("/data-sources");
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Sales DB")).toBeTruthy();
+    expect(within(table).queryByText("Metrics")).toBeNull();
   });
 });
 
@@ -238,6 +249,27 @@ describe("editing a data source", () => {
       settings: { host: "db2.internal", port: 5432, sslMode: "verify-full" },
       secrets: { password: "new-secret" },
     });
+  });
+
+  it("explains that an edit grant may not change where a source connects", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PROM_ID] = "edit";
+    const { user } = renderApp(`/data-sources/${PROM_ID}`);
+    // The name is no target, so the edit grant is enough for it.
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "Metrics 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    // The saved source loads again into a fresh form.
+    const url = await screen.findByRole("textbox", { name: "URL" });
+    await user.clear(url);
+    await user.type(url, "http://prometheus-2:9090");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/but not where it connects/)).toBeTruthy();
+    expect(server.areas.datasources.datasources.find((d) => d.id === PROM_ID)?.name).toBe(
+      "Metrics 2",
+    );
   });
 
   it("removes a secret without touching the settings", async () => {

@@ -1,6 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord } from "../../api/client";
-import type { Page, PanelQueryRequest, QueryResponse, TimeRange } from "../../api/generated/shapes";
+import type {
+  Page,
+  PanelQueryRequest,
+  QueryResponse,
+  VariableOptionsRequest,
+  VariableOptionsResponse,
+} from "../../api/generated/shapes";
 import { orgPath, send } from "../datasources/api";
 import { type DashboardModel, parseModel } from "./model";
 
@@ -65,10 +71,7 @@ export interface DashboardVersion {
   restoredFrom: number | null;
 }
 
-export interface VariableOption {
-  value: string;
-  label: string;
-}
+export type { VariableOption } from "../../api/generated/shapes";
 
 function invalid(what: string): never {
   throw new ApiError("invalid_response", 200, `unexpected ${what} response`);
@@ -340,22 +343,6 @@ export async function runPanelQuery(
 ): Promise<QueryResponse> {
   const path = orgPath(orgId, "dashboards", dashboardId, "panels", panelId, "query");
   return expectShape(await send("POST", path, body, signal), isQueryResponse, "panel query");
-}
-
-/**
- * `VariableOptionsRequest` (decided contract; the generated type follows from shapes.rs): the
- * time range and the values of the other variables, the variable's own name left out.
- */
-export interface VariableOptionsRequest {
-  timeRange: TimeRange;
-  variables: Record<string, unknown>;
-}
-
-/** The answer of the options route; errors are ordinary HTTP errors. */
-export interface VariableOptionsResponse {
-  options: VariableOption[];
-  /** More options exist than the server sent. */
-  truncated: boolean;
 }
 
 function isVariableOptions(value: unknown): value is VariableOptionsResponse {

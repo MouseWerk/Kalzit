@@ -70,6 +70,19 @@ const asText = (value: unknown): string | null =>
     ? String(value)
     : null;
 
+/**
+ * The values to send with the saved dashboard's stored queries (panel and options routes): only
+ * variables the saved dashboard defines, and no constant, whose value is the dashboard's own and
+ * whose sending the server refuses (docs/api/datasources.md, "Variables").
+ */
+export function storedQueryVariables(
+  values: Record<string, string>,
+  saved: readonly VariableModel[],
+): Record<string, string> {
+  const allowed = new Set(saved.filter((v) => v.type !== "constant").map((v) => v.name));
+  return Object.fromEntries(Object.entries(values).filter(([name]) => allowed.has(name)));
+}
+
 /** A variable's fixed choices as text, whatever JSON they were stored as. */
 export function optionValues(variable: VariableModel): string[] {
   return Array.isArray(variable.options)

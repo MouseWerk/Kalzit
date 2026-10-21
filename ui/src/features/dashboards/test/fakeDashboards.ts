@@ -226,6 +226,29 @@ function modelProblem(model: unknown): string | null {
   return null;
 }
 
+/**
+ * The stored-query variable rules (docs/api/datasources.md, "Variables"): only variables the
+ * dashboard defines, no value for a constant, and a custom value must be one of its options.
+ */
+function variablesProblem(model: DashboardModel, sent: unknown): boolean {
+  for (const [name, value] of Object.entries((sent ?? {}) as Record<string, unknown>)) {
+    const variable = model.variables.find((v) => v.name === name);
+    if (variable === undefined || variable.type === "constant") {
+      return true;
+    }
+    if (variable.type === "custom") {
+      const options = (Array.isArray(variable.options) ? variable.options : []).map((o) =>
+        typeof o === "object" && o !== null ? String((o as { value?: unknown }).value) : String(o),
+      );
+      const values = Array.isArray(value) ? value : [value];
+      if (!values.every((v) => options.includes(String(v)))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function validation(field: string, message = `invalid ${field}`): Response {
   return json(422, { error: { code: "validation", message, field } });
 }
@@ -306,8 +329,11 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         if (!areas.datasources.datasources.some((d) => d.id === id && d.deletedAt === undefined)) {
           return validation("model", `data source ${id} does not exist`);
         }
-        if (!can("datasources:query") || state.unqueryable.includes(id)) {
-          return error(403, "forbidden");
+        const granted = areas.datasources.grants[id] !== undefined;
+        if ((!can("datasources:query") && !granted) || state.unqueryable.includes(id)) {
+          return json(403, {
+            error: { code: "forbidden", message: `no query right on data source ${id}` },
+          });
         }
       }
       return null;
@@ -497,6 +523,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       const name = decodeURIComponent(parts[3] ?? "");
       const variable = latest(dashboard).model.variables.find((v) => v.name === name);
       if (variable === undefined || variable.type !== "query") return error(404, "not_found");
+      if (variablesProblem(latest(dashboard).model, body.variables)) return validation("variables");
       if (name in ((body.variables ?? {}) as Record<string, unknown>))
         return validation("variables");
       state.variableRequests.push({ name, body });
@@ -593,6 +620,9 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     const extra = unknownField(body, PANEL_QUERY_REQUEST_FIELDS);
     if (extra !== undefined) {
       return validation(extra);
+    }
+    if (variablesProblem(latest(dashboard).model, body.variables)) {
+      return validation("variables");
     }
     const query = body as unknown as PanelQueryRequest;
     state.panelQueries.push({ dashboardId: dashboard.id, panelId, body: query });

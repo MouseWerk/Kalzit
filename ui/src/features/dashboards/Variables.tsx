@@ -5,7 +5,7 @@ import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { runQuery } from "../datasources/api";
 import { fetchVariableOptions, type VariableOption } from "./api";
-import { currentValue, optionValues, type VariableModel } from "./model";
+import { currentValue, optionValues, storedQueryVariables, type VariableModel } from "./model";
 import type { TextRange } from "./timeRange";
 import { errorMessage } from "./ui/errors";
 
@@ -102,6 +102,7 @@ export function VariablesBar({
             textRange={textRange}
             range={range}
             run={run}
+            saved={stored ?? variables}
             draft={
               stored !== undefined &&
               JSON.stringify(stored.find((s) => s.name === variable.name)) !==
@@ -124,6 +125,7 @@ function VariableControl({
   range,
   run,
   draft,
+  saved,
   onChange,
 }: {
   orgId: string;
@@ -135,6 +137,7 @@ function VariableControl({
   range: TimeRange;
   run: number;
   draft: boolean;
+  saved: readonly VariableModel[];
   onChange: (value: string) => void;
 }) {
   const { t } = useI18n();
@@ -142,9 +145,11 @@ function VariableControl({
   const [text, setText] = useState(value);
   // Only the variables this query mentions feed it; changing any other one asks nothing.
   const mentioned = referencedNames(variable.query);
-  const inputs = Object.fromEntries(
+  const mentionedValues = Object.fromEntries(
     Object.entries(values).filter(([name]) => name !== variable.name && mentioned.has(name)),
   );
+  // The options route takes only saved, non-constant variables; a free query takes them all.
+  const inputs = draft ? mentionedValues : storedQueryVariables(mentionedValues, saved);
   const options = useQuery({
     queryKey: [
       "variable-options",

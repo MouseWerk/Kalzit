@@ -3,7 +3,7 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { runQuery } from "../datasources/api";
 import { queryText } from "../datasources/queryKinds";
 import { runPanelQuery } from "./api";
-import type { PanelModel } from "./model";
+import { type PanelModel, storedQueryVariables, type VariableModel } from "./model";
 import { panelQueries } from "./queryQueue";
 import { outcomesOf, type TargetOutcome } from "./results";
 import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
@@ -16,6 +16,8 @@ export interface PanelQueryInput {
   panel: PanelModel;
   range: TimeRange;
   variables: Record<string, string>;
+  /** The saved dashboard's variables, which decide what the panel route may be sent. */
+  saved?: readonly VariableModel[];
   /**
    * `stored` runs the saved panel through the panel query route, as every viewer does. `draft`
    * runs the targets being edited through the free query route, which editors may use; the
@@ -31,7 +33,11 @@ export interface PanelQueryInput {
  * a panel that unmounts cancels its query (TanStack Query aborts the signal it handed out).
  */
 export function usePanelResults(input: PanelQueryInput) {
-  const { orgId, dashboardId, panel, range, variables, source, run } = input;
+  const { orgId, dashboardId, panel, range, source, run } = input;
+  const variables =
+    source === "stored"
+      ? storedQueryVariables(input.variables, input.saved ?? [])
+      : input.variables;
   // The panel route runs every stored target, empty ones included, and answers each refId; a
   // draft only sends the targets that can run.
   const targets =

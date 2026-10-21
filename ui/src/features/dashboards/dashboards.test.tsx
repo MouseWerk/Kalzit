@@ -290,6 +290,12 @@ describe("dashboard view", () => {
     expect(await within(select).findByRole("option", { name: "United States" })).toBeTruthy();
     // A constant has nothing to choose and is not shown.
     expect(screen.queryByRole("combobox", { name: "tenant" })).toBeNull();
+    // Nor is it sent: the server answers 422 for a constant's value in a stored query.
+    const options = server.calls.filter((call) => call.path.includes("/variables/region/options"));
+    expect(options.length).toBeGreaterThan(0);
+    for (const call of options) {
+      expect(JSON.stringify(call.body)).not.toContain("tenant");
+    }
   });
 
   it.each([

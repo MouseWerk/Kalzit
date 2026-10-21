@@ -151,6 +151,8 @@ export interface FakeDatasourcesState {
   health: Record<string, WireHealth>;
   /** Answers one valid query item. Defaults to `defaultOutcome`. */
   respond: (item: QueryItem, range: TimeRange) => QueryOutcome | Promise<QueryOutcome>;
+  /** Grants on data sources for the caller, by data source id. */
+  grants: Record<string, "query" | "edit" | "admin">;
   /** Every request body of the free query route, in order. */
   queries: Record<string, unknown>[];
 }
@@ -394,6 +396,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     },
     health: {},
     respond: defaultOutcome,
+    grants: {},
     queries: [],
   };
 
@@ -405,14 +408,24 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     const { method, route, search, body, permissions } = request;
     const parts = route.split("/").slice(4); // after /api/orgs/{orgId}
     const can = (permission: string) => permissions.has(permission);
+    // "On the source" (docs/api/datasources.md): the org-wide permission, or a grant on that
+    // source; `query` gives read and query, `edit` adds write, `admin` adds permissions.
+    const level = (id: string) => state.grants[id];
+    const may = (id: string, right: "read" | "query" | "write" | "admin") => {
+      const grant = level(id);
+      const granted =
+        grant === "admin" ||
+        (grant === "edit" && right !== "admin") ||
+        (grant === "query" && (right === "read" || right === "query"));
+      const role = right === "admin" ? can("datasources:write") : can(`datasources:${right}`);
+      return granted || role;
+    };
+    const sees = (id: string) => may(id, "read") || may(id, "query");
 
     if (parts[0] === "datasource-kinds" && parts.length === 1 && method === "GET") {
       return json(200, { items: FAKE_KINDS, nextCursor: null });
     }
     if (parts[0] === "query" && parts.length === 1 && method === "POST") {
-      if (!can("datasources:query")) {
-        return error(403, "forbidden");
-      }
       const extra = unknownKey(body, QUERY_REQUEST_FIELDS);
       if (extra !== undefined) {
         return validation(extra);
@@ -435,7 +448,12 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       state.queries.push(body);
       const results: Record<string, QueryOutcome> = {};
       for (const item of items) {
-        results[item.refId] = await answerQuery(state, item, range);
+        // Per query: an unseen source is not_found, a seen one without the right forbidden.
+        results[item.refId] = !sees(item.datasourceId)
+          ? { error: { code: "not_found", message: "no such data source" } }
+          : !may(item.datasourceId, "query")
+            ? { error: { code: "forbidden", message: "no query right on this data source" } }
+            : await answerQuery(state, item, range);
       }
       return json(200, { results });
     }
@@ -448,15 +466,12 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         return validation(extra);
       }
       const trash = search.get("trash") === "true";
-      if (
-        trash ? !can("datasources:write") : !(can("datasources:read") || can("datasources:query"))
-      ) {
-        return error(403, "forbidden");
-      }
+      // Members get what they may read or query; the trash, what they may restore.
       const limit = Number(search.get("limit") ?? 50);
       const start = Number(search.get("cursor") ?? 0);
       const all = state.datasources
         .filter((ds) => (trash ? ds.deletedAt !== undefined : ds.deletedAt === undefined))
+        .filter((ds) => (trash ? may(ds.id, "write") : sees(ds.id)))
         .sort((a, b) => b.createdAt - a.createdAt);
       const items = all.slice(start, start + limit).map((ds) => {
         const item: Record<string, unknown> = {
@@ -516,15 +531,17 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     if (ds === undefined || (inTrash && parts[2] !== "restore")) {
       return error(404, "not_found");
     }
+    if (!sees(ds.id)) {
+      return error(404, "not_found");
+    }
     if (parts.length === 2 && method === "GET") {
-      // Not visible without datasources:read, as the server answers.
-      return can("datasources:read") ? json(200, publicView(ds)) : error(404, "not_found");
+      return may(ds.id, "read") ? json(200, publicView(ds)) : error(403, "forbidden");
     }
     if (parts[2] === "schema" && method === "GET") {
-      return can("datasources:query") ? json(200, state.schemas[ds.id]) : error(403, "forbidden");
+      return may(ds.id, "query") ? json(200, state.schemas[ds.id]) : error(403, "forbidden");
     }
     if (parts[2] === "health" && method === "POST") {
-      if (!can("datasources:query")) {
+      if (!may(ds.id, "query")) {
         return error(403, "forbidden");
       }
       if (Object.keys(body).length > 0) {
@@ -535,7 +552,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         state.health[ds.id] ?? { ok: true, message: "PostgreSQL 17.2", latencyMs: 12 },
       );
     }
-    if (!can("datasources:write")) {
+    if (!may(ds.id, "write")) {
       return error(403, "forbidden");
     }
     if (parts.length === 2 && method === "PATCH") {
@@ -554,6 +571,10 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       const movedTarget = kind.settings.find(
         (s) => s.target && JSON.stringify(settings[s.name]) !== JSON.stringify(ds.settings[s.name]),
       );
+      // A target change needs org-wide write or an admin grant; an edit grant is not enough.
+      if (movedTarget !== undefined && !may(ds.id, "admin")) {
+        return error(403, "forbidden");
+      }
       if (movedTarget !== undefined) {
         const missing = Object.keys(ds.secrets).find((name) => !(name in secrets));
         if (missing !== undefined) {
