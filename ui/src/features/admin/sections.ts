@@ -1,7 +1,7 @@
 import type { LinkProps } from "@tanstack/react-router";
 import type { Permission } from "../../api/generated/shapes";
 import type { MessageKey } from "../../i18n/i18n";
-import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { type OrgPermissions, useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 
 export interface AdminAccess {
   /** The organization the sections work on; undefined for a server admin without one. */
@@ -38,7 +38,11 @@ export interface AdminSectionLink {
   to: NonNullable<LinkProps["to"]>;
   label: MessageKey;
   description: MessageKey;
-  visible: (access: AdminAccess) => boolean;
+  /**
+   * Who may open the section. Takes the organization permissions, so the main navigation (which
+   * lists the sections as sub-pages) and the overview, with its AdminAccess, share one rule.
+   */
+  visible: (access: OrgPermissions) => boolean;
 }
 
 export const ORG_SECTIONS: readonly AdminSectionLink[] = [

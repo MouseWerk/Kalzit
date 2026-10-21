@@ -243,6 +243,75 @@ describe("small screens", () => {
     expect(phone.sort()).toEqual([".nav-link__label", ".shell__nav-list"]);
   });
 
+  it("lets long navigation labels shrink with the sidebar: entries truncate, sub-pages wrap", () => {
+    const base = (selector: string) =>
+      rules
+        .filter(
+          (rule) =>
+            rule.context.length === 1 &&
+            rule.selector.split(",").some((part) => part.trim() === selector),
+        )
+        .flatMap((rule) => rule.declarations);
+    for (const grid of [".shell__nav-list", ".nav-sub", ".nav-sub__group", ".nav-sub__list"]) {
+      expect(base(grid), grid).toContainEqual({
+        property: "grid-template-columns",
+        value: "minmax(0, 1fr)",
+      });
+    }
+    const sublink = rules.find((rule) => rule.selector === ".nav-sublink")?.declarations ?? [];
+    expect(sublink).toContainEqual({ property: "white-space", value: "normal" });
+    expect(sublink).toContainEqual({ property: "padding-block", value: "var(--space-1)" });
+    expect(sublink).toContainEqual({ property: "line-height", value: "var(--line-height-tight)" });
+    const label = base(".nav-link__label");
+    expect(label).toContainEqual({ property: "text-overflow", value: "ellipsis" });
+    expect(label).toContainEqual({ property: "min-width", value: "0" });
+  });
+
+  it("breaks only the sub-pages onto a line of their own, not their entry", () => {
+    const group = rules.find(
+      (rule) =>
+        rule.context.includes("@media (max-width: 48rem)") &&
+        rule.selector.split(",").some((part) => part.trim() === ".nav-group"),
+    );
+    expect(group?.declarations).toContainEqual({ property: "display", value: "contents" });
+    expect(inMedia("@media (max-width: 48rem)", ".nav-sub")).toContainEqual({
+      property: "flex",
+      value: "1 0 100%",
+    });
+  });
+
+  it("sets group headings apart from links with small capitals, not color", () => {
+    const title = rules.find((rule) => rule.selector === ".nav-sub__title")?.declarations ?? [];
+    expect(title).toContainEqual({ property: "text-transform", value: "uppercase" });
+    expect(title).toContainEqual({
+      property: "letter-spacing",
+      value: "var(--letter-spacing-caps)",
+    });
+  });
+
+  it("hides the rail's labels and the account name visually only, keeping them as names", () => {
+    const declarationsFor = (selector: string) =>
+      rules
+        .filter((rule) =>
+          rule.selector
+            .split(",")
+            .map((part) => part.replace(/\s+/g, " ").trim())
+            .includes(selector),
+        )
+        .flatMap((rule) => rule.declarations);
+    for (const selector of [
+      '.shell[data-sidebar="collapsed"] .nav-link__label',
+      '.shell[data-sidebar="collapsed"] .user-button__text',
+    ]) {
+      const declarations = declarationsFor(selector);
+      expect(declarations, selector).toContainEqual({ property: "clip-path", value: "inset(50%)" });
+      expect(
+        declarations.some((d) => d.property === "display" && d.value === "none"),
+        selector,
+      ).toBe(false);
+    }
+  });
+
   it("shows only icons on phones, keeping the label for screen readers", () => {
     const label = inMedia("@media (max-width: 25rem)", ".nav-link__label");
     expect(label).toContainEqual({ property: "clip-path", value: "inset(50%)" });
@@ -251,15 +320,41 @@ describe("small screens", () => {
 });
 
 describe("motion and typography", () => {
-  it("animates no layout properties", () => {
-    const LAYOUT = /\b(width|height|margin|padding|top|left|right|bottom|inset|font-size|all)\b/;
-    for (const rule of allRules()) {
+  const LAYOUT =
+    /\b(width|height|margin|padding|top|left|right|bottom|inset|font-size|all|grid-template|grid|flex-basis|flex|gap|min-width|max-width|inline-size|block-size|line-height|letter-spacing|border-width|aspect-ratio)\b/;
+  const ANIMATED = /^(transition|transition-property|animation|animation-name|will-change)$/;
+
+  /** Every declaration that animates a layout property, as "selector { property: value }". */
+  function layoutAnimations(rules: (StyleRule & { file?: string })[]): string[] {
+    const found: string[] = [];
+    for (const rule of rules) {
+      // Keyframes animate whatever they declare.
+      const keyframes = rule.context.some((context) => context.startsWith("@keyframes"));
       for (const { property, value } of rule.declarations) {
-        if (property === "transition" || property === "transition-property") {
-          expect(LAYOUT.test(value), where(rule, `${property}: ${value}`)).toBe(false);
+        if (
+          (ANIMATED.test(property) && LAYOUT.test(value)) ||
+          (keyframes && LAYOUT.test(property))
+        ) {
+          found.push(`${rule.selector} { ${property}: ${value} }`);
         }
       }
     }
+    return found;
+  }
+
+  it("animates no layout properties", () => {
+    expect(layoutAnimations(allRules())).toEqual([]);
+  });
+
+  it("catches layout properties in transitions, animation hints and keyframes", () => {
+    const sample = parseCss(
+      "@layer components { .a { transition: line-height 1s, color 1s; } .b { will-change: letter-spacing; transition: background-color 1s; } @keyframes grow { to { aspect-ratio: 2; color: red; } } }",
+    );
+    expect(layoutAnimations(sample).map((found) => found.split(" { ")[1])).toEqual([
+      "transition: line-height 1s, color 1s }",
+      "will-change: letter-spacing }",
+      "aspect-ratio: 2 }",
+    ]);
   });
 
   it("uses duration tokens, which drop to zero for reduced motion", () => {

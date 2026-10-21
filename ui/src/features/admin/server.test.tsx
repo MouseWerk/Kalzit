@@ -62,6 +62,15 @@ describe("server users", () => {
     expect(sent(server, "GET").filter((path) => path === "/api/me").length).toBeGreaterThan(
       sessionReads,
     );
+    // The overview confirms it and lists only the organization's sections, as does the sidebar.
+    const status = await screen.findByRole("status");
+    expect(within(status).getByText("Ada Lovelace is no longer a server admin.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Server" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Organization “Analytical Engines”" })).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    const sections = within(nav).getByRole("list", { name: "Administration sections" });
+    expect(within(sections).queryByRole("link", { name: "Server settings" })).toBeNull();
+    expect(within(sections).getByRole("link", { name: "Members" })).toBeTruthy();
   });
 
   it("explains that the last server admin stays", async () => {
@@ -166,7 +175,7 @@ describe("server users", () => {
 
   it("is hidden from members who are not server admins", async () => {
     await openAdmin("/admin", { isServerAdmin: false });
-    const sections = await screen.findByRole("navigation", { name: "Administration sections" });
+    const sections = await screen.findByRole("list", { name: "Administration sections" });
     expect(within(sections).queryByRole("link", { name: "Users" })).toBeNull();
     expect(within(sections).getByRole("link", { name: "Members" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Server" })).toBeNull();
@@ -251,7 +260,7 @@ describe("administration overview", () => {
 
   it("marks the current section in the section navigation", async () => {
     await openAdmin("/admin/teams");
-    const sections = await screen.findByRole("navigation", { name: "Administration sections" });
+    const sections = await screen.findByRole("list", { name: "Administration sections" });
     await waitFor(() =>
       expect(
         within(sections).getByRole("link", { name: "Teams" }).getAttribute("aria-current"),

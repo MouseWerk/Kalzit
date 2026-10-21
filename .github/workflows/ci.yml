@@ -86,6 +86,8 @@ jobs:
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run lint
       - if: steps.has_ui.outputs.present == 'true'
+        run: npm run check
+      - if: steps.has_ui.outputs.present == 'true'
         run: npm run typecheck
       - if: steps.has_ui.outputs.present == 'true'
         run: npm test
