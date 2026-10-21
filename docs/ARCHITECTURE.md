@@ -316,8 +316,8 @@ type QueryResult =
   read them: a configuration that a non-admin could change would decide where the data lives
   and which certificate is served. The folder is also checked at start whenever the data
   directory lies inside it (as written or with junctions resolved), with or without a
-  `kalzit.toml`. A folder whose owner entry can still change its DACL (left from an interrupted
-  creation) is refused as well.
+  `kalzit.toml`. A folder owned by an account other than SYSTEM or Administrators whose owner
+  entry can still change its DACL (left from an interrupted creation) is refused as well.
 - Windows also checks the state files that exist (`kalzit.db`, `-wal`, `-shm`, `secrets.key`,
   `secrets.key.dpapi`, `setup-token.txt`): a file keeps the entries it was created with, so one
   moved in from elsewhere may be open to others. The error names `icacls ... /reset`.
@@ -330,10 +330,13 @@ type QueryResult =
   serves `secrets.rs`.
 - One info line names the data directory and the database. `db::redact` parses the URL (`url`) and
   rebuilds it from scheme, user, `***` for a password, host, port and path; query values are shown
-  only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, ...), all
-  others as `***`. A URL with a second `@`, or a `?` or `#` before its last `@`, gets a warning at start
-  (percent-encode the password) and is shown with its host only; one that does not parse is shown
-  as `<unparseable database url>`. The `connect` error uses the same function.
+  only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, `host`,
+  `port`, `dbname`, ...), all others as `***`. A URL with an `@` after its authority (the text from
+  `://` to the first `/`, `?` or `#`) is ambiguous: a password with raw special characters may
+  have become port, path or query (`u:2024/Summer@db` parses as port 2024). It is logged as
+  `scheme://***` only, and a warning at start says to percent-encode the password. A URL that does
+  not parse is shown as `<unparseable database url>`; `sqlite:` URLs are shown as they are. The
+  `connect` error uses the same function.
 - Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
   `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback
   key file for data source secrets when no other key source is configured (`secrets.key` on

@@ -266,10 +266,12 @@ pub mod acl {
     const ACCESS_DENIED_OBJECT: u8 = 6;
     const ACCESS_DENIED_CALLBACK: u8 = 10;
     const ACCESS_DENIED_CALLBACK_OBJECT: u8 = 12;
+    const READ_ATTRIBUTES: u32 = 0x80;
     const DELETE: u32 = 0x1_0000;
     const READ_CONTROL: u32 = 0x2_0000;
     const WRITE_DAC: u32 = 0x4_0000;
     const WRITE_OWNER: u32 = 0x8_0000;
+    const SYNCHRONIZE: u32 = 0x10_0000;
     const GENERIC_ALL: u32 = 0x1000_0000;
     /// Read data or list, read extended attributes, generic read.
     const READ_MASK: u32 = 0x1 | 0x8 | 0x8000_0000;
@@ -360,10 +362,10 @@ pub mod acl {
     /// mark its entries as inheritable the modern way, so files created inside would get copies
     /// instead of inherited entries.
     ///
-    /// Until then the creating account also holds read-control, write-DAC and delete (not
-    /// inherited): an `OW` entry replaces the owner's implicit right to change the DACL,
-    /// `CONFIG_DIR_SDDL` grants the owner less than that, and the cleanup after a failed update
-    /// must be able to remove the directory.
+    /// Until then the creating account also holds read-control, write-DAC, delete,
+    /// read-attributes and synchronize (not inherited): an `OW` entry replaces the owner's implicit right to
+    /// change the DACL, `CONFIG_DIR_SDDL` grants the owner less than that, and the cleanup after
+    /// a failed update must be able to open and remove the directory.
     pub fn create_dir(path: &Path, sddl: &str) -> std::io::Result<()> {
         let initial = Descriptor::from_sddl(&initial_sddl(sddl))?;
         let attributes = initial.attributes();
@@ -381,7 +383,7 @@ pub mod acl {
 
     /// The descriptor a directory is created with before its final DACL is set.
     pub(super) fn initial_sddl(sddl: &str) -> String {
-        format!("{sddl}(A;;0x{:x};;;OW)", READ_CONTROL | WRITE_DAC | DELETE)
+        format!("{sddl}(A;;0x{:x};;;OW)", READ_CONTROL | WRITE_DAC | DELETE | READ_ATTRIBUTES | SYNCHRONIZE)
     }
 
     /// Creates a new file (it must not exist) that has the DACL from `sddl` from its first moment.
@@ -531,7 +533,9 @@ pub mod acl {
         };
         // In the configuration folder the owner may be a non-admin service account; an owner
         // entry that can still change the DACL (left from creation) would let it open the folder.
+        // SYSTEM and Administrators may change it anyway.
         if others == Others::ReadOnly
+            && ![SYSTEM, ADMINISTRATORS].contains(&owner)
             && dacl.iter().any(|e| e.sid == OWNER_RIGHTS && e.mask & (WRITE_DAC | WRITE_OWNER | GENERIC_ALL) != 0)
         {
             return Some("its owner entry may still change the access list (left from an interrupted creation)".into());
@@ -857,33 +861,57 @@ mod tests {
         assert!(text.contains("S-1-5-32-545 may write"), "{text}");
     }
 
+    /// A configuration folder whose owner entry still holds write-DAC (left from an interrupted
+    /// creation) is refused when a non-admin owns it; SYSTEM and Administrators may change the
+    /// entries anyway.
     #[cfg(windows)]
     #[test]
     fn a_config_folder_left_with_its_creation_entry_is_refused() {
+        use acl::{Entry, Others, problem};
+        let me = "S-1-5-80-1";
+        let entry = |sid: &str, mask: u32| Entry { sid: sid.into(), mask };
+        let left = [
+            entry("S-1-5-18", 0x1f01ff),
+            entry("S-1-5-32-544", 0x1f01ff),
+            entry("S-1-5-32-545", 0x1200a9),
+            entry("S-1-3-4", 0x1200ad),
+            entry("S-1-3-4", 0x70000),
+        ];
+        let text = problem(me, Some(&left), me, Others::ReadOnly).unwrap();
+        assert!(text.contains("owner entry may still change the access list"), "{text}");
+        for admin in ["S-1-5-18", "S-1-5-32-544"] {
+            assert_eq!(problem(admin, Some(&left), me, Others::ReadOnly), None, "{admin}");
+        }
+        assert_eq!(problem(me, Some(&left[..4]), me, Others::ReadOnly), None);
+        // The real descriptors: the creation one carries the entry, the final one does not.
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("Kalzit");
         std::fs::create_dir(&folder).unwrap();
         acl::restrict(&folder, &acl::initial_sddl(acl::CONFIG_DIR_SDDL)).unwrap();
-        let text = format!("{:#}", check_admin_only(&folder).unwrap_err());
-        assert!(text.contains("owner entry may still change the access list"), "{text}");
+        let (_, dacl) = acl::read(&folder).unwrap();
+        assert_eq!(problem(me, dacl.as_deref(), me, Others::ReadOnly).map(|_| ()), Some(()));
         acl::restrict(&folder, acl::CONFIG_DIR_SDDL).unwrap();
-        check_admin_only(&folder).unwrap();
+        let (_, dacl) = acl::read(&folder).unwrap();
+        assert_eq!(problem(me, dacl.as_deref(), me, Others::ReadOnly), None);
     }
 
-    /// The creation descriptor lets the creator remove the directory again, even where the parent
-    /// grants no delete-child right (`%ProgramData%\Kalzit` for a non-elevated account).
+    /// The creation descriptor lets the creator remove the directory again where neither the
+    /// directory nor its parent grants anything to Administrators or the creator, so this fails
+    /// without it on an elevated token, too.
     #[cfg(windows)]
     #[test]
     fn the_creation_descriptor_allows_cleanup() {
         let root = tempfile::tempdir().unwrap();
         let parent = root.path().join("Kalzit");
         std::fs::create_dir(&parent).unwrap();
-        acl::restrict(&parent, acl::CONFIG_DIR_SDDL).unwrap();
         let dir = parent.join("data");
         std::fs::create_dir(&dir).unwrap();
-        // A final DACL that gives the owner no delete right, as on the configuration folder.
-        acl::restrict(&dir, &acl::initial_sddl(acl::CONFIG_DIR_SDDL)).unwrap();
-        std::fs::remove_dir(&dir).unwrap();
+        acl::restrict(&dir, &acl::initial_sddl("D:P(A;;FA;;;SY)")).unwrap();
+        acl::restrict(&parent, "D:P(A;;FA;;;SY)").unwrap();
+        let removed = std::fs::remove_dir(&dir);
+        // Give the parent back to the owner, so the temporary folder can be cleaned up.
+        acl::restrict(&parent, "D:P(A;;FA;;;SY)(A;;FA;;;OW)").unwrap();
+        removed.unwrap();
     }
 
     #[cfg(windows)]
