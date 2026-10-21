@@ -334,8 +334,10 @@
     scrollbar-width: thin;
   }
 
+  /* minmax(0, 1fr): a long label shrinks with the column instead of pushing it wider. */
   .shell__nav-list {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-px);
     padding: 0;
     list-style: none;
@@ -357,6 +359,14 @@
     transition:
       background-color var(--duration-fast) var(--easing),
       color var(--duration-fast) var(--easing);
+  }
+
+  /* Sub-pages have no icon to fall back on, so a long name wraps instead of being cut. */
+  .nav-sublink {
+    padding-block: var(--space-1);
+    line-height: var(--line-height-tight);
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .nav-link:hover,
@@ -429,6 +439,7 @@
   /* Sub-pages line up with the entry's label: icon plus gap. */
   .nav-sub {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-px);
     padding: var(--space-px) 0 var(--space-1) var(--space-6);
     list-style: none;
@@ -436,6 +447,7 @@
 
   .nav-sub__group {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /* Group headings: small capitals, so they never read as links. */
@@ -451,6 +463,7 @@
 
   .nav-sub__list {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-px);
     padding: 0;
     list-style: none;
@@ -462,6 +475,7 @@
     z-index: var(--z-menu);
     display: grid;
     min-width: 12rem;
+    max-width: 20rem;
     max-height: calc(100dvh - var(--space-2));
     overflow-y: auto;
     padding: var(--space-1);
