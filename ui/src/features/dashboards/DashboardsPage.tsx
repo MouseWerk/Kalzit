@@ -1,16 +1,587 @@
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import { useId, useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
+import { FormAlert } from "../../components/FormAlert";
+import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
+import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
+import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { AccessButton } from "./accessIntegration";
+import {
+  createDashboard,
+  createFolder,
+  DASHBOARDS_KEY,
+  deleteFolder,
+  FOLDERS_KEY,
+  type Folder,
+  fetchDashboards,
+  foldersQuery,
+  restoreFolder,
+  updateFolder,
+} from "./api";
+import "./dashboards.css";
+import { descendantIds, FolderTree } from "./FolderTree";
+import { emptyModel } from "./model";
+import { ConfirmDialog, Dialog } from "./ui/Dialog";
+import { errorMessage } from "./ui/errors";
+
+const listRoute = getRouteApi("/_app/dashboards");
 
 export function DashboardsPage() {
   const { t } = useI18n();
   useDocumentTitle("dashboards.title");
+  const org = useCurrentOrg();
   return (
     <Page title={t("dashboards.title")} lead={t("dashboards.lead")}>
-      <EmptyState icon="dashboards" title={t("dashboards.empty.title")}>
-        {t("dashboards.empty.text")}
-      </EmptyState>
+      {org === undefined ? (
+        <EmptyState icon="dashboards" title={t("dashboards.noOrg.title")}>
+          {t("dashboards.noOrg.text")}
+        </EmptyState>
+      ) : (
+        <DashboardBrowser orgId={org.id} />
+      )}
     </Page>
+  );
+}
+
+function DashboardBrowser({ orgId }: { orgId: string }) {
+  const { t } = useI18n();
+  const permissions = useOrgPermissions();
+  const search = listRoute.useSearch();
+  const navigate = listRoute.useNavigate();
+  const searchId = useId();
+  const folders = useQuery(foldersQuery(orgId));
+  const [creating, setCreating] = useState<"dashboard" | "folder" | null>(null);
+  const [deletedFolder, setDeletedFolder] = useState<Folder | null>(null);
+  const queryClient = useQueryClient();
+  const restore = useMutation({
+    mutationFn: (id: string) => restoreFolder(orgId, id),
+    onSuccess: async () => {
+      setDeletedFolder(null);
+      await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+    },
+  });
+  const folder = folders.data?.find((f) => f.id === search.folder);
+  const canWrite = permissions.has("dashboards:write");
+
+  const select = (id: string | undefined) =>
+    navigate({ search: (prev) => ({ ...prev, folder: id }), replace: true });
+
+  return (
+    <div className="browser">
+      <aside className="browser__side">
+        {folders.isError ? (
+          <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
+        ) : (
+          <FolderTree folders={folders.data ?? []} selected={search.folder} onSelect={select} />
+        )}
+        {permissions.has("folders:write") ? (
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setCreating("folder")}
+          >
+            {t("dashboards.folders.new")}
+          </button>
+        ) : null}
+        {permissions.has("dashboards:delete") ? (
+          <Link to="/dashboards/trash" className="browser__trash">
+            {t("dashboards.trash.link")}
+          </Link>
+        ) : null}
+      </aside>
+      <section className="browser__main" aria-labelledby={`${searchId}-title`}>
+        <div className="browser__header">
+          <h2 className="section-title" id={`${searchId}-title`}>
+            {folder?.name ?? t("dashboards.folders.all")}
+            {folder?.restricted === true ? (
+              <span className="browser__restricted">
+                <Icon name="lock" />
+                {t("dashboards.folders.restricted")}
+              </span>
+            ) : null}
+          </h2>
+          {canWrite ? (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => setCreating("dashboard")}
+            >
+              {t("dashboards.new")}
+            </button>
+          ) : null}
+        </div>
+        {deletedFolder === null ? null : (
+          <div className="notice" role="status">
+            <Icon name="check" />
+            <span>{t("dashboards.folders.deleted", { name: deletedFolder.name })}</span>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => restore.mutate(deletedFolder.id)}
+              disabled={restore.isPending}
+            >
+              {t("dashboards.trash.restore")}
+            </button>
+          </div>
+        )}
+        <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
+        {folder === undefined ? null : (
+          <FolderActions
+            orgId={orgId}
+            folder={folder}
+            folders={folders.data ?? []}
+            onDeleted={(deleted) => {
+              setDeletedFolder(deleted);
+              void select(undefined);
+            }}
+          />
+        )}
+        <div className="field browser__search">
+          <label className="visually-hidden" htmlFor={searchId}>
+            {t("dashboards.search")}
+          </label>
+          <input
+            id={searchId}
+            type="search"
+            className="input"
+            placeholder={t("dashboards.search")}
+            value={search.q ?? ""}
+            onChange={(event) => {
+              const q = event.currentTarget.value;
+              void navigate({
+                search: (prev) => ({ ...prev, q: q === "" ? undefined : q }),
+                replace: true,
+              });
+            }}
+          />
+        </div>
+        <DashboardList
+          orgId={orgId}
+          folderId={search.folder}
+          q={search.q}
+          folders={folders.data ?? []}
+        />
+      </section>
+      {creating === "dashboard" ? (
+        <NewDashboardDialog
+          orgId={orgId}
+          folders={folders.data ?? []}
+          folderId={search.folder}
+          onClose={() => setCreating(null)}
+        />
+      ) : null}
+      {creating === "folder" ? (
+        <FolderDialog
+          orgId={orgId}
+          folders={folders.data ?? []}
+          parentId={search.folder ?? null}
+          onClose={() => setCreating(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DashboardList({
+  orgId,
+  folderId,
+  q,
+  folders,
+}: {
+  orgId: string;
+  folderId: string | undefined;
+  q: string | undefined;
+  folders: readonly Folder[];
+}) {
+  const { t, language } = useI18n();
+  const list = useInfiniteQuery({
+    queryKey: [DASHBOARDS_KEY, orgId, "list", folderId ?? null, q ?? ""],
+    queryFn: ({ pageParam, signal }) => {
+      signal.throwIfAborted();
+      return fetchDashboards(orgId, { folderId, q, cursor: pageParam });
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+  });
+  const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
+
+  if (list.isPending) {
+    return <p className="loading">{t("common.loading")}</p>;
+  }
+  if (list.isError) {
+    return <FormAlert>{errorMessage(t, list.error)}</FormAlert>;
+  }
+  const items = list.data.pages.flatMap((page) => page.items);
+  if (items.length === 0) {
+    return (
+      <EmptyState
+        icon="dashboards"
+        title={q === undefined ? t("dashboards.empty.title") : t("dashboards.empty.search")}
+      >
+        {q === undefined ? t("dashboards.empty.text") : t("dashboards.empty.searchText")}
+      </EmptyState>
+    );
+  }
+  const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? "";
+  return (
+    <>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th scope="col">{t("dashboards.column.title")}</th>
+            <th scope="col">{t("dashboards.column.folder")}</th>
+            <th scope="col">{t("dashboards.column.updated")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.id}>
+              <td>
+                <Link to="/dashboards/$dashboardId" params={{ dashboardId: item.id }} search={{}}>
+                  {item.title === "" ? t("dashboards.untitled") : item.title}
+                </Link>
+              </td>
+              <td>{folderName(item.folderId)}</td>
+              <td>
+                {item.updatedAt > 0 ? dateFormat.format(item.updatedAt) : ""}
+                {item.updatedBy === "" ? null : (
+                  <span className="data-table__muted">
+                    {" "}
+                    {t("dashboards.updatedBy", { name: item.updatedBy })}
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {list.hasNextPage ? (
+        <button
+          type="button"
+          className="button button--secondary"
+          onClick={() => void list.fetchNextPage()}
+          disabled={list.isFetchingNextPage}
+        >
+          {t("dashboards.loadMore")}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function FolderSelect({
+  folders,
+  value,
+  onChange,
+  exclude,
+  label,
+}: {
+  folders: readonly Folder[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+  exclude?: Set<string>;
+  label: string;
+}) {
+  const { t } = useI18n();
+  const id = useId();
+  return (
+    <div className="field">
+      <label className="field__label" htmlFor={id}>
+        {label}
+      </label>
+      <select
+        id={id}
+        className="select"
+        value={value ?? ""}
+        onChange={(event) =>
+          onChange(event.currentTarget.value === "" ? null : event.currentTarget.value)
+        }
+      >
+        <option value="">{t("dashboards.folders.none")}</option>
+        {folders
+          .filter((f) => exclude?.has(f.id) !== true)
+          .map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+      </select>
+    </div>
+  );
+}
+
+function NewDashboardDialog({
+  orgId,
+  folders,
+  folderId,
+  onClose,
+}: {
+  orgId: string;
+  folders: readonly Folder[];
+  folderId: string | undefined;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [title, setTitle] = useState("");
+  const [folder, setFolder] = useState<string | null>(folderId ?? null);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const create = useMutation({
+    mutationFn: () =>
+      createDashboard(orgId, {
+        title: title.trim(),
+        folderId: folder,
+        model: emptyModel(title.trim()),
+      }),
+    onSuccess: async ({ id }) => {
+      await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+      onClose();
+      await navigate({
+        to: "/dashboards/$dashboardId",
+        params: { dashboardId: id },
+        search: { edit: true },
+      });
+    },
+  });
+  const formId = useId();
+  return (
+    <Dialog
+      title={t("dashboards.new.title")}
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" className="button button--secondary" onClick={onClose}>
+            {t("dashboards.dialog.cancel")}
+          </button>
+          <button
+            type="submit"
+            form={formId}
+            className="button button--primary"
+            disabled={create.isPending}
+          >
+            {t("dashboards.new.create")}
+          </button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="form"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (title.trim() === "") {
+            setError(t("dashboards.new.titleRequired"));
+            return;
+          }
+          create.mutate();
+        }}
+      >
+        <FormAlert>{create.isError ? errorMessage(t, create.error) : null}</FormAlert>
+        <TextField
+          label={t("dashboards.new.titleLabel")}
+          value={title}
+          onValueChange={(value) => {
+            setTitle(value);
+            setError(undefined);
+          }}
+          error={error}
+          data-autofocus
+          autoComplete="off"
+        />
+        <FolderSelect
+          folders={folders}
+          value={folder}
+          onChange={setFolder}
+          label={t("dashboards.column.folder")}
+        />
+      </form>
+    </Dialog>
+  );
+}
+
+/** Create a folder, or rename and move an existing one. */
+function FolderDialog({
+  orgId,
+  folders,
+  parentId,
+  folder,
+  onClose,
+}: {
+  orgId: string;
+  folders: readonly Folder[];
+  parentId: string | null;
+  folder?: Folder;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [name, setName] = useState(folder?.name ?? "");
+  const [parent, setParent] = useState<string | null>(folder?.parentId ?? parentId);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const formId = useId();
+  const save = useMutation({
+    mutationFn: () =>
+      folder === undefined
+        ? createFolder(orgId, { name: name.trim(), parentId: parent })
+        : updateFolder(orgId, folder.id, {
+            name: name.trim(),
+            parentId: parent,
+            version: folder.version,
+          }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+      onClose();
+    },
+  });
+  return (
+    <Dialog
+      title={
+        folder === undefined ? t("dashboards.folders.newTitle") : t("dashboards.folders.editTitle")
+      }
+      onClose={onClose}
+      actions={
+        <>
+          <button type="button" className="button button--secondary" onClick={onClose}>
+            {t("dashboards.dialog.cancel")}
+          </button>
+          <button
+            type="submit"
+            form={formId}
+            className="button button--primary"
+            disabled={save.isPending}
+          >
+            {t("dashboards.folders.save")}
+          </button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="form"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (name.trim() === "") {
+            setError(t("dashboards.folders.nameRequired"));
+            return;
+          }
+          save.mutate();
+        }}
+      >
+        <FormAlert>{save.isError ? errorMessage(t, save.error) : null}</FormAlert>
+        <TextField
+          label={t("dashboards.folders.name")}
+          value={name}
+          onValueChange={(value) => {
+            setName(value);
+            setError(undefined);
+          }}
+          error={error}
+          data-autofocus
+          autoComplete="off"
+        />
+        <FolderSelect
+          folders={folders}
+          value={parent}
+          onChange={setParent}
+          label={t("dashboards.folders.parent")}
+          {...(folder === undefined ? {} : { exclude: descendantIds(folders, folder.id) })}
+        />
+      </form>
+    </Dialog>
+  );
+}
+
+function FolderActions({
+  orgId,
+  folder,
+  folders,
+  onDeleted,
+}: {
+  orgId: string;
+  folder: Folder;
+  folders: readonly Folder[];
+  onDeleted: (folder: Folder) => void;
+}) {
+  const { t } = useI18n();
+  const permissions = useOrgPermissions();
+  const queryClient = useQueryClient();
+  const [dialog, setDialog] = useState<"edit" | "delete" | null>(null);
+  const refresh = () => queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+  const restrict = useMutation({
+    mutationFn: (restricted: boolean) =>
+      updateFolder(orgId, folder.id, { restricted, version: folder.version }),
+    onSuccess: refresh,
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteFolder(orgId, folder.id),
+    onSuccess: async () => {
+      setDialog(null);
+      await refresh();
+      onDeleted(folder);
+    },
+  });
+
+  return (
+    <div className="folder-actions">
+      <FormAlert>{restrict.isError ? errorMessage(t, restrict.error) : null}</FormAlert>
+      {folder.canEdit ? (
+        <div className="toolbar">
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setDialog("edit")}
+          >
+            {t("dashboards.folders.edit")}
+          </button>
+          {permissions.has("folders:permissions") ? (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={folder.restricted}
+                disabled={restrict.isPending}
+                onChange={(event) => restrict.mutate(event.currentTarget.checked)}
+              />
+              {t("dashboards.folders.restrict")}
+            </label>
+          ) : null}
+          <AccessButton resource={{ kind: "folder", id: folder.id, name: folder.name }} />
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setDialog("delete")}
+          >
+            {t("dashboards.folders.delete")}
+          </button>
+        </div>
+      ) : null}
+      {dialog === "edit" ? (
+        <FolderDialog
+          orgId={orgId}
+          folders={folders}
+          parentId={folder.parentId}
+          folder={folder}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "delete" ? (
+        <ConfirmDialog
+          title={t("dashboards.folders.deleteTitle")}
+          confirmLabel={t("dashboards.folders.deleteConfirm")}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => remove.mutate()}
+          busy={remove.isPending}
+          error={remove.isError ? errorMessage(t, remove.error) : undefined}
+        >
+          {t("dashboards.folders.deleteText", { name: folder.name })}
+        </ConfirmDialog>
+      ) : null}
+    </div>
   );
 }

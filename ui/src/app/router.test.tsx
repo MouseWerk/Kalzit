@@ -120,7 +120,7 @@ describe("route guards", () => {
 
     server.state.signedIn = false;
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
-    await user.click(within(nav).getByRole("link", { name: "Explore" }));
+    await user.click(await within(nav).findByRole("link", { name: "Explore" }));
 
     await screen.findByRole("heading", { name: "Sign in" });
     expect(location().search).toEqual({ redirect: "/explore" });
@@ -134,11 +134,11 @@ describe("route guards", () => {
     const before = meCalls();
 
     // What hovering a link does (defaultPreload "intent"), awaited so the check is not racy.
-    await user.hover(within(nav).getByRole("link", { name: "Explore" }));
+    await user.hover(await within(nav).findByRole("link", { name: "Explore" }));
     await app.router.preloadRoute({ to: "/explore" });
     expect(meCalls()).toBe(before);
 
-    await user.click(within(nav).getByRole("link", { name: "Explore" }));
+    await user.click(await within(nav).findByRole("link", { name: "Explore" }));
     await screen.findByRole("heading", { level: 1, name: "Explore" });
     expect(meCalls()).toBe(before + 1);
   });
