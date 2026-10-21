@@ -618,8 +618,11 @@ impl Kind {
                     SettingType::Bool => "settings.expected_bool",
                     SettingType::Select => "settings.expected_option",
                 };
-                return Err(FieldError::new(field.name, reason, format!("{key} must be {expected}"))
-                    .with("options", field.options.join(", ")));
+                let e = FieldError::new(field.name, reason, format!("{key} must be {expected}"));
+                return Err(match field.field_type {
+                    SettingType::Select => e.with("options", field.options.join(", ")),
+                    _ => e,
+                });
             }
             if field.field_type == SettingType::String
                 && value.as_str().is_some_and(|s| s.chars().any(char::is_control))

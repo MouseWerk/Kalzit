@@ -379,7 +379,6 @@ pub enum QueryOutcome {
     Err { error: ErrorBody },
 }
 
-/// The body of every error answer: `{"error": ErrorBody}`.
 /// What the caller may do on one data source, from their role and grants together; the routes
 /// decide by the same rules.
 ///
@@ -388,7 +387,7 @@ pub enum QueryOutcome {
 /// - `write`: change its name, limits and secrets, and trash and restore it.
 /// - `permissions`: the admin level: manage its grants.
 /// - `changeTarget`: change where it connects (host, port, database, user, TLS, path, URL), with
-///   the secrets that go with it: the org-wide datasources:write, or `permissions`.
+///   the secrets that go with it: `write`, plus the org-wide datasources:write or `permissions`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -400,6 +399,7 @@ pub struct DatasourceAccess {
     pub change_target: bool,
 }
 
+/// The body of every error answer: `{"error": ErrorBody}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ErrorEnvelope {

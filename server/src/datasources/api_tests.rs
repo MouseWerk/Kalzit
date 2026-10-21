@@ -412,6 +412,16 @@ async fn settings_and_secrets_are_validated() {
     }
     let r = t.post("/datasources", json!({ "name": "X", "kind": "sqlite", "settings": {}, "extra": 1 })).await;
     assert_eq!(r.code(), "validation");
+    // Only a choice names its options.
+    let r =
+        t.post("/datasources", pg(json!({ "host": "h", "database": "d", "user": "u", "port": "x" }), json!({}))).await;
+    assert_eq!(r.body["error"]["reason"], "settings.expected_number", "{}", r.text);
+    assert_eq!(r.body["error"]["params"], json!({ "field": "port" }), "{}", r.text);
+    let r = t
+        .post("/datasources", pg(json!({ "host": "h", "database": "d", "user": "u", "sslMode": "x" }), json!({})))
+        .await;
+    assert_eq!(r.body["error"]["reason"], "settings.expected_option", "{}", r.text);
+    assert_eq!(r.body["error"]["params"]["options"], "disable, prefer, require, verify-ca, verify-full", "{}", r.text);
 }
 
 #[tokio::test]
@@ -674,6 +684,64 @@ async fn empty_sqlite_tables_keep_their_declared_types() {
     // documented default, string.
     assert_eq!(types, ["int64", "number", "string", "time", "bool", "string", "number", "string", "string"]);
     assert_eq!(frame["fields"][1]["values"], json!([]));
+}
+
+/// Values are converted to the column's type where nothing is lost: a whole REAL in an int64
+/// column is its integer, a fraction is `null` and counted; numbers in a time column are Unix
+/// seconds up to 10^11 and milliseconds above.
+#[tokio::test]
+async fn sqlite_values_keep_to_their_column_type() {
+    let t = T::new().await;
+    let file = t
+        .sqlite_file(
+            "werte.db",
+            // INTEGER affinity stores 3.0 as the integer 3 and keeps 1.5 and 2.5 as REAL.
+            "CREATE TABLE z (i INTEGER); INSERT INTO z VALUES (1), (3.0), (1.5), (2.5);
+             CREATE VIEW plus AS SELECT i + 1 AS j FROM z;
+             CREATE TABLE e (d DATETIME);
+             INSERT INTO e VALUES (1767261600), (1767261600000), (1767261600.5), ('2026-01-01 10:00:00');",
+        )
+        .await;
+    let id = t.create_sqlite("Werte", &file).await;
+    let run = |sql: &str| {
+        let t = &t;
+        let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }]);
+        async move {
+            let r = t.query(&t.owner, q).await;
+            let frame = r.body["results"]["A"]["result"]["frame"].clone();
+            assert!(frame.is_object(), "{}", r.text);
+            frame
+        }
+    };
+    let mismatch = |frame: &Value| {
+        frame["meta"]["notices"].as_array().unwrap().iter().find(|n| n["code"] == "frame.value_mismatch").cloned()
+    };
+
+    // Declared INTEGER: the fractions are empty, counted once per column.
+    let frame = run("SELECT i FROM z ORDER BY rowid").await;
+    assert_eq!(frame["fields"][0]["type"], "int64");
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "3", null, null]));
+    let notice = mismatch(&frame).expect("a mismatch notice");
+    assert_eq!(notice["params"], json!({ "column": "i", "count": "2" }));
+    assert_eq!(frame["meta"]["notices"].as_array().unwrap().len(), 1, "one notice per column: {frame}");
+
+    // The view's expression has no declared type; its first value makes it int64.
+    let frame = run("SELECT j FROM plus").await;
+    assert_eq!(frame["fields"][0]["type"], "int64");
+    assert_eq!(frame["fields"][0]["values"], json!(["2", "4", null, null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"]["count"], "2");
+
+    // A whole number stored as REAL becomes its integer.
+    let frame = run("SELECT 1 AS n UNION ALL SELECT 4.0 UNION ALL SELECT 2.5").await;
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "4", null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"], json!({ "column": "n", "count": "1" }));
+
+    // Seconds, milliseconds, fractional seconds and text all name the same time.
+    let frame = run("SELECT d FROM e ORDER BY rowid").await;
+    assert_eq!(frame["fields"][0]["type"], "time");
+    let ms = 1_767_261_600_000_i64;
+    assert_eq!(frame["fields"][0]["values"], json!([ms, ms, ms + 500, ms]));
+    assert!(mismatch(&frame).is_none(), "{frame}");
 }
 
 #[tokio::test]
@@ -1354,8 +1422,6 @@ async fn variable_changes_recheck_every_stored_query() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
 }
 
-/// An edit grant on a data source renames it and changes its limits, but where it connects is
-/// for administrators.
 /// List and detail answers say what the caller may do, from role and grants, and the routes
 /// agree with what they say.
 #[tokio::test]
@@ -1395,6 +1461,18 @@ async fn answers_carry_the_callers_access() {
     let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(back), Some(&custom)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
 
+    // A custom role with read and permissions but without write manages grants, but cannot change
+    // the source, so neither its target.
+    let role = t
+        .post("/roles", json!({ "name": "Freigaben", "permissions": ["datasources:read", "datasources:permissions"] }))
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text);
+    let granter = t.session_for_role("greta", role.body["id"].as_str()).await;
+    assert_eq!(seen(granter.clone()).await, access(true, false, false, true, false));
+    let moved = json!({ "settings": { "path": other.to_string_lossy() } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(moved), Some(&granter)).await;
+    assert_eq!(r.code(), "forbidden", "{}", r.text);
+
     let viewer = t.session_for_role("vera", Some("viewer")).await;
     let (vera,): (String,) =
         sqlx::query_as("SELECT id FROM users WHERE email = 'vera@example.de'").fetch_one(&t.state.db).await.unwrap();
@@ -1411,7 +1489,7 @@ async fn answers_carry_the_callers_access() {
         assert!(r.status.is_success(), "{}", r.text);
         assert_eq!(seen(viewer.clone()).await, expected, "{level}");
     }
-    // `changeTarget` says the target may change; an edit grant alone is refused (see
+    // With the admin grant the member may repoint the source (an edit grant alone may not, see
     // an_edit_grant_cannot_repoint_a_data_source).
     let r = t
         .send(
@@ -1430,6 +1508,221 @@ async fn answers_carry_the_callers_access() {
     assert_eq!(trash.body["items"][0]["access"], access(true, true, true, true, true), "{}", trash.text);
 }
 
+/// `access` against what each route allows, for every combination of data source permissions on
+/// a custom role (held directly or as a team role) and a grant (none, or query, edit or admin to
+/// the member, their team or their role): 192 principals. Read is `GET`, query is `/health` (and
+/// agrees with a free query), write is a rename, permissions is reading the grants, changeTarget
+/// is a path change; on the trash, `write` and being listed must match whether restore works.
+#[tokio::test]
+async fn access_matches_what_the_routes_allow() {
+    let t = T::new().await;
+    let file = t.sqlite_file("a.db", SALES).await;
+    let other = t.sqlite_file("b.db", SALES).await;
+    let ds = t.create_sqlite("A", &file).await;
+    let gone = t.create_sqlite("B", &file).await;
+    let r = t.send(Method::DELETE, &t.path(&format!("/datasources/{gone}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.text);
+    let db = t.state.db.clone();
+    let perms = ["datasources:read", "datasources:query", "datasources:write", "datasources:permissions"];
+    let grants: [(&str, &str); 6] =
+        [("none", ""), ("user", "query"), ("user", "edit"), ("user", "admin"), ("team", "edit"), ("role", "admin")];
+    let mut bad = Vec::new();
+    let mut n = 0;
+    for mask in 0..16u32 {
+        let set: Vec<&str> = perms.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, p)| *p).collect();
+        let role_id = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO roles (id, org_id, name, name_key, description, created_at) VALUES ($1, $2, $3, $4, $5, 0)",
+        )
+        .bind(&role_id)
+        .bind(&t.org)
+        .bind(format!("r{mask}"))
+        .bind(format!("r{mask}"))
+        .bind("x")
+        .execute(&db)
+        .await
+        .unwrap();
+        for p in &set {
+            sqlx::query("INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2)")
+                .bind(&role_id)
+                .bind(*p)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        for via_team in [false, true] {
+            for (subject, level) in grants {
+                n += 1;
+                let name = format!("u{n}");
+                let org_role = if via_team { "viewer".to_string() } else { role_id.clone() };
+                let cookie = t.session_for_role(&name, Some(&org_role)).await;
+                let (uid,): (String,) =
+                    sqlx::query_as("SELECT id FROM users WHERE name = $1").bind(&name).fetch_one(&db).await.unwrap();
+                let team = uuid::Uuid::now_v7().to_string();
+                sqlx::query("INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ($1, $2, $3, $4, 0)")
+                    .bind(&team)
+                    .bind(&t.org)
+                    .bind(format!("t{n}"))
+                    .bind(format!("t{n}"))
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ($1, $2, $3, 0)")
+                    .bind(&team)
+                    .bind(&uid)
+                    .bind("member")
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                if via_team {
+                    sqlx::query("INSERT INTO team_roles (team_id, role) VALUES ($1, $2)")
+                        .bind(&team)
+                        .bind(&role_id)
+                        .execute(&db)
+                        .await
+                        .unwrap();
+                }
+                let subject_id = match subject {
+                    "user" => uid.clone(),
+                    "team" => team.clone(),
+                    _ => role_id.clone(),
+                };
+                let mut grant_ids = Vec::new();
+                if subject != "none" {
+                    for res in [&ds, &gone] {
+                        let gid = uuid::Uuid::now_v7().to_string();
+                        sqlx::query("INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 0)")
+                            .bind(&gid).bind(&t.org).bind(subject).bind(&subject_id).bind("datasource").bind(res).bind(level)
+                            .execute(&db).await.unwrap();
+                        grant_ids.push(gid);
+                    }
+                }
+                let label = format!("perms={set:?} team={via_team} grant={subject}:{level}");
+                let flags = |a: &Value| -> [bool; 5] {
+                    ["read", "query", "write", "permissions", "changeTarget"].map(|k| a[k].as_bool().unwrap_or(false))
+                };
+                // Live source.
+                let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&cookie)).await;
+                let listed = list.body["items"].as_array().unwrap().iter().find(|i| i["id"] == ds.as_str()).cloned();
+                let one = t.send(Method::GET, &t.path(&format!("/datasources/{ds}")), None, Some(&cookie)).await;
+                if let Some(row) = &listed
+                    && one.status == StatusCode::OK
+                    && row["access"] != one.body["access"]
+                {
+                    bad.push(format!("{label}: list {} != detail {}", row["access"], one.body["access"]));
+                }
+                let claimed = listed
+                    .as_ref()
+                    .map(|r| flags(&r["access"]))
+                    .or_else(|| (one.status == StatusCode::OK).then(|| flags(&one.body["access"])))
+                    .unwrap_or_default();
+                let health = t
+                    .send(Method::POST, &t.path(&format!("/datasources/{ds}/health")), Some(json!({})), Some(&cookie))
+                    .await;
+                let q = t.send(Method::POST, &t.path("/query"), Some(json!({ "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT 1 AS x" } }], "timeRange": { "from": 0, "to": 1 } })), Some(&cookie)).await;
+                let free_ok = q.body["results"]["A"].get("result").is_some();
+                let write = t
+                    .send(
+                        Method::PATCH,
+                        &t.path(&format!("/datasources/{ds}")),
+                        Some(json!({ "name": "A" })),
+                        Some(&cookie),
+                    )
+                    .await;
+                let gr = t
+                    .send(
+                        Method::GET,
+                        &t.path(&format!("/grants?resourceType=datasource&resourceId={ds}")),
+                        None,
+                        Some(&cookie),
+                    )
+                    .await;
+                let moved = t
+                    .send(
+                        Method::PATCH,
+                        &t.path(&format!("/datasources/{ds}")),
+                        Some(json!({ "settings": { "path": other.to_string_lossy() } })),
+                        Some(&cookie),
+                    )
+                    .await;
+                if moved.status == StatusCode::OK {
+                    let back = t
+                        .send(
+                            Method::PATCH,
+                            &t.path(&format!("/datasources/{ds}")),
+                            Some(json!({ "settings": { "path": file.to_string_lossy() } })),
+                            Some(&t.owner),
+                        )
+                        .await;
+                    assert_eq!(back.status, StatusCode::OK, "{}", back.text);
+                }
+                let actual = [
+                    one.status == StatusCode::OK,
+                    health.status == StatusCode::OK,
+                    write.status == StatusCode::OK,
+                    gr.status == StatusCode::OK,
+                    moved.status == StatusCode::OK,
+                ];
+                if health.status.is_success() != free_ok {
+                    bad.push(format!("{label}: health {} but free query ok={free_ok}", health.status));
+                }
+                if claimed != actual {
+                    bad.push(format!(
+                        "{label}: live access {claimed:?} vs routes {actual:?} (listed={})",
+                        listed.is_some()
+                    ));
+                }
+                let sees = actual[0] || actual[1];
+                if listed.is_some() != sees {
+                    bad.push(format!("{label}: listed={} but routes see={sees}", listed.is_some()));
+                }
+                // Trash.
+                let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&cookie)).await;
+                let row =
+                    trash.body["items"].as_array().and_then(|a| a.iter().find(|i| i["id"] == gone.as_str()).cloned());
+                let claimed = row.as_ref().map(|r| flags(&r["access"])).unwrap_or_default();
+                let restore = t
+                    .send(
+                        Method::POST,
+                        &t.path(&format!("/datasources/{gone}/restore")),
+                        Some(json!({})),
+                        Some(&cookie),
+                    )
+                    .await;
+                if restore.status == StatusCode::OK {
+                    let again =
+                        t.send(Method::DELETE, &t.path(&format!("/datasources/{gone}")), None, Some(&t.owner)).await;
+                    assert!(again.status.is_success(), "{}", again.text);
+                }
+                let restore_ok = restore.status == StatusCode::OK;
+                if claimed[2] != restore_ok || row.is_some() != restore_ok {
+                    bad.push(format!(
+                        "{label}: trash listed={} access={claimed:?} but restore {}",
+                        row.is_some(),
+                        restore.status
+                    ));
+                }
+                for gid in grant_ids {
+                    sqlx::query("DELETE FROM resource_grants WHERE id = $1").bind(gid).execute(&db).await.unwrap();
+                }
+            }
+        }
+    }
+    assert_eq!(n, 192);
+    assert!(
+        bad.is_empty(),
+        "{} of {n} principals disagree:
+{}",
+        bad.len(),
+        bad.join(
+            "
+"
+        )
+    );
+}
+
+/// An edit grant on a data source renames it and changes its limits, but where it connects is
+/// for administrators.
 #[tokio::test]
 async fn an_edit_grant_cannot_repoint_a_data_source() {
     let t = T::new().await;

@@ -88,8 +88,10 @@ i18n keys the UI needs: `datasources.settings.<name>` for every field name above
 ## List: `GET /orgs/{orgId}/datasources`
 
 Query: `limit` (1 to 200, default 50), `cursor` (the previous page's `nextCursor`), `trash`
-(`true` lists the trash; needs `datasources:write`). Unknown parameters are a `validation` error.
-Newest first.
+(`true` lists the trash). Unknown parameters are a `validation` error. Newest first. The list
+holds exactly the sources the caller can open or query; the trash holds exactly those they can
+restore (`write` on the source, which needs the source to be visible to them: a role with
+`datasources:write` but neither read nor query sees only the sources a grant shows it).
 
 ```json
 { "items": [{ "id": "0199…", "name": "Umsätze", "kind": "postgres", "createdAt": 1800000000000,
@@ -130,12 +132,15 @@ agree; the list computes it for all rows at once.
 | `query` | `datasources:query` on the source (role, or any grant) | free queries (`/query`, Explore), Test connection (`/health`), `/schema` |
 | `write` | `datasources:write` on the source (admin roles, or an `edit` or `admin` grant) | `PATCH` of the name, non-target settings, limits and secrets; `DELETE` (trash) and `restore` |
 | `permissions` | `datasources:permissions` on the source (admin roles, or an `admin` grant) | managing the source's grants |
-| `changeTarget` | the org-wide `datasources:write` (the caller's role), or `datasources:permissions` on the source | changing `target` fields (host, port, database, user, TLS, URL, path), with the secrets that go with them (see Update) |
+| `changeTarget` | `write`, and also the org-wide `datasources:write` (the caller's role) or `datasources:permissions` on the source | changing `target` fields (host, port, database, user, TLS, URL, path), with the secrets that go with them (see Update) |
 
 `changeTarget` is exactly the rule `PATCH` applies to target changes. It differs from
-`permissions` for a custom role with the org-wide `datasources:write` but without
-`datasources:permissions`: that role may change targets but not manage grants. An `edit` grant
-gives `write` without `changeTarget`. On a source the caller cannot see, every flag is false.
+`permissions` in both directions: a custom role with the org-wide `datasources:write` but without
+`datasources:permissions` may change targets but not manage grants, and one with
+`datasources:read` and `datasources:permissions` but without write manages grants but cannot
+change the source at all. An `edit` grant gives `write` without `changeTarget`. On a source the
+caller cannot see, every flag is false. A test compares these flags with the routes' answers for
+192 combinations of roles, team roles and grants.
 Creating a source needs the org-wide `datasources:write` (the caller's role, not `access`).
 
 ### Create: `POST /orgs/{orgId}/datasources`
@@ -280,7 +285,14 @@ limit). Results are frames:
   `time`. So a table without rows still answers its types. Columns without a declared type
   (expressions such as `r * 2`), with `NUMERIC`/`DECIMAL` (which hold integers and reals alike) or
   with an unknown type take the type of their first value; without any value they are `string`.
-  A value that does not fit the declared type is `null` with a `frame.value_mismatch` notice.
+  A value is converted to the column's type where nothing is lost: an integer in a `number`
+  column, a whole-number REAL in an `int64` column (its integer). Any other value that does not
+  fit, such as `2.5` in an `int64` column, is `null`; one `frame.value_mismatch` notice per
+  column says how many (`count`).
+- Numbers in a SQLite `time` column are Unix time: a value whose magnitude is above 10^11 is
+  milliseconds, any other value seconds (what `unixepoch()` returns; fractions are kept to the
+  millisecond). 10^11 seconds lie in the year 5138 and 10^11 milliseconds in 1973, so both
+  readings cover the dates people store. Text is read in the forms SQLite's date functions write.
 - SQLite reads the file's current schema on every query, so a table recreated with other column
   types answers with its new types at once.
 - `meta.executedQuery` is the statement as sent, with placeholders instead of values.
@@ -449,9 +461,9 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.too_large` | | the settings are too large |
 | `settings.unknown` | `name` | not a setting of this kind |
 | `settings.secret_in_settings` | | a secret was sent in `settings` |
-| `settings.expected_text` | `options` (empty) | the value must be text |
-| `settings.expected_number` | `options` (empty) | the value must be a whole number of at least 0 |
-| `settings.expected_bool` | `options` (empty) | the value must be true or false |
+| `settings.expected_text` | | the value must be text |
+| `settings.expected_number` | | the value must be a whole number of at least 0 |
+| `settings.expected_bool` | | the value must be true or false |
 | `settings.expected_option` | `options` (comma-separated) | the value must be one of `options` |
 | `settings.control_characters` | | the value contains control characters |
 | `settings.required` | | a required setting is missing |
@@ -581,7 +593,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `frame.size_limit` | | notice: the result was cut at the response size limit |
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
 | `frame.type_unsupported` | `column`, `type` | notice: a column type the server cannot show |
-| `frame.value_mismatch` | `column` | notice: SQLite values that do not fit the column's type are empty |
+| `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 
 ## Not here yet

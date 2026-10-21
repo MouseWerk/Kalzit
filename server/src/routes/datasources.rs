@@ -106,10 +106,13 @@ fn access(ctx: &OrgCtx, held: Option<BTreeSet<Permission>>) -> DatasourceAccess 
     }
 }
 
-/// Where a source connects is decided by those who administer it: the org-wide right, or an
-/// admin grant on this source. An edit grant changes names, limits and secrets only.
+/// Whether the caller may change where a source connects: they may change the source at all
+/// (write on it), and where it connects is decided by those who administer it: the org-wide
+/// right, or an admin grant on this source. An edit grant changes names, limits and secrets only.
 fn may_change_target(ctx: &OrgCtx, held: &BTreeSet<Permission>) -> bool {
-    ctx.permissions.contains(&Permission::DatasourcesWrite) || held.contains(&Permission::DatasourcesPermissions)
+    held.contains(&Permission::DatasourcesWrite)
+        && (ctx.permissions.contains(&Permission::DatasourcesWrite)
+            || held.contains(&Permission::DatasourcesPermissions))
 }
 
 #[derive(Deserialize)]
@@ -164,7 +167,11 @@ async fn list(
             p.contains(&Permission::DatasourcesRead) || p.contains(&Permission::DatasourcesQuery)
         }
     };
-    let org_wide = shows(&ctx.permissions);
+    // The role alone shows every source only where it makes them visible at all (read or
+    // query); a role with write but neither sees, and restores, only what grants show it.
+    let role_sees = ctx.permissions.contains(&Permission::DatasourcesRead)
+        || ctx.permissions.contains(&Permission::DatasourcesQuery);
+    let org_wide = role_sees && shows(&ctx.permissions);
     // Also says per row what the caller may do, without a query per row.
     let index = AccessIndex::load(&mut *state.db.acquire().await?, &ctx).await?;
     let granted: Vec<String> = if org_wide {

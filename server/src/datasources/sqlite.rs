@@ -54,8 +54,10 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlitePool>, SourceError> {
             .pragma("query_only", "ON")
             // sqlx keeps the columns a cached statement was first prepared with, even after the
             // file's schema changed (SQLite re-prepares the statement, sqlx keeps the old
-            // columns). The file belongs to someone else and may change at any time, so every
-            // query is prepared afresh: one prepare per query, next to its execution.
+            // columns). The file belongs to someone else and may change at any time, so nothing
+            // is cached: a query prepares three statements (the schema read in `query`, the
+            // user's statement for its columns, and the same statement again to run it), about
+            // 0.25 ms in all.
             .statement_cache_capacity(0);
         SqlitePoolOptions::new()
             .max_connections(POOL_SIZE)
@@ -210,12 +212,20 @@ impl DataSourcePlugin for Sqlite {
                 Bind::Interval(ms) => query.bind(sql::format_interval(ms)),
             };
         }
+        let mut mismatches = vec![0_u64; frame.columns_mut().len()];
         let mut rows = query.fetch(&mut *c);
         while let Some(row) = rows.try_next().await.map_err(&stopped)? {
-            let values = row_values(&row, &mut frame);
+            let values = row_values(&row, &mut frame, &mut mismatches);
             if !frame.push_row(values) {
                 break;
             }
+        }
+        drop(rows);
+        let names: Vec<String> = frame.columns_mut().iter().map(|c| c.name.clone()).collect();
+        for (name, count) in names.iter().zip(mismatches).filter(|(_, n)| *n > 0) {
+            let message = format!("{name} holds {count} values that do not fit its type; they are shown empty");
+            let detail = Detail::new("frame.value_mismatch", message).with("column", name).with("count", count);
+            frame.notice(NoticeSeverity::Warning, detail);
         }
         Ok(QueryResult::Frame { frame: frame.finish() })
     }
@@ -257,9 +267,10 @@ pub fn parse_time_text(s: &str) -> Option<i64> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| d.and_hms_opt(0, 0, 0)).map(super::naive_to_ms)
 }
 
-/// SQLite types each value, not each column: the column takes the type of its first value, and
-/// later values are converted to it where that is lossless enough.
-fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
+/// SQLite types each value, not each column: a column without a declared type takes the type of
+/// its first value, and later values are converted to the column's type where that is lossless.
+/// Values that do not fit are `null` and counted per column in `mismatches`.
+fn row_values(row: &SqliteRow, frame: &mut FrameBuilder, mismatches: &mut [u64]) -> Vec<Value> {
     let mut out = Vec::with_capacity(row.len());
     let mut notices = Vec::new();
     for (i, column) in frame.columns_mut().iter_mut().enumerate() {
@@ -293,13 +304,7 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
         });
         let value = convert(natural, field_type);
         if value.is_null() {
-            notices.push(
-                Detail::new(
-                    "frame.value_mismatch",
-                    format!("{} holds values that do not fit its type; they are shown empty", column.name),
-                )
-                .with("column", &column.name),
-            );
+            mismatches[i] += 1;
         }
         out.push(value);
     }
@@ -315,16 +320,38 @@ enum Natural {
     Text(String),
 }
 
+/// Above this, a number in a time column is Unix milliseconds, below it Unix seconds (what
+/// SQLite's `unixepoch()` returns). 10^11 seconds lie in the year 5138, 10^11 milliseconds in
+/// 1973, so both readings cover the dates people store.
+const EPOCH_MS_ABOVE: f64 = 1e11;
+
+fn epoch_ms(n: f64) -> i64 {
+    let ms = if n.abs() > EPOCH_MS_ABOVE { n } else { n * 1000.0 };
+    ms.round() as i64
+}
+
 fn convert(natural: Natural, field_type: FieldType) -> Value {
     match (field_type, natural) {
         (FieldType::Int64, Natural::Int(i)) => json!(i.to_string()),
-        (FieldType::Int64, Natural::Real(f)) => json!(f.to_string()),
+        // A whole number stored as REAL fits; anything else would lose its fraction.
+        (FieldType::Int64, Natural::Real(f)) => {
+            if f.fract() == 0.0 && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&f) {
+                json!((f as i64).to_string())
+            } else {
+                Value::Null
+            }
+        }
         (FieldType::Number, Natural::Int(i)) => json!(i as f64),
         (FieldType::Number, Natural::Real(f)) => serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number),
         (FieldType::Bool, Natural::Int(i)) => json!(i != 0),
-        // A number in a date column is Unix seconds, what SQLite's unixepoch() returns.
-        (FieldType::Time, Natural::Int(i)) => json!(i.saturating_mul(1000)),
-        (FieldType::Time, Natural::Real(f)) => json!((f * 1000.0).round() as i64),
+        (FieldType::Time, Natural::Int(i)) => {
+            if i.unsigned_abs() > EPOCH_MS_ABOVE as u64 {
+                json!(i)
+            } else {
+                json!(i * 1000)
+            }
+        }
+        (FieldType::Time, Natural::Real(f)) if f.is_finite() => json!(epoch_ms(f)),
         (FieldType::Time, Natural::Text(t)) => parse_time_text(&t).map_or(Value::Null, |ms| json!(ms)),
         (FieldType::String, Natural::Text(t)) => json!(t),
         (FieldType::String, Natural::Int(i)) => json!(i.to_string()),
@@ -336,6 +363,24 @@ fn convert(natural: Natural, field_type: FieldType) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_reals_fit_int64_and_epochs_are_seconds_or_milliseconds() {
+        assert_eq!(convert(Natural::Real(4.0), FieldType::Int64), json!("4"));
+        assert_eq!(convert(Natural::Real(-3.0), FieldType::Int64), json!("-3"));
+        assert_eq!(convert(Natural::Real(2.5), FieldType::Int64), Value::Null);
+        assert_eq!(convert(Natural::Real(f64::NAN), FieldType::Int64), Value::Null);
+        assert_eq!(convert(Natural::Real(1e19), FieldType::Int64), Value::Null);
+        // Seconds up to 10^11, milliseconds above.
+        assert_eq!(convert(Natural::Int(1_767_261_600), FieldType::Time), json!(1_767_261_600_000_i64));
+        assert_eq!(convert(Natural::Int(1_767_261_600_000), FieldType::Time), json!(1_767_261_600_000_i64));
+        assert_eq!(convert(Natural::Int(100_000_000_000), FieldType::Time), json!(100_000_000_000_000_i64));
+        assert_eq!(convert(Natural::Int(100_000_000_001), FieldType::Time), json!(100_000_000_001_i64));
+        assert_eq!(convert(Natural::Int(-1_767_261_600), FieldType::Time), json!(-1_767_261_600_000_i64));
+        assert_eq!(convert(Natural::Real(1_767_261_600.25), FieldType::Time), json!(1_767_261_600_250_i64));
+        assert_eq!(convert(Natural::Real(1_767_261_600_250.4), FieldType::Time), json!(1_767_261_600_250_i64));
+        assert_eq!(convert(Natural::Real(f64::INFINITY), FieldType::Time), Value::Null);
+    }
 
     #[test]
     fn declared_types() {
