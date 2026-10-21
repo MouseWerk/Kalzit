@@ -490,7 +490,7 @@ async fn org_routes_check_membership_and_report_permissions() {
     assert!(perms.iter().all(|p| p != "dashboards:write" && p != "users:write"), "{perms:?}");
 }
 
-/// Every declared organization or admin route refuses strangers before its handler runs: no
+/// Every declared route except the public ones refuses strangers before its handler runs: no
 /// session answers 401, a member of another organization 404, a non-admin on /admin 403.
 #[tokio::test]
 async fn every_declared_route_enforces_its_access() {
@@ -512,7 +512,13 @@ async fn every_declared_route_enforces_its_access() {
         let (anon_status, member_status) = match def.access {
             Access::Org(_) | Access::OrgMember => (StatusCode::UNAUTHORIZED, StatusCode::NOT_FOUND),
             Access::ServerAdmin => (StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN),
-            Access::Public | Access::Authenticated => continue,
+            Access::Authenticated => {
+                let anon = t.send(def.method.clone(), &path, body, &[]).await;
+                assert_eq!(anon.status, StatusCode::UNAUTHORIZED, "{} {path} without a session", def.method);
+                checked += 1;
+                continue;
+            }
+            Access::Public => continue,
         };
         let anon = t.send(def.method.clone(), &path, body.clone(), &[]).await;
         assert_eq!(anon.status, anon_status, "{} {path} without a session", def.method);

@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --test api postgres -- --nocapture
+      - run: cargo test --locked --test api --test access postgres -- --nocapture
 
   ui:
     name: ui (${{ matrix.os }})
