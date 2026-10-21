@@ -10,6 +10,11 @@
     gap: var(--space-6);
   }
 
+  /* The live regions stay in place while empty, but take no row (and no gap) until they speak. */
+  .admin-overview > .admin-notice:not(:has(.notice)) {
+    position: absolute;
+  }
+
   .admin-overview__group {
     display: grid;
     gap: var(--space-3);

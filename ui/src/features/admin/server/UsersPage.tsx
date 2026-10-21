@@ -25,7 +25,7 @@ import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
 import { usePagedList } from "../components/lists";
 import { NameDialog } from "../components/NameDialog";
-import { Notice, useNotice } from "../components/Notice";
+import { Notice, setFlash, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
 import { errorText, LOCK_ERRORS, SERVER_ADMIN_ERRORS } from "../errors";
@@ -95,6 +95,8 @@ export function UsersPage() {
         // the route context, which the guard fills again, and this page is no longer allowed.
         await queryClient.invalidateQueries({ queryKey: meQuery.queryKey });
         await router.invalidate();
+        // The overview confirms it, since this page is gone after the navigation.
+        setFlash({ message: t("admin.users.removedAdmin", { name: user.name }) });
         await navigate({ to: "/admin" });
         return;
       }

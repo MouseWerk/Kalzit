@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useOrgPermissions } from "../../org/useOrg";
 import "./admin.css";
+import { Notice, useNotice } from "./components/Notice";
 import { type AdminSectionLink, ORG_SECTIONS, SERVER_SECTIONS, useAdminAccess } from "./sections";
 import { canOpenAdministration } from "./visibility";
 
@@ -35,15 +36,20 @@ export function AdminLayout() {
   );
 }
 
-/** The administration's start: every section the user may open, with what it is for. */
+/**
+ * The administration's start: every section the user may open, with what it is for. A change
+ * that ends here (giving up one's own server admin role) confirms itself in the notice area.
+ */
 export function AdminOverview() {
   const { t } = useI18n();
   useDocumentTitle("admin.title");
+  const notice = useNotice();
   const access = useAdminAccess();
   const orgSections = ORG_SECTIONS.filter((section) => section.visible(access));
   const serverSections = SERVER_SECTIONS.filter((section) => section.visible(access));
   return (
     <div className="admin-overview">
+      <Notice notice={notice.notice} onDismiss={notice.clear} />
       <OverviewGroup
         title={
           access.orgName === undefined
