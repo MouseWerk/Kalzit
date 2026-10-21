@@ -3,6 +3,8 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { getPanel } from "../../panels/registry";
+// PanelBody's own layout; Explore shows it without the dashboard stylesheet.
+import "../../panels/panels.css";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";

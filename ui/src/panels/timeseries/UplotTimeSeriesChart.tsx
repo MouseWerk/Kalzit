@@ -10,6 +10,8 @@ import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } f
 /** The palette classes, one probe each. */
 const SERIES_CLASSES = Array.from({ length: SERIES_COLORS }, (_, i) => `series-${i + 1}`);
 
+const DAY = 24 * 60 * 60 * 1000;
+
 /** Width of the value axis in CSS pixels, enough for labels such as "-12.5k". */
 const VALUE_AXIS_SIZE = 56;
 
@@ -72,6 +74,8 @@ export function UplotTimeSeriesChart({
   const { width, height } = useElementSize(boxRef);
   const themeVersion = useThemeVersion();
   const [plot, setPlot] = useState<PlotArea>({ left: VALUE_AXIS_SIZE, width: 1 });
+  // Counts charts built, so the size effect also runs for a chart built after the last resize.
+  const [built, setBuilt] = useState(0);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: themeVersion only triggers a redraw
   useEffect(() => {
@@ -84,6 +88,9 @@ export function UplotTimeSeriesChart({
     const grid = probeColor(probes, ".ts__probe--grid");
     const font = `${getComputedStyle(probes).fontSize} ${getComputedStyle(probes).fontFamily}`;
     const number = new Intl.NumberFormat(language, { maximumFractionDigits: 3 });
+    // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
+    const dates = new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit" });
+    const times = new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" });
     const axisStyle = {
       stroke: axis,
       font,
@@ -99,7 +106,11 @@ export function UplotTimeSeriesChart({
       cursor: { show: false },
       scales: { x: { time: true, min: timeRange.from, max: timeRange.to } },
       axes: [
-        axisStyle,
+        {
+          ...axisStyle,
+          values: (_u, splits, _axis, _space, step) =>
+            splits.map((v) => (step >= DAY ? dates : times).format(v)),
+        },
         {
           ...axisStyle,
           size: VALUE_AXIS_SIZE,
@@ -120,19 +131,21 @@ export function UplotTimeSeriesChart({
     const chart = new uPlot(options, alignSeries(series) as uPlot.AlignedData, target);
     chartRef.current = chart;
     setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+    setBuilt((count) => count + 1);
     return () => {
       chart.destroy();
       chartRef.current = null;
     };
   }, [series, timeRange.from, timeRange.to, lineWidth, language, themeVersion]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
   useEffect(() => {
     const chart = chartRef.current;
-    if (chart !== null && width > 0 && height > 0) {
-      chart.setSize({ width, height });
+    if (chart !== null && (chart.width !== width || chart.height !== height)) {
+      chart.setSize({ width: Math.max(width, 10), height: Math.max(height, 10) });
       setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
     }
-  }, [width, height]);
+  }, [width, height, built]);
 
   return (
     <ChartShell

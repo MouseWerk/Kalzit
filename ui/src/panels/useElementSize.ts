@@ -16,12 +16,16 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
     if (element === null || typeof ResizeObserver === "undefined") {
       return;
     }
+    // Each side on its own: a box without height yet (its layout still settling) must not keep
+    // a stale width, or a chart stays 640 px wide on a 360 px screen.
     const measure = (width: number, height: number) => {
-      if (width > 0 && height > 0) {
-        setSize((current) =>
-          current.width === width && current.height === height ? current : { width, height },
-        );
-      }
+      setSize((current) => {
+        const next = {
+          width: width > 0 ? width : current.width,
+          height: height > 0 ? height : current.height,
+        };
+        return next.width === current.width && next.height === current.height ? current : next;
+      });
     };
     const rect = element.getBoundingClientRect();
     measure(Math.floor(rect.width), Math.floor(rect.height));

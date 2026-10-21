@@ -1,7 +1,8 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Field, Frame } from "../api/generated/shapes";
+import { Dialog } from "../features/dashboards/ui/Dialog";
 import { formatValue } from "./frame";
 import { getPanel, panelsForShapes, suggestPanel } from "./registry";
 import { reduceField } from "./stat";
@@ -175,6 +176,48 @@ describe("bar and time series panels", () => {
     unmount();
     renderPanel("timeseries", [frame], { legend: "{{job}} on {{instance}}" });
     expect(screen.getByText("api on a:9")).toBeTruthy();
+  });
+
+  it("clears the keyboard readout on Escape before a dialog around it closes", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const plugin = getPanel("timeseries") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    const frame: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 100_000] },
+        { name: "load", type: "number", values: [1, 3] },
+      ],
+    };
+    render(
+      <Dialog title="Edit panel" onClose={onClose}>
+        <Panel frames={[frame]} options={plugin.options({})} timeRange={RANGE} title="Panel" />
+      </Dialog>,
+    );
+    const plot = screen.getByRole("group", { name: "Panel" });
+    plot.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("status").textContent).toContain("load:");
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toBe("");
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fill the live region while the pointer hovers", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 100_000] },
+        { name: "load", type: "number", values: [1, 3] },
+      ],
+    };
+    renderPanel("timeseries", [frame]);
+    const plot = screen.getByRole("group", { name: "Panel" });
+    fireEvent.pointerMove(plot, { clientX: 200 });
+    // The tooltip shows the values; the screen reader is not told about every hover.
+    expect(document.querySelector(".ts__tooltip")).not.toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
   });
 
   it("reads out the values at the cursor by keyboard", async () => {

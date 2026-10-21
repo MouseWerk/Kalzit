@@ -32,6 +32,48 @@
     --series-color: var(--chart-8);
   }
 
+  /*
+   * A panel's body wherever it is shown (dashboards, the panel editor, Explore): the
+   * visualization takes the height that is left, per-query errors sit above it.
+   */
+  .panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .panel-content__viz {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .panel-error {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--danger-bg);
+    font-size: var(--font-size-sm);
+    list-style: none;
+  }
+
+  .panel-error li,
+  div.panel-error {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .panel-error .icon {
+    color: var(--danger-text);
+  }
+
+  .panel-error--partial {
+    flex: none;
+  }
+
   .panel-empty {
     display: grid;
     height: 100%;

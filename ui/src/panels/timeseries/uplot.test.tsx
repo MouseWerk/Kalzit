@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { setLanguage } from "../../i18n/i18n";
 import { alignSeries } from "./align";
 import type { Series } from "./series";
 import { UplotTimeSeriesChart } from "./UplotTimeSeriesChart";
@@ -14,13 +15,23 @@ vi.mock("uplot", () => {
     bbox = { left: 50, top: 0, width: 500, height: 200 };
     record: (typeof created)[number];
     constructor(options: Record<string, unknown>, data: unknown[]) {
+      this.width = options.width as number;
+      this.height = options.height as number;
       this.record = { options, data, destroyed: false };
+      Object.assign(this.record, { setSizeCalls: this.setSizeCalls });
       created.push(this.record);
     }
+    width: number;
+    height: number;
+    setSizeCalls: unknown[] = [];
     posToVal(x: number) {
       return x * 200;
     }
-    setSize() {}
+    setSize(size: { width: number; height: number }) {
+      this.setSizeCalls.push(size);
+      this.width = size.width;
+      this.height = size.height;
+    }
     destroy() {
       this.record.destroyed = true;
     }
@@ -54,6 +65,69 @@ describe("uPlot data", () => {
       [1, null, 3],
       [null, 5, 6],
     ]);
+  });
+});
+
+describe("uPlot chart sizing and labels", () => {
+  it("follows the box width even while the box has no height yet", async () => {
+    let report: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null =
+      null;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: typeof report) {
+          report = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const resized: unknown[] = [];
+    created.length = 0;
+    const times = Float64Array.from([0, 100_000]);
+    render(
+      <UplotTimeSeriesChart
+        series={[series("load", times, [1, 2])]}
+        timeRange={{ from: 0, to: 100_000 }}
+        title="CPU"
+        unit=""
+        lineWidth={1}
+        showLegend={false}
+      />,
+    );
+    const chart = created.at(-1) as unknown as { setSizeCalls: unknown[] };
+    expect(chart).toBeDefined();
+    resized.push(...chart.setSizeCalls);
+    // A phone-width box whose height is still 0: the width must not stay at 640 px.
+    act(() => report?.([{ contentRect: { width: 360, height: 0 } }]));
+    expect(chart.setSizeCalls.at(-1)).toEqual({ width: 360, height: 220 });
+  });
+
+  it("writes time labels in the UI language", () => {
+    setLanguage("de");
+    created.length = 0;
+    const times = Float64Array.from([0, 100_000]);
+    render(
+      <UplotTimeSeriesChart
+        series={[series("load", times, [1, 2])]}
+        timeRange={{ from: 0, to: 100_000 }}
+        title="CPU"
+        unit=""
+        lineWidth={1}
+        showLegend={false}
+      />,
+    );
+    const options = created.at(-1)?.options as
+      | {
+          axes: {
+            values: (u: unknown, splits: number[], a: number, s: number, step: number) => string[];
+          }[];
+        }
+      | undefined;
+    const axes = options?.axes ?? [];
+    const at = new Date(2026, 9, 21, 4, 0).getTime();
+    expect(axes[0]?.values(null, [at], 0, 0, 3_600_000)).toEqual(["04:00"]);
+    expect(axes[0]?.values(null, [at], 0, 0, 86_400_000)).toEqual(["21.10."]);
   });
 });
 

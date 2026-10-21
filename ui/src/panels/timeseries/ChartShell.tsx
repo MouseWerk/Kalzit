@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { useEscapeLayer } from "../../lib/layers";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
 
@@ -61,6 +62,17 @@ export function ChartShell({
   const hintId = useId();
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [cursorX, setCursorX] = useState<number | null>(null);
+  // Whether the plot has keyboard focus and the cursor follows the keyboard (not the pointer).
+  const [focused, setFocused] = useState(false);
+  const [byKeyboard, setByKeyboard] = useState(false);
+
+  // Escape clears the keyboard readout first; only the next Escape reaches a dialog around the
+  // chart. Layers are handled in a document capture listener, so stopping the event in the
+  // plot's own handler would come too late.
+  useEscapeLayer(focused && byKeyboard && cursorX !== null, () => {
+    setCursorX(null);
+    setByKeyboard(false);
+  });
   const valueLabel = new Intl.NumberFormat(language, { maximumFractionDigits: 3 });
   const cursorTime = cursorX === null ? null : timeAt(cursorX);
   const readout =
@@ -72,8 +84,9 @@ export function ChartShell({
         });
   const valueText = (value: number) =>
     `${valueLabel.format(value)}${unit === "" ? "" : ` ${unit}`}`;
+  // Read out only what the keyboard asked for; hovering would make a screen reader chatter.
   const spoken =
-    cursorTime === null
+    cursorTime === null || !byKeyboard
       ? ""
       : [
           new Date(cursorTime).toLocaleString(language),
@@ -98,16 +111,15 @@ export function ChartShell({
     const next = keys[event.key];
     if (next !== undefined) {
       event.preventDefault();
+      setByKeyboard(true);
       setCursorX(clamp(next));
-    } else if (event.key === "Escape" && cursorX !== null) {
-      event.stopPropagation();
-      setCursorX(null);
     }
   }
 
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
+    setByKeyboard(false);
     setCursorX(x >= plot.left && x <= plot.left + plot.width ? x : null);
   }
 
@@ -123,10 +135,25 @@ export function ChartShell({
         aria-label={title}
         aria-describedby={hintId}
         onKeyDown={onKeyDown}
-        onFocus={() => setCursorX((x) => x ?? plot.left + plot.width / 2)}
-        onBlur={() => setCursorX(null)}
+        onFocus={(event) => {
+          setFocused(true);
+          // Keyboard focus starts the readout in the middle; a click only focuses.
+          if (event.currentTarget.matches(":focus-visible")) {
+            setByKeyboard(true);
+            setCursorX((x) => x ?? plot.left + plot.width / 2);
+          }
+        }}
+        onBlur={() => {
+          setFocused(false);
+          setByKeyboard(false);
+          setCursorX(null);
+        }}
         onPointerMove={onPointerMove}
-        onPointerLeave={() => setCursorX(null)}
+        onPointerLeave={() => {
+          if (!byKeyboard) {
+            setCursorX(null);
+          }
+        }}
       >
         <span className="visually-hidden" id={hintId}>
           {t("dashboards.panels.readoutHint")}
