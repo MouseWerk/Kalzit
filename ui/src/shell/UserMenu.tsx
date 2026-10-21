@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -208,6 +208,18 @@ export function UserMenu({ me }: { me: Me }) {
               ))}
             </MenuGroup>
             <hr className="menu__separator" />
+            {/* The own account: name, password, sessions (features/admin/account). */}
+            <Link
+              to="/account"
+              role="menuitem"
+              tabIndex={-1}
+              className="menu__item"
+              onClick={() => closeMenu(true)}
+            >
+              {/* An empty icon slot, so the label lines up with the other items. */}
+              <Icon name="check" className="menu__check" />
+              {t("admin.account.title")}
+            </Link>
             <button
               type="button"
               role="menuitem"

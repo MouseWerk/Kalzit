@@ -590,6 +590,8 @@
     background: transparent;
     color: var(--text);
     text-align: start;
+    /* The account item is a link; it looks like the other items. */
+    text-decoration: none;
   }
 
   .menu__item:hover,
