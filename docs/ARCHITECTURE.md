@@ -315,7 +315,9 @@ type QueryResult =
   canonicalizing), the folder and the file are checked the same way, except that others may
   read them: a configuration that a non-admin could change would decide where the data lives
   and which certificate is served. The folder is also checked at start whenever the data
-  directory lies inside it, with or without a `kalzit.toml`.
+  directory lies inside it (as written or with junctions resolved), with or without a
+  `kalzit.toml`. A folder whose owner entry can still change its DACL (left from an interrupted
+  creation) is refused as well.
 - Windows also checks the state files that exist (`kalzit.db`, `-wal`, `-shm`, `secrets.key`,
   `secrets.key.dpapi`, `setup-token.txt`): a file keeps the entries it was created with, so one
   moved in from elsewhere may be open to others. The error names `icacls ... /reset`.
@@ -326,7 +328,12 @@ type QueryResult =
 - `setup-token.txt` and the key files are created with their own file ACL (SYSTEM,
   Administrators, owner) on Windows and mode 0600 on Linux, through `data_dir::acl`, which also
   serves `secrets.rs`.
-- One info line names the data directory and the database (the URL with any password redacted).
+- One info line names the data directory and the database. `db::redact` parses the URL (`url`) and
+  rebuilds it from scheme, user, `***` for a password, host, port and path; query values are shown
+  only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, ...), all
+  others as `***`. A URL with a second `@`, or a `?` or `#` before its last `@`, gets a warning at start
+  (percent-encode the password) and is shown with its host only; one that does not parse is shown
+  as `<unparseable database url>`. The `connect` error uses the same function.
 - Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
   `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback
   key file for data source secrets when no other key source is configured (`secrets.key` on
@@ -337,7 +344,9 @@ type QueryResult =
   what is still in the WAL file. Back up the key file too (when it is used); without it stored
   data source secrets cannot be decrypted. A DPAPI key file only works on the same computer.
   To restore, copy the files into the data directory, do not move them: a copy takes the
-  directory's private entries, a moved file keeps its old ones, and Kalzit refuses it.
+  directory's private entries, a moved file keeps its old ones, and Kalzit refuses it. Restore
+  tools that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well,
+  and Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
 
 ### Running as a service
 

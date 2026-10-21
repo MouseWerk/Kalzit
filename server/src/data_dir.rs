@@ -83,13 +83,20 @@ fn canonical_lower(path: &Path) -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(canonical.to_string_lossy().to_lowercase()))
 }
 
-/// Whether `path` is `folder` or lies inside it.
+/// The absolute path as written (no links resolved), lower-case.
+#[cfg(windows)]
+fn lexical_lower(path: &Path) -> Option<std::path::PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    Some(std::path::PathBuf::from(absolute.to_string_lossy().to_lowercase()))
+}
+
+/// Whether `path` is `folder` or lies inside it, as written or with links resolved: a junction
+/// in either path cannot move it out of view.
 #[cfg(windows)]
 pub fn is_within(path: &Path, folder: &Path) -> bool {
-    match (canonical_lower(path), canonical_lower(folder)) {
-        (Some(path), Some(folder)) => path.starts_with(folder),
-        _ => false,
-    }
+    let paths = [lexical_lower(path), canonical_lower(path)];
+    let folders = [lexical_lower(folder), canonical_lower(folder)];
+    paths.iter().flatten().any(|p| folders.iter().flatten().any(|f| p.starts_with(f)))
 }
 
 /// Whether `file` lies directly in `folder`.
@@ -259,6 +266,11 @@ pub mod acl {
     const ACCESS_DENIED_OBJECT: u8 = 6;
     const ACCESS_DENIED_CALLBACK: u8 = 10;
     const ACCESS_DENIED_CALLBACK_OBJECT: u8 = 12;
+    const DELETE: u32 = 0x1_0000;
+    const READ_CONTROL: u32 = 0x2_0000;
+    const WRITE_DAC: u32 = 0x4_0000;
+    const WRITE_OWNER: u32 = 0x8_0000;
+    const GENERIC_ALL: u32 = 0x1000_0000;
     /// Read data or list, read extended attributes, generic read.
     const READ_MASK: u32 = 0x1 | 0x8 | 0x8000_0000;
     /// Write or append data (create files or folders), write extended attributes, delete
@@ -348,11 +360,12 @@ pub mod acl {
     /// mark its entries as inheritable the modern way, so files created inside would get copies
     /// instead of inherited entries.
     ///
-    /// Until then the creating account also holds read-control and write-DAC (not inherited):
-    /// an `OW` entry replaces the owner's implicit right to change the DACL, and `CONFIG_DIR_SDDL`
-    /// grants the owner less than that.
+    /// Until then the creating account also holds read-control, write-DAC and delete (not
+    /// inherited): an `OW` entry replaces the owner's implicit right to change the DACL,
+    /// `CONFIG_DIR_SDDL` grants the owner less than that, and the cleanup after a failed update
+    /// must be able to remove the directory.
     pub fn create_dir(path: &Path, sddl: &str) -> std::io::Result<()> {
-        let initial = Descriptor::from_sddl(&format!("{sddl}(A;;0x60000;;;OW)"))?;
+        let initial = Descriptor::from_sddl(&initial_sddl(sddl))?;
         let attributes = initial.attributes();
         // SAFETY: `attributes` points at `initial`, which outlives the call.
         unsafe { CreateDirectoryW(&HSTRING::from(path.as_os_str()), Some(&attributes)) }.map_err(io_error)?;
@@ -364,6 +377,11 @@ pub mod acl {
             return Err(e);
         }
         Ok(())
+    }
+
+    /// The descriptor a directory is created with before its final DACL is set.
+    pub(super) fn initial_sddl(sddl: &str) -> String {
+        format!("{sddl}(A;;0x{:x};;;OW)", READ_CONTROL | WRITE_DAC | DELETE)
     }
 
     /// Creates a new file (it must not exist) that has the DACL from `sddl` from its first moment.
@@ -511,6 +529,13 @@ pub mod acl {
         let Some(dacl) = dacl else {
             return Some("it has no access list, so everyone has full access".into());
         };
+        // In the configuration folder the owner may be a non-admin service account; an owner
+        // entry that can still change the DACL (left from creation) would let it open the folder.
+        if others == Others::ReadOnly
+            && dacl.iter().any(|e| e.sid == OWNER_RIGHTS && e.mask & (WRITE_DAC | WRITE_OWNER | GENERIC_ALL) != 0)
+        {
+            return Some("its owner entry may still change the access list (left from an interrupted creation)".into());
+        }
         let refused = match others {
             Others::NoAccess => READ_MASK | WRITE_MASK,
             Others::ReadOnly => WRITE_MASK,
@@ -785,7 +810,7 @@ mod tests {
         let folder = root.path().join("Kalzit");
         std::fs::create_dir(&folder).unwrap();
         // Users may create files and folders, as ProgramData itself allows them.
-        acl::restrict(&folder, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)(A;;0x1200af;;;BU)").unwrap();
+        acl::restrict(&folder, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;OW)(A;;0x1200af;;;BU)").unwrap();
         let dir = folder.join("data");
         let text = format!("{:#}", prepare_with(&dir, Some(&folder)).unwrap_err());
         assert!(text.contains("S-1-5-32-545 may write") && text.contains("icacls"), "{text}");
@@ -795,6 +820,70 @@ mod tests {
         assert!(text.contains("S-1-5-32-545 may write"), "{text}");
         // Elsewhere, the folder does not matter.
         prepare_with(&root.path().join("other"), Some(&folder)).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
+    }
+
+    /// A junction can make the data directory look outside `%ProgramData%\Kalzit` (or inside it);
+    /// the folder is checked either way.
+    #[cfg(windows)]
+    #[test]
+    fn junctions_do_not_skip_the_config_folder_check() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("Kalzit");
+        std::fs::create_dir(&folder).unwrap();
+        // Users may do everything, inside as well, so the test needs no elevated token.
+        acl::restrict(&folder, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;OW)(A;OICI;FA;;;BU)").unwrap();
+        // Inside as written, outside once resolved.
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        junction(&folder.join("data"), &elsewhere);
+        let text = format!("{:#}", prepare_with(&folder.join("data").join("store"), Some(&folder)).unwrap_err());
+        assert!(text.contains("S-1-5-32-545 may write"), "{text}");
+        // Outside as written, inside once resolved.
+        std::fs::create_dir(folder.join("real")).unwrap();
+        junction(&root.path().join("alias"), &folder.join("real"));
+        let text = format!("{:#}", prepare_with(&root.path().join("alias").join("store"), Some(&folder)).unwrap_err());
+        assert!(text.contains("S-1-5-32-545 may write"), "{text}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_config_folder_left_with_its_creation_entry_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("Kalzit");
+        std::fs::create_dir(&folder).unwrap();
+        acl::restrict(&folder, &acl::initial_sddl(acl::CONFIG_DIR_SDDL)).unwrap();
+        let text = format!("{:#}", check_admin_only(&folder).unwrap_err());
+        assert!(text.contains("owner entry may still change the access list"), "{text}");
+        acl::restrict(&folder, acl::CONFIG_DIR_SDDL).unwrap();
+        check_admin_only(&folder).unwrap();
+    }
+
+    /// The creation descriptor lets the creator remove the directory again, even where the parent
+    /// grants no delete-child right (`%ProgramData%\Kalzit` for a non-elevated account).
+    #[cfg(windows)]
+    #[test]
+    fn the_creation_descriptor_allows_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("Kalzit");
+        std::fs::create_dir(&parent).unwrap();
+        acl::restrict(&parent, acl::CONFIG_DIR_SDDL).unwrap();
+        let dir = parent.join("data");
+        std::fs::create_dir(&dir).unwrap();
+        // A final DACL that gives the owner no delete right, as on the configuration folder.
+        acl::restrict(&dir, &acl::initial_sddl(acl::CONFIG_DIR_SDDL)).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 
     #[cfg(windows)]

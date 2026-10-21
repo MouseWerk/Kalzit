@@ -79,6 +79,9 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         tracing::warn!("{warning}");
     }
     crate::data_dir::prepare(&config.paths.data_dir)?;
+    if let Some(warning) = db::ambiguity(&config.database_url()) {
+        tracing::warn!("{warning}");
+    }
     let pool = db::connect(&config.database_url(), config.database.max_connections).await?;
     tracing::info!(
         "data directory {}, database {} ready",
