@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { openLayerCount } from "../lib/layers";
+import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { stubMatchMedia } from "../test/matchMedia";
 import { renderApp } from "../test/renderApp";
 import { NAV_GROUPS_STORAGE_KEY, SIDEBAR_STORAGE_KEY } from "./sidebarState";
@@ -129,17 +129,13 @@ describe("collapsible sidebar", () => {
   it("has no rail on narrow screens, and Ctrl+B does nothing there", async () => {
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
     const layout = stubMatchMedia(false);
-    try {
-      const { user, shell } = await openShell();
-      expect(shell.dataset.sidebar).toBe("expanded");
-      await user.keyboard("{Control>}b{/Control}");
-      expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe("true");
-      // Wide again, the remembered rail comes back.
-      layout.set(true);
-      expect(shell.dataset.sidebar).toBe("collapsed");
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const { user, shell } = await openShell();
+    expect(shell.dataset.sidebar).toBe("expanded");
+    await user.keyboard("{Control>}b{/Control}");
+    expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe("true");
+    // Wide again, the remembered rail comes back.
+    layout.set(true);
+    expect(shell.dataset.sidebar).toBe("collapsed");
   });
 
   it("ignores B with other modifiers", async () => {
@@ -233,18 +229,14 @@ describe("sub-pages in the navigation", () => {
 
   it("keeps the current group's sub-pages reachable when the layout narrows", async () => {
     const layout = stubMatchMedia(true);
-    try {
-      const { user, nav } = await openShell("/admin/roles");
-      await within(nav).findByRole("list", { name: "Administration sections" });
-      await user.click(within(nav).getByRole("button", { name: "Administration sections" }));
-      expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
-      // The bar on top has no chevron to open it again, so it shows the current group's pages.
-      layout.set(false);
-      const list = within(nav).getByRole("list", { name: "Administration sections" });
-      expect(within(list).getByRole("link", { name: "Roles" })).toBeTruthy();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const { user, nav } = await openShell("/admin/roles");
+    await within(nav).findByRole("list", { name: "Administration sections" });
+    await user.click(within(nav).getByRole("button", { name: "Administration sections" }));
+    expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
+    // The bar on top has no chevron to open it again, so it shows the current group's pages.
+    layout.set(false);
+    const list = within(nav).getByRole("list", { name: "Administration sections" });
+    expect(within(list).getByRole("link", { name: "Roles" })).toBeTruthy();
   });
 
   it("keeps entries without sub-pages plain links", async () => {
@@ -301,11 +293,23 @@ describe("flyout in the rail", () => {
     expect(openLayerCount()).toBe(0);
   });
 
-  it("leaves Escape to the page while only a hover shows the flyout", async () => {
+  it("leaves Escape to the page while only a hover shows the flyout, and closes on it", async () => {
     const { user, nav } = await openRail();
     await user.hover(within(nav).getByRole("link", { name: "Administration" }));
     expect(within(nav).getByRole("list", { name: "Administration sections" })).toBeTruthy();
     expect(openLayerCount()).toBe(0);
+
+    const seen: KeyboardEvent[] = [];
+    const listener = (event: KeyboardEvent) => seen.push(event);
+    window.addEventListener("keydown", listener);
+    try {
+      await user.keyboard("{Escape}");
+    } finally {
+      window.removeEventListener("keydown", listener);
+    }
+    expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
+    // The page got the key, untouched.
+    expect(seen.map((event) => [event.key, event.defaultPrevented])).toEqual([["Escape", false]]);
   });
 
   it.each(["hover", "keyboard"])(
@@ -360,6 +364,25 @@ describe("flyout in the rail", () => {
     expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
     await user.tab();
     expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Explore");
+
+    // Escape hides it without taking the key from the page; the next focus shows one again.
+    const seen: boolean[] = [];
+    const listener = (event: KeyboardEvent) => seen.push(event.defaultPrevented);
+    window.addEventListener("keydown", listener);
+    try {
+      await user.keyboard("{Escape}");
+    } finally {
+      window.removeEventListener("keydown", listener);
+    }
+    expect(seen).toEqual([false]);
+    expect(document.querySelector(".rail-tooltip")).toBeNull();
+    await user.tab({ shift: true });
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
+    // A pointer gets the native title instead, never both.
+    await user.hover(within(nav).getByRole("link", { name: "Dashboards" }));
+    expect(document.querySelector(".rail-tooltip")).toBeNull();
+    act(() => within(nav).getByRole("link", { name: "Dashboards" }).focus());
+    await user.tab();
     // Entries with sub-pages show their flyout instead.
     await user.tab();
     await user.tab();

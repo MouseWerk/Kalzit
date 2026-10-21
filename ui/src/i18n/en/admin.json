@@ -4,7 +4,7 @@
   "admin.lead": "Organizations, teams, users and roles.",
   "admin.sections": "Administration sections",
   "admin.overview.emptyTitle": "Nothing here for you yet",
-  "admin.overview.emptyText": "Your role allows changes in the administration, but opening none of its sections. Ask an owner for read access.",
+  "admin.overview.emptyText": "Your role lets you make changes in the administration but not open any of its sections. Ask an owner for read access.",
   "admin.group.org": "Organization",
   "admin.group.orgNamed": "Organization “{name}”",
   "admin.group.server": "Server",

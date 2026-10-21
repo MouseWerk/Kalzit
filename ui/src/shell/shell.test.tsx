@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { stubMatchMedia } from "../test/matchMedia";
@@ -38,15 +38,11 @@ describe("app shell", () => {
 
   it("gives every navigation link a name and a tooltip for the icon-only phone layout", async () => {
     stubMatchMedia(false);
-    try {
-      await openShell();
-      const nav = screen.getByRole("navigation", { name: "Main navigation" });
-      for (const link of within(nav).getAllByRole("link")) {
-        expect(link.getAttribute("title")).toBe(link.textContent);
-        expect(link.querySelector(".nav-link__label")?.textContent).toBe(link.textContent);
-      }
-    } finally {
-      vi.unstubAllGlobals();
+    await openShell();
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    for (const link of within(nav).getAllByRole("link")) {
+      expect(link.getAttribute("title")).toBe(link.textContent);
+      expect(link.querySelector(".nav-link__label")?.textContent).toBe(link.textContent);
     }
   });
 

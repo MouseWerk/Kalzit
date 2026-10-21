@@ -7,6 +7,8 @@ const GAP_PX = 6;
  * The rail shows only icons. A pointer gets the native `title` tooltip; keyboard focus gets this
  * one, next to the focused control, with the same text. Screen readers already hear the
  * control's name, so it is hidden from them. Entries with sub-pages open their flyout instead.
+ * Escape hides it (without taking the key from the page) until the next focus, and a pointer
+ * over the sidebar hides it, so it never shows next to the native tooltip.
  */
 export function RailTooltip({
   rail,
@@ -37,17 +39,33 @@ export function RailTooltip({
         setTarget(null);
       }
     }
-    function onFocusOut() {
+    function hide() {
       setTarget(null);
     }
     sidebar.addEventListener("focusin", onFocusIn);
-    sidebar.addEventListener("focusout", onFocusOut);
+    sidebar.addEventListener("focusout", hide);
+    sidebar.addEventListener("pointerover", hide);
     return () => {
       sidebar.removeEventListener("focusin", onFocusIn);
-      sidebar.removeEventListener("focusout", onFocusOut);
+      sidebar.removeEventListener("focusout", hide);
+      sidebar.removeEventListener("pointerover", hide);
       setTarget(null);
     };
   }, [rail, sidebarRef]);
+
+  useEffect(() => {
+    if (shown === null) {
+      return;
+    }
+    // Bubble phase and no preventDefault: the page's own Escape handling still runs.
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) {
+        setTarget(null);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [shown]);
 
   useLayoutEffect(() => {
     const tip = tipRef.current;

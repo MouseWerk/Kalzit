@@ -252,6 +252,23 @@ function useFlyout(rail: boolean, onLayerChange: (open: boolean) => void) {
     return () => reportLayer(false);
   }, [layer]);
 
+  // A hover preview is no layer, yet Escape must dismiss it too (WCAG 1.4.13). It listens in the
+  // bubble phase and leaves the key alone, so the page still gets its Escape.
+  const hoverOpen = open && !layer;
+  useEffect(() => {
+    if (!hoverOpen) {
+      return;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) {
+        window.clearTimeout(closeTimer.current);
+        setMode(null);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [hoverOpen]);
+
   useEffect(() => () => window.clearTimeout(closeTimer.current), []);
 
   const onOutsidePointer = useEffectEvent((event: PointerEvent) => {
