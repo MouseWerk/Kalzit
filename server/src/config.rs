@@ -403,6 +403,15 @@ impl Config {
         {
             bail!("database.url must look like postgres://user:pass@host/db (or sqlite:path)");
         }
+        // Owner decision: no other backend for Kalzit's own data. The value is not echoed.
+        if let Some(url) = &self.database.url
+            && !url.starts_with("sqlite:")
+            && !url
+                .split_once("://")
+                .is_some_and(|(scheme, _)| ["postgres", "postgresql"].contains(&scheme.to_ascii_lowercase().as_str()))
+        {
+            bail!("Kalzit's own database must be SQLite or PostgreSQL (database.url)");
+        }
         if self.paths.data_dir.to_string_lossy().trim().is_empty() {
             match self.source("paths.data_dir") {
                 Source::Default => bail!(
@@ -763,7 +772,24 @@ mod tests {
             let text = format!("{:#}", Config::from_sources(&toml, env(&[])).unwrap_err());
             assert!(!text.contains("secret"), "the value is echoed: {text}");
         }
-        for url in ["postgres://u:p@db/k", "mysql://h/db", "sqlite:data/k.db", "sqlite::memory:"] {
+        for url in ["postgres://u:p@db/k", "postgresql://h/db", "sqlite:data/k.db", "sqlite::memory:"] {
+            assert!(Config::from_sources("", env(&[("KALZIT_DATABASE_URL", url)])).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn only_sqlite_and_postgres_hold_kalzits_own_data() {
+        for url in ["mysql://u:secret@h/db", "mariadb://u:secret@h/db", "mssql://u:secret@h/db", "redis://:secret@h"] {
+            for (toml, vars) in [
+                (format!("[database]\nurl = \"{url}\"\n"), env(&[])),
+                (String::new(), env(&[("KALZIT_DATABASE_URL", url)])),
+            ] {
+                let text = format!("{:#}", Config::from_sources(&toml, vars).unwrap_err());
+                assert!(text.contains("Kalzit's own database must be SQLite or PostgreSQL"), "{text}");
+                assert!(!text.contains("secret"), "the value is echoed: {text}");
+            }
+        }
+        for url in ["postgres://h/db", "PostgreSQL://h/db", "sqlite:k.db"] {
             assert!(Config::from_sources("", env(&[("KALZIT_DATABASE_URL", url)])).is_ok(), "{url}");
         }
     }
@@ -776,7 +802,7 @@ mod tests {
             resolve_sqlite_url("sqlite://k.db?mode=rwc", base).as_deref(),
             Some("sqlite:/etc/kalzit/k.db?mode=rwc")
         );
-        for url in ["sqlite::memory:", "sqlite:/var/k.db", "sqlite:", "postgres://h/db", "mysql://h/db"] {
+        for url in ["sqlite::memory:", "sqlite:/var/k.db", "sqlite:", "postgres://h/db", "postgresql://h/db"] {
             assert_eq!(resolve_sqlite_url(url, base), None, "{url}");
         }
     }
