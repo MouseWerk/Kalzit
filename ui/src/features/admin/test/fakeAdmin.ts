@@ -626,7 +626,12 @@ function handleMe(
 }
 
 function owners(state: FakeAdminState): number {
-  return state.members.filter((member) => member.role === "owner").length;
+  // Disabled owners do not count (docs/api/access.md, "An enabled owner remains").
+  return state.members.filter(
+    (member) =>
+      member.role === "owner" &&
+      state.users.find((user) => user.id === member.userId)?.disabled !== true,
+  ).length;
 }
 
 function handleOrg(
@@ -771,7 +776,7 @@ function teams(
   if (id === undefined && method === "POST") {
     needs(state, "teams:write");
     const teamName = name(body(input, ["name"]).name);
-    if (state.teams.some((team) => team.name === teamName)) {
+    if (state.teams.some((team) => team.name.toLowerCase() === teamName.toLowerCase())) {
       refuse("conflict", "name");
     }
     const team = {
@@ -797,7 +802,11 @@ function teams(
     needs(state, "teams:write");
     if (method === "PATCH") {
       const teamName = name(body(input, ["name"]).name);
-      if (state.teams.some((other) => other !== team && other.name === teamName)) {
+      if (
+        state.teams.some(
+          (other) => other !== team && other.name.toLowerCase() === teamName.toLowerCase(),
+        )
+      ) {
         refuse("conflict", "name");
       }
       team.name = teamName;
@@ -892,7 +901,11 @@ function roleName(state: FakeAdminState, value: unknown, except?: WireRole): str
   if (["owner", "admin", "editor", "viewer"].includes(roleName.toLowerCase())) {
     refuse("validation", "name");
   }
-  if (state.roles.some((role) => role !== except && role.name === roleName)) {
+  if (
+    state.roles.some(
+      (role) => role !== except && role.name.toLowerCase() === roleName.toLowerCase(),
+    )
+  ) {
     refuse("conflict", "name");
   }
   return roleName;
@@ -1196,6 +1209,13 @@ function handleServerAdmin(
     if (lastAdmin && (fields.isServerAdmin === false || fields.disabled === true)) {
       refuse("conflict");
     }
+    // Disabling the last enabled owner of an organization is refused as well.
+    const ownsAlone =
+      state.members.some((member) => member.userId === user.id && member.role === "owner") &&
+      owners(state) === 1;
+    if (fields.disabled === true && !user.disabled && ownsAlone) {
+      refuse("conflict");
+    }
     if (fields.password !== undefined && Array.from(String(fields.password)).length < 12) {
       refuse("validation", "password");
     }
@@ -1213,7 +1233,7 @@ function handleServerAdmin(
     }
     if (id === undefined && method === "POST") {
       const fields = body(input, ["name", "ownerUserId"]);
-      if (!state.users.some((user) => user.id === fields.ownerUserId)) {
+      if (!state.users.some((user) => user.id === fields.ownerUserId && !user.disabled)) {
         refuse("validation", "ownerUserId");
       }
       const org: WireAdminOrg = {

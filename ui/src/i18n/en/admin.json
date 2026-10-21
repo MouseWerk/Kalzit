@@ -386,5 +386,6 @@
   "admin.auditAction.dashboard.version_restored": "Dashboard version restored",
   "admin.auditAction.dashboard.trashed": "Dashboard moved to the trash",
   "admin.auditAction.dashboard.restored": "Dashboard restored",
-  "admin.auditAction.dashboard.purged": "Dashboard deleted for good"
+  "admin.auditAction.dashboard.purged": "Dashboard deleted for good",
+  "admin.users.cannotLock": "This account cannot be locked: it is the last server admin, or the last owner of an organization who can sign in. Give that role to someone else first."
 }

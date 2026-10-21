@@ -386,5 +386,6 @@
   "admin.auditAction.dashboard.version_restored": "Dashboard-Version wiederhergestellt",
   "admin.auditAction.dashboard.trashed": "Dashboard in den Papierkorb verschoben",
   "admin.auditAction.dashboard.restored": "Dashboard wiederhergestellt",
-  "admin.auditAction.dashboard.purged": "Dashboard endgültig gelöscht"
+  "admin.auditAction.dashboard.purged": "Dashboard endgültig gelöscht",
+  "admin.users.cannotLock": "Dieses Konto lässt sich nicht sperren: Es ist der letzte Server-Admin oder der letzte Eigentümer einer Organisation, der sich anmelden kann. Gib die Rolle zuerst jemand anderem."
 }

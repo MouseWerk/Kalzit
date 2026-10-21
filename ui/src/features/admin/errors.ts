@@ -59,6 +59,14 @@ export const SERVER_ADMIN_ERRORS: ErrorTexts = {
   "conflict:email": "admin.users.emailTaken",
 };
 
+/**
+ * Locking an account: refused for the last active server admin and for the last enabled owner
+ * of an organization; the answer does not say which, so the text names both.
+ */
+export const LOCK_ERRORS: ErrorTexts = {
+  conflict: "admin.users.cannotLock",
+};
+
 /** Granting access with a level beyond what the caller holds on the resource. */
 export const GRANT_ERRORS: ErrorTexts = {
   forbidden: "admin.access.cannotGrant",

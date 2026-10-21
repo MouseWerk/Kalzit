@@ -27,7 +27,7 @@ import { NameDialog } from "../components/NameDialog";
 import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
-import { errorText, SERVER_ADMIN_ERRORS } from "../errors";
+import { errorText, LOCK_ERRORS, SERVER_ADMIN_ERRORS } from "../errors";
 import { allowedWhen, useAdminAccess } from "../sections";
 import { newPasswordMessage } from "../validation";
 
@@ -237,7 +237,15 @@ export function UsersPage() {
           confirming?.kind === "lock" ? "admin.users.lockConfirm" : "admin.users.demoteSelfConfirm",
         )}
         busy={confirm.isPending}
-        error={confirm.error === null ? null : errorText(t, confirm.error, SERVER_ADMIN_ERRORS)}
+        error={
+          confirm.error === null
+            ? null
+            : errorText(
+                t,
+                confirm.error,
+                confirming?.kind === "lock" ? LOCK_ERRORS : SERVER_ADMIN_ERRORS,
+              )
+        }
         onClose={() => setConfirming(null)}
         onConfirm={() => {
           if (confirming !== null) {

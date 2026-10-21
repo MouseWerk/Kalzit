@@ -92,6 +92,25 @@ describe("server users", () => {
     expect(admin.users[1]?.disabled).toBe(false);
   });
 
+  it("explains why the last owner of an organization cannot be locked", async () => {
+    const { user, admin } = await openAdmin("/admin/server/users", {
+      isServerAdmin: true,
+      setup: (state) => {
+        // Another server admin exists; Ada is still the only owner of the organization.
+        Object.assign(state.users[1] ?? {}, { isServerAdmin: true });
+      },
+    });
+    const list = await usersList();
+    await user.click(within(list).getByRole("checkbox", { name: "Ada Lovelace is locked" }));
+    await user.click(screen.getByRole("button", { name: "Lock" }));
+    expect(
+      await within(screen.getByRole("dialog")).findByText(
+        /cannot be locked: it is the last server admin, or the last owner of an organization/,
+      ),
+    ).toBeTruthy();
+    expect(admin.users[0]?.disabled).toBe(false);
+  });
+
   it("creates a user, checking fields first and showing the server's answer at the field", async () => {
     const { user, admin } = await openAdmin("/admin/server/users", { isServerAdmin: true });
     await usersList();
