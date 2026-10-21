@@ -271,7 +271,8 @@ pub struct QueryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub max_data_points: Option<u32>,
-    /// Dashboard variables; they become bind parameters, never text in the query.
+    /// Variable values: bound as parameters in SQL, escaped into strings in PromQL, and checked
+    /// against the schema when used as identifiers (docs/api/datasources.md).
     #[serde(default)]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub variables: BTreeMap<String, Value>,
