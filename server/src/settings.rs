@@ -239,12 +239,23 @@ fn parse_env_value(raw: &str) -> Value {
 /// Checks every `KALZIT_SETTING_*` variable at startup: it must name a server setting that is not
 /// configured in `kalzit.toml`, with a valid value. A typo would otherwise be ignored silently.
 pub fn check_environment(vars: impl IntoIterator<Item = (String, String)>) -> Result<(), String> {
+    check_environment_with(vars, cfg!(windows))
+}
+
+/// `names_ignore_case`: Windows matches variable names regardless of case, so a lowercase
+/// `kalzit_setting_...` is read by `std::env::var` later and is checked like the upper case name.
+/// Elsewhere lookups are exact, so such a name would never apply and is refused instead.
+fn check_environment_with(
+    vars: impl IntoIterator<Item = (String, String)>,
+    names_ignore_case: bool,
+) -> Result<(), String> {
     for (name, raw) in vars {
-        // Windows matches variable names regardless of case, so `kalzit_setting_...` would be read
-        // by `std::env::var` later; it is checked the same way here.
         let upper = name.to_ascii_uppercase();
         if !upper.starts_with(SETTING_ENV_PREFIX) {
             continue;
+        }
+        if !names_ignore_case && upper != name {
+            return Err(format!("{name}: setting variables are upper case, like {upper}; this one would never apply"));
         }
         let Some(def) = REGISTRY
             .iter()
@@ -718,10 +729,14 @@ mod tests {
             assert!(err.contains(name), "{err}");
         }
         assert_eq!(env_var_name("audit.retention_days"), "KALZIT_SETTING_AUDIT_RETENTION_DAYS");
-        // Case does not hide a variable from the check (Windows reads it regardless of case).
-        let err = check_environment(vars(&[("kalzit_setting_audit_retention_days", "0")])).unwrap_err();
-        assert!(err.contains("kalzit_setting_audit_retention_days"), "{err}");
-        assert!(check_environment(vars(&[("Kalzit_Setting_Audit_Retention_Days", "30")])).is_ok());
+        // Where names ignore case (Windows), a lowercase name is read later, so it is checked...
+        let err = check_environment_with(vars(&[("kalzit_setting_audit_retention_days", "0")]), true).unwrap_err();
+        assert!(err.contains("kalzit_setting_audit_retention_days") && err.contains("whole number"), "{err}");
+        assert!(check_environment_with(vars(&[("Kalzit_Setting_Audit_Retention_Days", "30")]), true).is_ok());
+        // ...elsewhere it would never apply, so it is refused even with a valid value.
+        let err = check_environment_with(vars(&[("kalzit_setting_audit_retention_days", "30")]), false).unwrap_err();
+        assert!(err.contains("upper case"), "{err}");
+        assert!(check_environment_with(vars(&[("KALZIT_SETTING_AUDIT_RETENTION_DAYS", "30")]), false).is_ok());
     }
 
     fn rows(value: i64) -> Loaded {
