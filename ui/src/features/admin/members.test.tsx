@@ -92,20 +92,23 @@ describe("members", () => {
     expect(document.activeElement).toBe(email);
 
     // No account has it: 422 validation with field email.
-    await user.type(email, "nobody@example.com");
+    await user.click(email);
+    await user.paste("nobody@example.com");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await within(dialog).findByText(/No account uses this email address/)).toBeTruthy();
     expect(email.getAttribute("aria-invalid")).toBe("true");
 
     // Already a member: 409 conflict with field email.
     await user.clear(email);
-    await user.type(email, "grace@example.com");
+    await user.click(email);
+    await user.paste("grace@example.com");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await within(dialog).findByText("This person is already a member.")).toBeTruthy();
 
     admin.members = admin.members.filter((member) => member.userId !== "u2");
     await user.clear(email);
-    await user.type(email, " Grace@Example.com ");
+    await user.click(email);
+    await user.paste(" Grace@Example.com ");
     await user.selectOptions(within(dialog).getByLabelText("Role"), "admin");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Grace@Example.com was added.")).toBeTruthy();

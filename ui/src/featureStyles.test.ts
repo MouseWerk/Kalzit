@@ -118,19 +118,6 @@ function loadedSheets(path: string, seen = new Set<string>()): Set<string> {
   return seen;
 }
 
-/**
- * Modules of stream D (administration) that render admin.css classes without loading the sheet;
- * today only pages under AdminLayout render them, which loads it. Listed here, not fixed, because
- * that area belongs to another stream; each entry fails once fixed, so the list only shrinks.
- */
-const KNOWN_GAPS = new Set([
-  "features/admin/components/AuditLog.tsx",
-  "features/admin/components/Notice.tsx",
-  "features/admin/components/PagedSelect.tsx",
-  "features/admin/components/Section.tsx",
-  "features/admin/org/RoleEditorPage.tsx",
-]);
-
 describe("feature stylesheets", () => {
   it("are found, the query editors' own one included", () => {
     expect(featureSheets.map(rel)).toEqual(
@@ -180,12 +167,7 @@ describe("feature stylesheets", () => {
           missing.push(`${prefix}* (${owners.map(rel).join(" or ")})`);
         }
       }
-
-      if (KNOWN_GAPS.has(rel(path ?? ""))) {
-        expect(missing, "fixed: remove it from KNOWN_GAPS").not.toEqual([]);
-      } else {
-        expect(missing).toEqual([]);
-      }
+      expect(missing).toEqual([]);
     },
   );
 });

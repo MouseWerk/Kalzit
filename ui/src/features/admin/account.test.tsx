@@ -46,15 +46,19 @@ describe("own account", () => {
     expect(within(section).getAllByText("Enter your password.")).toHaveLength(2);
     expect(document.activeElement).toBe(current);
 
-    await user.type(current, "wrong password");
-    await user.type(within(section).getByLabelText("New password"), "a fresh long password");
-    await user.type(within(section).getByLabelText("Repeat new password"), "a different one");
+    await user.click(current);
+    await user.paste("wrong password");
+    await user.click(within(section).getByLabelText("New password"));
+    await user.paste("a fresh long password");
+    await user.click(within(section).getByLabelText("Repeat new password"));
+    await user.paste("a different one");
     await user.click(submit);
     expect(within(section).getByText("The passwords do not match.")).toBeTruthy();
 
     // A wrong current password is answered as a validation error of the field "current".
     await user.clear(within(section).getByLabelText("Repeat new password"));
-    await user.type(within(section).getByLabelText("Repeat new password"), "a fresh long password");
+    await user.click(within(section).getByLabelText("Repeat new password"));
+    await user.paste("a fresh long password");
     await user.click(submit);
     expect(await within(section).findByText("The current password is not correct.")).toBeTruthy();
     expect(document.activeElement).toBe(current);
