@@ -39,6 +39,19 @@ pub enum HttpError {
     Other(String),
 }
 
+impl HttpError {
+    /// The reason code, parameters and text for the API.
+    pub fn detail(&self) -> crate::datasources::Detail {
+        use crate::datasources::Detail;
+        match self {
+            HttpError::Blocked(b) => b.0.clone(),
+            HttpError::Timeout => Detail::new("http.timeout", self.to_string()),
+            HttpError::TooLarge(max) => Detail::new("http.too_large", self.to_string()).with("bytes", max),
+            HttpError::Other(message) => Detail::new("http.failed", message.clone()).with("detail", message),
+        }
+    }
+}
+
 impl From<ResolveError> for HttpError {
     fn from(e: ResolveError) -> Self {
         match e {
@@ -154,7 +167,12 @@ impl HttpClient {
     /// covers the scheme and address literals, which skip the resolver.
     async fn check_url(&self, url: &Url) -> Result<(), HttpError> {
         if !matches!(url.scheme(), "http" | "https") {
-            return Err(Blocked(format!("{} URLs are not allowed", url.scheme())).into());
+            let detail = crate::datasources::Detail::new(
+                "target.scheme_not_allowed",
+                format!("{} URLs are not allowed", url.scheme()),
+            )
+            .with("scheme", url.scheme());
+            return Err(Blocked(detail).into());
         }
         let host = url.host_str().ok_or_else(|| HttpError::Other("the URL has no host".into()))?;
         if let Some(ip) = parse_ip_literal(host) {

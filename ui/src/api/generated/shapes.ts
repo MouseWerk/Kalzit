@@ -1,6 +1,6 @@
 // Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.
 
-export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "setup_done" | "invalid_setup_token" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "internal";
+export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "setup_done" | "invalid_setup_token" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "busy" | "internal";
 
 export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
 
@@ -18,7 +18,19 @@ export type FrameMeta = {
  */
 executedQuery?: string, rowsTruncated: boolean, notices: Array<Notice>, };
 
-export type Notice = { severity: NoticeSeverity, text: string, };
+export type Notice = { severity: NoticeSeverity, 
+/**
+ * A stable code the UI translates (see docs/api/datasources.md).
+ */
+code: string, 
+/**
+ * Values the code's text needs (`{column}`).
+ */
+params?: { [key in string]: string }, 
+/**
+ * English fallback.
+ */
+text: string, };
 
 export type NoticeSeverity = "info" | "warning";
 
@@ -133,6 +145,17 @@ export type QueryOutcome = { result: QueryResult, } | { error: ErrorBody, };
 
 export type ErrorEnvelope = { error: ErrorBody, };
 
-export type ErrorBody = { code: ErrorCode, message: string, field?: string, };
+export type ErrorBody = { code: ErrorCode, message: string, field?: string, 
+/**
+ * A finer, stable reason the UI translates (see docs/api/datasources.md); `message` is the
+ * English fallback.
+ */
+reason?: string, 
+/**
+ * Values the reason's text needs (`{name}`).
+ */
+params?: { [key in string]: string }, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
+
+export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };

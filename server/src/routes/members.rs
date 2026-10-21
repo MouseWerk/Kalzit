@@ -88,7 +88,7 @@ async fn add(
     JsonBody(req): JsonBody<AddRequest>,
 ) -> ApiResult<(StatusCode, Json<Member>)> {
     let email = super::normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // First, so that two requests adding the same account run one after the other and the second
     // finds the membership.
     lock_org(&mut tx, &ctx.org_id).await?;
@@ -119,7 +119,7 @@ async fn add(
     let summary = json!({ "userId": user_id, "role": role.key });
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.added", ("user", &user_id), summary).await?;
     let member = load(&mut *tx, &ctx.org_id, &user_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(member)))
 }
 
@@ -208,7 +208,7 @@ async fn change_role(
     Path((_, user_id)): Path<(String, String)>,
     JsonBody(req): JsonBody<RoleRequest>,
 ) -> ApiResult<Json<Member>> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let previous = current_role_checked(&mut tx, &ctx, &user_id, Some(&role.key)).await?;
@@ -224,7 +224,7 @@ async fn change_role(
         audit(&mut tx, &actor, Some(&ctx.org_id), "member.role_changed", ("user", &user_id), summary).await?;
     }
     let member = load(&mut *tx, &ctx.org_id, &user_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(member))
 }
 
@@ -234,7 +234,7 @@ async fn remove(
     Extension(info): Extension<RequestInfo>,
     Path((_, user_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     current_role_checked(&mut tx, &ctx, &user_id, None).await?;
     // Team memberships and grants in this organization go with the membership; the account and
@@ -257,6 +257,6 @@ async fn remove(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.removed", ("user", &user_id), json!({ "userId": user_id }))
         .await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }

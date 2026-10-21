@@ -22,6 +22,9 @@ Common shapes:
   invalid cursor is `422 validation`, field `cursor`).
 - **Version conflict**: `409` with `{"error": {"code": "version_conflict", ...}, "current": <the
   stored resource, in the same shape as the route's answer>}`.
+- **Busy**: `503 busy` with `Retry-After: 1` when the database could not give the request its
+  lock in time (many writers at once, a backup). It is only answered before anything was
+  committed, so nothing was changed: send the request again.
 - **Conflict**: `409 conflict` when the resource is in a state that forbids the action (for
   example editing something in the trash), or changed between the server's checks and the change
   ("changed in the meantime": load it again and retry); the message says what to do.

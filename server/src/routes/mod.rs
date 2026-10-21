@@ -19,7 +19,6 @@ pub mod table;
 pub mod teams;
 
 use serde::Serialize;
-use sqlx::AnyPool;
 
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
@@ -70,7 +69,8 @@ pub struct OrgMembership {
     pub role: String,
 }
 
-pub async fn me(db: &AnyPool, user: SessionUser) -> ApiResult<Me> {
+/// Reads through `db`: the pool, or, after a change, the change's transaction before its commit.
+pub async fn me<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, user: SessionUser) -> ApiResult<Me> {
     let orgs: Vec<OrgMembership> = sqlx::query_as(
         "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id \
          WHERE m.user_id = $1 ORDER BY o.name",
@@ -98,10 +98,15 @@ pub fn clean_name(raw: &str, what: &str) -> ApiResult<String> {
     let name = raw.trim();
     let chars = name.chars().count();
     if chars == 0 || chars > MAX_NAME_CHARS {
-        return Err(ApiError::validation(format!("{what} needs 1 to {MAX_NAME_CHARS} characters")));
+        return Err(ApiError::validation(format!("{what} needs 1 to {MAX_NAME_CHARS} characters"))
+            .because("request.name_length")
+            .param("field", what)
+            .param("max", MAX_NAME_CHARS));
     }
     if name.chars().any(char::is_control) {
-        return Err(ApiError::validation(format!("{what} contains control characters")));
+        return Err(ApiError::validation(format!("{what} contains control characters"))
+            .because("request.name_control_characters")
+            .param("field", what));
     }
     Ok(name.to_string())
 }

@@ -2,7 +2,7 @@
 //! query editors. Secrets are written through `secrets` and never returned, only `{"set": true}`.
 //! Documented in docs/api/datasources.md.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -22,7 +22,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::secrets::{self, SecretPatch};
-use crate::shapes::{Page, Shape};
+use crate::shapes::{DatasourceAccess, Page, Shape};
 
 pub fn routes() -> Vec<RouteDef> {
     // Rights on one data source may come from the role or from a grant on it, so every route on a
@@ -45,11 +45,13 @@ const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
 
 fn field_error(e: FieldError) -> ApiError {
-    ApiError::validation(e.message).with_field(e.field)
+    ApiError::validation(e.detail.message).with_field(e.field).with_reason(e.detail.reason, e.detail.params)
 }
 
-fn blocked(message: String, field: &'static str) -> ApiError {
-    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked", message).with_field(field)
+fn blocked(detail: crate::datasources::Detail, field: &'static str) -> ApiError {
+    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked", detail.message)
+        .with_field(field)
+        .with_reason(detail.reason, detail.params)
 }
 
 #[derive(Serialize)]
@@ -87,6 +89,30 @@ struct ListItem {
     created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    access: DatasourceAccess,
+}
+
+/// The caller's access from what they hold on the source (role and grants together, as
+/// `resource_permissions` and the access index answer it). Nothing is allowed on a source the
+/// caller cannot see.
+fn access(ctx: &OrgCtx, held: Option<BTreeSet<Permission>>) -> DatasourceAccess {
+    let Some(held) = held else { return DatasourceAccess::default() };
+    DatasourceAccess {
+        read: held.contains(&Permission::DatasourcesRead),
+        query: held.contains(&Permission::DatasourcesQuery),
+        write: held.contains(&Permission::DatasourcesWrite),
+        permissions: held.contains(&Permission::DatasourcesPermissions),
+        change_target: may_change_target(ctx, &held),
+    }
+}
+
+/// Whether the caller may change where a source connects: they may change the source at all
+/// (write on it), and where it connects is decided by those who administer it: the org-wide
+/// right, or an admin grant on this source. An edit grant changes names, limits and secrets only.
+fn may_change_target(ctx: &OrgCtx, held: &BTreeSet<Permission>) -> bool {
+    held.contains(&Permission::DatasourcesWrite)
+        && (ctx.permissions.contains(&Permission::DatasourcesWrite)
+            || held.contains(&Permission::DatasourcesPermissions))
 }
 
 #[derive(Deserialize)]
@@ -103,23 +129,34 @@ async fn list(
     Extension(ctx): Extension<OrgCtx>,
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> ApiResult<Json<Page<ListItem>>> {
-    let Query(params) = params.map_err(|e| ApiError::validation(e.body_text()))?;
+    let Query(params) = params.map_err(|e| {
+        ApiError::validation(e.body_text()).because("request.query_invalid").param("detail", e.body_text())
+    })?;
     let limit = match params.limit.as_deref() {
         None => DEFAULT_LIMIT,
         Some(l) => match l.parse::<usize>() {
             Ok(n) if (1..=MAX_LIMIT).contains(&n) => n,
-            _ => return Err(ApiError::validation(format!("limit must be 1 to {MAX_LIMIT}")).with_field("limit")),
+            _ => {
+                return Err(ApiError::validation(format!("limit must be 1 to {MAX_LIMIT}"))
+                    .with_field("limit")
+                    .because("request.limit")
+                    .param("max", MAX_LIMIT));
+            }
         },
     };
     let trash = match params.trash.as_deref() {
         None | Some("false") => false,
         Some("true") => true,
-        Some(_) => return Err(ApiError::validation("trash must be true or false").with_field("trash")),
+        Some(_) => {
+            return Err(ApiError::validation("trash must be true or false")
+                .with_field("trash")
+                .because("request.trash"));
+        }
     };
     if let Some(c) = &params.cursor
         && uuid::Uuid::parse_str(c).is_err()
     {
-        return Err(ApiError::validation("cursor is not valid").with_field("cursor"));
+        return Err(ApiError::validation("cursor is not valid").with_field("cursor").because("request.cursor"));
     }
     // The role shows every source, or a grant shows that one: live sources with read or query
     // rights, trashed ones with the right to restore them (write).
@@ -130,12 +167,16 @@ async fn list(
             p.contains(&Permission::DatasourcesRead) || p.contains(&Permission::DatasourcesQuery)
         }
     };
-    let org_wide = shows(&ctx.permissions);
+    // The role alone shows every source only where it makes them visible at all (read or
+    // query); a role with write but neither sees, and restores, only what grants show it.
+    let role_sees = ctx.permissions.contains(&Permission::DatasourcesRead)
+        || ctx.permissions.contains(&Permission::DatasourcesQuery);
+    let org_wide = role_sees && shows(&ctx.permissions);
+    // Also says per row what the caller may do, without a query per row.
+    let index = AccessIndex::load(&mut *state.db.acquire().await?, &ctx).await?;
     let granted: Vec<String> = if org_wide {
         Vec::new()
     } else {
-        let mut conn = state.db.acquire().await?;
-        let index = AccessIndex::load(&mut conn, &ctx).await?;
         index
             .granted_datasources()
             .into_iter()
@@ -177,7 +218,10 @@ async fn list(
     };
     let items = rows
         .into_iter()
-        .map(|(id, name, kind, created_at, deleted_at)| ListItem { id, name, kind, created_at, deleted_at })
+        .map(|(id, name, kind, created_at, deleted_at)| {
+            let access = access(&ctx, index.datasource(&id));
+            ListItem { id, name, kind, created_at, deleted_at, access }
+        })
         .collect();
     Ok(Json(Page { items, next_cursor }))
 }
@@ -195,12 +239,19 @@ struct DatasourceView {
     updated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    access: DatasourceAccess,
 }
 
-async fn view(state: &AppState, ds: Datasource) -> ApiResult<DatasourceView> {
+/// The answer for one data source, read through `conn`: after a change, the change's own
+/// transaction before its commit, so a failing read can still be answered as "nothing changed".
+/// The caller's access comes from the access index read on the same connection, so it sees the
+/// change too and needs no second connection while the transaction holds the database.
+async fn view_in(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, ds: Datasource) -> ApiResult<DatasourceView> {
     let secrets =
-        secrets::set_fields(&state.db, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
+        secrets::set_fields(&mut *conn, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
+    let access = access(ctx, AccessIndex::load(&mut *conn, ctx).await?.datasource(&ds.id));
     Ok(DatasourceView {
+        access,
         id: ds.id,
         name: ds.name,
         kind: ds.kind,
@@ -218,12 +269,13 @@ async fn precheck_targets(state: &AppState, kind: &Kind, settings: &Value) -> Ap
     datasources::precheck_targets(&policy, kind, settings).map_err(|(b, field)| blocked(b.0, field))
 }
 
+/// `view_in` on a pooled connection, where no change is involved.
+async fn view(state: &AppState, ctx: &OrgCtx, ds: Datasource) -> ApiResult<DatasourceView> {
+    view_in(&mut *state.db.acquire().await?, ctx, ds).await
+}
+
 fn conflict_on_name(e: sqlx::Error) -> ApiError {
-    if e.as_database_error().is_some_and(|d| d.is_unique_violation()) {
-        ApiError::new(StatusCode::CONFLICT, "conflict", "a data source with this name exists").with_field("name")
-    } else {
-        e.into()
-    }
+    if e.as_database_error().is_some_and(|d| d.is_unique_violation()) { name_conflict() } else { e.into() }
 }
 
 async fn name_taken(state: &AppState, org_id: &str, name: &str, except: &str) -> ApiResult<bool> {
@@ -239,7 +291,9 @@ async fn name_taken(state: &AppState, org_id: &str, name: &str, except: &str) ->
 }
 
 fn name_conflict() -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "conflict", "a data source with this name exists").with_field("name")
+    ApiError::new(StatusCode::CONFLICT, "conflict", "a data source with this name exists")
+        .with_field("name")
+        .because("datasource.name_taken")
 }
 
 #[derive(Deserialize)]
@@ -284,10 +338,12 @@ async fn create(
     JsonBody(body): JsonBody<CreateBody>,
 ) -> ApiResult<impl IntoResponse> {
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
-    let kind = state
-        .datasources
-        .kind(&body.kind)
-        .ok_or_else(|| ApiError::validation(format!("{} is not a data source kind", body.kind)).with_field("kind"))?;
+    let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
+        ApiError::validation(format!("{} is not a data source kind", body.kind))
+            .with_field("kind")
+            .because("datasource.kind_unknown")
+            .param("kind", &body.kind)
+    })?;
     let settings = kind.validate_settings(&body.settings).map_err(field_error)?;
     // A secret that is null on create is simply not set.
     let secrets: SecretPatch = body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect();
@@ -298,7 +354,7 @@ async fn create(
     }
     let id = new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $6)",
@@ -319,9 +375,10 @@ async fn create(
         "secrets": secrets.keys().collect::<Vec<_>>(),
     });
     record(&mut tx, &event(&ctx, &info, "datasource.created", &id, summary, now)).await?;
-    tx.commit().await?;
-    let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
-    Ok((StatusCode::CREATED, Json(view(&state, ds).await?)))
+    let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
+    let answer = view_in(&mut tx, &ctx, ds).await?;
+    crate::db::commit(tx).await?;
+    Ok((StatusCode::CREATED, Json(answer)))
 }
 
 /// A data source the caller may act on with `permission`, after the org-level rule.
@@ -349,7 +406,7 @@ async fn get_one(
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
-    Ok(Json(view(&state, ds).await?))
+    Ok(Json(view(&state, &ctx, ds).await?))
 }
 
 #[derive(Deserialize)]
@@ -405,15 +462,13 @@ async fn update(
     // A new target must not receive the secrets stored for the old one: every stored secret is
     // sent again (or removed) in the same change.
     if let Some(target) = kind.changed_targets(&ds.settings, &settings).first() {
-        // Where a source connects is decided by those who administer it: the org-wide right, or
-        // an admin grant on this source. An edit grant changes names, limits and secrets only.
         let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
-        if !ctx.permissions.contains(&Permission::DatasourcesWrite)
-            && !held.contains(&Permission::DatasourcesPermissions)
-        {
+        if !may_change_target(&ctx, &held) {
             return Err(ApiError::forbidden(format!(
                 "changing {target} needs datasources:write for the organization or an admin grant on this source"
-            )));
+            ))
+            .because("datasource.target_change_forbidden")
+            .param("field", target));
         }
         for stored in secrets::set_fields(&state.db, &ds.id).await? {
             if !body.secrets.contains_key(&stored) {
@@ -421,17 +476,20 @@ async fn update(
                 return Err(ApiError::validation(format!(
                     "{target} changes where the data source connects; send {stored} again or remove it"
                 ))
-                .with_field(field));
+                .with_field(field)
+                .because("secrets.resend_on_target_change")
+                .param("field", target)
+                .param("secret", &stored));
             }
         }
     }
     changed.extend(body.secrets.keys().map(|k| format!("secrets.{k}")));
     if changed.is_empty() {
-        return Ok(Json(view(&state, ds).await?));
+        return Ok(Json(view(&state, &ctx, ds).await?));
     }
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE datasources SET name = $1, settings = $2, updated_at = $3 WHERE id = $4 AND org_id = $5")
         .bind(&name)
         .bind(settings.to_string())
@@ -443,10 +501,11 @@ async fn update(
         .map_err(conflict_on_name)?;
     secrets::apply_patch(&mut tx, state.datasources.keyring(), &ds.id, &body.secrets).await?;
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
-    tx.commit().await?;
+    let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
+    let answer = view_in(&mut tx, &ctx, saved).await?;
+    crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
-    let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &ds.id).await?;
-    Ok(Json(view(&state, ds).await?))
+    Ok(Json(answer))
 }
 
 async fn delete(
@@ -457,7 +516,7 @@ async fn delete(
 ) -> ApiResult<StatusCode> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
     let now = state.clock.now_ms().max(ds.updated_at + 1);
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE datasources SET deleted_at = $1, updated_at = $1 WHERE id = $2 AND org_id = $3")
         .bind(now)
         .bind(&ds.id)
@@ -465,7 +524,7 @@ async fn delete(
         .execute(&mut *tx)
         .await?;
     record(&mut tx, &event(&ctx, &info, "datasource.deleted", &ds.id, json!({}), now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -481,7 +540,7 @@ async fn restore(
         return Err(name_conflict());
     }
     let now = state.clock.now_ms().max(ds.updated_at + 1);
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE datasources SET deleted_at = NULL, updated_at = $1 WHERE id = $2 AND org_id = $3")
         .bind(now)
         .bind(&ds.id)
@@ -490,9 +549,10 @@ async fn restore(
         .await
         .map_err(conflict_on_name)?;
     record(&mut tx, &event(&ctx, &info, "datasource.restored", &ds.id, json!({}), now)).await?;
-    tx.commit().await?;
-    let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &ds.id).await?;
-    Ok(Json(view(&state, ds).await?))
+    let restored = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
+    let answer = view_in(&mut tx, &ctx, restored).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(answer))
 }
 
 async fn health(

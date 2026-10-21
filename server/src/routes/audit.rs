@@ -218,7 +218,7 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
     let days = days.as_i64().ok_or_else(|| ApiError::internal("audit", "audit.retention_days is not a number"))?;
     let now = state.clock.now_ms();
     let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let deleted = sqlx::query("DELETE FROM audit_events WHERE created_at < $1")
         .bind(cutoff)
         .execute(&mut *tx)
@@ -237,7 +237,7 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
         };
         audit::record(&mut tx, &event).await?;
     }
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(deleted)
 }
 
@@ -267,7 +267,8 @@ mod tests {
     async fn events_about_hidden_folders_and_their_dashboards_are_left_out() {
         let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
         let clock = std::sync::Arc::new(crate::clock::ManualClock::new(0));
-        // A data directory of its own: the server state keeps its secrets key there.
+        // A data directory of its own: never the system folder, and the server state keeps its
+        // secrets key there.
         let dir = tempfile::tempdir().unwrap();
         let mut config = crate::config::Config::default();
         config.paths.data_dir = dir.path().to_path_buf();

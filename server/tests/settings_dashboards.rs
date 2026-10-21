@@ -14,6 +14,8 @@ use kalzit::config::Config;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod common;
+
 const SETUP_CODE: &str = "test-setup-code-0123456789";
 const DAY_MS: i64 = 24 * 3_600_000;
 
@@ -42,7 +44,7 @@ impl Reply {
 }
 
 async fn test_app(db_url: Option<String>, tweak: impl FnOnce(&mut Config)) -> TestApp {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.database.url = db_url;
@@ -293,10 +295,223 @@ on_both_databases! {
     dashboards_moved_out_of_restriction_stay_hidden_once_purged: |_| {};
 }
 
+/// Lock contention on SQLite is never a 500. Another connection holds the database's write lock
+/// for longer than the app waits: reads go on (WAL), writes answer `503 busy` with `Retry-After`,
+/// and once the lock is free the same write succeeds. The app's wait is cut to 300 ms so the test
+/// does not sit out the production timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_locked_database_answers_busy_not_internal() {
+    let dir = common::private_tempdir();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    let url = config.database_url();
+    let pool = kalzit::db::connect_with(&url, 4, std::time::Duration::from_millis(300)).await.unwrap();
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+    let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    let app = router(state.clone()).layer(MockConnectInfo(peer));
+    let mut t = TestApp { app, clock, state, _dir: dir, owner: String::new(), org: String::new() };
+    let setup = t
+        .send(
+            Method::POST,
+            "/api/setup",
+            Some(json!({ "token": SETUP_CODE, "orgName": "Org", "name": "Jörg Müller",
+                         "email": "joerg@example.de", "password": "Grün und sicher 2026" })),
+            None,
+        )
+        .await;
+    assert_eq!(setup.status, StatusCode::OK, "{}", setup.body);
+    t.org = setup.body["orgs"][0]["id"].as_str().unwrap().to_string();
+    t.owner = t.session_for(setup.body["id"].as_str().unwrap()).await;
+
+    // Another writer (a second server process, a backup tool) takes the write lock and keeps it.
+    use sqlx::Connection;
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    sqlx::query("BEGIN EXCLUSIVE").execute(&mut holder).await.unwrap();
+
+    let read = t.get("~/folders", &t.owner).await;
+    assert_eq!(read.status, StatusCode::OK, "reads are not blocked by a writer: {}", read.body);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(t.path("~/folders"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::COOKIE, &t.owner)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "name": "Wartet" }).to_string()))
+        .unwrap();
+    let res = t.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.headers().get(header::RETRY_AFTER).map(|v| v.to_str().unwrap()), Some("1"));
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "busy", "{body}");
+
+    // A failed sign-in stays a failed sign-in, even when its audit entry cannot be written.
+    let wrong = t
+        .send(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "email": "joerg@example.de", "password": "falsch falsch falsch" })),
+            None,
+        )
+        .await;
+    assert_eq!((wrong.status, wrong.code()), (StatusCode::UNAUTHORIZED, "invalid_credentials"), "{}", wrong.body);
+
+    sqlx::query("COMMIT").execute(&mut holder).await.unwrap();
+    let again = t.post("~/folders", json!({ "name": "Wartet" }), &t.owner).await;
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+}
+
+/// Reading never waits on a writer, also when the session is due for its last-seen update: that
+/// update is best-effort and gives up at once, so the request answers well within the busy
+/// timeout (15 s) instead of waiting for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_due_session_touch_does_not_wait_for_a_writer() {
+    let t = test_app(None, |_| {}).await;
+    use sqlx::Connection;
+    let url = t.state.config.database_url();
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    // Past the touch interval (5 minutes), so this request wants to update last_seen_at.
+    t.clock.advance_ms(6 * 60 * 1000);
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+    let started = std::time::Instant::now();
+    let me = t.get("/me", &t.owner).await;
+    let took = started.elapsed();
+    sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+    assert_eq!(me.status, StatusCode::OK, "{}", me.body);
+    assert!(took < std::time::Duration::from_secs(3), "the read waited {took:?} for the writer");
+    // The update waited for the lock in the background and lands once it is free.
+    t.state.touches.settle().await;
+    let last_seen: i64 =
+        sqlx::query_scalar("SELECT MAX(last_seen_at) FROM sessions").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(last_seen, t.clock.now_ms());
+}
+
+/// A request dropped at any point while its session touch is due leaves every pooled
+/// connection with the normal busy timeout.
+#[tokio::test]
+async fn a_cancelled_request_leaves_the_busy_timeout_alone() {
+    use sqlx::Connection;
+    use std::future::Future;
+    use std::task::Poll;
+    let t = test_app(None, |_| {}).await;
+    let url = t.state.config.database_url();
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    t.clock.advance_ms(6 * 60 * 1000);
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+    // Drop the request after 0, 1, 2, ... polls, until it would finish on its own.
+    for polls in 0.. {
+        let mut request = Box::pin(t.get("/me", &t.owner));
+        let mut done = false;
+        for _ in 0..polls {
+            done = std::future::poll_fn(|cx| Poll::Ready(request.as_mut().poll(cx).is_ready())).await;
+            if done {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        drop(request);
+        if done {
+            break;
+        }
+    }
+    sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+    t.state.touches.settle().await;
+
+    let max = t.state.db.options().get_max_connections();
+    let mut conns = Vec::new();
+    for _ in 0..max {
+        conns.push(t.state.db.acquire().await.unwrap());
+    }
+    for conn in &mut conns {
+        let timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout").fetch_one(&mut **conn).await.unwrap();
+        assert_eq!(timeout, kalzit::db::SQLITE_BUSY_TIMEOUT.as_millis() as i64);
+    }
+}
+
+/// A graceful stop closes the database, so SQLite checkpoints its WAL and removes it: what a
+/// backup copies with the server stopped is complete in `kalzit.db` alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stopping_the_server_checkpoints_the_database() {
+    let dir = common::private_tempdir();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    config.server.http_addr = "127.0.0.1:0".into();
+    let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let wal = dir.path().join("kalzit.db-wal");
+    assert!(wal.exists(), "the database runs in WAL mode");
+    server.shutdown();
+    server.wait().await.unwrap();
+    assert!(!wal.exists(), "the WAL is folded into the database once the server stops");
+}
+
+/// A touch waiting for the write lock does not hold up the stop: the server drops it before it
+/// closes the database, instead of waiting out the busy timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_waiting_session_touch_does_not_delay_the_stop() {
+    use sqlx::Connection;
+    let dir = common::private_tempdir();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    config.server.http_addr = "127.0.0.1:0".into();
+    let url = config.database_url();
+    let db = kalzit::db::connect(&url, 1).await.unwrap();
+    sqlx::query("INSERT INTO users (id, email, name, created_at) VALUES ('u-1', 'joerg@example.de', 'Jörg', 0)")
+        .execute(&db)
+        .await
+        .unwrap();
+    // Last seen ten minutes ago, so the next request touches the session.
+    let now = kalzit::clock::SystemClock.now_ms();
+    let token = kalzit::auth::session::create(&db, &config.sessions, now - 10 * 60 * 1000, "u-1").await.unwrap();
+    // The jobs the server runs at its start write too. Something for each to delete shows when
+    // they are done, so only the touch waits for the lock below.
+    kalzit::auth::session::create(&db, &config.sessions, 0, "u-1").await.unwrap();
+    sqlx::query("INSERT INTO audit_events (id, action, summary, created_at) VALUES ('old', 'auth.signed_in', '{}', 0)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let (left,): (i64,) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM sessions) + (SELECT COUNT(*) FROM audit_events WHERE id = 'old')",
+        )
+        .fetch_one(&mut holder)
+        .await
+        .unwrap();
+        if left == 1 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the start jobs did not run within 20 s");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let me = reqwest::Client::new()
+        .get(format!("http://{}/api/me", server.http_addr.unwrap()))
+        .header("cookie", format!("kalzit_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), StatusCode::OK);
+
+    let started = std::time::Instant::now();
+    server.shutdown();
+    server.wait().await.unwrap();
+    let took = started.elapsed();
+    sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+    // Within the shortest grace (closing the console on Windows: 3 s), far below the 15 s busy timeout.
+    assert!(took < std::time::Duration::from_secs(3), "the stop waited {took:?} for the touch");
+}
+
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_runs_the_audit_retention() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:0".into();

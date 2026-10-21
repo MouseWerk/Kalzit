@@ -118,6 +118,13 @@ pub struct FrameMeta {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Notice {
     pub severity: NoticeSeverity,
+    /// A stable code the UI translates (see docs/api/datasources.md).
+    pub code: String,
+    /// Values the code's text needs (`{column}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub params: Option<BTreeMap<String, String>>,
+    /// English fallback.
     pub text: String,
 }
 
@@ -372,6 +379,26 @@ pub enum QueryOutcome {
     Err { error: ErrorBody },
 }
 
+/// What the caller may do on one data source, from their role and grants together; the routes
+/// decide by the same rules.
+///
+/// - `read`: open it (name, kind, settings without secrets).
+/// - `query`: run free queries in Explore, test the connection, read the schema.
+/// - `write`: change its name, limits and secrets, and trash and restore it.
+/// - `permissions`: the admin level: manage its grants.
+/// - `changeTarget`: change where it connects (host, port, database, user, TLS, path, URL), with
+///   the secrets that go with it: `write`, plus the org-wide datasources:write or `permissions`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct DatasourceAccess {
+    pub read: bool,
+    pub query: bool,
+    pub write: bool,
+    pub permissions: bool,
+    pub change_target: bool,
+}
+
 /// The body of every error answer: `{"error": ErrorBody}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -388,6 +415,15 @@ pub struct ErrorBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub field: Option<String>,
+    /// A finer, stable reason the UI translates (see docs/api/datasources.md); `message` is the
+    /// English fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
+    /// Values the reason's text needs (`{name}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 /// Every list answer. `nextCursor` is opaque; order is stable (newest first unless a route says
@@ -492,6 +528,7 @@ mod tests {
             ErrorEnvelope::decl(&cfg),
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),
+            DatasourceAccess::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",
