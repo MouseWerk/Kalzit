@@ -89,9 +89,9 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
     return () => window.clearTimeout(timer);
   }, [query, search.q, navigate]);
   const folder = folders.data?.find((f) => f.id === search.folder);
-  // Creating dashboards and folders and opening the trash follow the organization role in M1:
-  // there is no item yet whose grants could extend it. Actions on an item use its `access`.
-  const canWrite = permissions.has("dashboards:write");
+  // Creating a dashboard in the selected folder follows that folder's `access.write` (a grant on
+  // it counts); at the top level, and for folders and the trash, the organization role decides.
+  const canWrite = folder?.access?.write === true || permissions.has("dashboards:write");
 
   const select = (id: string | undefined) =>
     navigate({ search: (prev) => ({ ...prev, folder: id }), replace: true });

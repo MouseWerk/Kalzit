@@ -342,7 +342,8 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     const folderAnswer = (f: StoredFolder) => ({
       ...folderView(f),
       access: {
-        write: can("folders:write"),
+        // A folder grant (in `grants` by folder id) extends the role, as for dashboards.
+        write: can("folders:write") || state.grants[f.id]?.write === true,
         delete: can("folders:write"),
         permissions: can("folders:permissions"),
       },
@@ -474,7 +475,11 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       return json(200, { items, nextCursor: null });
     }
     if (parts.length === 1 && method === "POST") {
-      if (!can("dashboards:write")) return error(403, "forbidden");
+      // Creating needs dashboards:write, or a write grant on the target folder.
+      const into = typeof body.folderId === "string" ? body.folderId : null;
+      if (!can("dashboards:write") && !(into !== null && state.grants[into]?.write === true)) {
+        return error(403, "forbidden");
+      }
       const extra = unknownField(body, ["model", "folderId", "message"]);
       if (extra !== undefined) return validation(extra);
       // Created without a time range, a dashboard gets the organization's default (stream B).

@@ -129,6 +129,22 @@ describe("dashboard browser", () => {
     const created = server.areas.dashboards.dashboards.at(-1);
     expect(created === undefined ? "" : latest(created).model.title).toBe("Capacity");
   });
+
+  it("lets a viewer with a write grant on a folder create a dashboard there", async () => {
+    const server = setup("viewer");
+    server.areas.dashboards.grants["f-ops"] = { write: true };
+    const { user } = renderApp("/dashboards");
+    await screen.findByRole("heading", { name: "All dashboards" });
+    // At the top level the viewer role decides: nothing to create.
+    expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Operations" }));
+    await user.click(await screen.findByRole("button", { name: "New dashboard" }));
+    const dialog = screen.getByRole("dialog", { name: "New dashboard" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "Capacity");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Capacity" })).toBeTruthy();
+    expect(server.areas.dashboards.dashboards.at(-1)?.folderId).toBe("f-ops");
+  });
 });
 
 describe("dashboard view", () => {
