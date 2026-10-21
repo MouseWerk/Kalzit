@@ -395,6 +395,14 @@ impl Config {
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be at least 1");
         }
+        // Without `scheme://` there is no host part, the password cannot be told apart, and
+        // the value is never echoed here.
+        if let Some(url) = &self.database.url
+            && !url.starts_with("sqlite:")
+            && !url.split_once("://").is_some_and(|(scheme, _)| crate::db::is_scheme(scheme))
+        {
+            bail!("database.url must look like postgres://user:pass@host/db (or sqlite:path)");
+        }
         if self.paths.data_dir.to_string_lossy().trim().is_empty() {
             match self.source("paths.data_dir") {
                 Source::Default => bail!(
@@ -737,6 +745,27 @@ mod tests {
         .unwrap();
         assert_eq!(c.tls.cert_file, Some(PathBuf::from("env.pem")));
         assert_eq!(c.database_url(), "sqlite:env.db");
+    }
+
+    #[test]
+    fn a_database_url_without_scheme_slashes_is_refused_without_echo() {
+        for url in [
+            "postgres:/u:secret@db/k",
+            "postgres:u:secret@db/k",
+            "mysql:/u:secret@h:3306/db",
+            "postgres:x://u:secret@db",
+        ] {
+            let err = Config::from_sources("", env(&[("KALZIT_DATABASE_URL", url)])).unwrap_err();
+            let text = format!("{err:#}");
+            assert!(text.contains("postgres://user:pass@host/db"), "{text}");
+            assert!(!text.contains("secret"), "the value is echoed: {text}");
+            let toml = format!("[database]\nurl = \"{url}\"\n");
+            let text = format!("{:#}", Config::from_sources(&toml, env(&[])).unwrap_err());
+            assert!(!text.contains("secret"), "the value is echoed: {text}");
+        }
+        for url in ["postgres://u:p@db/k", "mysql://h/db", "sqlite:data/k.db", "sqlite::memory:"] {
+            assert!(Config::from_sources("", env(&[("KALZIT_DATABASE_URL", url)])).is_ok(), "{url}");
+        }
     }
 
     #[test]

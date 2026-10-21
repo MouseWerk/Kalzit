@@ -335,7 +335,9 @@ type QueryResult =
   `://` to the first `/`, `?` or `#`) is ambiguous: a password with raw special characters may
   have become port, path or query (`u:2024/Summer@db` parses as port 2024). It is logged as
   `scheme://***` only, and a warning at start says to percent-encode the password. A URL that does
-  not parse is shown as `<unparseable database url>`; `sqlite:` URLs are shown as they are. The
+  not parse is shown as `<unparseable database url>`, one without an authority (`postgres:u:pw@db`)
+  as `scheme:***`; `sqlite:` URLs are shown as they are. Such a URL is refused at load anyway: a
+  `database.url` other than `sqlite:` must start with `scheme://`, and the error does not repeat it. The
   `connect` error uses the same function.
 - Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
   `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback

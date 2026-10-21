@@ -29,10 +29,15 @@ pub fn redact(url: &str) -> String {
         return url.to_string();
     }
     if ambiguity(url).is_some() {
-        let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
-        return format!("{scheme}://***");
+        let scheme = url.split_once("://").map(|(scheme, _)| scheme).filter(|s| is_scheme(s));
+        return scheme.map_or_else(|| "***".to_string(), |scheme| format!("{scheme}://***"));
     }
     let Ok(parsed) = url::Url::parse(url) else { return "<unparseable database url>".into() };
+    // `postgres:u:secret@db/k` or `postgres:/u:secret@db`: no `//`, so no authority to take the
+    // password from; the rest may be anything.
+    if !parsed.has_authority() {
+        return format!("{}:***", parsed.scheme());
+    }
     let mut out = format!("{}:", parsed.scheme());
     if parsed.has_authority() {
         out.push_str("//");
@@ -65,6 +70,12 @@ pub fn redact(url: &str) -> String {
         out.push_str(&pairs.join("&"));
     }
     out
+}
+
+/// A URL scheme: letters, digits, `+`, `-` and `.`, starting with a letter.
+pub fn is_scheme(text: &str) -> bool {
+    text.starts_with(|c: char| c.is_ascii_alphabetic())
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
 }
 
 /// Query keys whose values are shown in logs (compared after decoding, without case). Every
@@ -159,7 +170,7 @@ mod tests {
             case("postgres://u:9123?x=1@db/k", "9123?x=1", None),
             case("postgres://u:7?a=1@host:5432", "7?a=1", None),
             case("postgres://u:771?2=3@4@db", "771?2=3@4", None),
-            case("postgres://:pasecret?ss=1@db", "pasecret?ss=1", None),
+            case("postgres://:pzsecret?ss=1@db", "pzsecret?ss=1", None),
             case("postgres://u/x:pwsecret?a=b@db", "pwsecret?a=b", None),
             case("postgres://u:asecret@b?c=dsecret@db", "asecret@b?c=dsecret", None),
             case("postgres://u:asecret?b=csecret@d@db", "asecret?b=csecret@d", None),
@@ -181,6 +192,11 @@ mod tests {
             case("postgres://db/k?options=-c%20x&pwd=secret3", "secret3", Some("postgres://db/k")),
             case("postgres://u:secret7@[2001:db8::1]:5432/db", "secret7", Some("u:***@[2001:db8::1]:5432/db")),
             case("postgres://u:secret%2F8@db:5432/k", "secret%2F8", Some("u:***@db:5432/k")),
+            // No `//` after the scheme: no authority, nothing but the scheme is shown.
+            case("postgres:/u:secret9@db/k", "secret9", Some("postgres:***")),
+            case("postgres:u:secret10@db/k", "secret10", Some("postgres:***")),
+            case("mysql:/u:secret11@h:3306/db", "secret11", Some("mysql:***")),
+            case("postgres:x://u:secret12@db", "secret12", Some("postgres:***")),
         ];
         for Case { url, password, host } in cases {
             let out = redact(url);
