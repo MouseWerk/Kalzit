@@ -40,7 +40,7 @@ impl AppState {
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
-        let touches = Arc::new(crate::auth::session::Touches::for_pool(db.options().get_max_connections()));
+        let touches = Arc::new(crate::auth::session::Touches::new(&db, &config.database_url()));
         Ok(Self {
             db,
             config: Arc::new(config),

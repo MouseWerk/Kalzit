@@ -23,6 +23,11 @@ pub const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(15);
 /// large file behind (64 MiB).
 const SQLITE_JOURNAL_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
 
+/// How long a session touch waits for the write lock on SQLite before it gives up. Short, because
+/// SQLite keeps waiting even when the touch is dropped, and closing the database at a stop waits
+/// for that.
+pub const TOUCH_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
     connect_with(url, max_connections, SQLITE_BUSY_TIMEOUT).await
 }
@@ -41,25 +46,7 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
     if let Some(file) = sqlite_file(url) {
         ensure_local_disk(&file)?;
     }
-    let busy_ms = busy_timeout.as_millis();
-    let pool = AnyPoolOptions::new()
-        .max_connections(max_connections)
-        .after_connect(move |conn, _| {
-            Box::pin(async move {
-                if conn.backend_name() == "SQLite" {
-                    // Per connection. `synchronous` stays at its default (FULL), so a committed
-                    // change survives a power loss too.
-                    let pragmas = [
-                        format!("PRAGMA busy_timeout = {busy_ms}"),
-                        format!("PRAGMA journal_size_limit = {SQLITE_JOURNAL_SIZE_LIMIT}"),
-                    ];
-                    for pragma in pragmas {
-                        sqlx::query(sqlx::AssertSqlSafe(pragma)).execute(&mut *conn).await?;
-                    }
-                }
-                Ok(())
-            })
-        })
+    let pool = pool_options(max_connections, busy_timeout)
         .connect(url)
         .await
         .with_context(|| format!("connecting to the database ({})", redact(url)))?;
@@ -79,6 +66,36 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
     drop(conn);
     MIGRATOR.run(&pool).await.context("running database migrations")?;
     Ok(pool)
+}
+
+/// A second, small pool on the same SQLite file whose connections wait only `busy_timeout` for a
+/// lock, for best-effort writes that must not hold up a stop. Its connections are its own, so the
+/// short timeout never reaches a request's connection. `None` for PostgreSQL, where a dropped
+/// statement ends with its connection, and for an in-memory database, which a second pool would
+/// not see. Connects on first use; the schema is the main pool's.
+pub fn side_pool(pool: &AnyPool, url: &str, max_connections: u32, busy_timeout: Duration) -> Option<AnyPool> {
+    sqlite_file(url)?;
+    Some(pool_options(max_connections, busy_timeout).connect_lazy_with((*pool.connect_options()).clone()))
+}
+
+fn pool_options(max_connections: u32, busy_timeout: Duration) -> AnyPoolOptions {
+    let busy_ms = busy_timeout.as_millis();
+    AnyPoolOptions::new().max_connections(max_connections).after_connect(move |conn, _| {
+        Box::pin(async move {
+            if conn.backend_name() == "SQLite" {
+                // Per connection. `synchronous` stays at its default (FULL), so a committed
+                // change survives a power loss too.
+                let pragmas = [
+                    format!("PRAGMA busy_timeout = {busy_ms}"),
+                    format!("PRAGMA journal_size_limit = {SQLITE_JOURNAL_SIZE_LIMIT}"),
+                ];
+                for pragma in pragmas {
+                    sqlx::query(sqlx::AssertSqlSafe(pragma)).execute(&mut *conn).await?;
+                }
+            }
+            Ok(())
+        })
+    })
 }
 
 /// Starts a transaction that holds the write lock from its first statement: `BEGIN IMMEDIATE` on

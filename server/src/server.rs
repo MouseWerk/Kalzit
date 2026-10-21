@@ -37,6 +37,7 @@ pub struct Running {
     handles: Vec<Handle<SocketAddr>>,
     listeners: JoinSet<Result<()>>,
     db: sqlx::AnyPool,
+    touches: Arc<crate::auth::session::Touches>,
 }
 
 impl Running {
@@ -58,6 +59,7 @@ impl Running {
                 break;
             }
         }
+        self.touches.abort_all().await;
         self.db.close().await;
         outcome
     }
@@ -102,6 +104,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         handles: Vec::new(),
         listeners: JoinSet::new(),
         db: state.db.clone(),
+        touches: state.touches.clone(),
     };
 
     if let Some(addr) = config.https_addr() {

@@ -443,6 +443,69 @@ async fn stopping_the_server_checkpoints_the_database() {
     assert!(!wal.exists(), "the WAL is folded into the database once the server stops");
 }
 
+/// A touch waiting for the write lock does not hold up the stop: the server drops it before it
+/// closes the database, instead of waiting out the busy timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_waiting_session_touch_does_not_delay_the_stop() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    config.server.http_addr = "127.0.0.1:0".into();
+    let url = config.database_url();
+    let db = kalzit::db::connect(&url, 1).await.unwrap();
+    sqlx::query("INSERT INTO users (id, email, name, created_at) VALUES ('u-1', 'joerg@example.de', 'Jörg', 0)")
+        .execute(&db)
+        .await
+        .unwrap();
+    // Last seen ten minutes ago, so the next request touches the session.
+    let now = kalzit::clock::SystemClock.now_ms();
+    let token = kalzit::auth::session::create(&db, &config.sessions, now - 10 * 60 * 1000, "u-1").await.unwrap();
+    // The jobs the server runs at its start write too. Something for each to delete shows when
+    // they are done, so only the touch waits for the lock below.
+    kalzit::auth::session::create(&db, &config.sessions, 0, "u-1").await.unwrap();
+    sqlx::query("INSERT INTO audit_events (id, action, summary, created_at) VALUES ('old', 'auth.signed_in', '{}', 0)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let (left,): (i64,) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM sessions) + (SELECT COUNT(*) FROM audit_events WHERE id = 'old')",
+        )
+        .fetch_one(&mut holder)
+        .await
+        .unwrap();
+        if left == 1 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the start jobs did not run within 20 s");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let me = reqwest::Client::new()
+        .get(format!("http://{}/api/me", server.http_addr.unwrap()))
+        .header("cookie", format!("kalzit_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), StatusCode::OK);
+
+    let started = std::time::Instant::now();
+    server.shutdown();
+    server.wait().await.unwrap();
+    let took = started.elapsed();
+    sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+    // Within the shortest grace (closing the console on Windows: 3 s), far below the 15 s busy timeout.
+    assert!(took < std::time::Duration::from_secs(3), "the stop waited {took:?} for the touch");
+}
+
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_runs_the_audit_retention() {
