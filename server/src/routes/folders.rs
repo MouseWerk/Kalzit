@@ -411,6 +411,9 @@ async fn create(
     .await?;
     let summary = json!({ "parentId": body.parent_id, "restricted": body.restricted });
     audit::record(&mut tx, &event(&ctx, &info, "folder.created", &id, summary, now)).await?;
+    if body.restricted {
+        keep_access(&mut tx, &ctx, &info, &id, now).await?;
+    }
     tx.commit().await?;
     Ok((StatusCode::CREATED, answer(&state, &ctx, &id).await?))
 }
@@ -426,6 +429,61 @@ pub struct UpdateFolder {
     #[serde(default)]
     restricted: Option<bool>,
     version: i64,
+}
+
+/// A member who restricts a folder (or creates one restricted) through a grant, not through
+/// org-wide `folders:permissions`, would lose sight of it at once: grants above a restricted
+/// folder do not reach into it. They get an `admin` grant on it in the same transaction, which
+/// they may hand out since they hold its permissions there.
+async fn keep_access(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    folder_id: &str,
+    now: i64,
+) -> ApiResult<()> {
+    if authz::role_sees_restricted(&ctx.permissions) {
+        return Ok(());
+    }
+    let existing: Option<(String, String)> = sqlx::query_as(
+        "SELECT id, level FROM resource_grants WHERE org_id = $1 AND resource_type = 'folder' AND resource_id = $2 \
+         AND subject_type = 'user' AND subject_id = $3",
+    )
+    .bind(&ctx.org_id)
+    .bind(folder_id)
+    .bind(&ctx.user.id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let (action, summary) = match existing {
+        Some((_, level)) if level == "admin" => return Ok(()),
+        Some((id, level)) => {
+            sqlx::query("UPDATE resource_grants SET level = 'admin' WHERE id = $1")
+                .bind(&id)
+                .execute(&mut *conn)
+                .await?;
+            ("grant.changed", json!({ "grantId": id, "from": level, "to": "admin" }))
+        }
+        None => {
+            let id = new_id();
+            sqlx::query(
+                "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
+                 created_by, created_at) VALUES ($1, $2, 'user', $3, 'folder', $4, 'admin', $3, $5)",
+            )
+            .bind(&id)
+            .bind(&ctx.org_id)
+            .bind(&ctx.user.id)
+            .bind(folder_id)
+            .bind(now)
+            .execute(&mut *conn)
+            .await?;
+            (
+                "grant.created",
+                json!({ "grantId": id, "subjectType": "user", "subjectId": ctx.user.id, "level": "admin" }),
+            )
+        }
+    };
+    audit::record(conn, &event(ctx, info, action, folder_id, summary, now)).await?;
+    Ok(())
 }
 
 /// The restricted folder that would govern `folder` under `parent`: the folder itself when it is
@@ -453,8 +511,10 @@ async fn update(
     let new_parent = body.parent_id.clone().filter(|p| *p != visible_parent(&before, &tree));
     let mut checked = None;
     if let Some(parent) = &new_parent {
-        if let Some(parent) = parent.as_deref() {
-            authorize(&state, &ctx, parent, Permission::FoldersWrite).await?;
+        match parent.as_deref() {
+            Some(parent) => authorize(&state, &ctx, parent, Permission::FoldersWrite).await?,
+            // The top level belongs to no folder, so only the org-wide permission counts, as on create.
+            None => ctx.check(Permission::FoldersWrite)?,
         }
         let subtree = Subtree::of(&mut *state.db.acquire().await?, &ctx, &tree, &folder_id, &Part::All).await?;
         tree.check_subtree_visible(&folder_id)?;
@@ -501,13 +561,15 @@ async fn update(
         changed.push("name");
     }
     if let (Some(parent), Some(checked)) = (new_parent, &checked) {
-        Subtree::of(&mut tx, &ctx, &tree, &folder_id, &Part::All).await?.check_unchanged(checked)?;
         // Moving hidden content along would also let the depth check reveal its levels.
         tree.check_subtree_visible(&folder_id)?;
+        // Placement first: the loser of two opposite moves learns of the cycle, not just that
+        // something changed.
         if let Some(parent) = parent.as_deref() {
             check_parent(&tree, parent)?;
             tree.check_placement(Some(&folder_id), parent)?;
         }
+        Subtree::of(&mut tx, &ctx, &tree, &folder_id, &Part::All).await?.check_unchanged(checked)?;
         next.parent_id = parent;
         changed.push("parentId");
     }
@@ -534,6 +596,9 @@ async fn update(
         .await?;
         let summary = json!({ "fields": changed });
         audit::record(&mut tx, &event(&ctx, &info, "folder.updated", &folder_id, summary, now)).await?;
+        if next.restricted != 0 && current.restricted == 0 {
+            keep_access(&mut tx, &ctx, &info, &folder_id, now).await?;
+        }
         tx.commit().await?;
     } else {
         drop(tx);

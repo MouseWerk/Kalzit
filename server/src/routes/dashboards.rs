@@ -265,6 +265,17 @@ async fn insert_version(
 /// Deletes the dashboards of one folder with their versions and grants, inside the caller's
 /// transaction. Answers how many dashboards went.
 pub(super) async fn purge_in_folder(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<u64> {
+    // Dashboards that once lived in a restricted folder keep their events hidden (see `purge`).
+    sqlx::query(
+        "INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) \
+         SELECT d.org_id, 'dashboard', d.id FROM dashboards d WHERE d.org_id = $1 AND d.folder_id = $2 \
+         AND d.ever_restricted = 1 AND NOT EXISTS (SELECT 1 FROM restricted_tombstones t \
+         WHERE t.org_id = d.org_id AND t.resource_type = 'dashboard' AND t.resource_id = d.id)",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .execute(&mut *conn)
+    .await?;
     sqlx::query(
         "DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id IN \
          (SELECT id FROM dashboards WHERE org_id = $1 AND folder_id = $2)",
@@ -456,6 +467,16 @@ async fn write_version(
     let mut tx = state.db.begin().await?;
     if moved {
         lock_place(&mut tx, &ctx.org_id, folder_id).await?;
+        // Leaving a restricted folder is remembered, so the purge still hides its old events.
+        if let Some(old) = row.folder_id.as_deref()
+            && folders::restricted_in(&mut tx, &ctx.org_id, old).await?
+        {
+            sqlx::query("UPDATE dashboards SET ever_restricted = 1 WHERE org_id = $1 AND id = $2")
+                .bind(&ctx.org_id)
+                .bind(&row.id)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
     let updated = sqlx::query(
         "UPDATE dashboards SET title = $1, search_title = $2, folder_id = $3, version = $4, updated_by = $5, \
@@ -514,6 +535,25 @@ async fn save(
     };
     if folder_id != row.folder_id {
         authorize_place(&state, &ctx, folder_id.as_deref()).await?;
+        // Moving into or out of a restricted folder changes who sees the dashboard: a permissions
+        // change on both sides, as for folders.
+        let tree = Tree::load(&mut *state.db.acquire().await?, &ctx).await?;
+        let governing = |folder: Option<&str>| folder.and_then(|f| tree.governing(f)).map(str::to_string);
+        if governing(row.folder_id.as_deref()) != governing(folder_id.as_deref()) {
+            for place in [row.folder_id.as_deref(), folder_id.as_deref()].into_iter().flatten() {
+                authz::check_resource(&state.db, &ctx, Permission::FoldersPermissions, Resource::Folder(place))
+                    .await
+                    // The caller sees the dashboard; that its folder is hidden from them is no secret
+                    // worth a 404 here, the move is simply not theirs to make.
+                    .map_err(|e| {
+                        if e.code == "not_found" {
+                            ApiError::forbidden("missing permission folders:permissions")
+                        } else {
+                            e
+                        }
+                    })?;
+            }
+        }
     }
     if body.version != row.version {
         return Err(ApiError::version_conflict(json!(view(&state, &ctx, row).await?)));
@@ -617,9 +657,17 @@ async fn purge(
         Some((_, None)) => return Err(not_trashed()),
         Some((folder, Some(_))) => folder,
     };
-    if let Some(folder) = folder.as_deref()
-        && folders::restricted_in(&mut tx, &ctx.org_id, folder).await?
-    {
+    let (ever_restricted,): (i64,) =
+        sqlx::query_as("SELECT ever_restricted FROM dashboards WHERE org_id = $1 AND id = $2")
+            .bind(&ctx.org_id)
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let restricted_now = match folder.as_deref() {
+        Some(folder) => folders::restricted_in(&mut tx, &ctx.org_id, folder).await?,
+        None => false,
+    };
+    if restricted_now || ever_restricted != 0 {
         // Restricted content keeps its audit events hidden once it is gone.
         folders::tombstone_dashboard(&mut tx, &ctx.org_id, &id).await?;
     }

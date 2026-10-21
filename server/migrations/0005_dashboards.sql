@@ -32,7 +32,9 @@ CREATE TABLE dashboards (
     updated_by  TEXT,
     updated_at  BIGINT NOT NULL,
     deleted_at  BIGINT,
-    trash_batch TEXT
+    trash_batch TEXT,
+    -- 1 once the dashboard was moved out of a restricted folder: purged, its events stay hidden.
+    ever_restricted BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX dashboards_org_title ON dashboards (org_id, title, id);

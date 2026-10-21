@@ -278,6 +278,10 @@ on_both_databases! {
     audit_summaries_do_not_name_hidden_folders: |_| {};
     answers_say_what_the_caller_may_do: |_| {};
     new_dashboards_take_the_default_time_range: |_| {};
+    dashboard_moves_across_restriction_need_permissions: |_| {};
+    restricting_through_an_admin_grant_keeps_access: |_| {};
+    moving_a_folder_to_the_top_level_needs_the_org_wide_right: |_| {};
+    dashboards_moved_out_of_restriction_stay_hidden_once_purged: |_| {};
 }
 
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
@@ -691,10 +695,12 @@ async fn concurrent_moves_never_build_a_cycle(t: TestApp) {
             t.patch(&path_a, json!({ "parentId": b, "version": 1 }), &t.owner),
             t.patch(&path_b, json!({ "parentId": a, "version": 1 }), &t.owner),
         );
-        // One wins; the other sees the cycle, or that the subtree it checked changed under it.
-        let (winner, loser) = if ab.status == StatusCode::OK { (&ab, &ba) } else { (&ba, &ab) };
-        assert_eq!(winner.status, StatusCode::OK, "{} / {}", ab.body, ba.body);
-        assert!(loser.field() == "parentId" || loser.code() == "conflict", "{} {}", loser.status, loser.body);
+        // One wins; the other learns of the cycle (placement is checked before "changed meanwhile").
+        let mut statuses = [ab.status, ba.status];
+        statuses.sort();
+        assert_eq!(statuses, [StatusCode::OK, StatusCode::UNPROCESSABLE_ENTITY], "{} / {}", ab.body, ba.body);
+        let loser = if ab.status == StatusCode::OK { &ba } else { &ab };
+        assert_eq!(loser.field(), "parentId");
     }
     let tree = t.get("~/folders", &t.owner).await;
     assert_eq!(tree.body["items"].as_array().unwrap().len(), 15, "every pair hangs together: {}", tree.body);
@@ -1406,6 +1412,108 @@ async fn new_dashboards_take_the_default_time_range(t: TestApp) {
     // A range given explicitly stays.
     let explicit = t.post("~/dashboards", json!({ "model": model("Mit") }), &t.owner).await;
     assert_eq!(explicit.body["model"]["timeRange"], json!({ "from": "now-6h", "to": "now" }));
+}
+
+/// N1: moving a dashboard into or out of a restricted folder needs `folders:permissions` on both
+/// places; echoing the masked `null` stays no move.
+async fn dashboard_moves_across_restriction_need_permissions(t: TestApp) {
+    let erika = t.member("Erika", "editor").await;
+    let vera = t.member("Vera", "viewer").await;
+    let secret = id_of(t.post("~/folders", json!({ "name": "Geheim", "restricted": true }), &t.owner).await);
+    let open = id_of(t.post("~/folders", json!({ "name": "Offen" }), &t.owner).await);
+    let pay = id_of(t.post("~/dashboards", json!({ "folderId": secret, "model": plain("Lohn") }), &t.owner).await);
+    let path = format!("~/dashboards/{pay}");
+    let folder_of = || async {
+        let (f,): (Option<String>,) = sqlx::query_as("SELECT folder_id FROM dashboards WHERE id = $1")
+            .bind(&pay)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+        f
+    };
+
+    // A grant on the dashboard alone: out of the hidden folder is refused, the echo is no move.
+    t.grant("Erika", "dashboard", &pay, "edit").await;
+    let out = t.put(&path, json!({ "model": plain("Lohn"), "version": 1, "folderId": open }), &erika).await;
+    assert_eq!((out.status, out.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", out.body);
+    let echo = t.put(&path, json!({ "model": plain("Lohn"), "version": 1, "folderId": null }), &erika).await;
+    assert_eq!(echo.status, StatusCode::OK, "{}", echo.body);
+    assert_eq!(folder_of().await.as_deref(), Some(secret.as_str()));
+    assert_eq!(t.get(&path, &vera).await.code(), "not_found");
+
+    // An edit grant on the restricted folder is not enough to take it out, an admin grant is.
+    t.grant("Erika", "folder", &secret, "edit").await;
+    let top = t.put(&path, json!({ "model": plain("Lohn"), "version": 2, "folderId": null }), &erika).await;
+    assert_eq!((top.status, top.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", top.body);
+    assert_eq!(folder_of().await.as_deref(), Some(secret.as_str()));
+    t.grant("Erika", "folder", &secret, "admin").await;
+    let top = t.put(&path, json!({ "model": plain("Lohn"), "version": 2, "folderId": null }), &erika).await;
+    assert_eq!(top.status, StatusCode::OK, "{}", top.body);
+    assert_eq!(folder_of().await, None);
+}
+
+/// N2: whoever restricts a folder through an admin grant keeps access to it.
+async fn restricting_through_an_admin_grant_keeps_access(t: TestApp) {
+    let vera = t.member("Vera", "viewer").await;
+    let team = id_of(t.post("~/folders", json!({ "name": "Team" }), &t.owner).await);
+    t.grant("Vera", "folder", &team, "admin").await;
+    let created = t.post("~/folders", json!({ "name": "Intern", "parentId": team, "restricted": true }), &vera).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(created.body["access"]["permissions"], true);
+    let names = |r: &Reply| folder_names(&r.body["items"]);
+    assert!(names(&t.get("~/folders", &vera).await).contains(&"Intern".to_string()));
+
+    // Restricting a subfolder through the grant on its parent, and a folder through its own grant.
+    let sub = id_of(t.post("~/folders", json!({ "name": "Unter", "parentId": team }), &t.owner).await);
+    let r = t.patch(&format!("~/folders/{sub}"), json!({ "restricted": true, "version": 1 }), &vera).await;
+    assert_eq!((r.status, &r.body["restricted"]), (StatusCode::OK, &json!(true)), "{}", r.body);
+    let own = id_of(t.post("~/folders", json!({ "name": "Eigen" }), &t.owner).await);
+    t.grant("Vera", "folder", &own, "admin").await;
+    let r = t.patch(&format!("~/folders/{own}"), json!({ "restricted": true, "version": 1 }), &vera).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let seen = names(&t.get("~/folders", &vera).await);
+    for name in ["Unter", "Eigen"] {
+        assert!(seen.contains(&name.to_string()), "{name} in {seen:?}");
+    }
+    let other = t.member("Walter", "viewer").await;
+    assert!(
+        names(&t.get("~/folders", &other).await).iter().all(|n| !["Intern", "Unter", "Eigen"].contains(&n.as_str()))
+    );
+}
+
+/// N3: the top level belongs to no folder, so moving there needs the org-wide right.
+async fn moving_a_folder_to_the_top_level_needs_the_org_wide_right(t: TestApp) {
+    let vera = t.member("Vera", "viewer").await;
+    let top = id_of(t.post("~/folders", json!({ "name": "Oben" }), &t.owner).await);
+    let sub = id_of(t.post("~/folders", json!({ "name": "Unten", "parentId": top }), &t.owner).await);
+    t.grant("Vera", "folder", &top, "edit").await;
+    let r = t.patch(&format!("~/folders/{sub}"), json!({ "parentId": null, "version": 1 }), &vera).await;
+    assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", r.body);
+    // Within the granted folder, moving works.
+    let other = id_of(t.post("~/folders", json!({ "name": "Daneben", "parentId": top }), &t.owner).await);
+    let r = t.patch(&format!("~/folders/{sub}"), json!({ "parentId": other, "version": 1 }), &vera).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+/// A dashboard moved out of a restricted folder keeps its events hidden once purged.
+async fn dashboards_moved_out_of_restriction_stay_hidden_once_purged(t: TestApp) {
+    let role = t.post("~/roles", json!({ "name": "Prüfer", "permissions": ["audit:read"] }), &t.owner).await;
+    let auditor = t.member("Paula", role.body["id"].as_str().unwrap()).await;
+    let secret = id_of(t.post("~/folders", json!({ "name": "Geheim", "restricted": true }), &t.owner).await);
+    let open = id_of(t.post("~/folders", json!({ "name": "Offen" }), &t.owner).await);
+    let id = id_of(t.post("~/dashboards", json!({ "folderId": secret, "model": plain("Lohn") }), &t.owner).await);
+    let moved = t
+        .put(&format!("~/dashboards/{id}"), json!({ "model": plain("Lohn"), "version": 1, "folderId": open }), &t.owner)
+        .await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
+    t.delete(&format!("~/dashboards/{id}"), &t.owner).await;
+    assert_eq!(t.delete(&format!("~/dashboards/{id}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let events = t.get("~/audit?limit=200", &auditor).await;
+    assert!(
+        !events.body["items"].as_array().unwrap().iter().any(|e| e["resourceId"] == id.as_str()),
+        "{}",
+        events.body
+    );
 }
 
 async fn old_versions_beyond_the_retention_are_dropped(t: TestApp) {

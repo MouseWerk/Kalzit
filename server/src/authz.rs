@@ -1162,6 +1162,39 @@ mod resource_tests {
     }
 
     #[tokio::test]
+    async fn the_access_index_agrees_with_check_resource_on_dashboards() {
+        let db = db().await;
+        for sql in [
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) \
+             VALUES ('open', 'o', NULL, 'O', 0, 1, 0, 0), ('secret', 'o', NULL, 'S', 1, 1, 0, 0)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at) \
+             VALUES ('top', 'o', NULL, 'T', 't', 1, 0, 0), ('in_open', 'o', 'open', 'O', 'o', 1, 0, 0), \
+             ('own_grant', 'o', 'secret', 'G', 'g', 1, 0, 0), ('hidden', 'o', 'secret', 'H', 'h', 1, 0, 0)",
+            "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+             VALUES ('g1', 'o', 'user', 'u', 'dashboard', 'own_grant', 'edit', 0), \
+             ('g2', 'o', 'user', 'u', 'folder', 'open', 'edit', 0)",
+        ] {
+            exec(&db, sql).await;
+        }
+        for role in [BuiltinRole::Viewer, BuiltinRole::Editor, BuiltinRole::Admin] {
+            let ctx = ctx(role);
+            let index = AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            for (id, folder) in
+                [("top", None), ("in_open", Some("open")), ("own_grant", Some("secret")), ("hidden", Some("secret"))]
+            {
+                let held = resource_permissions(&db, &ctx, Resource::Dashboard(id)).await.unwrap();
+                assert_eq!(index.dashboard(id, folder), held, "{role:?} {id}");
+            }
+        }
+        // The cases that matter: the own grant opens the dashboard in the hidden folder, nothing
+        // else in it.
+        let viewer = AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx(BuiltinRole::Viewer)).await.unwrap();
+        assert!(viewer.dashboard("own_grant", Some("secret")).unwrap().contains(&Permission::DashboardsWrite));
+        assert!(viewer.dashboard("hidden", Some("secret")).is_none());
+        assert!(viewer.folder("secret").is_none());
+    }
+
+    #[tokio::test]
     async fn folder_grants_inherit_through_the_stored_tree() {
         let db = db().await;
         for sql in [

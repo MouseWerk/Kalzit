@@ -65,7 +65,13 @@ Actions on a whole folder subtree (trash, restore, purge, move):
   every subfolder that another restricted folder governs, and `dashboards:delete` on every folder
   whose dashboards go along (trash, restore, purge);
 - moving a folder into or out of a restricted folder changes who sees it, so it needs
-  `folders:permissions` on the folder and on the new parent.
+  `folders:permissions` on the folder and on the new parent; the same holds for moving a
+  dashboard (on its folder and on the target folder).
+
+Whoever restricts a folder, or creates one restricted, through an `admin` grant instead of
+org-wide `folders:permissions` gets an `admin` grant on that folder in the same change
+(audited as `grant.created` or `grant.changed`): grants above a restricted folder do not reach into
+it, and without it they would lose sight of what they just made.
 
 Purging a folder or dashboard deletes the grants on it and on everything purged with it; grants on
 trashed resources stay, so a restore brings the access back.
@@ -95,9 +101,9 @@ default. Settings that live in the configuration (`sessions.*`) come from `kalzi
 overridden by `KALZIT_SETTING_<KEY>` (key in upper snake case: `audit.retention_days` is
 `KALZIT_SETTING_AUDIT_RETENTION_DAYS`; the value is JSON, or plain text for text settings).
 Organization settings are the database value, then the default. A `KALZIT_SETTING_*` variable
-(in any letter case, since Windows reads variable names regardless of case) that names no such
-server setting, or holds an invalid value, stops the server at start with a message naming the
-variable. `source` is `file` whenever `kalzit.toml` sets the key, also to the default value.
+that names no such server setting, or holds an invalid value, stops the server at start with a
+message naming the variable. On Windows, which reads variable names regardless of case, a name in
+any letter case is checked; elsewhere a name not in upper case would never apply and is refused. `source` is `file` whenever `kalzit.toml` sets the key, also to the default value.
 
 Server settings:
 
@@ -237,15 +243,16 @@ visible); `422 validation` field `parentId` (parent in the trash, or too deep); 
 Any member; needs `folders:write` on the folder. Body `{"version": number, "name"?: string,
 "parentId"?: string | null, "restricted"?: boolean}`; a missing field keeps its value,
 `"parentId": null` moves the folder to the top level (unless `null` is how the caller sees its
-current parent, see "Access"). A move needs `folders:write` on the new parent and the subtree
-rules above; changing `restricted` needs `folders:permissions` on the folder (an `admin` grant
-counts). Answers the `Folder` (unchanged, with the same version, when nothing changed).
+current parent, see "Access"). A move needs `folders:write` on the new parent (org-wide
+`folders:write` for the top level, as on create) and the subtree rules above; changing
+`restricted` needs `folders:permissions` on the folder (an `admin` grant counts). Answers the
+`Folder` (unchanged, with the same version, when nothing changed).
 
 Errors, in this order: `422 validation` field `name`; `404 not_found` (folder or new parent not
 visible); `403 forbidden` (a missing permission, or hidden content below a moved folder);
-`409 conflict` (folder in the trash, or changed in the meantime); `409 version_conflict` with
-`current: Folder`; `422 validation` field `parentId` (moving into itself or a subfolder, parent in
-the trash, or too deep).
+`409 conflict` (folder in the trash); `409 version_conflict` with `current: Folder`;
+`422 validation` field `parentId` (moving into itself or a subfolder, parent in the trash, or too
+deep); `409 conflict` (the subtree changed in the meantime).
 
 ### `DELETE /orgs/{orgId}/folders/{folderId}`
 
@@ -372,7 +379,8 @@ Any member; needs `dashboards:write` on the dashboard. Body `{"model": Dashboard
 number, "message"?: string, "folderId"?: string | null}`. `version` is the version the editor
 started from; a missing `folderId` (or the `folderId` as the caller sees it) keeps the folder,
 another folder or `null` (top level) moves it, which needs `dashboards:write` there (org-wide at
-the top level). Saves a new version; answers the `Dashboard`. The title follows `model.title`.
+the top level) and, into or out of a restricted folder, `folders:permissions` on the current and
+the new folder. Saves a new version; answers the `Dashboard`. The title follows `model.title`.
 Versions beyond `dashboards.version_retention` are deleted, oldest first.
 
 Errors: `404 not_found`; `409 conflict` (in the trash); invalid model or message; folder errors as
