@@ -166,12 +166,7 @@ function ChildList({
       {groupChildren(childItems).map(({ group, children }, index) => {
         const links = children.map((child) => (
           <li key={child.to}>
-            <Link
-              to={child.to}
-              className="nav-sublink"
-              title={t(child.label)}
-              onClick={onNavigate}
-            >
+            <Link to={child.to} className="nav-sublink" title={t(child.label)} onClick={onNavigate}>
               <span className="nav-sublink__label">{t(child.label)}</span>
             </Link>
           </li>
