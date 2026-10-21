@@ -50,7 +50,9 @@ a team or through a role. The nearest restricted folder above a resource decides
 subfolder narrows access further, and grants above it do not reach in. A grant on a single
 dashboard shows that dashboard (not its folder). For everyone else every route answers
 `404 not_found` for them, lists and searches leave them out, and the organization's audit view
-leaves out the events about them.
+leaves out the events about them. The audit view decides by the resource's current place: lifting
+a restriction, or moving a folder or dashboard out of a restricted folder, also shows its earlier
+events to everyone who may read the audit log.
 
 A folder or dashboard is never shown with the id of a folder the caller cannot see: a folder
 reached only through a grant below a hidden restricted folder has `parentId: null` (and hangs at
