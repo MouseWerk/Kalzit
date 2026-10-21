@@ -596,11 +596,6 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
     if engine == Engine::MsSql && words.contains("next value for") {
         return reject("NEXT VALUE FOR changes a sequence and is not allowed");
     }
-    // Query hints (`OPTION (...)`) can take table locks (TABLE HINT) and the parser does not see
-    // them as such, so none are accepted.
-    if engine == Engine::MsSql && (words.contains("option (") || words.contains("option(")) {
-        return reject("query hints (OPTION (...)) are not allowed");
-    }
     let statements = Parser::parse_sql(dialect(engine).as_ref(), sql)
         .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
     let [statement] = statements.as_slice() else {
@@ -619,8 +614,8 @@ struct ReadOnlyCheck {
     engine: Engine,
 }
 
-/// The only SQL Server table hints a read may carry: both read without taking locks.
-const ALLOWED_MSSQL_HINTS: &[&str] = &["nolock", "readuncommitted"];
+/// The only SQL Server table hints a read may carry: reads without locks, and index choices.
+const ALLOWED_MSSQL_HINTS: &[&str] = &["nolock", "readuncommitted", "index", "noexpand"];
 /// Every SQL Server table hint word, to recognize the old hint form `t (TABLOCKX)` among the
 /// arguments of a table-valued function call.
 const MSSQL_HINT_WORDS: &[&str] = &[
@@ -682,9 +677,12 @@ const FORBIDDEN_PREFIXES: &[&str] = &[
     "dblink",
 ];
 
-fn forbidden(name: &ObjectName) -> ControlFlow<String> {
+/// Refuses a forbidden function, by name. Only function calls are checked (a table called `edit`
+/// is fine), and the PostgreSQL prefix families only on PostgreSQL.
+fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<String> {
+    let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
     match last_name_part(name) {
-        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p)) => {
+        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) => {
             ControlFlow::Break(format!("{n} is not allowed: it reaches files, other servers or other sessions"))
         }
         _ => ControlFlow::Continue(()),
@@ -722,6 +720,29 @@ impl Visitor for ReadOnlyCheck {
 
     fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<String> {
         // `FROM LATERAL f(...)` and `FROM f(...)` are table factors, not expressions.
+        if self.engine == Engine::MsSql {
+            // `FROM t OPTION (TABLE HINT (t, TABLOCKX))` and `FROM t x (TABLOCKX)` parse as
+            // aliases with a column list; T-SQL has no such column lists on tables, so a query
+            // hint or an old-style table hint is behind them.
+            let alias = match factor {
+                TableFactor::Table { alias, .. } | TableFactor::Derived { alias, .. } => alias.as_ref(),
+                _ => None,
+            };
+            if let Some(alias) = alias {
+                if alias.name.value.eq_ignore_ascii_case("option") {
+                    return ControlFlow::Break("query hints (OPTION (...)) are not allowed".into());
+                }
+                let hinted = alias.columns.iter().any(|c| {
+                    c.data_type.is_some() || MSSQL_HINT_WORDS.contains(&c.name.value.to_ascii_lowercase().as_str())
+                });
+                if hinted && matches!(factor, TableFactor::Table { .. }) {
+                    return ControlFlow::Break(format!(
+                        "the table hints after {} are not allowed; write WITH (NOLOCK) instead",
+                        alias.name.value
+                    ));
+                }
+            }
+        }
         if let TableFactor::Table { with_hints, args, .. } = factor
             && self.engine == Engine::MsSql
         {
@@ -738,25 +759,22 @@ impl Visitor for ReadOnlyCheck {
             }
             if let Some(bad) = hints.iter().find(|h| !ALLOWED_MSSQL_HINTS.contains(&h.as_str())) {
                 return ControlFlow::Break(format!(
-                    "the table hint {bad} is not allowed; only NOLOCK and READUNCOMMITTED are"
+                    "the table hint {bad} is not allowed; only NOLOCK, READUNCOMMITTED, INDEX and NOEXPAND are"
                 ));
             }
         }
+        // Table functions such as OPENROWSET(...) appear here, with arguments; plain table and
+        // view names are not function calls and are not checked.
         match factor {
-            TableFactor::Function { name, .. } => forbidden(name),
-            TableFactor::Table { name, args: Some(_), .. } => forbidden(name),
+            TableFactor::Function { name, .. } => forbidden(name, self.engine),
+            TableFactor::Table { name, args: Some(_), .. } => forbidden(name, self.engine),
             _ => ControlFlow::Continue(()),
         }
     }
 
-    fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<String> {
-        // Table functions such as OPENROWSET(...) appear as relations.
-        forbidden(relation)
-    }
-
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<String> {
         match expr {
-            Expr::Function(f) => forbidden(&f.name),
+            Expr::Function(f) => forbidden(&f.name, self.engine),
             _ => ControlFlow::Continue(()),
         }
     }
@@ -1171,6 +1189,39 @@ mod tests {
         }
         // A table-valued function's arguments are not hints.
         accepted("SELECT * FROM sys.dm_exec_sql_text(0x01)", Engine::MsSql);
+        // Query hints and the old hint form after an alias, also with a comment in between.
+        for sql in [
+            "SELECT a FROM t OPTION/**/(TABLE HINT (t, TABLOCKX))",
+            "SELECT a FROM t option (MAXDOP 1)",
+            "SELECT a FROM t x (TABLOCKX)",
+            "SELECT a FROM t AS x (HOLDLOCK)",
+            "SELECT x.a FROM t x (UPDLOCK) JOIN u ON u.id = x.id",
+        ] {
+            rejected(sql, Engine::MsSql);
+        }
+        // Harmless hints and the words in a literal.
+        accepted("SELECT a FROM t WITH (INDEX(ix), NOLOCK)", Engine::MsSql);
+        accepted("SELECT a FROM v WITH (NOEXPAND)", Engine::MsSql);
+        accepted("SELECT 'option (x)' AS a FROM t", Engine::MsSql);
+        accepted("SELECT a FROM (VALUES (1)) AS v (a)", Engine::MsSql);
+    }
+
+    #[test]
+    fn names_that_look_like_forbidden_functions_are_fine_as_tables() {
+        for engine in ALL {
+            for sql in [
+                "SELECT * FROM lo_kunden",
+                "SELECT * FROM pg_create_jobs",
+                "SELECT * FROM dblinks",
+                "SELECT * FROM edit",
+            ] {
+                accepted(sql, engine);
+            }
+        }
+        accepted("SELECT * FROM pg_replication_origin_status", Engine::Postgres);
+        // The PostgreSQL prefix families are PostgreSQL's only.
+        accepted("SELECT lo_mein(1)", Engine::MySql);
+        rejected("SELECT lo_mein(1)", Engine::Postgres);
     }
 
     #[test]

@@ -353,11 +353,18 @@ async fn mssql_reads_and_rolls_back() {
         "SELECT o.name FROM sys.objects o JOIN sys.columns c WITH (XLOCK) ON c.object_id = o.object_id",
         "SELECT name FROM sys.objects OPTION (TABLE HINT (sys.objects, TABLOCKX))",
         "SELECT NEXT VALUE FOR dbo.s",
+        "SELECT name FROM sys.objects OPTION/**/(TABLE HINT (sys.objects, TABLOCKX))",
+        "SELECT o.name FROM sys.objects o (TABLOCKX)",
     ] {
         assert_eq!(t.query(&id, json!({ "sql": sql })).await["error"]["code"], "query_rejected", "{sql}");
     }
-    let nolock = t.query(&id, json!({ "sql": "SELECT TOP 1 name FROM sys.objects WITH (NOLOCK)" })).await;
-    assert!(nolock["result"].is_object(), "{nolock}");
+    for sql in [
+        "SELECT TOP 1 name FROM sys.objects WITH (NOLOCK)",
+        "SELECT TOP 1 'option (x)' AS a FROM sys.objects WITH (READUNCOMMITTED)",
+    ] {
+        let ok = t.query(&id, json!({ "sql": sql })).await;
+        assert!(ok["result"].is_object(), "{sql}: {ok}");
+    }
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "tables");
 

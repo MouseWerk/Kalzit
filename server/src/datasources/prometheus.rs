@@ -339,6 +339,8 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
     let interval = req.interval_ms as i64;
     let mut out = String::with_capacity(expr.len());
     let mut quote: Option<char> = None;
+    // Whether the open string is the value of a regex matcher (`=~` or `!~`).
+    let mut in_regex = false;
     let mut i = 0;
     while i < expr.len() {
         let c = expr[i..].chars().next().expect("i is on a char boundary");
@@ -350,7 +352,11 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
                 continue;
             }
             Some(q) if c == q => quote = None,
-            None if matches!(c, '"' | '\'' | '`') => quote = Some(c),
+            None if matches!(c, '"' | '\'' | '`') => {
+                quote = Some(c);
+                let before = out.trim_end();
+                in_regex = before.ends_with("=~") || before.ends_with("!~");
+            }
             None if c == '#' => {
                 // A comment runs to the end of the line; nothing in it is expanded.
                 let end = expr[i..].find('\n').map_or(expr.len(), |p| i + p);
@@ -389,7 +395,10 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
                     .variables
                     .get(name)
                     .ok_or_else(|| SourceError::Rejected(format!("variable {name} has no value")))?;
-                escape_for(q, name, &variable_text(name, value, false)?)?
+                // In a regex matcher a free value is matched literally, as list entries are; the
+                // values of checked (constant and custom) dashboard variables may be patterns.
+                let checked = req.identifier_variables.as_ref().is_some_and(|c| c.contains(name));
+                escape_for(q, name, &variable_text(name, value, in_regex && !checked)?)?
             }
         };
         out.push_str(&expansion);
@@ -514,6 +523,20 @@ mod tests {
         assert!(matches!(expand("x{a=`$job`}", &req(json!({ "job": "a`b" }))), Err(SourceError::Rejected(_))));
         assert_eq!(expand("x # $job ist ein Kommentar", &r).unwrap(), "x # $job ist ein Kommentar");
         assert!(matches!(expand("x{a=\"offen}", &r), Err(SourceError::Rejected(_))));
+
+        // A free single value is matched literally in a regex matcher, not as a pattern.
+        let r = req(json!({ "job": ".+" }));
+        assert_eq!(expand(r#"up{job=~"$job"}"#, &r).unwrap(), r#"up{job=~"\\.\\+"}"#);
+        assert_eq!(expand(r#"up{job!~ '$job'}"#, &r).unwrap(), r#"up{job!~ '\\.\\+'}"#);
+        assert_eq!(
+            expand(r#"up{job="$job"}"#, &r).unwrap(),
+            r#"up{job=".+"}"#,
+            "an equality matcher is literal anyway"
+        );
+        // A checked dashboard variable keeps its pattern.
+        let mut checked = req(json!({ "job": ".+" }));
+        checked.identifier_variables = Some(["job".to_string()].into());
+        assert_eq!(expand(r#"up{job=~"$job"}"#, &checked).unwrap(), r#"up{job=~".+"}"#);
     }
 
     #[test]
