@@ -7,8 +7,13 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod csv;
 pub mod detail;
+pub mod elasticsearch;
+pub mod file;
 pub mod frame;
+pub mod http_json;
+pub mod json_documents;
 pub mod mssql;
 pub mod mysql;
 pub mod postgres;
@@ -121,8 +126,21 @@ pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SourceSchema {
-    Tables { tables: Vec<Table> },
-    Metrics { metrics: Vec<String>, labels: Vec<String> },
+    Tables {
+        tables: Vec<Table>,
+    },
+    Metrics {
+        metrics: Vec<String>,
+        labels: Vec<String>,
+    },
+    /// Search indices with their mapped fields (Elasticsearch, OpenSearch).
+    Indices {
+        indices: Vec<Table>,
+    },
+    /// Field paths sampled from documents (JSON files, HTTP JSON).
+    Fields {
+        fields: Vec<crate::shapes::FieldSchema>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -794,6 +812,7 @@ pub const MAX_TIME_MS: i64 = 253_402_300_799_999;
 struct CachedPolicy {
     dirs: Vec<String>,
     allowed: Vec<String>,
+    file_dirs: Vec<String>,
     built: Instant,
     policy: Arc<TargetPolicy>,
 }
@@ -837,7 +856,16 @@ impl DataSources {
     pub fn new(config: &Config, db: AnyPool, keyring: Arc<Keyring>) -> Self {
         let database_url = config.database_url();
         Self {
-            kinds: vec![postgres::kind(), mysql::kind(), sqlite::kind(), mssql::kind(), prometheus::kind()],
+            kinds: vec![
+                postgres::kind(),
+                mysql::kind(),
+                sqlite::kind(),
+                mssql::kind(),
+                prometheus::kind(),
+                elasticsearch::kind(),
+                file::kind(),
+                http_json::kind(),
+            ],
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),
@@ -895,16 +923,19 @@ impl DataSources {
     pub async fn policy(&self, state: &AppState) -> ApiResult<Arc<TargetPolicy>> {
         let dirs = self.setting_strings(state, "datasources.sqlite_dirs").await?;
         let allowed = self.setting_strings(state, "datasources.allowed_targets").await?;
+        let file_dirs = self.setting_strings(state, "datasources.file_dirs").await?;
         let mut cache = self.policy_cache.lock().expect("policy cache lock");
         if let Some(c) = cache.as_ref()
             && c.dirs == dirs
             && c.allowed == allowed
+            && c.file_dirs == file_dirs
             && c.built.elapsed() < POLICY_REFRESH
         {
             return Ok(c.policy.clone());
         }
-        let policy = Arc::new(TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed));
-        *cache = Some(CachedPolicy { dirs, allowed, built: Instant::now(), policy: policy.clone() });
+        let policy =
+            Arc::new(TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed).with_file_dirs(&file_dirs));
+        *cache = Some(CachedPolicy { dirs, allowed, file_dirs, built: Instant::now(), policy: policy.clone() });
         Ok(policy)
     }
 
@@ -1245,6 +1276,11 @@ pub fn precheck_targets(
         && let Some(path) = settings.get("path").and_then(Value::as_str)
     {
         policy.check_sqlite_path(path).map_err(|b| (b, "path"))?;
+    }
+    if kind.kind() == "file"
+        && let Some(path) = settings.get("path").and_then(Value::as_str)
+    {
+        policy.check_file_path(path).map_err(|b| (b, "path"))?;
     }
     if let Some(host) = settings.get("host").and_then(Value::as_str) {
         policy.precheck_host(host).map_err(|b| (b, "host"))?;

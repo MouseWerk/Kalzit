@@ -136,15 +136,33 @@ pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
 }
 
 impl HttpClient {
-    /// Sends a request and follows redirects, checking every target. Authorization is dropped
-    /// when a redirect leaves the origin, so credentials are not handed to another host.
+    /// Sends a request and follows redirects, checking every target. Authorization and every
+    /// header marked sensitive are dropped when a redirect leaves the origin, so credentials are
+    /// not handed to another host.
     pub async fn send(&self, method: Method, url: Url, headers: HeaderMap) -> Result<reqwest::Response, HttpError> {
+        self.send_with_body(method, url, headers, None).await
+    }
+
+    /// `send` with a request body. A redirect keeps the method and body only for 307 and 308;
+    /// any other redirect continues as a GET without body, as browsers do.
+    pub async fn send_with_body(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, HttpError> {
         let mut url = url;
         let mut method = method;
         let mut headers = headers;
+        let mut body = body;
         for _ in 0..=MAX_REDIRECTS {
             self.check_url(&url).await?;
-            let response = self.client.request(method.clone(), url.clone()).headers(headers.clone()).send().await?;
+            let mut request = self.client.request(method.clone(), url.clone()).headers(headers.clone());
+            if let Some(b) = &body {
+                request = request.body(b.clone());
+            }
+            let response = request.send().await?;
             if !response.status().is_redirection() {
                 return Ok(response);
             }
@@ -154,9 +172,18 @@ impl HttpClient {
             let next = url.join(location).map_err(|e| HttpError::Other(format!("invalid redirect target: {e}")))?;
             if next.origin() != url.origin() {
                 headers.remove(AUTHORIZATION);
+                let sensitive: Vec<_> =
+                    headers.iter().filter(|(_, v)| v.is_sensitive()).map(|(k, _)| k.clone()).collect();
+                for name in sensitive {
+                    headers.remove(name);
+                }
             }
-            if response.status() == StatusCode::SEE_OTHER {
+            let keeps_method =
+                matches!(response.status(), StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT);
+            if response.status() == StatusCode::SEE_OTHER || (!keeps_method && body.is_some()) {
                 method = Method::GET;
+                body = None;
+                headers.remove(reqwest::header::CONTENT_TYPE);
             }
             url = next;
         }
@@ -327,7 +354,7 @@ mod tests {
     async fn redirector(target: String) -> std::net::SocketAddr {
         let app = Router::new().route(
             "/",
-            axum::routing::get(move || async move {
+            axum::routing::any(move || async move {
                 (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, target)]).into_response()
             }),
         );
@@ -350,5 +377,38 @@ mod tests {
         let hop = redirector(format!("http://{addr}/auth")).await;
         let r = c.send(Method::GET, Url::parse(&format!("http://{hop}/")).unwrap(), headers).await.unwrap();
         assert_eq!(r.text().await.unwrap(), "");
+    }
+
+    #[expect(clippy::disallowed_methods, reason = "a fake upstream server, not an API route")]
+    async fn echo_key() -> std::net::SocketAddr {
+        let app = Router::new().route(
+            "/key",
+            axum::routing::any(|method: Method, headers: axum::http::HeaderMap, body: String| async move {
+                let key = headers.get("x-api-key").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+                format!("{method} {key} {body}")
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        addr
+    }
+
+    #[tokio::test]
+    async fn sensitive_headers_and_bodies_follow_redirects_only_where_safe() {
+        let addr = echo_key().await;
+        let c = test_client(&[]);
+        let mut headers = HeaderMap::new();
+        let mut key = reqwest::header::HeaderValue::from_static("geheim");
+        key.set_sensitive(true);
+        headers.insert("x-api-key", key);
+        let same = Url::parse(&format!("http://{addr}/key")).unwrap();
+        let r = c.send_with_body(Method::POST, same, headers.clone(), Some(b"{}".to_vec())).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "POST geheim {}");
+        // A 307 to another origin keeps the method and body, but not the sensitive header.
+        let hop = redirector(format!("http://{addr}/key")).await;
+        let url = Url::parse(&format!("http://{hop}/")).unwrap();
+        let r = c.send_with_body(Method::POST, url, headers, Some(b"{}".to_vec())).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "POST  {}");
     }
 }

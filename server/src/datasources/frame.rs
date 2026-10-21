@@ -198,6 +198,11 @@ impl FrameBuilder {
         true
     }
 
+    /// Marks the frame cut off by a limit the source hit itself (while reading a file, say).
+    pub fn mark_truncated(&mut self, notice: Detail) {
+        self.truncate(notice);
+    }
+
     fn truncate(&mut self, notice: Detail) {
         self.truncated = true;
         self.notice(NoticeSeverity::Warning, notice);

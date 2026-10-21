@@ -394,6 +394,8 @@
   "admin.users.cannotLock": "This account cannot be locked: it is the last server admin, or the last owner of an organization who can sign in. Give that role to someone else first.",
   "admin.settings.datasources.sqlite_dirs.label": "SQLite folders",
   "admin.settings.datasources.sqlite_dirs.description": "Folders on the server from which SQLite data sources may open database files. The data folder is always refused. If the list is empty, no SQLite files are allowed.",
+  "admin.settings.datasources.file_dirs.label": "Folders for CSV and JSON files",
+  "admin.settings.datasources.file_dirs.description": "Folders on the server from which file data sources may read CSV, JSON and NDJSON files. The data folder is always refused. If the list is empty, no files are allowed.",
   "admin.settings.datasources.allowed_targets.label": "Allowed connection targets",
   "admin.settings.datasources.allowed_targets.description": "If this list is not empty, data sources may only connect to these hosts and networks.",
   "admin.settings.datasources.query_timeout_secs.label": "Query time limit (seconds)",

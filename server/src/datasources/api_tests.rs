@@ -190,7 +190,7 @@ async fn kinds_describe_their_settings_forms() {
     let r = t.get("/datasource-kinds").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let kinds: Vec<&str> = r.body["items"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus"]);
+    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus", "elasticsearch", "file", "http_json"]);
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");
@@ -1782,4 +1782,36 @@ async fn an_edit_grant_cannot_repoint_a_data_source() {
     assert_eq!(ids, [ds.as_str()], "{}", trash.text);
     let restored = t.post(&format!("/datasources/{ds}/restore"), json!({})).await;
     assert_eq!(restored.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn file_sources_read_only_from_the_file_directories() {
+    let t = T::new().await;
+    let files = t.dir.path().join("dateien");
+    std::fs::create_dir_all(&files).unwrap();
+    std::fs::write(files.join("umsatz.csv"), "land;betrag\nÖsterreich;12,5\n").unwrap();
+    // The SQLite directory does not open CSV files.
+    std::fs::write(t.allowed_dir().join("umsatz.csv"), "a\n1\n").unwrap();
+    let create =
+        |path: PathBuf| json!({ "name": "Datei", "kind": "file", "settings": { "path": path.to_string_lossy() } });
+    for path in [files.join("umsatz.csv"), t.allowed_dir().join("umsatz.csv")] {
+        let r = t.post("/datasources", create(path)).await;
+        assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"), "{}", r.text);
+        assert_eq!(r.body["error"]["field"], "path");
+        assert_eq!(r.body["error"]["reason"], "target.file_path_refused");
+    }
+    t.set("datasources.file_dirs", json!([files.to_string_lossy()]));
+    let r = t.post("/datasources", create(files.join("umsatz.csv"))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let q = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": {} }])).await;
+    let frame = &q.body["results"]["A"]["result"]["frame"];
+    assert_eq!(frame["fields"][1]["type"], "number", "{}", q.text);
+    assert_eq!(frame["fields"][1]["values"], json!([12.5]));
+    let bad = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT 1" } }])).await;
+    assert_eq!(bad.body["results"]["A"]["error"]["reason"], "query.invalid_form", "{}", bad.text);
+    // Removing the directory later cuts the source off.
+    t.set("datasources.file_dirs", json!([]));
+    let r = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": {} }])).await;
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "target.file_path_refused", "{}", r.text);
 }

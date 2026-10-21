@@ -99,6 +99,27 @@ jobs:
       prometheus:
         image: prom/prometheus:v3.5.0
         ports: ["9090:9090"]
+      # Security on (basic auth over plain HTTP), so credentials and scrubbing are exercised.
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "true"
+          xpack.security.http.ssl.enabled: "false"
+          ELASTIC_PASSWORD: kalzit-ci-es
+          cluster.routing.allocation.disk.threshold_enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports: ["9200:9200"]
+      # The security plugin is off: the test covers a cluster without authentication.
+      opensearch:
+        image: opensearchproject/opensearch:3.1.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          cluster.routing.allocation.disk.threshold_enabled: "false"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports: ["9201:9200"]
     env:
       KALZIT_TEST_REQUIRE_DATABASES: "1"
       KALZIT_TEST_POSTGRES_URL: postgres://kalzit:kalzit-ci-pg@localhost:5432/kalzit
@@ -106,24 +127,35 @@ jobs:
       KALZIT_TEST_MARIADB_URL: mysql://root:kalzit-ci-mariadb@127.0.0.1:3307/kalzit
       KALZIT_TEST_MSSQL_URL: mssql://sa:Kalzit-CI-mssql-1@127.0.0.1:1433/master
       KALZIT_TEST_PROMETHEUS_URL: http://127.0.0.1:9090
+      KALZIT_TEST_ELASTICSEARCH_URL: http://elastic:kalzit-ci-es@127.0.0.1:9200
+      KALZIT_TEST_OPENSEARCH_URL: http://127.0.0.1:9201
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --tests
-      - name: Wait for SQL Server and Prometheus
+      - name: Wait for SQL Server, Prometheus, Elasticsearch and OpenSearch
         shell: bash
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 120); do
             if docker exec "${{ job.services.mssql.id }}" /opt/mssql-tools18/bin/sqlcmd -C -S localhost \
                  -U sa -P "Kalzit-CI-mssql-1" -Q "SELECT 1" > /dev/null 2>&1; then
               mssql=ok
             fi
             if curl -fs http://127.0.0.1:9090/-/ready > /dev/null; then prom=ok; fi
-            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ]; then exit 0; fi
+            if curl -fs -u elastic:kalzit-ci-es \
+                 "http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null; then
+              es=ok
+            fi
+            if curl -fs "http://127.0.0.1:9201/_cluster/health?wait_for_status=yellow&timeout=1s" > /dev/null; then
+              os=ok
+            fi
+            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ] && [ "${es:-}" = ok ] && [ "${os:-}" = ok ]; then
+              exit 0
+            fi
             sleep 2
           done
-          echo "SQL Server or Prometheus did not become ready" >&2
+          echo "SQL Server, Prometheus, Elasticsearch or OpenSearch did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
 

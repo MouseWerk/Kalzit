@@ -194,7 +194,8 @@ type QueryResult =
   Kalzit's own data directory and database (also through a PostgreSQL source at the same server
   and database), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`,
   `fd00:ec2::254`), and SQLite files outside the directories a server admin allowed
-  (`datasources.sqlite_dirs`, empty by default, never including the data directory). A server
+  (`datasources.sqlite_dirs`, empty by default, never including the data directory); CSV and
+  JSON files of file sources follow the same rules within `datasources.file_dirs`. A server
   admin can additionally restrict sources to a list of allowed hosts and networks
   (`datasources.allowed_targets`). Rules that make this hold:
   - Names are resolved once per connect, the resolved address is checked, and the driver connects
@@ -215,7 +216,9 @@ type QueryResult =
   `lo_import`, `dblink`, `OPENROWSET`, `OPENDATASOURCE`, `load_extension`). They run in a
   read-only transaction where the engine has one (PostgreSQL, MySQL/MariaDB); SQLite opens the
   file read-only with extension loading disabled. Each engine has tests for these rejections.
-  Rejections answer `query_rejected` with the reason.
+  Rejections answer `query_rejected` with the reason. Elasticsearch and OpenSearch sources reach
+  only a fixed list of read endpoints (checked on every URL before it is sent) and refuse stored
+  scripts and scripts that use `ctx`; HTTP JSON sources send only GET requests below their URL.
 - **No string interpolation of user input.** Macros (`$__timeFilter(col)`, `$__timeFrom`,
   `$__timeTo`, `$__interval`, `$__interval_ms`) and variables become bind parameters. A variable
   used as an identifier must match an allow-list from the source's schema.

@@ -62,6 +62,47 @@ enum AllowedTarget {
     Suffix(String),
 }
 
+/// Directories a server admin allowed for file-based sources (SQLite files, CSV and JSON files),
+/// in the forms the path check needs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct AllowedDirs {
+    /// Canonical forms of the allowed directories.
+    canonical: Vec<PathBuf>,
+    /// The allowed directories as written and as canonicalized, normalized without touching the
+    /// file system, for the check before any file system access.
+    lexical: Vec<PathBuf>,
+    /// Whether an allowed directory is a network (UNC) path; only then are UNC paths accepted.
+    unc_allowed: bool,
+}
+
+impl AllowedDirs {
+    /// `setting` names the server setting in warnings about entries that cannot be used.
+    fn new(setting: &str, dirs: &[String]) -> Self {
+        let unc_allowed = dirs.iter().any(|d| is_unc(d));
+        let canonical: Vec<PathBuf> = dirs
+            .iter()
+            .filter_map(|d| match std::fs::canonicalize(d) {
+                Ok(p) if p.is_dir() => Some(p),
+                Ok(_) => {
+                    tracing::warn!("{setting}: {d} is not a directory, ignored");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!("{setting}: {d} cannot be used ({e}), ignored");
+                    None
+                }
+            })
+            .collect();
+        let mut lexical: Vec<PathBuf> = dirs
+            .iter()
+            .filter(|d| Path::new(d).is_absolute())
+            .filter_map(|d| normalize_lexically(Path::new(d)))
+            .collect();
+        lexical.extend(canonical.iter().map(|d| strip_verbatim(d.clone())));
+        Self { canonical, lexical, unc_allowed }
+    }
+}
+
 /// The target rules in force, built from the server settings when a connection is set up.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetPolicy {
@@ -69,13 +110,10 @@ pub struct TargetPolicy {
     data_dir: PathBuf,
     /// Kalzit's own SQLite database when it lives outside the data directory.
     own_sqlite: Option<PathBuf>,
-    /// Canonical forms of the allowed directories.
-    sqlite_dirs: Vec<PathBuf>,
-    /// The allowed directories as written and as canonicalized, normalized without touching the
-    /// file system, for the check before any file system access.
-    sqlite_dirs_lexical: Vec<PathBuf>,
-    /// Whether an allowed directory is a network (UNC) path; only then are UNC paths accepted.
-    sqlite_unc_allowed: bool,
+    /// `datasources.sqlite_dirs`.
+    sqlite_dirs: AllowedDirs,
+    /// `datasources.file_dirs`: CSV and JSON files.
+    file_dirs: AllowedDirs,
     /// `None` = no restriction. A configured list whose entries are all invalid restricts to
     /// nothing rather than allowing everything.
     allowed: Option<Vec<AllowedTarget>>,
@@ -83,26 +121,11 @@ pub struct TargetPolicy {
 
 impl TargetPolicy {
     /// `sqlite_dirs` and `allowed_targets` come from the server settings; invalid entries are
-    /// skipped with a warning (which only narrows what is allowed).
+    /// skipped with a warning (which only narrows what is allowed). File directories are added
+    /// with `with_file_dirs`; without them no CSV or JSON file is allowed.
     pub fn new(data_dir: &Path, own_db_url: &str, sqlite_dirs: &[String], allowed_targets: &[String]) -> Self {
         let data_dir = canonical_or_absolute(data_dir);
         let own_sqlite = own_sqlite_path(own_db_url).map(|p| canonical_or_absolute(&p));
-        let sqlite_unc_allowed = sqlite_dirs.iter().any(|d| is_unc(d));
-        let sqlite_dirs_raw = sqlite_dirs;
-        let sqlite_dirs: Vec<PathBuf> = sqlite_dirs
-            .iter()
-            .filter_map(|d| match std::fs::canonicalize(d) {
-                Ok(p) if p.is_dir() => Some(p),
-                Ok(_) => {
-                    tracing::warn!("datasources.sqlite_dirs: {d} is not a directory, ignored");
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!("datasources.sqlite_dirs: {d} cannot be used ({e}), ignored");
-                    None
-                }
-            })
-            .collect();
         let allowed = (!allowed_targets.is_empty()).then(|| {
             allowed_targets
                 .iter()
@@ -115,13 +138,19 @@ impl TargetPolicy {
                 })
                 .collect()
         });
-        let mut sqlite_dirs_lexical: Vec<PathBuf> = sqlite_dirs_raw
-            .iter()
-            .filter(|d| Path::new(d).is_absolute())
-            .filter_map(|d| normalize_lexically(Path::new(d)))
-            .collect();
-        sqlite_dirs_lexical.extend(sqlite_dirs.iter().map(|d| strip_verbatim(d.clone())));
-        Self { data_dir, own_sqlite, sqlite_dirs, sqlite_dirs_lexical, sqlite_unc_allowed, allowed }
+        Self {
+            data_dir,
+            own_sqlite,
+            sqlite_dirs: AllowedDirs::new("datasources.sqlite_dirs", sqlite_dirs),
+            file_dirs: AllowedDirs::default(),
+            allowed,
+        }
+    }
+
+    /// The directories CSV and JSON file sources may read (`datasources.file_dirs`).
+    pub fn with_file_dirs(mut self, file_dirs: &[String]) -> Self {
+        self.file_dirs = AllowedDirs::new("datasources.file_dirs", file_dirs);
+        self
     }
 
     /// The canonical file a SQLite source may open, or why not.
@@ -133,29 +162,47 @@ impl TargetPolicy {
     /// whether a file exists.
     pub fn check_sqlite_path(&self, raw: &str) -> Result<PathBuf, Blocked> {
         let refused = || Blocked::new("target.sqlite_path_refused", SQLITE_REFUSED);
+        let relative = || Blocked::new("target.sqlite_path_relative", "the SQLite path must be absolute");
+        self.check_path(&self.sqlite_dirs, raw, refused, relative)
+    }
+
+    /// The canonical CSV or JSON file a file source may read: the same rules as for SQLite
+    /// files, within `datasources.file_dirs`.
+    pub fn check_file_path(&self, raw: &str) -> Result<PathBuf, Blocked> {
+        let refused = || Blocked::new("target.file_path_refused", FILE_REFUSED);
+        let relative = || Blocked::new("target.file_path_relative", "the file path must be absolute");
+        self.check_path(&self.file_dirs, raw, refused, relative)
+    }
+
+    fn check_path(
+        &self,
+        dirs: &AllowedDirs,
+        raw: &str,
+        refused: impl Fn() -> Blocked,
+        relative: impl Fn() -> Blocked,
+    ) -> Result<PathBuf, Blocked> {
         let path = Path::new(raw);
         if !path.is_absolute() {
-            return Err(Blocked::new("target.sqlite_path_relative", "the SQLite path must be absolute"));
+            return Err(relative());
         }
-        if is_unc(raw) && !self.sqlite_unc_allowed {
+        if is_unc(raw) && !dirs.unc_allowed {
             return Err(refused());
         }
-        let lexical = normalize_lexically(path).ok_or_else(refused)?;
-        if !self.sqlite_dirs_lexical.iter().any(|dir| within(&lexical, dir)) {
+        let lexical = normalize_lexically(path).ok_or_else(&refused)?;
+        if !dirs.lexical.iter().any(|dir| within(&lexical, dir)) {
             return Err(refused());
         }
         let canonical = std::fs::canonicalize(&lexical).map_err(|_| refused())?;
         let own = self.own_sqlite.as_ref().is_some_and(|own| is_same_database_file(&canonical, own));
         if canonical.starts_with(&self.data_dir)
             || own
-            || !self.sqlite_dirs.iter().any(|dir| canonical.starts_with(dir))
+            || !dirs.canonical.iter().any(|dir| canonical.starts_with(dir))
             || !canonical.is_file()
         {
             return Err(refused());
         }
         Ok(strip_verbatim(canonical))
     }
-
     /// Checks one address, reached through `host` (the name as configured, for the allow-list).
     pub fn check_ip(&self, host: &str, ip: IpAddr) -> Result<(), Blocked> {
         if is_always_blocked(ip) {
@@ -288,6 +335,7 @@ impl TargetPolicy {
 
 const SQLITE_REFUSED: &str =
     "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, or cannot be opened";
+const FILE_REFUSED: &str = "the file is not in a directory allowed in datasources.file_dirs, or cannot be opened";
 
 /// `\\server\share`, `\\?\...`, `\\.\device` (and the same with forward slashes): paths
 /// that leave the local disks. Only Windows reads them that way.
@@ -545,6 +593,37 @@ mod tests {
         // Nothing is allowed until an admin lists a directory.
         let none = TargetPolicy::new(&data, &own_url, &[], &[]);
         assert!(none.check_sqlite_path(allowed.join("umsatz.db").to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn file_paths_keep_to_their_own_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let files = root.path().join("dateien");
+        let sqlite = root.path().join("sqlite");
+        for d in [&data, &files, &sqlite] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(files.join("umsatz.csv"), b"a\n1\n").unwrap();
+        std::fs::write(sqlite.join("umsatz.csv"), b"a\n1\n").unwrap();
+        std::fs::write(data.join("kalzit.db"), b"").unwrap();
+        let s = |p: &Path| p.to_string_lossy().to_string();
+        let p = TargetPolicy::new(&data, "sqlite::memory:", &[s(&sqlite)], &[]).with_file_dirs(&[s(&files), s(&data)]);
+        assert!(p.check_file_path(&s(&files.join("umsatz.csv"))).unwrap().ends_with("umsatz.csv"));
+        // The SQLite directories do not open files for file sources, nor the other way round.
+        let e = p.check_file_path(&s(&sqlite.join("umsatz.csv"))).unwrap_err();
+        assert_eq!((e.0.reason, e.0.message.as_str()), ("target.file_path_refused", FILE_REFUSED));
+        assert!(p.check_sqlite_path(&s(&files.join("umsatz.csv"))).is_err());
+        // The data directory stays refused even when listed; missing files answer the same.
+        assert_eq!(p.check_file_path(&s(&data.join("kalzit.db"))).unwrap_err(), e);
+        assert_eq!(p.check_file_path(&s(&files.join("fehlt.csv"))).unwrap_err(), e);
+        let climb = files.join("..").join("sqlite").join("umsatz.csv");
+        assert_eq!(p.check_file_path(&s(&climb)).unwrap_err(), e);
+        assert_eq!(p.check_file_path("relativ.csv").unwrap_err().0.reason, "target.file_path_relative");
+        // Nothing is allowed until an admin lists a directory.
+        let none = TargetPolicy::new(&data, "sqlite::memory:", &[s(&files)], &[]);
+        assert!(none.check_file_path(&s(&files.join("umsatz.csv"))).is_err());
+        assert_ne!(none, p, "the file directories are part of the rules a connection was built with");
     }
 
     #[test]
