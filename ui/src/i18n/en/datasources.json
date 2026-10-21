@@ -110,5 +110,6 @@
   "datasources.kinds.mysql.hint": "Use a user with only the SELECT privilege on the databases you need. Kalzit rejects queries that change data, but a read-only login is the real protection.",
   "datasources.kinds.mssql.hint": "Use a login in the db_datareader role only. Kalzit rejects queries that change data, but a read-only login is the real protection.",
   "datasources.kinds.sqlite.hint": "Kalzit opens SQLite files read-only, and only from folders a server admin allowed.",
-  "datasources.kinds.prometheus.hint": "Use credentials that can only read, if your server needs any."
+  "datasources.kinds.prometheus.hint": "Use credentials that can only read, if your server needs any.",
+  "datasources.secret.reenter": "The connection target changed, so enter this again (or remove it) before saving. Kalzit never sends a stored secret to a new target unasked."
 }

@@ -21,9 +21,25 @@ interface WireSetting {
   type: "string" | "text" | "number" | "bool" | "select";
   required: boolean;
   secret: boolean;
+  target: boolean;
   options?: string[];
   default?: unknown;
 }
+
+/** The fields marked `target` by the server's kinds (datasources/*.rs on m1/data). */
+const TARGET_FIELDS = new Set([
+  "host",
+  "port",
+  "database",
+  "user",
+  "sslMode",
+  "caCert",
+  "encrypt",
+  "trustServerCertificate",
+  "path",
+  "url",
+  "basicAuthUser",
+]);
 
 interface WireKind {
   kind: string;
@@ -43,6 +59,7 @@ const setting = (
   type,
   required: false,
   secret: false,
+  target: TARGET_FIELDS.has(name),
   ...extra,
 });
 
@@ -530,6 +547,22 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       const refused = checkSettings(kind, settings, secrets, body.settings !== undefined);
       if (refused !== null) {
         return refused;
+      }
+      // A changed target field needs every stored secret in the same patch (Update in the doc).
+      const movedTarget = kind.settings.find(
+        (s) => s.target && JSON.stringify(settings[s.name]) !== JSON.stringify(ds.settings[s.name]),
+      );
+      if (movedTarget !== undefined) {
+        const missing = Object.keys(ds.secrets).find((name) => !(name in secrets));
+        if (missing !== undefined) {
+          return json(422, {
+            error: {
+              code: "validation",
+              message: `${movedTarget.name} changes where the data source connects; send ${missing} again or remove it`,
+              field: missing,
+            },
+          });
+        }
       }
       if (typeof body.name === "string") {
         if (nameTaken(body.name.trim(), ds.id)) {

@@ -110,5 +110,6 @@
   "datasources.kinds.mysql.hint": "Verwende einen Benutzer nur mit dem SELECT-Recht auf die benötigten Datenbanken. Kalzit lehnt Abfragen ab, die Daten ändern, aber erst ein Login mit reinen Leserechten schützt wirklich.",
   "datasources.kinds.mssql.hint": "Verwende einen Login nur in der Rolle db_datareader. Kalzit lehnt Abfragen ab, die Daten ändern, aber erst ein Login mit reinen Leserechten schützt wirklich.",
   "datasources.kinds.sqlite.hint": "Kalzit öffnet SQLite-Dateien nur lesend, und nur aus Ordnern, die ein Server-Admin freigegeben hat.",
-  "datasources.kinds.prometheus.hint": "Verwende Zugangsdaten, die nur lesen dürfen, falls dein Server welche verlangt."
+  "datasources.kinds.prometheus.hint": "Verwende Zugangsdaten, die nur lesen dürfen, falls dein Server welche verlangt.",
+  "datasources.secret.reenter": "Das Verbindungsziel hat sich geändert. Gib diesen Wert erneut ein (oder entferne ihn), bevor du speicherst. Kalzit schickt ein gespeichertes Geheimnis nie ungefragt an ein neues Ziel."
 }

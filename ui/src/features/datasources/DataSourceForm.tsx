@@ -47,13 +47,21 @@ function readOnlyHint(t: Translate, kind: DatasourceKind): string {
  * Text for a field the server named in an error: a refused target and a name in use are said as
  * such; anything else is a value the server did not accept.
  */
-function serverFieldText(t: Translate, error: unknown): { field: string; text: string } | null {
+function serverFieldText(
+  t: Translate,
+  error: unknown,
+  secretFields: readonly string[],
+): { field: string; text: string } | null {
   if (!isApiError(error) || error.field === undefined) {
     return null;
   }
   const field = error.field.replace(/^(settings|secrets)\./, "");
   if (field === "settings" || field === "secrets") {
     return null;
+  }
+  // A secret named in a 422: the target moved and the secret has to be entered again.
+  if (error.code === "validation" && secretFields.includes(field)) {
+    return { field, text: t("datasources.secret.reenter") };
   }
   if (error.code === "datasource_target_blocked") {
     return { field, text: t("errors.datasource_target_blocked") };
@@ -110,7 +118,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
       createDatasource(orgId, {
         name: input.name,
         kind: chosen ?? "",
-        settings: input.settings,
+        settings: input.settings ?? {},
         secrets: Object.fromEntries(
           Object.entries(input.secrets).filter(
             (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -198,8 +206,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
     mutationFn: (output: FormOutput) =>
       updateDatasource(orgId, datasourceId, {
         name: output.name,
-        settings: output.settings,
         secrets: output.secrets,
+        ...(output.settings === undefined ? {} : { settings: output.settings }),
       }),
     onSuccess: (saved) => {
       queryClient.setQueryData(datasourceQuery(orgId, datasourceId).queryKey, saved);
@@ -323,12 +331,17 @@ export function HealthResult({ health, error }: { health: Health | null; error: 
   );
 }
 
-/** What the form produces; secrets follow the API's patch semantics (absent keep, null remove). */
+/**
+ * What the form produces; secrets follow the API's patch semantics (absent keep, null remove).
+ * `settings` is left out when nothing in them changed.
+ */
 interface FormOutput {
   name: string;
-  settings: Record<string, unknown>;
+  settings?: Record<string, unknown>;
   secrets: Record<string, string | null>;
 }
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 type SecretState = { mode: "keep" } | { mode: "remove" } | { mode: "set"; value: string };
 
@@ -398,7 +411,11 @@ function SettingsForm({
   const [focusInvalid, setFocusInvalid] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
 
-  const server = serverFieldText(t, error);
+  const server = serverFieldText(
+    t,
+    error,
+    secret.map((spec) => spec.name),
+  );
   const fieldError = (field: string) =>
     errors[field] ?? (server?.field === field ? server.text : undefined);
 
@@ -407,11 +424,12 @@ function SettingsForm({
     if (name.trim() === "") {
       found.name = t("datasources.form.nameRequired");
     }
-    const settings: Record<string, unknown> = {};
+    // Every field as the form holds it; undefined for an empty one.
+    const parsed: Record<string, unknown> = {};
     for (const spec of plain) {
       const value = values[spec.name];
       if (spec.type === "bool") {
-        settings[spec.name] = value === true;
+        parsed[spec.name] = value === true;
         continue;
       }
       const text = String(value ?? "").trim();
@@ -426,14 +444,51 @@ function SettingsForm({
           found[spec.name] = t("datasources.form.number");
           continue;
         }
-        settings[spec.name] = Number(text);
+        parsed[spec.name] = Number(text);
       } else {
-        settings[spec.name] = text;
+        parsed[spec.name] = text;
       }
     }
+    const stored = initial?.settings;
+    let settings: Record<string, unknown> | undefined;
+    if (stored === undefined) {
+      settings = Object.fromEntries(Object.entries(parsed).filter(([, v]) => v !== undefined));
+    } else {
+      // Only what the user changed: a default the form filled in for a field that is not stored
+      // is no change, so a rename never touches the settings (or the stored secrets).
+      const next: Record<string, unknown> = { ...stored };
+      for (const spec of plain) {
+        if (values[spec.name] === initialValue(spec, initial)) {
+          continue;
+        }
+        if (parsed[spec.name] === undefined) {
+          delete next[spec.name];
+        } else {
+          next[spec.name] = parsed[spec.name];
+        }
+      }
+      settings = sameJson(next, stored) ? undefined : next;
+    }
+    // Changing where the source connects needs every stored secret again (or its removal), so a
+    // stored password never goes to a new host unasked (docs/api/datasources.md, Update).
+    const movesTarget =
+      settings !== undefined &&
+      stored !== undefined &&
+      plain.some((spec) => spec.target && !sameJson(settings?.[spec.name], stored[spec.name]));
+    const reenter: string[] = [];
     const secretOutput: Record<string, string | null> = {};
     for (const spec of secret) {
       const state = secrets[spec.name] ?? { mode: "keep" };
+      const isStored = initial?.secrets[spec.name]?.set === true;
+      if (
+        movesTarget &&
+        isStored &&
+        (state.mode === "keep" || (state.mode === "set" && state.value === ""))
+      ) {
+        found[spec.name] = t("datasources.secret.reenter");
+        reenter.push(spec.name);
+        continue;
+      }
       if (state.mode === "remove") {
         if (spec.required) {
           found[spec.name] = t("datasources.form.required");
@@ -447,12 +502,22 @@ function SettingsForm({
         }
       }
     }
+    if (reenter.length > 0) {
+      setSecrets((current) => ({
+        ...current,
+        ...Object.fromEntries(reenter.map((field) => [field, { mode: "set", value: "" }])),
+      }));
+    }
     setErrors(found);
     if (Object.keys(found).length > 0) {
       setFocusInvalid((count) => count + 1);
       return null;
     }
-    return { name: name.trim(), settings, secrets: secretOutput };
+    const output: FormOutput = { name: name.trim(), secrets: secretOutput };
+    if (settings !== undefined) {
+      output.settings = settings;
+    }
+    return output;
   }
 
   // After a failed submit, focus moves to the first field marked invalid, in form order.

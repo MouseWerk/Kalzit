@@ -190,7 +190,30 @@ describe("adding a data source", () => {
 });
 
 describe("editing a data source", () => {
-  it("keeps, replaces or removes a secret, without any version in the patch", async () => {
+  it("renames without sending settings, also for a source stored without defaults", async () => {
+    const { server, user } = open("/data-sources/ds-lean");
+    server.areas.datasources.datasources.push({
+      id: "ds-lean",
+      name: "Lean",
+      kind: "postgres",
+      // Stored without port and sslMode: the form shows their defaults, which are no change.
+      settings: { host: "db.internal", database: "shop", user: "reader" },
+      secrets: { password: "s3cret" },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "Shop");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    expect(lastCall(server, "PATCH", "ds-lean")?.body).toEqual({ name: "Shop", secrets: {} });
+    const stored = server.areas.datasources.datasources.find((d) => d.id === "ds-lean");
+    expect(stored?.settings).toEqual({ host: "db.internal", database: "shop", user: "reader" });
+    expect(stored?.secrets).toEqual({ password: "s3cret" });
+  });
+
+  it("asks for stored secrets again when the target changes, as the contract requires", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
     expect(await screen.findByText("Set")).toBeTruthy();
     // The stored TLS mode is shown, not the default.
@@ -202,26 +225,49 @@ describe("editing a data source", () => {
     await user.clear(host);
     await user.type(host, "db2.internal");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Saved.");
-    const first = lastCall(server, "PATCH", PG_ID)?.body as Record<string, unknown>;
-    expect(Object.keys(first).sort()).toEqual(["name", "secrets", "settings"]);
-    expect(first.secrets).toEqual({});
+    // Nothing is sent: the password field asks to be entered again.
+    const password = await screen.findByLabelText("Password (optional)");
+    expect(password.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText(/The connection target changed/)).toBeTruthy();
+    expect(lastCall(server, "PATCH", PG_ID)).toBeUndefined();
 
-    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.type(password, "new-secret");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    expect(lastCall(server, "PATCH", PG_ID)?.body).toMatchObject({
+      settings: { host: "db2.internal", port: 5432, sslMode: "verify-full" },
+      secrets: { password: "new-secret" },
+    });
+  });
+
+  it("removes a secret without touching the settings", async () => {
+    const { server, user } = open(`/data-sources/${PG_ID}`);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
     expect(screen.getByText("Will be removed on save")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(lastCall(server, "PATCH", PG_ID)?.body).toMatchObject({ secrets: { password: null } }),
-    );
-    expect(server.areas.datasources.datasources[0]?.secrets).toEqual({});
-
-    await user.type(await screen.findByLabelText("Password (optional)"), "new-secret");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(lastCall(server, "PATCH", PG_ID)?.body).toMatchObject({
-        secrets: { password: "new-secret" },
+      expect(lastCall(server, "PATCH", PG_ID)?.body).toEqual({
+        name: "Sales DB",
+        secrets: { password: null },
       }),
     );
+    expect(server.areas.datasources.datasources[0]?.secrets).toEqual({});
+  });
+
+  it("shows the server's demand for a secret it stored in the meantime at that field", async () => {
+    const { server, user } = open("/data-sources/ds-prom");
+    const url = await screen.findByRole("textbox", { name: "URL" });
+    // Someone else stored a token after this page loaded; the page does not know it.
+    const prom = server.areas.datasources.datasources.find((d) => d.id === "ds-prom");
+    if (prom !== undefined) {
+      prom.secrets.bearerToken = "t0k3n";
+    }
+    await user.clear(url);
+    await user.type(url, "http://prometheus-2:9090");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const token = await screen.findByLabelText("Bearer token (optional)");
+    await waitFor(() => expect(token.getAttribute("aria-invalid")).toBe("true"));
+    expect(screen.getByText(/The connection target changed/)).toBeTruthy();
   });
 
   it("tests the connection, saving unsaved changes first", async () => {
@@ -236,12 +282,14 @@ describe("editing a data source", () => {
       latencyMs: 3,
       code: "datasource_target_blocked",
     };
-    await user.type(screen.getByRole("textbox", { name: "Database" }), "x");
+    // The row limit is no target, so no secret has to be entered again.
+    await user.type(screen.getByRole("textbox", { name: "Row limit (optional)" }), "1000");
     await user.click(screen.getByRole("button", { name: "Save and test" }));
     expect(await screen.findByText("The connection failed")).toBeTruthy();
     expect(screen.getByText(/does not allow connections to this address/)).toBeTruthy();
     expect(lastCall(server, "PATCH", PG_ID)?.body).toMatchObject({
-      settings: { database: "salesx" },
+      settings: { maxRows: 1000, host: "db.internal" },
+      secrets: {},
     });
   });
 

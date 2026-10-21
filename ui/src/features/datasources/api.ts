@@ -43,6 +43,11 @@ export interface SettingSpec {
   required: boolean;
   /** Write-only: stored encrypted, never sent back; the API only says whether it is set. */
   secret: boolean;
+  /**
+   * Decides where the stored secrets are sent (host, port, TLS checks, URL). Changing it needs
+   * every stored secret again in the same update.
+   */
+  target: boolean;
   options?: string[];
   /** What the server uses when the field is left out; the form starts with it. */
   default?: unknown;
@@ -132,6 +137,7 @@ function parseSetting(value: unknown): SettingSpec | null {
     type: value.type as SettingType,
     required: value.required === true,
     secret: value.secret === true,
+    target: value.target === true,
   };
   if (Array.isArray(value.options)) {
     spec.options = value.options.filter((option): option is string => typeof option === "string");
