@@ -7,6 +7,7 @@ import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { PanelHostContext } from "../../panels/host";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AccessButton } from "./accessIntegration";
 import {
@@ -335,6 +336,15 @@ function DashboardView({
             changeDraft((m) => ({ ...m, panels: placePanel(m.panels, id, grid) })),
         };
 
+  // Panels may set a variable the dashboard defines (a node click setting $customerId).
+  const host = {
+    orgId,
+    variables: {
+      names: model.variables.filter((v) => v.type !== "constant").map((v) => v.name),
+      set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
+    },
+  };
+
   return (
     <div className="dashboard">
       <div className="dashboard__bar">
@@ -490,35 +500,39 @@ function DashboardView({
               {canEdit ? t("dashboards.noPanels.text") : t("dashboards.noPanels.textViewer")}
             </EmptyState>
           ) : (
-            <DashboardGrid
-              panels={model.panels}
-              query={{
-                orgId,
-                dashboardId: dashboard.id,
-                range: resolved.range,
-                variables: values,
-                saved: dashboard.model.variables,
-                source: "stored",
-                run: clock.run,
-              }}
-              storedPanels={dashboard.model.panels}
-              edit={editActions}
-            />
+            <PanelHostContext value={host}>
+              <DashboardGrid
+                panels={model.panels}
+                query={{
+                  orgId,
+                  dashboardId: dashboard.id,
+                  range: resolved.range,
+                  variables: values,
+                  saved: dashboard.model.variables,
+                  source: "stored",
+                  run: clock.run,
+                }}
+                storedPanels={dashboard.model.panels}
+                edit={editActions}
+              />
+            </PanelHostContext>
           )}
         </>
       ) : null}
       {dialog?.kind === "panel" && resolved.ok ? (
-        <PanelEditor
-          orgId={orgId}
-          dashboardId={dashboard.id}
-          panel={dialog.panel}
-          range={resolved.range}
-          variables={values}
-          stored={dashboard.model.panels.find((p) => p.id === dialog.panel.id)}
-          savedVariables={dashboard.model.variables}
-          onApply={(panel) => applyPanel(panel, dialog.isNew)}
-          onClose={() => setDialog(null)}
-        />
+        <PanelHostContext value={host}>
+          <PanelEditor
+            orgId={orgId}
+            dashboardId={dashboard.id}
+            panel={dialog.panel}
+            range={resolved.range}
+            variables={values}
+            stored={dashboard.model.panels.find((p) => p.id === dialog.panel.id)}
+            savedVariables={dashboard.model.variables}
+            onApply={(panel) => applyPanel(panel, dialog.isNew)}
+            onClose={() => setDialog(null)}
+          />
+        </PanelHostContext>
       ) : null}
       {dialog?.kind === "settings" ? (
         <SettingsDialog

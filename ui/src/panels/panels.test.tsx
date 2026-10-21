@@ -41,6 +41,10 @@ describe("registry", () => {
       ["stat", true],
       ["bar", true],
       ["table", true],
+      // The graph panels follow, offered but not as fitting.
+      ["network", false],
+      ["hierarchy", false],
+      ["path", false],
     ]);
     // Documents are not accepted by any M1 panel: all are offered, none as fitting.
     expect(panelsForShapes(["documents"]).every((e) => !e.accepts)).toBe(true);

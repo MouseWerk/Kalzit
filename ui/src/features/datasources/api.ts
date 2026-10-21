@@ -159,7 +159,18 @@ export interface PromSchema {
   labels: string[];
 }
 
-export type SourceSchema = SqlSchema | PromSchema;
+/**
+ * Graph sources (Neo4j, Memgraph): labels, edge types and property keys per label, the fields of
+ * `GraphSchema` (an assumption of the graph UI, see panels/graph/adapter.ts).
+ */
+export interface GraphSourceSchema {
+  kind: "graph";
+  labels: string[];
+  edgeTypes: string[];
+  propertyKeys: Record<string, string[]>;
+}
+
+export type SourceSchema = SqlSchema | PromSchema | GraphSourceSchema;
 
 export interface DatasourceInput {
   name: string;
@@ -391,6 +402,15 @@ export async function fetchSchema(
     Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
   if (isRecord(value) && value.kind === "metrics") {
     return { kind: "metrics", metrics: strings(value.metrics), labels: strings(value.labels) };
+  }
+  if (isRecord(value) && value.kind === "graph") {
+    const keys = isRecord(value.propertyKeys) ? value.propertyKeys : {};
+    return {
+      kind: "graph",
+      labels: strings(value.labels),
+      edgeTypes: strings(value.edgeTypes),
+      propertyKeys: Object.fromEntries(Object.entries(keys).map(([k, v]) => [k, strings(v)])),
+    };
   }
   if (isRecord(value) && value.kind === "tables" && Array.isArray(value.tables)) {
     return { kind: "tables", tables: value.tables as SqlSchema["tables"] };

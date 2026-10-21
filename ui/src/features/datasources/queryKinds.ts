@@ -8,7 +8,9 @@ import { isRecord } from "../../api/client";
  */
 
 export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite"] as const;
-export type EditorFamily = "sql" | "promql";
+/** Graph sources queried in Cypher; their query form is `{cypher}` (panels/graph/adapter.ts). */
+export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
+export type EditorFamily = "sql" | "promql" | "cypher";
 
 export interface SqlQuery {
   sql: string;
@@ -21,9 +23,16 @@ export interface PromQuery {
   minStepMs?: number;
 }
 
+export interface CypherQuery {
+  cypher: string;
+}
+
 export function familyOf(kind: string): EditorFamily | undefined {
   if ((SQL_KINDS as readonly string[]).includes(kind)) {
     return "sql";
+  }
+  if ((CYPHER_KINDS as readonly string[]).includes(kind)) {
+    return "cypher";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -49,9 +58,15 @@ export function parsePromQuery(query: unknown): PromQuery {
   return parsed;
 }
 
+export function parseCypherQuery(query: unknown): CypherQuery {
+  const value = isRecord(query) ? query : {};
+  return { cypher: typeof value.cypher === "string" ? value.cypher : "" };
+}
+
 /** A new, empty query in the form the kind expects. */
 export function emptyQuery(kind: string): unknown {
-  return familyOf(kind) === "promql" ? { expr: "" } : { sql: "" };
+  const family = familyOf(kind);
+  return family === "promql" ? { expr: "" } : family === "cypher" ? { cypher: "" } : { sql: "" };
 }
 
 /** The query text alone, for summaries and for deciding whether there is anything to run. */
@@ -62,6 +77,9 @@ export function queryText(query: unknown): string {
     }
     if (typeof query.expr === "string") {
       return query.expr;
+    }
+    if (typeof query.cypher === "string") {
+      return query.cypher;
     }
   }
   return "";

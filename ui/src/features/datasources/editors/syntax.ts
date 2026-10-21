@@ -145,10 +145,94 @@ export const PROMQL_KEYWORDS = [
   "unless",
 ] as const;
 
+/** Cypher clauses and operators (Neo4j, Memgraph); compared without case, as Cypher does. */
+export const CYPHER_KEYWORDS = [
+  "match",
+  "optional",
+  "where",
+  "return",
+  "with",
+  "unwind",
+  "order",
+  "by",
+  "skip",
+  "limit",
+  "as",
+  "distinct",
+  "and",
+  "or",
+  "xor",
+  "not",
+  "in",
+  "is",
+  "null",
+  "true",
+  "false",
+  "case",
+  "when",
+  "then",
+  "else",
+  "end",
+  "call",
+  "yield",
+  "union",
+  "all",
+  "asc",
+  "desc",
+  "starts",
+  "ends",
+  "contains",
+  "exists",
+] as const;
+
+export const CYPHER_FUNCTIONS = [
+  "count",
+  "collect",
+  "sum",
+  "avg",
+  "min",
+  "max",
+  "size",
+  "length",
+  "nodes",
+  "relationships",
+  "labels",
+  "type",
+  "id",
+  "elementId",
+  "properties",
+  "keys",
+  "coalesce",
+  "toInteger",
+  "toFloat",
+  "toString",
+  "toLower",
+  "toUpper",
+  "trim",
+  "split",
+  "substring",
+  "replace",
+  "startNode",
+  "endNode",
+  "head",
+  "last",
+  "range",
+  "abs",
+  "round",
+  "date",
+  "datetime",
+  "duration",
+  "timestamp",
+  "shortestPath",
+  "allShortestPaths",
+] as const;
+
 const SQL_KEYWORD_SET = new Set<string>(SQL_KEYWORDS);
 const SQL_FUNCTION_SET = new Set<string>(SQL_FUNCTIONS);
 const PROMQL_FUNCTION_SET = new Set<string>(PROMQL_FUNCTIONS);
 const PROMQL_KEYWORD_SET = new Set<string>(PROMQL_KEYWORDS);
+const CYPHER_KEYWORD_SET = new Set<string>(CYPHER_KEYWORDS);
+const CYPHER_FUNCTION_SET = new Set<string>(CYPHER_FUNCTIONS.map((f) => f.toLowerCase()));
 
 interface Rule {
   kind: TokenKind;
@@ -177,6 +261,20 @@ const PROMQL_RULES: Rule[] = [
   { kind: "macro", pattern: /\$__\w+|\$\{?\w+\}?/y },
   { kind: "plain", pattern: /[A-Za-z_:][\w:]*/y },
   { kind: "operator", pattern: /=~|!~|[<>=!]=?|[-+*/%^,(){}[\]]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+// A label or edge type follows a colon (`(c:Customer)`, `[:BOUGHT]`); parameters start with $.
+const CYPHER_RULES: Rule[] = [
+  { kind: "comment", pattern: /\/\/[^\n]*/y },
+  { kind: "comment", pattern: /\/\*[\s\S]*?(\*\/|$)/y },
+  { kind: "string", pattern: /'(?:[^'\\]|\\.)*'?|"(?:[^"\\]|\\.)*"?/y },
+  { kind: "label", pattern: /:\s*(?:[A-Za-z_]\w*|`[^`]*`?)/y },
+  { kind: "plain", pattern: /`[^`]*`?/y },
+  { kind: "macro", pattern: /\$\{?\w+\}?/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_][\w]*/y },
+  { kind: "operator", pattern: /=~|<>|[<>=!]=?|<?-+>?|[-+*/%^,;().|{}[\]:]/y },
   { kind: "plain", pattern: /\s+/y },
 ];
 
@@ -237,5 +335,15 @@ export function tokenizePromql(text: string): Token[] {
     }
     // A label name inside a matcher: followed by an operator such as = or =~.
     return /^\s*(=~|!~|!=|=)/.test(rest) ? "label" : "plain";
+  });
+}
+
+export function tokenizeCypher(text: string): Token[] {
+  return tokenize(text, CYPHER_RULES, (word, rest) => {
+    const lower = word.toLowerCase();
+    if (CYPHER_FUNCTION_SET.has(lower) && /^\s*\(/.test(rest)) {
+      return "function";
+    }
+    return CYPHER_KEYWORD_SET.has(lower) ? "keyword" : "plain";
   });
 }

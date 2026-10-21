@@ -6,6 +6,7 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
+import { FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID } from "./fakeGraph";
 
 /**
  * Fake routes for data sources and the free query route, written from docs/api/datasources.md
@@ -123,7 +124,26 @@ export const FAKE_KINDS: WireKind[] = [
       ...COMMON,
     ],
   },
+  graphKind("neo4j", "Neo4j"),
+  graphKind("memgraph", "Memgraph"),
 ];
+
+/** Graph sources (M3): a Bolt URL, a database and a reading user; Cypher queries, graph results. */
+function graphKind(kind: string, name: string): WireKind {
+  return {
+    kind,
+    name,
+    shapes: ["graph"],
+    hintKey: `datasources.kinds.${kind}.hint`,
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("database", "string"),
+      setting("user", "string", { required: true }),
+      setting("password", "string", { secret: true }),
+      ...COMMON,
+    ],
+  };
+}
 
 export interface StoredDatasource {
   id: string;
@@ -152,7 +172,11 @@ export interface FakeDatasourcesState {
   /** The answer of "Test connection" per data source id; healthy by default. */
   health: Record<string, WireHealth>;
   /** Answers one valid query item. Defaults to `defaultOutcome`. */
-  respond: (item: QueryItem, range: TimeRange) => QueryOutcome | Promise<QueryOutcome>;
+  respond: (
+    item: QueryItem,
+    range: TimeRange,
+    variables: Record<string, unknown>,
+  ) => QueryOutcome | Promise<QueryOutcome>;
   /** Grants on data sources for the caller, by data source id. */
   grants: Record<string, "query" | "edit" | "admin">;
   /** Whether answers carry `access` (stream C's addition); false plays an older server. */
@@ -169,14 +193,22 @@ const BLOCKED_HOST = /^(169\.254\.|fe80:|fd00:ec2::254)/i;
 
 /**
  * A query whose text contains `fail:<code>` answers that error code. SQL with "time" in it, and
- * every PromQL query, answers a time series; other SQL a table with int64 and null values.
+ * every PromQL query, answers a time series; other SQL a table with int64 and null values;
+ * Cypher a graph (fakeGraph.ts).
  */
-export function defaultOutcome(item: QueryItem, range: TimeRange): QueryOutcome {
+export function defaultOutcome(
+  item: QueryItem,
+  range: TimeRange,
+  variables: Record<string, unknown> = {},
+): QueryOutcome {
   const query = (item.query ?? {}) as Record<string, unknown>;
-  const text = String(query.sql ?? query.expr ?? "");
+  const text = String(query.sql ?? query.expr ?? query.cypher ?? "");
   const failure = /fail:(\w+)/.exec(text);
   if (failure !== null) {
     return { error: { code: failure[1] as never, message: `source said no (${failure[1]})` } };
+  }
+  if (typeof query.cypher === "string") {
+    return graphOutcome(query.cypher, variables);
   }
   const meta = { executedQuery: text, rowsTruncated: false, notices: [] };
   if (typeof query.sql === "string" && !/\btime\b/i.test(query.sql)) {
@@ -245,6 +277,12 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     return "the query is not an object";
   }
   const q = query as Record<string, unknown>;
+  if (kind === "neo4j" || kind === "memgraph") {
+    const extra = unknownKey(q, ["cypher"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    if (typeof q.cypher !== "string") return "cypher is required";
+    return q.cypher.trim() === "" ? "the query is empty" : null;
+  }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
     if (extra !== undefined) return `unknown query field ${extra}`;
@@ -265,6 +303,7 @@ export async function answerQuery(
   state: FakeDatasourcesState,
   item: QueryItem,
   range: TimeRange,
+  variables: Record<string, unknown> = {},
 ): Promise<QueryOutcome> {
   const source = state.datasources.find(
     (d) => d.id === item.datasourceId && d.deletedAt === undefined,
@@ -276,7 +315,22 @@ export async function answerQuery(
   if (problem !== null) {
     return { error: { code: "query_rejected", message: problem } };
   }
-  return state.respond(item, range);
+  return state.respond(item, range, variables);
+}
+
+/** Adds the Neo4j source "Graph DB" (NEO4J_ID) with its schema, for the graph tests. */
+export function addNeo4jSource(state: FakeDatasourcesState): void {
+  const created = Date.UTC(2026, 0, 10);
+  state.datasources.push({
+    id: NEO4J_ID,
+    name: "Graph DB",
+    kind: "neo4j",
+    settings: { url: "bolt://graph.internal:7687", user: "reader" },
+    secrets: { password: "s3cret" },
+    createdAt: created,
+    updatedAt: created,
+  });
+  state.schemas[NEO4J_ID] = FAKE_GRAPH_SCHEMA;
 }
 
 function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
@@ -484,7 +538,12 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
           ? { error: { code: "not_found", message: "no such data source" } }
           : !may(item.datasourceId, "query")
             ? { error: { code: "forbidden", message: "no query right on this data source" } }
-            : await answerQuery(state, item, range);
+            : await answerQuery(
+                state,
+                item,
+                range,
+                (body.variables ?? {}) as Record<string, unknown>,
+              );
       }
       return json(200, { results });
     }
