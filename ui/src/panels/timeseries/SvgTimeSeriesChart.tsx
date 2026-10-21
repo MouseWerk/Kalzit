@@ -1,4 +1,4 @@
-import { type PointerEvent, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent, useId, useRef, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
@@ -46,8 +46,9 @@ export function SvgTimeSeriesChart({
   lineWidth,
   showLegend,
 }: TimeSeriesChartProps) {
-  const { language } = useI18n();
+  const { t, language } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
   const { width, height } = useElementSize(boxRef);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -91,6 +92,41 @@ export function SvgTimeSeriesChart({
         });
   useStyleVars(tooltipRef, { "--hover-x": `${hoverX ?? 0}px` });
 
+  /**
+   * The readout by keyboard: the plot takes focus, Left and Right move the cursor in steps of a
+   * fiftieth of the width (with Shift a tenth), Home and End jump, and a live region reads out
+   * the values at the cursor.
+   */
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const current = hoverX ?? AXIS_LEFT + plotWidth / 2;
+    const step = plotWidth / (event.shiftKey ? 10 : 50);
+    const keys: Record<string, number> = {
+      ArrowLeft: current - step,
+      ArrowRight: current + step,
+      Home: AXIS_LEFT,
+      End: AXIS_LEFT + plotWidth,
+    };
+    const next = keys[event.key];
+    if (next !== undefined) {
+      event.preventDefault();
+      setHoverX(Math.min(Math.max(next, AXIS_LEFT), AXIS_LEFT + plotWidth));
+    } else if (event.key === "Escape" && hoverX !== null) {
+      event.stopPropagation();
+      setHoverX(null);
+    }
+  }
+
+  const spoken =
+    hoverTime === null
+      ? ""
+      : [
+          new Date(hoverTime).toLocaleString(language),
+          ...readout.map(
+            (row) =>
+              `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : `${valueLabel.format(row.value)}${unit === "" ? "" : ` ${unit}`}`}`,
+          ),
+        ].join(", ");
+
   function onPointerMove(event: PointerEvent<SVGSVGElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -99,13 +135,29 @@ export function SvgTimeSeriesChart({
 
   return (
     <div className="ts">
-      <div className="ts__plot" ref={boxRef}>
+      <div
+        className="ts__plot"
+        ref={boxRef}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: the plot takes focus for the keyboard readout
+        tabIndex={0}
+        role="group"
+        aria-label={title}
+        aria-describedby={hintId}
+        onKeyDown={onKeyDown}
+        onFocus={() => setHoverX((x) => x ?? AXIS_LEFT + plotWidth / 2)}
+        onBlur={() => setHoverX(null)}
+      >
+        <span className="visually-hidden" id={hintId}>
+          {t("dashboards.panels.readoutHint")}
+        </span>
+        <span className="visually-hidden" role="status">
+          {spoken}
+        </span>
         <svg
           className="ts__svg"
           width={width}
           height={height}
-          role="img"
-          aria-label={title}
+          aria-hidden="true"
           onPointerMove={onPointerMove}
           onPointerLeave={() => setHoverX(null)}
         >

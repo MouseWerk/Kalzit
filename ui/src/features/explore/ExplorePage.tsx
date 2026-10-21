@@ -76,6 +76,7 @@ function Explore({ orgId }: { orgId: string }) {
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
   const [adding, setAdding] = useState(false);
+  const tabsId = useId();
 
   const list = datasources.data ?? [];
   const datasource = list.find((d) => d.id === chosen) ?? list[0];
@@ -214,7 +215,7 @@ function Explore({ orgId }: { orgId: string }) {
           aria-busy={result.isFetching}
         >
           <div className="explore__result-bar">
-            <Tabs tab={tab} onTab={setTab} />
+            <Tabs idPrefix={tabsId} tab={tab} onTab={setTab} />
             <div className="preference">
               <label htmlFor={`${datasourceId}-panel`}>{t("explore.visualization")}</label>
               <select
@@ -241,11 +242,13 @@ function Explore({ orgId }: { orgId: string }) {
               </button>
             ) : null}
           </div>
+          {/* Both panels exist, so every tab's aria-controls points at an element. */}
           <div
             className="explore__panel"
             role="tabpanel"
-            id={`explore-tab-${tab}`}
-            aria-labelledby={`explore-tab-${tab}-button`}
+            id={`${tabsId}-result`}
+            aria-labelledby={`${tabsId}-result-tab`}
+            hidden={tab !== "result"}
           >
             {tab === "result" ? (
               <PanelBody
@@ -257,9 +260,16 @@ function Explore({ orgId }: { orgId: string }) {
                 outcomes={outcomes}
                 hasTargets
               />
-            ) : (
-              <Inspect outcomes={outcomes} />
-            )}
+            ) : null}
+          </div>
+          <div
+            className="explore__panel"
+            role="tabpanel"
+            id={`${tabsId}-inspect`}
+            aria-labelledby={`${tabsId}-inspect-tab`}
+            hidden={tab !== "inspect"}
+          >
+            {tab === "inspect" ? <Inspect outcomes={outcomes} /> : null}
           </div>
         </section>
       )}
@@ -279,9 +289,11 @@ const TABS = ["result", "inspect"] as const;
 
 /** Result and inspector tabs; Left and Right switch, as in the WAI-ARIA tabs pattern. */
 function Tabs({
+  idPrefix,
   tab,
   onTab,
 }: {
+  idPrefix: string;
   tab: (typeof TABS)[number];
   onTab: (tab: (typeof TABS)[number]) => void;
 }) {
@@ -296,7 +308,7 @@ function Tabs({
     const next =
       TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length] ?? "result";
     onTab(next);
-    listRef.current?.querySelector<HTMLButtonElement>(`#explore-tab-${next}-button`)?.focus();
+    document.getElementById(`${idPrefix}-${next}-tab`)?.focus();
   }
   return (
     <div
@@ -311,10 +323,10 @@ function Tabs({
           key={name}
           type="button"
           role="tab"
-          id={`explore-tab-${name}-button`}
+          id={`${idPrefix}-${name}-tab`}
           className="tabs__tab"
           aria-selected={tab === name}
-          aria-controls={`explore-tab-${name}`}
+          aria-controls={`${idPrefix}-${name}`}
           tabIndex={tab === name ? 0 : -1}
           onClick={() => onTab(name)}
         >

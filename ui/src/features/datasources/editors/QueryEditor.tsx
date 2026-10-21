@@ -1,17 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId } from "react";
-import { useI18n } from "../../../i18n/i18n";
-import { type PromSchema, type SqlSchema, schemaQuery } from "../api";
-import {
-  familyOf,
-  type PromQuery,
-  parsePromQuery,
-  parseSqlQuery,
-  SQL_FORMATS,
-  type SqlQuery,
-} from "../queryKinds";
+import { useId, useState } from "react";
+import { type MessageKey, useI18n } from "../../../i18n/i18n";
+import { schemaQuery } from "../api";
+import { familyOf, type PromQuery, parsePromQuery, parseSqlQuery } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
-import { promqlCompletions, SQL_MACROS, sqlCompletions } from "./completion";
+import { PROMQL_MACROS, promqlCompletions, SQL_MACROS, sqlCompletions } from "./completion";
 
 export interface QueryEditorProps {
   orgId: string;
@@ -41,14 +34,32 @@ function useSchema(orgId: string, datasourceId: string) {
   return { schema: schema.data, failed: schema.isError };
 }
 
+function MacroHelp({ macros, lead }: { macros: { name: string; help: MessageKey }[]; lead: MessageKey }) {
+  const { t } = useI18n();
+  return (
+    <details className="query-editor__help">
+      <summary>{t("datasources.editor.macros")}</summary>
+      <p className="field__hint">{t(lead)}</p>
+      <dl className="query-editor__macros">
+        {macros.map((macro) => (
+          <div key={macro.name}>
+            <dt>
+              <code>{macro.name}</code>
+            </dt>
+            <dd>{t(macro.help)}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
 function SqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {
   const { t } = useI18n();
   const hintId = useId();
-  const formatId = useId();
   const { schema, failed } = useSchema(orgId, datasource.id);
-  const sqlSchema = schema !== undefined && "tables" in schema ? (schema as SqlSchema) : undefined;
+  const sqlSchema = schema?.kind === "tables" ? schema : undefined;
   const value = parseSqlQuery(query);
-  const update = (patch: Partial<SqlQuery>) => onChange({ ...value, ...patch });
 
   return (
     <div className="query-editor">
@@ -57,60 +68,37 @@ function SqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: Qu
         label={label ?? t("datasources.editor.label")}
         describedBy={hintId}
         value={value.sql}
-        onChange={(sql) => update({ sql })}
+        onChange={(sql) => onChange({ sql })}
         complete={(text, cursor, explicit) => sqlCompletions(text, cursor, sqlSchema, explicit)}
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")}
+        {t("datasources.editor.shortcuts")} {t("datasources.editor.sqlHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
-      <div className="query-editor__options">
-        <div className="preference">
-          <label htmlFor={formatId}>{t("datasources.editor.format")}</label>
-          <select
-            id={formatId}
-            className="select"
-            value={value.format}
-            onChange={(event) =>
-              update({ format: event.currentTarget.value as SqlQuery["format"] })
-            }
-          >
-            {SQL_FORMATS.map((format) => (
-              <option key={format} value={format}>
-                {t(`datasources.editor.format.${format}`)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <details className="query-editor__help">
-          <summary>{t("datasources.editor.macros")}</summary>
-          <p className="field__hint">{t("datasources.editor.macrosLead")}</p>
-          <dl className="query-editor__macros">
-            {SQL_MACROS.map((macro) => (
-              <div key={macro.name}>
-                <dt>
-                  <code>{macro.detail}</code>
-                </dt>
-                <dd>{t(macro.help)}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      </div>
+      <MacroHelp
+        macros={SQL_MACROS.map((m) => ({ name: m.detail, help: m.help }))}
+        lead="datasources.editor.macrosLead"
+      />
     </div>
   );
+}
+
+/** Seconds as typed; the query stores milliseconds. */
+function stepText(minStepMs: number | undefined): string {
+  return minStepMs === undefined ? "" : String(minStepMs / 1000);
 }
 
 function PromqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {
   const { t } = useI18n();
   const hintId = useId();
-  const legendId = useId();
+  const stepId = useId();
   const instantId = useId();
   const { schema, failed } = useSchema(orgId, datasource.id);
-  const promSchema =
-    schema !== undefined && "metrics" in schema ? (schema as PromSchema) : undefined;
+  const promSchema = schema?.kind === "metrics" ? schema : undefined;
   const value = parsePromQuery(query);
+  const [step, setStep] = useState(stepText(value.minStepMs));
+  const stepValid = step.trim() === "" || /^\d+(\.\d+)?$/.test(step.trim());
 
   function update(patch: Partial<PromQuery>) {
     const next: PromQuery = { ...value, ...patch };
@@ -118,8 +106,8 @@ function PromqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
     if (next.instant !== true) {
       delete next.instant;
     }
-    if (next.legend === "") {
-      delete next.legend;
+    if (next.minStepMs === undefined || next.minStepMs <= 0) {
+      delete next.minStepMs;
     }
     onChange(next);
   }
@@ -133,25 +121,42 @@ function PromqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         rows={3}
         value={value.expr}
         onChange={(expr) => update({ expr })}
-        complete={(text, cursor, explicit) => promqlCompletions(text, cursor, promSchema, explicit)}
+        complete={(text, cursor, explicit) =>
+          promqlCompletions(text, cursor, promSchema, explicit)
+        }
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")}
+        {t("datasources.editor.shortcuts")} {t("datasources.editor.promHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <div className="query-editor__options">
-        <div className="field query-editor__legend">
-          <label className="field__label" htmlFor={legendId}>
-            {t("datasources.editor.legend")}
+        <div className="field query-editor__step">
+          <label className="field__label" htmlFor={stepId}>
+            {t("datasources.editor.minStep")}
           </label>
           <input
-            id={legendId}
-            className="input input--mono"
-            value={value.legend ?? ""}
-            placeholder={t("datasources.editor.legendPlaceholder")}
-            onChange={(event) => update({ legend: event.currentTarget.value })}
+            id={stepId}
+            className="input"
+            inputMode="decimal"
+            value={step}
+            aria-invalid={stepValid ? undefined : true}
+            aria-describedby={stepValid ? undefined : `${stepId}-error`}
+            onChange={(event) => {
+              const text = event.currentTarget.value;
+              setStep(text);
+              if (text.trim() === "") {
+                update({ minStepMs: 0 });
+              } else if (/^\d+(\.\d+)?$/.test(text.trim())) {
+                update({ minStepMs: Math.round(Number(text) * 1000) });
+              }
+            }}
           />
+          {stepValid ? null : (
+            <p className="field__error" id={`${stepId}-error`}>
+              {t("datasources.editor.minStepInvalid")}
+            </p>
+          )}
         </div>
         <label className="checkbox" htmlFor={instantId}>
           <input
@@ -163,6 +168,7 @@ function PromqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
           {t("datasources.editor.instant")}
         </label>
       </div>
+      <MacroHelp macros={PROMQL_MACROS} lead="datasources.editor.promMacrosLead" />
     </div>
   );
 }

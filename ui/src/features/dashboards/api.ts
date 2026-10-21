@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
-import { ApiError, expectShape, isRecord, request } from "../../api/client";
+import { ApiError, expectShape, isRecord } from "../../api/client";
 import type { Page, PanelQueryRequest, QueryResponse, TimeRange } from "../../api/generated/shapes";
-import { orgPath } from "../datasources/api";
+import { orgPath, send } from "../datasources/api";
 import { type DashboardModel, parseModel } from "./model";
 
 /*
@@ -113,7 +113,7 @@ function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: stri
 
 async function folderPage(orgId: string, trashed: boolean): Promise<Folder[]> {
   const path = orgPath(orgId, "folders") + (trashed ? "?trashed=true" : "");
-  const value = await request("GET", path);
+  const value = await send("GET", path);
   if (!isRecord(value) || !Array.isArray(value.items)) {
     return invalid("folder list");
   }
@@ -134,7 +134,7 @@ export async function createFolder(
   orgId: string,
   input: { name: string; parentId: string | null },
 ): Promise<void> {
-  await request("POST", orgPath(orgId, "folders"), input);
+  await send("POST", orgPath(orgId, "folders"), input);
 }
 
 export async function updateFolder(
@@ -142,19 +142,19 @@ export async function updateFolder(
   id: string,
   patch: { name?: string; parentId?: string | null; restricted?: boolean; version: number },
 ): Promise<void> {
-  await request("PATCH", orgPath(orgId, "folders", id), patch);
+  await send("PATCH", orgPath(orgId, "folders", id), patch);
 }
 
 export async function deleteFolder(orgId: string, id: string): Promise<void> {
-  await request("DELETE", orgPath(orgId, "folders", id));
+  await send("DELETE", orgPath(orgId, "folders", id));
 }
 
 export async function restoreFolder(orgId: string, id: string): Promise<void> {
-  await request("POST", orgPath(orgId, "folders", id, "restore"));
+  await send("POST", orgPath(orgId, "folders", id, "restore"));
 }
 
 export async function purgeFolder(orgId: string, id: string): Promise<void> {
-  await request("DELETE", orgPath(orgId, "folders", id, "purge"));
+  await send("DELETE", orgPath(orgId, "folders", id, "purge"));
 }
 
 export interface DashboardFilter {
@@ -176,11 +176,11 @@ export async function fetchDashboards(
   if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "dashboards") + (query === "" ? "" : `?${query}`);
-  return parsePage(await request("GET", path), parseSummary, "dashboard list");
+  return parsePage(await send("GET", path), parseSummary, "dashboard list");
 }
 
 export async function fetchDashboard(orgId: string, id: string): Promise<Dashboard> {
-  return parseDashboard(await request("GET", orgPath(orgId, "dashboards", id)));
+  return parseDashboard(await send("GET", orgPath(orgId, "dashboards", id)));
 }
 
 /** Creates version 1; the title is the model's. */
@@ -188,7 +188,7 @@ export async function createDashboard(
   orgId: string,
   input: { folderId: string | null; model: DashboardModel },
 ): Promise<{ id: string }> {
-  return parseDashboard(await request("POST", orgPath(orgId, "dashboards"), input));
+  return parseDashboard(await send("POST", orgPath(orgId, "dashboards"), input));
 }
 
 /** Saves a new version. A newer stored version answers `version_conflict` (409). */
@@ -198,19 +198,19 @@ export async function saveDashboard(
   input: { model: DashboardModel; version: number; message: string },
 ): Promise<void> {
   const body = input.message === "" ? { model: input.model, version: input.version } : input;
-  await request("PUT", orgPath(orgId, "dashboards", id), body);
+  await send("PUT", orgPath(orgId, "dashboards", id), body);
 }
 
 export async function deleteDashboard(orgId: string, id: string): Promise<void> {
-  await request("DELETE", orgPath(orgId, "dashboards", id));
+  await send("DELETE", orgPath(orgId, "dashboards", id));
 }
 
 export async function restoreDashboard(orgId: string, id: string): Promise<void> {
-  await request("POST", orgPath(orgId, "dashboards", id, "restore"));
+  await send("POST", orgPath(orgId, "dashboards", id, "restore"));
 }
 
 export async function purgeDashboard(orgId: string, id: string): Promise<void> {
-  await request("DELETE", orgPath(orgId, "dashboards", id, "purge"));
+  await send("DELETE", orgPath(orgId, "dashboards", id, "purge"));
 }
 
 function parseVersion(value: unknown): DashboardVersion | null {
@@ -233,7 +233,7 @@ export async function fetchVersions(
 ): Promise<Page<DashboardVersion>> {
   const path = orgPath(orgId, "dashboards", id, "versions");
   return parsePage(
-    await request(
+    await send(
       "GET",
       cursor === undefined ? path : `${path}?cursor=${encodeURIComponent(cursor)}`,
     ),
@@ -247,12 +247,12 @@ export async function fetchVersionModel(
   id: string,
   version: number,
 ): Promise<DashboardModel> {
-  const value = await request("GET", orgPath(orgId, "dashboards", id, "versions", String(version)));
+  const value = await send("GET", orgPath(orgId, "dashboards", id, "versions", String(version)));
   return parseModel(isRecord(value) ? value.model : undefined, "");
 }
 
 export async function restoreVersion(orgId: string, id: string, version: number): Promise<void> {
-  await request("POST", orgPath(orgId, "dashboards", id, "versions", String(version), "restore"));
+  await send("POST", orgPath(orgId, "dashboards", id, "versions", String(version), "restore"));
 }
 
 function isQueryResponse(value: unknown): value is QueryResponse {
@@ -270,27 +270,57 @@ export async function runPanelQuery(
   body: PanelQueryRequest,
   signal?: AbortSignal,
 ): Promise<QueryResponse> {
-  signal?.throwIfAborted();
   const path = orgPath(orgId, "dashboards", dashboardId, "panels", panelId, "query");
-  return expectShape(await request("POST", path, body), isQueryResponse, "panel query");
+  return expectShape(await send("POST", path, body, signal), isQueryResponse, "panel query");
 }
 
+const cellText = (value: unknown): string | null =>
+  value === null || value === undefined
+    ? null
+    : typeof value === "object"
+      ? JSON.stringify(value)
+      : String(value);
+
+/**
+ * The choices of a query variable. The route answers a `QueryResponse` like every query route
+ * (docs/ARCHITECTURE.md): the first frame's first field holds the values, a second field, when
+ * there is one, their labels. A failed query is reported like any other request error.
+ */
 export async function fetchVariableOptions(
   orgId: string,
   dashboardId: string,
   name: string,
   body: { timeRange: TimeRange; variables: Record<string, unknown> },
+  signal?: AbortSignal,
 ): Promise<VariableOption[]> {
   const path = orgPath(orgId, "dashboards", dashboardId, "variables", name, "options");
-  const value = await request("POST", path, body);
-  if (!isRecord(value) || !Array.isArray(value.options)) {
-    return invalid("variable options");
-  }
-  return value.options.flatMap((option) =>
-    isRecord(option) && typeof option.value === "string"
-      ? [{ value: option.value, label: str(option.label, option.value) }]
-      : [],
+  const response = expectShape(
+    await send("POST", path, body, signal),
+    isQueryResponse,
+    "variable options",
   );
+  const outcomes = Object.values(response.results);
+  const failed = outcomes.find((o) => "error" in o);
+  const frame = outcomes.flatMap((o) =>
+    "result" in o && o.result.shape === "frame" ? [o.result.frame] : [],
+  )[0];
+  if (frame === undefined) {
+    if (failed !== undefined && "error" in failed) {
+      throw new ApiError(failed.error.code, 200, failed.error.message);
+    }
+    return [];
+  }
+  const [values, labels] = frame.fields;
+  const seen = new Set<string>();
+  const options: VariableOption[] = [];
+  (values?.values ?? []).forEach((raw, row) => {
+    const value = cellText(raw);
+    if (value !== null && !seen.has(value)) {
+      seen.add(value);
+      options.push({ value, label: cellText(labels?.values[row]) ?? value });
+    }
+  });
+  return options;
 }
 
 export const FOLDERS_KEY = "folders";

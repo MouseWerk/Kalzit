@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from "react";
 import type { Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { compareValues, formatValue, rowCount } from "../frame";
+import { compareValues, formatValue, int64Key, rowCount } from "../frame";
 import { EmptyPanel } from "../shared";
 import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -28,7 +28,10 @@ export function sortedRows(frame: Frame, sort: Sort): Uint32Array {
     return order;
   }
   const sign = sort.direction === "ascending" ? 1 : -1;
-  const { values, type } = field;
+  const { type } = field;
+  // int64 is compared as BigInt; converting once per sort keeps 100,000 rows fast.
+  const values =
+    type === "int64" ? field.values.map((v) => int64Key(v) ?? (v === null ? null : String(v))) : field.values;
   return order.sort((a, b) => {
     const left = values[a];
     const right = values[b];

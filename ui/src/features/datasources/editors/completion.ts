@@ -159,7 +159,17 @@ export function sqlCompletions(
   return found.length === 0 ? null : { from: cursor - word.length, to: cursor, options: found };
 }
 
-const DURATIONS = ["1m", "5m", "10m", "30m", "1h", "6h", "1d", "$__interval"];
+const DURATIONS = ["1m", "5m", "10m", "30m", "1h", "6h", "1d", "$__interval", "$__rate_interval"];
+
+/** The PromQL macros of docs/api/datasources.md. */
+export const PROMQL_MACROS: { name: string; help: MessageKey }[] = [
+  { name: "$__interval", help: "datasources.editor.macro.interval" },
+  { name: "$__interval_ms", help: "datasources.editor.macro.intervalMs" },
+  { name: "$__rate_interval", help: "datasources.editor.macro.rateInterval" },
+  { name: "$__range", help: "datasources.editor.macro.range" },
+  { name: "$__timeFrom", help: "datasources.editor.macro.timeFromSeconds" },
+  { name: "$__timeTo", help: "datasources.editor.macro.timeToSeconds" },
+];
 
 /** Completions for PromQL: metrics, functions, label names inside `{}`, durations inside `[]`. */
 export function promqlCompletions(
@@ -185,23 +195,17 @@ export function promqlCompletions(
     if ((inMatcher.match(/"/g) ?? []).length % 2 === 1) {
       return null;
     }
-    const metricName = /([\w:]+)\s*$/.exec(before.slice(0, openBrace))?.[1];
-    const metrics = schema?.metrics ?? [];
-    const metric = metrics.find((m) => m.name === metricName);
-    const labels = metric?.labels ?? [...new Set(metrics.flatMap((m) => m.labels))].sort();
-    options = labels.map((label) => ({ label, kind: "label" as const }));
+    // The schema lists label names for the whole source, not per metric.
+    options = (schema?.labels ?? []).map((label) => ({ label, kind: "label" as const }));
   } else {
     if (word === "" && !explicit) {
       return null;
     }
     options = [
-      ...(schema?.metrics ?? []).map((m) => {
-        const option: Completion = { label: m.name, kind: "metric" };
-        if (m.help !== undefined && m.help !== "") {
-          option.detail = m.help;
-        }
-        return option;
-      }),
+      ...(word.startsWith("$")
+        ? PROMQL_MACROS.map((m) => ({ label: m.name, kind: "macro" as const }))
+        : []),
+      ...(schema?.metrics ?? []).map((name) => ({ label: name, kind: "metric" as const })),
       ...PROMQL_FUNCTIONS.map((f) => ({ label: f, kind: "function" as const })),
       ...PROMQL_KEYWORDS.map((k) => ({ label: k, kind: "keyword" as const })),
     ];

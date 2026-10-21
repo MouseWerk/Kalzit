@@ -4,6 +4,8 @@ import { appRoute } from "../../app/baseRoutes";
 export interface DataSourcesSearch {
   /** A data source just moved to the trash; the list offers to restore it. */
   deleted?: string | undefined;
+  /** Lists the trash instead. */
+  trash?: boolean | undefined;
 }
 
 export interface NewDataSourceSearch {
@@ -16,6 +18,7 @@ const datasourcesRoute = createRoute({
   path: "/data-sources",
   validateSearch: (search: Record<string, unknown>): DataSourcesSearch => ({
     deleted: typeof search.deleted === "string" ? search.deleted : undefined,
+    trash: search.trash === true || search.trash === "true" ? true : undefined,
   }),
   component: lazyRouteComponent(() => import("./DataSourcesPage"), "DataSourcesPage"),
 });

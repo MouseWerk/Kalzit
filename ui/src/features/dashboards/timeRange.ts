@@ -21,7 +21,8 @@ type Unit = (typeof UNITS)[number];
 
 const FIXED_MS: Partial<Record<Unit, number>> = { s: 1000, m: 60_000, h: 3_600_000 };
 
-const RELATIVE = /^now((?:[+-]\d+[smhdwMy])*)(?:\/([smhdwMy]))?$/;
+// The server's grammar (dashboards/model.rs): steps of at most five digits, one optional rounding.
+const RELATIVE = /^now((?:[+-]\d{1,5}[smhdwMy])*)(?:\/([smhdwMy]))?$/;
 const STEP = /([+-])(\d+)([smhdwMy])/g;
 
 function add(date: Date, amount: number, unit: Unit): void {
@@ -104,11 +105,16 @@ export function resolveTime(text: string, now: number, roundUp = false): number 
     }
     return date.getTime();
   }
-  if (/^\d{10,}$/.test(value)) {
-    return Number(value);
+  // A date alone is local midnight of that day (Date.parse would take UTC midnight).
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (date !== null) {
+    const [year, month, day] = [Number(date[1]), Number(date[2]), Number(date[3])];
+    const local = new Date(year, month - 1, day);
+    return local.getMonth() === month - 1 && local.getDate() === day ? local.getTime() : null;
   }
-  // ISO 8601 with a date; without an offset it is local time, as datetime-local inputs give it.
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+  // A date and a time; without an offset it is local time, as typed. Epoch numbers are not
+  // accepted: the server refuses them in a stored range.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?$/.test(value)) {
     const time = Date.parse(value);
     return Number.isNaN(time) ? null : time;
   }

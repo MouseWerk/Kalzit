@@ -55,24 +55,26 @@ export function reduceField(
       // Not a decimal string after all; fall through to numbers.
     }
   }
-  const numbers = present.map(toNumber).filter((v): v is number => v !== null);
-  if (numbers.length === 0) {
+  // One pass in a loop: spreading 100,000 values into Math.min would overflow the call stack.
+  let count = 0;
+  let sum = 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const raw of present) {
+    const value = toNumber(raw);
+    if (value === null) {
+      continue;
+    }
+    count++;
+    sum += value;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (count === 0) {
     return { value: null, type: "number" };
   }
-  let result: number;
-  switch (reducer) {
-    case "min":
-      result = Math.min(...numbers);
-      break;
-    case "max":
-      result = Math.max(...numbers);
-      break;
-    case "sum":
-      result = numbers.reduce((a, b) => a + b, 0);
-      break;
-    default:
-      result = numbers.reduce((a, b) => a + b, 0) / numbers.length;
-  }
+  const result =
+    reducer === "min" ? min : reducer === "max" ? max : reducer === "sum" ? sum : sum / count;
   return { value: result, type: "number" };
 }
 

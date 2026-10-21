@@ -422,8 +422,28 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       );
     }
     if (parts[2] === "variables" && parts[4] === "options" && method === "POST") {
+      // Answers a QueryResponse like every query route (docs/ARCHITECTURE.md): the values in the
+      // first field, their labels in the second.
+      const denied = needs("dashboards:read");
+      if (denied !== null) return denied;
+      const extra = unknownField(body, ["timeRange", "variables"]);
+      if (extra !== undefined) return validation(extra);
       const options = state.variableOptions[decodeURIComponent(parts[3] ?? "")] ?? [];
-      return needs("dashboards:read") ?? json(200, { options });
+      return json(200, {
+        results: {
+          A: {
+            result: {
+              shape: "frame",
+              frame: {
+                fields: [
+                  { name: "value", type: "string", values: options.map((o) => o.value) },
+                  { name: "label", type: "string", values: options.map((o) => o.label) },
+                ],
+              },
+            },
+          },
+        },
+      });
     }
     if (parts[2] === "versions" && method === "GET") {
       const denied = needs("dashboards:read");

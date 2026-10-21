@@ -12,7 +12,7 @@ import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AccessButton } from "../dashboards/accessIntegration";
 import { ConfirmDialog } from "../dashboards/ui/Dialog";
-import { errorMessage } from "../dashboards/ui/errors";
+import { errorCodeMessage, errorMessage } from "../dashboards/ui/errors";
 import {
   checkHealth,
   createDatasource,
@@ -36,15 +36,35 @@ function settingLabel(t: Translate, spec: SettingSpec): string {
   return Object.hasOwn(catalogs.en, spec.labelKey) ? t(spec.labelKey as MessageKey) : spec.name;
 }
 
-function optionLabel(t: Translate, label: string): string {
-  return Object.hasOwn(catalogs.en, label) ? t(label as MessageKey) : label;
+/** The read-only login advice of the kind (`hintKey`), or the general one for unknown keys. */
+function readOnlyHint(t: Translate, kind: DatasourceKind): string {
+  return Object.hasOwn(catalogs.en, kind.hintKey)
+    ? t(kind.hintKey as MessageKey)
+    : t("datasources.readOnly.lead");
 }
 
-/** The read-only advice for the kind, with a general text for kinds this UI does not know. */
-function readOnlyHint(t: Translate, kind: string): string {
-  const key = `datasources.readOnly.${kind}`;
-  const specific = Object.hasOwn(catalogs.en, key) ? ` ${t(key as MessageKey)}` : "";
-  return `${t("datasources.readOnly.lead")}${specific}`;
+/**
+ * Text for a field the server named in an error: a refused target and a name in use are said as
+ * such; anything else is a value the server did not accept.
+ */
+function serverFieldText(t: Translate, error: unknown): { field: string; text: string } | null {
+  if (!isApiError(error) || error.field === undefined) {
+    return null;
+  }
+  const field = error.field.replace(/^(settings|secrets)\./, "");
+  if (field === "settings" || field === "secrets") {
+    return null;
+  }
+  if (error.code === "datasource_target_blocked") {
+    return { field, text: t("errors.datasource_target_blocked") };
+  }
+  if (error.code === "conflict" && field === "name") {
+    return { field, text: t("datasources.form.nameTaken") };
+  }
+  if (error.code === "validation") {
+    return { field, text: t("validation.serverRejected") };
+  }
+  return null;
 }
 
 function useWriteAccess() {
@@ -164,6 +184,7 @@ export function EditDataSourcePage() {
 function EditDataSource({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const { datasourceId } = editRoute.useParams();
+  const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const source = useQuery(datasourceQuery(orgId, datasourceId));
@@ -174,15 +195,12 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const [formKey, setFormKey] = useState(0);
 
   const save = useMutation({
-    mutationFn: (output: FormOutput) => {
-      const current = source.data as Datasource;
-      return updateDatasource(orgId, datasourceId, {
+    mutationFn: (output: FormOutput) =>
+      updateDatasource(orgId, datasourceId, {
         name: output.name,
         settings: output.settings,
         secrets: output.secrets,
-        version: current.version,
-      });
-    },
+      }),
     onSuccess: (saved) => {
       queryClient.setQueryData(datasourceQuery(orgId, datasourceId).queryKey, saved);
       void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
@@ -212,7 +230,9 @@ function EditDataSource({ orgId }: { orgId: string }) {
   if (kind === undefined) {
     return <FormAlert>{t("datasources.form.unknownKind")}</FormAlert>;
   }
-  const versionConflict = isApiError(save.error, "version_conflict");
+  // Testing needs datasources:query, which admins hold with the built-in roles; a custom role
+  // may allow changing sources without querying them.
+  const canTest = permissions.has("datasources:query");
 
   return (
     <div className="ds-edit">
@@ -221,33 +241,19 @@ function EditDataSource({ orgId }: { orgId: string }) {
         kind={kind}
         initial={source.data}
         busy={save.isPending}
-        error={versionConflict ? null : save.error}
+        error={save.error}
         submitLabel={t("datasources.form.save")}
         onSubmit={(output) => save.mutate(output)}
-        onSubmitAndTest={(output) => save.mutate(output, { onSuccess: () => test.mutate() })}
-        onTest={() => test.mutate()}
+        {...(canTest
+          ? {
+              onSubmitAndTest: (output: FormOutput) =>
+                save.mutate(output, { onSuccess: () => test.mutate() }),
+              onTest: () => test.mutate(),
+            }
+          : {})}
         testing={test.isPending}
         saved={save.isSuccess}
       />
-      {versionConflict ? (
-        <div className="notice notice--danger" role="alert">
-          <Icon name="alert" />
-          <div className="ds-conflict">
-            <span>{t("datasources.form.conflict")}</span>
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={async () => {
-                save.reset();
-                await source.refetch();
-                setFormKey((key) => key + 1);
-              }}
-            >
-              {t("datasources.form.reload")}
-            </button>
-          </div>
-        </div>
-      ) : null}
       <HealthResult health={health} error={test.error} />
       <div className="ds-edit__footer">
         <AccessButton resource={{ kind: "datasource", id: datasourceId, name: source.data.name }} />
@@ -278,7 +284,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
   );
 }
 
-function HealthResult({ health, error }: { health: Health | null; error: Error | null }) {
+/** The outcome of "Test connection", in a live region so it is announced. */
+export function HealthResult({ health, error }: { health: Health | null; error: Error | null }) {
   const { t } = useI18n();
   let content = null;
   if (error !== null) {
@@ -298,6 +305,9 @@ function HealthResult({ health, error }: { health: Health | null; error: Error |
               ? t("datasources.health.ok", { ms: Math.round(health.latencyMs) })
               : t("datasources.health.failed")}
           </strong>
+          {health.ok || health.code === undefined ? null : (
+            <span>{errorCodeMessage(t, health.code)}</span>
+          )}
           {health.message === "" ? null : (
             <span className="ds-health__message">{health.message}</span>
           )}
@@ -336,16 +346,21 @@ interface SettingsFormProps {
   saved?: boolean;
 }
 
+/**
+ * What a field starts with: the stored value, else the kind's default, so an untouched form never
+ * sends something weaker than the server would use (TLS modes, encryption).
+ */
 function initialValue(spec: SettingSpec, initial: Datasource | undefined): string | boolean {
   const stored = initial?.settings[spec.name];
+  const value = stored === undefined || stored === null ? spec.default : stored;
   if (spec.type === "bool") {
-    return stored === true;
+    return value === true;
   }
-  if (stored === undefined || stored === null) {
-    return spec.type === "select" ? (spec.options?.[0]?.value ?? "") : "";
-  }
-  return String(stored);
+  return value === undefined || value === null ? "" : String(value);
 }
+
+/** A whole number of at least 0, as the `number` setting type requires. */
+const WHOLE_NUMBER = /^\d+$/;
 
 /**
  * The settings form of one kind, rendered from the kind's schema. Secret fields are write-only:
@@ -383,11 +398,9 @@ function SettingsForm({
   const [focusInvalid, setFocusInvalid] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
 
-  const serverField = isApiError(error, "validation")
-    ? error.field?.replace(/^(settings|secrets)\./, "")
-    : undefined;
+  const server = serverFieldText(t, error);
   const fieldError = (field: string) =>
-    errors[field] ?? (serverField === field ? t("validation.serverRejected") : undefined);
+    errors[field] ?? (server?.field === field ? server.text : undefined);
 
   function validate(): FormOutput | null {
     const found: Record<string, string> = {};
@@ -409,12 +422,11 @@ function SettingsForm({
         continue;
       }
       if (spec.type === "number") {
-        const number = Number(text);
-        if (!Number.isFinite(number)) {
+        if (!WHOLE_NUMBER.test(text)) {
           found[spec.name] = t("datasources.form.number");
           continue;
         }
-        settings[spec.name] = number;
+        settings[spec.name] = Number(text);
       } else {
         settings[spec.name] = text;
       }
@@ -484,10 +496,10 @@ function SettingsForm({
       </p>
       <div className="notice">
         <Icon name="lock" />
-        <span>{readOnlyHint(t, kind.kind)}</span>
+        <span>{readOnlyHint(t, kind)}</span>
       </div>
       <FormAlert>
-        {error !== null && serverField === undefined ? errorMessage(t, error) : null}
+        {error !== null && server === null ? errorMessage(t, error) : null}
       </FormAlert>
       <TextField
         label={t("datasources.form.name")}
@@ -613,9 +625,12 @@ function SettingField({
           aria-invalid={error === undefined ? undefined : true}
           aria-describedby={error === undefined ? undefined : errorId}
         >
+          {spec.required || spec.default !== undefined ? null : (
+            <option value="">{t("datasources.form.serverDefault")}</option>
+          )}
           {(spec.options ?? []).map((option) => (
-            <option key={option.value} value={option.value}>
-              {optionLabel(t, option.label)}
+            <option key={option} value={option}>
+              {option}
             </option>
           ))}
         </select>
@@ -623,15 +638,35 @@ function SettingField({
       </div>
     );
   }
+  const fullLabel = spec.required ? label : t("datasources.form.optional", { label });
+  if (spec.type === "text") {
+    return (
+      <div className="field">
+        <label className="field__label" htmlFor={id}>
+          {fullLabel}
+        </label>
+        <textarea
+          id={id}
+          className="input input--mono ds-textarea"
+          rows={5}
+          value={String(value)}
+          spellCheck={false}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={error === undefined ? undefined : errorId}
+        />
+        {errorText}
+      </div>
+    );
+  }
   return (
     <TextField
-      label={spec.required ? label : t("datasources.form.optional", { label })}
+      label={fullLabel}
       value={String(value)}
       onValueChange={onChange}
       error={error}
-      mono={spec.type === "path" || spec.type === "url"}
-      inputMode={spec.type === "number" ? "decimal" : undefined}
-      type={spec.type === "url" ? "url" : "text"}
+      mono={spec.name === "path" || spec.name === "url"}
+      inputMode={spec.type === "number" ? "numeric" : undefined}
       autoComplete="off"
       spellCheck={false}
     />

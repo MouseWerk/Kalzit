@@ -101,7 +101,8 @@ function VariableControl({
         onChange={(event) => setText(event.currentTarget.value)}
         onBlur={() => text !== value && onChange(text)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
+          // An Enter that confirms an input method composition is not a submit.
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             onChange(text);
           }
         }}

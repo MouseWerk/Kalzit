@@ -33,10 +33,19 @@ export function toNumber(value: unknown): number | null {
   return null;
 }
 
-/** "cpu{host="a"}": the field name with its series labels, as a series is usually written. */
-export function seriesName(field: Field): string {
+/**
+ * "cpu{host="a"}": the field name with its series labels, as a series is usually written. A name
+ * that already carries them (Prometheus fields are named so) is kept. With a legend template,
+ * `{{label}}` is replaced by that label's value, `{{__name__}}` by the field name.
+ */
+export function seriesName(field: Field, legend = ""): string {
+  if (legend.trim() !== "") {
+    return legend.replace(/\{\{\s*([\w:]+)\s*\}\}/g, (_, label: string) =>
+      label === "__name__" ? (field.labels?.__name__ ?? field.name) : (field.labels?.[label] ?? ""),
+    );
+  }
   const labels = Object.entries(field.labels ?? {}).filter(([key]) => key !== "__name__");
-  if (labels.length === 0) {
+  if (labels.length === 0 || field.name.includes("{")) {
     return field.name;
   }
   const text = labels.map(([key, value]) => `${key}="${value}"`).join(", ");
@@ -64,6 +73,15 @@ export function dateTimeFormat(language: string): Intl.DateTimeFormat {
   return format;
 }
 
+/** int64 digits grouped as the language groups numbers, every digit kept. */
+function formatInt64(value: unknown, language: string): string {
+  try {
+    return BigInt(String(value)).toLocaleString(language);
+  } catch {
+    return String(value);
+  }
+}
+
 /** A value as text: null is empty, int64 keeps every digit, numbers follow the language. */
 export function formatValue(type: FieldType, value: unknown, language: string): string {
   if (value === null || value === undefined) {
@@ -71,7 +89,7 @@ export function formatValue(type: FieldType, value: unknown, language: string): 
   }
   switch (type) {
     case "int64":
-      return String(value);
+      return formatInt64(value, language);
     case "number":
       return typeof value === "number" ? numberFormat(language).format(value) : String(value);
     case "time":
@@ -83,20 +101,22 @@ export function formatValue(type: FieldType, value: unknown, language: string): 
   }
 }
 
-function compareInt64(a: string, b: string): number {
+/** An int64 value as a BigInt, for exact comparison; null when it is not a decimal string. */
+export function int64Key(value: unknown): bigint | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
   try {
-    const left = BigInt(a);
-    const right = BigInt(b);
-    return left < right ? -1 : left > right ? 1 : 0;
+    return BigInt(value);
   } catch {
-    return a.localeCompare(b);
+    return null;
   }
 }
 
-/** Sort order for one column; nulls always go last, whatever the direction. */
+/** Sort order for one column of values (int64 already turned into BigInt keys). */
 export function compareValues(type: FieldType, a: unknown, b: unknown): number {
-  if (type === "int64" && typeof a === "string" && typeof b === "string") {
-    return compareInt64(a, b);
+  if (typeof a === "bigint" && typeof b === "bigint") {
+    return a < b ? -1 : a > b ? 1 : 0;
   }
   if (typeof a === "number" && typeof b === "number") {
     return a - b;

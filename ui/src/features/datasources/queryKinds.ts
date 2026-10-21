@@ -1,26 +1,24 @@
 import { isRecord } from "../../api/client";
 
 /**
- * The query forms of the M1 data source kinds (docs/ARCHITECTURE.md, query API): SQL sources
- * take `{sql, format}`, Prometheus takes `{expr, instant?, legend?}`. Everything that knows these
- * forms lives here, so a new kind adds its editor family in one place.
+ * The query forms of the M1 data source kinds (docs/api/datasources.md): SQL sources take exactly
+ * `{sql}`, Prometheus takes `{expr, instant?, minStepMs?}`. Anything else is rejected as a wrong
+ * query form, so these are the only shapes the editors produce. Whether a result is drawn as a
+ * table or a time series is the panel's choice from the frame, not part of the query.
  */
 
 export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite"] as const;
 export type EditorFamily = "sql" | "promql";
 
-export const SQL_FORMATS = ["table", "timeSeries"] as const;
-export type SqlFormat = (typeof SQL_FORMATS)[number];
-
 export interface SqlQuery {
   sql: string;
-  format: SqlFormat;
 }
 
 export interface PromQuery {
   expr: string;
   instant?: boolean;
-  legend?: string;
+  /** Lower bound of the range query's step, in milliseconds. */
+  minStepMs?: number;
 }
 
 export function familyOf(kind: string): EditorFamily | undefined {
@@ -32,10 +30,7 @@ export function familyOf(kind: string): EditorFamily | undefined {
 
 export function parseSqlQuery(query: unknown): SqlQuery {
   const value = isRecord(query) ? query : {};
-  return {
-    sql: typeof value.sql === "string" ? value.sql : "",
-    format: value.format === "timeSeries" ? "timeSeries" : "table",
-  };
+  return { sql: typeof value.sql === "string" ? value.sql : "" };
 }
 
 export function parsePromQuery(query: unknown): PromQuery {
@@ -44,15 +39,15 @@ export function parsePromQuery(query: unknown): PromQuery {
   if (value.instant === true) {
     parsed.instant = true;
   }
-  if (typeof value.legend === "string" && value.legend !== "") {
-    parsed.legend = value.legend;
+  if (typeof value.minStepMs === "number" && Number.isInteger(value.minStepMs) && value.minStepMs > 0) {
+    parsed.minStepMs = value.minStepMs;
   }
   return parsed;
 }
 
 /** A new, empty query in the form the kind expects. */
 export function emptyQuery(kind: string): unknown {
-  return familyOf(kind) === "promql" ? { expr: "" } : { sql: "", format: "table" };
+  return familyOf(kind) === "promql" ? { expr: "" } : { sql: "" };
 }
 
 /** The query text alone, for summaries and for deciding whether there is anything to run. */

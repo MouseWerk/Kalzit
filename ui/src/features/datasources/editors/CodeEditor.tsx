@@ -91,6 +91,10 @@ function TextareaCodeEditor({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter and Tab confirm an input method composition; they must not pick a suggestion.
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       setCompletion(null);

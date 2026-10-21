@@ -9,6 +9,9 @@ import { isRecord } from "../../api/client";
 export const GRID_COLUMNS = 24;
 export const MIN_PANEL_WIDTH = 2;
 export const MIN_PANEL_HEIGHT = 2;
+/** The server's limits on a panel's height and row (docs/api/settings-dashboards.md). */
+export const MAX_PANEL_HEIGHT = 200;
+export const MAX_GRID_Y = 10_000;
 
 export interface GridPos {
   x: number;
@@ -49,13 +52,35 @@ export interface VariableModel {
   name: string;
   label?: string;
   type: VariableType;
-  /** `custom` and `interval`: the values to choose from. */
-  options?: string[];
+  /**
+   * `custom` and `interval`: the values to choose from. Kept as stored (the server allows any
+   * JSON), so numbers or objects survive a save; `optionValues` reads them as text.
+   */
+  options?: unknown;
   /** `query`: where the options come from. */
   datasourceId?: string;
+  /** Kept for every type as stored, also on a constant. */
   query?: unknown;
-  /** The value the dashboard opens with. */
-  current?: string;
+  /** The value the dashboard opens with: text, a number or a list, as stored. */
+  current?: unknown;
+}
+
+const asText = (value: unknown): string | null =>
+  typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ? String(value)
+    : null;
+
+/** A variable's fixed choices as text, whatever JSON they were stored as. */
+export function optionValues(variable: VariableModel): string[] {
+  return Array.isArray(variable.options)
+    ? variable.options.map(asText).filter((v): v is string => v !== null)
+    : [];
+}
+
+/** The value a variable opens with, as text; a stored list opens with its first entry. */
+export function currentValue(variable: VariableModel): string | undefined {
+  const current = Array.isArray(variable.current) ? variable.current[0] : variable.current;
+  return asText(current) ?? undefined;
 }
 
 export interface DashboardModel {
@@ -132,10 +157,8 @@ function parseVariable(value: unknown): VariableModel | null {
   if (typeof value.label === "string" && value.label !== "") {
     variable.label = value.label;
   }
-  if (Array.isArray(value.options)) {
-    variable.options = value.options.flatMap((v) =>
-      typeof v === "string" || typeof v === "number" ? [String(v)] : [],
-    );
+  if (value.options !== undefined) {
+    variable.options = value.options;
   }
   if (typeof value.datasourceId === "string") {
     variable.datasourceId = value.datasourceId;
@@ -143,30 +166,22 @@ function parseVariable(value: unknown): VariableModel | null {
   if (value.query !== undefined) {
     variable.query = value.query;
   }
-  if (typeof value.current === "string" || typeof value.current === "number") {
-    variable.current = String(value.current);
+  if (value.current !== undefined) {
+    variable.current = value.current;
   }
   return variable;
 }
 
 /**
- * Keeps only the fields the variable's type uses: the server refuses a `datasourceId` on
- * anything but a query variable, and the dialog may have filled others before a type change.
+ * Drops what the server refuses: a `datasourceId` on anything but a query variable (the dialog
+ * may have set one before a type change) and an empty label or current value. Everything else is
+ * kept as stored.
  */
 export function cleanVariable(variable: VariableModel): VariableModel {
-  const clean: VariableModel = { name: variable.name, type: variable.type };
-  if (variable.label !== undefined && variable.label !== "") clean.label = variable.label;
-  if (variable.current !== undefined && variable.current !== "") clean.current = variable.current;
-  if (variable.type === "query") {
-    if (variable.datasourceId !== undefined) clean.datasourceId = variable.datasourceId;
-    if (variable.query !== undefined) clean.query = variable.query;
-  }
-  if (
-    (variable.type === "custom" || variable.type === "interval") &&
-    variable.options !== undefined
-  ) {
-    clean.options = variable.options;
-  }
+  const clean: VariableModel = { ...variable };
+  if (clean.type !== "query") delete clean.datasourceId;
+  if (clean.label === "") delete clean.label;
+  if (clean.current === "") delete clean.current;
   return clean;
 }
 
@@ -223,14 +238,15 @@ function overlaps(a: GridPos, b: GridPos): boolean {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
-/** Keeps a position inside the 24 columns and at least the minimum size. */
+/** Keeps a position inside the server's limits: 24 columns, h 2 to 200, y up to 10,000. */
 export function clampGrid(grid: GridPos): GridPos {
   const w = Math.min(Math.max(grid.w, MIN_PANEL_WIDTH), GRID_COLUMNS);
+  const h = Math.min(Math.max(grid.h, MIN_PANEL_HEIGHT), MAX_PANEL_HEIGHT);
   return {
     x: Math.min(Math.max(grid.x, 0), GRID_COLUMNS - w),
-    y: Math.max(grid.y, 0),
+    y: Math.min(Math.max(grid.y, 0), MAX_GRID_Y),
     w,
-    h: Math.max(grid.h, MIN_PANEL_HEIGHT),
+    h,
   };
 }
 

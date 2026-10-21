@@ -8,6 +8,8 @@ import { SvgTimeSeriesChart, type TimeSeriesChartProps } from "./SvgTimeSeriesCh
 
 export interface TimeSeriesOptions {
   unit: string;
+  /** Series names from labels, such as "{{job}} on {{instance}}"; empty uses the field names. */
+  legend: string;
   lineWidth: number;
   showLegend: boolean;
 }
@@ -24,13 +26,14 @@ function parseOptions(stored: unknown): TimeSeriesOptions {
   const value = isRecord(stored) ? stored : {};
   return {
     unit: typeof value.unit === "string" ? value.unit : "",
+    legend: typeof value.legend === "string" ? value.legend : "",
     lineWidth: LINE_WIDTHS.find((w) => w === value.lineWidth) ?? 1,
     showLegend: value.showLegend !== false,
   };
 }
 
 function TimeSeriesPanel({ frames, options, timeRange, title }: PanelProps<TimeSeriesOptions>) {
-  const series = buildSeries(frames);
+  const series = buildSeries(frames, options.legend);
   if (series.length === 0) {
     return <EmptyPanel reason="noTimeSeries" />;
   }
@@ -50,9 +53,25 @@ function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOpti
   const { t } = useI18n();
   const widthId = useId();
   const legendId = useId();
+  const templateId = useId();
   return (
     <>
       <UnitField value={options.unit} onChange={(unit) => onChange({ ...options, unit })} />
+      <div className="field">
+        <label className="field__label" htmlFor={templateId}>
+          {t("dashboards.panels.legendTemplate")}
+        </label>
+        <p className="field__hint" id={`${templateId}-hint`}>
+          {t("dashboards.panels.legendTemplateHint")}
+        </p>
+        <input
+          id={templateId}
+          className="input input--mono"
+          value={options.legend}
+          aria-describedby={`${templateId}-hint`}
+          onChange={(event) => onChange({ ...options, legend: event.currentTarget.value })}
+        />
+      </div>
       <div className="field">
         <label className="field__label" htmlFor={widthId}>
           {t("dashboards.panels.lineWidth")}

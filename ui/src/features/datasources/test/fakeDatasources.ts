@@ -1,9 +1,4 @@
-import type {
-  QueryItem,
-  QueryOutcome,
-  QueryRequest,
-  TimeRange,
-} from "../../../api/generated/shapes";
+import type { QueryItem, QueryOutcome, TimeRange } from "../../../api/generated/shapes";
 import {
   error,
   type FakeArea,
@@ -11,13 +6,112 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
-import type { DatasourceKind, Health, SourceSchema } from "../api";
 
 /**
- * Fake routes for data sources and the free query route, following the contract in
- * docs/ARCHITECTURE.md: secrets are write-only (`{set}`), PATCH uses omitted/null/string for
- * secrets, versions are checked, deleting moves to the trash, and permissions are enforced.
+ * Fake routes for data sources and the free query route, written from docs/api/datasources.md
+ * (stream C), not from the UI's types: Page envelopes (kinds included), no version on data
+ * sources, unknown body fields, settings and query parameters refused with 422, secrets only in
+ * `secrets` and never returned, health and schema need `datasources:query`, and each query form
+ * exactly as documented (`{sql}`, `{expr, instant?, minStepMs?}`), anything else `query_rejected`.
  */
+
+interface WireSetting {
+  name: string;
+  labelKey: string;
+  type: "string" | "text" | "number" | "bool" | "select";
+  required: boolean;
+  secret: boolean;
+  options?: string[];
+  default?: unknown;
+}
+
+interface WireKind {
+  kind: string;
+  name: string;
+  shapes: string[];
+  hintKey: string;
+  settings: WireSetting[];
+}
+
+const setting = (
+  name: string,
+  type: WireSetting["type"],
+  extra: Partial<WireSetting> = {},
+): WireSetting => ({
+  name,
+  labelKey: `datasources.settings.${name}`,
+  type,
+  required: false,
+  secret: false,
+  ...extra,
+});
+
+const COMMON = [setting("queryTimeoutSecs", "number"), setting("maxRows", "number")];
+
+function sqlKind(
+  kind: string,
+  name: string,
+  port: number,
+  tls: WireSetting[],
+): WireKind {
+  return {
+    kind,
+    name,
+    shapes: ["frame"],
+    hintKey: `datasources.kinds.${kind}.hint`,
+    settings: [
+      setting("host", "string", { required: true }),
+      setting("port", "number", { default: port }),
+      setting("database", "string", { required: true }),
+      setting("user", "string", { required: true }),
+      setting("password", "string", { secret: true }),
+      ...tls,
+      setting("caCert", "text"),
+      ...COMMON,
+    ],
+  };
+}
+
+/** The kinds in the documented order and with the documented fields and defaults. */
+export const FAKE_KINDS: WireKind[] = [
+  sqlKind("postgres", "PostgreSQL", 5432, [
+    setting("sslMode", "select", {
+      options: ["disable", "prefer", "require", "verify-ca", "verify-full"],
+      default: "prefer",
+    }),
+  ]),
+  sqlKind("mysql", "MySQL / MariaDB", 3306, [
+    setting("sslMode", "select", {
+      options: ["disabled", "preferred", "required", "verify_ca", "verify_identity"],
+      default: "preferred",
+    }),
+  ]),
+  {
+    kind: "sqlite",
+    name: "SQLite",
+    shapes: ["frame"],
+    hintKey: "datasources.kinds.sqlite.hint",
+    settings: [setting("path", "string", { required: true }), ...COMMON],
+  },
+  sqlKind("mssql", "Microsoft SQL Server", 1433, [
+    setting("encrypt", "bool", { default: true }),
+    setting("trustServerCertificate", "bool", { default: false }),
+  ]),
+  {
+    kind: "prometheus",
+    name: "Prometheus",
+    shapes: ["frame"],
+    hintKey: "datasources.kinds.prometheus.hint",
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("basicAuthUser", "string"),
+      setting("basicAuthPassword", "string", { secret: true }),
+      setting("bearerToken", "string", { secret: true }),
+      setting("caCert", "text"),
+      ...COMMON,
+    ],
+  },
+];
 
 export interface StoredDatasource {
   id: string;
@@ -25,123 +119,40 @@ export interface StoredDatasource {
   kind: string;
   settings: Record<string, unknown>;
   secrets: Record<string, string>;
-  version: number;
   createdAt: number;
+  updatedAt: number;
   deletedAt?: number;
 }
 
-export interface FakeDatasourcesState {
-  kinds: DatasourceKind[];
-  datasources: StoredDatasource[];
-  schemas: Record<string, SourceSchema>;
-  /** The answer of "Test connection" per data source id; healthy by default. */
-  health: Record<string, Health>;
-  /** Answers one query item. Defaults to `defaultOutcome`. */
-  respond: (item: QueryItem, range: TimeRange) => QueryOutcome | Promise<QueryOutcome>;
-  /** Every request to the free query route, in order. */
-  queries: QueryRequest[];
+export interface WireHealth {
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+  code?: string;
 }
 
-export const SQL_SETTINGS: DatasourceKind["settings"] = [
-  {
-    name: "host",
-    labelKey: "datasources.settings.host",
-    type: "string",
-    required: true,
-    secret: false,
-  },
-  {
-    name: "port",
-    labelKey: "datasources.settings.port",
-    type: "number",
-    required: false,
-    secret: false,
-  },
-  {
-    name: "database",
-    labelKey: "datasources.settings.database",
-    type: "string",
-    required: true,
-    secret: false,
-  },
-  {
-    name: "user",
-    labelKey: "datasources.settings.user",
-    type: "string",
-    required: true,
-    secret: false,
-  },
-  {
-    name: "password",
-    labelKey: "datasources.settings.password",
-    type: "string",
-    required: false,
-    secret: true,
-  },
-  {
-    name: "sslMode",
-    labelKey: "datasources.settings.sslMode",
-    type: "select",
-    required: true,
-    secret: false,
-    options: [
-      { value: "require", label: "require" },
-      { value: "disable", label: "disable" },
-    ],
-  },
-];
-
-export const FAKE_KINDS: DatasourceKind[] = [
-  { kind: "postgres", name: "PostgreSQL", shapes: ["frame"], settings: SQL_SETTINGS },
-  { kind: "mysql", name: "MySQL / MariaDB", shapes: ["frame"], settings: SQL_SETTINGS },
-  {
-    kind: "sqlite",
-    name: "SQLite",
-    shapes: ["frame"],
-    settings: [
-      {
-        name: "path",
-        labelKey: "datasources.settings.path",
-        type: "path",
-        required: true,
-        secret: false,
-      },
-    ],
-  },
-  {
-    kind: "prometheus",
-    name: "Prometheus",
-    shapes: ["frame"],
-    settings: [
-      {
-        name: "url",
-        labelKey: "datasources.settings.url",
-        type: "url",
-        required: true,
-        secret: false,
-      },
-      {
-        name: "token",
-        labelKey: "datasources.settings.token",
-        type: "string",
-        required: false,
-        secret: true,
-      },
-      {
-        name: "tlsSkipVerify",
-        labelKey: "datasources.settings.tlsSkipVerify",
-        type: "bool",
-        required: false,
-        secret: false,
-      },
-    ],
-  },
-];
+export interface FakeDatasourcesState {
+  datasources: StoredDatasource[];
+  /** Schema answers per data source id, in the documented wire shape. */
+  schemas: Record<string, unknown>;
+  /** The answer of "Test connection" per data source id; healthy by default. */
+  health: Record<string, WireHealth>;
+  /** Answers one valid query item. Defaults to `defaultOutcome`. */
+  respond: (item: QueryItem, range: TimeRange) => QueryOutcome | Promise<QueryOutcome>;
+  /** Every request body of the free query route, in order. */
+  queries: Record<string, unknown>[];
+}
 
 export const PG_ID = "ds-pg";
 export const PROM_ID = "ds-prom";
 
-/** A query whose text contains `fail:<code>` answers that error code; handy in tests. */
+/** Hosts in link-local and metadata ranges are refused, as the target check does. */
+const BLOCKED_HOST = /^(169\.254\.|fe80:|fd00:ec2::254)/i;
+
+/**
+ * A query whose text contains `fail:<code>` answers that error code. SQL with "time" in it, and
+ * every PromQL query, answers a time series; other SQL a table with int64 and null values.
+ */
 export function defaultOutcome(item: QueryItem, range: TimeRange): QueryOutcome {
   const query = (item.query ?? {}) as Record<string, unknown>;
   const text = String(query.sql ?? query.expr ?? "");
@@ -149,7 +160,8 @@ export function defaultOutcome(item: QueryItem, range: TimeRange): QueryOutcome 
   if (failure !== null) {
     return { error: { code: failure[1] as never, message: `source said no (${failure[1]})` } };
   }
-  if (query.format === "table") {
+  const meta = { executedQuery: text, rowsTruncated: false, notices: [] };
+  if (typeof query.sql === "string" && !/\btime\b/i.test(query.sql)) {
     return {
       result: {
         shape: "frame",
@@ -159,7 +171,7 @@ export function defaultOutcome(item: QueryItem, range: TimeRange): QueryOutcome 
             { name: "name", type: "string", values: ["Ada", null, "Grace"] },
             { name: "score", type: "number", values: [1.5, null, 3] },
           ],
-          meta: { executedQuery: text, rowsTruncated: false, notices: [] },
+          meta,
         },
       },
     };
@@ -177,42 +189,26 @@ export function defaultOutcome(item: QueryItem, range: TimeRange): QueryOutcome 
             values: Array.from({ length: points }, (_, i) => range.from + i * step),
           },
           {
-            name: "value",
+            name: "up",
             type: "number",
             values: Array.from({ length: points }, (_, i) => i * 2),
+            labels: { job: "api" },
           },
         ],
-        meta: { executedQuery: text, rowsTruncated: false, notices: [] },
+        meta,
       },
     },
   };
 }
 
-/** Runs one query item as the server would: only against a data source that is not deleted. */
-export async function answerQuery(
-  state: FakeDatasourcesState,
-  item: QueryItem,
-  range: TimeRange,
-): Promise<QueryOutcome> {
-  const exists = state.datasources.some(
-    (d) => d.id === item.datasourceId && d.deletedAt === undefined,
-  );
-  if (!exists) {
-    return { error: { code: "not_found", message: "no such data source" } };
-  }
-  return state.respond(item, range);
-}
+const unknownKey = (body: Record<string, unknown>, allowed: string[]) =>
+  Object.keys(body).find((key) => !allowed.includes(key));
 
-/**
- * Stream C has not published its route document yet; like stream B's routes, these are assumed
- * to refuse unknown fields with 422, so the UI sends exactly the fields of the contract.
- */
+/** Request body field checks shared with the dashboard fakes. */
 export function unknownField(body: Record<string, unknown>, allowed: string[]) {
-  return Object.keys(body).find((key) => !allowed.includes(key));
+  return unknownKey(body, allowed);
 }
 
-/** `QueryRequest` in api/generated/shapes.ts. */
-const QUERY_REQUEST_FIELDS = ["queries", "timeRange", "intervalMs", "maxDataPoints", "variables"];
 /** `PanelQueryRequest` in api/generated/shapes.ts. */
 export const PANEL_QUERY_REQUEST_FIELDS = [
   "timeRange",
@@ -222,28 +218,113 @@ export const PANEL_QUERY_REQUEST_FIELDS = [
   "maxDataPoints",
   "variables",
 ];
+const QUERY_REQUEST_FIELDS = ["queries", "timeRange", "intervalMs", "maxDataPoints", "variables"];
+const QUERY_ITEM_FIELDS = ["refId", "datasourceId", "query", "cursor", "limit"];
+
+/** The documented query form of the kind; null when it fits, else the rejection message. */
+function queryFormProblem(kind: string, query: unknown): string | null {
+  if (typeof query !== "object" || query === null) {
+    return "the query is not an object";
+  }
+  const q = query as Record<string, unknown>;
+  if (kind === "prometheus") {
+    const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    if (typeof q.expr !== "string") return "expr is required";
+    if (q.instant !== undefined && typeof q.instant !== "boolean") return "instant is a boolean";
+    if (q.minStepMs !== undefined && !Number.isInteger(q.minStepMs)) return "minStepMs";
+    return null;
+  }
+  const extra = unknownKey(q, ["sql"]);
+  if (extra !== undefined) return `unknown query field ${extra}`;
+  return typeof q.sql === "string" ? null : "sql is required";
+}
+
+/** Runs one query item as the server would: on a live data source, in its documented form. */
+export async function answerQuery(
+  state: FakeDatasourcesState,
+  item: QueryItem,
+  range: TimeRange,
+): Promise<QueryOutcome> {
+  const source = state.datasources.find((d) => d.id === item.datasourceId && d.deletedAt === undefined);
+  if (source === undefined) {
+    return { error: { code: "not_found", message: "no such data source" } };
+  }
+  const problem = queryFormProblem(source.kind, item.query);
+  if (problem !== null) {
+    return { error: { code: "query_rejected", message: problem } };
+  }
+  return state.respond(item, range);
+}
 
 function publicView(ds: StoredDatasource) {
-  const kind = FAKE_KINDS.find((k) => k.kind === ds.kind);
-  const secrets = Object.fromEntries(
-    (kind?.settings ?? [])
-      .filter((s) => s.secret)
-      .map((s) => [s.name, { set: ds.secrets[s.name] !== undefined }]),
-  );
-  return {
+  const secrets = Object.fromEntries(Object.keys(ds.secrets).map((name) => [name, { set: true }]));
+  const view: Record<string, unknown> = {
     id: ds.id,
     name: ds.name,
     kind: ds.kind,
     settings: ds.settings,
     secrets,
-    version: ds.version,
+    createdAt: ds.createdAt,
+    updatedAt: ds.updatedAt,
   };
+  if (ds.deletedAt !== undefined) {
+    view.deletedAt = ds.deletedAt;
+  }
+  return view;
+}
+
+function validation(field: string): Response {
+  return json(422, { error: { code: "validation", message: `invalid ${field}`, field } });
+}
+
+/** Settings and secrets as the save routes check them; a Response when they are refused. */
+function checkSettings(
+  kind: WireKind,
+  settings: Record<string, unknown>,
+  secrets: Record<string, unknown>,
+  requireAll: boolean,
+): Response | null {
+  for (const [name, value] of Object.entries(settings)) {
+    const spec = kind.settings.find((s) => s.name === name);
+    if (spec === undefined) return validation("settings");
+    if (spec.secret) return validation(name);
+    const ok =
+      spec.type === "number"
+        ? Number.isInteger(value) && (value as number) >= 0
+        : spec.type === "bool"
+          ? typeof value === "boolean"
+          : spec.type === "select"
+            ? spec.options?.includes(String(value)) === true
+            : typeof value === "string";
+    if (!ok) return validation(name);
+    if (name === "port" && ((value as number) < 1 || (value as number) > 65535)) {
+      return validation("port");
+    }
+    if ((name === "host" || name === "url") && BLOCKED_HOST.test(String(value).replace(/^https?:\/\//, ""))) {
+      return json(422, {
+        error: { code: "datasource_target_blocked", message: "target refused", field: name },
+      });
+    }
+  }
+  for (const name of Object.keys(secrets)) {
+    const spec = kind.settings.find((s) => s.name === name);
+    if (spec === undefined || !spec.secret) return validation("secrets");
+  }
+  if (requireAll) {
+    for (const spec of kind.settings) {
+      if (spec.required && !spec.secret && settings[spec.name] === undefined) {
+        return validation(spec.name);
+      }
+    }
+  }
+  return null;
 }
 
 export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasourcesState> {
   let nextId = 1;
+  const created = Date.UTC(2026, 0, 15);
   const state: FakeDatasourcesState = {
-    kinds: FAKE_KINDS,
     datasources: [
       {
         id: PG_ID,
@@ -254,24 +335,25 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
           port: 5432,
           database: "sales",
           user: "reader",
-          sslMode: "require",
+          sslMode: "verify-full",
         },
         secrets: { password: "s3cret" },
-        version: 1,
-        createdAt: Date.UTC(2026, 0, 15),
+        createdAt: created,
+        updatedAt: created,
       },
       {
         id: PROM_ID,
         name: "Metrics",
         kind: "prometheus",
-        settings: { url: "http://prometheus:9090", tlsSkipVerify: false },
+        settings: { url: "http://prometheus:9090" },
         secrets: {},
-        version: 1,
-        createdAt: Date.UTC(2026, 1, 1),
+        createdAt: created - 1000,
+        updatedAt: created - 1000,
       },
     ],
     schemas: {
       [PG_ID]: {
+        kind: "tables",
         tables: [
           {
             schema: "public",
@@ -286,10 +368,9 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         ],
       },
       [PROM_ID]: {
-        metrics: [
-          { name: "http_requests_total", help: "Requests served", labels: ["job", "status"] },
-          { name: "up", labels: ["job", "instance"] },
-        ],
+        kind: "metrics",
+        metrics: ["http_requests_total", "up"],
+        labels: ["instance", "job", "status"],
       },
     },
     health: {},
@@ -298,114 +379,166 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
   };
 
   const live = () => state.datasources.filter((ds) => ds.deletedAt === undefined);
+  const nameTaken = (name: string, except?: string) =>
+    live().some((ds) => ds.name === name && ds.id !== except);
 
   async function handle(request: FakeRequest): Promise<Response | undefined> {
-    const { method, route, body, permissions } = request;
+    const { method, route, search, body, permissions } = request;
     const parts = route.split("/").slice(4); // after /api/orgs/{orgId}
     const can = (permission: string) => permissions.has(permission);
 
     if (parts[0] === "datasource-kinds" && parts.length === 1 && method === "GET") {
-      return can("datasources:read") || can("datasources:write")
-        ? json(200, state.kinds)
-        : error(403, "forbidden");
+      return json(200, { items: FAKE_KINDS, nextCursor: null });
     }
     if (parts[0] === "query" && parts.length === 1 && method === "POST") {
       if (!can("datasources:query")) {
         return error(403, "forbidden");
       }
-      const extra = unknownField(body, QUERY_REQUEST_FIELDS);
+      const extra = unknownKey(body, QUERY_REQUEST_FIELDS);
       if (extra !== undefined) {
-        return error(422, "validation", extra);
+        return validation(extra);
       }
-      const query = body as unknown as QueryRequest;
-      state.queries.push(query);
+      const items = (body.queries ?? []) as QueryItem[];
+      if (items.length < 1 || items.length > 50) {
+        return validation("queries");
+      }
+      for (const item of items) {
+        if (unknownKey(item as unknown as Record<string, unknown>, QUERY_ITEM_FIELDS) !== undefined) {
+          return validation("queries");
+        }
+      }
+      const range = body.timeRange as TimeRange;
+      if (range.from > range.to) {
+        return validation("timeRange");
+      }
+      state.queries.push(body);
       const results: Record<string, QueryOutcome> = {};
-      for (const item of query.queries) {
-        results[item.refId] = await answerQuery(state, item, query.timeRange);
+      for (const item of items) {
+        results[item.refId] = await answerQuery(state, item, range);
       }
       return json(200, { results });
     }
     if (parts[0] !== "datasources") {
       return undefined;
     }
-    const readable = can("datasources:read") || can("datasources:write");
     if (parts.length === 1 && method === "GET") {
-      if (!readable) {
+      const extra = [...search.keys()].find((key) => !["limit", "cursor", "trash"].includes(key));
+      if (extra !== undefined) {
+        return validation(extra);
+      }
+      const trash = search.get("trash") === "true";
+      if (trash ? !can("datasources:write") : !(can("datasources:read") || can("datasources:query"))) {
         return error(403, "forbidden");
       }
-      const items = live().map(({ id, name, kind, createdAt }) => ({ id, name, kind, createdAt }));
-      return json(200, { items, nextCursor: null });
+      const limit = Number(search.get("limit") ?? 50);
+      const start = Number(search.get("cursor") ?? 0);
+      const all = state.datasources
+        .filter((ds) => (trash ? ds.deletedAt !== undefined : ds.deletedAt === undefined))
+        .sort((a, b) => b.createdAt - a.createdAt);
+      const items = all.slice(start, start + limit).map((ds) => {
+        const item: Record<string, unknown> = {
+          id: ds.id,
+          name: ds.name,
+          kind: ds.kind,
+          createdAt: ds.createdAt,
+        };
+        if (ds.deletedAt !== undefined) item.deletedAt = ds.deletedAt;
+        return item;
+      });
+      const next = start + limit < all.length ? String(start + limit) : null;
+      return json(200, { items, nextCursor: next });
     }
     if (parts.length === 1 && method === "POST") {
-      const extra = unknownField(body, ["name", "kind", "settings", "secrets"]);
-      if (extra !== undefined) {
-        return error(422, "validation", extra);
-      }
       if (!can("datasources:write")) {
         return error(403, "forbidden");
       }
-      if (typeof body.name !== "string" || body.name === "") {
-        return error(400, "validation", "name");
+      const extra = unknownKey(body, ["name", "kind", "settings", "secrets"]);
+      if (extra !== undefined) {
+        return validation(extra);
       }
-      const created: StoredDatasource = {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (name === "" || name.length > 100) {
+        return validation("name");
+      }
+      const kind = FAKE_KINDS.find((k) => k.kind === body.kind);
+      if (kind === undefined) {
+        return validation("kind");
+      }
+      const settings = (body.settings ?? {}) as Record<string, unknown>;
+      const secrets = (body.secrets ?? {}) as Record<string, unknown>;
+      const refused = checkSettings(kind, settings, secrets, true);
+      if (refused !== null) {
+        return refused;
+      }
+      if (nameTaken(name)) {
+        return json(409, { error: { code: "conflict", message: "name in use", field: "name" } });
+      }
+      const now = Date.now();
+      const stored: StoredDatasource = {
         id: `ds-new-${nextId++}`,
-        name: body.name,
-        kind: String(body.kind),
-        settings: (body.settings ?? {}) as Record<string, unknown>,
-        secrets: (body.secrets ?? {}) as Record<string, string>,
-        version: 1,
-        createdAt: Date.now(),
+        name,
+        kind: kind.kind,
+        settings,
+        secrets: Object.fromEntries(
+          Object.entries(secrets).filter((e): e is [string, string] => typeof e[1] === "string"),
+        ),
+        createdAt: now,
+        updatedAt: now,
       };
-      state.datasources.push(created);
-      return json(201, publicView(created));
+      state.datasources.push(stored);
+      return json(201, publicView(stored));
     }
     const ds = state.datasources.find((d) => d.id === decodeURIComponent(parts[1] ?? ""));
-    if (ds === undefined || (ds.deletedAt !== undefined && parts[2] !== "restore")) {
+    const inTrash = ds?.deletedAt !== undefined;
+    if (ds === undefined || (inTrash && parts[2] !== "restore")) {
       return error(404, "not_found");
     }
     if (parts.length === 2 && method === "GET") {
-      return readable ? json(200, publicView(ds)) : error(403, "forbidden");
+      // Not visible without datasources:read, as the server answers.
+      return can("datasources:read") ? json(200, publicView(ds)) : error(404, "not_found");
     }
     if (parts[2] === "schema" && method === "GET") {
-      return can("datasources:query")
-        ? json(200, state.schemas[ds.id] ?? { tables: [] })
-        : error(403, "forbidden");
+      return can("datasources:query") ? json(200, state.schemas[ds.id]) : error(403, "forbidden");
     }
     if (parts[2] === "health" && method === "POST") {
-      if (!can("datasources:write")) {
+      if (!can("datasources:query")) {
         return error(403, "forbidden");
       }
-      return json(
-        200,
-        state.health[ds.id] ?? { ok: true, message: "PostgreSQL 17.2", latencyMs: 12.4 },
-      );
+      if (Object.keys(body).length > 0) {
+        return validation(Object.keys(body)[0] ?? "");
+      }
+      return json(200, state.health[ds.id] ?? { ok: true, message: "PostgreSQL 17.2", latencyMs: 12 });
     }
     if (!can("datasources:write")) {
       return error(403, "forbidden");
     }
     if (parts.length === 2 && method === "PATCH") {
-      const extra = unknownField(body, ["name", "settings", "secrets", "version"]);
+      const extra = unknownKey(body, ["name", "settings", "secrets"]);
       if (extra !== undefined) {
-        return error(422, "validation", extra);
+        return validation(extra);
       }
-      if (body.version !== ds.version) {
-        return json(409, {
-          error: { code: "version_conflict", message: "newer version" },
-          current: publicView(ds),
-        });
+      const kind = FAKE_KINDS.find((k) => k.kind === ds.kind) as WireKind;
+      const settings = (body.settings ?? ds.settings) as Record<string, unknown>;
+      const secrets = (body.secrets ?? {}) as Record<string, unknown>;
+      const refused = checkSettings(kind, settings, secrets, body.settings !== undefined);
+      if (refused !== null) {
+        return refused;
       }
-      if (typeof body.name === "string") ds.name = body.name;
-      if (body.settings !== undefined) ds.settings = body.settings as Record<string, unknown>;
-      for (const [field, value] of Object.entries(
-        (body.secrets ?? {}) as Record<string, unknown>,
-      )) {
+      if (typeof body.name === "string") {
+        if (nameTaken(body.name.trim(), ds.id)) {
+          return json(409, { error: { code: "conflict", message: "name in use", field: "name" } });
+        }
+        ds.name = body.name.trim();
+      }
+      if (body.settings !== undefined) ds.settings = settings;
+      for (const [field, value] of Object.entries(secrets)) {
         if (value === null) {
           delete ds.secrets[field];
         } else if (typeof value === "string") {
           ds.secrets[field] = value;
         }
       }
-      ds.version++;
+      ds.updatedAt = Date.now();
       return json(200, publicView(ds));
     }
     if (parts.length === 2 && method === "DELETE") {
@@ -413,8 +546,11 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return new Response(null, { status: 204 });
     }
     if (parts[2] === "restore" && method === "POST") {
+      if (!inTrash) {
+        return error(404, "not_found");
+      }
       delete ds.deletedAt;
-      return new Response(null, { status: 204 });
+      return json(200, publicView(ds));
     }
     return undefined;
   }

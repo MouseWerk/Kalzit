@@ -9,7 +9,7 @@ export interface Series {
 }
 
 /** Every number or int64 field of every frame with a time field becomes one series. */
-export function buildSeries(frames: readonly Frame[]): Series[] {
+export function buildSeries(frames: readonly Frame[], legend = ""): Series[] {
   const series: Series[] = [];
   for (const frame of frames) {
     const time = timeField(frame);
@@ -26,7 +26,7 @@ export function buildSeries(frames: readonly Frame[]): Series[] {
       for (let i = 0; i < count; i++) {
         values[i] = toNumber(field.values[i]) ?? Number.NaN;
       }
-      series.push({ name: seriesName(field), times, values });
+      series.push({ name: seriesName(field, legend), times, values });
     }
   }
   return series;
@@ -192,8 +192,30 @@ export function timeTicks(
         ticks.push(d.getTime());
       }
     }
+  } else if (step >= HOUR) {
+    // Hour steps are counted on the local clock tick by tick, so they stay on 00:00, 06:00, 12:00
+    // across a daylight saving change instead of drifting to 01:00 after it.
+    const hours = Math.round(step / HOUR);
+    const d = new Date(from);
+    d.setMinutes(0, 0, 0);
+    if (d.getTime() < from) {
+      d.setHours(d.getHours() + 1);
+    }
+    while (d.getHours() % hours !== 0) {
+      d.setHours(d.getHours() + 1);
+    }
+    for (let guard = 0; d.getTime() <= to && guard < 1000; guard++) {
+      ticks.push(d.getTime());
+      const before = d.getHours();
+      d.setHours(before + hours);
+      // A skipped or repeated hour can leave the clock off the grid; put it back on.
+      while (d.getHours() % hours !== 0) {
+        d.setHours(d.getHours() + 1);
+      }
+    }
   } else {
-    // Local offset, so hour ticks fall on local full hours too.
+    // Steps below an hour divide an hour, and zones move by whole hours, so a fixed step from a
+    // local boundary stays on local boundaries.
     const offset = new Date(from).getTimezoneOffset() * MINUTE;
     for (let t = Math.ceil((from - offset) / step) * step + offset; t <= to; t += step) {
       ticks.push(t);
