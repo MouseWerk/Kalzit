@@ -20,15 +20,18 @@ use super::{
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
-    SettingField::new("host", "datasources.settings.host", SettingType::String).required(),
-    SettingField::new("port", "datasources.settings.port", SettingType::Number).default(DefaultValue::Number(3306)),
-    SettingField::new("database", "datasources.settings.database", SettingType::String).required(),
-    SettingField::new("user", "datasources.settings.user", SettingType::String).required(),
+    SettingField::new("host", "datasources.settings.host", SettingType::String).target().required(),
+    SettingField::new("port", "datasources.settings.port", SettingType::Number)
+        .target()
+        .default(DefaultValue::Number(3306)),
+    SettingField::new("database", "datasources.settings.database", SettingType::String).target().required(),
+    SettingField::new("user", "datasources.settings.user", SettingType::String).target().required(),
     SettingField::new("password", "datasources.settings.password", SettingType::String).secret(),
     SettingField::new("sslMode", "datasources.settings.sslMode", SettingType::Select)
+        .target()
         .options(&["disabled", "preferred", "required", "verify_ca", "verify_identity"])
         .default(DefaultValue::Text("preferred")),
-    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text),
+    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 const POOL_SIZE: u32 = 4;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -81,6 +84,9 @@ async fn pool(conn: &Connection) -> Result<Arc<MySqlPool>, SourceError> {
             .database(&s.database)
             .ssl_mode(mode)
             .charset("utf8mb4")
+            // The session's sql_mode is set in after_connect, exactly; the driver must not add to it.
+            .pipes_as_concat(false)
+            .no_engine_substitution(false)
             // DATETIME values are read and the macros' times are bound as UTC.
             .timezone(Some("+00:00".to_string()));
         if let Some(password) = conn.secret("password") {
@@ -89,11 +95,21 @@ async fn pool(conn: &Connection) -> Result<Arc<MySqlPool>, SourceError> {
         if let Some(pem) = s.ca_cert.filter(|p| !p.trim().is_empty()) {
             options = options.ssl_ca_from_pem(pem.into_bytes());
         }
+        let recheck = matches!(mode, MySqlSslMode::VerifyIdentity).then(|| (conn.policy_arc(), s.host.clone(), port));
         MySqlPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
             .acquire_timeout(CONNECT_TIMEOUT)
             .idle_timeout(Duration::from_secs(300))
+            .after_connect(move |c, _| {
+                let recheck = recheck.clone();
+                Box::pin(async move {
+                    if let Some((policy, host, port)) = recheck {
+                        super::recheck_name(&policy, &host, port).await?;
+                    }
+                    pin_sql_mode(c).await
+                })
+            })
             .connect_with(options)
             .await
             .map_err(failed)
@@ -103,6 +119,9 @@ async fn pool(conn: &Connection) -> Result<Arc<MySqlPool>, SourceError> {
 
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
+        sqlx::Error::Configuration(inner) if inner.is::<super::targets::Blocked>() => {
+            SourceError::Blocked(inner.to_string())
+        }
         // 1792: cannot execute statement in a READ ONLY transaction.
         sqlx::Error::Database(db) if db.code().as_deref() == Some("25006") || db.message().contains("READ ONLY") => {
             SourceError::Rejected(format!("the query tried to write: {}", db.message()))
@@ -112,14 +131,37 @@ fn failed(e: sqlx::Error) -> SourceError {
     }
 }
 
+/// The sql_mode the statement checker assumes: backslash escapes in strings and `"` as a string
+/// quote. `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` from the server's default would make the server
+/// read the text differently from the checker, so every session gets exactly this mode.
+pub const SQL_MODE: &str = "NO_ENGINE_SUBSTITUTION";
+
+/// Sets `SQL_MODE` on a new connection and verifies it took effect.
+async fn pin_sql_mode(c: &mut sqlx::MySqlConnection) -> Result<(), sqlx::Error> {
+    c.execute(sqlx::AssertSqlSafe(format!("SET SESSION sql_mode = '{SQL_MODE}'"))).await?;
+    let (mode,): (String,) = sqlx::query_as("SELECT CAST(@@SESSION.sql_mode AS CHAR)").fetch_one(&mut *c).await?;
+    let mode = mode.to_ascii_uppercase();
+    if mode.contains("ANSI_QUOTES") || mode.contains("NO_BACKSLASH_ESCAPES") || mode.contains("ANSI") {
+        return Err(sqlx::Error::Configuration(format!("the server keeps sql_mode {mode}").into()));
+    }
+    Ok(())
+}
+
 /// Server-side limit for the statements of this session: `max_execution_time` (MySQL, ms) or
-/// `max_statement_time` (MariaDB, seconds). Each server rejects the other's variable, which is
-/// fine; the client-side timeout applies regardless.
-async fn limit_session(c: &mut sqlx::MySqlConnection, timeout: Duration) {
+/// `max_statement_time` (MariaDB, seconds). Each server rejects the other's variable. A server
+/// that takes neither is refused: a query it runs could not be stopped after the client gives up.
+async fn limit_session(c: &mut sqlx::MySqlConnection, timeout: Duration) -> Result<(), SourceError> {
     let ms = timeout.as_millis().max(1);
-    if c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_execution_time = {ms}"))).await.is_err() {
-        let secs = timeout.as_secs_f64().max(0.001);
-        let _ = c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_statement_time = {secs}"))).await;
+    if c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_execution_time = {ms}"))).await.is_ok() {
+        return Ok(());
+    }
+    let secs = timeout.as_secs_f64().max(0.001);
+    match c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_statement_time = {secs}"))).await {
+        Ok(_) => Ok(()),
+        Err(_) => Err(SourceError::Failed(
+            "the server supports neither max_execution_time nor max_statement_time, so query times cannot be limited"
+                .into(),
+        )),
     }
 }
 
@@ -174,7 +216,7 @@ impl DataSourcePlugin for MySql {
         let prepared = sql::prepare_query(self, conn, &req, Engine::MySql).await?;
         let pool = pool(conn).await?;
         let mut c = pool.acquire().await.map_err(failed)?;
-        limit_session(&mut c, req.limits.timeout).await;
+        limit_session(&mut c, req.limits.timeout).await?;
         let mut tx = sqlx::Connection::begin_with(&mut *c, "START TRANSACTION READ ONLY").await.map_err(failed)?;
         let statement =
             (&mut *tx).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(failed)?;
@@ -208,7 +250,7 @@ impl DataSourcePlugin for MySql {
                 Bind::Int(i) => query.bind(i),
                 Bind::Float(f) => query.bind(f),
                 Bind::Text(t) => query.bind(t),
-                Bind::Time(ms) => query.bind(chrono::DateTime::from_timestamp_millis(ms).map(|t| t.naive_utc())),
+                Bind::Time(ms) => query.bind(super::bind_time(ms)?.naive_utc()),
                 Bind::Interval(ms) => query.bind(sql::format_interval(ms)),
             };
         }

@@ -374,6 +374,19 @@ async fn update(
         None => ds.settings.clone(),
     };
     kind.validate_secrets(&body.secrets).map_err(field_error)?;
+    // A new target must not receive the secrets stored for the old one: every stored secret is
+    // sent again (or removed) in the same change.
+    if let Some(target) = kind.changed_targets(&ds.settings, &settings).first() {
+        for stored in secrets::set_fields(&state.db, &ds.id).await? {
+            if !body.secrets.contains_key(&stored) {
+                let field = kind.all_settings().find(|f| f.name == stored).map_or("secrets", |f| f.name);
+                return Err(ApiError::validation(format!(
+                    "{target} changes where the data source connects; send {stored} again or remove it"
+                ))
+                .with_field(field));
+            }
+        }
+    }
     changed.extend(body.secrets.keys().map(|k| format!("secrets.{k}")));
     if changed.is_empty() {
         return Ok(Json(view(&state, ds).await?));
@@ -450,7 +463,7 @@ async fn health(
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<HealthReport>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesQuery, false).await?;
-    Ok(Json(datasources::check_health(&state, &ds).await?))
+    Ok(Json(datasources::check_health(&state, &ctx.user.id, &ds).await?))
 }
 
 async fn schema(
@@ -459,5 +472,5 @@ async fn schema(
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<SourceSchema>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesQuery, false).await?;
-    Ok(Json(datasources::read_schema(&state, &ds).await?))
+    Ok(Json(datasources::read_schema(&state, &ctx.user.id, &ds).await?))
 }

@@ -164,13 +164,23 @@ impl HttpClient {
 }
 
 /// Reads a body up to `max` bytes; a larger body is an error instead of a truncated document.
-pub async fn read_limited(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, HttpError> {
+pub async fn read_limited(response: reqwest::Response, max: usize) -> Result<Vec<u8>, HttpError> {
+    read_counted(response, max, |_| true).await
+}
+
+/// Like `read_limited`, and `admit` is asked before each chunk is kept (to charge a budget as
+/// the data arrives); a refusal ends the read as too large.
+pub async fn read_counted(
+    mut response: reqwest::Response,
+    max: usize,
+    mut admit: impl FnMut(usize) -> bool,
+) -> Result<Vec<u8>, HttpError> {
     if response.content_length().is_some_and(|len| len > max as u64) {
         return Err(HttpError::TooLarge(max));
     }
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > max {
+        if body.len() + chunk.len() > max || !admit(chunk.len()) {
             return Err(HttpError::TooLarge(max));
         }
         body.extend_from_slice(&chunk);

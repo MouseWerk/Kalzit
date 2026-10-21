@@ -25,15 +25,20 @@ use super::{
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
-    SettingField::new("host", "datasources.settings.host", SettingType::String).required(),
-    SettingField::new("port", "datasources.settings.port", SettingType::Number).default(DefaultValue::Number(1433)),
-    SettingField::new("database", "datasources.settings.database", SettingType::String).required(),
-    SettingField::new("user", "datasources.settings.user", SettingType::String).required(),
+    SettingField::new("host", "datasources.settings.host", SettingType::String).target().required(),
+    SettingField::new("port", "datasources.settings.port", SettingType::Number)
+        .target()
+        .default(DefaultValue::Number(1433)),
+    SettingField::new("database", "datasources.settings.database", SettingType::String).target().required(),
+    SettingField::new("user", "datasources.settings.user", SettingType::String).target().required(),
     SettingField::new("password", "datasources.settings.password", SettingType::String).secret(),
-    SettingField::new("encrypt", "datasources.settings.encrypt", SettingType::Bool).default(DefaultValue::Bool(true)),
+    SettingField::new("encrypt", "datasources.settings.encrypt", SettingType::Bool)
+        .target()
+        .default(DefaultValue::Bool(true)),
     SettingField::new("trustServerCertificate", "datasources.settings.trustServerCertificate", SettingType::Bool)
+        .target()
         .default(DefaultValue::Bool(false)),
-    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text),
+    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 const POOL_SIZE: usize = 4;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -215,7 +220,7 @@ impl DataSourcePlugin for MsSql {
                 Bind::Int(i) => q.bind(i),
                 Bind::Float(f) => q.bind(f),
                 Bind::Text(t) => q.bind(t),
-                Bind::Time(ms) => q.bind(chrono::DateTime::from_timestamp_millis(ms).map(|t| t.naive_utc())),
+                Bind::Time(ms) => q.bind(super::bind_time(ms)?.naive_utc()),
                 Bind::Interval(ms) => q.bind(sql::format_interval(ms)),
             }
         }

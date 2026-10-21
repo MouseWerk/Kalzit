@@ -21,15 +21,18 @@ use super::{
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
-    SettingField::new("host", "datasources.settings.host", SettingType::String).required(),
-    SettingField::new("port", "datasources.settings.port", SettingType::Number).default(DefaultValue::Number(5432)),
-    SettingField::new("database", "datasources.settings.database", SettingType::String).required(),
-    SettingField::new("user", "datasources.settings.user", SettingType::String).required(),
+    SettingField::new("host", "datasources.settings.host", SettingType::String).target().required(),
+    SettingField::new("port", "datasources.settings.port", SettingType::Number)
+        .target()
+        .default(DefaultValue::Number(5432)),
+    SettingField::new("database", "datasources.settings.database", SettingType::String).target().required(),
+    SettingField::new("user", "datasources.settings.user", SettingType::String).target().required(),
     SettingField::new("password", "datasources.settings.password", SettingType::String).secret(),
     SettingField::new("sslMode", "datasources.settings.sslMode", SettingType::Select)
+        .target()
         .options(&["disable", "prefer", "require", "verify-ca", "verify-full"])
         .default(DefaultValue::Text("prefer")),
-    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text),
+    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 const POOL_SIZE: u32 = 4;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -86,9 +89,11 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
         let port = s.port.unwrap_or(5432) as u16;
         let mode = ssl_mode(s.ssl_mode.as_deref());
         let addr = conn.policy().pick_address(&s.host, port, CONNECT_TIMEOUT).await?;
-        // The driver connects to the checked address. Only with verify-full it connects by name,
-        // because the certificate must match the name; then a rebound address could only reach
-        // a server holding a valid certificate for that name.
+        // The driver connects to the checked address. With verify-full it must connect by name,
+        // because the driver checks the certificate against the host it connects to and has no
+        // separate TLS name. It then resolves the name itself for every new connection, so
+        // after_connect resolves and checks the name again; a rebound address could only reach a
+        // server holding a valid certificate for that name anyway.
         let host = if matches!(mode, PgSslMode::VerifyFull) { s.host.clone() } else { addr.ip().to_string() };
         let mut options = PgConnectOptions::new_without_pgpass()
             .host(&host)
@@ -104,6 +109,7 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
             options = options.ssl_root_cert_from_pem(pem.into_bytes());
         }
         let own = conn.own_database().postgres_identity().await?;
+        let recheck = matches!(mode, PgSslMode::VerifyFull).then(|| (conn.policy_arc(), s.host.clone(), port));
         PgPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
@@ -111,7 +117,11 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
             .idle_timeout(Duration::from_secs(300))
             .after_connect(move |c, _| {
                 let own = own.clone();
+                let recheck = recheck.clone();
                 Box::pin(async move {
+                    if let Some((policy, host, port)) = recheck {
+                        super::recheck_name(&policy, &host, port).await?;
+                    }
                     // Every new connection is checked, not only the first: the pool reconnects.
                     let Some(own) = own else { return Ok(()) };
                     let identity: (String, String) = sqlx::query_as(IDENTITY_SQL)
@@ -133,7 +143,9 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
 
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
-        sqlx::Error::Configuration(inner) if inner.is::<OwnDatabase>() => SourceError::Blocked(inner.to_string()),
+        sqlx::Error::Configuration(inner) if inner.is::<OwnDatabase>() || inner.is::<super::targets::Blocked>() => {
+            SourceError::Blocked(inner.to_string())
+        }
         sqlx::Error::Database(db) => {
             if db.code().as_deref() == Some("57014") {
                 SourceError::Failed("the query was cancelled by the statement timeout".into())
@@ -221,6 +233,8 @@ impl DataSourcePlugin for Postgres {
             .map_err(failed)?;
         // Timestamps without a zone are read as UTC, like the macros' values.
         (&mut *tx).execute("SET LOCAL TimeZone = 'UTC'").await.map_err(failed)?;
+        // The statement checker reads backslashes in '...' literally, as the SQL standard does.
+        (&mut *tx).execute("SET LOCAL standard_conforming_strings = on").await.map_err(failed)?;
         let statement =
             (&mut *tx).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(failed)?;
         let decoders: Vec<Decoder> =
@@ -253,7 +267,7 @@ impl DataSourcePlugin for Postgres {
                 Bind::Int(i) => query.bind(i),
                 Bind::Float(f) => query.bind(f),
                 Bind::Text(t) => query.bind(t),
-                Bind::Time(ms) => query.bind(chrono::DateTime::from_timestamp_millis(ms)),
+                Bind::Time(ms) => query.bind(super::bind_time(ms)?),
                 Bind::Interval(ms) => {
                     query.bind(PgInterval { months: 0, days: 0, microseconds: ms.saturating_mul(1000) })
                 }

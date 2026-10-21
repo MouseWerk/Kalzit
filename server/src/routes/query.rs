@@ -9,8 +9,8 @@ use axum::{Extension, Json};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
-use crate::datasources::{check_items, run_queries};
-use crate::error::{ApiError, ApiResult};
+use crate::datasources::{check_items, check_range, run_queries};
+use crate::error::ApiResult;
 use crate::extract::JsonBody;
 use crate::shapes::{ErrorBody, QueryOutcome, QueryRequest, QueryResponse};
 
@@ -24,9 +24,7 @@ async fn query(
     JsonBody(req): JsonBody<QueryRequest>,
 ) -> ApiResult<Json<QueryResponse>> {
     check_items(&req.queries)?;
-    if req.time_range.from > req.time_range.to {
-        return Err(ApiError::validation("timeRange.from must not be after timeRange.to").with_field("timeRange"));
-    }
+    check_range(req.time_range)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
     // its refId only. Ids of other organizations are not found when they are run.
     let mut refused = Vec::new();

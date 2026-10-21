@@ -15,7 +15,7 @@ use reqwest::{Method, Url};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::frame::{Column, FrameBuilder};
+use super::frame::{Charge, Column, FrameBuilder};
 use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
     SourceSchema,
@@ -24,11 +24,11 @@ use crate::http::{HttpClient, HttpError, HttpOptions};
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] = &[
-    SettingField::new("url", "datasources.settings.url", SettingType::String).required(),
-    SettingField::new("basicAuthUser", "datasources.settings.basicAuthUser", SettingType::String),
+    SettingField::new("url", "datasources.settings.url", SettingType::String).target().required(),
+    SettingField::new("basicAuthUser", "datasources.settings.basicAuthUser", SettingType::String).target(),
     SettingField::new("basicAuthPassword", "datasources.settings.basicAuthPassword", SettingType::String).secret(),
     SettingField::new("bearerToken", "datasources.settings.bearerToken", SettingType::String).secret(),
-    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text),
+    SettingField::new("caCert", "datasources.settings.caCert", SettingType::Text).target(),
 ];
 /// The client's own limit; the query timeout around each call is usually shorter.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -144,12 +144,15 @@ impl Client {
         }
     }
 
-    /// GETs an API path and answers its `data`, or the server's error message.
+    /// GETs an API path and answers its `data`, or the server's error message. With a charge,
+    /// the body is charged to the request's budget as it arrives (and stays charged while the
+    /// charge lives), so concurrent queries cannot each hold a whole budget's worth unaccounted.
     async fn api(
         &self,
         path: &str,
         params: &[(&str, String)],
         max_bytes: usize,
+        charge: Option<&mut Charge>,
     ) -> Result<(Value, Vec<String>), SourceError> {
         let mut url = self.base.join(path).map_err(|e| SourceError::Failed(e.to_string()))?;
         url.query_pairs_mut().extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())));
@@ -159,7 +162,11 @@ impl Client {
         }
         let response = self.http.send(Method::GET, url, headers).await.map_err(|e| self.failed(e))?;
         let status = response.status();
-        let body = crate::http::read_limited(response, max_bytes).await.map_err(|e| self.failed(e))?;
+        let body = match charge {
+            Some(charge) => crate::http::read_counted(response, max_bytes, |n| charge.add(n)).await,
+            None => crate::http::read_limited(response, max_bytes).await,
+        }
+        .map_err(|e| self.failed(e))?;
         let parsed: Value = serde_json::from_slice(&body).map_err(|_| {
             SourceError::Failed(format!("the server answered {status} without a Prometheus API response"))
         })?;
@@ -195,7 +202,7 @@ impl DataSourcePlugin for Prometheus {
     async fn health(&self, conn: &Connection) -> Health {
         let check = async {
             let c = client(conn).await?;
-            c.api("api/v1/query", &[("query", "1+1".into())], MAX_SMALL_RESPONSE).await?;
+            c.api("api/v1/query", &[("query", "1+1".into())], MAX_SMALL_RESPONSE, None).await?;
             Ok::<_, SourceError>(())
         };
         match check.await {
@@ -211,8 +218,8 @@ impl DataSourcePlugin for Prometheus {
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).take(MAX_SCHEMA_NAMES).collect())
                 .unwrap_or_default()
         };
-        let (metrics, _) = c.api("api/v1/label/__name__/values", &[], MAX_SMALL_RESPONSE).await?;
-        let (labels, _) = c.api("api/v1/labels", &[], MAX_SMALL_RESPONSE).await?;
+        let (metrics, _) = c.api("api/v1/label/__name__/values", &[], MAX_SMALL_RESPONSE, None).await?;
+        let (labels, _) = c.api("api/v1/labels", &[], MAX_SMALL_RESPONSE, None).await?;
         Ok(SourceSchema::Metrics { metrics: names(metrics), labels: names(labels) })
     }
 
@@ -221,11 +228,12 @@ impl DataSourcePlugin for Prometheus {
         let expr = expand(&q.expr, &req)?;
         let c = client(conn).await?;
         let max_bytes = req.limits.budget.remaining();
+        let mut charge = req.limits.budget.charge();
         let (data, warnings) = if q.instant {
             let time = seconds(req.range.to);
-            c.api("api/v1/query", &[("query", expr.clone()), ("time", time)], max_bytes).await?
+            c.api("api/v1/query", &[("query", expr.clone()), ("time", time)], max_bytes, Some(&mut charge)).await?
         } else {
-            let span = (req.range.to - req.range.from).max(0);
+            let span = req.range.to.saturating_sub(req.range.from).max(0);
             let step_ms = (req.interval_ms as i64)
                 .max(q.min_step_ms.unwrap_or(0) as i64)
                 .max(span / MAX_POINTS_PER_SERIES + 1)
@@ -236,14 +244,18 @@ impl DataSourcePlugin for Prometheus {
                 ("end", seconds(req.range.to)),
                 ("step", seconds(step_ms)),
             ];
-            c.api("api/v1/query_range", &params, max_bytes).await?
+            c.api("api/v1/query_range", &params, max_bytes, Some(&mut charge)).await?
         };
         let mut frame = to_frame(&data, &req)?;
         frame.executed_query(expr);
         for w in warnings {
             frame.notice(NoticeSeverity::Info, c.scrub(&w));
         }
-        Ok(QueryResult::Frame { frame: frame.finish() })
+        let frame = frame.finish();
+        // The raw answer is gone now; only the frame's own charge remains.
+        drop(data);
+        drop(charge);
+        Ok(QueryResult::Frame { frame })
     }
 }
 
@@ -362,8 +374,8 @@ fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceError> {
             "__interval" => duration(interval),
             "__interval_ms" => interval.to_string(),
             // Four intervals and at least a minute, so rate() always sees two scrapes.
-            "__rate_interval" => duration((interval * 4).max(60_000)),
-            "__range" => duration((req.range.to - req.range.from).max(1)),
+            "__rate_interval" => duration(interval.saturating_mul(4).max(60_000)),
+            "__range" => duration(req.range.to.saturating_sub(req.range.from).max(1)),
             "__timeFrom" => seconds(req.range.from),
             "__timeTo" => seconds(req.range.to),
             m if m.starts_with("__") => return Err(SourceError::Rejected(format!("unknown macro ${m}"))),

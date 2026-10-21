@@ -21,7 +21,7 @@ use super::{
 use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const SETTINGS: &[SettingField] =
-    &[SettingField::new("path", "datasources.settings.path", SettingType::String).required()];
+    &[SettingField::new("path", "datasources.settings.path", SettingType::String).target().required()];
 /// Connections per SQLite source; reads in parallel, the file is never written.
 const POOL_SIZE: u32 = 4;
 /// Tables listed in the schema.
@@ -187,7 +187,7 @@ impl DataSourcePlugin for Sqlite {
                 Bind::Int(i) => query.bind(i),
                 Bind::Float(f) => query.bind(f),
                 Bind::Text(t) => query.bind(t),
-                Bind::Time(ms) => query.bind(sqlite_time_text(ms)),
+                Bind::Time(ms) => query.bind(sqlite_time_text(ms)?),
                 Bind::Interval(ms) => query.bind(sql::format_interval(ms)),
             };
         }
@@ -214,10 +214,8 @@ fn declared_type(decl: &str) -> Option<FieldType> {
 }
 
 /// `YYYY-MM-DD HH:MM:SS.SSS` in UTC, the text form SQLite's date functions use.
-fn sqlite_time_text(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
-        .unwrap_or_default()
+fn sqlite_time_text(ms: i64) -> Result<String, SourceError> {
+    Ok(super::bind_time(ms)?.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
 }
 
 /// Unix milliseconds from the text forms SQLite stores dates in.
@@ -312,6 +310,7 @@ mod tests {
         assert_eq!(parse_time_text("2026-10-20T14:30:00+02:00"), Some(1_792_499_400_000));
         assert_eq!(parse_time_text("2026-10-20"), Some(1_792_454_400_000));
         assert_eq!(parse_time_text("gestern"), None);
-        assert_eq!(sqlite_time_text(1_792_499_400_250), "2026-10-20 12:30:00.250");
+        assert_eq!(sqlite_time_text(1_792_499_400_250).unwrap(), "2026-10-20 12:30:00.250");
+        assert!(sqlite_time_text(i64::MAX).is_err(), "never an empty or NULL time");
     }
 }

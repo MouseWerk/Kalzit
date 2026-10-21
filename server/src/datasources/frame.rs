@@ -10,22 +10,96 @@ use serde_json::Value;
 
 use crate::shapes::{Field, FieldType, Frame, FrameMeta, Notice, NoticeSeverity};
 
-/// Bytes left for the results of one request; queries running in parallel draw from it.
+/// Bytes left for the results of one request; queries running in parallel draw from it. When
+/// created `within` a server-wide pool, every byte is also drawn from that pool, and what the
+/// request drew goes back to it when the request's last budget handle is dropped.
 #[derive(Clone, Debug)]
-pub struct ResponseBudget(Arc<AtomicUsize>);
+pub struct ResponseBudget(Arc<Budget>);
+
+#[derive(Debug)]
+struct Budget {
+    left: AtomicUsize,
+    server: Option<Arc<AtomicUsize>>,
+    drawn: AtomicUsize,
+}
+
+impl Drop for Budget {
+    fn drop(&mut self) {
+        if let Some(server) = &self.server {
+            server.fetch_add(*self.drawn.get_mut(), Ordering::SeqCst);
+        }
+    }
+}
+
+fn reserve(counter: &AtomicUsize, bytes: usize) -> bool {
+    counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(bytes)).is_ok()
+}
 
 impl ResponseBudget {
     pub fn new(max_bytes: usize) -> Self {
-        Self(Arc::new(AtomicUsize::new(max_bytes)))
+        Self(Arc::new(Budget { left: AtomicUsize::new(max_bytes), server: None, drawn: AtomicUsize::new(0) }))
+    }
+
+    /// A request budget that also draws from the server-wide pool of in-flight result bytes.
+    pub fn within(max_bytes: usize, server: Arc<AtomicUsize>) -> Self {
+        Self(Arc::new(Budget { left: AtomicUsize::new(max_bytes), server: Some(server), drawn: AtomicUsize::new(0) }))
     }
 
     /// Reserves `bytes`; false (and nothing reserved) when not enough is left.
     pub fn take(&self, bytes: usize) -> bool {
-        self.0.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(bytes)).is_ok()
+        if !reserve(&self.0.left, bytes) {
+            return false;
+        }
+        if let Some(server) = &self.0.server
+            && !reserve(server, bytes)
+        {
+            self.0.left.fetch_add(bytes, Ordering::SeqCst);
+            return false;
+        }
+        self.0.drawn.fetch_add(bytes, Ordering::SeqCst);
+        true
+    }
+
+    /// Returns bytes taken earlier, once they are no longer held.
+    pub fn give_back(&self, bytes: usize) {
+        self.0.left.fetch_add(bytes, Ordering::SeqCst);
+        if let Some(server) = &self.0.server {
+            server.fetch_add(bytes, Ordering::SeqCst);
+        }
+        self.0.drawn.fetch_sub(bytes, Ordering::SeqCst);
     }
 
     pub fn remaining(&self) -> usize {
-        self.0.load(Ordering::SeqCst)
+        self.0.left.load(Ordering::SeqCst)
+    }
+
+    /// A reservation that grows as data arrives and is given back when dropped.
+    pub fn charge(&self) -> Charge {
+        Charge { budget: self.clone(), bytes: 0 }
+    }
+}
+
+/// Bytes held while a response is read and parsed; given back on drop, also on failure.
+#[derive(Debug)]
+pub struct Charge {
+    budget: ResponseBudget,
+    bytes: usize,
+}
+
+impl Charge {
+    /// Adds `bytes`; false when the budget has no room for them.
+    pub fn add(&mut self, bytes: usize) -> bool {
+        let ok = self.budget.take(bytes);
+        if ok {
+            self.bytes += bytes;
+        }
+        ok
+    }
+}
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        self.budget.give_back(self.bytes);
     }
 }
 
@@ -143,6 +217,31 @@ impl FrameBuilder {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn charges_are_given_back_and_requests_return_their_bytes_to_the_server() {
+        let server = Arc::new(AtomicUsize::new(150));
+        let a = ResponseBudget::within(100, server.clone());
+        let b = ResponseBudget::within(100, server.clone());
+        {
+            let mut charge = a.charge();
+            assert!(charge.add(80));
+            assert!(!charge.add(30), "over the request's budget");
+            // The server pool limits requests together.
+            assert!(!b.take(80));
+            assert!(b.take(70));
+        }
+        assert_eq!(a.remaining(), 100, "the charge was given back");
+        assert_eq!(server.load(Ordering::SeqCst), 80);
+        drop(b);
+        assert_eq!(server.load(Ordering::SeqCst), 150, "a finished request returns what it drew");
+        let held = a.clone();
+        assert!(held.take(10));
+        drop(a);
+        assert_eq!(server.load(Ordering::SeqCst), 140, "only the last handle returns the bytes");
+        drop(held);
+        assert_eq!(server.load(Ordering::SeqCst), 150);
+    }
 
     #[test]
     fn row_limit_truncates_with_a_notice() {

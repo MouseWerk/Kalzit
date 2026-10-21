@@ -11,7 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 
 use serde_json::Value;
-use sqlparser::ast::{Expr, ObjectName, ObjectNamePart, Query, Select, SetExpr, Statement, Visit, Visitor};
+use sqlparser::ast::{
+    Expr, ObjectName, ObjectNamePart, Query, Select, SetExpr, Statement, TableFactor, Visit, Visitor,
+};
 use sqlparser::dialect::{Dialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 
@@ -74,6 +76,10 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "load_file",
     "sys_exec",
     "sys_eval",
+    // MySQL/MariaDB named locks outlive the query on a pooled session.
+    "get_lock",
+    "release_lock",
+    "release_all_locks",
     // PostgreSQL: files and directories
     "pg_read_file",
     "pg_read_binary_file",
@@ -286,6 +292,12 @@ fn is_ident_char(c: char) -> bool {
 
 /// Splits the query into pass-through text and substitutions.
 fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
+    // MySQL and MariaDB run the content of these comments as SQL. They are refused anywhere in
+    // the text, even inside strings, rather than trusting two parsers to agree on where a
+    // comment starts.
+    if engine == Engine::MySql && (sql.contains("/*!") || sql.contains("/*M!") || sql.contains("/*m!")) {
+        return reject("MySQL executable comments (/*! ... */) are not allowed");
+    }
     let bytes = sql.as_bytes();
     let mut pieces = Vec::new();
     let mut text_start = 0;
@@ -298,12 +310,12 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             b'"' => Some(skip_string(bytes, i, b'"', engine == Engine::MySql)?),
             b'`' if matches!(engine, Engine::MySql | Engine::Sqlite) => Some(skip_string(bytes, i, b'`', false)?),
             b'[' if matches!(engine, Engine::MsSql | Engine::Sqlite) => Some(skip_bracket(bytes, i)?),
-            b'-' if bytes.get(i + 1) == Some(&b'-') => Some(skip_line(bytes, i)),
+            b'-' if bytes.get(i + 1) == Some(&b'-') => match line_comment_after_dashes(sql, i + 2, engine)? {
+                true => Some(skip_line(bytes, i)),
+                false => None,
+            },
             b'#' if engine == Engine::MySql => Some(skip_line(bytes, i)),
             b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                if engine == Engine::MySql && (sql[i..].starts_with("/*!") || sql[i..].starts_with("/*M!")) {
-                    return reject("MySQL executable comments (/*! ... */) are not allowed");
-                }
                 Some(skip_block_comment(bytes, i, matches!(engine, Engine::Postgres | Engine::MsSql))?)
             }
             b'$' if engine == Engine::Postgres => dollar_quote_end(sql, i)?,
@@ -373,6 +385,21 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
     pieces.push(Piece::Text(&sql[text_start..]));
     pieces.retain(|p| !matches!(p, Piece::Text("")));
     Ok(pieces)
+}
+
+/// Whether `--` (ending before `next`) starts a comment. MySQL and MariaDB need a space or a
+/// control character after it; the checker's parser accepts any Unicode whitespace there. Where
+/// the two would disagree (a non-ASCII space) the query is refused, so the checked text is the
+/// executed text.
+fn line_comment_after_dashes(sql: &str, next: usize, engine: Engine) -> Result<bool, Rejected> {
+    if engine != Engine::MySql {
+        return Ok(true);
+    }
+    match sql[next..].chars().next() {
+        Some(c) if c.is_ascii() => Ok(c.is_ascii_whitespace() || c.is_ascii_control()),
+        Some(c) if c.is_whitespace() => reject("write -- comments with an ordinary space after the dashes"),
+        _ => Ok(false),
+    }
 }
 
 fn valid_variable_name(name: &str) -> bool {
@@ -530,6 +557,12 @@ fn dialect(engine: Engine) -> Box<dyn Dialect> {
 /// Exactly one `SELECT`/`WITH` without `INTO`, locking clauses, data-modifying parts or forbidden
 /// functions.
 pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
+    // Reading a sequence advances it. Refused by its words, before parsing, so it does not
+    // depend on whether the parser knows the T-SQL form.
+    let words = sql.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    if engine == Engine::MsSql && words.contains("next value for") {
+        return reject("NEXT VALUE FOR changes a sequence and is not allowed");
+    }
     let statements = Parser::parse_sql(dialect(engine).as_ref(), sql)
         .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
     let [statement] = statements.as_slice() else {
@@ -589,6 +622,15 @@ impl Visitor for ReadOnlyCheck {
             return ControlFlow::Break("SELECT ... INTO is not allowed".into());
         }
         ControlFlow::Continue(())
+    }
+
+    fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<String> {
+        // `FROM LATERAL f(...)` and `FROM f(...)` are table factors, not expressions.
+        match factor {
+            TableFactor::Function { name, .. } => forbidden(name),
+            TableFactor::Table { name, args: Some(_), .. } => forbidden(name),
+            _ => ControlFlow::Continue(()),
+        }
     }
 
     fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<String> {
@@ -888,6 +930,43 @@ mod tests {
         assert!(rejected("SELECT * FROM t FOR UPDATE", Engine::Postgres).contains("locking"));
         assert!(rejected("SELECT * INTO neu FROM t", Engine::MsSql).contains("INTO"));
         assert!(rejected("SELECT 1 /*!50000 INTO OUTFILE '/x' */", Engine::MySql).contains("executable comments"));
+    }
+
+    /// MySQL reads `--` as a comment only before a space or control character; otherwise the
+    /// text after it is SQL, and the checker must see it as SQL too.
+    #[test]
+    fn mysql_dash_comments_follow_the_server() {
+        // Not a comment for MySQL: the rest is checked (and here refused).
+        rejected("SELECT 1 --x\nUNION SELECT LOAD_FILE('/etc/passwd')", Engine::MySql);
+        let p = accepted("SELECT 2 --1", Engine::MySql);
+        assert_eq!(p.sql, "SELECT 2 --1");
+        let p = accepted("SELECT 2 --$land", Engine::MySql);
+        assert_eq!((p.sql.as_str(), p.binds.len()), ("SELECT 2 --?", 1));
+        // A comment for MySQL: nothing in it is substituted.
+        accepted("SELECT 1 -- $land\n", Engine::MySql);
+        accepted("SELECT 1 --\t$land\n", Engine::MySql);
+        // Where the parsers would disagree, the query is refused.
+        assert!(rejected("SELECT 1 --\u{a0}x\n", Engine::MySql).contains("ordinary space"));
+        // Executable comments are refused anywhere, also where a string or comment hides them.
+        for sql in ["SELECT '/*!50000'", "SELECT 1 -- /*M! x */\n", "SELECT 1 /* /*m! */"] {
+            assert!(rejected(sql, Engine::MySql).contains("executable"), "{sql}");
+        }
+        // Other engines read every `--` as a comment.
+        accepted("SELECT 1 --$land", Engine::Postgres);
+    }
+
+    #[test]
+    fn functions_in_from_are_checked_too() {
+        for sql in [
+            "SELECT * FROM LATERAL pg_read_file('/etc/passwd') AS f",
+            "SELECT * FROM t, LATERAL pg_ls_dir('.') AS d",
+            "SELECT * FROM pg_ls_dir('.') AS d",
+        ] {
+            assert!(rejected(sql, Engine::Postgres).contains("not allowed"), "{sql}");
+        }
+        assert!(rejected("SELECT GET_LOCK('x', 1)", Engine::MySql).contains("get_lock"));
+        assert!(rejected("SELECT NEXT VALUE FOR dbo.s", Engine::MsSql).contains("sequence"));
+        assert!(rejected("SELECT 1 WHERE 2 = (SELECT next  VALUE\n FOR s)", Engine::MsSql).contains("sequence"));
     }
 
     #[test]

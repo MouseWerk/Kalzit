@@ -319,11 +319,30 @@ async fn secrets_are_never_returned_and_follow_patch_semantics() {
         .send(
             Method::PATCH,
             &path,
-            Some(json!({ "settings": { "host": "db2.intern", "database": "lager", "user": "leser" } })),
+            Some(json!({ "name": "Lager 2", "settings": { "host": "db.intern", "database": "lager", "user": "leser", "maxRows": 10 } })),
             Some(&t.owner),
         )
         .await;
     assert_eq!(r.body["secrets"], json!({ "password": { "set": true } }), "{}", r.text);
+    // Changing where the source connects needs the stored secrets again.
+    for settings in [
+        json!({ "host": "anderswo.example", "database": "lager", "user": "leser" }),
+        json!({ "host": "db2.intern", "database": "lager", "user": "leser", "port": 6543 }),
+        json!({ "host": "db2.intern", "database": "lager", "user": "leser", "sslMode": "disable" }),
+    ] {
+        let r = t.send(Method::PATCH, &path, Some(json!({ "settings": settings })), Some(&t.owner)).await;
+        assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", r.text);
+        assert_eq!(r.body["error"]["field"], "password");
+    }
+    let moved = json!({ "settings": { "host": "anderswo.example", "database": "lager", "user": "leser" },
+                        "secrets": { "password": "Sehr-Geheim-42" } });
+    let r = t.send(Method::PATCH, &path, Some(moved), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let back = json!({ "settings": { "host": "db2.intern", "database": "lager", "user": "leser" }, "secrets": { "password": null } });
+    let r = t.send(Method::PATCH, &path, Some(back), Some(&t.owner)).await;
+    assert_eq!(r.body["secrets"], json!({}), "{}", r.text);
+    let again = json!({ "secrets": { "password": "Sehr-Geheim-42" } });
+    t.send(Method::PATCH, &path, Some(again), Some(&t.owner)).await;
     // A string sets it.
     let r =
         t.send(Method::PATCH, &path, Some(json!({ "secrets": { "password": "Neu-Geheim-43" } })), Some(&t.owner)).await;
@@ -700,6 +719,13 @@ async fn fake_prometheus() -> SocketAddr {
             "/api/v1/query_range",
             axum::routing::get(|RawQuery(q): RawQuery| async move {
                 let q = q.unwrap_or_default();
+                if q.contains("gross") {
+                    let values: Vec<Value> = (0..5_000).map(|i| json!([1_700_000_000 + i, "1.5"])).collect();
+                    let body = json!({ "status": "success", "data": { "resultType": "matrix", "result": [
+                        { "metric": { "__name__": "gross" }, "values": values }
+                    ] } });
+                    return (StatusCode::OK, axum::Json(body));
+                }
                 if q.contains("kaputt") {
                     return (
                         StatusCode::BAD_REQUEST,
@@ -791,6 +817,18 @@ async fn prometheus_through_the_client_factory() {
         s.body,
         json!({ "kind": "metrics", "metrics": ["up", "http_requests_total"], "labels": ["job", "instance"] })
     );
+
+    // A large answer is charged to the request's budget while it is read, and everything is
+    // given back afterwards.
+    t.set("datasources.max_response_bytes", json!(10_000));
+    let big = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "gross" } }])).await;
+    assert_eq!(big.body["results"]["A"]["error"]["code"], "datasource_error", "{}", big.text);
+    assert!(big.text.contains("larger than"), "{}", big.text);
+    assert_eq!(t.state.datasources.inflight_available(), super::MAX_INFLIGHT_RESULT_BYTES);
+    t.set("datasources.max_response_bytes", json!(1_000_000));
+    let ok = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "gross" } }])).await;
+    assert_eq!(ok.body["results"]["A"]["result"]["frame"]["fields"][1]["values"].as_array().unwrap().len(), 5_000);
+    assert_eq!(t.state.datasources.inflight_available(), super::MAX_INFLIGHT_RESULT_BYTES);
 
     // The allow-list applies to HTTP sources too.
     t.set("datasources.allowed_targets", json!(["10.0.0.0/8"]));

@@ -279,6 +279,10 @@ impl Connection {
         &self.policy
     }
 
+    pub fn policy_arc(&self) -> Arc<TargetPolicy> {
+        self.policy.clone()
+    }
+
     pub fn own_database(&self) -> &OwnDatabase {
         &self.own
     }
@@ -401,6 +405,9 @@ pub struct SettingField {
     pub field_type: SettingType,
     pub required: bool,
     pub secret: bool,
+    /// Decides where the stored secrets are sent (host, port, URL, user, TLS checks). Changing it
+    /// requires sending every stored secret again, so a secret cannot be redirected.
+    pub target: bool,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     pub options: &'static [&'static str],
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -409,11 +416,16 @@ pub struct SettingField {
 
 impl SettingField {
     pub const fn new(name: &'static str, label_key: &'static str, field_type: SettingType) -> Self {
-        Self { name, label_key, field_type, required: false, secret: false, options: &[], default: None }
+        Self { name, label_key, field_type, required: false, secret: false, target: false, options: &[], default: None }
     }
 
     pub const fn required(mut self) -> Self {
         self.required = true;
+        self
+    }
+
+    pub const fn target(mut self) -> Self {
+        self.target = true;
         self
     }
 
@@ -464,6 +476,11 @@ impl Kind {
 
     fn field(&self, name: &str) -> Option<&SettingField> {
         self.all_settings().find(|f| f.name == name)
+    }
+
+    /// The target fields whose value differs between two settings objects.
+    pub fn changed_targets(&self, old: &Value, new: &Value) -> Vec<&'static str> {
+        self.all_settings().filter(|f| f.target && old.get(f.name) != new.get(f.name)).map(|f| f.name).collect()
     }
 
     /// Checks `settings` against the form and the plugin and returns it without `null`
@@ -641,6 +658,31 @@ pub const MAX_QUERIES_PER_REQUEST: usize = 50;
 const CONNECTION_REFRESH: Duration = Duration::from_secs(10 * 60);
 /// Health checks and schema reads get the query timeout, but never longer than this.
 const MAX_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+/// Queries running at once on the whole server, whoever runs them; further ones wait. A fixed
+/// value until the settings registry has `datasources.max_parallel_queries`.
+const MAX_RUNNING_QUERIES: usize = 64;
+/// Result bytes all requests together may hold at once (each request is also bounded by
+/// `datasources.max_response_bytes`). A fixed value until the settings registry has
+/// `datasources.max_inflight_bytes`.
+const MAX_INFLIGHT_RESULT_BYTES: usize = 1 << 30;
+/// How long the target rules built from the settings are reused (canonicalized directories).
+const POLICY_REFRESH: Duration = Duration::from_secs(60);
+/// The range a query may ask for: the years 1 to 9999, as Unix milliseconds.
+pub const MIN_TIME_MS: i64 = -62_135_596_800_000;
+pub const MAX_TIME_MS: i64 = 253_402_300_799_999;
+
+struct CachedPolicy {
+    dirs: Vec<String>,
+    allowed: Vec<String>,
+    built: Instant,
+    policy: Arc<TargetPolicy>,
+}
+
+/// The slots a running query holds: one of its user's and one of the server's.
+pub struct QuerySlots {
+    _user: tokio::sync::OwnedSemaphorePermit,
+    _server: tokio::sync::OwnedSemaphorePermit,
+}
 
 struct Cached {
     updated_at: i64,
@@ -658,6 +700,9 @@ pub struct DataSources {
     database_url: String,
     connections: Mutex<HashMap<String, Cached>>,
     user_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
+    running: Arc<Semaphore>,
+    inflight_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    policy_cache: Mutex<Option<CachedPolicy>>,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
@@ -674,6 +719,9 @@ impl DataSources {
             database_url,
             connections: Mutex::new(HashMap::new()),
             user_slots: Mutex::new(HashMap::new()),
+            running: Arc::new(Semaphore::new(MAX_RUNNING_QUERIES)),
+            inflight_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(MAX_INFLIGHT_RESULT_BYTES)),
+            policy_cache: Mutex::new(None),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
         }
@@ -717,11 +765,35 @@ impl DataSources {
         value.as_u64().ok_or_else(|| ApiError::internal("settings", format!("{key} is not a whole number")))
     }
 
-    /// The target rules from the current server settings.
-    pub async fn policy(&self, state: &AppState) -> ApiResult<TargetPolicy> {
+    /// The target rules from the current server settings. Reused while the settings are the
+    /// same, so the directories are not canonicalized for every query.
+    pub async fn policy(&self, state: &AppState) -> ApiResult<Arc<TargetPolicy>> {
         let dirs = self.setting_strings(state, "datasources.sqlite_dirs").await?;
         let allowed = self.setting_strings(state, "datasources.allowed_targets").await?;
-        Ok(TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed))
+        let mut cache = self.policy_cache.lock().expect("policy cache lock");
+        if let Some(c) = cache.as_ref()
+            && c.dirs == dirs
+            && c.allowed == allowed
+            && c.built.elapsed() < POLICY_REFRESH
+        {
+            return Ok(c.policy.clone());
+        }
+        let policy = Arc::new(TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed));
+        *cache = Some(CachedPolicy { dirs, allowed, built: Instant::now(), policy: policy.clone() });
+        Ok(policy)
+    }
+
+    /// Waits for a slot of the user and one of the server. The caller's timeout covers the wait.
+    pub async fn slots(&self, user_id: &str) -> Result<QuerySlots, SourceError> {
+        let closed = |_| SourceError::Failed("the server is shutting down".into());
+        let user = self.user_slots(user_id).acquire_owned().await.map_err(closed)?;
+        let server = self.running.clone().acquire_owned().await.map_err(closed)?;
+        Ok(QuerySlots { _user: user, _server: server })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inflight_available(&self) -> usize {
+        self.inflight_bytes.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The limits for one source: its own settings within the server-wide maxima.
@@ -735,12 +807,13 @@ impl DataSources {
     }
 
     async fn response_budget(&self, state: &AppState) -> ApiResult<ResponseBudget> {
-        Ok(ResponseBudget::new(self.setting_u64(state, "datasources.max_response_bytes").await? as usize))
+        let max = self.setting_u64(state, "datasources.max_response_bytes").await? as usize;
+        Ok(ResponseBudget::within(max, self.inflight_bytes.clone()))
     }
 
     /// The cached connection of a data source, or a new one.
     pub async fn connection(&self, state: &AppState, ds: &Datasource) -> Result<Arc<Connection>, SourceError> {
-        let policy = Arc::new(self.policy(state).await.map_err(|e| SourceError::Failed(e.message))?);
+        let policy = self.policy(state).await.map_err(|e| SourceError::Failed(e.message))?;
         {
             let cache = self.connections.lock().expect("connection cache lock");
             if let Some(c) = cache.get(&ds.id)
@@ -787,6 +860,25 @@ impl DataSources {
 
 fn outcome_error(code: &str, message: impl Into<String>) -> QueryOutcome {
     QueryOutcome::Err { error: ErrorBody { code: code.to_string(), message: message.into(), field: None } }
+}
+
+/// A time range within the years 1 to 9999, `from` not after `to`.
+pub fn check_range(range: TimeRange) -> ApiResult<()> {
+    let inside = |t: i64| (MIN_TIME_MS..=MAX_TIME_MS).contains(&t);
+    if !inside(range.from) || !inside(range.to) {
+        return Err(ApiError::validation("timeRange must lie within the years 1 to 9999").with_field("timeRange"));
+    }
+    if range.from > range.to {
+        return Err(ApiError::validation("timeRange.from must not be after timeRange.to").with_field("timeRange"));
+    }
+    Ok(())
+}
+
+/// A bound time as a UTC timestamp; a time outside chrono's range is refused, never bound as
+/// NULL.
+pub fn bind_time(ms: i64) -> Result<chrono::DateTime<chrono::Utc>, SourceError> {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .ok_or_else(|| SourceError::Rejected(format!("the time {ms} is out of range")))
 }
 
 /// Checks the shape of a request's queries: 1 to `MAX_QUERIES_PER_REQUEST`, each with a
@@ -869,11 +961,10 @@ async fn run_one(
         limits.max_rows = limits.max_rows.min(limit.max(1) as usize);
     }
     let timeout = limits.timeout;
-    let slots = registry.user_slots(&ctx.user.id);
     let started = Instant::now();
     let run = async {
         // Waiting for a free slot counts against the query's own timeout.
-        let _permit = slots.acquire().await.map_err(|_| SourceError::Failed("the server is shutting down".into()))?;
+        let _slots = registry.slots(&ctx.user.id).await?;
         let conn = registry.connection(state, &ds).await?;
         let req = SourceQuery {
             ref_id: item.ref_id.clone(),
@@ -948,7 +1039,8 @@ pub fn precheck_targets(
     Ok(())
 }
 
-pub async fn check_health(state: &AppState, ds: &Datasource) -> ApiResult<HealthReport> {
+/// "Test connection" with the cached connection, counted against the caller's query slots.
+pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let registry = &state.datasources;
     let kind =
         registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("health", format!("unknown kind {}", ds.kind)))?;
@@ -959,20 +1051,27 @@ pub async fn check_health(state: &AppState, ds: &Datasource) -> ApiResult<Health
         let message = conn.map_or_else(|| e.to_string(), |c| c.scrub(&e.to_string()));
         HealthReport { ok: false, message, latency_ms: started.elapsed().as_millis() as u64, code: Some(e.code()) }
     };
-    let policy = Arc::new(registry.policy(state).await?);
+    let policy = registry.policy(state).await?;
     // The plugin's health answer has no error code, so a target refused by the rules is
     // reported as such before the plugin runs.
     if let Err((blocked, _)) = precheck_targets(&policy, kind, &ds.settings) {
         return Ok(failed(blocked.into(), None));
     }
-    let conn = match registry.fresh_connection(state, ds, policy).await {
-        Ok(c) => c,
-        Err(e) => return Ok(failed(e, None)),
+    let run = async {
+        let _slots = registry.slots(user_id).await?;
+        let conn = registry.connection(state, ds).await?;
+        let health = kind.plugin.health(&conn).await;
+        Ok::<_, SourceError>((conn, health))
     };
-    let health = match tokio::time::timeout(timeout, kind.plugin.health(&conn)).await {
-        Ok(h) => h,
-        Err(_) => return Ok(failed(SourceError::Timeout(timeout.as_secs()), Some(&conn))),
+    let (conn, health) = match tokio::time::timeout(timeout, run).await {
+        Ok(Ok(done)) => done,
+        Ok(Err(e)) => return Ok(failed(e, None)),
+        Err(_) => return Ok(failed(SourceError::Timeout(timeout.as_secs()), None)),
     };
+    if !health.ok {
+        // The next query should not reuse a pool that just failed.
+        registry.forget(&ds.id);
+    }
     Ok(HealthReport {
         ok: health.ok,
         message: conn.scrub(&health.message),
@@ -981,17 +1080,24 @@ pub async fn check_health(state: &AppState, ds: &Datasource) -> ApiResult<Health
     })
 }
 
-pub async fn read_schema(state: &AppState, ds: &Datasource) -> ApiResult<SourceSchema> {
+/// The schema for query editors, counted against the caller's query slots.
+pub async fn read_schema(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<SourceSchema> {
     let registry = &state.datasources;
     let kind =
         registry.kind(&ds.kind).ok_or_else(|| ApiError::internal("schema", format!("unknown kind {}", ds.kind)))?;
     let budget = registry.response_budget(state).await?;
     let timeout = registry.limits(state, ds, budget).await?.timeout;
-    let conn = registry.connection(state, ds).await.map_err(|e| api_error(e, None))?;
-    match tokio::time::timeout(timeout, kind.plugin.schema(&conn)).await {
-        Err(_) => Err(api_error(SourceError::Timeout(timeout.as_secs()), Some(&conn))),
-        Ok(Err(e)) => Err(api_error(e, Some(&conn))),
-        Ok(Ok(schema)) => Ok(schema),
+    let run = async {
+        let _slots = registry.slots(user_id).await?;
+        let conn = registry.connection(state, ds).await?;
+        let schema = kind.plugin.schema(&conn).await;
+        Ok::<_, SourceError>((conn, schema))
+    };
+    match tokio::time::timeout(timeout, run).await {
+        Err(_) => Err(api_error(SourceError::Timeout(timeout.as_secs()), None)),
+        Ok(Err(e)) => Err(api_error(e, None)),
+        Ok(Ok((conn, Err(e)))) => Err(api_error(e, Some(&conn))),
+        Ok(Ok((_, Ok(schema)))) => Ok(schema),
     }
 }
 
@@ -1023,6 +1129,16 @@ pub fn check_pem(field: &'static str, pem: Option<&str>) -> Result<(), FieldErro
             Err(FieldError::new(field, "the CA certificate must be in PEM format (-----BEGIN CERTIFICATE-----)"))
         }
         _ => Ok(()),
+    }
+}
+
+/// For drivers that must connect by name (strict TLS modes): resolves and checks the name again
+/// right before each new pooled connection, as an error the driver hands back.
+pub async fn recheck_name(policy: &TargetPolicy, host: &str, port: u16) -> Result<(), sqlx::Error> {
+    match policy.resolve_all(host, port).await {
+        Ok(_) => Ok(()),
+        Err(targets::ResolveError::Blocked(b)) => Err(sqlx::Error::Configuration(Box::new(b))),
+        Err(other) => Err(sqlx::Error::Configuration(other.to_string().into())),
     }
 }
 
