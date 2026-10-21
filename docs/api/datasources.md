@@ -17,6 +17,8 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | POST | `/orgs/{orgId}/datasources/{datasourceId}/health` | `datasources:query` |
 | GET | `/orgs/{orgId}/datasources/{datasourceId}/schema` | `datasources:query` |
 | POST | `/orgs/{orgId}/query` | `datasources:query` |
+| POST | `/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query` | member; `dashboards:read` on the dashboard |
+| POST | `/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` | member; `dashboards:read` on the dashboard |
 
 With the built-in roles, editors read and query data sources, admins and owners also create,
 change and delete them. Viewers have neither: the list answers `403 forbidden`, a single data
@@ -275,10 +277,51 @@ Macros: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at 
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
 
+## A dashboard's stored queries
+
+Both routes run only what the dashboard's current version stores; the request adds the time
+range, limits and variable values (bound like all variables, never text in the query).
+
+**Who may run them.** Reading the dashboard (`dashboards:read` on it, through the role, a folder
+or a dashboard grant) is what authorizes its stored queries. The caller needs no data source
+permission: viewers have none and still see their dashboards. This is safe because saving a
+dashboard requires `datasources:query` on every data source it uses, so only sources an authorized
+editor placed there are reached, and only with the stored queries. A data source must exist in the
+organization and not be in the trash (otherwise that target answers `not_found`). A dashboard the
+caller cannot read (another organization, a restricted folder without a grant, unknown or in the
+trash) answers `404 not_found`, and so do unknown panels and variables.
+
+**Variables.** `variables` may only name variables the dashboard defines (otherwise `422
+validation`, `field: variables`); at most 100, names of letters, digits and `_`, all values together
+at most 64 KiB. `timeRange` as for free queries. These limits also hold for `POST /query`.
+
+### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
+
+Body `PanelQueryRequest`: `timeRange`, optional `intervalMs`, `maxDataPoints`, `limit` (rows per
+target), `cursors` (per `refId`, for document results, M2) and `variables`. Answer `QueryResponse`
+with one outcome per stored target of the panel (empty `results` for a panel without targets).
+Per-target errors are as for free queries, including `query_rejected` for a stored statement that
+is not a single read-only `SELECT`.
+
+### Variable options: `POST /orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`
+
+Body `VariableOptionsRequest`: `{ "timeRange": {...}, "variables": {...} }` (no other fields). The
+variable's own name in `variables` is refused (`422 validation`, `field: variables`); a variable
+that is not of type `query` is `422 validation`.
+
+```json
+{ "options": [{ "value": "AT", "label": "Österreich" }], "truncated": false }
+```
+
+- `value` is the first field of the result, `label` the second field or the value again.
+- Options are distinct by value, in the query's order; empty values are skipped. `int64` stays its
+  decimal text, `time` becomes ISO 8601 in UTC (`2025-01-01T10:00:00.000Z`), numbers and booleans
+  their JSON text.
+- At most 10,000 options; `truncated` is true when that limit or the query's row limit cut the list.
+- A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
+  `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
+
 ## Not here yet
 
-- `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query` and
-  `POST /orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` use the same query engine
-  (`datasources::run_queries`) and are added with the dashboards routes.
 - Purging data sources from the trash, per-source grants (`resource_grants`), testing settings
   before saving.

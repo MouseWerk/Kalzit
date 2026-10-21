@@ -824,14 +824,163 @@ async fn prometheus_through_the_client_factory() {
     let big = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "gross" } }])).await;
     assert_eq!(big.body["results"]["A"]["error"]["code"], "datasource_error", "{}", big.text);
     assert!(big.text.contains("larger than"), "{}", big.text);
-    assert_eq!(t.state.datasources.inflight_available(), super::MAX_INFLIGHT_RESULT_BYTES);
+    assert_eq!(t.state.datasources.inflight_available(), 1_073_741_824);
     t.set("datasources.max_response_bytes", json!(1_000_000));
     let ok = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "gross" } }])).await;
     assert_eq!(ok.body["results"]["A"]["result"]["frame"]["fields"][1]["values"].as_array().unwrap().len(), 5_000);
-    assert_eq!(t.state.datasources.inflight_available(), super::MAX_INFLIGHT_RESULT_BYTES);
+    assert_eq!(t.state.datasources.inflight_available(), 1_073_741_824);
 
     // The allow-list applies to HTTP sources too.
     t.set("datasources.allowed_targets", json!(["10.0.0.0/8"]));
     let blocked = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "up" } }])).await;
     assert_eq!(blocked.body["results"]["A"]["error"]["code"], "datasource_target_blocked", "{}", blocked.text);
+}
+
+// ---- a dashboard's stored queries ----
+
+fn dashboard_model(ds: &str) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "title": "Umsatz",
+        "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "land", "type": "query", "datasourceId": ds,
+              "query": { "sql": "SELECT land, land || '!' AS label FROM verkauf ORDER BY id" } },
+            { "name": "kaputt", "type": "query", "datasourceId": ds, "query": { "sql": "DELETE FROM verkauf" } },
+            { "name": "fest", "type": "constant" }
+        ],
+        "panels": [{
+            "id": "p1", "type": "table", "title": "Verkäufe", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [
+                { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT id FROM verkauf WHERE land = $land" } },
+                { "refId": "B", "datasourceId": ds, "query": { "sql": "DELETE FROM verkauf" } }
+            ],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    })
+}
+
+impl T {
+    async fn dashboard(&self, ds: &str, folder: Option<&str>) -> String {
+        let mut body = json!({ "model": dashboard_model(ds) });
+        if let Some(f) = folder {
+            body["folderId"] = json!(f);
+        }
+        let r = self.post("/dashboards", body).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+        r.body["id"].as_str().unwrap().to_string()
+    }
+
+    async fn panel(&self, cookie: &str, dashboard: &str, panel: &str, body: Value) -> Reply {
+        let path = self.path(&format!("/dashboards/{dashboard}/panels/{panel}/query"));
+        self.send(Method::POST, &path, Some(body), Some(cookie)).await
+    }
+
+    async fn options(&self, cookie: &str, dashboard: &str, name: &str, body: Value) -> Reply {
+        let path = self.path(&format!("/dashboards/{dashboard}/variables/{name}/options"));
+        self.send(Method::POST, &path, Some(body), Some(cookie)).await
+    }
+}
+
+fn range() -> Value {
+    json!({ "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 })
+}
+
+#[tokio::test]
+async fn viewers_run_the_stored_queries_of_dashboards_they_may_read() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let dashboard = t.dashboard(&ds, None).await;
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+
+    // Viewers hold no data source permission; reading the dashboard is enough for its queries.
+    let r =
+        t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": { "land": "Schweiz" } })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["2"]));
+    assert_eq!(r.body["results"]["B"]["error"]["code"], "query_rejected", "stored writes are refused too");
+    // Without a value the variable's query answers for its refId only.
+    let r = t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range() })).await;
+    assert_eq!(r.body["results"]["A"]["error"]["code"], "query_rejected", "{}", r.text);
+
+    let r = t.options(&viewer, &dashboard, "land", json!({ "timeRange": range() })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["options"][0], json!({ "value": "Österreich", "label": "Österreich!" }));
+    assert_eq!(r.body["options"].as_array().unwrap().len(), 3);
+    assert_eq!(r.body["truncated"], false);
+    let r = t.options(&viewer, &dashboard, "kaputt", json!({ "timeRange": range() })).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "query_rejected"), "{}", r.text);
+    let r = t.options(&viewer, &dashboard, "fest", json!({ "timeRange": range() })).await;
+    assert_eq!(r.code(), "validation", "not a query variable");
+    // A variable's own value is refused.
+    let r = t.options(&viewer, &dashboard, "land", json!({ "timeRange": range(), "variables": { "land": "x" } })).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("variables")));
+
+    // Unknown panels and variables do not exist.
+    assert_eq!(t.panel(&viewer, &dashboard, "p9", json!({ "timeRange": range() })).await.status, StatusCode::NOT_FOUND);
+    let r = t.options(&viewer, &dashboard, "nix", json!({ "timeRange": range() })).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // A trashed data source answers per target.
+    t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&t.owner)).await;
+    let r =
+        t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": { "land": "Schweiz" } })).await;
+    assert_eq!(r.body["results"]["A"]["error"]["code"], "not_found", "{}", r.text);
+}
+
+#[tokio::test]
+async fn dashboards_the_caller_cannot_read_do_not_exist() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let folder = t.post("/folders", json!({ "name": "Geheim", "restricted": true })).await;
+    assert_eq!(folder.status, StatusCode::CREATED, "{}", folder.text);
+    let hidden = t.dashboard(&ds, Some(folder.body["id"].as_str().unwrap())).await;
+    let open = t.dashboard(&ds, None).await;
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let stranger = t.session_for_role("fremd", Some("stranger")).await;
+    let body = json!({ "timeRange": range(), "variables": { "land": "Schweiz" } });
+
+    // Inside a restricted folder without a grant: not found, for both routes.
+    assert_eq!(t.panel(&viewer, &hidden, "p1", body.clone()).await.status, StatusCode::NOT_FOUND);
+    let r = t.options(&viewer, &hidden, "land", json!({ "timeRange": range() })).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    // The owner manages folder permissions and sees it.
+    assert_eq!(t.panel(&t.owner, &hidden, "p1", body.clone()).await.status, StatusCode::OK);
+    // Members of other organizations and unknown dashboards: not found.
+    assert_eq!(t.panel(&stranger, &open, "p1", body.clone()).await.status, StatusCode::NOT_FOUND);
+    let unknown = uuid::Uuid::now_v7().to_string();
+    assert_eq!(t.panel(&viewer, &unknown, "p1", body.clone()).await.status, StatusCode::NOT_FOUND);
+    // A trashed dashboard runs nothing.
+    t.send(Method::DELETE, &t.path(&format!("/dashboards/{open}")), None, Some(&t.owner)).await;
+    assert_eq!(t.panel(&viewer, &open, "p1", body).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn dashboard_query_requests_are_bounded() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let dashboard = t.dashboard(&ds, None).await;
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let many: serde_json::Map<String, Value> = (0..101).map(|i| (format!("v{i}"), json!(i))).collect();
+    for (body, field) in [
+        (json!({ "timeRange": { "from": 0, "to": i64::MAX } }), "timeRange"),
+        (json!({ "timeRange": { "from": 2, "to": 1 } }), "timeRange"),
+        (json!({ "timeRange": range(), "variables": { "fremd": 1 } }), "variables"),
+        (json!({ "timeRange": range(), "variables": many }), "variables"),
+        (json!({ "timeRange": range(), "variables": { "land": "x".repeat(70_000) } }), "variables"),
+    ] {
+        let r = t.panel(&viewer, &dashboard, "p1", body.clone()).await;
+        assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some(field)), "{body}: {}", r.text);
+    }
+    let r = t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "extra": 1 })).await;
+    assert_eq!(r.code(), "validation");
+    let r = t.options(&viewer, &dashboard, "land", json!({ "timeRange": range(), "cursors": {} })).await;
+    assert_eq!(r.code(), "validation", "unknown fields are refused");
+    // The row limit applies to stored queries too.
+    let body = json!({ "timeRange": range(), "variables": { "land": "Schweiz" }, "limit": 1 });
+    let r = t.panel(&viewer, &dashboard, "p1", body).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"].as_array().unwrap().len(), 1);
 }

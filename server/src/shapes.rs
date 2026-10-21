@@ -319,6 +319,35 @@ pub struct PanelQueryRequest {
     pub variables: BTreeMap<String, Value>,
 }
 
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`: runs the stored
+/// query of a query-type variable (same access as the panel route).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VariableOptionsRequest {
+    pub time_range: TimeRange,
+    /// The other variables' current values; the variable's own name is refused.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct VariableOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct VariableOptionsResponse {
+    /// Distinct by `value`, in the order the query returned them.
+    pub options: Vec<VariableOption>,
+    /// True when the list was cut at the option limit or the query's row limit.
+    pub truncated: bool,
+}
+
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -453,6 +482,9 @@ mod tests {
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
             PanelQueryRequest::decl(&cfg),
+            VariableOptionsRequest::decl(&cfg),
+            VariableOption::decl(&cfg),
+            VariableOptionsResponse::decl(&cfg),
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),

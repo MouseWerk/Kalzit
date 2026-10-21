@@ -100,6 +100,24 @@ export type PanelQueryRequest = { timeRange: TimeRange,
  */
 cursors: { [key in string]: string }, limit?: number, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, };
 
+export type VariableOptionsRequest = { timeRange: TimeRange, 
+/**
+ * The other variables' current values; the variable's own name is refused.
+ */
+variables: Record<string, unknown>, };
+
+export type VariableOption = { value: string, label: string, };
+
+export type VariableOptionsResponse = { 
+/**
+ * Distinct by `value`, in the order the query returned them.
+ */
+options: Array<VariableOption>, 
+/**
+ * True when the list was cut at the option limit or the query's row limit.
+ */
+truncated: boolean, };
+
 export type TimeRange = { from: number, to: number, };
 
 export type QueryResponse = { 
