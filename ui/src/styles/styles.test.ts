@@ -399,6 +399,11 @@ describe("contrast in every theme", () => {
     ["--border-strong", ["--bg", "--bg-surface", "--bg-raised"], UI],
     ["--focus-ring", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], UI],
     ["--accent", ["--bg", "--bg-surface", "--bg-raised"], UI],
+    // Chart series are meaningful marks on the panel surfaces.
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map(
+      (n) =>
+        [`--chart-${n}`, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
+    ),
   ];
 
   for (const theme of themes) {

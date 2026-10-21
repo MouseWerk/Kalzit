@@ -35,6 +35,16 @@
     --danger-text: light-dark(oklch(49% 0.17 27), oklch(77% 0.13 25));
     --danger-bg: light-dark(oklch(95.6% 0.022 27), oklch(26% 0.045 25));
     --success-text: light-dark(oklch(47% 0.11 150), oklch(78% 0.13 150));
+    /* Series colors for charts: distinct hues at similar lightness, each at least 3:1 against the
+       surfaces panels sit on (pinned in styles.test.ts). Order follows how often series appear. */
+    --chart-1: light-dark(oklch(52% 0.13 255), oklch(76% 0.1 255));
+    --chart-2: light-dark(oklch(54% 0.13 45), oklch(76% 0.11 45));
+    --chart-3: light-dark(oklch(52% 0.11 150), oklch(77% 0.11 150));
+    --chart-4: light-dark(oklch(52% 0.14 305), oklch(76% 0.1 305));
+    --chart-5: light-dark(oklch(55% 0.11 85), oklch(80% 0.11 85));
+    --chart-6: light-dark(oklch(52% 0.09 200), oklch(77% 0.08 200));
+    --chart-7: light-dark(oklch(53% 0.15 0), oklch(76% 0.1 0));
+    --chart-8: light-dark(oklch(50% 0.04 260), oklch(74% 0.03 260));
 
     --shadow-color: light-dark(oklch(0% 0 0 / 0.12), oklch(0% 0 0 / 0.5));
     --shadow-menu: 0 4px 16px var(--shadow-color), 0 1px 3px var(--shadow-color);
