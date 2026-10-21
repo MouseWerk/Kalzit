@@ -4,11 +4,13 @@ import { isApiError } from "../../../api/client";
 import { LANGUAGES, type MessageKey, useI18n } from "../../../i18n/i18n";
 import { THEMES } from "../../../theme/theme";
 import { isSetting, type Setting } from "../api";
+import { settingName, settingText } from "../catalog";
 import { errorText, SETTING_ERRORS } from "../errors";
 import { Dialog } from "./Dialog";
 import { formatValue } from "./format";
 import { Notice, useNotice } from "./Notice";
 import { useRowKeys } from "./rows";
+import "./settings.css";
 
 interface Conflict {
   key: string;
@@ -56,7 +58,7 @@ export function useSettingChanges({
       setRejected(null);
       await queryClient.invalidateQueries({ queryKey });
       notice.show({
-        message: t("admin.settings.saved", { key: saved.key }),
+        message: t("admin.settings.saved", { name: settingName(t, saved.key) }),
         undo: () =>
           save.mutate({
             key: saved.key,
@@ -172,14 +174,18 @@ export function SettingsList({
   );
 }
 
-/** The server's description (English until the UI has its own texts) and the default value. */
+/**
+ * The setting's description from the catalogs and its default value. Only for a setting this UI
+ * does not know (a newer server) the server's English description stands in.
+ */
 export function SettingDescription({ setting }: { setting: Setting }) {
   const { t } = useI18n();
+  const text = settingText(t, setting);
   return (
     <>
-      {setting.description === "" ? null : (
-        <p className="admin-setting__text" lang="en">
-          {setting.description}
+      {text.description === "" ? null : (
+        <p className="admin-setting__text" lang={text.fromServer ? "en" : undefined}>
+          {text.description}
         </p>
       )}
       <p className="admin-setting__text">
@@ -229,11 +235,22 @@ function SettingField({
   const committed = useRef<string | null>(null);
   const error = invalid ?? rejected;
 
+  // The label is the heading; the key stays visible for KALZIT_SETTING_* and kalzit.toml.
+  const label = settingText(t, setting).label;
   const header = (
     <div className="admin-setting__header">
-      <label htmlFor={id} className="admin-setting__key">
-        <code>{setting.key}</code>
-      </label>
+      {label === undefined ? (
+        <label htmlFor={id} className="admin-setting__key">
+          <code>{setting.key}</code>
+        </label>
+      ) : (
+        <>
+          <label htmlFor={id} className="admin-setting__key">
+            {label}
+          </label>
+          <code className="admin-setting__name">{setting.key}</code>
+        </>
+      )}
       <div className="admin-setting__description" id={descriptionId}>
         {description}
         {reason === undefined ? null : <p className="admin-setting__reason">{reason}</p>}
@@ -435,7 +452,9 @@ function ConflictDialog({
         </>
       }
     >
-      <p>{t("admin.conflict.text", { key: conflict?.key ?? "" })}</p>
+      <p>
+        {t("admin.conflict.text", { name: conflict === null ? "" : settingName(t, conflict.key) })}
+      </p>
       <dl className="admin-conflict">
         <dt>{t("admin.conflict.stored")}</dt>
         <dd>

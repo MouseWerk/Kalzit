@@ -39,6 +39,8 @@ pub struct SettingDef {
     pub default: fn() -> Value,
     /// Settings that could lock an admin out (network, TLS) are file or environment only.
     pub ui_editable: bool,
+    /// English. The UI shows its own label and description from `ui/src/i18n/*/admin.json`
+    /// (a test there fails for a key without them) and this text only for keys it does not know.
     pub description: &'static str,
 }
 

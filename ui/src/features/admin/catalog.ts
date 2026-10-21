@@ -1,12 +1,13 @@
 /**
  * Display names for the access model: permissions grouped by area with what each one allows,
- * built-in roles, grant levels and audit actions. Typed against the generated permission list,
- * so a permission the server adds fails the typecheck until it has a text here.
+ * built-in roles, grant levels, audit actions and settings. Typed against the generated
+ * permission and setting lists, so a permission or setting the server adds fails the typecheck
+ * until it has a text.
  */
 import { ORG_ROLES, type OrgRole } from "../../api/auth";
-import type { Permission } from "../../api/generated/shapes";
+import type { Permission, SettingKey } from "../../api/generated/shapes";
 import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
-import type { GrantLevel, ResourceType, Role, SubjectType } from "./api";
+import type { GrantLevel, ResourceType, Role, Setting, SubjectType } from "./api";
 
 export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
   "dashboards:read": "admin.permission.dashboards.read",
@@ -168,6 +169,48 @@ export function knownAuditActions(): string[] {
   return Object.keys(catalogs.en)
     .filter((key) => key.startsWith(prefix))
     .map((key) => key.slice(prefix.length));
+}
+
+/**
+ * The catalog key of a setting's label or description (`admin.settings.<key>.label`). Typed
+ * against the generated registry keys, so a setting the server adds fails the typecheck until
+ * both texts exist.
+ */
+export function settingMessage(key: SettingKey, part: "label" | "description"): MessageKey {
+  return `admin.settings.${key}.${part}`;
+}
+
+/** Whether the UI has texts for a setting; a newer server may send keys this UI does not know. */
+export function isKnownSetting(key: string): key is SettingKey {
+  return isMessageKey(`admin.settings.${key}.label`);
+}
+
+export interface SettingText {
+  /** Undefined for a setting this UI does not know; the key is then the heading. */
+  label: string | undefined;
+  description: string;
+  /** True when the description is the server's English text, for a setting this UI does not know. */
+  fromServer: boolean;
+}
+
+/** A setting's label and description in the user's language, the server's text as fallback. */
+export function settingText(
+  t: Translate,
+  setting: Pick<Setting, "key" | "description">,
+): SettingText {
+  if (isKnownSetting(setting.key)) {
+    return {
+      label: t(settingMessage(setting.key, "label")),
+      description: t(settingMessage(setting.key, "description")),
+      fromServer: false,
+    };
+  }
+  return { label: undefined, description: setting.description, fromServer: true };
+}
+
+/** A setting's name in notices and dialogs: its label, or the key for a setting not known here. */
+export function settingName(t: Translate, key: string): string {
+  return isKnownSetting(key) ? t(settingMessage(key, "label")) : key;
 }
 
 /**
