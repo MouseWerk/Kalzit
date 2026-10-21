@@ -23,23 +23,52 @@ Common shapes:
 - **Version conflict**: `409` with `{"error": {"code": "version_conflict", ...}, "current": <the
   stored resource, in the same shape as the route's answer>}`.
 - **Conflict**: `409 conflict` when the resource is in a state that forbids the action (for
-  example editing something in the trash); the message says what to do first.
+  example editing something in the trash), or changed between the server's checks and the change
+  ("changed in the meantime": load it again and retry); the message says what to do.
+
+## Access to folders and dashboards
+
+Access to a single folder or dashboard is decided per resource: the member's org-wide permissions
+(their role and their teams' roles) plus their grants (`docs/api/access.md`) on it or on a folder
+above it. Grants extend a member's rights beyond their role: a viewer with an `edit` grant on a
+folder may save, create and delete dashboards there. So the folder and dashboard routes other than
+the two lists are open to every member and check the permission named below on the resource;
+what lives at the top level, outside every folder, needs the org-wide permission.
+
+```ts
+interface ResourceAccess {         // what the caller may do, grants included
+  write: boolean;                  // folders: folders:write; dashboards: dashboards:write
+  delete: boolean;                 // folders: folders:write; dashboards: dashboards:delete
+  permissions: boolean;            // folders: folders:permissions; dashboards: dashboards:share
+}
+```
 
 Restricted folders: a folder with `restricted: true` and everything below it (subfolders and
 their dashboards) exist only for members who may manage folder permissions (`folders:permissions`:
-admins and owners) and members with a grant (`docs/api/access.md`) on that folder or a folder
-below it, directly, through a team or through a role. The nearest restricted folder above a
-resource decides: a restricted subfolder narrows access further, and grants above it do not reach
-in. A grant on a single dashboard shows that dashboard (not its folder). For everyone else every
-route answers `404 not_found` for them, lists and searches leave them out, and the organization's
-audit view leaves out the events about them. A folder someone reaches only through a grant below a
-hidden restricted folder appears at the top of their tree with `parentId: null`.
+admins and owners) and members with a grant on that folder or a folder below it, directly, through
+a team or through a role. The nearest restricted folder above a resource decides: a restricted
+subfolder narrows access further, and grants above it do not reach in. A grant on a single
+dashboard shows that dashboard (not its folder). For everyone else every route answers
+`404 not_found` for them, lists and searches leave them out, and the organization's audit view
+leaves out the events about them.
+
+A folder or dashboard is never shown with the id of a folder the caller cannot see: a folder
+reached only through a grant below a hidden restricted folder has `parentId: null` (and hangs at
+the top of the tree), a dashboard reached only through its own grant has `folderId: null`. Sending
+that `null` back unchanged (`PATCH` of the folder, `PUT` of the dashboard) is no move.
+
+Actions on a whole folder subtree (trash, restore, purge, move):
+
+- `403 forbidden` ("the folder contains content you cannot see") when anything below the folder is
+  hidden from the caller;
+- `403 forbidden` ("... content you may not change") unless the caller holds `folders:write` on
+  every subfolder that another restricted folder governs, and `dashboards:delete` on every folder
+  whose dashboards go along (trash, restore, purge);
+- moving a folder into or out of a restricted folder changes who sees it, so it needs
+  `folders:permissions` on the folder and on the new parent.
 
 Purging a folder or dashboard deletes the grants on it and on everything purged with it; grants on
 trashed resources stay, so a restore brings the access back.
-
-Actions on a whole subtree (trash, restore, purge, move) answer `403 forbidden` ("the folder
-contains content you cannot see") when anything below the folder is hidden from the caller.
 
 ## Settings
 
@@ -65,10 +94,10 @@ default. Settings that live in the configuration (`sessions.*`) come from `kalzi
 `KALZIT_<SECTION>_<KEY>` and are never editable in the UI. Every other server setting can be
 overridden by `KALZIT_SETTING_<KEY>` (key in upper snake case: `audit.retention_days` is
 `KALZIT_SETTING_AUDIT_RETENTION_DAYS`; the value is JSON, or plain text for text settings).
-Organization settings are the database value, then the default. A `KALZIT_SETTING_*` variable that
-names no such server setting, or holds an invalid value, stops the server at start with a message
-naming the variable. `source` is `file` whenever `kalzit.toml` sets the key, also to the default
-value.
+Organization settings are the database value, then the default. A `KALZIT_SETTING_*` variable
+(in any letter case, since Windows reads variable names regardless of case) that names no such
+server setting, or holds an invalid value, stops the server at start with a message naming the
+variable. `source` is `file` whenever `kalzit.toml` sets the key, also to the default value.
 
 Server settings:
 
@@ -90,7 +119,7 @@ Organization settings:
 
 | Key | Default | Accepts |
 |---|---|---|
-| `dashboards.default_time_range` | `{"from": "now-6h", "to": "now"}` | a time range as in the dashboard model |
+| `dashboards.default_time_range` | `{"from": "now-6h", "to": "now"}` | a time range as in the dashboard model; new dashboards without `timeRange` get it |
 
 ### `GET /admin/settings`
 
@@ -102,10 +131,11 @@ Server administrators. Answers `Page<Setting>` with every server setting in regi
 Server administrators. Body `{"value": unknown, "version": number}`; `version` is the `version`
 the client read (0 for a setting never saved). Answers the updated `Setting`.
 
-Errors: `404 not_found` (no such server setting); `409 conflict` (not editable, or set in the
-environment); `422 validation` with field `value` (value rejected; checked before the version);
-`409 version_conflict` with `current: Setting`. Audited as `settings.updated` (summary: key and
-new version, never the value).
+Errors: `404 not_found` (no such server setting); `409 conflict` when the setting is not editable
+in the UI or its value comes from the environment (`source: "env"`) or from `kalzit.toml`
+(`source: "file"`); `422 validation` with field `value` (value rejected; checked before the
+version); `409 version_conflict` with `current: Setting`. Audited as `settings.updated` (summary:
+key and new version, never the value).
 
 ### `GET /orgs/{orgId}/settings`
 
@@ -128,7 +158,7 @@ interface AuditEvent {
   action: string;                 // "<area>.<verb>", see below
   resourceType: string | null;    // "folder", "dashboard", "setting", "org", "user"
   resourceId: string | null;
-  summary: object;                // ids and changed field names, never secrets or typed text
+  summary: object;                // ids, counts and changed field names; never secrets or typed text
   createdAt: number;
 }
 ```
@@ -141,8 +171,14 @@ Query parameters (all optional): `actor` (user id), `action` (prefix: `dashboard
 ### `GET /orgs/{orgId}/audit`
 
 Permission `audit:read`. `Page<AuditEvent>` of this organization, newest first. `orgId` as a query
-parameter is `422 validation`. Events about folders and dashboards the caller cannot see (see
-"Restricted folders") are left out; events of purged resources stay, since they hold only ids.
+parameter is `422 validation`. For members without access to restricted folders:
+
+- events about folders and dashboards they cannot see are left out, also after that content was
+  purged (the server remembers which purged folders and dashboards were restricted content);
+- a summary's `parentId` or `folderId` that names a folder they cannot see (or a purged restricted
+  one) reads `null`.
+
+Counts in summaries (`folder.trashed`: `{"folders", "dashboards"}`) are not narrowed.
 
 ### `GET /admin/audit`
 
@@ -162,13 +198,14 @@ Actions written by these routes: `settings.updated`, `folder.created`, `folder.u
 ```ts
 interface Folder {
   id: string;
-  parentId: string | null;        // null: top level
+  parentId: string | null;        // null: top level, or a parent the caller cannot see
   name: string;                   // 1 to 100 characters, trimmed, no control characters
   restricted: boolean;            // the folder's own flag; subfolders inherit the restriction
   version: number;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;       // set while in the trash
+  access: ResourceAccess;
 }
 interface FolderNode extends Folder { children: FolderNode[] }
 ```
@@ -187,46 +224,47 @@ its folder.
 
 ### `POST /orgs/{orgId}/folders`
 
-Permission `folders:write`. Body `{"name": string, "parentId"?: string | null, "restricted"?:
-boolean}`. Answers `201` with the `Folder`.
+Any member. Body `{"name": string, "parentId"?: string | null, "restricted"?: boolean}`. Needs
+`folders:write` on the parent (org-wide at the top level); `restricted: true` needs
+`folders:permissions` on the parent (org-wide at the top level). Answers `201` with the `Folder`.
 
 Errors: `422 validation` field `name`; `404 not_found` (parent not in the organization or not
 visible); `422 validation` field `parentId` (parent in the trash, or too deep); `403 forbidden`
-(no `folders:write` on the parent, or `restricted: true` without `folders:permissions`).
+(missing permission).
 
 ### `PATCH /orgs/{orgId}/folders/{folderId}`
 
-Permission `folders:write` on the folder. Body `{"version": number, "name"?: string, "parentId"?:
-string | null, "restricted"?: boolean}`; a missing field keeps its value, `"parentId": null` moves
-the folder to the top level. Answers the `Folder` (unchanged, with the same version, when nothing
-changed).
+Any member; needs `folders:write` on the folder. Body `{"version": number, "name"?: string,
+"parentId"?: string | null, "restricted"?: boolean}`; a missing field keeps its value,
+`"parentId": null` moves the folder to the top level (unless `null` is how the caller sees its
+current parent, see "Access"). A move needs `folders:write` on the new parent and the subtree
+rules above; changing `restricted` needs `folders:permissions` on the folder (an `admin` grant
+counts). Answers the `Folder` (unchanged, with the same version, when nothing changed).
 
 Errors, in this order: `422 validation` field `name`; `404 not_found` (folder or new parent not
-visible); `403 forbidden` (no `folders:write` on the new parent; changing `restricted` without
-`folders:permissions`); `409 conflict` (folder in the trash); `409 version_conflict` with
+visible); `403 forbidden` (a missing permission, or hidden content below a moved folder);
+`409 conflict` (folder in the trash, or changed in the meantime); `409 version_conflict` with
 `current: Folder`; `422 validation` field `parentId` (moving into itself or a subfolder, parent in
-the trash, or too deep); `403 forbidden` when moving a folder with content the caller cannot see.
+the trash, or too deep).
 
 ### `DELETE /orgs/{orgId}/folders/{folderId}`
 
-Permission `folders:write` on the folder. Moves the folder, every subfolder and every dashboard in
-them to the trash (`204`). Needs `dashboards:delete` too when that includes dashboards
-(`403 forbidden` otherwise), and `403 forbidden` when content below is hidden from the caller.
-Already in the trash: `204` without a change.
+Any member; needs `folders:write` on the folder and the subtree rules above. Moves the folder,
+every subfolder and every dashboard in them to the trash (`204`). Already in the trash: `204`
+without a change. `409 conflict` when something joined the subtree while the request ran.
 
 ### `POST /orgs/{orgId}/folders/{folderId}/restore`
 
-Permission `folders:write` on the folder. Takes the folder and whatever was trashed together with
-it out of the trash; answers the `Folder`. Not in the trash: the `Folder` unchanged. Errors:
-`409 conflict` when its parent is still in the trash; `403 forbidden` when content below is hidden
-from the caller.
+Any member; needs `folders:write` on the folder and the subtree rules above for what comes back.
+Takes the folder and whatever was trashed together with it out of the trash; answers the
+`Folder`. Not in the trash: the `Folder` unchanged. `409 conflict` when its parent is still in the
+trash, or the trash entry changed while the request ran.
 
 ### `DELETE /orgs/{orgId}/folders/{folderId}/purge`
 
-Permission `folders:write` on the folder. Deletes the folder for good with all its subfolders,
-dashboards and their versions (`204`). Needs `dashboards:delete` when dashboards are among them.
-Errors: `409 conflict` when the folder is not in the trash; `403 forbidden` when content below is
-hidden from the caller.
+Any member; needs `folders:write` on the folder and the subtree rules above. Deletes the folder for
+good with all its subfolders, dashboards and their versions (`204`). `409 conflict` when the
+folder is not in the trash (also when it was restored while the purge waited).
 
 ## Dashboards
 
@@ -277,13 +315,14 @@ panels and query variables: a data source the caller cannot see is `422 validati
 ```ts
 interface DashboardSummary {
   id: string;
-  folderId: string | null;
+  folderId: string | null;        // null: top level, or a folder the caller cannot see
   title: string;
   version: number;
   createdAt: number;
   updatedAt: number;
   updatedBy: string | null;
   deletedAt: number | null;
+  access: ResourceAccess;
 }
 interface Dashboard extends DashboardSummary {
   model: DashboardModel;          // migrated to the current schemaVersion
@@ -307,62 +346,69 @@ line breaks (`422 validation` field `message`).
 
 Permission `dashboards:read`. `Page<DashboardSummary>` ordered by title (the database's collation),
 then id. Query: `folderId` (only that folder; `404 not_found` if not visible), `q` (part of the
-title, any case), `trashed=true` (the trash instead), `limit`, `cursor`. Dashboards in folders the
-caller does not see are left out.
+title, any case), `trashed=true` (the trash instead), `limit`, `cursor`. Dashboards the caller
+does not see are left out.
 
 ### `POST /orgs/{orgId}/dashboards`
 
-Permission `dashboards:write`. Body `{"model": DashboardModel, "folderId"?: string | null,
-"message"?: string}`. Answers `201` with the `Dashboard` (version 1).
+Any member; needs `dashboards:write` on the folder (org-wide at the top level). Body
+`{"model": DashboardModel, "folderId"?: string | null, "message"?: string}`. A model without
+`timeRange` gets the organization's `dashboards.default_time_range`. Answers `201` with the
+`Dashboard` (version 1).
 
 Errors: invalid model or message (see above); `404 not_found` (folder not in the organization or
-not visible); `422 validation` field `folderId` (folder in the trash); `403 forbidden` (no
-`dashboards:write` in that folder); data source check (see above).
+not visible); `422 validation` field `folderId` (folder in the trash); `403 forbidden` (missing
+permission); data source check (see above).
 
 ### `GET /orgs/{orgId}/dashboards/{dashboardId}`
 
-Permission `dashboards:read`. Answers the `Dashboard`, also while it is in the trash (`deletedAt`
-set). `404 not_found` for ids of other organizations and dashboards in hidden folders.
+Any member; needs `dashboards:read` on the dashboard. Answers the `Dashboard`, also while it is in
+the trash (`deletedAt` set). `404 not_found` for ids of other organizations and dashboards the
+caller cannot see.
 
 ### `PUT /orgs/{orgId}/dashboards/{dashboardId}`
 
-Permission `dashboards:write`. Body `{"model": DashboardModel, "version": number, "message"?:
-string, "folderId"?: string | null}`. `version` is the version the editor started from; a missing
-`folderId` keeps the folder, `null` moves to the top level. Saves a new version; answers the
-`Dashboard`. The title follows `model.title`. Versions beyond `dashboards.version_retention` are
-deleted, oldest first.
+Any member; needs `dashboards:write` on the dashboard. Body `{"model": DashboardModel, "version":
+number, "message"?: string, "folderId"?: string | null}`. `version` is the version the editor
+started from; a missing `folderId` (or the `folderId` as the caller sees it) keeps the folder,
+another folder or `null` (top level) moves it, which needs `dashboards:write` there (org-wide at
+the top level). Saves a new version; answers the `Dashboard`. The title follows `model.title`.
+Versions beyond `dashboards.version_retention` are deleted, oldest first.
 
 Errors: `404 not_found`; `409 conflict` (in the trash); invalid model or message; folder errors as
 on create; `409 version_conflict` with `current: Dashboard`; data source check.
 
 ### `DELETE /orgs/{orgId}/dashboards/{dashboardId}`
 
-Permission `dashboards:delete`. Moves it to the trash (`204`); already there: `204` without a
-change.
+Any member; needs `dashboards:delete` on the dashboard. Moves it to the trash (`204`); already
+there: `204` without a change.
 
 ### `POST /orgs/{orgId}/dashboards/{dashboardId}/restore`
 
-Permission `dashboards:delete`. Takes it out of the trash; answers the `Dashboard`. Not in the
-trash: the `Dashboard` unchanged. `409 conflict` while its folder is in the trash.
+Any member; needs `dashboards:delete` on the dashboard. Takes it out of the trash; answers the
+`Dashboard`. Not in the trash: the `Dashboard` unchanged. `409 conflict` while its folder is in
+the trash; `404 not_found` when it was purged while the restore waited.
 
 ### `DELETE /orgs/{orgId}/dashboards/{dashboardId}/purge`
 
-Permission `dashboards:delete`. Deletes it with all versions for good (`204`). `409 conflict` when
-it is not in the trash.
+Any member; needs `dashboards:delete` on the dashboard. Deletes it with all versions for good
+(`204`). `409 conflict` when it is not in the trash, also when it was restored while the purge
+waited.
 
 ### `GET /orgs/{orgId}/dashboards/{dashboardId}/versions`
 
-Permission `dashboards:read`. `Page<DashboardVersionSummary>`, newest version first.
+Any member; needs `dashboards:read` on the dashboard. `Page<DashboardVersionSummary>`, newest
+version first.
 
 ### `GET /orgs/{orgId}/dashboards/{dashboardId}/versions/{version}`
 
-Permission `dashboards:read`. Answers the `DashboardVersion`; `404 not_found` for a version that
-does not exist (or was dropped by the retention) and for anything but plain digits without a
-leading zero (`01` and `+1` are `404`).
+Any member; needs `dashboards:read` on the dashboard. Answers the `DashboardVersion`;
+`404 not_found` for a version that does not exist (or was dropped by the retention) and for
+anything but plain digits without a leading zero (`01` and `+1` are `404`).
 
 ### `POST /orgs/{orgId}/dashboards/{dashboardId}/versions/{version}/restore`
 
-Permission `dashboards:write`. No body. Saves that version's model as a new version (with
-`restoredFrom` set, `message` empty) and answers the `Dashboard`. The old model must pass today's
-validation (`422 validation` field `model` otherwise) and the data source check. `409 conflict` while
-the dashboard is in the trash; `404 not_found` for an unknown version.
+Any member; needs `dashboards:write` on the dashboard. No body. Saves that version's model as a
+new version (with `restoredFrom` set, `message` empty) and answers the `Dashboard`. The old model
+must pass today's validation (`422 validation` field `model` otherwise) and the data source check.
+`409 conflict` while the dashboard is in the trash; `404 not_found` for an unknown version.
