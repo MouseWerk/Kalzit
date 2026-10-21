@@ -1,0 +1,557 @@
+/*
+ * Administration and account: overview, lists of rows, dialogs, notices and the
+ * settings and permission editors. Tokens only; states use a neutral tint and text weight.
+ */
+@layer components {
+  /* Overview */
+
+  .admin-overview {
+    display: grid;
+    gap: var(--space-6);
+  }
+
+  /* The live regions stay in place while empty, but take no row (and no gap) until they speak. */
+  .admin-overview > .admin-notice:not(:has(.notice)) {
+    position: absolute;
+  }
+
+  .admin-overview__group {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .admin-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr));
+    gap: var(--space-3);
+    padding: 0;
+    list-style: none;
+  }
+
+  .admin-card {
+    display: grid;
+    height: 100%;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    color: var(--text);
+    text-decoration: none;
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .admin-card:hover {
+    background: var(--bg-hover);
+  }
+
+  .admin-card__title {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .admin-card__text {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* Section */
+
+  .admin-section {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .admin-section__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .admin-section__heading {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-section__lead {
+    max-width: 44rem;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-section__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .admin-back {
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-subsection {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .admin-subsection__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .admin-fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .admin-fieldset > legend {
+    padding: 0;
+    margin-block-end: var(--space-2);
+  }
+
+  .admin-empty {
+    color: var(--text-muted);
+  }
+
+  .admin-error {
+    color: var(--danger-text);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-account__section + .admin-account__section {
+    padding-block-start: var(--space-6);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .admin-account__form {
+    max-width: 28rem;
+  }
+
+  /* Lists of rows: arrow keys move between rows (components/rows.ts) */
+
+  .admin-list {
+    display: grid;
+    padding: 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    list-style: none;
+  }
+
+  .admin-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-4);
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .admin-row + .admin-row {
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .admin-row:first-child {
+    border-start-start-radius: var(--radius-lg);
+    border-start-end-radius: var(--radius-lg);
+  }
+
+  .admin-row:last-child {
+    border-end-start-radius: var(--radius-lg);
+    border-end-end-radius: var(--radius-lg);
+  }
+
+  /* The list draws its own frame, so the ring goes inside the row. */
+  .admin-row:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+    background: var(--bg-hover);
+  }
+
+  .admin-row__main {
+    display: grid;
+    flex: 1 1 14rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-row__title {
+    font-weight: var(--font-weight-medium);
+  }
+
+  a.admin-row__title {
+    color: var(--text);
+  }
+
+  .admin-row__meta {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-row__detail {
+    display: grid;
+    flex: 1 1 12rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-row__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .admin-row--setting {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  @media (max-width: 48rem) {
+    .admin-row--setting {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .admin-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--space-px) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+
+  .admin-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: 0;
+    list-style: none;
+  }
+
+  .admin-checks {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .admin-check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .admin-pager {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .admin-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-3);
+  }
+
+  .admin-filters > .field {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Long names in pickers must not push the page wider than a phone (360 px). */
+  .admin-filters .select,
+  .admin-section .field .select,
+  .admin-dialog .field .select {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .admin-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .admin-textarea {
+    min-height: 5rem;
+    resize: vertical;
+  }
+
+  .admin-access__title {
+    font-size: var(--font-size-md);
+  }
+
+  .admin-audit {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  /* Notices and small buttons */
+
+  .admin-notice {
+    display: grid;
+  }
+
+  .admin-notice .notice {
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .admin-notice__text {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+
+  .admin-link-button {
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+
+  .admin-link-button:hover {
+    background: var(--bg-active);
+  }
+
+  /* Dialogs */
+
+  .admin-dialog__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-dialog);
+    display: grid;
+    place-items: center;
+    padding: var(--space-4);
+    background: var(--shadow-color);
+  }
+
+  .admin-dialog {
+    display: grid;
+    width: min(32rem, 100%);
+    max-height: calc(100dvh - var(--space-8));
+    gap: var(--space-4);
+    overflow-y: auto;
+    padding: var(--space-5);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .admin-dialog--wide {
+    width: min(44rem, 100%);
+  }
+
+  .admin-dialog__title {
+    overflow-wrap: anywhere;
+  }
+
+  .admin-dialog__body {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .admin-dialog__text {
+    color: var(--text-muted);
+  }
+
+  .admin-dialog__footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-3);
+  }
+
+  /* Settings */
+
+  .admin-setting__header {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-setting__key {
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* The key under the label, quiet, for KALZIT_SETTING_* and kalzit.toml. */
+  .admin-setting__name {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .admin-setting__description {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+  }
+
+  .admin-setting__text,
+  .admin-setting__reason {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-setting__value {
+    overflow-wrap: anywhere;
+  }
+
+  .admin-setting__check {
+    justify-self: start;
+    width: var(--icon-size);
+    height: var(--icon-size);
+  }
+
+  .admin-setting__input {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .admin-setting__json {
+    min-height: 6rem;
+    resize: vertical;
+  }
+
+  .admin-conflict {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .admin-conflict dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* Permissions */
+
+  .admin-permissions {
+    display: grid;
+    gap: var(--space-5);
+  }
+
+  .admin-permissions__group {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .admin-permissions__title {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .admin-permission {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--space-3);
+    align-items: baseline;
+  }
+
+  .admin-permission__label {
+    overflow-wrap: anywhere;
+  }
+
+  .admin-permission__text {
+    grid-column: 2;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-permission__note {
+    font-style: italic;
+  }
+
+  .admin-permission-list {
+    display: grid;
+    gap: var(--space-2);
+    padding: 0;
+    list-style: none;
+  }
+
+  .admin-permission-list__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-3);
+  }
+
+  .admin-permission-list__text {
+    flex: 1 1 16rem;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* "Why?" popover */
+
+  .admin-why {
+    display: inline-block;
+  }
+
+  /* Fixed to the window, placed by WhyCanI, so a scrolling dialog does not clip it. */
+  .admin-popover {
+    position: fixed;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    z-index: var(--z-toast);
+    display: grid;
+    width: min(22rem, calc(100vw - var(--space-4)));
+    max-height: calc(100dvh - var(--space-4));
+    overflow-y: auto;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .admin-popover__title {
+    font-size: var(--font-size-md);
+  }
+
+  .admin-popover__text {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    overflow-wrap: anywhere;
+  }
+
+  .admin-popover__list {
+    display: grid;
+    gap: var(--space-1);
+    padding-inline-start: var(--space-4);
+  }
+
+  .admin-access__why {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .admin-access__add {
+    display: grid;
+    gap: var(--space-3);
+    padding-block-start: var(--space-4);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+}
