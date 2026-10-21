@@ -22,9 +22,23 @@ enum Command {
     Serve,
     /// Read and validate the configuration, then exit.
     CheckConfig,
+    /// Manage the key that encrypts data source secrets.
+    Secrets {
+        #[command(subcommand)]
+        action: SecretsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecretsCommand {
+    /// Re-encrypt every stored secret with a new key. Stop the server first.
+    Rotate,
 }
 
 fn main() -> ExitCode {
+    // One rustls crypto provider for the whole process (ring), before any TLS client or server
+    // is built; libraries that would pick another one use this.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     let config = match Config::load(cli.config.as_deref()) {
         Ok(c) => c,
@@ -37,6 +51,26 @@ fn main() -> ExitCode {
         Command::CheckConfig => {
             println!("configuration is valid");
             ExitCode::SUCCESS
+        }
+        Command::Secrets { action: SecretsCommand::Rotate } => {
+            init_logging(&config.log);
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("kalzit: cannot start the async runtime: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match runtime.block_on(kalzit::secrets::rotate(&config)) {
+                Ok(rotation) => {
+                    println!("{rotation}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("kalzit: rotating the secrets key failed: {e:#}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         Command::Serve => {
             init_logging(&config.log);

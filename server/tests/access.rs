@@ -202,6 +202,22 @@ fn uuid() -> String {
     uuid::Uuid::now_v7().to_string()
 }
 
+impl TestApp {
+    /// A real dashboard of `org`: grants need an existing resource.
+    async fn dashboard(&self, org: &str) -> String {
+        let id = uuid();
+        sqlx::query(
+            "INSERT INTO dashboards (id, org_id, title, search_title, version, created_at, updated_at)              VALUES ($1, $2, 'Umsatz', 'umsatz', 1, 0, 0)",
+        )
+        .bind(&id)
+        .bind(org)
+        .execute(&self.state.db)
+        .await
+        .unwrap();
+        id
+    }
+}
+
 fn has(list: &[String], item: &str) -> bool {
     list.iter().any(|p| p == item)
 }
@@ -370,7 +386,7 @@ async fn parallel_duplicate_writes_are_answered_cleanly() {
     let t = test_app(None).await;
     let (owner, org) = t.setup().await;
     let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
-    let dashboard = uuid();
+    let dashboard = t.dashboard(&org).await;
 
     let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
                         "resourceId": dashboard, "level": "edit" });
@@ -580,8 +596,18 @@ async fn grants_extend_access_per_resource() {
     let ed = t.member(&owner, &org, "Ed", "ed@example.de", "editor").await;
     let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
     let stranger = t.user(&owner, "Fremd", "fremd@example.de").await;
-    let dashboard = uuid();
+    let dashboard = t.dashboard(&org).await;
+    // Grants need a data source that exists in the organization.
     let datasource = uuid();
+    sqlx::query(
+        "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+         VALUES ($1, $2, 'Quelle', 'sqlite', '{}', 0, 0)",
+    )
+    .bind(&datasource)
+    .bind(&org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
     let explain = |p: &str, rt: &str, id: &str| {
         format!("/api/orgs/{org}/explain?permission={p}&resourceType={rt}&resourceId={id}")
     };
@@ -690,7 +716,7 @@ async fn nobody_grants_more_than_they_hold_on_a_resource() {
     let grants = format!("/api/orgs/{org}/grants");
     let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
     let max = t.member(&owner, &org, "Max", "max@example.de", "viewer").await;
-    let dashboard = uuid();
+    let dashboard = t.dashboard(&org).await;
     let grant = |who: &str, level: &str| json!({ "subjectType": "user", "subjectId": who, "resourceType": "dashboard", "resourceId": dashboard, "level": level });
     // A viewer with an admin grant on one dashboard manages its grants...
     assert_eq!(t.post(&grants, grant(&vic.user_id, "admin"), &owner).await.status, StatusCode::CREATED);
@@ -698,7 +724,7 @@ async fn nobody_grants_more_than_they_hold_on_a_resource() {
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     // ...but not on another one.
     let other = json!({ "subjectType": "user", "subjectId": max.user_id, "resourceType": "dashboard",
-                        "resourceId": uuid(), "level": "view" });
+                        "resourceId": t.dashboard(&org).await, "level": "view" });
     assert_eq!(t.post(&grants, other, &vic).await.status, StatusCode::FORBIDDEN);
     // An edit grant does not let Max share further.
     assert_eq!(t.post(&grants, grant(&vic.user_id, "view"), &max).await.status, StatusCode::FORBIDDEN);
@@ -931,7 +957,7 @@ async fn parallel_grant_deletes_do_not_drain_the_pool() {
     let mut calls = Vec::new();
     for _ in 0..parallel {
         let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
-                            "resourceId": uuid(), "level": "edit" });
+                            "resourceId": t.dashboard(&org).await, "level": "edit" });
         let r = t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await;
         assert_eq!(r.status, StatusCode::CREATED);
         let path = format!("/api/orgs/{org}/grants/{}", r.body["id"].as_str().unwrap());
@@ -970,7 +996,7 @@ async fn removing_a_member_needs_what_they_hold_through_teams_and_grants() {
     // Out of the team, Vic still holds an admin grant on a dashboard.
     t.delete(&format!("{team}/members/{}", vic.user_id), &owner).await;
     let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
-                        "resourceId": uuid(), "level": "admin" });
+                        "resourceId": t.dashboard(&org).await, "level": "admin" });
     assert_eq!(t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await.status, StatusCode::CREATED);
     assert_eq!(t.delete(&vic_path, &hr).await.status, StatusCode::FORBIDDEN);
 
@@ -1129,7 +1155,7 @@ async fn postgres_access_model() {
         .post(&format!("/api/orgs/{org}/roles"), json!({ "name": "Prüfer", "permissions": ["audit:read"] }), &owner)
         .await;
     assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
-    let dashboard = uuid();
+    let dashboard = t.dashboard(&org).await;
     let grant = json!({ "subjectType": "role", "subjectId": role.body["id"], "resourceType": "dashboard",
                         "resourceId": dashboard, "level": "admin" });
     assert_eq!(t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await.status, StatusCode::CREATED);

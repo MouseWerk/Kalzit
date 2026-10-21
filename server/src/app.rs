@@ -12,9 +12,11 @@ use tower_http::trace::TraceLayer;
 use crate::auth::ratelimit::RateLimiter;
 use crate::clock::Clock;
 use crate::config::Config;
+use crate::datasources::DataSources;
 use crate::error::ApiError;
 use crate::routes::setup::SetupGate;
 use crate::routes::{self, health};
+use crate::secrets::Keyring;
 use crate::{net, web};
 
 #[derive(Clone)]
@@ -24,6 +26,8 @@ pub struct AppState {
     pub clock: Arc<dyn Clock>,
     pub login_limiter: Arc<RateLimiter>,
     pub setup: Arc<SetupGate>,
+    pub secrets: Arc<Keyring>,
+    pub datasources: Arc<DataSources>,
 }
 
 impl AppState {
@@ -32,7 +36,17 @@ impl AppState {
         crate::auth::password::prewarm().await;
         let sec = &config.security;
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
-        Ok(Self { db, config: Arc::new(config), clock, login_limiter: Arc::new(login_limiter), setup: Arc::new(setup) })
+        let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
+        let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
+        Ok(Self {
+            db,
+            config: Arc::new(config),
+            clock,
+            login_limiter: Arc::new(login_limiter),
+            setup: Arc::new(setup),
+            secrets,
+            datasources,
+        })
     }
 }
 

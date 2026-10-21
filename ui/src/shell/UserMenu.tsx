@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -38,7 +38,7 @@ function menuItems(menu: HTMLElement | null): HTMLElement[] {
  * arrow keys move between items, Home and End jump, Escape and Tab close, and focus returns to the
  * button after a choice or Escape.
  */
-export function UserMenu({ me }: { me: Me }) {
+export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const { t, language } = useI18n();
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -152,6 +152,8 @@ export function UserMenu({ me }: { me: Me }) {
           ref={buttonRef}
           type="button"
           className="user-button"
+          // The rail shows only the avatar; the name is the tooltip there.
+          title={rail ? me.name : undefined}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
@@ -208,6 +210,18 @@ export function UserMenu({ me }: { me: Me }) {
               ))}
             </MenuGroup>
             <hr className="menu__separator" />
+            {/* The own account: name, password, sessions (features/admin/account). */}
+            <Link
+              to="/account"
+              role="menuitem"
+              tabIndex={-1}
+              className="menu__item"
+              onClick={() => closeMenu(true)}
+            >
+              {/* An empty icon slot, so the label lines up with the other items. */}
+              <Icon name="check" className="menu__check" />
+              {t("admin.account.title")}
+            </Link>
             <button
               type="button"
               role="menuitem"

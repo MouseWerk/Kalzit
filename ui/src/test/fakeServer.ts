@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
+import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 
@@ -245,7 +246,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         }
       }
     }
-    return error(404, "not_found");
+    return handleAdminRoute(server, path, method, body) ?? error(404, "not_found");
   }
 
   vi.stubGlobal(

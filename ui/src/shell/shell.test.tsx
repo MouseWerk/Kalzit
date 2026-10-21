@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
+import { stubMatchMedia } from "../test/matchMedia";
 import { renderApp } from "../test/renderApp";
 import { THEME_STORAGE_KEY } from "../theme/theme";
 
@@ -36,11 +37,20 @@ describe("app shell", () => {
   });
 
   it("gives every navigation link a name and a tooltip for the icon-only phone layout", async () => {
+    stubMatchMedia(false);
     await openShell();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     for (const link of within(nav).getAllByRole("link")) {
       expect(link.getAttribute("title")).toBe(link.textContent);
       expect(link.querySelector(".nav-link__label")?.textContent).toBe(link.textContent);
+    }
+  });
+
+  it("shows no tooltips in the expanded sidebar, where every label is visible", async () => {
+    await openShell();
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    for (const link of within(nav).getAllByRole("link")) {
+      expect(link.getAttribute("title"), link.textContent ?? "").toBeNull();
     }
   });
 
@@ -52,7 +62,8 @@ describe("app shell", () => {
       ["Dashboards", "No dashboards yet"],
       ["Explore", "No data source to query"],
       ["Data sources", "No data sources yet"],
-      ["Administration", "Nothing to manage yet"],
+      // The administration opens on its overview of sections, headed by the organization.
+      ["Administration", "Organization “Analytical Engines”"],
     ];
     for (const [link, emptyTitle] of pages) {
       // Entries that depend on permissions appear once those are loaded.
@@ -86,7 +97,7 @@ describe("app shell", () => {
     });
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     if (shown) {
-      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
+      expect(await screen.findByRole("list", { name: "Administration sections" })).toBeTruthy();
       expect(within(nav).getByRole("link", { name: "Administration" })).toBeTruthy();
     } else {
       expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
@@ -105,19 +116,41 @@ describe("app shell", () => {
     expect(within(nav).queryByRole("link", { name: "Administration" })).toBeNull();
   });
 
-  it.each(["users:write", "settings:read", "roles:write", "audit:read"])(
-    "shows administration for a custom role with %s",
-    async (permission) => {
-      await openShell(
-        "/admin",
-        { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
-        { steward: [permission] },
-      );
-      const nav = screen.getByRole("navigation", { name: "Main navigation" });
-      expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
-      expect(await screen.findByRole("heading", { name: "Nothing to manage yet" })).toBeTruthy();
-    },
-  );
+  it.each([
+    // Change permissions without the matching read permission open no section.
+    ["users:write", "Nothing here for you yet"],
+    ["settings:read", "Organization “Org”"],
+    ["roles:write", "Nothing here for you yet"],
+    ["audit:read", "Organization “Org”"],
+  ])("shows administration for a custom role with %s", async (permission, overviewHeading) => {
+    await openShell(
+      "/admin",
+      { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
+      { steward: [permission] },
+    );
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    expect(await within(nav).findByRole("link", { name: "Administration" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: overviewHeading })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "No access" })).toBeNull();
+  });
+
+  it.each([
+    ["settings:read", "Organization settings"],
+    ["audit:read", "Audit log"],
+  ])("lists the section a custom role with %s may open", async (permission, section) => {
+    await openShell(
+      "/admin",
+      { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "steward" }] },
+      { steward: [permission] },
+    );
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    const sections = await within(nav).findByRole("list", { name: "Administration sections" });
+    expect(
+      within(sections)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual([section]);
+  });
 
   it("shows administration to a server admin who belongs to no organization", async () => {
     await openShell("/", { ...TEST_USER, isServerAdmin: true, orgs: [] });
@@ -162,7 +195,7 @@ describe("user menu", () => {
     const menu = screen.getByRole("menu", { name: "Account" });
     expect(menuButton.getAttribute("aria-expanded")).toBe("true");
     const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="menuitemradio"]'));
-    expect(items).toHaveLength(7);
+    expect(items).toHaveLength(8);
     expect(document.activeElement).toBe(items[0]);
 
     await user.keyboard("{ArrowDown}");
@@ -175,6 +208,22 @@ describe("user menu", () => {
     expect(document.activeElement).toBe(within(menu).getByRole("menuitem", { name: "Sign out" }));
 
     await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(menuButton);
+  });
+
+  it("opens the own account from the menu, by keyboard", async () => {
+    const { user, menuButton, location } = await openShell();
+    menuButton.focus();
+    await user.keyboard("{ArrowUp}");
+    const menu = screen.getByRole("menu", { name: "Account" });
+    // Second to last, right before Sign out.
+    await user.keyboard("{ArrowUp}");
+    const account = within(menu).getByRole("menuitem", { name: "Your account" });
+    expect(document.activeElement).toBe(account);
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { level: 1, name: "Your account" })).toBeTruthy();
+    expect(location().pathname).toBe("/account");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(menuButton);
   });

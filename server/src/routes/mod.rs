@@ -1,11 +1,17 @@
 pub mod admin_orgs;
+pub mod admin_settings;
 pub mod admin_users;
+pub mod audit;
 pub mod auth;
+pub mod dashboards;
+pub mod datasources;
+pub mod folders;
 pub mod grants;
 pub mod health;
 pub mod me;
 pub mod members;
 pub mod orgs;
+pub mod query;
 pub mod roles;
 pub mod setup;
 pub mod support;
@@ -24,6 +30,12 @@ pub fn all() -> Vec<table::RouteDef> {
         setup::routes(),
         auth::routes(),
         orgs::routes(),
+        admin_settings::routes(),
+        audit::routes(),
+        folders::routes(),
+        dashboards::routes(),
+        datasources::routes(),
+        query::routes(),
         members::routes(),
         teams::routes(),
         roles::routes(),

@@ -271,7 +271,8 @@ pub struct QueryRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub max_data_points: Option<u32>,
-    /// Dashboard variables; they become bind parameters, never text in the query.
+    /// Variable values: bound as parameters in SQL, escaped into strings in PromQL, and checked
+    /// against the schema when used as identifiers (docs/api/datasources.md).
     #[serde(default)]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub variables: BTreeMap<String, Value>,
@@ -317,6 +318,35 @@ pub struct PanelQueryRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub variables: BTreeMap<String, Value>,
+}
+
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`: runs the stored
+/// query of a query-type variable (same access as the panel route).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VariableOptionsRequest {
+    pub time_range: TimeRange,
+    /// The other variables' current values; the variable's own name is refused.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct VariableOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct VariableOptionsResponse {
+    /// Distinct by `value`, in the order the query returned them.
+    pub options: Vec<VariableOption>,
+    /// True when the list was cut at the option limit or the query's row limit.
+    pub truncated: bool,
 }
 
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
@@ -453,6 +483,9 @@ mod tests {
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
             PanelQueryRequest::decl(&cfg),
+            VariableOptionsRequest::decl(&cfg),
+            VariableOption::decl(&cfg),
+            VariableOptionsResponse::decl(&cfg),
             TimeRange::decl(&cfg),
             QueryResponse::decl(&cfg),
             QueryOutcome::decl(&cfg),
@@ -469,6 +502,8 @@ mod tests {
         };
         out.push_str(&union("ErrorCode", crate::error::ERROR_CODES.to_vec()));
         out.push_str(&union("Permission", crate::authz::Permission::ALL.iter().map(|p| p.as_str()).collect()));
+        // The UI keeps a label and description per setting in its catalogs (tested there).
+        out.push_str(&union("SettingKey", crate::settings::REGISTRY.iter().map(|d| d.key).collect()));
         for decl in decls {
             out.push_str("export ");
             out.push_str(&decl);
