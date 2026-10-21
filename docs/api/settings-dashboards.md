@@ -27,10 +27,16 @@ Common shapes:
 
 Restricted folders: a folder with `restricted: true` and everything below it (subfolders and
 their dashboards) exist only for members who may manage folder permissions (`folders:permissions`:
-admins and owners) and, once resource grants arrive, members with a grant on it. The nearest
-restricted folder above a resource decides: a restricted subfolder narrows access further. For
-everyone else every route answers `404 not_found` for them, lists and searches leave them out, and
-the organization's audit view leaves out the events about them.
+admins and owners) and members with a grant (`docs/api/access.md`) on that folder or a folder
+below it, directly, through a team or through a role. The nearest restricted folder above a
+resource decides: a restricted subfolder narrows access further, and grants above it do not reach
+in. A grant on a single dashboard shows that dashboard (not its folder). For everyone else every
+route answers `404 not_found` for them, lists and searches leave them out, and the organization's
+audit view leaves out the events about them. A folder someone reaches only through a grant below a
+hidden restricted folder appears at the top of their tree with `parentId: null`.
+
+Purging a folder or dashboard deletes the grants on it and on everything purged with it; grants on
+trashed resources stay, so a restore brings the access back.
 
 Actions on a whole subtree (trash, restore, purge, move) answer `403 forbidden` ("the folder
 contains content you cannot see") when anything below the folder is hidden from the caller.
@@ -59,7 +65,10 @@ default. Settings that live in the configuration (`sessions.*`) come from `kalzi
 `KALZIT_<SECTION>_<KEY>` and are never editable in the UI. Every other server setting can be
 overridden by `KALZIT_SETTING_<KEY>` (key in upper snake case: `audit.retention_days` is
 `KALZIT_SETTING_AUDIT_RETENTION_DAYS`; the value is JSON, or plain text for text settings).
-Organization settings are the database value, then the default.
+Organization settings are the database value, then the default. A `KALZIT_SETTING_*` variable that
+names no such server setting, or holds an invalid value, stops the server at start with a message
+naming the variable. `source` is `file` whenever `kalzit.toml` sets the key, also to the default
+value.
 
 Server settings:
 
