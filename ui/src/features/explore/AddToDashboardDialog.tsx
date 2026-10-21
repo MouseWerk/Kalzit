@@ -57,7 +57,7 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
   }, [search]);
   const dashboards = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "pick", q],
-    queryFn: ({ pageParam }) => fetchDashboards(orgId, { q, cursor: pageParam }),
+    queryFn: ({ pageParam, signal }) => fetchDashboards(orgId, { q, cursor: pageParam }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     placeholderData: keepPreviousData,

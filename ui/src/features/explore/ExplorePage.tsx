@@ -8,8 +8,8 @@ import { readPreference, writePreference } from "../../lib/storage";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
-import { PanelBody } from "../dashboards/PanelCard";
 import type { PanelModel } from "../dashboards/model";
+import { PanelBody } from "../dashboards/PanelCard";
 import { outcomesOf } from "../dashboards/results";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {

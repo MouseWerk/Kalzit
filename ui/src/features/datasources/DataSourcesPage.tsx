@@ -84,7 +84,8 @@ function DataSourceList({
   const { deleted } = listRoute.useSearch();
   const list = useInfiniteQuery({
     queryKey: [DATASOURCES_KEY, orgId, trash ? "trash" : "list"],
-    queryFn: ({ pageParam }) => fetchDatasourcePage(orgId, { cursor: pageParam, trash }),
+    queryFn: ({ pageParam, signal }) =>
+      fetchDatasourcePage(orgId, { cursor: pageParam, trash }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
   });

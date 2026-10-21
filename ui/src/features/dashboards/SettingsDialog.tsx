@@ -8,8 +8,8 @@ import { emptyQuery } from "../datasources/queryKinds";
 import {
   cleanVariable,
   currentValue,
-  optionValues,
   type DashboardModel,
+  optionValues,
   VARIABLE_TYPES,
   type VariableModel,
   type VariableType,

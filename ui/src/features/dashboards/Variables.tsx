@@ -1,13 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useId, useState } from "react";
-import type { TimeRange } from "../../api/generated/shapes";
-import { useI18n } from "../../i18n/i18n";
 import { ApiError, isApiError } from "../../api/client";
-import type { QueryResponse } from "../../api/generated/shapes";
+import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
+import { useI18n } from "../../i18n/i18n";
 import { runQuery } from "../datasources/api";
 import { fetchVariableOptions, type VariableOption } from "./api";
-import type { TextRange } from "./timeRange";
 import { currentValue, optionValues, type VariableModel } from "./model";
+import type { TextRange } from "./timeRange";
 import { errorMessage } from "./ui/errors";
 
 /** The value each variable starts with: its stored current value, else the first fixed value. */

@@ -1,11 +1,16 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
+import { fetchDashboards } from "./api";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { PANEL_QUERY_CONCURRENCY } from "./queryQueue";
 import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
+import { preloadDataPages } from "./test/lazyPages";
+
+// Lazy pages are loaded once up front, so no test waits on a cold module transform.
+beforeAll(preloadDataPages);
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
@@ -516,6 +521,61 @@ describe("editing a dashboard", () => {
   });
 });
 
+describe("rights and refusals", () => {
+  it("lets a viewer with an edit grant edit and save, but not delete", async () => {
+    const server = setup("viewer", []);
+    server.areas.dashboards.grants["d-sales"] = { write: true };
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
+    expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const title = within(dialog).getByRole("textbox", { name: "Title" });
+    await user.clear(title);
+    await user.type(title, "Sales (granted)");
+    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
+    expect(latest(storedSales(server)).model.title).toBe("Sales (granted)");
+  });
+
+  it.each([
+    ["a data source the editor may not query", "forbidden", /data source you may not query/],
+    ["a data source that no longer exists", "missing", /no longer exists/],
+  ] as const)("explains a save refused for %s", async (_, kind, text) => {
+    const server = setup("editor");
+    if (kind === "forbidden") {
+      server.areas.dashboards.unqueryable.push(PG_ID);
+    } else {
+      const source = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+      if (source !== undefined) {
+        source.deletedAt = Date.now();
+      }
+    }
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText(text)).toBeTruthy();
+    expect(storedSales(server).versions).toHaveLength(1);
+  });
+
+  it("passes the query's abort signal to the request", async () => {
+    installFakeServer({ signedIn: true, user: asRole("viewer") });
+    const controller = new AbortController();
+    await fetchDashboards("o1", {}, controller.signal);
+    const init = vi.mocked(fetch).mock.calls.at(-1)?.[1];
+    expect(init?.signal).toBe(controller.signal);
+  });
+});
+
 describe("history and trash", () => {
   it("restores an older version as the newest", async () => {
     const server = setup();
@@ -530,6 +590,16 @@ describe("history and trash", () => {
     expect(latest(stored)).toMatchObject({ version: 3, restoredFrom: 1, message: "" });
     expect(latest(stored).model.panels).toHaveLength(3);
     expect(screen.getAllByRole("article")).toHaveLength(3);
+  });
+
+  it("lists a trashed dashboard even when its folder is not in the caller's list", async () => {
+    const server = setup("editor");
+    const lost = addDashboard(server.areas.dashboards, "d-lost", emptyModel("Elsewhere"), {
+      folderId: "f-not-listed",
+    });
+    lost.deletedAt = Date.now();
+    renderApp("/dashboards/trash");
+    expect(await screen.findByRole("button", { name: "Restore “Elsewhere”" })).toBeTruthy();
   });
 
   it("moves a dashboard to the trash and restores it from there", async () => {

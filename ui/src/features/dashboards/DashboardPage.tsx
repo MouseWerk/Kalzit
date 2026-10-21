@@ -5,15 +5,15 @@ import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
-import { useI18n } from "../../i18n/i18n";
+import { type Translate, useI18n } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AccessButton } from "./accessIntegration";
 import {
-  type Dashboard,
   DASHBOARDS_KEY,
+  type Dashboard,
+  dashboardFromBody,
   dashboardQuery,
   deleteDashboard,
-  dashboardFromBody,
   fetchDashboard,
   restoreDashboard,
   saveDashboard,
@@ -37,6 +37,20 @@ import { resolveRange, type TextRange } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import { initialVariables, VariablesBar } from "./Variables";
+
+/**
+ * Saving checks every data source the panels and variables use: one the caller may not query is
+ * 403, one that does not exist (or is not visible) is 422 on `model`. Both get their own text.
+ */
+function saveErrorText(t: Translate, error: unknown): string {
+  if (isApiError(error, "forbidden")) {
+    return t("dashboards.save.forbidden");
+  }
+  if (isApiError(error, "validation") && error.field === "model") {
+    return t("dashboards.save.modelRefused");
+  }
+  return errorMessage(t, error);
+}
 
 const dashboardRoute = getRouteApi("/_app/dashboards/$dashboardId");
 
@@ -114,7 +128,10 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
   // Dashboards in restricted folders are hidden altogether, so whoever sees one may edit it when
   // their role allows; the server checks the folder grant on save. A trashed one is read-only.
   const inTrash = dashboard.deletedAt !== null;
-  const canEdit = permissions.has("dashboards:write") && !inTrash;
+  // What this caller may do here, grants included; the organization role until the server
+  // answers with `access`.
+  const canEdit = (dashboard.access?.write ?? permissions.has("dashboards:write")) && !inTrash;
+  const canDelete = dashboard.access?.delete ?? permissions.has("dashboards:delete");
 
   const [draft, setDraft] = useState<DashboardModel | null>(null);
   const model = draft ?? dashboard.model;
@@ -339,7 +356,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
               <AccessButton
                 resource={{ kind: "dashboard", id: dashboard.id, name: dashboard.title }}
               />
-              {permissions.has("dashboards:delete") && !inTrash ? (
+              {canDelete && !inTrash ? (
                 <button
                   type="button"
                   className="button button--secondary"
@@ -384,7 +401,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
         <div className="dashboard__mode" role="status">
           <Icon name="alert" />
           <span>{t("dashboards.inTrash")}</span>
-          {permissions.has("dashboards:delete") ? (
+          {canDelete ? (
             <button
               type="button"
               className="button button--secondary button--small"
@@ -482,7 +499,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
           busy={save.isPending}
           error={
             save.isError && !isApiError(save.error, "version_conflict")
-              ? errorMessage(t, save.error)
+              ? saveErrorText(t, save.error)
               : undefined
           }
           onSave={(message) => save.mutate({ next: draft, version: dashboard.version, message })}
@@ -498,7 +515,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
           mine={draft}
           current={dialog.current}
           busy={save.isPending}
-          error={save.isError ? errorMessage(t, save.error) : undefined}
+          error={save.isError ? saveErrorText(t, save.error) : undefined}
           onOverwrite={() =>
             save.mutate({
               next: draft,
@@ -540,7 +557,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
         </ConfirmDialog>
       ) : null}
       {save.isError && dialog === null && !isApiError(save.error, "version_conflict") ? (
-        <FormAlert>{errorMessage(t, save.error)}</FormAlert>
+        <FormAlert>{saveErrorText(t, save.error)}</FormAlert>
       ) : null}
     </div>
   );

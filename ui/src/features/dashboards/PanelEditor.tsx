@@ -6,7 +6,7 @@ import { panelsForShapes } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
-import { type PanelModel, nextRefId, type Target } from "./model";
+import { nextRefId, type PanelModel, type Target } from "./model";
 import { PanelBody } from "./PanelCard";
 import { Dialog } from "./ui/Dialog";
 import { usePanelResults } from "./usePanelResults";

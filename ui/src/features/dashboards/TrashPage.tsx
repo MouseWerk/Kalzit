@@ -12,7 +12,6 @@ import {
   FOLDERS_KEY,
   fetchDashboards,
   fetchTrashedFolders,
-  foldersQuery,
   purgeDashboard,
   purgeFolder,
   restoreDashboard,
@@ -58,16 +57,14 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
   const [purging, setPurging] = useState<TrashItem | null>(null);
   const dashboards = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "trash"],
-    queryFn: ({ pageParam }) => fetchDashboards(orgId, { trashed: true, cursor: pageParam }),
+    queryFn: ({ pageParam, signal }) =>
+      fetchDashboards(orgId, { trashed: true, cursor: pageParam }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
   });
-  // Folders not in the trash: a trashed dashboard in any other folder went with its folder and
-  // is restored with it, so it is listed only through that folder.
-  const liveFolders = useQuery(foldersQuery(orgId));
   const folders = useQuery({
     queryKey: [FOLDERS_KEY, orgId, "trash"],
-    queryFn: () => fetchTrashedFolders(orgId),
+    queryFn: ({ signal }) => fetchTrashedFolders(orgId, signal),
     enabled: canFolders,
   });
   const refresh = async () => {
@@ -89,17 +86,16 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
   });
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
 
-  if (dashboards.isPending || liveFolders.isPending || (canFolders && folders.isPending)) {
+  if (dashboards.isPending || (canFolders && folders.isPending)) {
     return <p className="loading">{t("common.loading")}</p>;
   }
-  if (dashboards.isError || folders.isError || liveFolders.isError) {
-    return (
-      <FormAlert>
-        {errorMessage(t, dashboards.error ?? folders.error ?? liveFolders.error)}
-      </FormAlert>
-    );
+  if (dashboards.isError || folders.isError) {
+    return <FormAlert>{errorMessage(t, dashboards.error ?? folders.error)}</FormAlert>;
   }
-  const live = new Set(liveFolders.data.map((f) => f.id));
+  // A folder is trashed with everything below it at one moment and restored the same way, so a
+  // dashboard trashed at the same moment as a listed folder is shown through that folder. Any
+  // other trashed dashboard is listed, whether or not its folder is in the caller's list.
+  const withFolder = new Set((folders.data ?? []).map((f) => f.deletedAt));
   const items: TrashItem[] = [
     ...(folders.data ?? []).map((f) => ({
       kind: "folder" as const,
@@ -109,7 +105,7 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
     })),
     ...dashboards.data.pages
       .flatMap((page) => page.items)
-      .filter((d) => d.folderId === null || live.has(d.folderId))
+      .filter((d) => d.folderId === null || !withFolder.has(d.deletedAt))
       .map((d) => ({
         kind: "dashboard" as const,
         id: d.id,

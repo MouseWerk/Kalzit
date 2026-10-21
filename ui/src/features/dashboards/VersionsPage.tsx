@@ -44,7 +44,7 @@ function VersionList({ orgId }: { orgId: string }) {
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
   const versions = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "versions", dashboardId],
-    queryFn: ({ pageParam }) => fetchVersions(orgId, dashboardId, pageParam),
+    queryFn: ({ pageParam, signal }) => fetchVersions(orgId, dashboardId, pageParam, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
   });
@@ -59,7 +59,9 @@ function VersionList({ orgId }: { orgId: string }) {
     },
   });
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
-  const canRestore = permissions.has("dashboards:write") && dashboard.data?.deletedAt === null;
+  const canRestore =
+    (dashboard.data?.access?.write ?? permissions.has("dashboards:write")) &&
+    dashboard.data?.deletedAt === null;
 
   if (versions.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
@@ -201,7 +203,7 @@ function VersionCompare({
   const { t } = useI18n();
   const old = useQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "version", dashboardId, version],
-    queryFn: () => fetchVersionModel(orgId, dashboardId, version),
+    queryFn: ({ signal }) => fetchVersionModel(orgId, dashboardId, version, signal),
     staleTime: Number.POSITIVE_INFINITY,
   });
   if (old.isPending) {

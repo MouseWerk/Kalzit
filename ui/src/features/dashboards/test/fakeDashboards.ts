@@ -53,6 +53,10 @@ export interface FakeDashboardsState {
   folders: StoredFolder[];
   dashboards: StoredDashboard[];
   variableOptions: Record<string, VariableOption[]>;
+  /** Resource grants per dashboard id, extending the caller's role on that dashboard. */
+  grants: Record<string, { write?: boolean; delete?: boolean }>;
+  /** Data sources the caller may see but not query (a grant taken away). */
+  unqueryable: string[];
   /** Every request of the options route, to check what was asked and how often. */
   variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
@@ -227,6 +231,8 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     folders: [],
     dashboards: [],
     variableOptions: {},
+    grants: {},
+    unqueryable: [],
     variableRequests: [],
     panelQueries: [],
     holdPanelQueries: false,
@@ -270,6 +276,44 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     const { method, route, search, body, permissions } = request;
     const parts = route.split("/").slice(4);
     const can = (permission: string) => permissions.has(permission);
+    // What the caller may do with one item: the role, extended by resource grants (the
+    // `access` booleans stream B adds to the answers).
+    const accessOf = (d: StoredDashboard) => {
+      const grant = state.grants[d.id] ?? {};
+      return {
+        write: can("dashboards:write") || grant.write === true,
+        delete: can("dashboards:delete") || grant.delete === true,
+        permissions: can("dashboards:share"),
+      };
+    };
+    // Saving checks datasources:query on every data source the model uses: one that does not
+    // exist (or is not visible) is 422 on model, one the caller may not query is 403.
+    const datasourceCheck = (model: DashboardModel): Response | null => {
+      const ids = [
+        ...model.panels.flatMap((p) => p.targets.map((t) => t.datasourceId)),
+        ...model.variables.flatMap((v) => (v.datasourceId === undefined ? [] : [v.datasourceId])),
+      ];
+      for (const id of ids) {
+        if (!areas.datasources.datasources.some((d) => d.id === id && d.deletedAt === undefined)) {
+          return validation("model", `data source ${id} does not exist`);
+        }
+        if (!can("datasources:query") || state.unqueryable.includes(id)) {
+          return error(403, "forbidden");
+        }
+      }
+      return null;
+    };
+    const dashboardAnswer = (d: StoredDashboard) => ({ ...detail(d), access: accessOf(d) });
+    const folderAnswer = (f: StoredFolder) => ({
+      ...folderView(f),
+      access: {
+        write: can("folders:write"),
+        delete: can("folders:write"),
+        permissions: can("folders:permissions"),
+      },
+    });
+    const allowed = (d: StoredDashboard, what: "write" | "delete") =>
+      accessOf(d)[what] ? null : error(403, "forbidden");
     const visible = (folderId: string | null) =>
       folderId === null || can("folders:permissions") || !restrictedChain(folderId);
 
@@ -284,14 +328,14 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
           const items = state.folders
             .filter((f) => f.deletedAt !== null && visible(f.id) && !trashedChain(f.parentId))
             .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
-            .map((f) => ({ ...folderView(f), children: [] }));
+            .map((f) => ({ ...folderAnswer(f), children: [] }));
           return json(200, { items, nextCursor: null });
         }
         const tree = (parentId: string | null): unknown[] =>
           state.folders
             .filter((f) => f.parentId === parentId && f.deletedAt === null && visible(f.id))
             .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
-            .map((f) => ({ ...folderView(f), children: tree(f.id) }));
+            .map((f) => ({ ...folderAnswer(f), children: tree(f.id) }));
         return json(200, { items: tree(null), nextCursor: null });
       }
       if (parts.length === 1 && method === "POST") {
@@ -308,7 +352,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
           parentId,
           restricted: body.restricted === true,
         });
-        return json(201, folderView(created));
+        return json(201, folderAnswer(created));
       }
       const folder = folderById(decodeURIComponent(parts[1] ?? ""));
       if (folder === undefined || !visible(folder.id)) {
@@ -324,7 +368,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         if (body.version !== folder.version) {
           return json(409, {
             error: { code: "version_conflict", message: "a newer version exists" },
-            current: folderView(folder),
+            current: folderAnswer(folder),
           });
         }
         if (body.parentId !== undefined && subtree(folder.id).some((f) => f.id === body.parentId)) {
@@ -334,7 +378,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         if (body.parentId !== undefined) folder.parentId = body.parentId as string | null;
         if (typeof body.restricted === "boolean") folder.restricted = body.restricted;
         folder.version++;
-        return json(200, folderView(folder));
+        return json(200, folderAnswer(folder));
       }
       if (parts.length === 2 && method === "DELETE") {
         const ids = new Set(subtree(folder.id).map((f) => f.id));
@@ -358,7 +402,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
               d.deletedAt = null;
           }
         }
-        return json(200, folderView(folder));
+        return json(200, folderAnswer(folder));
       }
       if (parts[2] === "purge" && method === "DELETE") {
         if (folder.deletedAt === null) return error(409, "conflict");
@@ -390,7 +434,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         .filter((d) => visible(d.folderId) && (trashed || !trashedChain(d.folderId)))
         .filter((d) => folderId === null || d.folderId === folderId)
         .filter((d) => latest(d).model.title.toLowerCase().includes(q))
-        .map(summary)
+        .map((d) => ({ ...summary(d), access: accessOf(d) }))
         .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
       return json(200, { items, nextCursor: null });
     }
@@ -400,6 +444,8 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (extra !== undefined) return validation(extra);
       const problem = modelProblem(body.model);
       if (problem !== null) return validation("model", problem);
+      const refused = datasourceCheck(body.model as DashboardModel);
+      if (refused !== null) return refused;
       const folderId = (body.folderId as string | null | undefined) ?? null;
       if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
         return error(404, "not_found");
@@ -409,7 +455,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       });
       latest(created).message = typeof body.message === "string" ? body.message : "";
       latest(created).createdAt = Date.now();
-      return json(201, detail(created));
+      return json(201, dashboardAnswer(created));
     }
     const dashboard = state.dashboards.find((d) => d.id === decodeURIComponent(parts[1] ?? ""));
     if (dashboard === undefined || !visible(dashboard.folderId)) {
@@ -417,7 +463,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     }
     const needs = (permission: string) => (can(permission) ? null : error(403, "forbidden"));
     if (parts.length === 2 && method === "GET") {
-      return needs("dashboards:read") ?? json(200, detail(dashboard));
+      return needs("dashboards:read") ?? json(200, dashboardAnswer(dashboard));
     }
     if (parts[2] === "panels" && parts[4] === "query" && method === "POST") {
       return (
@@ -452,7 +498,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       return version === undefined ? error(404, "not_found") : json(200, version);
     }
     if (parts[2] === "versions" && parts[4] === "restore" && method === "POST") {
-      const denied = needs("dashboards:write");
+      const denied = allowed(dashboard, "write");
       if (denied !== null) return denied;
       if (dashboard.deletedAt !== null) return error(409, "conflict");
       const version = dashboard.versions.find((v) => v.version === Number(parts[3]));
@@ -466,20 +512,22 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         createdAt: Date.now(),
         model: version.model,
       });
-      return json(200, detail(dashboard));
+      return json(200, dashboardAnswer(dashboard));
     }
     if (parts.length === 2 && method === "PUT") {
-      const denied = needs("dashboards:write");
+      const denied = allowed(dashboard, "write");
       if (denied !== null) return denied;
       const extra = unknownField(body, ["model", "version", "message", "folderId"]);
       if (extra !== undefined) return validation(extra);
       if (dashboard.deletedAt !== null) return error(409, "conflict");
       const problem = modelProblem(body.model);
       if (problem !== null) return validation("model", problem);
+      const refused = datasourceCheck(body.model as DashboardModel);
+      if (refused !== null) return refused;
       if (body.version !== latest(dashboard).version) {
         return json(409, {
           error: { code: "version_conflict", message: "a newer version exists" },
-          current: detail(dashboard),
+          current: dashboardAnswer(dashboard),
         });
       }
       if (body.folderId !== undefined) dashboard.folderId = body.folderId as string | null;
@@ -492,23 +540,23 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         createdAt: Date.now(),
         model: body.model as DashboardModel,
       });
-      return json(200, detail(dashboard));
+      return json(200, dashboardAnswer(dashboard));
     }
     if (parts.length === 2 && method === "DELETE") {
-      const denied = needs("dashboards:delete");
+      const denied = allowed(dashboard, "delete");
       if (denied !== null) return denied;
       dashboard.deletedAt ??= Date.now();
       return new Response(null, { status: 204 });
     }
     if (parts[2] === "restore" && method === "POST") {
-      const denied = needs("dashboards:delete");
+      const denied = allowed(dashboard, "delete");
       if (denied !== null) return denied;
       if (trashedChain(dashboard.folderId)) return error(409, "conflict");
       dashboard.deletedAt = null;
-      return json(200, detail(dashboard));
+      return json(200, dashboardAnswer(dashboard));
     }
     if (parts[2] === "purge" && method === "DELETE") {
-      const denied = needs("dashboards:delete");
+      const denied = allowed(dashboard, "delete");
       if (denied !== null) return denied;
       if (dashboard.deletedAt === null) return error(409, "conflict");
       state.dashboards = state.dashboards.filter((d) => d !== dashboard);

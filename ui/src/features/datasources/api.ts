@@ -220,9 +220,9 @@ function isQueryResponse(value: unknown): value is QueryResponse {
   return isRecord(value) && isRecord(value.results);
 }
 
-export async function fetchKinds(orgId: string): Promise<DatasourceKind[]> {
+export async function fetchKinds(orgId: string, signal?: AbortSignal): Promise<DatasourceKind[]> {
   const page = parsePage(
-    await send("GET", orgPath(orgId, "datasource-kinds")),
+    await send("GET", orgPath(orgId, "datasource-kinds"), undefined, signal),
     parseKind,
     "data source kinds",
   );
@@ -233,24 +233,28 @@ export async function fetchKinds(orgId: string): Promise<DatasourceKind[]> {
 export async function fetchDatasourcePage(
   orgId: string,
   options: { cursor?: string | undefined; trash?: boolean } = {},
+  signal?: AbortSignal,
 ): Promise<Page<DatasourceSummary>> {
   const params = new URLSearchParams();
   if (options.trash === true) params.set("trash", "true");
   if (options.cursor !== undefined) params.set("cursor", options.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "datasources") + (query === "" ? "" : `?${query}`);
-  return parsePage(await send("GET", path), parseSummary, "data source list");
+  return parsePage(await send("GET", path, undefined, signal), parseSummary, "data source list");
 }
 
 /** Pages after this are not read for pickers; no organization keeps that many sources. */
 const PICKER_PAGES = 20;
 
 /** Every data source, for pickers in Explore and the panel editor. */
-export async function fetchAllDatasources(orgId: string): Promise<DatasourceSummary[]> {
+export async function fetchAllDatasources(
+  orgId: string,
+  signal?: AbortSignal,
+): Promise<DatasourceSummary[]> {
   const all: DatasourceSummary[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < PICKER_PAGES; page++) {
-    const next = await fetchDatasourcePage(orgId, { cursor });
+    const next = await fetchDatasourcePage(orgId, { cursor }, signal);
     all.push(...next.items);
     if (next.nextCursor === null) {
       break;
@@ -260,8 +264,12 @@ export async function fetchAllDatasources(orgId: string): Promise<DatasourceSumm
   return all;
 }
 
-export async function fetchDatasource(orgId: string, id: string): Promise<Datasource> {
-  return parseDatasource(await send("GET", orgPath(orgId, "datasources", id)));
+export async function fetchDatasource(
+  orgId: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Datasource> {
+  return parseDatasource(await send("GET", orgPath(orgId, "datasources", id), undefined, signal));
 }
 
 export async function createDatasource(orgId: string, input: DatasourceInput): Promise<Datasource> {
@@ -301,8 +309,12 @@ export async function checkHealth(orgId: string, id: string): Promise<Health> {
   return result;
 }
 
-export async function fetchSchema(orgId: string, id: string): Promise<SourceSchema> {
-  const value = await send("GET", orgPath(orgId, "datasources", id, "schema"));
+export async function fetchSchema(
+  orgId: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<SourceSchema> {
+  const value = await send("GET", orgPath(orgId, "datasources", id, "schema"), undefined, signal);
   const strings = (list: unknown) =>
     Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
   if (isRecord(value) && value.kind === "metrics") {
@@ -330,7 +342,7 @@ export async function runQuery(
 export function kindsQuery(orgId: string) {
   return queryOptions({
     queryKey: ["datasource-kinds", orgId],
-    queryFn: () => fetchKinds(orgId),
+    queryFn: ({ signal }) => fetchKinds(orgId, signal),
     // The kinds are compiled into the server; they change only with an update.
     staleTime: 10 * 60_000,
   });
@@ -342,21 +354,21 @@ export const DATASOURCES_KEY = "datasources";
 export function datasourcesQuery(orgId: string) {
   return queryOptions({
     queryKey: [DATASOURCES_KEY, orgId, "all"],
-    queryFn: () => fetchAllDatasources(orgId),
+    queryFn: ({ signal }) => fetchAllDatasources(orgId, signal),
   });
 }
 
 export function datasourceQuery(orgId: string, id: string) {
   return queryOptions({
     queryKey: [DATASOURCES_KEY, orgId, "one", id],
-    queryFn: () => fetchDatasource(orgId, id),
+    queryFn: ({ signal }) => fetchDatasource(orgId, id, signal),
   });
 }
 
 export function schemaQuery(orgId: string, id: string) {
   return queryOptions({
     queryKey: [DATASOURCES_KEY, orgId, "schema", id],
-    queryFn: () => fetchSchema(orgId, id),
+    queryFn: ({ signal }) => fetchSchema(orgId, id, signal),
     staleTime: 5 * 60_000,
     retry: false,
   });

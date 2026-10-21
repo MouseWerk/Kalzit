@@ -9,6 +9,27 @@ import { type DashboardModel, parseModel } from "./model";
  * exactly the documented fields: the server answers unknown fields with 422 validation.
  */
 
+/**
+ * What the caller may do with one folder or dashboard, grants included (stream B adds it to the
+ * answers). Absent on older servers; the UI then falls back to the organization permissions.
+ */
+export interface Access {
+  write: boolean;
+  delete: boolean;
+  permissions: boolean;
+}
+
+function parseAccess(value: unknown): Access | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return {
+    write: value.write === true,
+    delete: value.delete === true,
+    permissions: value.permissions === true,
+  };
+}
+
 export interface Folder {
   id: string;
   parentId: string | null;
@@ -17,6 +38,7 @@ export interface Folder {
   restricted: boolean;
   version: number;
   deletedAt: number | null;
+  access?: Access;
 }
 
 export interface DashboardSummary {
@@ -26,6 +48,7 @@ export interface DashboardSummary {
   version: number;
   updatedAt: number;
   deletedAt: number | null;
+  access?: Access;
 }
 
 export interface Dashboard extends DashboardSummary {
@@ -64,14 +87,19 @@ function flattenFolders(nodes: unknown[], into: Folder[] = []): Folder[] {
     if (!isRecord(node) || typeof node.id !== "string") {
       continue;
     }
-    into.push({
+    const folder: Folder = {
       id: node.id,
       parentId: nullableId(node.parentId),
       name: str(node.name),
       restricted: node.restricted === true,
       version: num(node.version),
       deletedAt: nullableNum(node.deletedAt),
-    });
+    };
+    const access = parseAccess(node.access);
+    if (access !== undefined) {
+      folder.access = access;
+    }
+    into.push(folder);
     if (Array.isArray(node.children)) {
       flattenFolders(node.children, into);
     }
@@ -83,7 +111,7 @@ function parseSummary(value: unknown): DashboardSummary | null {
   if (!isRecord(value) || typeof value.id !== "string") {
     return null;
   }
-  return {
+  const summary: DashboardSummary = {
     id: value.id,
     folderId: nullableId(value.folderId),
     title: str(value.title),
@@ -91,6 +119,11 @@ function parseSummary(value: unknown): DashboardSummary | null {
     updatedAt: num(value.updatedAt),
     deletedAt: nullableNum(value.deletedAt),
   };
+  const access = parseAccess(value.access);
+  if (access !== undefined) {
+    summary.access = access;
+  }
+  return summary;
 }
 
 function parseDashboard(value: unknown): Dashboard {
@@ -120,9 +153,13 @@ function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: stri
   } satisfies Page<T>;
 }
 
-async function folderPage(orgId: string, trashed: boolean): Promise<Folder[]> {
+async function folderPage(
+  orgId: string,
+  trashed: boolean,
+  signal?: AbortSignal,
+): Promise<Folder[]> {
   const path = orgPath(orgId, "folders") + (trashed ? "?trashed=true" : "");
-  const value = await send("GET", path);
+  const value = await send("GET", path, undefined, signal);
   if (!isRecord(value) || !Array.isArray(value.items)) {
     return invalid("folder list");
   }
@@ -130,13 +167,13 @@ async function folderPage(orgId: string, trashed: boolean): Promise<Folder[]> {
 }
 
 /** The visible folders not in the trash, parents before their children. */
-export function fetchFolders(orgId: string): Promise<Folder[]> {
-  return folderPage(orgId, false);
+export function fetchFolders(orgId: string, signal?: AbortSignal): Promise<Folder[]> {
+  return folderPage(orgId, false, signal);
 }
 
 /** The top folder of every trashed subtree. */
-export function fetchTrashedFolders(orgId: string): Promise<Folder[]> {
-  return folderPage(orgId, true);
+export function fetchTrashedFolders(orgId: string, signal?: AbortSignal): Promise<Folder[]> {
+  return folderPage(orgId, true, signal);
 }
 
 export async function createFolder(
@@ -177,6 +214,7 @@ export interface DashboardFilter {
 export async function fetchDashboards(
   orgId: string,
   filter: DashboardFilter,
+  signal?: AbortSignal,
 ): Promise<Page<DashboardSummary>> {
   const params = new URLSearchParams();
   if (filter.folderId !== undefined) params.set("folderId", filter.folderId);
@@ -185,11 +223,15 @@ export async function fetchDashboards(
   if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "dashboards") + (query === "" ? "" : `?${query}`);
-  return parsePage(await send("GET", path), parseSummary, "dashboard list");
+  return parsePage(await send("GET", path, undefined, signal), parseSummary, "dashboard list");
 }
 
-export async function fetchDashboard(orgId: string, id: string): Promise<Dashboard> {
-  return parseDashboard(await send("GET", orgPath(orgId, "dashboards", id)));
+export async function fetchDashboard(
+  orgId: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Dashboard> {
+  return parseDashboard(await send("GET", orgPath(orgId, "dashboards", id), undefined, signal));
 }
 
 /** Creates version 1; the title is the model's. */
@@ -239,10 +281,16 @@ export async function fetchVersions(
   orgId: string,
   id: string,
   cursor?: string,
+  signal?: AbortSignal,
 ): Promise<Page<DashboardVersion>> {
   const path = orgPath(orgId, "dashboards", id, "versions");
   return parsePage(
-    await send("GET", cursor === undefined ? path : `${path}?cursor=${encodeURIComponent(cursor)}`),
+    await send(
+      "GET",
+      cursor === undefined ? path : `${path}?cursor=${encodeURIComponent(cursor)}`,
+      undefined,
+      signal,
+    ),
     parseVersion,
     "version list",
   );
@@ -252,8 +300,14 @@ export async function fetchVersionModel(
   orgId: string,
   id: string,
   version: number,
+  signal?: AbortSignal,
 ): Promise<DashboardModel> {
-  const value = await send("GET", orgPath(orgId, "dashboards", id, "versions", String(version)));
+  const value = await send(
+    "GET",
+    orgPath(orgId, "dashboards", id, "versions", String(version)),
+    undefined,
+    signal,
+  );
   return parseModel(isRecord(value) ? value.model : undefined, "");
 }
 
@@ -324,13 +378,13 @@ export const DASHBOARDS_KEY = "dashboards";
 export function foldersQuery(orgId: string) {
   return queryOptions({
     queryKey: [FOLDERS_KEY, orgId],
-    queryFn: () => fetchFolders(orgId),
+    queryFn: ({ signal }) => fetchFolders(orgId, signal),
   });
 }
 
 export function dashboardQuery(orgId: string, id: string) {
   return queryOptions({
     queryKey: [DASHBOARDS_KEY, orgId, "one", id],
-    queryFn: () => fetchDashboard(orgId, id),
+    queryFn: ({ signal }) => fetchDashboard(orgId, id, signal),
   });
 }

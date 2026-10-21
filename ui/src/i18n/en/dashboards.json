@@ -250,5 +250,7 @@
   "dashboards.panels.noValue": "no value",
   "dashboards.folders.restrictedInheritedHint": "Restricted through a folder above it: only members with access, admins and owners see it.",
   "dashboards.panel.placed": "{title}: column {column}, row {row}, {width} columns wide, {height} rows high.",
-  "dashboards.variables.notFound": "This variable is not part of the saved dashboard. Save the dashboard, or reload the page if someone removed it."
+  "dashboards.variables.notFound": "This variable is not part of the saved dashboard. Save the dashboard, or reload the page if someone removed it.",
+  "dashboards.save.forbidden": "You may not save this: a panel or variable uses a data source you may not query, or you may not change this dashboard. Ask an admin for access, or remove those queries.",
+  "dashboards.save.modelRefused": "The server did not accept the dashboard, for example because a panel or variable uses a data source that no longer exists. Check the queries and try again."
 }

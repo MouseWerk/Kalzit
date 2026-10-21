@@ -218,10 +218,8 @@ function DashboardList({
   const { t, language } = useI18n();
   const list = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "list", folderId ?? null, q ?? ""],
-    queryFn: ({ pageParam, signal }) => {
-      signal.throwIfAborted();
-      return fetchDashboards(orgId, { folderId, q, cursor: pageParam });
-    },
+    queryFn: ({ pageParam, signal }) =>
+      fetchDashboards(orgId, { folderId, q, cursor: pageParam }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     // A new search keeps showing the previous results until its own arrive, without "Loading".
@@ -546,7 +544,7 @@ function FolderActions({
   return (
     <div className="folder-actions">
       <FormAlert>{restrict.isError ? errorMessage(t, restrict.error) : null}</FormAlert>
-      {permissions.has("folders:write") ? (
+      {(folder.access?.write ?? permissions.has("folders:write")) ? (
         <div className="toolbar">
           <button
             type="button"
@@ -555,7 +553,7 @@ function FolderActions({
           >
             {t("dashboards.folders.edit")}
           </button>
-          {permissions.has("folders:permissions") ? (
+          {(folder.access?.permissions ?? permissions.has("folders:permissions")) ? (
             <label className="checkbox">
               <input
                 type="checkbox"

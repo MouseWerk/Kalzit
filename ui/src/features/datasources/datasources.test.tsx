@@ -1,8 +1,12 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { preloadDataPages } from "../dashboards/test/lazyPages";
 import { PG_ID } from "./test/fakeDatasources";
+
+// Lazy pages are loaded once up front, so no test waits on a cold module transform.
+beforeAll(preloadDataPages);
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
