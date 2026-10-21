@@ -93,7 +93,8 @@ Newest first.
 
 ```json
 { "items": [{ "id": "0199…", "name": "Umsätze", "kind": "postgres", "createdAt": 1800000000000,
-              "access": { "read": true, "query": true, "write": false, "permissions": false } }], "nextCursor": null }
+              "access": { "read": true, "query": true, "write": false, "permissions": false, "changeTarget": false } }],
+  "nextCursor": null }
 ```
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
@@ -111,7 +112,7 @@ Items in the trash also carry `deletedAt`. `access` is described under [Access](
   "secrets": { "password": { "set": true } },
   "createdAt": 1800000000000,
   "updatedAt": 1800000000000,
-  "access": { "read": true, "query": true, "write": true, "permissions": true }
+  "access": { "read": true, "query": true, "write": true, "permissions": true, "changeTarget": true }
 }
 ```
 
@@ -128,13 +129,14 @@ agree; the list computes it for all rows at once.
 | `read` | `datasources:read` on the source (role, or any grant) | `GET` of the source: name, kind, settings without secrets |
 | `query` | `datasources:query` on the source (role, or any grant) | free queries (`/query`, Explore), Test connection (`/health`), `/schema` |
 | `write` | `datasources:write` on the source (admin roles, or an `edit` or `admin` grant) | `PATCH` of the name, non-target settings, limits and secrets; `DELETE` (trash) and `restore` |
-| `permissions` | `datasources:permissions` on the source (admin roles, or an `admin` grant) | managing the source's grants, and changing `target` fields (host, port, database, user, TLS, URL, path) |
+| `permissions` | `datasources:permissions` on the source (admin roles, or an `admin` grant) | managing the source's grants |
+| `changeTarget` | the org-wide `datasources:write` (the caller's role), or `datasources:permissions` on the source | changing `target` fields (host, port, database, user, TLS, URL, path), with the secrets that go with them (see Update) |
 
-A target change is also allowed with the org-wide `datasources:write` alone; the built-in roles
-give that only together with `datasources:permissions`, so for them `permissions` is the whole
-rule. A custom role with `datasources:write` but not `datasources:permissions` may change targets
-although `permissions` is false. Creating a source needs the org-wide `datasources:write` (the
-caller's role, not `access`).
+`changeTarget` is exactly the rule `PATCH` applies to target changes. It differs from
+`permissions` for a custom role with the org-wide `datasources:write` but without
+`datasources:permissions`: that role may change targets but not manage grants. An `edit` grant
+gives `write` without `changeTarget`. On a source the caller cannot see, every flag is false.
+Creating a source needs the org-wide `datasources:write` (the caller's role, not `access`).
 
 ### Create: `POST /orgs/{orgId}/datasources`
 

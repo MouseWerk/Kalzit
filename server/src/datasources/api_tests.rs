@@ -1364,7 +1364,7 @@ async fn answers_carry_the_callers_access() {
     let file = t.sqlite_file("umsatz.db", SALES).await;
     let other = t.sqlite_file("anderes.db", SALES).await;
     let ds = t.create_sqlite("Umsätze", &file).await;
-    let access = |read: bool, query: bool, write: bool, permissions: bool| json!({ "read": read, "query": query, "write": write, "permissions": permissions });
+    let access = |read: bool, query: bool, write: bool, permissions: bool, change_target: bool| json!({ "read": read, "query": query, "write": write, "permissions": permissions, "changeTarget": change_target });
     let seen = |cookie: String| {
         let t = &t;
         let ds = ds.clone();
@@ -1376,9 +1376,24 @@ async fn answers_carry_the_callers_access() {
             one.body["access"].clone()
         }
     };
-    assert_eq!(seen(t.owner.clone()).await, access(true, true, true, true));
+    assert_eq!(seen(t.owner.clone()).await, access(true, true, true, true, true));
     let editor = t.session_for_role("edda", Some("editor")).await;
-    assert_eq!(seen(editor.clone()).await, access(true, true, false, false));
+    assert_eq!(seen(editor.clone()).await, access(true, true, false, false, false));
+
+    // A custom role with the org-wide write but without permissions may repoint sources, so
+    // `changeTarget` is true where `permissions` is false.
+    let role = t
+        .post("/roles", json!({ "name": "Quellenpflege", "permissions": ["datasources:read", "datasources:write"] }))
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text);
+    let custom = t.session_for_role("quirin", role.body["id"].as_str()).await;
+    assert_eq!(seen(custom.clone()).await, access(true, false, true, false, true));
+    let moved = json!({ "settings": { "path": other.to_string_lossy() } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(moved), Some(&custom)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let back = json!({ "settings": { "path": file.to_string_lossy() } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(back), Some(&custom)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
 
     let viewer = t.session_for_role("vera", Some("viewer")).await;
     let (vera,): (String,) =
@@ -1387,16 +1402,16 @@ async fn answers_carry_the_callers_access() {
     assert_eq!(list.body["items"], json!([]), "{}", list.text);
     let grant = |level: &str| json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": ds, "level": level });
     for (level, expected) in [
-        ("query", access(true, true, false, false)),
-        ("edit", access(true, true, true, false)),
-        ("admin", access(true, true, true, true)),
+        ("query", access(true, true, false, false, false)),
+        ("edit", access(true, true, true, false, false)),
+        ("admin", access(true, true, true, true, true)),
     ] {
         // A second grant for the same member replaces the first.
         let r = t.post("/grants", grant(level)).await;
         assert!(r.status.is_success(), "{}", r.text);
         assert_eq!(seen(viewer.clone()).await, expected, "{level}");
     }
-    // `permissions` is what changing the target needs; an edit grant alone is refused (see
+    // `changeTarget` says the target may change; an edit grant alone is refused (see
     // an_edit_grant_cannot_repoint_a_data_source).
     let r = t
         .send(
@@ -1407,12 +1422,12 @@ async fn answers_carry_the_callers_access() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
-    assert_eq!(r.body["access"], access(true, true, true, true));
+    assert_eq!(r.body["access"], access(true, true, true, true, true));
 
     // The trash says the same.
     t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&viewer)).await;
     let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&viewer)).await;
-    assert_eq!(trash.body["items"][0]["access"], access(true, true, true, true), "{}", trash.text);
+    assert_eq!(trash.body["items"][0]["access"], access(true, true, true, true, true), "{}", trash.text);
 }
 
 #[tokio::test]

@@ -93,17 +93,23 @@ struct ListItem {
 }
 
 /// The caller's access from what they hold on the source (role and grants together, as
-/// `resource_permissions` and the access index answer it). Changing where a source connects is
-/// also open to the org-wide datasources:write (see `update`), which the built-in roles only
-/// give together with datasources:permissions.
-fn access(held: Option<BTreeSet<Permission>>) -> DatasourceAccess {
-    let held = held.unwrap_or_default();
+/// `resource_permissions` and the access index answer it). Nothing is allowed on a source the
+/// caller cannot see.
+fn access(ctx: &OrgCtx, held: Option<BTreeSet<Permission>>) -> DatasourceAccess {
+    let Some(held) = held else { return DatasourceAccess::default() };
     DatasourceAccess {
         read: held.contains(&Permission::DatasourcesRead),
         query: held.contains(&Permission::DatasourcesQuery),
         write: held.contains(&Permission::DatasourcesWrite),
         permissions: held.contains(&Permission::DatasourcesPermissions),
+        change_target: may_change_target(ctx, &held),
     }
+}
+
+/// Where a source connects is decided by those who administer it: the org-wide right, or an
+/// admin grant on this source. An edit grant changes names, limits and secrets only.
+fn may_change_target(ctx: &OrgCtx, held: &BTreeSet<Permission>) -> bool {
+    ctx.permissions.contains(&Permission::DatasourcesWrite) || held.contains(&Permission::DatasourcesPermissions)
 }
 
 #[derive(Deserialize)]
@@ -206,7 +212,7 @@ async fn list(
     let items = rows
         .into_iter()
         .map(|(id, name, kind, created_at, deleted_at)| {
-            let access = access(index.datasource(&id));
+            let access = access(&ctx, index.datasource(&id));
             ListItem { id, name, kind, created_at, deleted_at, access }
         })
         .collect();
@@ -232,7 +238,7 @@ struct DatasourceView {
 async fn view(state: &AppState, ctx: &OrgCtx, ds: Datasource) -> ApiResult<DatasourceView> {
     let secrets =
         secrets::set_fields(&state.db, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
-    let access = access(resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?);
+    let access = access(ctx, resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?);
     Ok(DatasourceView {
         access,
         id: ds.id,
@@ -439,12 +445,8 @@ async fn update(
     // A new target must not receive the secrets stored for the old one: every stored secret is
     // sent again (or removed) in the same change.
     if let Some(target) = kind.changed_targets(&ds.settings, &settings).first() {
-        // Where a source connects is decided by those who administer it: the org-wide right, or
-        // an admin grant on this source. An edit grant changes names, limits and secrets only.
         let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
-        if !ctx.permissions.contains(&Permission::DatasourcesWrite)
-            && !held.contains(&Permission::DatasourcesPermissions)
-        {
+        if !may_change_target(&ctx, &held) {
             return Err(ApiError::forbidden(format!(
                 "changing {target} needs datasources:write for the organization or an admin grant on this source"
             ))

@@ -386,15 +386,18 @@ pub enum QueryOutcome {
 /// - `read`: open it (name, kind, settings without secrets).
 /// - `query`: run free queries in Explore, test the connection, read the schema.
 /// - `write`: change its name, limits and secrets, and trash and restore it.
-/// - `permissions`: the admin level: manage its grants and change where it connects (host,
-///   port, database, path, URL), with the secrets that go with it.
+/// - `permissions`: the admin level: manage its grants.
+/// - `changeTarget`: change where it connects (host, port, database, user, TLS, path, URL), with
+///   the secrets that go with it: the org-wide datasources:write, or `permissions`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
 pub struct DatasourceAccess {
     pub read: bool,
     pub query: bool,
     pub write: bool,
     pub permissions: bool,
+    pub change_target: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
