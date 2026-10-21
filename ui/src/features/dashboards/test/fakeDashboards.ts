@@ -6,14 +6,17 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
-import { answerQuery } from "../../datasources/test/fakeDatasources";
+import { answerQuery, PANEL_QUERY_REQUEST_FIELDS } from "../../datasources/test/fakeDatasources";
 import type { VariableOption } from "../api";
 import type { DashboardModel } from "../model";
 
 /**
- * Fake routes for folders, dashboards, versions, the panel query route and variable options.
- * Restricted folders the caller has no grant for are simply absent (`hidden`), as on the server;
- * a dashboard save with an old version answers 409 `version_conflict` with the stored one.
+ * Fake folder and dashboard routes, written from docs/api/settings-dashboards.md (stream B), not
+ * from the UI's own types: lists are `Page<T>`, folders come as a tree, unknown body fields and
+ * query parameters answer 422, `version_conflict` carries the stored resource as `current`, and
+ * trash, restore and purge behave as documented. Restricted folders exist only for members with
+ * `folders:permissions`. The panel query and variable option routes (stream C) follow
+ * docs/ARCHITECTURE.md.
  */
 
 export interface StoredFolder {
@@ -21,29 +24,29 @@ export interface StoredFolder {
   parentId: string | null;
   name: string;
   restricted: boolean;
-  canEdit: boolean;
   version: number;
-  /** Not visible to the caller at all, like a restricted folder without a grant. */
-  hidden?: boolean;
-  deletedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
 }
 
 export interface StoredVersion {
   version: number;
-  createdAt: number;
-  createdBy: string;
   message: string;
+  authorId: string | null;
+  authorName: string | null;
+  restoredFrom: number | null;
+  createdAt: number;
   model: DashboardModel;
 }
 
 export interface StoredDashboard {
   id: string;
-  title: string;
   folderId: string | null;
-  canEdit: boolean;
+  createdAt: number;
+  createdBy: string | null;
+  deletedAt: number | null;
   versions: StoredVersion[];
-  updatedBy: string;
-  deletedAt?: number;
 }
 
 export interface FakeDashboardsState {
@@ -57,8 +60,31 @@ export interface FakeDashboardsState {
   release: () => void;
 }
 
+const AUTHOR = { id: "u1", name: "Ada Lovelace" };
+const CREATED = Date.UTC(2026, 9, 1);
+
 export function latest(dashboard: StoredDashboard): StoredVersion {
   return dashboard.versions.at(-1) as StoredVersion;
+}
+
+export function addFolder(
+  state: FakeDashboardsState,
+  id: string,
+  name: string,
+  options: { parentId?: string | null; restricted?: boolean } = {},
+): StoredFolder {
+  const folder: StoredFolder = {
+    id,
+    parentId: options.parentId ?? null,
+    name,
+    restricted: options.restricted ?? false,
+    version: 1,
+    createdAt: CREATED,
+    updatedAt: CREATED,
+    deletedAt: null,
+  };
+  state.folders.push(folder);
+  return folder;
 }
 
 /** Adds a dashboard with one stored version and returns it. */
@@ -66,20 +92,22 @@ export function addDashboard(
   state: FakeDashboardsState,
   id: string,
   model: DashboardModel,
-  options: { folderId?: string | null; canEdit?: boolean } = {},
+  options: { folderId?: string | null } = {},
 ): StoredDashboard {
   const dashboard: StoredDashboard = {
     id,
-    title: model.title,
     folderId: options.folderId ?? null,
-    canEdit: options.canEdit ?? true,
-    updatedBy: "Ada Lovelace",
+    createdAt: CREATED,
+    createdBy: AUTHOR.id,
+    deletedAt: null,
     versions: [
       {
         version: 1,
-        createdAt: Date.UTC(2026, 9, 1),
-        createdBy: "Ada Lovelace",
         message: "",
+        authorId: AUTHOR.id,
+        authorName: AUTHOR.name,
+        restoredFrom: null,
+        createdAt: CREATED,
         model,
       },
     ],
@@ -88,16 +116,106 @@ export function addDashboard(
   return dashboard;
 }
 
-function detail(dashboard: StoredDashboard) {
-  const current = latest(dashboard);
+function summary(d: StoredDashboard) {
+  const current = latest(d);
   return {
-    id: dashboard.id,
-    title: dashboard.title,
-    folderId: dashboard.folderId,
+    id: d.id,
+    folderId: d.folderId,
+    title: current.model.title,
     version: current.version,
-    model: current.model,
-    canEdit: dashboard.canEdit,
+    createdAt: d.createdAt,
+    updatedAt: current.createdAt,
+    updatedBy: current.authorId,
+    deletedAt: d.deletedAt,
   };
+}
+
+function detail(d: StoredDashboard) {
+  return { ...summary(d), model: latest(d).model, createdBy: d.createdBy };
+}
+
+function folderView(f: StoredFolder) {
+  const { id, parentId, name, restricted, version, createdAt, updatedAt, deletedAt } = f;
+  return { id, parentId, name, restricted, version, createdAt, updatedAt, deletedAt };
+}
+
+/** The first field of `body` the route does not know, as the server reports it. */
+function unknownField(body: Record<string, unknown>, allowed: string[]): string | undefined {
+  return Object.keys(body).find((key) => !allowed.includes(key));
+}
+
+function unknownParam(search: URLSearchParams, allowed: string[]): string | undefined {
+  return [...search.keys()].find((key) => !allowed.includes(key));
+}
+
+const MODEL_FIELDS = [
+  "schemaVersion",
+  "title",
+  "timeRange",
+  "refreshSeconds",
+  "variables",
+  "panels",
+];
+const PANEL_FIELDS = [
+  "id",
+  "type",
+  "title",
+  "grid",
+  "targets",
+  "transformations",
+  "options",
+  "fieldConfig",
+];
+const VARIABLE_FIELDS = ["name", "type", "label", "datasourceId", "query", "options", "current"];
+const VARIABLE_TYPES = ["query", "custom", "constant", "textbox", "interval"];
+
+/** The documented model checks that matter to the UI; a message names the place like the server. */
+function modelProblem(model: unknown): string | null {
+  if (typeof model !== "object" || model === null || Array.isArray(model)) {
+    return "model: not an object";
+  }
+  const m = model as Record<string, unknown>;
+  const extra = unknownField(m, MODEL_FIELDS);
+  if (extra !== undefined) return `model.${extra}: unknown field`;
+  if (m.schemaVersion !== 1) return "model.schemaVersion: must be 1";
+  if (typeof m.title !== "string" || m.title.length < 1 || m.title.length > 200) {
+    return "model.title: 1 to 200 characters";
+  }
+  const range = m.timeRange as Record<string, unknown> | undefined;
+  if (typeof range?.from !== "string" || typeof range.to !== "string") {
+    return "model.timeRange: from and to are required";
+  }
+  for (const [i, variable] of ((m.variables ?? []) as Record<string, unknown>[]).entries()) {
+    const field = unknownField(variable, VARIABLE_FIELDS);
+    if (field !== undefined) return `model.variables[${i}].${field}: unknown field`;
+    if (!VARIABLE_TYPES.includes(String(variable.type))) return `model.variables[${i}].type`;
+    if ((variable.type === "query") !== (variable.datasourceId !== undefined)) {
+      return `model.variables[${i}].datasourceId: only and always for query variables`;
+    }
+  }
+  const ids = new Set<string>();
+  for (const [i, panel] of ((m.panels ?? []) as Record<string, unknown>[]).entries()) {
+    const field = unknownField(panel, PANEL_FIELDS);
+    if (field !== undefined) return `model.panels[${i}].${field}: unknown field`;
+    const grid = panel.grid as { x: number; y: number; w: number; h: number };
+    if (
+      grid.w < 1 ||
+      grid.w > 24 ||
+      grid.x < 0 ||
+      grid.x + grid.w > 24 ||
+      grid.h < 1 ||
+      grid.h > 200
+    ) {
+      return `model.panels[${i}].grid: out of range`;
+    }
+    if (ids.has(String(panel.id))) return `model.panels[${i}].id: not unique`;
+    ids.add(String(panel.id));
+  }
+  return null;
+}
+
+function validation(field: string, message = `invalid ${field}`): Response {
+  return json(422, { error: { code: "validation", message, field } });
 }
 
 export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsState> {
@@ -119,79 +237,133 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     },
   };
 
-  const visibleFolder = (id: string | null) =>
-    id === null ||
-    state.folders.some((f) => f.id === id && f.hidden !== true && f.deletedAt === undefined);
-  const findDashboard = (id: string) =>
-    state.dashboards.find(
-      (d) => d.id === id && d.deletedAt === undefined && visibleFolder(d.folderId),
-    );
+  const folderById = (id: string | null) =>
+    id === null ? undefined : state.folders.find((f) => f.id === id);
 
-  async function handle(request: FakeRequest): Promise<Response | undefined> {
+  /** Restricted here or above: such folders exist only for members who manage permissions. */
+  function restrictedChain(id: string | null): boolean {
+    for (let f = folderById(id); f !== undefined; f = folderById(f.parentId)) {
+      if (f.restricted) return true;
+    }
+    return false;
+  }
+
+  function trashedChain(id: string | null): boolean {
+    for (let f = folderById(id); f !== undefined; f = folderById(f.parentId)) {
+      if (f.deletedAt !== null) return true;
+    }
+    return false;
+  }
+
+  function subtree(id: string): StoredFolder[] {
+    const all = state.folders.filter((f) => f.id === id);
+    for (let i = 0; i < all.length; i++) {
+      all.push(...state.folders.filter((f) => f.parentId === all[i]?.id));
+    }
+    return all;
+  }
+
+  function handle(request: FakeRequest): Response | undefined | Promise<Response | undefined> {
     const { method, route, search, body, permissions } = request;
     const parts = route.split("/").slice(4);
     const can = (permission: string) => permissions.has(permission);
+    const visible = (folderId: string | null) =>
+      folderId === null || can("folders:permissions") || !restrictedChain(folderId);
 
     if (parts[0] === "folders") {
-      const folder = state.folders.find(
-        (f) =>
-          f.id === parts[1] &&
-          f.hidden !== true &&
-          (f.deletedAt === undefined || parts[2] === "restore"),
-      );
-      if (parts.length === 1 && method === "GET") {
-        const items = state.folders.filter((f) => f.hidden !== true && f.deletedAt === undefined);
-        return json(
-          200,
-          items.map(({ id, parentId, name, restricted, canEdit, version }) => ({
-            id,
-            parentId,
-            name,
-            restricted,
-            canEdit,
-            version,
-          })),
-        );
-      }
-      if (parts.length === 1 && method === "POST") {
-        if (!can("folders:write")) {
-          return error(403, "forbidden");
-        }
-        state.folders.push({
-          id: `folder-new-${nextId++}`,
-          parentId: (body.parentId as string | null) ?? null,
-          name: String(body.name),
-          restricted: false,
-          canEdit: true,
-          version: 1,
-        });
-        return json(201, {});
-      }
-      if (folder === undefined) {
-        return error(404, "not_found");
-      }
-      if (!can("folders:write")) {
+      if (!can(parts.length === 1 && method === "GET" ? "folders:read" : "folders:write")) {
         return error(403, "forbidden");
       }
-      if (parts.length === 2 && method === "PATCH") {
-        if (body.version !== folder.version) {
-          return error(409, "version_conflict");
+      if (parts.length === 1 && method === "GET") {
+        const extra = unknownParam(search, ["trashed", "limit", "cursor"]);
+        if (extra !== undefined) return validation(extra);
+        if (search.get("trashed") === "true") {
+          const items = state.folders
+            .filter((f) => f.deletedAt !== null && visible(f.id) && !trashedChain(f.parentId))
+            .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
+            .map((f) => ({ ...folderView(f), children: [] }));
+          return json(200, { items, nextCursor: null });
         }
+        const tree = (parentId: string | null): unknown[] =>
+          state.folders
+            .filter((f) => f.parentId === parentId && f.deletedAt === null && visible(f.id))
+            .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+            .map((f) => ({ ...folderView(f), children: tree(f.id) }));
+        return json(200, { items: tree(null), nextCursor: null });
+      }
+      if (parts.length === 1 && method === "POST") {
+        const extra = unknownField(body, ["name", "parentId", "restricted"]);
+        if (extra !== undefined) return validation(extra);
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        if (name.length < 1 || name.length > 100) return validation("name");
+        const parentId = (body.parentId as string | null | undefined) ?? null;
+        if (parentId !== null && (folderById(parentId) === undefined || !visible(parentId))) {
+          return error(404, "not_found");
+        }
+        if (body.restricted === true && !can("folders:permissions")) return error(403, "forbidden");
+        const created = addFolder(state, `folder-new-${nextId++}`, name, {
+          parentId,
+          restricted: body.restricted === true,
+        });
+        return json(201, folderView(created));
+      }
+      const folder = folderById(decodeURIComponent(parts[1] ?? ""));
+      if (folder === undefined || !visible(folder.id)) {
+        return error(404, "not_found");
+      }
+      if (parts.length === 2 && method === "PATCH") {
+        const extra = unknownField(body, ["version", "name", "parentId", "restricted"]);
+        if (extra !== undefined) return validation(extra);
+        if (folder.deletedAt !== null) return error(409, "conflict");
         if (body.restricted !== undefined && !can("folders:permissions")) {
           return error(403, "forbidden");
         }
-        if (typeof body.name === "string") folder.name = body.name;
+        if (body.version !== folder.version) {
+          return json(409, {
+            error: { code: "version_conflict", message: "a newer version exists" },
+            current: folderView(folder),
+          });
+        }
+        if (body.parentId !== undefined && subtree(folder.id).some((f) => f.id === body.parentId)) {
+          return validation("parentId");
+        }
+        if (typeof body.name === "string") folder.name = body.name.trim();
         if (body.parentId !== undefined) folder.parentId = body.parentId as string | null;
         if (typeof body.restricted === "boolean") folder.restricted = body.restricted;
         folder.version++;
-        return json(200, {});
+        return json(200, folderView(folder));
       }
       if (parts.length === 2 && method === "DELETE") {
-        folder.deletedAt = Date.now();
+        const ids = new Set(subtree(folder.id).map((f) => f.id));
+        const contained = state.dashboards.filter(
+          (d) => d.folderId !== null && ids.has(d.folderId),
+        );
+        if (contained.length > 0 && !can("dashboards:delete")) return error(403, "forbidden");
+        const now = Date.now();
+        for (const f of subtree(folder.id)) f.deletedAt ??= now;
+        for (const d of contained) d.deletedAt ??= now;
         return new Response(null, { status: 204 });
       }
       if (parts[2] === "restore" && method === "POST") {
-        delete folder.deletedAt;
+        if (trashedChain(folder.parentId)) return error(409, "conflict");
+        const at = folder.deletedAt;
+        if (at !== null) {
+          const ids = new Set(subtree(folder.id).map((f) => f.id));
+          for (const f of subtree(folder.id)) if (f.deletedAt === at) f.deletedAt = null;
+          for (const d of state.dashboards) {
+            if (d.folderId !== null && ids.has(d.folderId) && d.deletedAt === at)
+              d.deletedAt = null;
+          }
+        }
+        return json(200, folderView(folder));
+      }
+      if (parts[2] === "purge" && method === "DELETE") {
+        if (folder.deletedAt === null) return error(409, "conflict");
+        const ids = new Set(subtree(folder.id).map((f) => f.id));
+        state.folders = state.folders.filter((f) => !ids.has(f.id));
+        state.dashboards = state.dashboards.filter(
+          (d) => d.folderId === null || !ids.has(d.folderId),
+        );
         return new Response(null, { status: 204 });
       }
       return undefined;
@@ -200,137 +372,162 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     if (parts[0] !== "dashboards") {
       return undefined;
     }
-    if (!can("dashboards:read")) {
-      return error(403, "forbidden");
-    }
     if (parts.length === 1 && method === "GET") {
-      const deleted = search.get("deleted") === "true";
+      if (!can("dashboards:read")) return error(403, "forbidden");
+      const extra = unknownParam(search, ["folderId", "q", "trashed", "limit", "cursor"]);
+      if (extra !== undefined) return validation(extra);
       const folderId = search.get("folderId");
+      if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
+        return error(404, "not_found");
+      }
+      const trashed = search.get("trashed") === "true";
       const q = (search.get("q") ?? "").toLowerCase();
       const items = state.dashboards
-        .filter((d) => (deleted ? d.deletedAt !== undefined : d.deletedAt === undefined))
-        .filter((d) => visibleFolder(d.folderId))
+        .filter((d) => (trashed ? d.deletedAt !== null : d.deletedAt === null))
+        .filter((d) => visible(d.folderId) && (trashed || !trashedChain(d.folderId)))
         .filter((d) => folderId === null || d.folderId === folderId)
-        .filter((d) => d.title.toLowerCase().includes(q))
-        .map((d) => ({
-          id: d.id,
-          title: d.title,
-          folderId: d.folderId,
-          updatedAt: latest(d).createdAt,
-          updatedBy: d.updatedBy,
-          ...(d.deletedAt === undefined ? {} : { deletedAt: d.deletedAt }),
-        }));
+        .filter((d) => latest(d).model.title.toLowerCase().includes(q))
+        .map(summary)
+        .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
       return json(200, { items, nextCursor: null });
     }
     if (parts.length === 1 && method === "POST") {
-      if (!can("dashboards:write")) {
-        return error(403, "forbidden");
+      if (!can("dashboards:write")) return error(403, "forbidden");
+      const extra = unknownField(body, ["model", "folderId", "message"]);
+      if (extra !== undefined) return validation(extra);
+      const problem = modelProblem(body.model);
+      if (problem !== null) return validation("model", problem);
+      const folderId = (body.folderId as string | null | undefined) ?? null;
+      if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
+        return error(404, "not_found");
       }
       const created = addDashboard(state, `dash-new-${nextId++}`, body.model as DashboardModel, {
-        folderId: (body.folderId as string | null) ?? null,
+        folderId,
       });
-      created.title = String(body.title);
+      latest(created).message = typeof body.message === "string" ? body.message : "";
+      latest(created).createdAt = Date.now();
       return json(201, detail(created));
     }
-    const id = decodeURIComponent(parts[1] ?? "");
-    if (parts[2] === "restore" && method === "POST") {
-      const trashed = state.dashboards.find((d) => d.id === id && d.deletedAt !== undefined);
-      if (trashed === undefined) {
-        return error(404, "not_found");
-      }
-      delete trashed.deletedAt;
-      return new Response(null, { status: 204 });
-    }
-    const dashboard = findDashboard(id);
-    if (dashboard === undefined) {
+    const dashboard = state.dashboards.find((d) => d.id === decodeURIComponent(parts[1] ?? ""));
+    if (dashboard === undefined || !visible(dashboard.folderId)) {
       return error(404, "not_found");
     }
+    const needs = (permission: string) => (can(permission) ? null : error(403, "forbidden"));
     if (parts.length === 2 && method === "GET") {
-      return json(200, detail(dashboard));
+      return needs("dashboards:read") ?? json(200, detail(dashboard));
     }
     if (parts[2] === "panels" && parts[4] === "query" && method === "POST") {
-      const panelId = decodeURIComponent(parts[3] ?? "");
-      const panel = latest(dashboard).model.panels.find((p) => p.id === panelId);
-      if (panel === undefined) {
-        return error(404, "not_found");
-      }
-      const query = body as unknown as PanelQueryRequest;
-      state.panelQueries.push({ dashboardId: id, panelId, body: query });
-      if (state.holdPanelQueries) {
-        await new Promise<void>((resolve) => waiting.push(resolve));
-      }
-      const results: Record<string, QueryOutcome> = {};
-      for (const target of panel.targets) {
-        results[target.refId] = await answerQuery(
-          areas.datasources,
-          { refId: target.refId, datasourceId: target.datasourceId, query: target.query },
-          query.timeRange,
-        );
-      }
-      return json(200, { results });
+      return (
+        needs("dashboards:read") ?? panelQuery(dashboard, decodeURIComponent(parts[3] ?? ""), body)
+      );
     }
     if (parts[2] === "variables" && parts[4] === "options" && method === "POST") {
-      return json(200, {
-        options: state.variableOptions[decodeURIComponent(parts[3] ?? "")] ?? [],
-      });
+      const options = state.variableOptions[decodeURIComponent(parts[3] ?? "")] ?? [];
+      return needs("dashboards:read") ?? json(200, { options });
     }
     if (parts[2] === "versions" && method === "GET") {
+      const denied = needs("dashboards:read");
+      if (denied !== null) return denied;
       if (parts.length === 3) {
-        const items = [...dashboard.versions]
-          .reverse()
-          .map(({ version, createdAt, createdBy, message }) => ({
-            version,
-            createdAt,
-            createdBy,
-            message,
-          }));
+        const items = [...dashboard.versions].reverse().map(({ model: _model, ...rest }) => rest);
         return json(200, { items, nextCursor: null });
       }
       const version = dashboard.versions.find((v) => v.version === Number(parts[3]));
       return version === undefined ? error(404, "not_found") : json(200, version);
     }
-    if (!can("dashboards:write") || !dashboard.canEdit) {
-      return error(403, "forbidden");
-    }
     if (parts[2] === "versions" && parts[4] === "restore" && method === "POST") {
+      const denied = needs("dashboards:write");
+      if (denied !== null) return denied;
+      if (dashboard.deletedAt !== null) return error(409, "conflict");
       const version = dashboard.versions.find((v) => v.version === Number(parts[3]));
-      if (version === undefined) {
-        return error(404, "not_found");
-      }
+      if (version === undefined) return error(404, "not_found");
       dashboard.versions.push({
-        ...version,
         version: latest(dashboard).version + 1,
+        message: "",
+        authorId: AUTHOR.id,
+        authorName: AUTHOR.name,
+        restoredFrom: version.version,
         createdAt: Date.now(),
-        message: `Restored version ${version.version}`,
+        model: version.model,
       });
-      return new Response(null, { status: 204 });
+      return json(200, detail(dashboard));
     }
     if (parts.length === 2 && method === "PUT") {
+      const denied = needs("dashboards:write");
+      if (denied !== null) return denied;
+      const extra = unknownField(body, ["model", "version", "message", "folderId"]);
+      if (extra !== undefined) return validation(extra);
+      if (dashboard.deletedAt !== null) return error(409, "conflict");
+      const problem = modelProblem(body.model);
+      if (problem !== null) return validation("model", problem);
       if (body.version !== latest(dashboard).version) {
         return json(409, {
           error: { code: "version_conflict", message: "a newer version exists" },
           current: detail(dashboard),
         });
       }
-      const model = body.model as DashboardModel;
+      if (body.folderId !== undefined) dashboard.folderId = body.folderId as string | null;
       dashboard.versions.push({
         version: latest(dashboard).version + 1,
+        message: typeof body.message === "string" ? body.message : "",
+        authorId: AUTHOR.id,
+        authorName: AUTHOR.name,
+        restoredFrom: null,
         createdAt: Date.now(),
-        createdBy: "Ada Lovelace",
-        message: String(body.message ?? ""),
-        model,
+        model: body.model as DashboardModel,
       });
-      dashboard.title = model.title;
       return json(200, detail(dashboard));
     }
     if (parts.length === 2 && method === "DELETE") {
-      if (!can("dashboards:delete")) {
-        return error(403, "forbidden");
-      }
-      dashboard.deletedAt = Date.now();
+      const denied = needs("dashboards:delete");
+      if (denied !== null) return denied;
+      dashboard.deletedAt ??= Date.now();
+      return new Response(null, { status: 204 });
+    }
+    if (parts[2] === "restore" && method === "POST") {
+      const denied = needs("dashboards:delete");
+      if (denied !== null) return denied;
+      if (trashedChain(dashboard.folderId)) return error(409, "conflict");
+      dashboard.deletedAt = null;
+      return json(200, detail(dashboard));
+    }
+    if (parts[2] === "purge" && method === "DELETE") {
+      const denied = needs("dashboards:delete");
+      if (denied !== null) return denied;
+      if (dashboard.deletedAt === null) return error(409, "conflict");
+      state.dashboards = state.dashboards.filter((d) => d !== dashboard);
       return new Response(null, { status: 204 });
     }
     return undefined;
+  }
+
+  async function panelQuery(
+    dashboard: StoredDashboard,
+    panelId: string,
+    body: Record<string, unknown>,
+  ): Promise<Response> {
+    const panel = latest(dashboard).model.panels.find((p) => p.id === panelId);
+    if (panel === undefined) {
+      return error(404, "not_found");
+    }
+    const extra = unknownField(body, PANEL_QUERY_REQUEST_FIELDS);
+    if (extra !== undefined) {
+      return validation(extra);
+    }
+    const query = body as unknown as PanelQueryRequest;
+    state.panelQueries.push({ dashboardId: dashboard.id, panelId, body: query });
+    if (state.holdPanelQueries) {
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    }
+    const results: Record<string, QueryOutcome> = {};
+    for (const target of panel.targets) {
+      results[target.refId] = await answerQuery(
+        areas.datasources,
+        { refId: target.refId, datasourceId: target.datasourceId, query: target.query },
+        query.timeRange,
+      );
+    }
+    return json(200, { results });
   }
 
   return { state, handle };

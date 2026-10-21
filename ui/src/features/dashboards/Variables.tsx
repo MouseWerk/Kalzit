@@ -8,9 +8,7 @@ import { errorMessage } from "./ui/errors";
 
 /** The value each variable starts with: its stored current value, else the first fixed value. */
 export function initialVariables(variables: readonly VariableModel[]): Record<string, string> {
-  return Object.fromEntries(
-    variables.map((v) => [v.name, v.current ?? (v.type === "custom" ? (v.values?.[0] ?? "") : "")]),
-  );
+  return Object.fromEntries(variables.map((v) => [v.name, v.current ?? v.options?.[0] ?? ""]));
 }
 
 interface VariablesBarProps {
@@ -37,18 +35,21 @@ export function VariablesBar({
   }
   return (
     <section className="variables" aria-label={t("dashboards.variables.label")}>
-      {variables.map((variable) => (
-        <VariableControl
-          key={variable.name}
-          orgId={orgId}
-          dashboardId={dashboardId}
-          variable={variable}
-          value={values[variable.name] ?? ""}
-          values={values}
-          range={range}
-          onChange={(value) => onChange(variable.name, value)}
-        />
-      ))}
+      {variables
+        // A constant has one fixed value; there is nothing to choose.
+        .filter((variable) => variable.type !== "constant")
+        .map((variable) => (
+          <VariableControl
+            key={variable.name}
+            orgId={orgId}
+            dashboardId={dashboardId}
+            variable={variable}
+            value={values[variable.name] ?? ""}
+            values={values}
+            range={range}
+            onChange={(value) => onChange(variable.name, value)}
+          />
+        ))}
     </section>
   );
 }
@@ -108,8 +109,8 @@ function VariableControl({
     );
   } else {
     const list =
-      variable.type === "custom"
-        ? (variable.values ?? []).map((v) => ({ value: v, label: v }))
+      variable.type === "custom" || variable.type === "interval"
+        ? (variable.options ?? []).map((v) => ({ value: v, label: v }))
         : (options.data ?? []);
     const known = list.some((option) => option.value === value);
     control = (

@@ -14,6 +14,7 @@ import {
   dashboardQuery,
   deleteDashboard,
   fetchDashboard,
+  restoreDashboard,
   saveDashboard,
 } from "./api";
 import "./dashboards.css";
@@ -109,10 +110,13 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
   const search = dashboardRoute.useSearch();
   const routeNavigate = dashboardRoute.useNavigate();
   const headingId = useId();
-  const canEdit = dashboard.canEdit && permissions.has("dashboards:write");
+  // Dashboards in restricted folders are hidden altogether, so whoever sees one may edit it when
+  // their role allows; the server checks the folder grant on save. A trashed one is read-only.
+  const inTrash = dashboard.deletedAt !== null;
+  const canEdit = permissions.has("dashboards:write") && !inTrash;
 
   const [draft, setDraft] = useState<DashboardModel | null>(() =>
-    search.edit === true && dashboard.canEdit ? dashboard.model : null,
+    search.edit === true && !inTrash ? dashboard.model : null,
   );
   const model = draft ?? dashboard.model;
   const [values, setValues] = useState(() => initialVariables(dashboard.model.variables));
@@ -186,6 +190,11 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       await navigate({ to: "/dashboards/trash" });
     },
+  });
+
+  const restore = useMutation({
+    mutationFn: () => restoreDashboard(orgId, dashboard.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] }),
   });
 
   const changeDraft = (change: (current: DashboardModel) => DashboardModel) =>
@@ -306,7 +315,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
               <AccessButton
                 resource={{ kind: "dashboard", id: dashboard.id, name: dashboard.title }}
               />
-              {permissions.has("dashboards:delete") && dashboard.canEdit ? (
+              {permissions.has("dashboards:delete") && !inTrash ? (
                 <button
                   type="button"
                   className="button button--secondary"
@@ -347,6 +356,22 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
           )}
         </div>
       </div>
+      {inTrash ? (
+        <div className="dashboard__mode" role="status">
+          <Icon name="alert" />
+          <span>{t("dashboards.inTrash")}</span>
+          {permissions.has("dashboards:delete") ? (
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              onClick={() => restore.mutate()}
+              disabled={restore.isPending}
+            >
+              {t("dashboards.trash.restore")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {draft === null ? null : (
         <p className="dashboard__mode" role="status">
           <Icon name="dashboards" />

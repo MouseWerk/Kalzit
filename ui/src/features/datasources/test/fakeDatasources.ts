@@ -203,6 +203,26 @@ export async function answerQuery(
   return state.respond(item, range);
 }
 
+/**
+ * Stream C has not published its route document yet; like stream B's routes, these are assumed
+ * to refuse unknown fields with 422, so the UI sends exactly the fields of the contract.
+ */
+export function unknownField(body: Record<string, unknown>, allowed: string[]) {
+  return Object.keys(body).find((key) => !allowed.includes(key));
+}
+
+/** `QueryRequest` in api/generated/shapes.ts. */
+const QUERY_REQUEST_FIELDS = ["queries", "timeRange", "intervalMs", "maxDataPoints", "variables"];
+/** `PanelQueryRequest` in api/generated/shapes.ts. */
+export const PANEL_QUERY_REQUEST_FIELDS = [
+  "timeRange",
+  "cursors",
+  "limit",
+  "intervalMs",
+  "maxDataPoints",
+  "variables",
+];
+
 function publicView(ds: StoredDatasource) {
   const kind = FAKE_KINDS.find((k) => k.kind === ds.kind);
   const secrets = Object.fromEntries(
@@ -293,6 +313,10 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       if (!can("datasources:query")) {
         return error(403, "forbidden");
       }
+      const extra = unknownField(body, QUERY_REQUEST_FIELDS);
+      if (extra !== undefined) {
+        return error(422, "validation", extra);
+      }
       const query = body as unknown as QueryRequest;
       state.queries.push(query);
       const results: Record<string, QueryOutcome> = {};
@@ -313,6 +337,10 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return json(200, { items, nextCursor: null });
     }
     if (parts.length === 1 && method === "POST") {
+      const extra = unknownField(body, ["name", "kind", "settings", "secrets"]);
+      if (extra !== undefined) {
+        return error(422, "validation", extra);
+      }
       if (!can("datasources:write")) {
         return error(403, "forbidden");
       }
@@ -356,6 +384,10 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return error(403, "forbidden");
     }
     if (parts.length === 2 && method === "PATCH") {
+      const extra = unknownField(body, ["name", "settings", "secrets", "version"]);
+      if (extra !== undefined) {
+        return error(422, "validation", extra);
+      }
       if (body.version !== ds.version) {
         return json(409, {
           error: { code: "version_conflict", message: "newer version" },

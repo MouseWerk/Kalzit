@@ -34,19 +34,23 @@ export interface PanelModel {
   fieldConfig: unknown;
 }
 
+/** Every variable type the model allows (docs/api/settings-dashboards.md). */
+export const ALL_VARIABLE_TYPES = ["custom", "textbox", "query", "constant", "interval"] as const;
+export type VariableType = (typeof ALL_VARIABLE_TYPES)[number];
+/** The types the settings dialog offers; constant and interval are kept when stored. */
 export const VARIABLE_TYPES = ["custom", "textbox", "query"] as const;
-export type VariableType = (typeof VARIABLE_TYPES)[number];
 
 /**
- * A dashboard variable. `custom` offers fixed values, `textbox` takes free text, `query` asks the
- * server for its options. The value always reaches queries as a bind parameter.
+ * A dashboard variable. `custom` and `interval` offer fixed values, `textbox` takes free text,
+ * `query` asks the server for its options, `constant` is fixed and not shown. The value always
+ * reaches queries as a bind parameter.
  */
 export interface VariableModel {
   name: string;
   label?: string;
   type: VariableType;
-  /** `custom`: the values to choose from. */
-  values?: string[];
+  /** `custom` and `interval`: the values to choose from. */
+  options?: string[];
   /** `query`: where the options come from. */
   datasourceId?: string;
   query?: unknown;
@@ -123,13 +127,15 @@ function parseVariable(value: unknown): VariableModel | null {
   if (!isRecord(value) || typeof value.name !== "string" || value.name === "") {
     return null;
   }
-  const type = VARIABLE_TYPES.find((t) => t === value.type) ?? "textbox";
+  const type = ALL_VARIABLE_TYPES.find((t) => t === value.type) ?? "textbox";
   const variable: VariableModel = { name: value.name, type };
   if (typeof value.label === "string" && value.label !== "") {
     variable.label = value.label;
   }
-  if (Array.isArray(value.values)) {
-    variable.values = value.values.filter((v): v is string => typeof v === "string");
+  if (Array.isArray(value.options)) {
+    variable.options = value.options.flatMap((v) =>
+      typeof v === "string" || typeof v === "number" ? [String(v)] : [],
+    );
   }
   if (typeof value.datasourceId === "string") {
     variable.datasourceId = value.datasourceId;
@@ -137,10 +143,31 @@ function parseVariable(value: unknown): VariableModel | null {
   if (value.query !== undefined) {
     variable.query = value.query;
   }
-  if (typeof value.current === "string") {
-    variable.current = value.current;
+  if (typeof value.current === "string" || typeof value.current === "number") {
+    variable.current = String(value.current);
   }
   return variable;
+}
+
+/**
+ * Keeps only the fields the variable's type uses: the server refuses a `datasourceId` on
+ * anything but a query variable, and the dialog may have filled others before a type change.
+ */
+export function cleanVariable(variable: VariableModel): VariableModel {
+  const clean: VariableModel = { name: variable.name, type: variable.type };
+  if (variable.label !== undefined && variable.label !== "") clean.label = variable.label;
+  if (variable.current !== undefined && variable.current !== "") clean.current = variable.current;
+  if (variable.type === "query") {
+    if (variable.datasourceId !== undefined) clean.datasourceId = variable.datasourceId;
+    if (variable.query !== undefined) clean.query = variable.query;
+  }
+  if (
+    (variable.type === "custom" || variable.type === "interval") &&
+    variable.options !== undefined
+  ) {
+    clean.options = variable.options;
+  }
+  return clean;
 }
 
 export function parseModel(value: unknown, fallbackTitle: string): DashboardModel {

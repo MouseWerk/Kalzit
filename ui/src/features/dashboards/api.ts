@@ -4,39 +4,42 @@ import type { Page, PanelQueryRequest, QueryResponse, TimeRange } from "../../ap
 import { orgPath } from "../datasources/api";
 import { type DashboardModel, parseModel } from "./model";
 
+/*
+ * Folders and dashboards as docs/api/settings-dashboards.md specifies them. Request bodies carry
+ * exactly the documented fields: the server answers unknown fields with 422 validation.
+ */
+
 export interface Folder {
   id: string;
   parentId: string | null;
   name: string;
+  /** The folder's own flag; subfolders inherit the restriction. */
   restricted: boolean;
-  canEdit: boolean;
-  /** Sent back with a change; the folder list is assumed to carry it like every versioned item. */
   version: number;
+  deletedAt: number | null;
 }
 
 export interface DashboardSummary {
   id: string;
-  title: string;
   folderId: string | null;
+  title: string;
+  version: number;
   updatedAt: number;
-  updatedBy: string;
-  deletedAt?: number;
+  deletedAt: number | null;
 }
 
-export interface Dashboard {
-  id: string;
-  title: string;
-  folderId: string | null;
-  version: number;
+export interface Dashboard extends DashboardSummary {
   model: DashboardModel;
-  canEdit: boolean;
 }
 
 export interface DashboardVersion {
   version: number;
   createdAt: number;
-  createdBy: string;
+  /** Current name of the author; null once the account is removed. */
+  authorName: string | null;
   message: string;
+  /** The version this one brought back, for restores. */
+  restoredFrom: number | null;
 }
 
 export interface VariableOption {
@@ -53,51 +56,49 @@ const str = (value: unknown, fallback = ""): string =>
 const num = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const nullableId = (value: unknown): string | null => (typeof value === "string" ? value : null);
+const nullableNum = (value: unknown): number | null => (typeof value === "number" ? value : null);
 
-function parseFolder(value: unknown): Folder | null {
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return null;
+/** Folders arrive as a tree (`FolderNode` with `children`); the UI works on the flat list. */
+function flattenFolders(nodes: unknown[], into: Folder[] = []): Folder[] {
+  for (const node of nodes) {
+    if (!isRecord(node) || typeof node.id !== "string") {
+      continue;
+    }
+    into.push({
+      id: node.id,
+      parentId: nullableId(node.parentId),
+      name: str(node.name),
+      restricted: node.restricted === true,
+      version: num(node.version),
+      deletedAt: nullableNum(node.deletedAt),
+    });
+    if (Array.isArray(node.children)) {
+      flattenFolders(node.children, into);
+    }
   }
-  return {
-    id: value.id,
-    parentId: nullableId(value.parentId),
-    name: str(value.name),
-    restricted: value.restricted === true,
-    canEdit: value.canEdit === true,
-    version: num(value.version),
-  };
+  return into;
 }
 
 function parseSummary(value: unknown): DashboardSummary | null {
   if (!isRecord(value) || typeof value.id !== "string") {
     return null;
   }
-  const summary: DashboardSummary = {
+  return {
     id: value.id,
-    title: str(value.title),
     folderId: nullableId(value.folderId),
+    title: str(value.title),
+    version: num(value.version),
     updatedAt: num(value.updatedAt),
-    updatedBy: str(value.updatedBy),
+    deletedAt: nullableNum(value.deletedAt),
   };
-  if (typeof value.deletedAt === "number") {
-    summary.deletedAt = value.deletedAt;
-  }
-  return summary;
 }
 
 function parseDashboard(value: unknown): Dashboard {
-  if (!isRecord(value) || typeof value.id !== "string" || typeof value.version !== "number") {
+  const summary = parseSummary(value);
+  if (summary === null || !isRecord(value) || typeof value.version !== "number") {
     return invalid("dashboard");
   }
-  const title = str(value.title);
-  return {
-    id: value.id,
-    title,
-    folderId: nullableId(value.folderId),
-    version: value.version,
-    model: parseModel(value.model, title),
-    canEdit: value.canEdit === true,
-  };
+  return { ...summary, model: parseModel(value.model, summary.title) };
 }
 
 function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: string) {
@@ -110,12 +111,23 @@ function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: stri
   } satisfies Page<T>;
 }
 
-export async function fetchFolders(orgId: string): Promise<Folder[]> {
-  const value = await request("GET", orgPath(orgId, "folders"));
-  if (!Array.isArray(value)) {
+async function folderPage(orgId: string, trashed: boolean): Promise<Folder[]> {
+  const path = orgPath(orgId, "folders") + (trashed ? "?trashed=true" : "");
+  const value = await request("GET", path);
+  if (!isRecord(value) || !Array.isArray(value.items)) {
     return invalid("folder list");
   }
-  return value.map(parseFolder).filter((f) => f !== null);
+  return flattenFolders(value.items);
+}
+
+/** The visible folders not in the trash, parents before their children. */
+export function fetchFolders(orgId: string): Promise<Folder[]> {
+  return folderPage(orgId, false);
+}
+
+/** The top folder of every trashed subtree. */
+export function fetchTrashedFolders(orgId: string): Promise<Folder[]> {
+  return folderPage(orgId, true);
 }
 
 export async function createFolder(
@@ -141,11 +153,15 @@ export async function restoreFolder(orgId: string, id: string): Promise<void> {
   await request("POST", orgPath(orgId, "folders", id, "restore"));
 }
 
+export async function purgeFolder(orgId: string, id: string): Promise<void> {
+  await request("DELETE", orgPath(orgId, "folders", id, "purge"));
+}
+
 export interface DashboardFilter {
   folderId?: string | undefined;
   q?: string | undefined;
   /** The trash: dashboards deleted and not yet purged. */
-  deleted?: boolean;
+  trashed?: boolean;
   cursor?: string | undefined;
 }
 
@@ -156,7 +172,7 @@ export async function fetchDashboards(
   const params = new URLSearchParams();
   if (filter.folderId !== undefined) params.set("folderId", filter.folderId);
   if (filter.q !== undefined && filter.q !== "") params.set("q", filter.q);
-  if (filter.deleted === true) params.set("deleted", "true");
+  if (filter.trashed === true) params.set("trashed", "true");
   if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "dashboards") + (query === "" ? "" : `?${query}`);
@@ -167,15 +183,12 @@ export async function fetchDashboard(orgId: string, id: string): Promise<Dashboa
   return parseDashboard(await request("GET", orgPath(orgId, "dashboards", id)));
 }
 
+/** Creates version 1; the title is the model's. */
 export async function createDashboard(
   orgId: string,
-  input: { title: string; folderId: string | null; model: DashboardModel },
+  input: { folderId: string | null; model: DashboardModel },
 ): Promise<{ id: string }> {
-  const value = await request("POST", orgPath(orgId, "dashboards"), input);
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return invalid("dashboard");
-  }
-  return { id: value.id };
+  return parseDashboard(await request("POST", orgPath(orgId, "dashboards"), input));
 }
 
 /** Saves a new version. A newer stored version answers `version_conflict` (409). */
@@ -184,7 +197,8 @@ export async function saveDashboard(
   id: string,
   input: { model: DashboardModel; version: number; message: string },
 ): Promise<void> {
-  await request("PUT", orgPath(orgId, "dashboards", id), input);
+  const body = input.message === "" ? { model: input.model, version: input.version } : input;
+  await request("PUT", orgPath(orgId, "dashboards", id), body);
 }
 
 export async function deleteDashboard(orgId: string, id: string): Promise<void> {
@@ -195,6 +209,10 @@ export async function restoreDashboard(orgId: string, id: string): Promise<void>
   await request("POST", orgPath(orgId, "dashboards", id, "restore"));
 }
 
+export async function purgeDashboard(orgId: string, id: string): Promise<void> {
+  await request("DELETE", orgPath(orgId, "dashboards", id, "purge"));
+}
+
 function parseVersion(value: unknown): DashboardVersion | null {
   if (!isRecord(value) || typeof value.version !== "number") {
     return null;
@@ -202,8 +220,9 @@ function parseVersion(value: unknown): DashboardVersion | null {
   return {
     version: value.version,
     createdAt: num(value.createdAt),
-    createdBy: str(value.createdBy),
+    authorName: typeof value.authorName === "string" ? value.authorName : null,
     message: str(value.message),
+    restoredFrom: nullableNum(value.restoredFrom),
   };
 }
 

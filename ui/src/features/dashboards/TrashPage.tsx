@@ -1,13 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
-import { DASHBOARDS_KEY, fetchDashboards, restoreDashboard } from "./api";
+import {
+  DASHBOARDS_KEY,
+  FOLDERS_KEY,
+  fetchDashboards,
+  fetchTrashedFolders,
+  purgeDashboard,
+  purgeFolder,
+  restoreDashboard,
+  restoreFolder,
+} from "./api";
 import "./dashboards.css";
+import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
 export function TrashPage() {
@@ -17,7 +28,7 @@ export function TrashPage() {
   const permissions = useOrgPermissions();
   let body = null;
   if (org !== undefined && permissions.has("dashboards:delete")) {
-    body = <TrashList orgId={org.id} />;
+    body = <TrashList orgId={org.id} canFolders={permissions.has("folders:write")} />;
   } else if (permissions.loaded) {
     body = (
       <EmptyState icon="lock" title={t("dashboards.forbidden.title")}>
@@ -32,31 +43,72 @@ export function TrashPage() {
   );
 }
 
-function TrashList({ orgId }: { orgId: string }) {
+interface TrashItem {
+  kind: "folder" | "dashboard";
+  id: string;
+  name: string;
+  deletedAt: number | null;
+}
+
+/** Trashed folders (each with what was trashed with it) and dashboards: restore or purge. */
+function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }) {
   const { t, language } = useI18n();
   const queryClient = useQueryClient();
-  const trash = useQuery({
+  const [purging, setPurging] = useState<TrashItem | null>(null);
+  const dashboards = useQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "trash"],
-    queryFn: () => fetchDashboards(orgId, { deleted: true }),
+    queryFn: () => fetchDashboards(orgId, { trashed: true }),
   });
+  const folders = useQuery({
+    queryKey: [FOLDERS_KEY, orgId, "trash"],
+    queryFn: () => fetchTrashedFolders(orgId),
+    enabled: canFolders,
+  });
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+    await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+  };
   const restore = useMutation({
-    mutationFn: (id: string) => restoreDashboard(orgId, id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] }),
+    mutationFn: (item: TrashItem) =>
+      item.kind === "folder" ? restoreFolder(orgId, item.id) : restoreDashboard(orgId, item.id),
+    onSuccess: refresh,
+  });
+  const purge = useMutation({
+    mutationFn: (item: TrashItem) =>
+      item.kind === "folder" ? purgeFolder(orgId, item.id) : purgeDashboard(orgId, item.id),
+    onSuccess: async () => {
+      setPurging(null);
+      await refresh();
+    },
   });
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
 
-  if (trash.isPending) {
+  if (dashboards.isPending || (canFolders && folders.isPending)) {
     return <p className="loading">{t("common.loading")}</p>;
   }
-  if (trash.isError) {
-    return <FormAlert>{errorMessage(t, trash.error)}</FormAlert>;
+  if (dashboards.isError || folders.isError) {
+    return <FormAlert>{errorMessage(t, dashboards.error ?? folders.error)}</FormAlert>;
   }
+  const items: TrashItem[] = [
+    ...(folders.data ?? []).map((f) => ({
+      kind: "folder" as const,
+      id: f.id,
+      name: f.name,
+      deletedAt: f.deletedAt,
+    })),
+    ...dashboards.data.items.map((d) => ({
+      kind: "dashboard" as const,
+      id: d.id,
+      name: d.title === "" ? t("dashboards.untitled") : d.title,
+      deletedAt: d.deletedAt,
+    })),
+  ];
   const back = (
     <Link to="/dashboards" className="versions__back">
       {t("dashboards.backToList")}
     </Link>
   );
-  if (trash.data.items.length === 0) {
+  if (items.length === 0) {
     return (
       <>
         {back}
@@ -66,14 +118,16 @@ function TrashList({ orgId }: { orgId: string }) {
       </>
     );
   }
+  const failed = restore.error ?? purge.error;
   return (
     <div className="versions">
       {back}
-      <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
+      <FormAlert>{failed === null ? null : errorMessage(t, failed)}</FormAlert>
       <table className="data-table">
         <thead>
           <tr>
-            <th scope="col">{t("dashboards.column.title")}</th>
+            <th scope="col">{t("dashboards.trash.name")}</th>
+            <th scope="col">{t("dashboards.trash.kind")}</th>
             <th scope="col">{t("dashboards.trash.deletedAt")}</th>
             <th scope="col">
               <span className="visually-hidden">{t("dashboards.history.actions")}</span>
@@ -81,25 +135,55 @@ function TrashList({ orgId }: { orgId: string }) {
           </tr>
         </thead>
         <tbody>
-          {trash.data.items.map((item) => (
-            <tr key={item.id}>
-              <td>{item.title === "" ? t("dashboards.untitled") : item.title}</td>
-              <td>{item.deletedAt === undefined ? "" : format.format(item.deletedAt)}</td>
+          {items.map((item) => (
+            <tr key={`${item.kind}:${item.id}`}>
+              <td>{item.name}</td>
+              <td>
+                {item.kind === "folder"
+                  ? t("dashboards.trash.kindFolder")
+                  : t("dashboards.trash.kindDashboard")}
+              </td>
+              <td>{item.deletedAt === null ? "" : format.format(item.deletedAt)}</td>
               <td className="data-table__actions">
                 <button
                   type="button"
                   className="button button--secondary button--small"
-                  onClick={() => restore.mutate(item.id)}
+                  onClick={() => restore.mutate(item)}
                   disabled={restore.isPending}
-                  aria-label={t("dashboards.trash.restoreNamed", { title: item.title })}
+                  aria-label={t("dashboards.trash.restoreNamed", { title: item.name })}
                 >
                   {t("dashboards.trash.restore")}
+                </button>{" "}
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={() => setPurging(item)}
+                  aria-label={t("dashboards.trash.purgeNamed", { title: item.name })}
+                >
+                  {t("dashboards.trash.purge")}
                 </button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {purging === null ? null : (
+        <ConfirmDialog
+          title={t("dashboards.trash.purgeTitle")}
+          confirmLabel={t("dashboards.trash.purgeConfirm")}
+          onCancel={() => {
+            purge.reset();
+            setPurging(null);
+          }}
+          onConfirm={() => purge.mutate(purging)}
+          busy={purge.isPending}
+          error={purge.isError ? errorMessage(t, purge.error) : undefined}
+        >
+          {purging.kind === "folder"
+            ? t("dashboards.trash.purgeFolderText", { title: purging.name })
+            : t("dashboards.trash.purgeText", { title: purging.name })}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

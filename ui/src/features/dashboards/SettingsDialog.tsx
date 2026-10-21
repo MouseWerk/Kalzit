@@ -6,6 +6,7 @@ import { datasourcesQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
 import {
+  cleanVariable,
   type DashboardModel,
   VARIABLE_TYPES,
   type VariableModel,
@@ -54,7 +55,11 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
     if (Object.keys(found).length > 0) {
       return;
     }
-    const next: DashboardModel = { ...model, title: title.trim(), variables };
+    const next: DashboardModel = {
+      ...model,
+      title: title.trim(),
+      variables: variables.map(cleanVariable),
+    };
     if (refresh > 0) {
       next.refreshSeconds = refresh;
     } else {
@@ -135,7 +140,7 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
             onClick={() => {
               setVariables((list) => [
                 ...list,
-                { name: `var${list.length + 1}`, type: "custom", values: [] },
+                { name: `var${list.length + 1}`, type: "custom", options: [] },
               ]);
               setKeys((list) => [...list, crypto.randomUUID()]);
             }}
@@ -165,7 +170,7 @@ function VariableEditor({
   const id = useId();
   const datasources = useQuery({ ...datasourcesQuery(orgId), enabled: variable.type === "query" });
   const datasource = datasources.data?.find((d) => d.id === variable.datasourceId);
-  const [valuesText, setValuesText] = useState((variable.values ?? []).join(", "));
+  const [valuesText, setValuesText] = useState((variable.options ?? []).join(", "));
   return (
     <section className="variable-editor" aria-label={variable.name}>
       <div className="variable-editor__row">
@@ -193,6 +198,9 @@ function VariableEditor({
             value={variable.type}
             onChange={(event) => onChange({ type: event.currentTarget.value as VariableType })}
           >
+            {(VARIABLE_TYPES as readonly VariableType[]).includes(variable.type) ? null : (
+              <option value={variable.type}>{variable.type}</option>
+            )}
             {VARIABLE_TYPES.map((type) => (
               <option key={type} value={type}>
                 {t(`dashboards.variables.type.${type}`)}
@@ -201,7 +209,7 @@ function VariableEditor({
           </select>
         </div>
       </div>
-      {variable.type === "custom" ? (
+      {variable.type === "custom" || variable.type === "interval" ? (
         <TextField
           label={t("dashboards.variables.values")}
           hint={t("dashboards.variables.valuesHint")}
@@ -210,7 +218,7 @@ function VariableEditor({
             // The text stays as typed; a trailing comma is the start of the next value.
             setValuesText(text);
             onChange({
-              values: text
+              options: text
                 .split(",")
                 .map((v) => v.trim())
                 .filter((v) => v !== ""),

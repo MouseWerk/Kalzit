@@ -98,8 +98,8 @@ describe("folder tree", () => {
       parentId,
       name: id,
       restricted: false,
-      canEdit: true,
       version: 1,
+      deletedAt: null,
     });
     const tree = buildTree([folder("b", "a"), folder("a", null), folder("orphan", "hidden")]);
     expect(tree.map((n) => n.folder.id)).toEqual(["a", "orphan"]);

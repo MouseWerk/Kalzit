@@ -246,15 +246,7 @@ function DashboardList({
                 </Link>
               </td>
               <td>{folderName(item.folderId)}</td>
-              <td>
-                {item.updatedAt > 0 ? dateFormat.format(item.updatedAt) : ""}
-                {item.updatedBy === "" ? null : (
-                  <span className="data-table__muted">
-                    {" "}
-                    {t("dashboards.updatedBy", { name: item.updatedBy })}
-                  </span>
-                )}
-              </td>
+              <td>{item.updatedAt > 0 ? dateFormat.format(item.updatedAt) : ""}</td>
             </tr>
           ))}
         </tbody>
@@ -334,7 +326,6 @@ function NewDashboardDialog({
   const create = useMutation({
     mutationFn: () =>
       createDashboard(orgId, {
-        title: title.trim(),
         folderId: folder,
         model: emptyModel(title.trim()),
       }),
@@ -531,7 +522,7 @@ function FolderActions({
   return (
     <div className="folder-actions">
       <FormAlert>{restrict.isError ? errorMessage(t, restrict.error) : null}</FormAlert>
-      {folder.canEdit ? (
+      {permissions.has("folders:write") ? (
         <div className="toolbar">
           <button
             type="button"

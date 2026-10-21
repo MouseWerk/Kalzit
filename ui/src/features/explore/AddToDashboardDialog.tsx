@@ -54,7 +54,6 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
         model.timeRange = range;
         model.panels = [{ ...newPanel, grid: { ...PANEL_GRID, y: 0 } }];
         const created = await createDashboard(orgId, {
-          title: title.trim(),
           folderId: folder === "" ? null : folder,
           model,
         });

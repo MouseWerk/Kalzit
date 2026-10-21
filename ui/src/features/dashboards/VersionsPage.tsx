@@ -59,7 +59,7 @@ function VersionList({ orgId }: { orgId: string }) {
     },
   });
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
-  const canRestore = permissions.has("dashboards:write") && dashboard.data?.canEdit === true;
+  const canRestore = permissions.has("dashboards:write") && dashboard.data?.deletedAt === null;
 
   if (versions.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
@@ -106,10 +106,16 @@ function VersionList({ orgId }: { orgId: string }) {
                 </td>
                 <td>
                   {format.format(item.createdAt)}
-                  {item.createdBy === "" ? null : (
+                  {item.authorName === null ? null : (
                     <span className="data-table__muted">
                       {" "}
-                      {t("dashboards.updatedBy", { name: item.createdBy })}
+                      {t("dashboards.updatedBy", { name: item.authorName })}
+                    </span>
+                  )}
+                  {item.restoredFrom === null ? null : (
+                    <span className="data-table__muted">
+                      {" "}
+                      {t("dashboards.history.restoredFrom", { version: item.restoredFrom })}
                     </span>
                   )}
                 </td>

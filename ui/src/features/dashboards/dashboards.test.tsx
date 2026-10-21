@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
-import { emptyModel, type PanelModel } from "./model";
+import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { PANEL_QUERY_CONCURRENCY } from "./queryQueue";
-import { addDashboard, latest } from "./test/fakeDashboards";
+import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
@@ -27,26 +27,8 @@ function sqlPanel(id: string, title: string, sql: string, x = 0, y = 0): PanelMo
 function setup(role = "editor", panels?: PanelModel[]) {
   const server = installFakeServer({ signedIn: true, user: asRole(role) });
   const { dashboards } = server.areas;
-  dashboards.folders.push(
-    {
-      id: "f-ops",
-      parentId: null,
-      name: "Operations",
-      restricted: false,
-      canEdit: true,
-      version: 1,
-    },
-    { id: "f-hr", parentId: null, name: "People", restricted: true, canEdit: true, version: 1 },
-    {
-      id: "f-secret",
-      parentId: null,
-      name: "Board only",
-      restricted: true,
-      canEdit: false,
-      version: 1,
-      hidden: true,
-    },
-  );
+  addFolder(dashboards, "f-ops", "Operations");
+  addFolder(dashboards, "f-hr", "People", { restricted: true });
   const model = {
     ...emptyModel("Sales"),
     panels: panels ?? [
@@ -67,30 +49,57 @@ function setup(role = "editor", panels?: PanelModel[]) {
   };
   addDashboard(dashboards, "d-sales", model, { folderId: "f-ops" });
   addDashboard(dashboards, "d-people", emptyModel("Headcount"), { folderId: "f-hr" });
-  addDashboard(dashboards, "d-hidden", emptyModel("Board pay"), { folderId: "f-secret" });
   return server;
 }
 
+/** Someone else saves a new version of the stored dashboard. */
+function saveAsOther(stored: StoredDashboard, model: DashboardModel, message = "") {
+  stored.versions.push({
+    version: latest(stored).version + 1,
+    message,
+    authorId: "u2",
+    authorName: "Grace Hopper",
+    restoredFrom: null,
+    createdAt: Date.UTC(2026, 9, 2),
+    model,
+  });
+}
+
+function storedSales(server: ReturnType<typeof setup>): StoredDashboard {
+  const stored = server.areas.dashboards.dashboards.find((d) => d.id === "d-sales");
+  if (stored === undefined) {
+    throw new Error("no dashboard");
+  }
+  return stored;
+}
 const panelOf = (title: string) => screen.getByRole("article", { name: title });
 
 describe("dashboard browser", () => {
-  it("shows the folder tree with restricted folders marked and hidden ones absent", async () => {
-    setup();
+  it("marks restricted folders for those who see them", async () => {
+    setup("admin");
     const { user } = renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("button", { name: /Operations/ })).toBeTruthy();
-    expect(within(tree).getByRole("button", { name: "People, Restricted" })).toBeTruthy();
-    expect(within(tree).queryByText("Board only")).toBeNull();
+    expect(await within(tree).findByRole("button", { name: "People, Restricted" })).toBeTruthy();
+    expect(within(tree).getByRole("button", { name: "Operations" })).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Board pay" })).toBeNull();
 
     await user.click(within(tree).getByRole("button", { name: "People, Restricted" }));
     expect(await screen.findByRole("link", { name: "Headcount" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("link", { name: "Sales" })).toBeNull());
   });
 
+  it("leaves restricted folders and their dashboards out for everyone else", async () => {
+    setup("editor");
+    renderApp("/dashboards");
+    const tree = await screen.findByRole("navigation", { name: "Folders" });
+    expect(await within(tree).findByRole("button", { name: "Operations" })).toBeTruthy();
+    expect(within(tree).queryByText("People")).toBeNull();
+    expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Headcount" })).toBeNull();
+  });
+
   it("searches dashboards by title", async () => {
-    setup();
+    setup("admin");
     const { user } = renderApp("/dashboards");
     await screen.findByRole("link", { name: "Sales" });
     await user.type(screen.getByRole("searchbox", { name: "Search dashboards" }), "head");
@@ -108,7 +117,8 @@ describe("dashboard browser", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Capacity" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Add panel" }).length).toBeGreaterThan(0);
     expect(location().pathname).toBe("/dashboards/dash-new-1");
-    expect(server.areas.dashboards.dashboards.at(-1)?.title).toBe("Capacity");
+    const created = server.areas.dashboards.dashboards.at(-1);
+    expect(created === undefined ? "" : latest(created).model.title).toBe("Capacity");
   });
 });
 
@@ -263,6 +273,36 @@ describe("editing a dashboard", () => {
     expect(server.areas.datasources.queries.length).toBeGreaterThan(0);
   });
 
+  it("adds a variable whose value reaches every panel query", async () => {
+    const server = setup();
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    await user.click(within(dialog).getByRole("button", { name: "Add variable" }));
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "region");
+    await user.type(within(dialog).getByRole("textbox", { name: "Values" }), "eu, us");
+    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
+    // Only the fields of a custom variable: the server refuses anything else.
+    expect(latest(storedSales(server)).model.variables).toEqual([
+      { name: "region", type: "custom", options: ["eu", "us"] },
+    ]);
+
+    await user.selectOptions(await screen.findByRole("combobox", { name: "region" }), "us");
+    await waitFor(() => {
+      const last = server.areas.dashboards.panelQueries.at(-1);
+      expect(last?.body.variables).toEqual({ region: "us" });
+    });
+  });
   it("shows both sides of a version conflict and saves mine on request", async () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
@@ -270,19 +310,10 @@ describe("editing a dashboard", () => {
     await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
 
     // Someone else saves a renamed panel meanwhile.
-    const stored = server.areas.dashboards.dashboards[0];
-    if (stored === undefined) {
-      throw new Error("no dashboard");
-    }
+    const stored = storedSales(server);
     const theirs = structuredClone(latest(stored).model);
     theirs.panels[0] = { ...(theirs.panels[0] as PanelModel), title: "Orders by day" };
-    stored.versions.push({
-      version: 2,
-      createdAt: 1,
-      createdBy: "Grace",
-      message: "",
-      model: theirs,
-    });
+    saveAsOther(stored, theirs);
 
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
@@ -312,18 +343,9 @@ describe("editing a dashboard", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
-    const stored = server.areas.dashboards.dashboards[0];
-    if (stored === undefined) {
-      throw new Error("no dashboard");
-    }
+    const stored = storedSales(server);
     const theirs = { ...structuredClone(latest(stored).model), title: "Sales 2027" };
-    stored.versions.push({
-      version: 2,
-      createdAt: 1,
-      createdBy: "Grace",
-      message: "",
-      model: theirs,
-    });
+    saveAsOther(stored, theirs);
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
@@ -343,25 +365,17 @@ describe("editing a dashboard", () => {
 describe("history and trash", () => {
   it("restores an older version as the newest", async () => {
     const server = setup();
-    const stored = server.areas.dashboards.dashboards[0];
-    if (stored === undefined) {
-      throw new Error("no dashboard");
-    }
-    stored.versions.push({
-      version: 2,
-      createdAt: Date.UTC(2026, 9, 2),
-      createdBy: "Grace",
-      message: "Removed everything",
-      model: emptyModel("Sales"),
-    });
+    const stored = storedSales(server);
+    saveAsOther(stored, emptyModel("Sales"), "Removed everything");
     const { user } = renderApp("/dashboards/d-sales/versions");
     expect(await screen.findByText("Removed everything")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Restore…" }));
     const dialog = screen.getByRole("dialog", { name: "Restore this version?" });
     await user.click(within(dialog).getByRole("button", { name: "Restore" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Sales" })).toBeTruthy();
-    expect(latest(stored).version).toBe(3);
+    expect(latest(stored)).toMatchObject({ version: 3, restoredFrom: 1, message: "" });
     expect(latest(stored).model.panels).toHaveLength(3);
+    expect(screen.getAllByRole("article")).toHaveLength(3);
   });
 
   it("moves a dashboard to the trash and restores it from there", async () => {
@@ -372,8 +386,41 @@ describe("history and trash", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Trash" })).toBeTruthy();
     await user.click(await screen.findByRole("button", { name: "Restore “Sales”" }));
-    await waitFor(() => expect(server.areas.dashboards.dashboards[0]?.deletedAt).toBeUndefined());
+    await waitFor(() => expect(storedSales(server).deletedAt).toBeNull());
     expect(await screen.findByText("The trash is empty")).toBeTruthy();
+  });
+
+  it("trashes a folder with its dashboards, restores it and purges for good", async () => {
+    const server = setup("admin");
+    const { user } = renderApp("/dashboards?folder=f-ops");
+    await user.click(await screen.findByRole("button", { name: "Delete folder…" }));
+    const confirm = screen.getByRole("dialog", { name: "Delete folder?" });
+    await user.click(within(confirm).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("Folder “Operations” moved to the trash.")).toBeTruthy();
+    expect(storedSales(server).deletedAt).not.toBeNull();
+
+    await user.click(screen.getByRole("link", { name: "Trash" }));
+    // The folder is listed; the dashboard trashed with it is listed as well.
+    expect(await screen.findByRole("button", { name: "Restore “Operations”" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Restore “Operations”" }));
+    await waitFor(() => expect(storedSales(server).deletedAt).toBeNull());
+
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
+    await user.click(await screen.findByRole("link", { name: "Sales" }));
+    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Delete dashboard?" })).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Delete “Sales” for good" }));
+    const purge = screen.getByRole("dialog", { name: "Delete for good?" });
+    expect(document.activeElement).toBe(within(purge).getByRole("button", { name: "Cancel" }));
+    await user.click(within(purge).getByRole("button", { name: "Delete for good" }));
+    await waitFor(() =>
+      expect(server.areas.dashboards.dashboards.some((d) => d.id === "d-sales")).toBe(false),
+    );
   });
 });
 
