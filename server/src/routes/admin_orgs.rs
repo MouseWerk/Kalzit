@@ -84,7 +84,7 @@ async fn create(
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
     let id = super::new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // Locks the owner's row, which also makes the transaction write first (docs/ARCHITECTURE.md,
     // "write first"): a disable of that account waits for this to finish.
     let owner = sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1 AND disabled = 0")
@@ -130,7 +130,7 @@ async fn rename(
     JsonBody(req): JsonBody<RenameRequest>,
 ) -> ApiResult<Json<AdminOrg>> {
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let done =
         sqlx::query("UPDATE orgs SET name = $1 WHERE id = $2").bind(&name).bind(&org_id).execute(&mut *tx).await?;
     if done.rows_affected() == 0 {

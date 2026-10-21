@@ -41,13 +41,15 @@ async fn update(
     JsonBody(req): JsonBody<UpdateRequest>,
 ) -> ApiResult<Json<Me>> {
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE users SET name = $1 WHERE id = $2").bind(&name).bind(&user.id).execute(&mut *tx).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "userId": user.id, "fields": ["name"] });
     audit(&mut tx, &actor, None, "user.updated", ("user", &user.id), summary).await?;
+    // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
+    let answer = me(&mut *tx, SessionUser { name, ..user }).await?;
     tx.commit().await?;
-    Ok(Json(me(&state.db, SessionUser { name, ..user }).await?))
+    Ok(Json(answer))
 }
 
 #[derive(Deserialize)]
@@ -94,7 +96,7 @@ async fn change_password(
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await.map_err(|e| ApiError::internal("hashing password", e))?;
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // Only if the password is still the one just verified: of two changes at once, the second
     // fails as if its current password were wrong.
     let changed = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3")
@@ -164,7 +166,7 @@ async fn end_session(
     Extension(info): Extension<RequestInfo>,
     Path(session_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // Another user's session id answers like an unknown one.
     let done = sqlx::query("DELETE FROM sessions WHERE id = $1 AND user_id = $2")
         .bind(&session_id)
@@ -192,7 +194,7 @@ async fn end_other_sessions(
     Extension(info): Extension<RequestInfo>,
     headers: HeaderMap,
 ) -> ApiResult<Json<Revoked>> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let revoked = session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers).as_deref()).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, None, "auth.sessions_revoked", ("user", &user.id), json!({ "revoked": revoked })).await?;

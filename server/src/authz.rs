@@ -728,6 +728,8 @@ pub fn ensure_owner_remains(current_role: &str, new_role: Option<&str>, other_ow
 // Lock order. Transactions that lock more than one kind of row take them in this order, so two of
 // them can never wait on each other in a cycle (a deadlock on PostgreSQL):
 //   1. user rows of server admins (`lock_server_admins`, administration only);
+//   1b. the user row of the account being disabled (`lock_orgs_left_without_owner`) or made the
+//       owner of a new organization (`routes/admin_orgs.rs`);
 //   2. organization rows (`lock_org`), several of them in id order;
 //   3. custom role rows (`lock_role`);
 //   4. owner rows of org_members (`lock_owners`, `lock_orgs_left_without_owner`).
@@ -1266,7 +1268,7 @@ mod resource_tests {
         exec(&db, "INSERT INTO users (id, email, name, disabled, created_at) VALUES ('d', 'd@example.de', 'D', 1, 0)")
             .await;
         exec(&db, "INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ('o', 'd', 'owner', 0)").await;
-        let mut tx = db.begin().await.unwrap();
+        let mut tx = crate::db::begin(&db).await.unwrap();
         lock_org(&mut tx, "o").await.unwrap();
         // A disabled owner does not count: u is the only enabled one.
         assert_eq!(lock_owners(&mut tx, "o", "u").await.unwrap(), 0);

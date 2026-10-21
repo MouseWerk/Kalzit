@@ -32,6 +32,7 @@ pub struct Running {
     pub https_addr: Option<SocketAddr>,
     handles: Vec<Handle<SocketAddr>>,
     listeners: JoinSet<Result<()>>,
+    db: sqlx::AnyPool,
 }
 
 impl Running {
@@ -42,12 +43,19 @@ impl Running {
         }
     }
 
-    /// Waits until every listener has stopped; the first listener error ends the wait.
+    /// Waits until every listener has stopped, then closes the database; the first listener
+    /// error ends the wait. Closing lets SQLite checkpoint its WAL into the database file, so a
+    /// copy of `kalzit.db` taken while the server is stopped is complete on its own.
     pub async fn wait(mut self) -> Result<()> {
+        let mut outcome = Ok(());
         while let Some(result) = self.listeners.join_next().await {
-            result.context("listener task")??;
+            if let Err(e) = result.context("listener task").and_then(|r| r) {
+                outcome = Err(e);
+                break;
+            }
         }
-        Ok(())
+        self.db.close().await;
+        outcome
     }
 }
 
@@ -84,7 +92,13 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
     let app = router(state.clone());
-    let mut running = Running { http_addr: None, https_addr: None, handles: Vec::new(), listeners: JoinSet::new() };
+    let mut running = Running {
+        http_addr: None,
+        https_addr: None,
+        handles: Vec::new(),
+        listeners: JoinSet::new(),
+        db: state.db.clone(),
+    };
 
     if let Some(addr) = config.https_addr() {
         let rustls = RustlsConfig::from_config(tls::server_config(&config.tls)?);

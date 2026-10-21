@@ -88,7 +88,7 @@ async fn add(
     JsonBody(req): JsonBody<AddRequest>,
 ) -> ApiResult<(StatusCode, Json<Member>)> {
     let email = super::normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // First, so that two requests adding the same account run one after the other and the second
     // finds the membership.
     lock_org(&mut tx, &ctx.org_id).await?;
@@ -208,7 +208,7 @@ async fn change_role(
     Path((_, user_id)): Path<(String, String)>,
     JsonBody(req): JsonBody<RoleRequest>,
 ) -> ApiResult<Json<Member>> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let previous = current_role_checked(&mut tx, &ctx, &user_id, Some(&role.key)).await?;
@@ -234,7 +234,7 @@ async fn remove(
     Extension(info): Extension<RequestInfo>,
     Path((_, user_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     current_role_checked(&mut tx, &ctx, &user_id, None).await?;
     // Team memberships and grants in this organization go with the membership; the account and

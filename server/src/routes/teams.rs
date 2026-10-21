@@ -133,7 +133,7 @@ async fn create(
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
     let id = super::new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     sqlx::query("INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ($1, $2, $3, $4, $5)")
         .bind(&id)
@@ -167,7 +167,7 @@ async fn rename(
     JsonBody(req): JsonBody<NameRequest>,
 ) -> ApiResult<Json<Team>> {
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let done = sqlx::query("UPDATE teams SET name = $1, name_key = $2 WHERE org_id = $3 AND id = $4")
         .bind(&name)
@@ -210,7 +210,7 @@ async fn delete(
     Extension(info): Extension<RequestInfo>,
     Path((_, team_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     load(&mut tx, &ctx.org_id, &team_id).await?;
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
@@ -314,7 +314,7 @@ async fn put_member(
     if role != "member" && role != "maintainer" {
         return Err(ApiError::validation("role must be member or maintainer").with_field("role"));
     }
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     ensure_may_manage_members(&mut tx, &ctx, &team_id).await?;
     let in_org: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
@@ -374,7 +374,7 @@ async fn remove_member(
     Extension(info): Extension<RequestInfo>,
     Path((_, team_id, user_id)): Path<(String, String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     ensure_may_manage_members(&mut tx, &ctx, &team_id).await?;
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
@@ -410,7 +410,7 @@ async fn set_roles(
     if keys.len() > MAX_TEAM_ROLES {
         return Err(ApiError::validation(format!("a team can have at most {MAX_TEAM_ROLES} roles")).with_field("roles"));
     }
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     load(&mut tx, &ctx.org_id, &team_id).await?;
     let mut changed = team_permissions(&mut tx, &ctx.org_id, &team_id).await?;

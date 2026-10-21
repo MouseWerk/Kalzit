@@ -169,7 +169,7 @@ async fn create(
 
     let id = super::new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let (count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM roles WHERE org_id = $1").bind(&ctx.org_id).fetch_one(&mut *tx).await?;
@@ -229,7 +229,7 @@ async fn update(
         .transpose()?;
     let permissions = req.permissions.as_deref().map(parse_permissions).transpose()?;
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let current = custom_role(&mut tx, &ctx.org_id, &role_id).await?;
     // Changing a role changes the rights of everyone holding it, in both directions.
@@ -279,7 +279,7 @@ async fn delete(
     Extension(info): Extension<RequestInfo>,
     Path((_, role_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let current = custom_role(&mut tx, &ctx.org_id, &role_id).await?;
     ensure_holds(&ctx.permissions, &current.permissions)?;

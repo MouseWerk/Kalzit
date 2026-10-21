@@ -17,7 +17,6 @@ pub mod table;
 pub mod teams;
 
 use serde::Serialize;
-use sqlx::AnyPool;
 
 use crate::auth::SessionUser;
 use crate::error::{ApiError, ApiResult};
@@ -66,7 +65,8 @@ pub struct OrgMembership {
     pub role: String,
 }
 
-pub async fn me(db: &AnyPool, user: SessionUser) -> ApiResult<Me> {
+/// Reads through `db`: the pool, or, after a change, the change's transaction before its commit.
+pub async fn me<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, user: SessionUser) -> ApiResult<Me> {
     let orgs: Vec<OrgMembership> = sqlx::query_as(
         "SELECT o.id, o.name, m.role FROM org_members m JOIN orgs o ON o.id = m.org_id \
          WHERE m.user_id = $1 ORDER BY o.name",

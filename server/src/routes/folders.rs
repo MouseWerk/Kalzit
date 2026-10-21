@@ -120,11 +120,11 @@ fn visible_parent(row: &FolderRow, tree: &Tree) -> Option<String> {
     row.parent_id.clone().filter(|p| tree.visible(p))
 }
 
-/// The answer after a change, read once the transaction (and its lock) is over.
-async fn answer(state: &AppState, ctx: &OrgCtx, folder_id: &str) -> ApiResult<Json<Folder>> {
-    let mut conn = state.db.acquire().await?;
-    let tree = Tree::load(&mut conn, ctx).await?;
-    let index = AccessIndex::load(&mut conn, ctx).await?;
+/// The answer, read through `conn`: after a change, the change's own transaction before its
+/// commit, so a failing read can still be answered as "nothing changed".
+async fn answer(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, folder_id: &str) -> ApiResult<Json<Folder>> {
+    let tree = Tree::load(conn, ctx).await?;
+    let index = AccessIndex::load(conn, ctx).await?;
     Ok(Json(view(visible_row(&tree, folder_id)?, &tree, &index)))
 }
 
@@ -390,7 +390,7 @@ async fn create(
     }
     let id = new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     if let Some(parent) = body.parent_id.as_deref() {
         check_parent(&tree, parent)?;
@@ -414,8 +414,9 @@ async fn create(
     if body.restricted {
         keep_access(&mut tx, &ctx, &info, &id, now).await?;
     }
+    let created = answer(&mut tx, &ctx, &id).await?;
     tx.commit().await?;
-    Ok((StatusCode::CREATED, answer(&state, &ctx, &id).await?))
+    Ok((StatusCode::CREATED, created))
 }
 
 #[derive(Deserialize)]
@@ -540,7 +541,7 @@ async fn update(
         authorize(&state, &ctx, &folder_id, Permission::FoldersPermissions).await?;
     }
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
     if current.deleted_at.is_some() {
@@ -599,11 +600,10 @@ async fn update(
         if next.restricted != 0 && current.restricted == 0 {
             keep_access(&mut tx, &ctx, &info, &folder_id, now).await?;
         }
-        tx.commit().await?;
-    } else {
-        drop(tx);
     }
-    answer(&state, &ctx, &folder_id).await
+    let updated = answer(&mut tx, &ctx, &folder_id).await?;
+    tx.commit().await?;
+    Ok(updated)
 }
 
 async fn trash(
@@ -613,7 +613,7 @@ async fn trash(
     Path((_, folder_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let checked = authorize_subtree(&state, &ctx, &folder_id, |r| r.deleted_at.is_none().then_some(Part::Live)).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     if visible_row(&tree, &folder_id)?.deleted_at.is_some() {
         return Ok(StatusCode::NO_CONTENT);
@@ -660,12 +660,12 @@ async fn restore(
     Path((_, folder_id)): Path<(String, String)>,
 ) -> ApiResult<Json<Folder>> {
     let checked = authorize_subtree(&state, &ctx, &folder_id, |r| r.trash_batch.clone().map(Part::Batch)).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
     let Some(batch) = current.trash_batch.clone() else {
-        drop(tx);
-        return answer(&state, &ctx, &folder_id).await;
+        // Not in the trash: nothing to change; the transaction ends with the answer.
+        return answer(&mut tx, &ctx, &folder_id).await;
     };
     let parent = current.parent_id.as_deref().and_then(|p| tree.rows.get(p));
     if parent.is_some_and(|p| p.deleted_at.is_some()) {
@@ -696,8 +696,9 @@ async fn restore(
     let now = state.clock.now_ms();
     let summary = json!({ "folders": folders, "dashboards": dashboards });
     audit::record(&mut tx, &event(&ctx, &info, "folder.restored", &folder_id, summary, now)).await?;
+    let restored = answer(&mut tx, &ctx, &folder_id).await?;
     tx.commit().await?;
-    answer(&state, &ctx, &folder_id).await
+    Ok(restored)
 }
 
 async fn purge(
@@ -708,7 +709,7 @@ async fn purge(
 ) -> ApiResult<StatusCode> {
     let not_trashed = || conflict("only folders in the trash can be purged; move it to the trash first");
     let checked = authorize_subtree(&state, &ctx, &folder_id, |r| r.deleted_at.is_some().then_some(Part::All)).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     // Checked under the lock, where restores wait: a folder restored in the meantime stays.
     if visible_row(&tree, &folder_id)?.deleted_at.is_none() {

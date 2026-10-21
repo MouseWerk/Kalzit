@@ -132,7 +132,11 @@ fn event<'a>(
     }
 }
 
-async fn fetch(db: &sqlx::AnyPool, org_id: &str, id: &str) -> ApiResult<Option<DashboardRow>> {
+async fn fetch<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    org_id: &str,
+    id: &str,
+) -> ApiResult<Option<DashboardRow>> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 AND id = $2")))
         .bind(org_id)
         .bind(id)
@@ -183,27 +187,33 @@ fn stored_model(raw: &str) -> ApiResult<Value> {
     model::migrate(value).map_err(|e| ApiError::internal("dashboards", e))
 }
 
-async fn model_at(db: &sqlx::AnyPool, dashboard_id: &str, version: i64) -> ApiResult<Option<String>> {
+async fn model_at(conn: &mut sqlx::AnyConnection, dashboard_id: &str, version: i64) -> ApiResult<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
             .bind(dashboard_id)
             .bind(version)
-            .fetch_optional(db)
+            .fetch_optional(&mut *conn)
             .await?;
     Ok(row.map(|(m,)| m))
 }
 
-/// The answer for one dashboard, read outside any transaction.
-async fn view(state: &AppState, ctx: &OrgCtx, row: DashboardRow) -> ApiResult<Dashboard> {
-    let raw = model_at(&state.db, &row.id, row.version).await?.ok_or_else(|| {
+/// The answer for one dashboard, read through `conn`: after a change, the change's own
+/// transaction before its commit, so a failing read can still be answered as "nothing changed".
+async fn view(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: DashboardRow) -> ApiResult<Dashboard> {
+    let raw = model_at(conn, &row.id, row.version).await?.ok_or_else(|| {
         ApiError::internal("dashboards", format!("dashboard {} lacks its version {}", row.id, row.version))
     })?;
-    let index = AccessIndex::load(&mut *state.db.acquire().await?, ctx).await?;
+    let index = AccessIndex::load(conn, ctx).await?;
     Ok(Dashboard {
         summary: DashboardSummary::new(&row, &index),
         model: stored_model(&raw)?,
         created_by: row.created_by,
     })
+}
+
+/// `view` on a pooled connection, where no change is involved.
+async fn pool_view(state: &AppState, ctx: &OrgCtx, row: DashboardRow) -> ApiResult<Dashboard> {
+    view(&mut *state.db.acquire().await?, ctx, row).await
 }
 
 fn parse_model(raw: Value) -> ApiResult<model::DashboardModel> {
@@ -405,7 +415,7 @@ async fn create(
     let id = new_id();
     let keep = version_retention(&state).await?;
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_place(&mut tx, &ctx.org_id, body.folder_id.as_deref()).await?;
     sqlx::query(
         "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_by, created_at, \
@@ -424,9 +434,10 @@ async fn create(
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
     let summary = json!({ "folderId": body.folder_id, "version": 1 });
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.created", &id, summary, now)).await?;
+    let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    let answer = view(&mut tx, &ctx, row).await?;
     tx.commit().await?;
-    let row = fetch(&state.db, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
-    Ok((StatusCode::CREATED, Json(view(&state, &ctx, row).await?)))
+    Ok((StatusCode::CREATED, Json(answer)))
 }
 
 async fn get_one(
@@ -435,7 +446,7 @@ async fn get_one(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<Json<Dashboard>> {
     let row = load(&state, &ctx, &id, Permission::DashboardsRead).await?;
-    Ok(Json(view(&state, &ctx, row).await?))
+    Ok(Json(pool_view(&state, &ctx, row).await?))
 }
 
 #[derive(Deserialize)]
@@ -464,7 +475,7 @@ async fn write_version(
     let now = state.clock.now_ms();
     let next = row.version + 1;
     let moved = folder_id != row.folder_id.as_deref();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     if moved {
         lock_place(&mut tx, &ctx.org_id, folder_id).await?;
         // Leaving a restricted folder is remembered, so the purge still hides its old events.
@@ -500,7 +511,7 @@ async fn write_version(
         if stored.deleted_at.is_some() {
             return Err(conflict("the dashboard is in the trash; restore it first"));
         }
-        return Err(ApiError::version_conflict(json!(view(state, ctx, stored).await?)));
+        return Err(ApiError::version_conflict(json!(pool_view(state, ctx, stored).await?)));
     }
     insert_version(&mut tx, &row.id, next, &ctx.user.id, &new, keep, now).await?;
     let (action, summary) = match new.restored_from {
@@ -508,9 +519,10 @@ async fn write_version(
         None => ("dashboard.saved", json!({ "version": next, "moved": moved })),
     };
     audit::record(&mut tx, &event(ctx, info, action, &row.id, summary, now)).await?;
+    let saved = fetch(&mut *tx, &ctx.org_id, &row.id).await?.ok_or_else(ApiError::not_found)?;
+    let answer = view(&mut tx, ctx, saved).await?;
     tx.commit().await?;
-    let saved = fetch(&state.db, &ctx.org_id, &row.id).await?.ok_or_else(ApiError::not_found)?;
-    view(state, ctx, saved).await
+    Ok(answer)
 }
 
 async fn save(
@@ -556,7 +568,7 @@ async fn save(
         }
     }
     if body.version != row.version {
-        return Err(ApiError::version_conflict(json!(view(&state, &ctx, row).await?)));
+        return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
     check_dashboard_sources(&state.db, &ctx, &model).await?;
     let new = NewVersion { model: &model, message: &message, restored_from: None };
@@ -574,7 +586,7 @@ async fn trash(
         return Ok(StatusCode::NO_CONTENT);
     }
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "UPDATE dashboards SET deleted_at = $1, trash_batch = $2 WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL",
     )
@@ -597,10 +609,10 @@ async fn restore(
 ) -> ApiResult<Json<Dashboard>> {
     let row = load(&state, &ctx, &id, Permission::DashboardsDelete).await?;
     if row.deleted_at.is_none() {
-        return Ok(Json(view(&state, &ctx, row).await?));
+        return Ok(Json(pool_view(&state, &ctx, row).await?));
     }
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // The lock orders this against a purge of the dashboard or its folder: whichever comes
     // second sees what the first left.
     match lock_place(&mut tx, &ctx.org_id, row.folder_id.as_deref()).await {
@@ -621,13 +633,15 @@ async fn restore(
     .rows_affected();
     if restored == 1 {
         audit::record(&mut tx, &event(&ctx, &info, "dashboard.restored", &id, json!({}), now)).await?;
+        let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+        let answer = view(&mut tx, &ctx, row).await?;
         tx.commit().await?;
-    } else {
-        // Restored or purged by someone else meanwhile: answer what is stored now.
-        drop(tx);
+        return Ok(Json(answer));
     }
+    // Restored or purged by someone else meanwhile: nothing changed here, answer what is stored.
+    drop(tx);
     let row = fetch(&state.db, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
-    Ok(Json(view(&state, &ctx, row).await?))
+    Ok(Json(pool_view(&state, &ctx, row).await?))
 }
 
 async fn purge(
@@ -642,7 +656,7 @@ async fn purge(
         return Err(not_trashed());
     }
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // Restores and grant changes lock the organization too, so the state read here holds until
     // the commit: a dashboard restored since the check above stays.
     authz::lock_org(&mut tx, &ctx.org_id).await?;

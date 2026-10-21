@@ -102,7 +102,7 @@ pub async fn login(
     limiter.reset(&email_key);
     limiter.refund(&ip_key);
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A
     // password change or a disable takes the same lock, so a sign-in that raced one either sees
     // the change and fails here, or commits first and has its session ended by the change.
@@ -126,11 +126,13 @@ pub async fn login(
     event.actor_user_id = Some(&row.id);
     event.resource_id = Some(&row.id);
     crate::audit::record(&mut tx, &event).await?;
-    tx.commit().await?;
+    // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
+    let answer = me(&mut *tx, user).await?;
+    tx.commit().await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    Ok((headers, Json(me(&state.db, user).await?)))
+    Ok((headers, Json(answer)))
 }
 
 pub async fn logout(

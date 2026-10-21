@@ -105,7 +105,7 @@ async fn create(
 
     let id = super::new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at) \
          VALUES ($1, $2, $3, $4, $5, 0, $6)",
@@ -154,7 +154,7 @@ async fn update(
         None => None,
     };
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let admins = lock_server_admins(&mut tx).await?;
     let current = load(&mut *tx, &user_id).await?;
     let disabled = req.disabled.unwrap_or(current.disabled.0);

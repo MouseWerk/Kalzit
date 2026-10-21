@@ -340,6 +340,22 @@ async fn a_locked_database_answers_busy_not_internal() {
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
 }
 
+/// A graceful stop closes the database, so SQLite checkpoints its WAL and removes it: what a
+/// backup copies with the server stopped is complete in `kalzit.db` alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stopping_the_server_checkpoints_the_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    config.server.http_addr = "127.0.0.1:0".into();
+    let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let wal = dir.path().join("kalzit.db-wal");
+    assert!(wal.exists(), "the database runs in WAL mode");
+    server.shutdown();
+    server.wait().await.unwrap();
+    assert!(!wal.exists(), "the WAL is folded into the database once the server stops");
+}
+
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_runs_the_audit_retention() {

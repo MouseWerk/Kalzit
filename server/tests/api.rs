@@ -112,6 +112,25 @@ impl TestApp {
     }
 }
 
+/// Setup claims the one `setup_lock` row first: when another server on the same database already
+/// holds it (setup done there, or running at this moment), this one answers `setup_done` and
+/// leaves nothing behind, without relying on the user count.
+#[tokio::test]
+async fn setup_is_refused_once_another_server_claimed_it() {
+    let t = test_app("127.0.0.1:50000", |_| {}).await;
+    sqlx::query("INSERT INTO setup_lock (id, done_at) VALUES (1, 0)").execute(&t.state.db).await.unwrap();
+    let r = t.setup().await;
+    assert_eq!((r.status, r.code()), (StatusCode::CONFLICT, "setup_done"), "{}", r.body);
+    for table in ["users", "orgs", "org_members", "sessions"] {
+        let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "{table}");
+    }
+    assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": false }));
+}
+
 #[tokio::test]
 async fn setup_creates_owner_once() {
     let t = test_app("127.0.0.1:50000", |_| {}).await;
