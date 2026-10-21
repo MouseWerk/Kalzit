@@ -8,6 +8,7 @@ import "../../panels/panels.css";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
+import "./dashboards.css";
 import type { GridPos, PanelModel } from "./model";
 import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
 import { Dialog } from "./ui/Dialog";

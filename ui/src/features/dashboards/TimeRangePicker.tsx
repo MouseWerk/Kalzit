@@ -10,6 +10,7 @@ import {
   type TextRange,
   toStoredAbsolute,
 } from "./timeRange";
+import "./dashboards.css";
 import { Dialog } from "./ui/Dialog";
 
 const PRESET_LABELS: Record<string, MessageKey> = {

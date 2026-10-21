@@ -2,6 +2,7 @@ import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
 import { rowCount } from "../../../panels/frame";
 import type { TargetOutcome } from "../results";
+import "../dashboards.css";
 import { errorCodeMessage } from "./errors";
 
 /**

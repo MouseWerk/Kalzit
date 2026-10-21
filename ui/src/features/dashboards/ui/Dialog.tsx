@@ -2,6 +2,7 @@ import { type KeyboardEvent, type ReactNode, useId, useLayoutEffect, useRef } fr
 import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
+import "../dashboards.css";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';

@@ -5,8 +5,9 @@ import { parseCss } from "../../test/cssParse";
 
 /**
  * jsdom applies no stylesheets, so this checks the wiring instead: the layout that gives a panel
- * body its height must come with PanelBody itself, not only with the dashboard pages. Explore
- * renders PanelBody without importing dashboards.css; a chart there had no height at all.
+ * body its height must come with PanelBody itself, in the panels' own stylesheet. Explore once
+ * rendered PanelBody before any dashboard page had loaded dashboards.css; a chart there had no
+ * height at all.
  */
 const SRC = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(SRC, path), "utf8");
