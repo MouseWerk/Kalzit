@@ -667,11 +667,13 @@ async fn roles_and_organizations_are_enforced() {
         (Method::PATCH, one.clone(), Some(json!({ "name": "N" }))),
         (Method::DELETE, one.clone(), None),
         (Method::POST, t.path(&format!("/datasources/{trashed}/restore")), Some(json!({}))),
-        (Method::GET, t.path("/datasources?trash=true"), None),
     ] {
         let r = t.send(method.clone(), &path, body, Some(&editor)).await;
         assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{method} {path}");
     }
+    // The trash lists only what the caller may restore: nothing, for an editor.
+    let r = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&editor)).await;
+    assert_eq!((r.status, r.body["items"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{}", r.text);
     // Viewers have no data source rights of their own: the list is empty, queries do not find
     // the source, and its routes do not exist for them.
     let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
@@ -1168,4 +1170,95 @@ async fn prometheus_panels_keep_variables_to_the_dashboard() {
     let bad = json!({ "timeRange": range(), "variables": { "job": "api\"} or vector(1) or up{job=\"x" } });
     let r = t.panel(&viewer, &dashboard, "p", bad).await;
     assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("variables")), "{}", r.text);
+}
+
+/// Any change to a variable definition makes every stored query count as changed, so an editor
+/// without data source rights cannot widen what the queries read.
+#[tokio::test]
+async fn variable_changes_recheck_every_stored_query() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let mut model = dashboard_model(&ds);
+    model["variables"].as_array_mut().unwrap().push(json!({ "name": "wahl", "type": "custom", "options": ["land"] }));
+    let r = t.post("/dashboards", json!({ "model": model.clone() })).await;
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("edda", Some("viewer")).await;
+    let (edda,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'edda@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": edda, "resourceType": "dashboard", "resourceId": dashboard, "level": "edit" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let path = t.path(&format!("/dashboards/{dashboard}"));
+    let fest = 2;
+    let wahl = 3;
+    let mut changes = Vec::new();
+    let mut m = model.clone();
+    m["variables"][fest]["current"] = json!({ "value": "Schweiz" });
+    changes.push(("a constant's value", m));
+    let mut m = model.clone();
+    m["variables"][wahl]["options"] = json!(["land", "betrag"]);
+    changes.push(("a custom option", m));
+    let mut m = model.clone();
+    m["variables"][fest]["type"] = json!("textbox");
+    changes.push(("a constant turned textbox", m));
+    for (what, m) in changes {
+        let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 1 })), Some(&viewer)).await;
+        assert_eq!(r.code(), "forbidden", "{what}: {}", r.text);
+    }
+    // Without variable changes the same editor may still rename it.
+    let mut m = model;
+    m["title"] = json!("Neu");
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 1 })), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+}
+
+/// An edit grant on a data source renames it and changes its limits, but where it connects is
+/// for administrators.
+#[tokio::test]
+async fn an_edit_grant_cannot_repoint_a_data_source() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let other = t.sqlite_file("anderes.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let pg = t
+        .post(
+            "/datasources",
+            json!({ "name": "PG", "kind": "postgres",
+            "settings": { "host": "db.intern", "database": "d", "user": "u" }, "secrets": { "password": "geheim" } }),
+        )
+        .await
+        .body["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let viewer = t.session_for_role("erik", Some("viewer")).await;
+    let (erik,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'erik@example.de'").fetch_one(&t.state.db).await.unwrap();
+    for id in [&ds, &pg] {
+        let grant = json!({ "subjectType": "user", "subjectId": erik, "resourceType": "datasource", "resourceId": id, "level": "edit" });
+        assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    }
+    let patch = |id: &str, body: Value| {
+        let path = t.path(&format!("/datasources/{id}"));
+        let viewer = viewer.clone();
+        let t = &t;
+        async move { t.send(Method::PATCH, &path, Some(body), Some(&viewer)).await }
+    };
+    let r = patch(&ds, json!({ "settings": { "path": other.to_string_lossy() } })).await;
+    assert_eq!(r.code(), "forbidden", "{}", r.text);
+    let r = patch(&pg, json!({ "settings": { "host": "anderswo.example", "database": "d", "user": "u" }, "secrets": { "password": "geheim" } })).await;
+    assert_eq!(r.code(), "forbidden", "{}", r.text);
+    // Name, limits and re-entering a secret for the same target are fine.
+    assert_eq!(patch(&ds, json!({ "name": "Umsatz alt" })).await.status, StatusCode::OK);
+    let limits = json!({ "settings": { "path": file.to_string_lossy(), "maxRows": 10 } });
+    assert_eq!(patch(&ds, limits).await.status, StatusCode::OK);
+    assert_eq!(patch(&pg, json!({ "secrets": { "password": "neu" } })).await.status, StatusCode::OK);
+
+    // The trash shows what the member may restore.
+    t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&viewer)).await;
+    let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&viewer)).await;
+    let ids: Vec<&str> = trash.body["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [ds.as_str()], "{}", trash.text);
+    let restored = t.post(&format!("/datasources/{ds}/restore"), json!({})).await;
+    assert_eq!(restored.status, StatusCode::OK);
 }

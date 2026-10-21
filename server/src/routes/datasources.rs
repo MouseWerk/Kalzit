@@ -16,7 +16,7 @@ use super::table::{RouteDef, route};
 use super::{clean_name, new_id};
 use crate::app::AppState;
 use crate::audit::{AuditEvent, record};
-use crate::authz::{Access, AccessIndex, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{Access, AccessIndex, OrgCtx, Permission, Resource, check_resource, resource_permissions};
 use crate::datasources::{self, Datasource, FieldError, HealthReport, Kind, SettingField, SourceSchema, find_in_org};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -116,17 +116,21 @@ async fn list(
         Some("true") => true,
         Some(_) => return Err(ApiError::validation("trash must be true or false").with_field("trash")),
     };
-    if trash {
-        ctx.check(Permission::DatasourcesWrite)?;
-    }
     if let Some(c) = &params.cursor
         && uuid::Uuid::parse_str(c).is_err()
     {
         return Err(ApiError::validation("cursor is not valid").with_field("cursor"));
     }
-    // The role shows every source, or a grant shows that one (with read or query rights).
-    let org_wide = ctx.permissions.contains(&Permission::DatasourcesRead)
-        || ctx.permissions.contains(&Permission::DatasourcesQuery);
+    // The role shows every source, or a grant shows that one: live sources with read or query
+    // rights, trashed ones with the right to restore them (write).
+    let shows = |p: &std::collections::BTreeSet<Permission>| {
+        if trash {
+            p.contains(&Permission::DatasourcesWrite)
+        } else {
+            p.contains(&Permission::DatasourcesRead) || p.contains(&Permission::DatasourcesQuery)
+        }
+    };
+    let org_wide = shows(&ctx.permissions);
     let granted: Vec<String> = if org_wide {
         Vec::new()
     } else {
@@ -135,11 +139,7 @@ async fn list(
         index
             .granted_datasources()
             .into_iter()
-            .filter(|id| {
-                index.datasource(id).is_some_and(|p| {
-                    p.contains(&Permission::DatasourcesRead) || p.contains(&Permission::DatasourcesQuery)
-                })
-            })
+            .filter(|id| index.datasource(id).is_some_and(|p| shows(&p)))
             .map(String::from)
             .collect()
     };
@@ -405,6 +405,16 @@ async fn update(
     // A new target must not receive the secrets stored for the old one: every stored secret is
     // sent again (or removed) in the same change.
     if let Some(target) = kind.changed_targets(&ds.settings, &settings).first() {
+        // Where a source connects is decided by those who administer it: the org-wide right, or
+        // an admin grant on this source. An edit grant changes names, limits and secrets only.
+        let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+        if !ctx.permissions.contains(&Permission::DatasourcesWrite)
+            && !held.contains(&Permission::DatasourcesPermissions)
+        {
+            return Err(ApiError::forbidden(format!(
+                "changing {target} needs datasources:write for the organization or an admin grant on this source"
+            )));
+        }
         for stored in secrets::set_fields(&state.db, &ds.id).await? {
             if !body.secrets.contains_key(&stored) {
                 let field = kind.all_settings().find(|f| f.name == stored).map_or("secrets", |f| f.name);

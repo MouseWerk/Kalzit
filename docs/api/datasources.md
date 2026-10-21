@@ -8,7 +8,7 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | Method | Path | Access |
 |---|---|---|
 | GET | `/orgs/{orgId}/datasource-kinds` | member |
-| GET | `/orgs/{orgId}/datasources` | member; lists the sources the caller may read or query (`?trash=true`: org-wide `datasources:write`) |
+| GET | `/orgs/{orgId}/datasources` | member; lists the sources the caller may read or query (`?trash=true`: the trashed ones they may restore, `datasources:write`) |
 | POST | `/orgs/{orgId}/datasources` | `datasources:write` (org-wide) |
 | GET | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:read` on the source |
 | PATCH | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
@@ -129,7 +129,10 @@ Items in the trash also carry `deletedAt`.
 All fields optional. `settings`, when present, replaces all settings. Per secret field: absent =
 keep, `null` = remove, string = set. A patch that changes nothing answers the data source as is.
 
-When the patch changes a `target` field (for example `host`, `port`, `user`, `sslMode`, `url`),
+Changing a `target` field (for example `host`, `port`, `user`, `sslMode`, `url`, `path`) needs
+the org-wide `datasources:write` or an `admin` grant on the source; an `edit` grant may change the
+name, the other settings and the limits, and re-enter secrets, but answers `403 forbidden` for a
+target change. When the patch changes a `target` field,
 every secret that is stored must be in the same patch, either with its value again or with `null`.
 Otherwise the answer is `422 validation` with `field` naming the secret, so a stored password is
 never sent to a new host without being entered again.
@@ -306,7 +309,9 @@ The consequence: the right to query a source is checked when a query is saved, n
 An editor who later loses access to a source leaves working dashboards behind; to stop such a
 query, remove it from the dashboard (or move the dashboard where fewer people may read it).
 Saving checks only queries that are new or changed against the stored version, so someone who may
-edit a dashboard can rename or rearrange it without rights on its sources; a new or changed query
+edit a dashboard can rename or rearrange it without rights on its sources. Any change to a
+variable definition (type, `current`, `options`, query) counts as a change of every stored query,
+since variables shape what the queries read; a new or changed query
 on a source the saver may not query answers `403 forbidden` naming the source, and an id that
 names no data source of the organization `422 validation` (`field: model`).
 
@@ -322,7 +327,10 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
 - `custom`: the value, or each value of a list, must be one of the variable's `options` (a list of
   values or of `{"value": ..., "label": ...}` objects).
 - `query`, `textbox`, `interval`: free values. They are bound as parameters in SQL and escaped into
-  quoted strings in PromQL.
+  quoted strings in PromQL. Inside a PromQL regex matcher (`=~`, `!~`) a free value is also
+  regex-escaped, so it matches literally (`.+` matches the text `.+`); constant and custom values
+  are kept as written there, so a dashboard may offer a pattern such as `.*`. In free queries every
+  variable value is regex-escaped in regex matchers.
 - Only `constant` and `custom` variables may be used as identifiers (`${x:identifier}`), since only
   their values are checked against the dashboard's own list; any other variable used that way
   answers `query_rejected` for that target. Identifiers must also be in the source's schema.
