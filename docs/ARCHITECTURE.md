@@ -301,15 +301,20 @@ type QueryResult =
   elsewhere (`clippy.toml`); the data source drivers' read-only transactions on the users'
   databases are the marked exceptions. A graceful stop (Ctrl+C, SIGTERM, and on Windows closing
   the console or shutting down, with a 3 s grace instead of 10 s) closes the database, which
-  folds the WAL back into `kalzit.db`.
+  folds the WAL back into `kalzit.db`. The close gets 2 s, on Windows at most what is left of the
+  grace; when a statement still waits for a lock another program holds, the stop goes on without
+  it and logs a warning. Nothing committed is lost, and the next start completes the checkpoint.
 - Reads never wait on writers: the one write a read request makes, the session's last-seen time,
   runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
   the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
-  tries again, since its touch is still due. An older touch never overwrites a newer one. On
-  SQLite the touches use a small pool of their own whose connections wait at most 1 s for the
-  write lock: SQLite keeps waiting even after a touch is aborted, and a stop, which aborts all
-  touches before it closes the database, would otherwise wait the full 15 s. The requests'
-  connections keep their 15 s. A failed touch is logged at debug level only.
+  tries again, since its touch is still due. An older touch never overwrites a newer one. A
+  failed touch is logged at debug level only.
+- Background writes: the touches and the hourly jobs (session cleanup, audit retention) run as
+  tasks a stop aborts before it closes the database (`db::Background`). On SQLite they use a
+  small pool of their own whose connections wait at most 1 s for the write lock: SQLite keeps
+  waiting even after a statement is aborted, and closing the database would wait the full 15 s.
+  The requests' connections keep their 15 s. Each of these writes is repeated later, so a
+  dropped one costs nothing.
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).

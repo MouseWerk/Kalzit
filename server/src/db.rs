@@ -5,7 +5,9 @@
 //! servers on one database need PostgreSQL.
 
 use std::cell::Cell;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -23,10 +25,10 @@ pub const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(15);
 /// large file behind (64 MiB).
 const SQLITE_JOURNAL_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
 
-/// How long a session touch waits for the write lock on SQLite before it gives up. Short, because
-/// SQLite keeps waiting even when the touch is dropped, and closing the database at a stop waits
-/// for that.
-pub const TOUCH_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long the server's own background writes (session touches, the hourly jobs) wait for the
+/// write lock on SQLite before they give up. Short, because SQLite keeps waiting even when the
+/// write is dropped, and closing the database at a stop waits for that.
+pub const BACKGROUND_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
     connect_with(url, max_connections, SQLITE_BUSY_TIMEOUT).await
@@ -76,6 +78,61 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
 pub fn side_pool(pool: &AnyPool, url: &str, max_connections: u32, busy_timeout: Duration) -> Option<AnyPool> {
     sqlite_file(url)?;
     Some(pool_options(max_connections, busy_timeout).connect_lazy_with((*pool.connect_options()).clone()))
+}
+
+/// The writes the server makes on its own, outside requests: session touches and the hourly
+/// jobs. They run as tasks the server aborts when it stops, and on SQLite through a `side_pool`
+/// that waits at most `BACKGROUND_BUSY_TIMEOUT` for the write lock, so a stop never waits the
+/// full busy timeout for one. Each of them is repeated later, so a dropped one costs nothing.
+pub struct Background {
+    db: AnyPool,
+    own_pool: bool,
+    /// `None` once stopped: nothing new starts.
+    tasks: Mutex<Option<tokio::task::JoinSet<()>>>,
+}
+
+impl Background {
+    /// For the server's pool `main` on `url`, with up to `max_connections` of its own on SQLite.
+    pub fn new(main: &AnyPool, url: &str, max_connections: u32) -> Self {
+        let own = side_pool(main, url, max_connections, BACKGROUND_BUSY_TIMEOUT);
+        Self {
+            own_pool: own.is_some(),
+            db: own.unwrap_or_else(|| main.clone()),
+            tasks: Mutex::new(Some(tokio::task::JoinSet::new())),
+        }
+    }
+
+    /// The pool background writes go through.
+    pub fn db(&self) -> &AnyPool {
+        &self.db
+    }
+
+    /// Runs `task` until it ends or the server stops; after the stop it does not start.
+    pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
+        if let Some(tasks) = self.lock_tasks().as_mut() {
+            // Finished tasks leave their result in the set; drop them so it does not grow.
+            while tasks.try_join_next().is_some() {}
+            tasks.spawn(task);
+        }
+    }
+
+    /// Aborts every task for good and closes the own pool, which waits at most
+    /// `BACKGROUND_BUSY_TIMEOUT` for a write that is waiting for the lock.
+    pub async fn stop(&self) {
+        let tasks = self.lock_tasks().take();
+        if let Some(mut tasks) = tasks {
+            tasks.abort_all();
+            while tasks.join_next().await.is_some() {}
+        }
+        if self.own_pool {
+            self.db.close().await;
+        }
+    }
+
+    fn lock_tasks(&self) -> MutexGuard<'_, Option<tokio::task::JoinSet<()>>> {
+        // The set holds no invariant a panic could break.
+        self.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 fn pool_options(max_connections: u32, busy_timeout: Duration) -> AnyPoolOptions {
@@ -302,12 +359,14 @@ const SECRET_PARAMS: &[&str] = &["password", "pass", "pwd", "sslpassword", "sslk
 /// cookie is presented again, and most expired cookies never come back.
 pub fn spawn_session_cleanup(state: crate::app::AppState) {
     const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
-    tokio::spawn(async move {
+    let background = state.background.clone();
+    background.spawn(async move {
         let mut tick = tokio::time::interval(INTERVAL);
         loop {
             tick.tick().await;
             let now = state.clock.now_ms();
-            match crate::auth::session::delete_ended(&state.db, &state.config.sessions, now).await {
+            let db = state.background.db();
+            match crate::auth::session::delete_ended(db, &state.config.sessions, now).await {
                 Ok(0) => {}
                 Ok(n) => tracing::debug!("removed {n} ended sessions"),
                 Err(e) => tracing::warn!("removing ended sessions failed, will retry in an hour: {e}"),

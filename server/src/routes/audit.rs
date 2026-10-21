@@ -214,11 +214,16 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
 /// Deletes events older than `audit.retention_days` and records how many went. Answers the
 /// number deleted.
 pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
+    purge_expired_in(state, &state.db).await
+}
+
+/// `purge_expired` through `db`: the hourly job uses the background pool.
+async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
     let days = settings::get(state, "audit.retention_days").await?;
     let days = days.as_i64().ok_or_else(|| ApiError::internal("audit", "audit.retention_days is not a number"))?;
     let now = state.clock.now_ms();
     let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
-    let mut tx = crate::db::begin(&state.db).await?;
+    let mut tx = crate::db::begin(db).await?;
     let deleted = sqlx::query("DELETE FROM audit_events WHERE created_at < $1")
         .bind(cutoff)
         .execute(&mut *tx)
@@ -244,11 +249,12 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
 /// Runs `purge_expired` every hour, like the session cleanup.
 pub fn spawn_retention(state: AppState) {
     const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
-    tokio::spawn(async move {
+    let background = state.background.clone();
+    background.spawn(async move {
         let mut tick = tokio::time::interval(INTERVAL);
         loop {
             tick.tick().await;
-            match purge_expired(&state).await {
+            match purge_expired_in(&state, state.background.db()).await {
                 Ok(0) => {}
                 Ok(n) => tracing::info!("deleted {n} audit events past their retention"),
                 Err(e) => tracing::warn!("deleting old audit events failed, will retry in an hour: {}", e.message),
