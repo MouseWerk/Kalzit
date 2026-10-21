@@ -59,6 +59,12 @@ mod tests {
         "server",
         "health",
         "frame",
+        "graph",
+        "cypher",
+        "gsql",
+        "bolt",
+        "memgraph",
+        "tigergraph",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.

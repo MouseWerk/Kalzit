@@ -72,13 +72,21 @@ export type TypeShare = { name: string,
  */
 share: number, };
 
-export type Truncated = { limit: number, };
+export type Truncated = { limit: number, 
+/**
+ * Which limit cut the result (a notice code such as `graph.node_limit`), when known.
+ */
+reason?: string, };
 
 export type GraphSet = { nodes: Array<Node>, edges: Array<Edge>, 
 /**
  * Paths stay paths when the query returned them, instead of a loose set of edges.
  */
-paths?: Array<GraphPath>, schema: GraphSchema, truncated?: Truncated, };
+paths?: Array<GraphPath>, schema: GraphSchema, truncated?: Truncated, 
+/**
+ * What the source said about the result, such as columns that are not part of the graph.
+ */
+notices?: Array<Notice>, };
 
 export type Node = { id: string, labels: Array<string>, properties: Record<string, unknown>, };
 

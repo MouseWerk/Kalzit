@@ -7,15 +7,21 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod bolt;
+pub mod cypher;
 pub mod detail;
 pub mod frame;
+pub mod graph;
+pub mod gsql;
 pub mod mssql;
 pub mod mysql;
+pub mod neo4j;
 pub mod postgres;
 pub mod prometheus;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
+pub mod tigergraph;
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
@@ -123,6 +129,17 @@ pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -
 pub enum SourceSchema {
     Tables { tables: Vec<Table> },
     Metrics { metrics: Vec<String>, labels: Vec<String> },
+    /// Graph sources: node labels (TigerGraph: vertex types), relationship (edge) types, property
+    /// keys, and for TigerGraph the installed queries.
+    Graph {
+        labels: Vec<String>,
+        #[serde(rename = "edgeTypes")]
+        edge_types: Vec<String>,
+        #[serde(rename = "propertyKeys")]
+        property_keys: Vec<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        queries: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -837,7 +854,16 @@ impl DataSources {
     pub fn new(config: &Config, db: AnyPool, keyring: Arc<Keyring>) -> Self {
         let database_url = config.database_url();
         Self {
-            kinds: vec![postgres::kind(), mysql::kind(), sqlite::kind(), mssql::kind(), prometheus::kind()],
+            kinds: vec![
+                postgres::kind(),
+                mysql::kind(),
+                sqlite::kind(),
+                mssql::kind(),
+                prometheus::kind(),
+                neo4j::neo4j(),
+                neo4j::memgraph(),
+                tigergraph::kind(),
+            ],
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),

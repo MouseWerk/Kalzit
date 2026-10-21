@@ -139,12 +139,29 @@ impl HttpClient {
     /// Sends a request and follows redirects, checking every target. Authorization is dropped
     /// when a redirect leaves the origin, so credentials are not handed to another host.
     pub async fn send(&self, method: Method, url: Url, headers: HeaderMap) -> Result<reqwest::Response, HttpError> {
+        self.send_body(method, url, headers, None).await
+    }
+
+    /// `send` with a request body. A `303 See Other` continues as a `GET` without the body; other
+    /// redirects send it again.
+    pub async fn send_body(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, HttpError> {
         let mut url = url;
         let mut method = method;
         let mut headers = headers;
+        let mut body = body;
         for _ in 0..=MAX_REDIRECTS {
             self.check_url(&url).await?;
-            let response = self.client.request(method.clone(), url.clone()).headers(headers.clone()).send().await?;
+            let mut request = self.client.request(method.clone(), url.clone()).headers(headers.clone());
+            if let Some(b) = &body {
+                request = request.body(b.clone());
+            }
+            let response = request.send().await?;
             if !response.status().is_redirection() {
                 return Ok(response);
             }
@@ -157,6 +174,7 @@ impl HttpClient {
             }
             if response.status() == StatusCode::SEE_OTHER {
                 method = Method::GET;
+                body = None;
             }
             url = next;
         }
