@@ -78,7 +78,21 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(50 * 1024 * 1024),
         ui_editable: true,
-        description: "Largest result one query may produce.",
+        description: "Largest result one request may produce, all its queries together.",
+    },
+    SettingDef {
+        key: "datasources.max_parallel_queries",
+        scope: Scope::Server,
+        default: || json!(64),
+        ui_editable: true,
+        description: "Queries running at once on the whole server; further ones wait for a free slot, at most until their time limit runs out.",
+    },
+    SettingDef {
+        key: "datasources.max_inflight_bytes",
+        scope: Scope::Server,
+        default: || json!(1024 * 1024 * 1024),
+        ui_editable: true,
+        description: "Result bytes all running queries together may hold.",
     },
     SettingDef {
         key: "audit.retention_days",
@@ -163,6 +177,8 @@ fn rule(key: &str) -> Option<Rule> {
         "datasources.query_timeout_secs" => Rule::Int { min: 1, max: 3600 },
         "datasources.max_rows" => Rule::Int { min: 1, max: 10_000_000 },
         "datasources.max_response_bytes" => Rule::Int { min: 1024, max: 1024 * 1024 * 1024 },
+        "datasources.max_parallel_queries" => Rule::Int { min: 1, max: 10_000 },
+        "datasources.max_inflight_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),

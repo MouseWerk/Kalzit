@@ -597,7 +597,17 @@ async fn grants_extend_access_per_resource() {
     let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
     let stranger = t.user(&owner, "Fremd", "fremd@example.de").await;
     let dashboard = t.dashboard(&org).await;
+    // Grants need a data source that exists in the organization.
     let datasource = uuid();
+    sqlx::query(
+        "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+         VALUES ($1, $2, 'Quelle', 'sqlite', '{}', 0, 0)",
+    )
+    .bind(&datasource)
+    .bind(&org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
     let explain = |p: &str, rt: &str, id: &str| {
         format!("/api/orgs/{org}/explain?permission={p}&resourceType={rt}&resourceId={id}")
     };
