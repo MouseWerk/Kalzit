@@ -10,6 +10,8 @@
 //!
 //! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run.
 
+mod common;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -76,7 +78,7 @@ fn parts(url: &str) -> (String, u16, String, Option<String>, String) {
 
 impl T {
     async fn new(db_url: Option<String>) -> T {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::private_tempdir();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
         config.database.url = db_url;

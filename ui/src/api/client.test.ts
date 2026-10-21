@@ -85,11 +85,30 @@ describe("request", () => {
     [429, "rate_limited"],
     [500, "internal"],
     [502, "internal"],
+    [503, "busy"],
   ] as const)("maps status %i without an envelope to %s", async (status, code) => {
     respond(status, "<html>Bad Gateway</html>", "text/html");
     const error = await failure(request("GET", "/api/x"));
     expect(error.code).toBe(code);
     expect(error.status).toBe(status);
+  });
+
+  it("keeps Retry-After of a busy answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response('{"error":{"code":"busy","message":"the database is busy"}}', {
+            status: 503,
+            headers: { "Content-Type": "application/json", "Retry-After": "2" },
+          }),
+      ),
+    );
+    const error = await failure(request("POST", "/api/x", {}));
+    expect(error.code).toBe("busy");
+    expect(error.retryAfterMs).toBe(2000);
+    respond(503, '{"error":{"code":"busy","message":""}}');
+    expect((await failure(request("GET", "/api/x"))).retryAfterMs).toBeUndefined();
   });
 
   it("keeps the stored resource of a version conflict", async () => {

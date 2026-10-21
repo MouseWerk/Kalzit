@@ -99,14 +99,22 @@ fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     remove_file_if_present(path);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)?.write_all(content.as_bytes())
+    // Private from its first moment: mode 0600, or on Windows its own protected ACL instead of
+    // whatever the folder passes on.
+    #[cfg(windows)]
+    let mut file = crate::data_dir::acl::create_file(path, crate::data_dir::acl::FILE_SDDL)?;
+    #[cfg(not(windows))]
+    let mut file = {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path)?
+    };
+    file.write_all(content.as_bytes())
 }
 
 fn remove_file_if_present(path: &Path) {
@@ -182,10 +190,22 @@ pub async fn complete(
 
     let org_id = new_id();
     let user_id = new_id();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
+    // The one row of `setup_lock` (fixed key) is written first: of two servers on one database
+    // doing setup at once, the second waits for the first and then fails on the key, on
+    // PostgreSQL as on SQLite. An early return rolls everything back.
+    let claimed = sqlx::query("INSERT INTO setup_lock (id, done_at) VALUES (1, $1)").bind(now).execute(&mut *tx).await;
+    match claimed {
+        Ok(_) => {}
+        Err(e) if super::support::is_unique_violation(&e) => {
+            // Another server on the same database finished setup first; this one is done too.
+            close_gate(&mut gate);
+            return Err(setup_done());
+        }
+        Err(e) => return Err(e.into()),
+    }
     let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(&mut *tx).await?;
     if users > 0 {
-        // Another server on the same database finished setup first; this one is done too.
         close_gate(&mut gate);
         return Err(setup_done());
     }
@@ -223,17 +243,20 @@ pub async fn complete(
         at_ms: now,
     };
     crate::audit::record(&mut tx, &event).await?;
-    tx.commit().await?;
+    // The session and the answer are part of the transaction: once it is committed, nothing may
+    // fail as "busy, nothing changed".
+    let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
+    let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
+    let answer = me(&mut *tx, user).await?;
+    crate::db::commit(tx).await?;
 
     close_gate(&mut gate);
     drop(gate);
     tracing::info!(user = %user_id, org = %org_id, "setup complete");
 
-    let token = session::create(&state.db, &state.config.sessions, now, &user_id).await?;
-    let user = SessionUser { id: user_id, email, name, is_server_admin: 1 };
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    Ok((headers, Json(me(&state.db, user).await?)))
+    Ok((headers, Json(answer)))
 }
 
 #[cfg(test)]
@@ -246,5 +269,31 @@ mod tests {
         assert_eq!(code.len(), 29, "{code}");
         assert_eq!(code.matches('-').count(), 5);
         assert_eq!(hash_code(&code), hash_code(&code.replace('-', " ").to_uppercase()));
+    }
+
+    #[test]
+    fn the_setup_code_file_is_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(TOKEN_FILE);
+        write_private(&file, "abc\n").unwrap();
+        // Written again on the next start: replaced, still private.
+        write_private(&file, "def\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "def\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        #[cfg(windows)]
+        {
+            // Its own protected entries, not the ones the (temporary) folder passes on.
+            let sddl = crate::data_dir::acl::dacl_sddl(&file).unwrap();
+            assert!(sddl.split("D:").nth(1).unwrap_or_default().starts_with('P'), "not protected: {sddl}");
+            let aces = crate::data_dir::acl::aces(&sddl);
+            let mut trustees: Vec<&str> = aces.iter().map(|(_, _, t)| t.as_str()).collect();
+            trustees.sort_unstable();
+            assert_eq!(trustees, ["BA", "OW", "SY"], "{sddl}");
+            assert!(aces.iter().all(|(flags, _, _)| flags.is_empty()), "explicit entries only: {sddl}");
+        }
     }
 }

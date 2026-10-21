@@ -220,6 +220,7 @@ impl DataSourcePlugin for MySql {
         let pool = pool(conn).await?;
         let mut c = pool.acquire().await.map_err(failed)?;
         limit_session(&mut c, req.limits.timeout).await?;
+        #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = sqlx::Connection::begin_with(&mut *c, "START TRANSACTION READ ONLY").await.map_err(failed)?;
         let statement =
             (&mut *tx).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(failed)?;

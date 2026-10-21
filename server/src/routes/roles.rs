@@ -169,7 +169,7 @@ async fn create(
 
     let id = super::new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let (count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM roles WHERE org_id = $1").bind(&ctx.org_id).fetch_one(&mut *tx).await?;
@@ -193,7 +193,7 @@ async fn create(
     let summary = json!({ "roleId": id, "permissions": names(&permissions) });
     audit(&mut tx, &actor, Some(&ctx.org_id), "role.created", ("role", &id), summary).await?;
     let role = load(&mut tx, &ctx.org_id, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(role)))
 }
 
@@ -229,7 +229,7 @@ async fn update(
         .transpose()?;
     let permissions = req.permissions.as_deref().map(parse_permissions).transpose()?;
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let current = custom_role(&mut tx, &ctx.org_id, &role_id).await?;
     // Changing a role changes the rights of everyone holding it, in both directions.
@@ -269,7 +269,7 @@ async fn update(
         audit(&mut tx, &actor, Some(&ctx.org_id), "role.updated", ("role", &role_id), summary).await?;
     }
     let role = load(&mut tx, &ctx.org_id, &role_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(role))
 }
 
@@ -279,7 +279,7 @@ async fn delete(
     Extension(info): Extension<RequestInfo>,
     Path((_, role_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let current = custom_role(&mut tx, &ctx.org_id, &role_id).await?;
     ensure_holds(&ctx.permissions, &current.permissions)?;
@@ -309,6 +309,6 @@ async fn delete(
         .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "role.deleted", ("role", &role_id), json!({ "roleId": role_id })).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }

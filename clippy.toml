@@ -7,4 +7,16 @@ disallowed-methods = [
     { path = "axum::routing::Router::merge", reason = "declare the route in a route table so its access is enforced" },
     { path = "axum::routing::Router::nest_service", reason = "declare the route in a route table so its access is enforced" },
     { path = "axum::routing::Router::fallback_service", reason = "declare the route in a route table so its access is enforced" },
+    # Transactions of Kalzit's database start in db::begin (BEGIN IMMEDIATE on SQLite) and commit in
+    # db::commit (which marks the request as having saved something, so later errors are not
+    # "busy"). Only those two functions call sqlx directly.
+    { path = "sqlx_core::pool::Pool::begin", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::pool::Pool::begin_with", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::pool::Pool::try_begin", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::pool::Pool::try_begin_with", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::acquire::Acquire::begin", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::connection::Connection::begin", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::connection::Connection::begin_with", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::transaction::Transaction::begin", reason = "start transactions with db::begin" },
+    { path = "sqlx_core::transaction::Transaction::commit", reason = "commit with db::commit" },
 ]

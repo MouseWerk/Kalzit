@@ -746,13 +746,17 @@ fn is_canonical_uuid(id: &str) -> bool {
 
 /// A data source of `org_id` that is not in the trash. Ids of other organizations, trashed
 /// sources and malformed ids are all `not_found`.
-pub async fn resolve_in_org(db: &AnyPool, org_id: &str, datasource_id: &str) -> ApiResult<Datasource> {
+pub async fn resolve_in_org<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    org_id: &str,
+    datasource_id: &str,
+) -> ApiResult<Datasource> {
     find_in_org(db, org_id, datasource_id, false).await
 }
 
 /// Like `resolve_in_org`, but `trashed` selects the data sources in the trash instead.
-pub(crate) async fn find_in_org(
-    db: &AnyPool,
+pub(crate) async fn find_in_org<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
     org_id: &str,
     datasource_id: &str,
     trashed: bool,

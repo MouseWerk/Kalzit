@@ -98,6 +98,18 @@ describe("route guards", () => {
     expect(await screen.findByRole("heading", { name: `Welcome, ${TEST_USER.name}` })).toBeTruthy();
   });
 
+  it("does not repeat a sign-in the server answered busy", async () => {
+    const server = installFakeServer();
+    server.failNext("/api/auth/login", 503, "busy", "POST");
+    // Retries on, as in the real app: the sign-in itself opts out.
+    const { user } = renderApp("/login", { retry: true });
+    await signIn(user);
+    expect(
+      await screen.findByText("The server is busy right now. Try again in a moment."),
+    ).toBeTruthy();
+    expect(server.calls.filter((c) => c.path === "/api/auth/login")).toHaveLength(1);
+  });
+
   it("returns to sign in when the session ends while the app is open", async () => {
     const server = installFakeServer({ signedIn: true });
     const { app, location } = renderApp("/dashboards");
