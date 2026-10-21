@@ -3,7 +3,7 @@ import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { formatValue, rowCount, seriesName, toNumber, valueFields } from "../frame";
-import { EmptyPanel, UnitField } from "../shared";
+import { EmptyPanel, emptyReason, UnitField } from "../shared";
 import { SERIES_COLORS } from "../timeseries/ChartShell";
 import { niceTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -61,7 +61,7 @@ function BarPanel({ frames, options, title }: PanelProps<BarOptions>) {
   const { width, height } = useElementSize(boxRef);
   const data = barData(frames, language);
   if (data === null) {
-    return <EmptyPanel reason="noValues" />;
+    return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
   const values = data.series.flatMap((s) => s.values).filter((v): v is number => v !== null);
   const ticks = niceTicks(Math.min(0, ...values), Math.max(0, ...values), 4);

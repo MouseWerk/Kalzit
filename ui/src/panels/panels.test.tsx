@@ -241,6 +241,22 @@ describe("bar and time series panels", () => {
     renderPanel("timeseries", [tableFrame]);
     expect(screen.getByText(/No time series in the result/)).toBeTruthy();
   });
+
+  it.each(["timeseries", "bar", "stat"])(
+    "says a %s panel got no rows rather than blaming the field types",
+    (type) => {
+      // An empty SQLite result has no value to tell a REAL column's type by; it arrives as text.
+      renderPanel(type, [
+        {
+          fields: [
+            { name: "time", type: "time", values: [] },
+            { name: "amount", type: "string", values: [] },
+          ],
+        },
+      ]);
+      expect(screen.getByText("The query returned no data.")).toBeTruthy();
+    },
+  );
 });
 
 describe("performance budget", () => {

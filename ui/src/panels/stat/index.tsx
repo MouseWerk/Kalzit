@@ -3,7 +3,7 @@ import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { formatValue, seriesName, timeField, toNumber, valueFields } from "../frame";
-import { EmptyPanel, UnitField } from "../shared";
+import { EmptyPanel, emptyReason, UnitField } from "../shared";
 import { SERIES_COLORS } from "../timeseries/ChartShell";
 import { seriesPath, valueExtent } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -120,7 +120,7 @@ function StatPanel({ frames, options }: PanelProps<StatOptions>) {
   const { language } = useI18n();
   const items = frames.flatMap((frame) => valueFields(frame).map((field) => ({ frame, field })));
   if (items.length === 0) {
-    return <EmptyPanel reason="noValues" />;
+    return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
   return (
     <ul className="stat">

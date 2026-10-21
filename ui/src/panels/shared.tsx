@@ -1,5 +1,7 @@
 import { useId } from "react";
+import type { Frame } from "../api/generated/shapes";
 import { useI18n } from "../i18n/i18n";
+import { rowCount } from "./frame";
 import "./panels.css";
 
 const EMPTY_REASONS = {
@@ -8,10 +10,21 @@ const EMPTY_REASONS = {
   noValues: "dashboards.panels.empty.noValues",
 } as const;
 
+type EmptyReason = keyof typeof EMPTY_REASONS;
+
 /** What a panel shows when the data has nothing it can draw, and why. */
-export function EmptyPanel({ reason }: { reason: keyof typeof EMPTY_REASONS }) {
+export function EmptyPanel({ reason }: { reason: EmptyReason }) {
   const { t } = useI18n();
   return <p className="panel-empty">{t(EMPTY_REASONS[reason])}</p>;
+}
+
+/**
+ * Why there is nothing to draw: without any row the query found no data, which says more than the
+ * panel's own reason. An empty result also has no values to tell a column's type by, so a number
+ * column can arrive as text and the panel's reason would be wrong.
+ */
+export function emptyReason(frames: readonly Frame[], otherwise: EmptyReason): EmptyReason {
+  return frames.every((frame) => rowCount(frame) === 0) ? "noData" : otherwise;
 }
 
 export function UnitField({

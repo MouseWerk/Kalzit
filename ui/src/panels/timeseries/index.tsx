@@ -1,7 +1,7 @@
 import { lazy, type ReactNode, Suspense, useId } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
-import { EmptyPanel, UnitField } from "../shared";
+import { EmptyPanel, emptyReason, UnitField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
@@ -50,7 +50,7 @@ function parseOptions(stored: unknown): TimeSeriesOptions {
 function TimeSeriesPanel({ frames, options, timeRange, title }: PanelProps<TimeSeriesOptions>) {
   const series = buildSeries(frames, options.legend);
   if (series.length === 0) {
-    return <EmptyPanel reason="noTimeSeries" />;
+    return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
   }
   return (
     <TimeSeriesChart
