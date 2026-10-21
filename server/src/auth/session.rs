@@ -1,5 +1,7 @@
 //! Server-side sessions. The cookie holds a random token; the database holds only its SHA-256.
 
+use std::time::Duration;
+
 use axum::http::{HeaderMap, HeaderValue, header};
 use sha2::{Digest, Sha256};
 use sqlx::AnyPool;
@@ -70,13 +72,54 @@ pub async fn lookup(db: &AnyPool, cfg: &SessionConfig, now_ms: i64, token: &str)
     .fetch_optional(db)
     .await?;
     if user.is_some() && now_ms - last_seen >= TOUCH_INTERVAL_MS {
-        sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token_hash = $2")
-            .bind(now_ms)
-            .bind(&hash)
-            .execute(db)
-            .await?;
+        touch(db, &hash, now_ms).await;
     }
     Ok(user)
+}
+
+/// How long the last-seen update may wait for the database. A read must not wait on writers;
+/// a missed update only moves the idle limit by one touch interval.
+const TOUCH_WAIT: Duration = Duration::from_millis(100);
+
+/// Best-effort update of the session's last-seen time: skipped when no connection is free at
+/// once, given up after `TOUCH_WAIT`, and any failure is only logged.
+async fn touch(db: &AnyPool, hash: &str, now_ms: i64) {
+    let Some(mut conn) = db.try_acquire() else {
+        tracing::debug!("session touch skipped: no free database connection");
+        return;
+    };
+    let update = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token_hash = $2").bind(now_ms).bind(hash);
+    let result = if conn.backend_name() == "SQLite" {
+        // SQLite waits for the write lock with the connection's busy timeout; for this one
+        // statement it is cut to the touch wait, then set back.
+        async {
+            let (previous,): (i64,) = sqlx::query_as("PRAGMA busy_timeout").fetch_one(&mut *conn).await?;
+            let short = format!("PRAGMA busy_timeout = {}", TOUCH_WAIT.as_millis());
+            sqlx::query(sqlx::AssertSqlSafe(short)).execute(&mut *conn).await?;
+            let outcome = update.execute(&mut *conn).await;
+            let restore = format!("PRAGMA busy_timeout = {previous}");
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(restore)).execute(&mut *conn).await {
+                // Never hand a connection with the short wait back to the pool.
+                conn.close_on_drop();
+                return Err(e);
+            }
+            outcome.map(|_| ())
+        }
+        .await
+    } else {
+        match tokio::time::timeout(TOUCH_WAIT, update.execute(&mut *conn)).await {
+            Ok(outcome) => outcome.map(|_| ()),
+            Err(_) => {
+                // An abandoned statement leaves the connection in an unknown state.
+                conn.close_on_drop();
+                tracing::debug!("session touch gave up after {TOUCH_WAIT:?}");
+                return;
+            }
+        }
+    };
+    if let Err(e) = result {
+        tracing::debug!("session touch skipped: {e}");
+    }
 }
 
 /// A session last seen at or before this time has ended through the idle limit. With the idle

@@ -360,6 +360,28 @@ async fn a_locked_database_answers_busy_not_internal() {
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
 }
 
+/// Reading never waits on a writer, also when the session is due for its last-seen update: that
+/// update is best-effort and gives up at once, so the request answers well within the busy
+/// timeout (15 s) instead of waiting for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_due_session_touch_does_not_wait_for_a_writer() {
+    let t = test_app(None, |_| {}).await;
+    use sqlx::Connection;
+    let url = t.state.config.database_url();
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    // Past the touch interval (5 minutes), so this request wants to update last_seen_at.
+    t.clock.advance_ms(6 * 60 * 1000);
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+    let started = std::time::Instant::now();
+    let me = t.get("/me", &t.owner).await;
+    let took = started.elapsed();
+    sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+    assert_eq!(me.status, StatusCode::OK, "{}", me.body);
+    assert!(took < std::time::Duration::from_secs(3), "the read waited {took:?} for the writer");
+    // Once the lock is free, the next due request updates it again.
+    assert_eq!(t.get("/me", &t.owner).await.status, StatusCode::OK);
+}
+
 /// A graceful stop closes the database, so SQLite checkpoints its WAL and removes it: what a
 /// backup copies with the server stopped is complete in `kalzit.db` alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
