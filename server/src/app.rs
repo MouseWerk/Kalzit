@@ -36,7 +36,7 @@ impl AppState {
         crate::auth::password::prewarm().await;
         let sec = &config.security;
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
-        let secrets = Arc::new(Keyring::load(&config.paths.data_dir)?);
+        let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         Ok(Self {
             db,

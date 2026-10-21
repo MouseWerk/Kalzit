@@ -36,6 +36,9 @@ enum SecretsCommand {
 }
 
 fn main() -> ExitCode {
+    // One rustls crypto provider for the whole process (ring), before any TLS client or server
+    // is built; libraries that would pick another one use this.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     let config = match Config::load(cli.config.as_deref()) {
         Ok(c) => c,

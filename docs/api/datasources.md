@@ -35,10 +35,10 @@ source `404 not_found` (it is not visible to them), and they run queries only th
     "shapes": ["frame"],
     "hintKey": "datasources.kinds.postgres.hint",
     "settings": [
-      { "name": "host", "labelKey": "datasources.settings.host", "type": "string", "required": true, "secret": false },
-      { "name": "port", "labelKey": "datasources.settings.port", "type": "number", "required": false, "secret": false, "default": 5432 },
-      { "name": "password", "labelKey": "datasources.settings.password", "type": "string", "required": false, "secret": true },
-      { "name": "sslMode", "labelKey": "datasources.settings.sslMode", "type": "select", "required": false, "secret": false,
+      { "name": "host", "labelKey": "datasources.settings.host", "type": "string", "required": true, "secret": false, "target": true },
+      { "name": "port", "labelKey": "datasources.settings.port", "type": "number", "required": false, "secret": false, "target": true, "default": 5432 },
+      { "name": "password", "labelKey": "datasources.settings.password", "type": "string", "required": false, "secret": true, "target": false },
+      { "name": "sslMode", "labelKey": "datasources.settings.sslMode", "type": "select", "required": false, "secret": false, "target": true,
         "options": ["disable", "prefer", "require", "verify-ca", "verify-full"], "default": "prefer" }
     ]
   }],
@@ -49,7 +49,17 @@ source `404 not_found` (it is not visible to them), and they run queries only th
 - `type`: `string` (one line), `text` (multi-line, e.g. a PEM certificate), `number` (whole number
   of at least 0), `bool`, `select` (one of `options`). `options` and `default` appear only when set.
 - `secret: true` fields are sent in `secrets`, never in `settings`, and are never returned.
-- `hintKey` is the advice shown on the form: use a read-only, least-privilege login.
+- `target: true` fields decide where the stored secrets are sent (host, port, database, user, TLS
+  checks, URL, path). Changing one requires sending the secrets again (see Update).
+- `hintKey` is the advice shown on the form. Suggested English texts:
+  - `postgres`, `mysql`: "Use a login that can only read. Kalzit also runs every query in a
+    read-only transaction, but only the database's permissions are a real boundary."
+  - `mssql`: "Use a login that can only read (db_datareader). SQL Server has no read-only
+    transaction, so the login's permissions are the only real defence; Kalzit's query check is a
+    second line."
+  - `sqlite`: "The file is opened read-only. It must lie in a directory a server administrator
+    allowed."
+  - `prometheus`: "Use a token or account that can only query."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
   limits for this source; the server-wide limits are the maximum.
 
@@ -113,6 +123,11 @@ Items in the trash also carry `deletedAt`.
 All fields optional. `settings`, when present, replaces all settings. Per secret field: absent =
 keep, `null` = remove, string = set. A patch that changes nothing answers the data source as is.
 
+When the patch changes a `target` field (for example `host`, `port`, `user`, `sslMode`, `url`),
+every secret that is stored must be in the same patch, either with its value again or with `null`.
+Otherwise the answer is `422 validation` with `field` naming the secret, so a stored password is
+never sent to a new host without being entered again.
+
 ### Delete and restore
 
 `DELETE` moves the data source to the trash and answers `204`. `POST .../restore` brings it back
@@ -123,11 +138,30 @@ keep, `null` = remove, string = set. A patch that changes nothing answers the da
 | Status, code | When | `field` |
 |---|---|---|
 | `422 validation` | name empty or longer than 100 characters, unknown kind, unknown setting, wrong type, missing required field, secret sent in `settings`, unknown secret, port outside 1..65535, host with credentials, SQLite path not absolute, URL with credentials, query or fragment, `caCert` without a PEM certificate | the field name: `name`, `kind`, a settings field name such as `host`, `settings` (unknown setting), `secrets` (unknown secret) |
-| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory or Kalzit's own database; a link-local or metadata address (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
+| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a link-local or metadata address (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
 | `409 conflict` | another data source in use has this name (also when restoring) | `name` |
 
 Name resolution happens when connecting, so a host name that resolves to a refused address is
 reported by the query, health and schema routes, not when saving.
+
+### Connections and targets
+
+- Kalzit resolves a host name once, checks the address and connects to that address; the name is
+  used for TLS. Exception: PostgreSQL `verify-full` and MySQL `verify_identity` need the driver to
+  connect by name (the drivers check the certificate against the host they connect to and have no
+  separate TLS name). There the name is resolved and checked again right before every new pooled
+  connection; an address change between that check and the driver's own lookup could only reach
+  a server holding a valid certificate for the name.
+- Data source HTTP traffic (Prometheus) never uses a proxy; `HTTP_PROXY` and similar variables are
+  ignored. A proxy would resolve names itself, past the target check.
+- When Kalzit itself runs on PostgreSQL, every PostgreSQL source is checked after connecting to make
+  sure it is not Kalzit's own database (`pg_control_system()` and `current_database()`). Servers
+  that speak the PostgreSQL protocol but lack `pg_control_system()` (several compatible engines)
+  are then refused.
+- The block list holds the link-local range (which contains the usual cloud metadata address
+  `169.254.169.254`) and AWS's IPv6 metadata address. Alibaba Cloud's metadata service
+  (`100.100.100.200`) lies in the carrier-grade NAT range used by private networks and is not
+  blocked; on Alibaba Cloud, restrict sources with `datasources.allowed_targets`.
 
 ## Test connection: `POST /orgs/{orgId}/datasources/{datasourceId}/health`
 
@@ -173,7 +207,8 @@ Body `QueryRequest`, answer `QueryResponse` (types generated in `ui/src/api/gene
 ```
 
 - 1 to 50 queries, each with its own `refId` (1 to 64 characters); `timeRange.from` not after
-  `timeRange.to`. Otherwise `422 validation` (`field`: `queries` or `timeRange`).
+  `timeRange.to`, both within the years 1 to 9999. Otherwise `422 validation` (`field`: `queries`
+  or `timeRange`).
 - `intervalMs` is optional; without it the interval is the range divided by `maxDataPoints`
   (default 1000), rounded up to a familiar step (1 ms ... 1 week).
 - `limit` on a query lowers the row limit for it.
@@ -184,8 +219,11 @@ Per-query error codes: `not_found` (no such data source in this organization), `
 `query_rejected` (not a single read-only `SELECT`/`WITH`, a forbidden function, a variable without
 a value, wrong query form), `datasource_target_blocked`, `datasource_error`, `query_timeout`.
 
-Queries run in parallel, at most 8 at a time per user (more wait, within their timeout), and are
-cancelled when the client goes away. Results are frames:
+Queries run in parallel, at most 8 at a time per user and 64 on the whole server (more wait,
+within their timeout); "Test connection" and schema reads count against the same limits. Results
+of all running requests together are held to 1 GiB. Queries are cancelled when the client goes away
+(SQL Server receives a cancel; PostgreSQL and MySQL/MariaDB also stop by their server-side time
+limit). Results are frames:
 
 - Field types: `time` (Unix ms), `number`, `int64` (decimal strings, e.g. `COUNT(*)` and `BIGINT`),
   `string`, `bool`, `json`; missing values are `null`. `NUMERIC`/`DECIMAL` are `number`.
@@ -201,8 +239,14 @@ Exactly one `SELECT` or `WITH` statement. Rejected: other statements, several st
 `SELECT ... INTO`, `FOR UPDATE`/`FOR SHARE` and other locking clauses, data-modifying `WITH`,
 MySQL executable comments (`/*! ... */`), and file, network and session functions (`LOAD_FILE`,
 `pg_read_file`, `lo_import`, `dblink`, `query_to_xml`, `OPENROWSET`, `OPENDATASOURCE`,
-`OPENQUERY`, `load_extension`, ...). PostgreSQL and MySQL run in a read-only transaction; SQLite
-opens the file read-only; every transaction is rolled back.
+`OPENQUERY`, `load_extension`, named locks, `NEXT VALUE FOR`, ...), also when used as a table in
+`FROM`. MySQL/MariaDB: `--` starts a comment only before a space or control character, as on the
+server. PostgreSQL and MySQL/MariaDB run in a read-only transaction; SQLite opens the file
+read-only; every transaction is rolled back. PostgreSQL queries run with
+`standard_conforming_strings = on`; MySQL/MariaDB sessions run with `sql_mode =
+NO_ENGINE_SUBSTITUTION` (no `ANSI_QUOTES`, no `NO_BACKSLASH_ESCAPES`), so the server reads the text
+as the check did. A MySQL/MariaDB server that supports neither `max_execution_time` nor
+`max_statement_time` is refused, since its queries could not be stopped.
 
 Macros and variables become bind parameters, never text in the SQL:
 

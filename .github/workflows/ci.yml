@@ -56,6 +56,77 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --test api postgres -- --nocapture
 
+  # Data sources against real servers. The passwords below belong to throwaway containers
+  # reachable only from this job; they protect nothing and are not secrets. PostgreSQL uses a
+  # password here (unlike the job above) so password handling and scrubbing are exercised.
+  datasources:
+    name: datasources
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: kalzit
+          POSTGRES_PASSWORD: kalzit-ci-pg
+          POSTGRES_DB: kalzit
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kalzit" --health-interval 2s --health-timeout 5s --health-retries 30
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: kalzit-ci-mysql
+          MYSQL_DATABASE: kalzit
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pkalzit-ci-mysql"
+          --health-interval 2s --health-timeout 5s --health-retries 60
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: kalzit-ci-mariadb
+          MARIADB_DATABASE: kalzit
+        ports: ["3307:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 2s --health-timeout 5s --health-retries 60
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Kalzit-CI-mssql-1"
+        ports: ["1433:1433"]
+      prometheus:
+        image: prom/prometheus:v3.5.0
+        ports: ["9090:9090"]
+    env:
+      KALZIT_TEST_REQUIRE_DATABASES: "1"
+      KALZIT_TEST_POSTGRES_URL: postgres://kalzit:kalzit-ci-pg@localhost:5432/kalzit
+      KALZIT_TEST_MYSQL_URL: mysql://root:kalzit-ci-mysql@127.0.0.1:3306/kalzit
+      KALZIT_TEST_MARIADB_URL: mysql://root:kalzit-ci-mariadb@127.0.0.1:3307/kalzit
+      KALZIT_TEST_MSSQL_URL: mssql://sa:Kalzit-CI-mssql-1@127.0.0.1:1433/master
+      KALZIT_TEST_PROMETHEUS_URL: http://127.0.0.1:9090
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --tests
+      - name: Wait for SQL Server and Prometheus
+        shell: bash
+        run: |
+          for i in $(seq 1 90); do
+            if docker exec "${{ job.services.mssql.id }}" /opt/mssql-tools18/bin/sqlcmd -C -S localhost \
+                 -U sa -P "Kalzit-CI-mssql-1" -Q "SELECT 1" > /dev/null 2>&1; then
+              mssql=ok
+            fi
+            if curl -fs http://127.0.0.1:9090/-/ready > /dev/null; then prom=ok; fi
+            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ]; then exit 0; fi
+            sleep 2
+          done
+          echo "SQL Server or Prometheus did not become ready" >&2
+          exit 1
+      - run: cargo test --locked --test datasources -- --nocapture
+
   ui:
     name: ui (${{ matrix.os }})
     strategy:
