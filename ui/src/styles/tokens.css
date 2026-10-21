@@ -65,9 +65,9 @@
       ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --font-size-xs: 0.75rem;
     --font-size-sm: 0.8125rem;
-    --font-size-md: 0.9375rem;
-    --font-size-lg: 1.125rem;
-    --font-size-xl: 1.5rem;
+    --font-size-md: 0.875rem;
+    --font-size-lg: 1.0625rem;
+    --font-size-xl: 1.25rem;
     --line-height-tight: 1.25;
     --line-height: 1.5;
     --font-weight-regular: 400;
@@ -104,11 +104,15 @@
     --z-toast: 300;
     --z-skip-link: 400;
 
-    --sidebar-width: 15rem;
+    /* Compact density, as in developer tools: 232 px sidebar, 56 px rail, 30 px rows. */
+    --sidebar-width: 14.5rem;
+    --sidebar-rail-width: 3.5rem;
+    --nav-row-height: 1.875rem;
     --content-max-width: 72rem;
     --auth-card-width: 26rem;
-    --control-height: 2.25rem;
-    --icon-size: 1.125rem;
+    --control-height: 2rem;
+    --icon-size: 1rem;
+    --avatar-size: 1.5rem;
 
     --duration-fast: 120ms;
     --duration-normal: 180ms;
