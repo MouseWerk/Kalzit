@@ -43,6 +43,8 @@ catalog.
 | Anmelden | Sign in | Sich mit E-Mail-Adresse und Passwort beim Server ausweisen. | Einloggen, Login (als Verb), Log in |
 | Abmelden | Sign out | Die Sitzung beenden. | Ausloggen, Log out |
 | Sitzung | Session | Die Anmeldung im Browser, bis zum Abmelden oder Ablauf. | |
+| Betreuer | Maintainer | Rolle in einem Team: darf Mitglieder des Teams hinzufügen und entfernen. | Maintainer (im Deutschen) |
+| Gesperrt | Locked | Ein Konto, das sich nicht anmelden kann, bis ein Server-Admin es entsperrt. | Deaktiviert, Disabled (in English) |
 | E-Mail-Adresse | Email address | Kennung zum Anmelden. | Mail-Adresse, E-mail |
 | Verwaltung | Administration | Bereich für Organisationen, Teams, Benutzer und Rollen. | Administration (im Deutschen), Admin-Bereich |
 | Darstellung | Theme | System, Hell, Dunkel, Hoher Kontrast. | Thema, Design (für das Theme) |
