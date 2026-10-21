@@ -27,6 +27,8 @@ describe("Explore", () => {
     expect(
       await screen.findByRole("heading", { name: "Explore is not available to your role" }),
     ).toBeTruthy();
+    // A query grant on a data source is the way in for a viewer; the text says so.
+    expect(screen.getByText(/anyone with query access to a data source/)).toBeTruthy();
   });
 
   it("runs a query with an absolute time range and shows the result in a matching panel", async () => {

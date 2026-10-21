@@ -3,7 +3,7 @@
   "explore.title": "Explore",
   "explore.lead": "Ask your data questions without building a dashboard first.",
   "explore.forbidden.title": "Explore is not available to your role",
-  "explore.forbidden.text": "Explore runs free queries, which editors, admins and owners may do. Dashboards shared with you still show their data.",
+  "explore.forbidden.text": "Explore runs free queries. Editors, admins and owners may use it, and so may anyone with query access to a data source; an admin can give you that. Dashboards shared with you still show their data.",
   "explore.noDatasources.title": "No data source to query",
   "explore.noDatasources.text": "Explore needs a data source. An admin adds them under Data sources.",
   "explore.datasource": "Data source",

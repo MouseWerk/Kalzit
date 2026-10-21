@@ -174,7 +174,7 @@
   "admin.access.cannotPick": "Du darfst keine Benutzer, Teams oder Rollen sehen und kannst deshalb niemanden auswählen.",
   "admin.access.whyManage": "Wer darf diesen Zugriff ändern?",
   "admin.why.button": "Warum?",
-  "admin.why.buttonLabel": "Warum habe ich {permission}?",
+  "admin.why.buttonLabel": "Warum habe ich dieses Recht? {permission}",
   "admin.why.title": "Woher dieses Recht kommt",
   "admin.why.none": "Du hast dieses Recht nicht.",
   "admin.why.orgRole": "Deine Rolle in der Organisation: {role}",

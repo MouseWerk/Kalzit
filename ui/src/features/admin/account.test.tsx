@@ -14,7 +14,8 @@ describe("own account", () => {
     const { user, server } = await openAdmin("/account");
     const name = await screen.findByLabelText("Name");
     await user.clear(name);
-    await user.type(name, "Ada King");
+    await user.click(name);
+    await user.paste("Ada King");
     await user.tab();
     expect(await screen.findByText("Your name was saved.")).toBeTruthy();
     expect(server.state.user.name).toBe("Ada King");
@@ -65,7 +66,8 @@ describe("own account", () => {
     expect(admin.password).toBe(TEST_PASSWORD);
 
     await user.clear(current);
-    await user.type(current, TEST_PASSWORD);
+    await user.click(current);
+    await user.paste(TEST_PASSWORD);
     await user.click(submit);
     expect(await within(section).findByText("Your password was changed.")).toBeTruthy();
     expect(admin.password).toBe("a fresh long password");
@@ -125,7 +127,9 @@ describe("own account", () => {
       },
     });
     expect(admin.explain).toHaveLength(4);
-    const why = await screen.findByRole("button", { name: "Why do I have audit:read?" });
+    const why = await screen.findByRole("button", {
+      name: "Why do I have this permission? Read the audit log of the organization.",
+    });
     await user.click(why);
     const popover = screen.getByRole("dialog", { name: "Where this permission comes from" });
     expect(await within(popover).findByText("Your role in the organization: Editor")).toBeTruthy();
