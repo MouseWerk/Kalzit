@@ -399,6 +399,17 @@ function DashboardView({
             </>
           ) : (
             <>
+              {/*
+               * "Done" takes the place of "Edit", so a second click on that spot leaves edit
+               * mode instead of adding a panel by accident.
+               */}
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => (dirty ? setDialog({ kind: "discard" }) : setDraft(null))}
+              >
+                {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
+              </button>
               <button type="button" className="button button--secondary" onClick={addPanel}>
                 {t("dashboards.addPanel")}
               </button>
@@ -408,13 +419,6 @@ function DashboardView({
                 onClick={() => setDialog({ kind: "settings" })}
               >
                 {t("dashboards.settings")}
-              </button>
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => (dirty ? setDialog({ kind: "discard" }) : setDraft(null))}
-              >
-                {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
               </button>
               <button
                 type="button"

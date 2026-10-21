@@ -173,11 +173,16 @@
     overflow: hidden;
   }
 
+  /*
+   * On a narrow screen the actions wrap below the title instead of pushing past the panel; the
+   * title keeps at least a label's width so it stays readable.
+   */
   .panel-card__header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-2);
+    gap: var(--space-1) var(--space-2);
     min-height: var(--control-height);
     padding: var(--space-1) var(--space-2) 0 var(--space-3);
   }
@@ -188,6 +193,7 @@
   }
 
   .panel-card__title {
+    flex: 1 1 var(--size-label);
     min-width: 0;
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
@@ -195,7 +201,10 @@
 
   .panel-card__actions {
     display: flex;
-    flex: none;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
     gap: var(--space-1);
     cursor: default;
   }

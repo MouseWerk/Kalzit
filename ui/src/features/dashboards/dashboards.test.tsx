@@ -227,10 +227,11 @@ describe("dashboard view", () => {
     };
     const { user } = renderApp("/dashboards/d-sales");
     const select = await screen.findByRole("combobox", { name: "region" });
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "Europe",
-      "United States",
-    ]);
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Europe", "United States"]);
     expect(select).toHaveProperty("value", "eu");
     await waitFor(() =>
       expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables).toEqual({
@@ -482,6 +483,20 @@ describe("editing a dashboard", () => {
     // The panel below was pushed down instead of being covered.
     expect(saved.model.panels.find((p) => p.id === "p-mixed")?.grid.y).toBe(10);
     expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
+  });
+
+  it("puts Done where Edit was, so a second click there does not add a panel", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-sales");
+    const edit = await screen.findByRole("button", { name: "Edit" });
+    const tools = edit.parentElement as HTMLElement;
+    const position = [...tools.children].indexOf(edit);
+    await user.click(edit);
+    const done = await screen.findByRole("button", { name: "Done" });
+    expect([...tools.children].indexOf(done)).toBe(position);
+    expect(within(tools).getByRole("button", { name: "Add panel" })).not.toBe(
+      tools.children[position],
+    );
   });
 
   it("adds a panel with a query from the panel editor", async () => {
