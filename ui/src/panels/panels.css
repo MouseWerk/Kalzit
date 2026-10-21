@@ -1,38 +1,35 @@
 @layer components {
-  /*
-   * Series colors. They read the chart palette tokens (--chart-1 ... --chart-8) once tokens.css
-   * has them; until then they fall back to existing tokens that meet 3:1 on every surface.
-   */
+  /* Series colors: the chart palette tokens, distinguishable for every color vision. */
   .series-1 {
-    --series-color: var(--chart-1, var(--accent));
+    --series-color: var(--chart-1);
   }
 
   .series-2 {
-    --series-color: var(--chart-2, var(--success-text));
+    --series-color: var(--chart-2);
   }
 
   .series-3 {
-    --series-color: var(--chart-3, var(--danger-text));
+    --series-color: var(--chart-3);
   }
 
   .series-4 {
-    --series-color: var(--chart-4, var(--text-muted));
+    --series-color: var(--chart-4);
   }
 
   .series-5 {
-    --series-color: var(--chart-5, var(--accent-text));
+    --series-color: var(--chart-5);
   }
 
   .series-6 {
-    --series-color: var(--chart-6, var(--border-strong));
+    --series-color: var(--chart-6);
   }
 
   .series-7 {
-    --series-color: var(--chart-7, var(--text));
+    --series-color: var(--chart-7);
   }
 
   .series-8 {
-    --series-color: var(--chart-8, var(--focus-ring));
+    --series-color: var(--chart-8);
   }
 
   .panel-empty {

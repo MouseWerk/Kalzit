@@ -31,7 +31,9 @@ export function sortedRows(frame: Frame, sort: Sort): Uint32Array {
   const { type } = field;
   // int64 is compared as BigInt; converting once per sort keeps 100,000 rows fast.
   const values =
-    type === "int64" ? field.values.map((v) => int64Key(v) ?? (v === null ? null : String(v))) : field.values;
+    type === "int64"
+      ? field.values.map((v) => int64Key(v) ?? (v === null ? null : String(v)))
+      : field.values;
   return order.sort((a, b) => {
     const left = values[a];
     const right = values[b];

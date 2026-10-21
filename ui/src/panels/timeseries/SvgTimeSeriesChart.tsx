@@ -135,6 +135,7 @@ export function SvgTimeSeriesChart({
 
   return (
     <div className="ts">
+      {/* biome-ignore lint/a11y/useSemanticElements: a focusable plot, not a set of form fields */}
       <div
         className="ts__plot"
         ref={boxRef}

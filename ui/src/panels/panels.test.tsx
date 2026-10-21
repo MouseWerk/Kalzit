@@ -12,6 +12,8 @@ import type { AnyPanelPlugin } from "./types";
 const RANGE = { from: 0, to: 100_000 };
 /** Above 2^53: a double would print 9007199254740992. */
 const BIG = "9007199254740993";
+/** BIG as English groups it: still every digit. */
+const BIG_SHOWN = "9,007,199,254,740,993";
 
 function renderPanel(type: string, frames: Frame[], options: unknown = {}) {
   const plugin = getPanel(type) as AnyPanelPlugin;
@@ -60,12 +62,13 @@ describe("table panel", () => {
       within(rows[row] as HTMLElement)
         .getAllByRole("cell")
         .map((cell) => cell.textContent);
-    expect(cells(1)).toEqual([BIG, "Ada", "1.5"]);
+    expect(cells(1)).toEqual([BIG_SHOWN, "Ada", "1.5"]);
     expect(cells(2)).toEqual(["2", "", ""]);
     expect(cells(3)).toEqual(["", "Grace", "3"]);
     expect(formatValue("int64", "123456789012345678901234567890", "en")).toBe(
-      "123456789012345678901234567890",
+      "123,456,789,012,345,678,901,234,567,890",
     );
+    expect(formatValue("int64", "-1234567", "de")).toBe("-1.234.567");
   });
 
   it("sorts int64 by value, not as text or doubles, with nulls last both ways", async () => {
@@ -79,10 +82,10 @@ describe("table panel", () => {
         .getAllByRole("row")
         .slice(1)
         .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
-    expect(firstColumn()).toEqual(["-5", "2", BIG, ""]);
+    expect(firstColumn()).toEqual(["-5", "2", BIG_SHOWN, ""]);
     await user.click(within(header).getByRole("button"));
     expect(header.getAttribute("aria-sort")).toBe("descending");
-    expect(firstColumn()).toEqual([BIG, "2", "-5", ""]);
+    expect(firstColumn()).toEqual([BIG_SHOWN, "2", "-5", ""]);
     // Values one apart above 2^53 still sort apart.
     const close: Frame = {
       fields: [{ name: "n", type: "int64", values: [BIG, "9007199254740992"] }],
@@ -121,7 +124,7 @@ describe("stat panel", () => {
   it("shows the value with its unit and a dash when there is none", () => {
     const frame: Frame = { fields: [field] };
     const { unmount } = renderPanel("stat", [frame], { reducer: "max", unit: "B" });
-    expect(screen.getByText(BIG).textContent).toBe(`${BIG} B`);
+    expect(screen.getByText(BIG_SHOWN).textContent).toBe(`${BIG_SHOWN} B`);
     unmount();
     renderPanel("stat", [{ fields: [{ name: "x", type: "number", values: [null] }] }]);
     expect(screen.getByText("–")).toBeTruthy();
@@ -152,7 +155,43 @@ describe("bar and time series panels", () => {
     // A gap starts a new subpath: two "M" in the first series.
     expect(paths[0]?.getAttribute("d")?.match(/M/g)).toHaveLength(2);
     expect(screen.getByText('b{host="x"}')).toBeTruthy();
-    expect(screen.getByRole("img", { name: "Panel" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Panel" })).toBeTruthy();
+  });
+
+  it("names series from a legend template, and keeps Prometheus field names as they are", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 100_000] },
+        {
+          name: 'up{job="api"}',
+          type: "number",
+          values: [1, 1],
+          labels: { job: "api", instance: "a:9" },
+        },
+      ],
+    };
+    const { unmount } = renderPanel("timeseries", [frame]);
+    expect(screen.getByText('up{job="api"}')).toBeTruthy();
+    unmount();
+    renderPanel("timeseries", [frame], { legend: "{{job}} on {{instance}}" });
+    expect(screen.getByText("api on a:9")).toBeTruthy();
+  });
+
+  it("reads out the values at the cursor by keyboard", async () => {
+    const user = userEvent.setup();
+    const frame: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 50_000, 100_000] },
+        { name: "load", type: "number", values: [1, 2, 3] },
+      ],
+    };
+    renderPanel("timeseries", [frame], { unit: "%" });
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: "Panel" }));
+    // Focus puts the cursor in the middle of the range.
+    expect(screen.getByRole("status").textContent).toContain("load: 2 %");
+    await user.keyboard("{End}");
+    expect(screen.getByRole("status").textContent).toContain("load: 3 %");
   });
 
   it("explains a result without time", () => {
@@ -204,6 +243,39 @@ describe("performance budget", () => {
     );
     expect(points).toBeLessThanOrEqual(4 * 1002);
     expect(ms).toBeLessThan(CI ? 150 : 60);
+  });
+
+  it("reduces 100,000 values for a stat without spreading them into arguments", () => {
+    const values = Array.from({ length: POINTS }, (_, i) => (i * 7919) % 100_003);
+    const field: Field = { name: "v", type: "number", values };
+    let max: unknown;
+    const ms = minOf(5, () => {
+      max = reduceField(field, "max").value;
+    });
+    process.stdout.write(`stat: 100k values reduced in ${ms.toFixed(1)} ms\n`);
+    expect(max).toBe(values.reduce((a, b) => (b > a ? b : a), 0));
+    expect(ms).toBeLessThan(CI ? 60 : 25);
+  });
+
+  it("sorts 100,000 int64 rows within budget", () => {
+    const frame: Frame = {
+      fields: [
+        {
+          name: "n",
+          type: "int64",
+          values: Array.from({ length: POINTS }, (_, i) =>
+            String(BigInt(i * 7919) * 10_000_000_000n),
+          ),
+        },
+      ],
+    };
+    let order: Uint32Array = new Uint32Array();
+    const ms = minOf(3, () => {
+      order = sortedRows(frame, { column: 0, direction: "descending" });
+    });
+    process.stdout.write(`table: 100k int64 rows sorted in ${ms.toFixed(1)} ms\n`);
+    expect(order[0]).toBe(POINTS - 1);
+    expect(ms).toBeLessThan(CI ? 600 : 250);
   });
 
   it("renders a 100,000 point time series panel within budget", () => {
