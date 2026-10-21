@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { ApiError, isApiError } from "../../api/client";
 import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { runQuery } from "../datasources/api";
 import { fetchVariableOptions, type VariableOption } from "./api";
-import { currentValue, optionValues, storedQueryVariables, type VariableModel } from "./model";
+import { currentValue, optionChoices, storedQueryVariables, type VariableModel } from "./model";
 import type { TextRange } from "./timeRange";
 import { errorMessage } from "./ui/errors";
 import "./dashboards.css";
@@ -13,7 +13,7 @@ import "./dashboards.css";
 /** The value each variable starts with: its stored current value, else the first fixed value. */
 export function initialVariables(variables: readonly VariableModel[]): Record<string, string> {
   return Object.fromEntries(
-    variables.map((v) => [v.name, currentValue(v) ?? optionValues(v)[0] ?? ""]),
+    variables.map((v) => [v.name, currentValue(v) ?? optionChoices(v)[0]?.value ?? ""]),
   );
 }
 
@@ -198,6 +198,15 @@ function VariableControl({
       : errorMessage(t, options.error)
     : null;
   const label = variable.label ?? variable.name;
+  // A query variable without a stored value opens with its first option once they load, as a
+  // custom one opens with its first fixed value.
+  const first = options.data?.options[0]?.value;
+  const opensEmpty = variable.type === "query" && currentValue(variable) === undefined;
+  useEffect(() => {
+    if (opensEmpty && value === "" && first !== undefined) {
+      onChange(first);
+    }
+  }, [opensEmpty, value, first, onChange]);
 
   let control: ReactNode;
   if (variable.type === "textbox") {
@@ -219,7 +228,7 @@ function VariableControl({
   } else {
     const list =
       variable.type === "custom" || variable.type === "interval"
-        ? optionValues(variable).map((v) => ({ value: v, label: v }))
+        ? optionChoices(variable)
         : (options.data?.options ?? []);
     const known = list.some((option) => option.value === value);
     control = (

@@ -83,17 +83,39 @@ export function storedQueryVariables(
   return Object.fromEntries(Object.entries(values).filter(([name]) => allowed.has(name)));
 }
 
-/** A variable's fixed choices as text, whatever JSON they were stored as. */
+/**
+ * A variable's fixed choices, whatever JSON they were stored as: plain values (text, numbers,
+ * booleans) or `{ value, label }` objects, whose label is shown and whose value is sent.
+ */
+export function optionChoices(variable: VariableModel): { value: string; label: string }[] {
+  if (!Array.isArray(variable.options)) {
+    return [];
+  }
+  const choices: { value: string; label: string }[] = [];
+  for (const option of variable.options) {
+    const plain = asText(option);
+    if (plain !== null) {
+      choices.push({ value: plain, label: plain });
+    } else if (isRecord(option)) {
+      const value = asText(option.value);
+      if (value !== null) {
+        const label = asText(option.label);
+        choices.push({ value, label: label === null || label === "" ? value : label });
+      }
+    }
+  }
+  return choices;
+}
+
+/** A variable's fixed choices as the values queries receive. */
 export function optionValues(variable: VariableModel): string[] {
-  return Array.isArray(variable.options)
-    ? variable.options.map(asText).filter((v): v is string => v !== null)
-    : [];
+  return optionChoices(variable).map((choice) => choice.value);
 }
 
 /** The value a variable opens with, as text; a stored list opens with its first entry. */
 export function currentValue(variable: VariableModel): string | undefined {
   const current = Array.isArray(variable.current) ? variable.current[0] : variable.current;
-  return asText(current) ?? undefined;
+  return asText(isRecord(current) ? current.value : current) ?? undefined;
 }
 
 export interface DashboardModel {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -79,6 +79,9 @@ function DashboardLoader({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const { dashboardId } = dashboardRoute.useParams();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
+  // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
+  // view), which must not throw the picks away.
+  const picked = useRef(new Map<string, Record<string, string>>());
 
   useEffect(() => {
     if (dashboard.data !== undefined) {
@@ -118,11 +121,20 @@ function DashboardLoader({ orgId }: { orgId: string }) {
       key={`${dashboard.data.id}:${dashboard.data.version}`}
       orgId={orgId}
       dashboard={dashboard.data}
+      picked={picked.current}
     />
   );
 }
 
-function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboard }) {
+function DashboardView({
+  orgId,
+  dashboard,
+  picked,
+}: {
+  orgId: string;
+  dashboard: Dashboard;
+  picked: Map<string, Record<string, string>>;
+}) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
@@ -146,7 +158,14 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
     }
   }, [draft]);
   const model = draft ?? dashboard.model;
-  const [values, setValues] = useState(() => initialVariables(dashboard.model.variables));
+  const [values, setValues] = useState(() => {
+    const start = initialVariables(dashboard.model.variables);
+    const kept = Object.entries(picked.get(dashboard.id) ?? {}).filter(([name]) => name in start);
+    return { ...start, ...Object.fromEntries(kept) };
+  });
+  useEffect(() => {
+    picked.set(dashboard.id, values);
+  }, [picked, dashboard.id, values]);
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
   // `run` re-runs the panels (refresh, auto refresh); `manual` counts only the Refresh button,
   // which also reads variable options again.

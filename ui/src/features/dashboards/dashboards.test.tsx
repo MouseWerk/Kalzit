@@ -209,6 +209,82 @@ describe("dashboard view", () => {
     await waitFor(() => expect(requests).toHaveLength(3));
   });
 
+  it("offers custom options stored as value and label, and opens with the first", async () => {
+    const server = setup("viewer");
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        {
+          name: "region",
+          type: "custom",
+          options: [
+            { value: "eu", label: "Europe" },
+            { value: "us", label: "United States" },
+          ],
+        },
+      ],
+    };
+    const { user } = renderApp("/dashboards/d-sales");
+    const select = await screen.findByRole("combobox", { name: "region" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Europe",
+      "United States",
+    ]);
+    expect(select).toHaveProperty("value", "eu");
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables).toEqual({
+        region: "eu",
+      }),
+    );
+    await user.selectOptions(select, "us");
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables).toEqual({
+        region: "us",
+      }),
+    );
+  });
+
+  it("opens a query variable without a stored value with its first option", async () => {
+    const server = setup("viewer", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "city", type: "query", datasourceId: PG_ID, query: { sql: "SELECT city" } },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [
+      { value: "graz", label: "Graz" },
+      { value: "linz", label: "Linz" },
+    ];
+    renderApp("/dashboards/d-sales");
+    const select = await screen.findByRole("combobox", { name: "city" });
+    await waitFor(() => expect(select).toHaveProperty("value", "graz"));
+    // The placeholder for "no value" is gone once a value is chosen.
+    expect(within(select).queryByRole("option", { name: "No value" })).toBeNull();
+  });
+
+  it("keeps the values a viewer picked when the dashboard is saved", async () => {
+    const server = setup("editor");
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [{ name: "region", type: "custom", options: ["eu", "us"] }],
+    };
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.selectOptions(await screen.findByRole("combobox", { name: "region" }), "us");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
+    // The new version opens a fresh view; the pick survives it.
+    await screen.findByRole("button", { name: "Edit" });
+    expect(screen.getByRole("combobox", { name: "region" })).toHaveProperty("value", "us");
+  });
+
   it("runs a changed query variable through the free query route in edit mode", async () => {
     const server = setup("editor", []);
     const stored = storedSales(server);
