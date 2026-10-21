@@ -482,6 +482,40 @@ mod acl {
         unsafe { LocalFree(Some(HLOCAL(sd.0))) };
         if ok { Ok(()) } else { Err(error) }
     }
+
+    /// The file's DACL as SDDL, read through the API (tests check what `restrict` set).
+    #[cfg(test)]
+    pub fn dacl_sddl(path: &std::path::Path) -> std::io::Result<String> {
+        use windows::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
+        use windows::Win32::Security::GetFileSecurityW;
+        use windows::core::PWSTR;
+        let name = HSTRING::from(path.as_os_str());
+        let mut needed = 0u32;
+        // SAFETY: a size query with no buffer.
+        let _ = unsafe { GetFileSecurityW(&name, DACL_SECURITY_INFORMATION.0, None, 0, &mut needed) };
+        let mut buffer = vec![0u8; needed as usize];
+        let sd = PSECURITY_DESCRIPTOR(buffer.as_mut_ptr().cast());
+        // SAFETY: `buffer` holds `needed` bytes for the descriptor.
+        if !unsafe { GetFileSecurityW(&name, DACL_SECURITY_INFORMATION.0, Some(sd), needed, &mut needed) }.as_bool() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut text = PWSTR::null();
+        // SAFETY: `sd` is the descriptor read above; `text` receives a LocalAlloc'ed string.
+        unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                sd,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &mut text,
+                None,
+            )
+        }
+        .map_err(std::io::Error::other)?;
+        // SAFETY: the conversion returned a NUL-terminated wide string, freed right after.
+        let sddl = unsafe { text.to_string() }.map_err(std::io::Error::other);
+        unsafe { LocalFree(Some(HLOCAL(text.0.cast()))) };
+        sddl
+    }
 }
 
 #[cfg(windows)]
@@ -1104,12 +1138,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         Keyring::load_from(None, None, None, dir.path(), true).unwrap();
         let path = dir.path().join(DPAPI_KEY_FILE);
-        let out = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(format!("(Get-Acl -LiteralPath '{}').Sddl", path.display().to_string().replace('\'', "''")))
-            .output()
-            .unwrap();
-        let sddl = String::from_utf8_lossy(&out.stdout).to_string();
+        let sddl = acl::dacl_sddl(&path).unwrap();
         let dacl = sddl.split("D:").nth(1).unwrap_or_default().trim().to_string();
         assert!(dacl.starts_with('P'), "not inherited: {sddl}");
         let trustees: Vec<&str> =
