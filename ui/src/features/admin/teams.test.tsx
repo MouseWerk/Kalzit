@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { openAdmin } from "./test/openAdmin";
+import { ALL_PERMISSIONS, openAdmin } from "./test/openAdmin";
 
 describe("teams", () => {
   it("lists teams with their member count and creates one", async () => {
@@ -48,10 +48,10 @@ describe("teams", () => {
     const role = within(members).getByRole("combobox", { name: "Team role of Grace Hopper" });
     await user.selectOptions(role, "member");
     expect(await screen.findByText("Grace Hopper is now Member of the team.")).toBeTruthy();
-    expect(admin.teams[0]?.members[0]?.teamRole).toBe("member");
+    expect(admin.teams[0]?.members[0]?.role).toBe("member");
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(await screen.findByText("Grace Hopper is now Maintainer of the team.")).toBeTruthy();
-    expect(admin.teams[0]?.members[0]?.teamRole).toBe("maintainer");
+    expect(admin.teams[0]?.members[0]?.role).toBe("maintainer");
 
     await user.click(screen.getByRole("button", { name: "Add member…" }));
     const dialog = screen.getByRole("dialog", { name: "Add member to team" });
@@ -103,5 +103,126 @@ describe("teams", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("heading", { level: 2, name: "Data team" })).toBeTruthy();
     expect(admin.teams[0]?.name).toBe("Data team");
+  });
+
+  it("hides deleting a team whose roles the user does not hold", async () => {
+    await openAdmin("/admin/teams", {
+      permissions: ALL_PERMISSIONS.filter((permission) => permission !== "audit:read"),
+      setup: (admin) => {
+        Object.assign(admin.teams[0] ?? {}, { roles: ["r1"] });
+      },
+    });
+    const list = await screen.findByRole("list", { name: "Teams" });
+    expect(within(list).getByRole("link", { name: "Analysts" })).toBeTruthy();
+    expect(within(list).queryByRole("button", { name: "Delete Analysts…" })).toBeNull();
+  });
+
+  it("never offers the owner role, and stops at 20 roles", async () => {
+    await openAdmin("/admin/teams/t1", {
+      setup: (admin) => {
+        for (let index = 0; index < 20; index++) {
+          admin.roles.push({
+            id: `x${index}`,
+            name: `Role ${index}`,
+            description: "",
+            builtin: false,
+            permissions: [],
+            createdAt: 0,
+          });
+        }
+        Object.assign(admin.teams[0] ?? {}, {
+          roles: Array.from({ length: 20 }, (_, index) => `x${index}`),
+        });
+      },
+    });
+    const roles = await screen.findByRole("group", { name: "Roles of the team" });
+    await within(roles).findByRole("checkbox", { name: "Auditor" });
+    expect(within(roles).queryByRole("checkbox", { name: "Owner" })).toBeNull();
+    // Full: unchecked roles cannot be added, checked ones can still be removed.
+    expect(
+      (within(roles).getByRole("checkbox", { name: "Auditor" }) as HTMLInputElement).disabled,
+    ).toBe(true);
+    expect(
+      (within(roles).getByRole("checkbox", { name: "Role 0" }) as HTMLInputElement).disabled,
+    ).toBe(false);
+  });
+
+  it("does not let anyone take away a team role they do not hold", async () => {
+    await openAdmin("/admin/teams/t1", {
+      permissions: ALL_PERMISSIONS.filter((permission) => permission !== "audit:read"),
+      setup: (admin) => {
+        Object.assign(admin.teams[0] ?? {}, { roles: ["r1"] });
+      },
+    });
+    const roles = await screen.findByRole("group", { name: "Roles of the team" });
+    const auditor = await within(roles).findByRole("checkbox", { name: "Auditor" });
+    expect((auditor as HTMLInputElement).checked).toBe(true);
+    expect((auditor as HTMLInputElement).disabled).toBe(true);
+    // Changing members would give or take that role too.
+    expect(
+      screen.getByText(
+        "The team's roles have permissions you do not have, so you cannot add or remove its members.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add member…" })).toBeNull();
+  });
+
+  it("lets a maintainer of the team manage its members without teams:members", async () => {
+    const { user, admin } = await openAdmin("/admin/teams/t1", {
+      permissions: ["teams:read", "users:read", "audit:read"],
+      setup: (state) => {
+        state.teams[0]?.members.push({
+          userId: "u1",
+          email: "ada@example.com",
+          name: "Ada Lovelace",
+          role: "maintainer",
+          addedAt: 0,
+        });
+      },
+    });
+    const members = await screen.findByRole("list", { name: "Members" });
+    await user.selectOptions(
+      within(members).getByRole("combobox", { name: "Team role of Grace Hopper" }),
+      "member",
+    );
+    await waitFor(() => expect(admin.teams[0]?.members[0]?.role).toBe("member"));
+  });
+
+  it("keeps a way out of the add dialog when everyone is in the team already", async () => {
+    const { user } = await openAdmin("/admin/teams/t1", {
+      setup: (admin) => {
+        const team = admin.teams[0];
+        if (team !== undefined) {
+          team.members = admin.members.map((member) => ({
+            userId: member.userId,
+            email: member.email,
+            name: member.name,
+            role: "member" as const,
+            addedAt: 0,
+          }));
+        }
+      },
+    });
+    await screen.findByRole("list", { name: "Members" });
+    const open = screen.getByRole("button", { name: "Add member…" });
+    await user.click(open);
+    const dialog = screen.getByRole("dialog", { name: "Add member to team" });
+    expect(
+      await within(dialog).findByText("Every member of the organization is already in this team."),
+    ).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(open);
+  });
+
+  it("does not undo the team's roles when someone changed them in the meantime", async () => {
+    const { user, admin } = await openAdmin("/admin/teams/t1");
+    const roles = await screen.findByRole("group", { name: "Roles of the team" });
+    await user.click(await within(roles).findByRole("checkbox", { name: "Auditor" }));
+    await screen.findByText("The roles of the team were changed.");
+    Object.assign(admin.teams[0] ?? {}, { roles: ["editor", "r1"] });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText(/Not undone: someone else changed this/)).toBeTruthy();
+    expect(admin.teams[0]?.roles).toEqual(["editor", "r1"]);
   });
 });

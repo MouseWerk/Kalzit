@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "../../../i18n/i18n";
-import { adminKeys, listOrgSettings, type OrgSetting, updateOrgSetting } from "../api";
+import { adminKeys, listOrgSettings, type Setting, updateOrgSetting } from "../api";
 import { LoadState, Section } from "../components/Section";
-import { SettingsList, useSettingChanges } from "../components/Settings";
+import { SettingDescription, SettingsList, useSettingChanges } from "../components/Settings";
 import { allowedWhen, useAdminAccess } from "../sections";
 
 export function OrgSettingsPage() {
@@ -18,9 +18,9 @@ export function OrgSettingsPage() {
     queryFn: () => listOrgSettings(orgId),
     enabled: canRead && orgId !== "",
   });
-  const changes = useSettingChanges<OrgSetting>({
+  const changes = useSettingChanges({
     queryKey,
-    read: () => queryClient.getQueryData<OrgSetting[]>(queryKey),
+    read: () => queryClient.getQueryData<Setting[]>(queryKey),
     patch: (key, value, version) => updateOrgSetting(orgId, key, value, version),
   });
 
@@ -37,6 +37,7 @@ export function OrgSettingsPage() {
           label={t("admin.orgSettings.title")}
           settings={settings.data}
           changes={changes}
+          describe={(setting) => <SettingDescription setting={setting} />}
           readOnlyReason={(setting) => {
             if (!setting.editable) {
               return t("admin.settings.notEditable");

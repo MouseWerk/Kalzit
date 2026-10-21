@@ -3,12 +3,12 @@ import { useI18n } from "../../../i18n/i18n";
 import {
   adminKeys,
   listServerSettings,
-  type ServerSetting,
+  type Setting,
   type SettingSource,
   updateServerSetting,
 } from "../api";
 import { LoadState, Section } from "../components/Section";
-import { SettingsList, useSettingChanges } from "../components/Settings";
+import { SettingDescription, SettingsList, useSettingChanges } from "../components/Settings";
 import { allowedWhen, useAdminAccess } from "../sections";
 
 const SOURCE_TEXT = {
@@ -20,7 +20,8 @@ const SOURCE_TEXT = {
 
 /**
  * Server settings with where each value comes from. The environment wins over the file, the file
- * over what was changed here (docs/ARCHITECTURE.md), so values from the first two are read-only.
+ * over what was changed here, so values from the first two are read-only; settings that live in
+ * the configuration (sessions) are never changeable here.
  */
 export function ServerSettingsPage() {
   const { t } = useI18n();
@@ -32,13 +33,13 @@ export function ServerSettingsPage() {
     queryFn: listServerSettings,
     enabled: access.isServerAdmin,
   });
-  const changes = useSettingChanges<ServerSetting>({
+  const changes = useSettingChanges({
     queryKey,
-    read: () => queryClient.getQueryData<ServerSetting[]>(queryKey),
+    read: () => queryClient.getQueryData<Setting[]>(queryKey),
     patch: updateServerSetting,
   });
 
-  function readOnlyReason(setting: ServerSetting): string | undefined {
+  function readOnlyReason(setting: Setting): string | undefined {
     if (setting.source === "env") {
       return t("admin.serverSettings.fromEnv");
     }
@@ -65,9 +66,7 @@ export function ServerSettingsPage() {
           describe={(setting) => (
             <>
               <span className="admin-badge">{t(SOURCE_TEXT[setting.source])}</span>
-              {setting.description === "" ? null : (
-                <p className="admin-setting__text">{setting.description}</p>
-              )}
+              <SettingDescription setting={setting} />
             </>
           )}
         />

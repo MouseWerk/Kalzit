@@ -1,6 +1,9 @@
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { openAdmin, sent } from "./test/openAdmin";
+import { BUILT_IN_ROLE_PERMISSIONS } from "./catalog";
+import { ALL_PERMISSIONS, openAdmin, sent } from "./test/openAdmin";
+
+const EDITOR_PERMISSIONS = [...BUILT_IN_ROLE_PERMISSIONS.editor];
 
 async function membersList() {
   return screen.findByRole("list", { name: "Members" });
@@ -80,28 +83,44 @@ describe("members", () => {
     expect(admin.members.map((member) => member.userId)).not.toContain("u3");
   });
 
-  it("adds a member by email address and says when there is no such account", async () => {
+  it("adds a member by email address, with the server's answers at the field", async () => {
     const { user, admin } = await openAdmin("/admin/members");
     await membersList();
-    admin.members = admin.members.filter((member) => member.userId !== "u2");
     await user.click(screen.getByRole("button", { name: "Add member…" }));
     const dialog = screen.getByRole("dialog", { name: "Add member" });
     const email = within(dialog).getByLabelText("Email address");
     expect(document.activeElement).toBe(email);
 
+    // No account has it: 422 validation with field email.
     await user.type(email, "nobody@example.com");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await within(dialog).findByText(/No account uses this email address/)).toBeTruthy();
+    expect(email.getAttribute("aria-invalid")).toBe("true");
 
+    // Already a member: 409 conflict with field email.
     await user.clear(email);
     await user.type(email, "grace@example.com");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+    expect(await within(dialog).findByText("This person is already a member.")).toBeTruthy();
+
+    admin.members = admin.members.filter((member) => member.userId !== "u2");
+    await user.clear(email);
+    await user.type(email, " Grace@Example.com ");
     await user.selectOptions(within(dialog).getByLabelText("Role"), "admin");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
-    expect(await screen.findByText("grace@example.com was added.")).toBeTruthy();
+    expect(await screen.findByText("Grace@Example.com was added.")).toBeTruthy();
     expect(admin.members.find((member) => member.userId === "u2")?.role).toBe("admin");
   });
 
-  it("shows members read-only without users:write and hides adding without users:invite", async () => {
+  it("adds members with users:write, not users:invite", async () => {
+    await openAdmin("/admin/members", {
+      permissions: ["users:read", "users:invite", "audit:read"],
+    });
+    await membersList();
+    expect(screen.queryByRole("button", { name: "Add member…" })).toBeNull();
+  });
+
+  it("shows members read-only without users:write", async () => {
     await openAdmin("/admin/members", { permissions: ["users:read", "audit:read"] });
     const list = await membersList();
     expect(within(list).queryByRole("combobox")).toBeNull();
@@ -110,18 +129,53 @@ describe("members", () => {
     expect(within(list).getAllByText("Owner").length).toBeGreaterThan(0);
   });
 
-  it("does not offer roles with permissions the user does not hold", async () => {
-    // Can manage members, but holds only what the built-in viewer role has.
-    const { admin } = await openAdmin("/admin/members", {
-      permissions: ["users:read", "users:write", "roles:read", "dashboards:read"],
+  it("does not let an admin change an owner, nor offer roles above their own", async () => {
+    // Everything the built-in admin role has: all but org:delete.
+    const { user, server } = await openAdmin("/admin/members", {
+      permissions: ALL_PERMISSIONS.filter((permission) => permission !== "org:delete"),
+    });
+    const list = await membersList();
+    // The owner holds more than an admin: no role picker and no remove button for them.
+    expect(within(list).queryByRole("combobox", { name: "Role of Ada Lovelace" })).toBeNull();
+    expect(within(list).queryByRole("button", { name: "Remove Ada Lovelace…" })).toBeNull();
+    const select = within(list).getByRole("combobox", { name: "Role of Alan Turing" });
+    const options = within(select).getAllByRole("option") as HTMLOptionElement[];
+    expect(options.filter((option) => option.disabled).map((option) => option.value)).toEqual([
+      "owner",
+    ]);
+    await user.selectOptions(select, "r1");
+    expect(await screen.findByText("Alan Turing is now Auditor.")).toBeTruthy();
+    expect(sent(server, "PATCH")).toEqual(["/api/orgs/o1/members/u3"]);
+  });
+
+  it("without roles:read offers only the built-in roles the user holds", async () => {
+    await openAdmin("/admin/members", {
+      permissions: ["users:read", "users:write", ...EDITOR_PERMISSIONS],
     });
     const list = await membersList();
     const select = within(list).getByRole("combobox", { name: "Role of Alan Turing" });
     const options = within(select).getAllByRole("option") as HTMLOptionElement[];
-    const disabled = options.filter((option) => option.disabled).map((option) => option.value);
-    // The fake's admin role holds only dashboards:read and users:write, both held here.
-    expect(disabled).toEqual(["owner", "editor", "r1"]);
-    expect(admin.roles.map((role) => role.id)).toContain("r1");
+    expect(options.map((option) => [option.value, option.disabled])).toEqual([
+      ["owner", true],
+      ["admin", true],
+      ["editor", false],
+      ["viewer", false],
+    ]);
+  });
+
+  it("maps a refused change to a readable text", async () => {
+    const { user, server } = await openAdmin("/admin/members");
+    const list = await membersList();
+    server.failNext("/api/orgs/o1/members/u3", 403, "forbidden", "PATCH");
+    await user.selectOptions(
+      within(list).getByRole("combobox", { name: "Role of Alan Turing" }),
+      "editor",
+    );
+    expect(
+      await screen.findByText(
+        "You can only change or remove members, and give roles, whose permissions you hold yourself.",
+      ),
+    ).toBeTruthy();
   });
 
   it("says no access when following a link without users:read", async () => {

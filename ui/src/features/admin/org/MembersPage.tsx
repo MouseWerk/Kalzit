@@ -1,5 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useId, useRef, useState } from "react";
+import { isApiError } from "../../../api/client";
+import { trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
 import {
@@ -17,9 +19,9 @@ import { usePagedList } from "../components/lists";
 import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
-import { type ErrorTexts, errorText, MEMBER_ERRORS } from "../errors";
+import { ADD_MEMBER_ERRORS, errorText, MEMBER_ERRORS } from "../errors";
 import { allowedWhen, useAdminAccess } from "../sections";
-import { RoleSelect, useRoles } from "./shared";
+import { holdsRole, RoleSelect, useRoles } from "./shared";
 
 export function MembersPage() {
   const { t, language } = useI18n();
@@ -27,8 +29,8 @@ export function MembersPage() {
   const orgId = access.orgId ?? "";
   const queryClient = useQueryClient();
   const canRead = access.has("users:read");
+  // Adding, changing and removing members all need users:write (docs/api/access.md, Members).
   const canWrite = access.has("users:write");
-  const canInvite = access.has("users:invite");
   const roles = useRoles(access.orgId, access.has("roles:read"));
   const list = usePagedList(
     adminKeys.members(orgId),
@@ -43,19 +45,20 @@ export function MembersPage() {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.org(orgId) });
 
+  // Members carry no version, so undo restores the previous role as it was when changed here; a
+  // change someone else made in between is overwritten. The server still checks the guards.
   const changeRole = useMutation({
     mutationFn: (input: { member: Member; role: string; undo: boolean }) =>
       changeMemberRole(orgId, input.member.userId, input.role),
-    onSuccess: async (_, { member, role, undo }) => {
+    onSuccess: async (changed, { member, undo }) => {
       await refresh();
-      const name = roleLabel(t, role, roles.data);
+      const name = roleLabel(t, changed.role, roles.data);
       notice.show(
         undo
           ? { message: t("admin.members.roleRestored", { name: member.name, role: name }) }
           : {
               message: t("admin.members.roleChanged", { name: member.name, role: name }),
-              undo: () =>
-                changeRole.mutate({ member: { ...member, role }, role: member.role, undo: true }),
+              undo: () => changeRole.mutate({ member: changed, role: member.role, undo: true }),
             },
       );
     },
@@ -77,7 +80,7 @@ export function MembersPage() {
       lead="admin.members.lead"
       allowed={allowedWhen(access, canRead)}
       actions={
-        canInvite ? (
+        canWrite ? (
           <button type="button" className="button button--primary" onClick={() => setAdding(true)}>
             {t("admin.members.add")}
           </button>
@@ -89,44 +92,53 @@ export function MembersPage() {
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />
       ) : (
         <ul className="admin-list" aria-label={t("admin.members.title")} {...keys.listProps}>
-          {members.map((member, index) => (
-            <li key={member.userId} className="admin-row" {...keys.rowProps(index)}>
-              <div className="admin-row__main">
-                <span className="admin-row__title">{member.name}</span>
-                <span className="admin-row__meta">{member.email}</span>
-              </div>
-              <span className="admin-row__meta">
-                {t("admin.members.joined", { date: formatDateTime(member.joinedAt, language) })}
-              </span>
-              <div className="admin-row__actions">
-                {canWrite ? (
-                  <RoleSelect
-                    label={t("admin.members.roleOf", { name: member.name })}
-                    value={member.role}
-                    roles={roles.data}
-                    access={access}
-                    disabled={changeRole.isPending}
-                    onChange={(role) => changeRole.mutate({ member, role, undo: false })}
-                  />
-                ) : (
-                  <span className="admin-badge">{roleLabel(t, member.role, roles.data)}</span>
-                )}
-                {canWrite ? (
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    aria-label={t("admin.members.removeNamed", { name: member.name })}
-                    onClick={() => {
-                      remove.reset();
-                      setRemoving(member);
-                    }}
-                  >
-                    {t("admin.common.removeAsk")}
-                  </button>
-                ) : null}
-              </div>
-            </li>
-          ))}
+          {members.map((member, index) => {
+            // Nobody changes or removes someone whose role holds more than they do.
+            const canChange = canWrite && holdsRole(access, member.role, roles.data);
+            return (
+              <li key={member.userId} className="admin-row" {...keys.rowProps(index)}>
+                <div className="admin-row__main">
+                  <span className="admin-row__title">{member.name}</span>
+                  <span className="admin-row__meta">{member.email}</span>
+                </div>
+                <span className="admin-row__meta">
+                  {t("admin.members.joined", { date: formatDateTime(member.joinedAt, language) })}
+                </span>
+                <div className="admin-row__actions">
+                  {canChange ? (
+                    <>
+                      <RoleSelect
+                        label={t("admin.members.roleOf", { name: member.name })}
+                        value={member.role}
+                        roles={roles.data}
+                        access={access}
+                        pending={changeRole.isPending}
+                        onChange={(role) => changeRole.mutate({ member, role, undo: false })}
+                      />
+                      <button
+                        type="button"
+                        className="button button--secondary"
+                        aria-label={t("admin.members.removeNamed", { name: member.name })}
+                        onClick={() => {
+                          remove.reset();
+                          setRemoving(member);
+                        }}
+                      >
+                        {t("admin.common.removeAsk")}
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      className="admin-badge"
+                      title={canWrite ? t("admin.members.aboveYou") : undefined}
+                    >
+                      {roleLabel(t, member.role, roles.data)}
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
       {list.hasMore ? (
@@ -139,16 +151,17 @@ export function MembersPage() {
           {t("admin.common.showMore")}
         </button>
       ) : null}
-      <AddMemberDialog
-        open={adding}
-        orgId={orgId}
-        onClose={() => setAdding(false)}
-        onAdded={async (email) => {
-          setAdding(false);
-          await refresh();
-          notice.show({ message: t("admin.members.added", { email }) });
-        }}
-      />
+      {adding ? (
+        <AddMemberDialog
+          orgId={orgId}
+          onClose={() => setAdding(false)}
+          onAdded={async (email) => {
+            setAdding(false);
+            await refresh();
+            notice.show({ message: t("admin.members.added", { email }) });
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={removing !== null}
         title={t("admin.members.removeTitle")}
@@ -168,19 +181,11 @@ export function MembersPage() {
   );
 }
 
-const ADD_MEMBER_ERRORS: ErrorTexts = {
-  ...MEMBER_ERRORS,
-  not_found: "admin.members.noAccount",
-  conflict: "admin.members.alreadyMember",
-};
-
 function AddMemberDialog({
-  open,
   orgId,
   onClose,
   onAdded,
 }: {
-  open: boolean;
   orgId: string;
   onClose: () => void;
   onAdded: (email: string) => void;
@@ -194,11 +199,14 @@ function AddMemberDialog({
   const emailRef = useRef<HTMLInputElement>(null);
   const roleId = useId();
   const add = useMutation({
-    mutationFn: () => addMember(orgId, { email: email.trim(), role }),
-    onSuccess: () => {
-      onAdded(email.trim());
-      setEmail("");
-      setRole("viewer");
+    mutationFn: () => addMember(orgId, { email: trimWhitespace(email), role }),
+    onSuccess: () => onAdded(trimWhitespace(email)),
+    onError: (error) => {
+      // Problems with the address belong to its field, where they are announced.
+      if (isApiError(error) && error.field === "email") {
+        setEmailError(errorText(t, error, ADD_MEMBER_ERRORS));
+        emailRef.current?.focus();
+      }
     },
   });
 
@@ -215,14 +223,13 @@ function AddMemberDialog({
     add.mutate();
   }
 
-  function close() {
-    add.reset();
-    setEmailError(undefined);
-    onClose();
-  }
+  const formError =
+    add.error === null || (isApiError(add.error) && add.error.field === "email")
+      ? null
+      : errorText(t, add.error, ADD_MEMBER_ERRORS);
 
   return (
-    <Dialog open={open} title={t("admin.members.addTitle")} onClose={close} initialFocus={emailRef}>
+    <Dialog open title={t("admin.members.addTitle")} onClose={onClose} initialFocus={emailRef}>
       <form className="form" noValidate onSubmit={onSubmit}>
         <TextField
           ref={emailRef}
@@ -249,13 +256,13 @@ function AddMemberDialog({
             onChange={setRole}
           />
         </div>
-        {add.error === null ? null : (
+        {formError === null ? null : (
           <p className="admin-error" role="alert">
-            {errorText(t, add.error, ADD_MEMBER_ERRORS)}
+            {formError}
           </p>
         )}
         <div className="admin-dialog__footer">
-          <button type="button" className="button button--secondary" onClick={close}>
+          <button type="button" className="button button--secondary" onClick={onClose}>
             {t("admin.common.cancel")}
           </button>
           <button type="submit" className="button button--primary" aria-disabled={add.isPending}>

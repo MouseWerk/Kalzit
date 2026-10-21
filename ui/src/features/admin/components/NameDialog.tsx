@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { type FormEvent, useRef, useState } from "react";
+import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
@@ -34,7 +35,19 @@ export function NameDialog({
   const [name, setName] = useState(initial);
   const [fieldError, setFieldError] = useState<string | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
-  const save = useMutation({ mutationFn: onSubmit });
+  const save = useMutation({
+    mutationFn: onSubmit,
+    onError: (error) => {
+      // The server's answer about the name (rejected, taken) belongs to the field.
+      if (isApiError(error) && error.field === "name") {
+        setFieldError(
+          errorText(t, error, { "validation:name": "validation.serverRejected", ...errors }),
+        );
+        inputRef.current?.focus();
+      }
+    },
+  });
+  const nameProblem = isApiError(save.error) && save.error.field === "name";
 
   function close() {
     save.reset();
@@ -77,7 +90,7 @@ export function NameDialog({
           }}
           error={fieldError}
         />
-        {save.error === null ? null : (
+        {save.error === null || nameProblem ? null : (
           <p className="admin-error" role="alert">
             {errorText(t, save.error, errors)}
           </p>

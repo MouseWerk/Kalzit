@@ -1,91 +1,141 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { openAdmin } from "./test/openAdmin";
+import { openAdmin, sent } from "./test/openAdmin";
+
+const RANGE = "dashboards.default_time_range";
+
+async function fieldOf(key: string) {
+  return (await screen.findByLabelText(key)) as HTMLInputElement;
+}
 
 describe("organization settings", () => {
-  it("applies a value when the field is left, and undoes it", async () => {
+  it("reads the settings page and applies a value when the field is left, with undo", async () => {
     const { user, admin } = await openAdmin("/admin/settings");
-    const field = await screen.findByLabelText("dashboards.default_refresh");
+    const field = await fieldOf(RANGE);
+    expect(field.value).toBe('{"from":"now-6h","to":"now"}');
     await user.clear(field);
-    await user.type(field, "1m");
+    await user.type(field, '{{"from":"now-24h","to":"now"}');
     await user.tab();
-    expect(await screen.findByText("dashboards.default_refresh was saved.")).toBeTruthy();
-    expect(admin.orgSettings[0]).toMatchObject({ value: "1m", version: 2 });
+    expect(await screen.findByText(`${RANGE} was saved.`)).toBeTruthy();
+    expect(admin.orgSettings[0]).toMatchObject({
+      value: { from: "now-24h", to: "now" },
+      version: 1,
+    });
 
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(admin.orgSettings[0]).toMatchObject({ value: "30s", version: 3 }));
     await waitFor(() =>
-      expect((screen.getByLabelText("dashboards.default_refresh") as HTMLInputElement).value).toBe(
-        "30s",
+      expect(admin.orgSettings[0]).toMatchObject({
+        value: { from: "now-6h", to: "now" },
+        version: 2,
+      }),
+    );
+    // The field stays the same element across saves, so focus is not lost.
+    await waitFor(() =>
+      expect((screen.getByLabelText(RANGE) as HTMLInputElement).value).toBe(
+        '{"from":"now-6h","to":"now"}',
       ),
     );
+    expect(screen.getByLabelText(RANGE)).toBe(field);
   });
 
-  it("saves numbers on Enter once and switches at once", async () => {
-    const { user, admin, server } = await openAdmin("/admin/settings");
-    const days = await screen.findByLabelText("audit.retention_days");
-    await user.clear(days);
-    await user.type(days, "90{Enter}");
-    await waitFor(() => expect(admin.orgSettings[1]?.value).toBe(90));
-    // The blur after Enter must not send the same change again.
+  it("undoes with the version the change produced, so a change in between is a conflict", async () => {
+    const { user, admin } = await openAdmin("/admin/settings");
+    const field = await fieldOf(RANGE);
+    await user.clear(field);
+    await user.type(field, '{{"from":"now-1h","to":"now"}');
     await user.tab();
-    expect(server.calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
-
-    await user.click(screen.getByLabelText("security.require_2fa"));
-    await waitFor(() => expect(admin.orgSettings[2]?.value).toBe(true));
-  });
-
-  it("rejects a value that is not a number without sending it", async () => {
-    const { user, server } = await openAdmin("/admin/settings");
-    const days = await screen.findByLabelText("audit.retention_days");
-    await user.clear(days);
-    await user.tab();
-    expect(await screen.findByText("Enter a number.")).toBeTruthy();
-    expect(days.getAttribute("aria-invalid")).toBe("true");
-    expect(server.calls.some((call) => call.method === "PATCH")).toBe(false);
+    await screen.findByText(`${RANGE} was saved.`);
+    // Someone else saves after this change and before the undo.
+    Object.assign(admin.orgSettings[0] ?? {}, { value: { from: "now-7d", to: "now" }, version: 5 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(within(dialog).getByText('{"from":"now-7d","to":"now"}')).toBeTruthy();
+    expect(admin.orgSettings[0]?.version).toBe(5);
   });
 
   it("shows what changed on a version conflict and keeps the stored value", async () => {
     const { user, admin } = await openAdmin("/admin/settings");
-    const field = await screen.findByLabelText("dashboards.default_refresh");
-    // Someone else saves first.
-    Object.assign(admin.orgSettings[0] ?? {}, { value: "5m", version: 2 });
+    const field = await fieldOf(RANGE);
+    Object.assign(admin.orgSettings[0] ?? {}, {
+      value: { from: "now-30d", to: "now" },
+      version: 2,
+    });
     await user.clear(field);
-    await user.type(field, "10s");
+    await user.type(field, '{{"from":"now-2d","to":"now"}');
     await user.tab();
 
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
-    expect(within(dialog).getByText("5m")).toBeTruthy();
-    expect(within(dialog).getByText("10s")).toBeTruthy();
+    expect(within(dialog).getByText('{"from":"now-30d","to":"now"}')).toBeTruthy();
+    expect(within(dialog).getByText('{"from":"now-2d","to":"now"}')).toBeTruthy();
     expect(document.activeElement).toBe(
       within(dialog).getByRole("button", { name: "Keep saved value" }),
     );
     await user.click(within(dialog).getByRole("button", { name: "Keep saved value" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(await screen.findByDisplayValue("5m")).toBeTruthy();
-    expect(admin.orgSettings[0]).toMatchObject({ value: "5m", version: 2 });
+    await waitFor(() => expect(field.value).toBe('{"from":"now-30d","to":"now"}'));
+    expect(admin.orgSettings[0]?.version).toBe(2);
   });
 
   it("overwrites on a version conflict only when asked to", async () => {
     const { user, admin } = await openAdmin("/admin/settings");
-    const field = await screen.findByLabelText("dashboards.default_refresh");
-    Object.assign(admin.orgSettings[0] ?? {}, { value: "5m", version: 2 });
+    const field = await fieldOf(RANGE);
+    Object.assign(admin.orgSettings[0] ?? {}, {
+      value: { from: "now-30d", to: "now" },
+      version: 2,
+    });
     await user.clear(field);
-    await user.type(field, "10s");
+    await user.type(field, '{{"from":"now-2d","to":"now"}');
     await user.tab();
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
     await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
-    await waitFor(() => expect(admin.orgSettings[0]).toMatchObject({ value: "10s", version: 3 }));
+    await waitFor(() =>
+      expect(admin.orgSettings[0]).toMatchObject({
+        value: { from: "now-2d", to: "now" },
+        version: 3,
+      }),
+    );
   });
 
-  it("shows settings read-only without settings:write, and fixed ones with the reason", async () => {
+  it("reports an error instead of a stale conflict when the settings cannot be read again", async () => {
+    const { user, admin, server } = await openAdmin("/admin/settings");
+    const field = await fieldOf(RANGE);
+    Object.assign(admin.orgSettings[0] ?? {}, { version: 2 });
+    server.failNext("/api/orgs/o1/settings", 500, "internal", "GET");
+    await user.clear(field);
+    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.tab();
+    expect(await screen.findByText(/Something went wrong on the server/)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("rejects text that is not JSON without sending it", async () => {
+    const { user, server } = await openAdmin("/admin/settings");
+    const field = await fieldOf(RANGE);
+    await user.clear(field);
+    await user.type(field, "last week");
+    await user.tab();
+    expect(await screen.findByText("Enter a valid JSON value.")).toBeTruthy();
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(sent(server, "PATCH")).toEqual([]);
+  });
+
+  it("shows a value the server rejects at its field", async () => {
+    const { user } = await openAdmin("/admin/settings");
+    const field = await fieldOf(RANGE);
+    await user.clear(field);
+    await user.type(field, "42");
+    await user.tab();
+    expect(
+      await screen.findByText("The server did not accept this value. Check it and try again."),
+    ).toBeTruthy();
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("shows settings read-only without settings:write", async () => {
     await openAdmin("/admin/settings", { permissions: ["settings:read"] });
     const list = await screen.findByRole("list", { name: "Organization settings" });
     expect(within(list).queryByRole("textbox")).toBeNull();
-    expect(within(list).getAllByText("You can see this setting, but not change it.")).toHaveLength(
-      3,
-    );
-    expect(within(list).getByText("This setting cannot be changed here.")).toBeTruthy();
+    expect(within(list).getByText("You can see this setting, but not change it.")).toBeTruthy();
   });
 });
 
@@ -94,23 +144,59 @@ describe("server settings", () => {
     await openAdmin("/admin/server/settings", { isServerAdmin: true });
     const list = await screen.findByRole("list", { name: "Server settings" });
     const rows = within(list).getAllByRole("listitem");
-    expect(within(rows[0] as HTMLElement).getByText("Environment")).toBeTruthy();
-    expect(within(rows[0] as HTMLElement).getByText(/Set by an environment variable/)).toBeTruthy();
-    expect(within(rows[0] as HTMLElement).queryByRole("textbox")).toBeNull();
-    expect(within(rows[1] as HTMLElement).getByText("Configuration file")).toBeTruthy();
-    expect(within(rows[1] as HTMLElement).getByText(/Set in the configuration file/)).toBeTruthy();
-    expect(within(rows[2] as HTMLElement).getByText("Default")).toBeTruthy();
-    expect(within(rows[2] as HTMLElement).getByRole("textbox")).toBeTruthy();
-    expect(within(rows[3] as HTMLElement).getByText(/Only the configuration file/)).toBeTruthy();
+    const row = (index: number) => within(rows[index] as HTMLElement);
+    expect(row(0).getByText("Environment")).toBeTruthy();
+    expect(row(0).getByText(/Set by an environment variable/)).toBeTruthy();
+    expect(row(0).queryByRole("spinbutton")).toBeNull();
+    expect(row(1).getByText("Configuration file")).toBeTruthy();
+    expect(row(1).getByText(/Set in the configuration file/)).toBeTruthy();
+    expect(row(2).getByText("Default")).toBeTruthy();
+    expect(row(3).getByRole("spinbutton")).toBeTruthy();
+    // Session settings live in the configuration and are never changeable in the UI.
+    expect(row(4).getByText(/Only the configuration file/)).toBeTruthy();
   });
 
-  it("changes an editable server setting with undo", async () => {
+  it("offers settings with fixed choices as a select with readable names", async () => {
     const { user, admin } = await openAdmin("/admin/server/settings", { isServerAdmin: true });
-    const field = await screen.findByLabelText("appearance.default_theme");
-    await user.clear(field);
-    await user.type(field, "dark{Enter}");
+    const theme = await screen.findByLabelText("appearance.default_theme");
+    expect(
+      within(theme)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["System", "Light", "Dark", "High contrast"]);
+    await user.selectOptions(theme, "dark");
     expect(await screen.findByText("appearance.default_theme was saved.")).toBeTruthy();
-    expect(admin.serverSettings[2]).toMatchObject({ value: "dark", version: 2 });
+    expect(admin.serverSettings[2]).toMatchObject({ value: "dark", version: 1 });
+  });
+
+  it("saves a number on Enter once, and shows a rejected value at the field", async () => {
+    const { user, admin, server } = await openAdmin("/admin/server/settings", {
+      isServerAdmin: true,
+    });
+    const rows = await fieldOf("datasources.max_rows");
+    await user.clear(rows);
+    await user.type(rows, "5000{Enter}");
+    await waitFor(() => expect(admin.serverSettings[3]?.value).toBe(5000));
+    // The blur after Enter must not send the same change again.
+    await user.tab();
+    expect(sent(server, "PATCH")).toEqual(["/api/admin/settings/datasources.max_rows"]);
+
+    await user.clear(rows);
+    await user.type(rows, "0{Enter}");
+    expect(
+      await screen.findByText("The server did not accept this value. Check it and try again."),
+    ).toBeTruthy();
+  });
+
+  it("does not save on the Enter that confirms an input method's candidate", async () => {
+    const { user, server } = await openAdmin("/admin/server/settings", { isServerAdmin: true });
+    const rows = await fieldOf("datasources.max_rows");
+    await user.clear(rows);
+    await user.type(rows, "7");
+    rows.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }),
+    );
+    expect(sent(server, "PATCH")).toEqual([]);
   });
 
   it("is not offered to members who are not server admins", async () => {

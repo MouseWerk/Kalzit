@@ -1,8 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
+import { isApiError } from "../../../api/client";
 import {
   type FieldErrors,
+  fieldFromServer,
   firstInvalid,
   MIN_PASSWORD_LENGTH,
   trimWhitespace,
@@ -18,7 +20,7 @@ import {
   type UserPatch,
   updateUser,
 } from "../api";
-import { Dialog } from "../components/Dialog";
+import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
 import { usePagedList } from "../components/lists";
 import { NameDialog } from "../components/NameDialog";
@@ -47,6 +49,7 @@ export function UsersPage() {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.server });
 
+  // Accounts carry no version: undo puts back the value as it was when changed here.
   const update = useMutation({
     mutationFn: (input: { user: AdminUser; patch: UserPatch; undo: UserPatch | null }) =>
       updateUser(input.user.id, input.patch),
@@ -69,6 +72,28 @@ export function UsersPage() {
       );
     },
     onError: (error) => notice.showError(errorText(t, error, SERVER_ADMIN_ERRORS)),
+  });
+
+  // Locking someone, and giving up one's own server admin role, happen only after a confirmation.
+  const [confirming, setConfirming] = useState<{
+    kind: "lock" | "demoteSelf";
+    user: AdminUser;
+  } | null>(null);
+  const confirm = useMutation({
+    mutationFn: (input: { kind: "lock" | "demoteSelf"; user: AdminUser }) =>
+      updateUser(
+        input.user.id,
+        input.kind === "lock" ? { disabled: true } : { isServerAdmin: false },
+      ),
+    onSuccess: async (_, { kind, user }) => {
+      setConfirming(null);
+      await refresh();
+      notice.show({
+        message: t(kind === "lock" ? "admin.users.locked" : "admin.users.removedAdmin", {
+          name: user.name,
+        }),
+      });
+    },
   });
 
   return (
@@ -106,15 +131,24 @@ export function UsersPage() {
                   <input
                     type="checkbox"
                     checked={user.isServerAdmin}
-                    disabled={update.isPending}
+                    aria-disabled={update.isPending}
                     aria-label={t("admin.users.serverAdminOf", { name: user.name })}
-                    onChange={() =>
+                    onChange={() => {
+                      if (update.isPending) {
+                        return;
+                      }
+                      if (user.id === me.id && user.isServerAdmin) {
+                        // Taking it from oneself cannot be undone from here: ask first.
+                        confirm.reset();
+                        setConfirming({ kind: "demoteSelf", user });
+                        return;
+                      }
                       update.mutate({
                         user,
                         patch: { isServerAdmin: !user.isServerAdmin },
                         undo: { isServerAdmin: user.isServerAdmin },
-                      })
-                    }
+                      });
+                    }}
                   />
                   <span aria-hidden="true">{t("admin.users.serverAdmin")}</span>
                 </label>
@@ -122,15 +156,20 @@ export function UsersPage() {
                   <input
                     type="checkbox"
                     checked={user.disabled}
-                    disabled={update.isPending}
+                    aria-disabled={update.isPending}
                     aria-label={t("admin.users.lockedOf", { name: user.name })}
-                    onChange={() =>
-                      update.mutate({
-                        user,
-                        patch: { disabled: !user.disabled },
-                        undo: { disabled: user.disabled },
-                      })
-                    }
+                    onChange={() => {
+                      if (update.isPending) {
+                        return;
+                      }
+                      if (!user.disabled) {
+                        // Locking ends every session of the account at once: ask first.
+                        confirm.reset();
+                        setConfirming({ kind: "lock", user });
+                        return;
+                      }
+                      update.mutate({ user, patch: { disabled: false }, undo: null });
+                    }}
                   />
                   <span aria-hidden="true">{t("admin.users.lockedLabel")}</span>
                 </label>
@@ -189,6 +228,27 @@ export function UsersPage() {
           }}
         />
       )}
+      <ConfirmDialog
+        open={confirming !== null}
+        title={t(
+          confirming?.kind === "lock" ? "admin.users.lockTitle" : "admin.users.demoteSelfTitle",
+        )}
+        confirmLabel={t(
+          confirming?.kind === "lock" ? "admin.users.lockConfirm" : "admin.users.demoteSelfConfirm",
+        )}
+        busy={confirm.isPending}
+        error={confirm.error === null ? null : errorText(t, confirm.error, SERVER_ADMIN_ERRORS)}
+        onClose={() => setConfirming(null)}
+        onConfirm={() => {
+          if (confirming !== null) {
+            confirm.mutate(confirming);
+          }
+        }}
+      >
+        {t(confirming?.kind === "lock" ? "admin.users.lockText" : "admin.users.demoteSelfText", {
+          name: confirming?.user.name ?? "",
+        })}
+      </ConfirmDialog>
       {settingPassword === null ? null : (
         <SetPasswordDialog
           user={settingPassword}
@@ -205,6 +265,11 @@ export function UsersPage() {
 
 type NewUserField = "name" | "email" | "password";
 const NEW_USER_FIELDS: readonly NewUserField[] = ["name", "email", "password"];
+
+/** A taken email address: `409 conflict` with field `email`. */
+function conflictField(error: unknown): "email" | undefined {
+  return isApiError(error, "conflict") && error.field === "email" ? "email" : undefined;
+}
 
 function CreateUserDialog({
   onClose,
@@ -230,7 +295,21 @@ function CreateUserDialog({
         password: values.password,
         isServerAdmin,
       }),
-    onSuccess: () => onCreated(trimWhitespace(values.name)),
+    onSuccess: (created) => onCreated(created.name),
+    onError: (error) => {
+      // A field the server names gets the error at the field, where it is announced.
+      const field = fieldFromServer(NEW_USER_FIELDS, error) ?? conflictField(error);
+      if (field !== undefined) {
+        setErrors({
+          [field]: {
+            key: isApiError(error, "conflict")
+              ? "admin.users.emailTaken"
+              : "validation.serverRejected",
+          },
+        });
+        refs[field].current?.focus();
+      }
+    },
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -308,9 +387,11 @@ function CreateUserDialog({
           />
           <span>{t("admin.users.serverAdmin")}</span>
         </label>
-        {create.error === null ? null : (
+        {create.error === null ||
+        fieldFromServer(NEW_USER_FIELDS, create.error) !== undefined ||
+        conflictField(create.error) !== undefined ? null : (
           <p className="admin-error" role="alert">
-            {errorText(t, create.error, { conflict: "admin.users.emailTaken" })}
+            {errorText(t, create.error, SERVER_ADMIN_ERRORS)}
           </p>
         )}
         <div className="admin-dialog__footer">
@@ -366,6 +447,7 @@ function SetPasswordDialog({
       initialFocus={inputRef}
     >
       <form className="form" noValidate onSubmit={submit}>
+        <p className="admin-dialog__text">{t("admin.users.setPasswordText")}</p>
         <TextField
           ref={inputRef}
           label={t("admin.users.newPassword")}

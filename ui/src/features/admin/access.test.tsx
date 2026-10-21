@@ -33,7 +33,7 @@ function Harness({ resource }: { resource: AccessResource }) {
   );
 }
 
-function renderHarness(permissions: string[], resource: AccessResource) {
+function renderHarness(permissions: string[], resource: AccessResource, managesResources = true) {
   const me: Me = {
     ...TEST_USER,
     isServerAdmin: false,
@@ -44,6 +44,9 @@ function renderHarness(permissions: string[], resource: AccessResource) {
     user: me,
     rolePermissions: { tester: permissions },
   });
+  const admin = fakeAdmin(server);
+  admin.callerPermissions = new Set(permissions);
+  admin.managesResources = managesResources;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const root = createRootRouteWithContext<{ queryClient: QueryClient }>()({ component: Outlet });
   const app = createRoute({
@@ -67,7 +70,7 @@ function renderHarness(permissions: string[], resource: AccessResource) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { server, admin: fakeAdmin(server), user: userEvent.setup() };
+  return { server, admin, user: userEvent.setup() };
 }
 
 const DASHBOARD: AccessResource = { type: "dashboard", id: "d1", name: "Revenue" };
@@ -87,11 +90,11 @@ describe("access dialog", () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it("gives a user access with a level, and removes it with undo", async () => {
+  it("gives a user access with a level, removes it with undo and keeps focus in the dialog", async () => {
     const { user, admin } = renderHarness(ALL_PERMISSIONS, DASHBOARD);
     await user.click(await screen.findByRole("button", { name: "Access…" }));
     const dialog = screen.getByRole("dialog");
-    await user.selectOptions(within(dialog).getByLabelText("To"), "user");
+    await user.selectOptions(await within(dialog).findByLabelText("Give access to"), "user");
     await user.selectOptions(await within(dialog).findByLabelText("User"), "u3");
     await user.selectOptions(within(dialog).getByLabelText("Access"), "view");
     await user.click(within(dialog).getByRole("button", { name: "Give access" }));
@@ -109,9 +112,26 @@ describe("access dialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Remove access of Analysts" }));
     expect(await within(dialog).findByText("Access of Analysts was removed.")).toBeTruthy();
     expect(admin.grants.some((grant) => grant.subjectId === "t1")).toBe(false);
+    // The removed row's button is gone; focus stays inside the dialog, on the list's heading.
+    expect(document.activeElement).toBe(
+      within(dialog).getByRole("heading", { name: "Granted access" }),
+    );
     await user.click(within(dialog).getByRole("button", { name: "Undo" }));
     expect(await within(dialog).findByText("Access of Analysts was restored.")).toBeTruthy();
     expect(admin.grants.some((grant) => grant.subjectId === "t1")).toBe(true);
+  });
+
+  it("changes the level when the subject already has access", async () => {
+    const { user, admin } = renderHarness(ALL_PERMISSIONS, DASHBOARD);
+    await user.click(await screen.findByRole("button", { name: "Access…" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(await within(dialog).findByLabelText("Give access to"), "team");
+    await user.selectOptions(await within(dialog).findByLabelText("Team"), "t1");
+    await user.selectOptions(within(dialog).getByLabelText("Access"), "admin");
+    await user.click(within(dialog).getByRole("button", { name: "Give access" }));
+    const list = within(dialog).getByRole("list", { name: "Granted access" });
+    expect(await within(list).findByText("Can manage")).toBeTruthy();
+    expect(admin.grants.filter((grant) => grant.subjectId === "t1")).toHaveLength(1);
   });
 
   it("offers query instead of view for data sources", async () => {
@@ -121,7 +141,7 @@ describe("access dialog", () => {
       name: "Sales",
     });
     await user.click(await screen.findByRole("button", { name: "Access…" }));
-    const levels = within(screen.getByRole("dialog")).getByLabelText("Access");
+    const levels = await within(screen.getByRole("dialog")).findByLabelText("Access");
     expect(
       within(levels)
         .getAllByRole("option")
@@ -129,21 +149,35 @@ describe("access dialog", () => {
     ).toEqual(["Can query", "Can edit", "Can manage"]);
   });
 
-  it("is read-only without the manage permission of the resource type", async () => {
-    // dashboards:share manages dashboards; folders:permissions does not.
-    const { user } = renderHarness(["users:read", "teams:read", "folders:permissions"], DASHBOARD);
+  it("says so when the server does not let the user see who has access", async () => {
+    // Org-wide permissions say nothing here: the manage permission may come from a grant on the
+    // resource, so the dialog follows the server's answer to the list.
+    const { user, server } = renderHarness(ALL_PERMISSIONS, DASHBOARD, false);
     await user.click(await screen.findByRole("button", { name: "Access…" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText(/You can see who has access, but not change it./)).toBeTruthy();
-    await within(dialog).findByRole("list", { name: "Granted access" });
+    expect(
+      await within(dialog).findByText(
+        "You cannot see who has access to this. Ask someone who manages its access.",
+      ),
+    ).toBeTruthy();
     expect(within(dialog).queryByRole("button", { name: /Remove access/ })).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Give access" })).toBeNull();
+    expect(server.calls.map((call) => call.path)).toContain(
+      "/api/orgs/o1/grants?resourceType=dashboard&resourceId=d1",
+    );
+  });
+
+  it("lets a member manage access through a grant, without the permission in their role", async () => {
+    const { user } = renderHarness(["users:read", "teams:read"], DASHBOARD, true);
+    await user.click(await screen.findByRole("button", { name: "Access…" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByRole("button", { name: "Give access" })).toBeTruthy();
   });
 
   it("offers only the kinds of subjects the user may see", async () => {
     const { user } = renderHarness(["dashboards:share", "teams:read"], DASHBOARD);
     await user.click(await screen.findByRole("button", { name: "Access…" }));
-    const to = within(screen.getByRole("dialog")).getByLabelText("To");
+    const to = await within(screen.getByRole("dialog")).findByLabelText("Give access to");
     expect(
       within(to)
         .getAllByRole("option")
@@ -157,9 +191,11 @@ describe("access dialog", () => {
     const dialog = screen.getByRole("dialog");
     await within(dialog).findByRole("list", { name: "Granted access" });
     server.failNext("/api/orgs/o1/grants", 403, "forbidden", "POST");
-    await user.click(within(dialog).getByRole("button", { name: "Give access" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Give access" }));
     expect(
-      await within(dialog).findByText("You cannot give permissions you do not have yourself."),
+      await within(dialog).findByText(
+        "You can only give access up to what you may do on this yourself.",
+      ),
     ).toBeTruthy();
   });
 

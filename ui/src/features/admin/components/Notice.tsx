@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
 
@@ -10,12 +10,29 @@ export interface NoticeContent {
   error?: boolean;
 }
 
+// A notice for the next page, when a change ends with a navigation (a created role opens).
+let flash: NoticeContent | null = null;
+
+/** Shows `content` on the next page that uses `useNotice`. */
+export function setFlash(content: NoticeContent): void {
+  flash = content;
+}
+
+// Read during the first render and cleared after it, so a render that runs twice (strict mode)
+// still sees it.
+function peekFlash(): NoticeContent | null {
+  return flash;
+}
+
 /**
  * Changes apply at once; the page confirms each with a notice that offers to undo it, and reports
  * a failed change in the same place. The next change replaces the notice.
  */
 export function useNotice() {
-  const [notice, setNotice] = useState<NoticeContent | null>(null);
+  const [notice, setNotice] = useState<NoticeContent | null>(peekFlash);
+  useEffect(() => {
+    flash = null;
+  }, []);
   return {
     notice,
     show: (content: NoticeContent) => setNotice(content),

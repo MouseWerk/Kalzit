@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { meQuery } from "../../../api/auth";
@@ -23,6 +23,7 @@ import {
 import { PERMISSION_GROUPS, PERMISSION_TEXT, roleLabel } from "../catalog";
 import { ConfirmDialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
+import { usePagedList } from "../components/lists";
 import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
 import { LoadState } from "../components/Section";
@@ -115,7 +116,8 @@ function ProfileSection() {
           }}
           onBlur={commit}
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            // Enter also confirms an input method candidate; that must not save.
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
               commit();
             }
           }}
@@ -139,6 +141,7 @@ type PasswordField = "current" | "next" | "confirm";
  */
 function PasswordSection() {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const notice = useNotice();
   const empty = { current: "", next: "", confirm: "" };
   const [values, setValues] = useState(empty);
@@ -150,12 +153,15 @@ function PasswordSection() {
   };
   const change = useMutation({
     mutationFn: () => changeMyPassword({ current: values.current, new: values.next }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setValues(empty);
       notice.show({ message: t("admin.account.passwordChanged") });
+      // The server ended every other session.
+      await queryClient.invalidateQueries({ queryKey: adminKeys.sessions });
     },
     onError: (failure) => {
-      if (isApiError(failure, "invalid_credentials")) {
+      // A wrong current password is a validation error of the field "current".
+      if (isApiError(failure, "validation") && failure.field === "current") {
         setErrors({ current: t("admin.account.currentWrong") });
         refs.current.current?.focus();
         return;
@@ -247,9 +253,9 @@ function SessionsSection() {
   const { t, language } = useI18n();
   const queryClient = useQueryClient();
   const notice = useNotice();
-  const sessions = useQuery({ queryKey: adminKeys.sessions, queryFn: listMySessions });
+  const sessions = usePagedList(adminKeys.sessions, (cursor) => listMySessions(cursor));
   const [confirming, setConfirming] = useState(false);
-  const list = sessions.data ?? [];
+  const list = sessions.items ?? [];
   const keys = useRowKeys(list.length);
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.sessions });
 
@@ -274,41 +280,54 @@ function SessionsSection() {
   return (
     <AccountSection title={t("admin.account.sessions")} lead={t("admin.account.sessionsLead")}>
       <Notice notice={notice.notice} onDismiss={notice.clear} />
-      {sessions.data === undefined ? (
-        <LoadState error={sessions.error} onRetry={() => void sessions.refetch()} />
+      {sessions.items === undefined ? (
+        <LoadState error={sessions.query.error} onRetry={() => void sessions.query.refetch()} />
       ) : (
         <ul className="admin-list" aria-label={t("admin.account.sessions")} {...keys.listProps}>
-          {list.map((session, index) => (
-            <li key={session.id} className="admin-row" {...keys.rowProps(index)}>
-              <div className="admin-row__main">
-                <span className="admin-row__title">
-                  {session.userAgent ?? t("admin.account.unknownBrowser")}
-                </span>
-                <span className="admin-row__meta">
-                  {t("admin.account.sessionTimes", {
-                    created: formatDateTime(session.createdAt, language),
-                    seen: formatDateTime(session.lastSeenAt, language),
-                  })}
-                </span>
-              </div>
-              <div className="admin-row__actions">
-                {session.current ? (
-                  <span className="admin-badge">{t("admin.account.thisBrowser")}</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    disabled={revoke.isPending}
-                    onClick={() => revoke.mutate(session)}
-                  >
-                    {t("admin.account.revoke")}
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
+          {list.map((session, index) => {
+            const created = formatDateTime(session.createdAt, language);
+            return (
+              <li key={session.id} className="admin-row" {...keys.rowProps(index)}>
+                <div className="admin-row__main">
+                  <span className="admin-row__title">
+                    {t("admin.account.sessionCreated", { date: created })}
+                  </span>
+                  <span className="admin-row__meta">
+                    {t("admin.account.sessionTimes", {
+                      seen: formatDateTime(session.lastSeenAt, language),
+                      expires: formatDateTime(session.expiresAt, language),
+                    })}
+                  </span>
+                </div>
+                <div className="admin-row__actions">
+                  {session.current ? (
+                    <span className="admin-badge">{t("admin.account.thisBrowser")}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      aria-label={t("admin.account.revokeNamed", { date: created })}
+                      aria-disabled={revoke.isPending}
+                      onClick={() => {
+                        if (!revoke.isPending) {
+                          revoke.mutate(session);
+                        }
+                      }}
+                    >
+                      {t("admin.account.revoke")}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
+      {sessions.hasMore ? (
+        <button type="button" className="button button--secondary" onClick={sessions.loadMore}>
+          {t("admin.common.showMore")}
+        </button>
+      ) : null}
       {others.length === 0 ? null : (
         <div className="form__actions">
           <button

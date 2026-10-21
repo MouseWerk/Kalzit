@@ -27,13 +27,28 @@ export function startOfDay(date: string): number | undefined {
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime();
 }
 
-/** The last millisecond of that day in local time, so "to" includes the whole day. */
-export function endOfDay(date: string): number | undefined {
+/**
+ * The start of the day after, in local time: the server's `to` is exclusive, so this includes the
+ * whole chosen day.
+ */
+export function startOfNextDay(date: string): number | undefined {
   const start = startOfDay(date);
   if (start === undefined) {
     return undefined;
   }
   const next = new Date(start);
   next.setDate(next.getDate() + 1);
-  return next.getTime() - 1;
+  return next.getTime();
+}
+
+/** An audit summary (ids and changed field names) as short readable text. */
+export function formatSummary(summary: Record<string, unknown>): string {
+  return Object.entries(summary)
+    .map(([key, value]) => {
+      const text = Array.isArray(value)
+        ? value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).join(", ")
+        : formatValue(value);
+      return `${key}: ${text}`;
+    })
+    .join(" · ");
 }

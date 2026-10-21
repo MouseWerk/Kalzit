@@ -9,8 +9,9 @@ import { NameDialog } from "../components/NameDialog";
 import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
-import { errorText } from "../errors";
+import { errorText, TEAM_ERRORS } from "../errors";
 import { allowedWhen, useAdminAccess } from "../sections";
+import { holdsRole, useRoles } from "./shared";
 
 export function TeamsPage() {
   const { t } = useI18n();
@@ -20,6 +21,7 @@ export function TeamsPage() {
   const canRead = access.has("teams:read");
   const canWrite = access.has("teams:write");
   const list = usePagedList(adminKeys.teams(orgId), (cursor) => listTeams(orgId, cursor), canRead);
+  const roles = useRoles(access.orgId, access.has("roles:read"));
   const notice = useNotice();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Team | null>(null);
@@ -77,7 +79,8 @@ export function TeamsPage() {
                   })}
                 </span>
               </div>
-              {canWrite ? (
+              {/* Deleting takes the team's roles from its members; that needs holding them. */}
+              {canWrite && team.roles.every((role) => holdsRole(access, role, roles.data)) ? (
                 <div className="admin-row__actions">
                   <button
                     type="button"
@@ -107,7 +110,7 @@ export function TeamsPage() {
           title={t("admin.teams.createTitle")}
           label={t("admin.teams.name")}
           submitLabel={t("admin.teams.createSubmit")}
-          errors={{ conflict: "admin.teams.nameTaken" }}
+          errors={TEAM_ERRORS}
           onClose={() => setCreating(false)}
           onSubmit={async (name) => {
             await createTeam(orgId, name);
@@ -121,7 +124,7 @@ export function TeamsPage() {
         title={t("admin.teams.deleteTitle")}
         confirmLabel={t("admin.common.delete")}
         busy={remove.isPending}
-        error={remove.error === null ? null : errorText(t, remove.error)}
+        error={remove.error === null ? null : errorText(t, remove.error, TEAM_ERRORS)}
         onClose={() => setDeleting(null)}
         onConfirm={() => {
           if (deleting !== null) {

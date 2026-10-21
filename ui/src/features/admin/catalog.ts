@@ -6,7 +6,7 @@
 import { ORG_ROLES, type OrgRole } from "../../api/auth";
 import type { Permission } from "../../api/generated/shapes";
 import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
-import type { GrantLevel, Role, SubjectType } from "./api";
+import type { GrantLevel, ResourceType, Role, SubjectType } from "./api";
 
 export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
   "dashboards:read": "admin.permission.dashboards.read",
@@ -137,6 +137,12 @@ export const LEVEL_TEXT: Record<GrantLevel, MessageKey> = {
   query: "admin.level.query",
 };
 
+export const RESOURCE_TEXT: Record<ResourceType, MessageKey> = {
+  folder: "admin.resource.folder",
+  dashboard: "admin.resource.dashboard",
+  datasource: "admin.resource.datasource",
+};
+
 export const SUBJECT_TEXT: Record<SubjectType, MessageKey> = {
   user: "admin.subject.user",
   team: "admin.subject.team",
@@ -162,4 +168,96 @@ export function knownAuditActions(): string[] {
   return Object.keys(catalogs.en)
     .filter((key) => key.startsWith(prefix))
     .map((key) => key.slice(prefix.length));
+}
+
+/**
+ * Areas of audit actions. The server filters `action` by prefix, so "team." finds every team
+ * change; each area has a readable name.
+ */
+export const AUDIT_AREAS: Record<string, MessageKey> = {
+  "auth.": "admin.auditArea.auth",
+  "member.": "admin.auditArea.member",
+  "team.": "admin.auditArea.team",
+  "role.": "admin.auditArea.role",
+  "grant.": "admin.auditArea.grant",
+  "user.": "admin.auditArea.user",
+  "org.": "admin.auditArea.org",
+  "settings.": "admin.auditArea.settings",
+  "folder.": "admin.auditArea.folder",
+  "dashboard.": "admin.auditArea.dashboard",
+};
+
+/**
+ * The built-in roles' permissions as the server pins them (server/src/authz.rs,
+ * `BuiltinRole::permissions`), for deciding what a member may change when the role list cannot
+ * be read (no `roles:read`).
+ */
+const VIEWER: Permission[] = ["dashboards:read", "folders:read", "analyses:read", "teams:read"];
+const EDITOR: Permission[] = [
+  ...VIEWER,
+  "dashboards:write",
+  "dashboards:delete",
+  "dashboards:share",
+  "folders:write",
+  "datasources:query",
+  "datasources:read",
+  "analyses:write",
+  "data:export",
+  "annotations:write",
+  "users:read",
+];
+const ADMIN: Permission[] = [
+  ...EDITOR,
+  "folders:permissions",
+  "datasources:write",
+  "datasources:permissions",
+  "teams:write",
+  "teams:members",
+  "users:invite",
+  "users:write",
+  "roles:read",
+  "roles:write",
+  "serviceaccounts:write",
+  "audit:read",
+  "plugins:configure",
+  "settings:read",
+  "settings:write",
+  "org:write",
+];
+export const BUILT_IN_ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]> = {
+  viewer: VIEWER,
+  editor: EDITOR,
+  admin: ADMIN,
+  owner: [...ADMIN, "org:delete"],
+};
+
+/** Permissions only the built-in owner role has; custom roles cannot hold them. */
+export const OWNER_ONLY: readonly Permission[] = ["org:delete"];
+
+/**
+ * The permissions of a role key, from the role list when known, else for built-in roles from the
+ * pinned table; undefined for a custom role the UI cannot read.
+ */
+export function permissionsOfRole(
+  role: string,
+  roles: readonly Role[] | undefined,
+): readonly string[] | undefined {
+  const listed = roles?.find((candidate) => candidate.id === role);
+  if (listed !== undefined) {
+    return listed.permissions;
+  }
+  return isBuiltInRole(role) ? BUILT_IN_ROLE_PERMISSIONS[role] : undefined;
+}
+
+/**
+ * Whether someone holding `has` holds every one of `permissions`. The server refuses giving or
+ * taking away what the caller does not hold (docs/api/access.md, "The guards").
+ */
+export function holdsAll(
+  has: (permission: Permission) => boolean,
+  permissions: readonly string[] | undefined,
+): boolean {
+  return (
+    permissions?.every((permission) => isKnownPermission(permission) && has(permission)) === true
+  );
 }

@@ -8,6 +8,7 @@ import {
   listMembers,
   listTeamMembers,
   MAX_PAGE_SIZE,
+  MAX_TEAM_ROLES,
   putTeamMember,
   removeTeamMember,
   renameTeam,
@@ -21,17 +22,19 @@ import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { usePagedList } from "../components/lists";
 import { NameDialog } from "../components/NameDialog";
 import { Notice, useNotice } from "../components/Notice";
+import { PagedSelect } from "../components/PagedSelect";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
-import { errorText, GRANT_ERRORS } from "../errors";
+import { errorText, TEAM_ERRORS } from "../errors";
 import { allowedWhen, useAdminAccess } from "../sections";
-import { canGrant, useRoles } from "./shared";
+import { holdsRole, useRoles } from "./shared";
 
 const TEAM_ROLE_TEXT = {
   member: "admin.teams.teamRole.member",
   maintainer: "admin.teams.teamRole.maintainer",
 } as const;
 
+const appRoute = getRouteApi("/_app");
 const teamRoute = getRouteApi("/_app/admin/teams/$teamId");
 
 /** The team page as a route; keyed, so moving between teams starts with fresh state. */
@@ -40,15 +43,19 @@ export function TeamRoutePage() {
   return <TeamPage key={teamId} teamId={teamId} />;
 }
 
+function sameRoles(a: readonly string[], b: readonly string[]): boolean {
+  return [...a].sort().join("\n") === [...b].sort().join("\n");
+}
+
 /** One team: its members with their team role, and the roles the team gives its members. */
 export function TeamPage({ teamId }: { teamId: string }) {
   const { t } = useI18n();
   const access = useAdminAccess();
+  const { me } = appRoute.useRouteContext();
   const orgId = access.orgId ?? "";
   const queryClient = useQueryClient();
   const canRead = access.has("teams:read");
   const canWrite = access.has("teams:write");
-  const canManageMembers = access.has("teams:members");
   const team = useQuery({
     queryKey: adminKeys.team(orgId, teamId),
     queryFn: () => fetchTeam(orgId, teamId),
@@ -66,33 +73,37 @@ export function TeamPage({ teamId }: { teamId: string }) {
   const [removing, setRemoving] = useState<TeamMember | null>(null);
   const rows = members.items ?? [];
   const keys = useRowKeys(rows.length);
+  const assigned = team.data?.roles ?? [];
+
+  // Who joins or leaves the team gains or loses its roles, so changing members needs holding
+  // them, plus teams:members or being a maintainer of this team (docs/api/access.md, Teams).
+  const isMaintainer = rows.some((row) => row.userId === me.id && row.role === "maintainer");
+  const holdsTeamRoles = assigned.every((role) => holdsRole(access, role, roles.data));
+  const canManageMembers =
+    (access.has("teams:members") || isMaintainer) && holdsTeamRoles && team.data !== undefined;
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.teams(orgId) });
 
+  // Team memberships carry no version: undo puts back the team role as it was when changed here.
   const changeTeamRole = useMutation({
-    mutationFn: (input: { member: TeamMember; teamRole: TeamRole; undo: boolean }) =>
-      putTeamMember(orgId, teamId, input.member.userId, input.teamRole),
-    onSuccess: async (_, { member, teamRole, undo }) => {
+    mutationFn: (input: { member: TeamMember; role: TeamRole; undo: boolean }) =>
+      putTeamMember(orgId, teamId, input.member.userId, input.role),
+    onSuccess: async (changed, { member, undo }) => {
       await refresh();
       const message = t("admin.teams.teamRoleChanged", {
         name: member.name,
-        role: t(TEAM_ROLE_TEXT[teamRole]),
+        role: t(TEAM_ROLE_TEXT[changed.role]),
       });
       notice.show(
         undo
           ? { message }
           : {
               message,
-              undo: () =>
-                changeTeamRole.mutate({
-                  member: { ...member, teamRole },
-                  teamRole: member.teamRole,
-                  undo: true,
-                }),
+              undo: () => changeTeamRole.mutate({ member: changed, role: member.role, undo: true }),
             },
       );
     },
-    onError: (error) => notice.showError(errorText(t, error)),
+    onError: (error) => notice.showError(errorText(t, error, TEAM_ERRORS)),
   });
 
   const remove = useMutation({
@@ -104,23 +115,38 @@ export function TeamPage({ teamId }: { teamId: string }) {
     },
   });
 
-  const assigned = team.data?.roles ?? [];
   const changeRoles = useMutation({
-    mutationFn: (input: { next: string[]; previous: string[]; undo: boolean }) =>
-      setTeamRoles(orgId, teamId, input.next),
-    onSuccess: async (_, { next, previous, undo }) => {
+    mutationFn: async (input: { next: string[]; previous: string[]; undo: boolean }) => {
+      if (input.undo) {
+        // Roles carry no version: undo first checks that nobody changed them since.
+        const current = await fetchTeam(orgId, teamId);
+        if (!sameRoles(current.roles, input.previous)) {
+          throw new ChangedMeanwhile();
+        }
+      }
+      return setTeamRoles(orgId, teamId, input.next);
+    },
+    onSuccess: async (changed, { previous, undo }) => {
       await refresh();
-      const message = t("admin.teams.rolesChanged");
+      const message = t(undo ? "admin.teams.rolesRestored" : "admin.teams.rolesChanged");
       notice.show(
         undo
           ? { message }
           : {
               message,
-              undo: () => changeRoles.mutate({ next: previous, previous: next, undo: true }),
+              undo: () =>
+                changeRoles.mutate({ next: previous, previous: changed.roles, undo: true }),
             },
       );
     },
-    onError: (error) => notice.showError(errorText(t, error, GRANT_ERRORS)),
+    onError: async (error) => {
+      if (error instanceof ChangedMeanwhile) {
+        await refresh();
+        notice.showError(t("admin.common.changedMeanwhile"));
+        return;
+      }
+      notice.showError(errorText(t, error, TEAM_ERRORS));
+    },
   });
 
   const back = (
@@ -128,6 +154,9 @@ export function TeamPage({ teamId }: { teamId: string }) {
       {t("admin.teams.back")}
     </Link>
   );
+
+  const offeredRoles = (roles.data ?? []).filter((role) => role.id !== "owner");
+  const full = assigned.length >= MAX_TEAM_ROLES;
 
   return (
     <Section
@@ -165,6 +194,9 @@ export function TeamPage({ teamId }: { teamId: string }) {
                 </button>
               ) : null}
             </div>
+            {!holdsTeamRoles && (access.has("teams:members") || isMaintainer) ? (
+              <p className="admin-section__lead">{t("admin.teams.rolesAboveYou")}</p>
+            ) : null}
             {members.items === undefined ? (
               <LoadState error={members.query.error} onRetry={() => void members.query.refetch()} />
             ) : rows.length === 0 ? (
@@ -183,14 +215,14 @@ export function TeamPage({ teamId }: { teamId: string }) {
                           <select
                             className="select"
                             aria-label={t("admin.teams.teamRoleOf", { name: member.name })}
-                            value={member.teamRole}
-                            disabled={changeTeamRole.isPending}
+                            value={member.role}
+                            aria-disabled={changeTeamRole.isPending}
                             onChange={(event) => {
-                              const teamRole = TEAM_ROLES.find(
-                                (role) => role === event.currentTarget.value,
+                              const role = TEAM_ROLES.find(
+                                (candidate) => candidate === event.currentTarget.value,
                               );
-                              if (teamRole !== undefined) {
-                                changeTeamRole.mutate({ member, teamRole, undo: false });
+                              if (role !== undefined && !changeTeamRole.isPending) {
+                                changeTeamRole.mutate({ member, role, undo: false });
                               }
                             }}
                           >
@@ -213,7 +245,7 @@ export function TeamPage({ teamId }: { teamId: string }) {
                           </button>
                         </>
                       ) : (
-                        <span className="admin-badge">{t(TEAM_ROLE_TEXT[member.teamRole])}</span>
+                        <span className="admin-badge">{t(TEAM_ROLE_TEXT[member.role])}</span>
                       )}
                     </div>
                   </li>
@@ -231,7 +263,9 @@ export function TeamPage({ teamId }: { teamId: string }) {
             <legend>
               <h3>{t("admin.teams.roles")}</h3>
             </legend>
-            <p className="admin-section__lead">{t("admin.teams.rolesLead")}</p>
+            <p className="admin-section__lead">
+              {t("admin.teams.rolesLead", { count: MAX_TEAM_ROLES })}
+            </p>
             {roles.data === undefined ? (
               <ul className="admin-tags">
                 {assigned.map((role) => (
@@ -242,24 +276,30 @@ export function TeamPage({ teamId }: { teamId: string }) {
               </ul>
             ) : (
               <div className="admin-checks">
-                {roles.data.map((role) => {
+                {offeredRoles.map((role) => {
                   const checked = assigned.includes(role.id);
-                  const allowed = canGrant(access, role);
+                  // Giving and taking a team role both need holding its permissions.
+                  const held = holdsRole(access, role.id, roles.data);
+                  const blocked = !canWrite || !held || (!checked && full);
                   return (
                     <label key={role.id} className="admin-check">
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!canWrite || changeRoles.isPending || (!allowed && !checked)}
-                        onChange={() =>
+                        disabled={blocked}
+                        aria-disabled={changeRoles.isPending}
+                        onChange={() => {
+                          if (changeRoles.isPending) {
+                            return;
+                          }
                           changeRoles.mutate({
                             next: checked
                               ? assigned.filter((id) => id !== role.id)
                               : [...assigned, role.id],
                             previous: assigned,
                             undo: false,
-                          })
-                        }
+                          });
+                        }}
                       />
                       <span>{roleLabel(t, role.id, roles.data)}</span>
                     </label>
@@ -277,7 +317,7 @@ export function TeamPage({ teamId }: { teamId: string }) {
           label={t("admin.teams.name")}
           initial={team.data.name}
           submitLabel={t("admin.common.save")}
-          errors={{ conflict: "admin.teams.nameTaken" }}
+          errors={TEAM_ERRORS}
           onClose={() => setRenaming(false)}
           onSubmit={async (name) => {
             await renameTeam(orgId, teamId, name);
@@ -304,7 +344,7 @@ export function TeamPage({ teamId }: { teamId: string }) {
         title={t("admin.teams.removeMemberTitle")}
         confirmLabel={t("admin.common.remove")}
         busy={remove.isPending}
-        error={remove.error === null ? null : errorText(t, remove.error)}
+        error={remove.error === null ? null : errorText(t, remove.error, TEAM_ERRORS)}
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           if (removing !== null) {
@@ -321,6 +361,9 @@ export function TeamPage({ teamId }: { teamId: string }) {
   );
 }
 
+/** Undo found the value changed by someone else since the change it would revert. */
+class ChangedMeanwhile extends Error {}
+
 function AddTeamMemberDialog({
   orgId,
   teamId,
@@ -335,54 +378,76 @@ function AddTeamMemberDialog({
   onAdded: (name: string) => void;
 }) {
   const { t } = useI18n();
+  const formId = useId();
   const memberId = useId();
   const roleId = useId();
-  const candidates = useQuery({
-    queryKey: [...adminKeys.members(orgId), "picker"],
-    queryFn: () => listMembers(orgId, undefined, MAX_PAGE_SIZE),
-  });
-  const options = (candidates.data?.items ?? []).filter(
-    (member) => !present.includes(member.userId),
+  const candidates = usePagedList([...adminKeys.members(orgId), "picker"], (cursor) =>
+    listMembers(orgId, cursor, MAX_PAGE_SIZE),
   );
+  const options = candidates.items
+    ?.filter((member) => !present.includes(member.userId))
+    .map((member) => ({
+      id: member.userId,
+      label: t("admin.common.nameAndEmail", { name: member.name, email: member.email }),
+    }));
   const [userId, setUserId] = useState("");
-  const [teamRole, setTeamRole] = useState<TeamRole>("member");
-  const chosen = userId === "" ? options[0]?.userId : userId;
+  const [role, setRole] = useState<TeamRole>("member");
+  const chosen = options?.find((option) => option.id === userId) ?? options?.[0];
   const add = useMutation({
-    mutationFn: (id: string) => putTeamMember(orgId, teamId, id, teamRole),
-    onSuccess: (_, id) => onAdded(options.find((member) => member.userId === id)?.name ?? id),
+    mutationFn: (id: string) => putTeamMember(orgId, teamId, id, role),
+    onSuccess: (added) => onAdded(added.name),
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (chosen !== undefined && !add.isPending) {
-      add.mutate(chosen);
+      add.mutate(chosen.id);
     }
   }
 
+  const empty = options !== undefined && options.length === 0 && !candidates.hasMore;
   return (
-    <Dialog open title={t("admin.teams.addMemberTitle")} onClose={onClose}>
-      {candidates.data === undefined ? (
-        <LoadState error={candidates.error} onRetry={() => void candidates.refetch()} />
-      ) : options.length === 0 ? (
+    <Dialog
+      open
+      title={t("admin.teams.addMemberTitle")}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="button button--secondary" onClick={onClose}>
+            {t("admin.common.cancel")}
+          </button>
+          {options === undefined || empty ? null : (
+            <button
+              type="submit"
+              form={formId}
+              className="button button--primary"
+              aria-disabled={add.isPending || chosen === undefined}
+            >
+              {t("admin.teams.addMemberSubmit")}
+            </button>
+          )}
+        </>
+      }
+    >
+      {empty ? (
         <p>{t("admin.teams.everyoneIn")}</p>
       ) : (
-        <form className="form" noValidate onSubmit={submit}>
+        <form id={formId} className="form" noValidate onSubmit={submit}>
           <div className="field">
             <label className="field__label" htmlFor={memberId}>
               {t("admin.teams.member")}
             </label>
-            <select
+            <PagedSelect
               id={memberId}
-              className="select"
-              value={chosen}
-              onChange={(event) => setUserId(event.currentTarget.value)}
-            >
-              {options.map((member) => (
-                <option key={member.userId} value={member.userId}>
-                  {t("admin.common.nameAndEmail", { name: member.name, email: member.email })}
-                </option>
-              ))}
-            </select>
+              value={chosen?.id ?? ""}
+              onChange={setUserId}
+              options={options}
+              error={candidates.query.error}
+              onRetry={() => void candidates.query.refetch()}
+              hasMore={candidates.hasMore}
+              onMore={candidates.loadMore}
+              loadingMore={candidates.loadingMore}
+            />
           </div>
           <div className="field">
             <label className="field__label" htmlFor={roleId}>
@@ -391,17 +456,19 @@ function AddTeamMemberDialog({
             <select
               id={roleId}
               className="select"
-              value={teamRole}
+              value={role}
               onChange={(event) => {
-                const next = TEAM_ROLES.find((role) => role === event.currentTarget.value);
+                const next = TEAM_ROLES.find(
+                  (candidate) => candidate === event.currentTarget.value,
+                );
                 if (next !== undefined) {
-                  setTeamRole(next);
+                  setRole(next);
                 }
               }}
             >
-              {TEAM_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {t(TEAM_ROLE_TEXT[role])}
+              {TEAM_ROLES.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {t(TEAM_ROLE_TEXT[candidate])}
                 </option>
               ))}
             </select>
@@ -409,17 +476,9 @@ function AddTeamMemberDialog({
           </div>
           {add.error === null ? null : (
             <p className="admin-error" role="alert">
-              {errorText(t, add.error)}
+              {errorText(t, add.error, TEAM_ERRORS)}
             </p>
           )}
-          <div className="admin-dialog__footer">
-            <button type="button" className="button button--secondary" onClick={onClose}>
-              {t("admin.common.cancel")}
-            </button>
-            <button type="submit" className="button button--primary" aria-disabled={add.isPending}>
-              {t("admin.teams.addMemberSubmit")}
-            </button>
-          </div>
         </form>
       )}
     </Dialog>

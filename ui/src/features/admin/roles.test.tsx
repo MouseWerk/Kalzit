@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { generatedUnion } from "../../test/generated";
 import { PERMISSION_GROUPS, PERMISSION_TEXT } from "./catalog";
-import { openAdmin } from "./test/openAdmin";
+import { openAdmin, sent } from "./test/openAdmin";
 
 describe("permission catalog", () => {
   it("puts every permission of the server into exactly one group, with a text", () => {
@@ -62,6 +62,104 @@ describe("roles", () => {
     const created = admin.roles.find((role) => role.name === "Publisher");
     expect(created?.permissions).toEqual(["dashboards:share"]);
     expect(location().pathname).toBe(`/admin/roles/${created?.id}`);
+    expect(screen.getByText("Role “Publisher” was created.")).toBeTruthy();
+  });
+
+  it("shows a taken name at the field and the role limit as a readable text", async () => {
+    const { user, server } = await openAdmin("/admin/roles/new");
+    const name = await screen.findByLabelText("Name");
+    await user.type(name, "Auditor");
+    await user.click(screen.getByRole("button", { name: "Create role" }));
+    expect(
+      await screen.findByText("A role with this name already exists. Choose another name."),
+    ).toBeTruthy();
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+
+    await user.clear(name);
+    await user.type(name, "Reader");
+    // 409 conflict without a field: the organization has 100 custom roles.
+    server.failNext("/api/orgs/o1/roles", 409, "conflict", "POST");
+    await user.click(screen.getByRole("button", { name: "Create role" }));
+    expect(
+      await screen.findByText(
+        "This organization already has the most custom roles it can have. Delete one before creating another.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps the description to 500 characters, over several lines", async () => {
+    const { user, server } = await openAdmin("/admin/roles/new");
+    await user.type(await screen.findByLabelText("Name"), "Writer");
+    const description = screen.getByLabelText("Description");
+    expect(description.tagName).toBe("TEXTAREA");
+    await user.type(description, "first line{Enter}second line");
+    expect(screen.getByText("22 of 500 characters.")).toBeTruthy();
+    await user.clear(description);
+    await user.click(description);
+    await user.paste("x".repeat(501));
+    await user.click(screen.getByRole("button", { name: "Create role" }));
+    expect(screen.getByText("Use at most 500 characters.")).toBeTruthy();
+    expect(sent(server, "POST")).toEqual([]);
+  });
+
+  it("never offers the owner-only permission for a custom role", async () => {
+    await openAdmin("/admin/roles/new");
+    const box = await screen.findByRole("checkbox", { name: "org:delete" });
+    expect((box as HTMLInputElement).disabled).toBe(true);
+    expect(
+      document.getElementById(box.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toContain("Only the built-in owner role has this.");
+  });
+
+  it("shows a role with permissions the user lacks read-only, without delete", async () => {
+    const { user } = await openAdmin("/admin/roles", {
+      permissions: ["roles:read", "roles:write", "dashboards:read"],
+    });
+    const list = await screen.findByRole("list", { name: "Roles" });
+    // Auditor holds audit:read, which this user does not have.
+    expect(within(list).queryByRole("button", { name: "Delete Auditor…" })).toBeNull();
+    await user.click(within(list).getByRole("link", { name: "Auditor" }));
+    expect(
+      await screen.findByText(
+        "This role has permissions you do not have, so you cannot change or delete it.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Name")).toBeNull();
+    for (const box of screen.getAllByRole("checkbox")) {
+      expect((box as HTMLInputElement).disabled).toBe(true);
+    }
+  });
+
+  it("does not undo when someone changed the role in the meantime", async () => {
+    const { user, admin } = await openAdmin("/admin/roles/r1");
+    await user.click(await screen.findByRole("checkbox", { name: "teams:read" }));
+    await screen.findByText("Role “Auditor” was saved.");
+    const role = admin.roles.find((candidate) => candidate.id === "r1");
+    if (role !== undefined) {
+      role.permissions = ["audit:read", "teams:read", "users:read"];
+    }
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(
+      await screen.findByText(
+        "Not undone: someone else changed this in the meantime. The page now shows the current state.",
+      ),
+    ).toBeTruthy();
+    expect(role?.permissions).toEqual(["audit:read", "teams:read", "users:read"]);
+  });
+
+  it("saves the name once on Enter followed by leaving the field, and not on IME Enter", async () => {
+    const { user, server } = await openAdmin("/admin/roles/r1");
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Reviewer");
+    name.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }),
+    );
+    expect(sent(server, "PATCH")).toEqual([]);
+    await user.keyboard("{Enter}");
+    await user.tab();
+    await screen.findByText("Role “Reviewer” was saved.");
+    expect(sent(server, "PATCH")).toEqual(["/api/orgs/o1/roles/r1"]);
   });
 
   it("does not let anyone add permissions they do not hold", async () => {
@@ -73,7 +171,7 @@ describe("roles", () => {
     expect(
       document.getElementById(box.getAttribute("aria-describedby") ?? "")?.textContent,
     ).toContain("You can only give permissions you have yourself.");
-    // A held permission can be added, and one the role has can always be taken away.
+    // A held permission can be added.
     const read = screen.getByRole("checkbox", { name: "dashboards:read" });
     expect((read as HTMLInputElement).disabled).toBe(false);
     await user.click(read);

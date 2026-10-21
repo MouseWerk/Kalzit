@@ -1,19 +1,33 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
-import { trimWhitespace } from "../../../auth/validation";
+import { type FormEvent, type ReactNode, type Ref, useId, useRef, useState } from "react";
+import { isApiError } from "../../../api/client";
+import { characterCount, trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
-import { adminKeys, createRole, type Role, type RoleInput, updateRole } from "../api";
-import { isKnownPermission, PERMISSION_GROUPS, PERMISSION_TEXT, roleLabel } from "../catalog";
-import { Notice, useNotice } from "../components/Notice";
+import {
+  adminKeys,
+  createRole,
+  listRoles,
+  MAX_ROLE_DESCRIPTION,
+  type Role,
+  type RoleInput,
+  updateRole,
+} from "../api";
+import {
+  holdsAll,
+  isKnownPermission,
+  OWNER_ONLY,
+  PERMISSION_GROUPS,
+  PERMISSION_TEXT,
+  roleLabel,
+} from "../catalog";
+import { Notice, setFlash, useNotice } from "../components/Notice";
 import { LoadState, Section } from "../components/Section";
-import { type ErrorTexts, errorText, GRANT_ERRORS } from "../errors";
+import { errorText, ROLE_ERRORS } from "../errors";
 import { type AdminAccess, allowedWhen, useAdminAccess } from "../sections";
 import { nameMessage } from "../validation";
 import { useRoles } from "./shared";
-
-const ROLE_ERRORS: ErrorTexts = { ...GRANT_ERRORS, conflict: "admin.roles.nameTaken" };
 
 const roleRoute = getRouteApi("/_app/admin/roles/$roleId");
 
@@ -56,8 +70,13 @@ export function RoleEditorPage({ roleId }: { roleId: string }) {
     body = <LoadState error={roles.error} onRetry={() => void roles.refetch()} />;
   } else if (role === undefined) {
     body = <p className="admin-empty">{t("admin.roles.notFound")}</p>;
-  } else if (role.builtin || !access.has("roles:write")) {
-    body = <ReadOnlyRole role={role} />;
+  } else if (role.builtin) {
+    body = <ReadOnlyRole role={role} reason={t("admin.roles.builtinReadOnly")} />;
+  } else if (!access.has("roles:write")) {
+    body = <ReadOnlyRole role={role} reason={role.description} />;
+  } else if (!holdsAll(access.has, role.permissions)) {
+    // Changing a role also needs holding what it has now (docs/api/access.md, Roles).
+    body = <ReadOnlyRole role={role} reason={t("admin.roles.aboveYou")} />;
   } else {
     body = <EditRole role={role} access={access} />;
   }
@@ -74,13 +93,10 @@ export function RoleEditorPage({ roleId }: { roleId: string }) {
   );
 }
 
-function ReadOnlyRole({ role }: { role: Role }) {
-  const { t } = useI18n();
+function ReadOnlyRole({ role, reason }: { role: Role; reason: string }) {
   return (
     <>
-      <p className="admin-section__lead">
-        {role.builtin ? t("admin.roles.builtinReadOnly") : role.description}
-      </p>
+      {reason === "" ? null : <p className="admin-section__lead">{reason}</p>}
       <PermissionPicker
         selected={role.permissions}
         isAllowed={() => false}
@@ -99,6 +115,27 @@ function useNameError() {
   };
 }
 
+function descriptionError(t: ReturnType<typeof useI18n>["t"], description: string) {
+  return characterCount(description.trim()) > MAX_ROLE_DESCRIPTION
+    ? t("validation.tooLong", { count: MAX_ROLE_DESCRIPTION })
+    : undefined;
+}
+
+/** Whether the permission may be added: held by the user, and not one only owners have. */
+function grantable(access: AdminAccess, permission: string): boolean {
+  return (
+    isKnownPermission(permission) && access.has(permission) && !OWNER_ONLY.includes(permission)
+  );
+}
+
+/** The server error for the name or description field, if it names one of them. */
+function fieldOf(error: unknown): "name" | "description" | undefined {
+  if (!isApiError(error)) {
+    return undefined;
+  }
+  return error.field === "name" || error.field === "description" ? error.field : undefined;
+}
+
 function NewRoleForm({ access }: { access: AdminAccess }) {
   const { t } = useI18n();
   const orgId = access.orgId ?? "";
@@ -108,16 +145,24 @@ function NewRoleForm({ access }: { access: AdminAccess }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [permissions, setPermissions] = useState<string[]>([]);
-  const [nameError, setNameError] = useState<string | undefined>(undefined);
+  const [errors, setErrors] = useState<{
+    name?: string | undefined;
+    description?: string | undefined;
+  }>({});
   const nameRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const create = useMutation({
     mutationFn: (input: RoleInput) => createRole(orgId, input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: adminKeys.roles(orgId) });
-      if (created === undefined) {
-        await navigate({ to: "/admin/roles" });
-      } else {
-        await navigate({ to: "/admin/roles/$roleId", params: { roleId: created.id } });
+      setFlash({ message: t("admin.roles.created", { name: created.name }) });
+      await navigate({ to: "/admin/roles/$roleId", params: { roleId: created.id } });
+    },
+    onError: (error) => {
+      const field = fieldOf(error);
+      if (field !== undefined) {
+        setErrors({ [field]: errorText(t, error, ROLE_ERRORS) });
+        (field === "name" ? nameRef : descriptionRef).current?.focus();
       }
     },
   });
@@ -127,14 +172,23 @@ function NewRoleForm({ access }: { access: AdminAccess }) {
     if (create.isPending) {
       return;
     }
-    const problem = nameText(name);
-    setNameError(problem);
-    if (problem !== undefined) {
+    const found = { name: nameText(name), description: descriptionError(t, description) };
+    setErrors(found);
+    if (found.name !== undefined) {
       nameRef.current?.focus();
+      return;
+    }
+    if (found.description !== undefined) {
+      descriptionRef.current?.focus();
       return;
     }
     create.mutate({ name: trimWhitespace(name), description: description.trim(), permissions });
   }
+
+  const formError =
+    create.error === null || fieldOf(create.error) !== undefined
+      ? null
+      : errorText(t, create.error, ROLE_ERRORS);
 
   return (
     <form className="form" noValidate onSubmit={submit}>
@@ -145,19 +199,22 @@ function NewRoleForm({ access }: { access: AdminAccess }) {
         autoComplete="off"
         onValueChange={(value) => {
           setName(value);
-          setNameError(undefined);
+          setErrors({ ...errors, name: undefined });
         }}
-        error={nameError}
+        error={errors.name}
       />
-      <TextField
-        label={t("admin.roles.description")}
+      <DescriptionField
+        ref={descriptionRef}
         value={description}
-        autoComplete="off"
-        onValueChange={setDescription}
+        error={errors.description}
+        onChange={(value) => {
+          setDescription(value);
+          setErrors({ ...errors, description: undefined });
+        }}
       />
       <PermissionPicker
         selected={permissions}
-        isAllowed={(permission) => isKnownPermission(permission) && access.has(permission)}
+        isAllowed={(permission) => grantable(access, permission)}
         onToggle={(permission) =>
           setPermissions(
             permissions.includes(permission)
@@ -166,9 +223,9 @@ function NewRoleForm({ access }: { access: AdminAccess }) {
           )
         }
       />
-      {create.error === null ? null : (
+      {formError === null ? null : (
         <p className="admin-error" role="alert">
-          {errorText(t, create.error, ROLE_ERRORS)}
+          {formError}
         </p>
       )}
       <div className="form__actions">
@@ -180,9 +237,25 @@ function NewRoleForm({ access }: { access: AdminAccess }) {
   );
 }
 
+/** Undo found the role changed by someone else since the change it would revert. */
+class ChangedMeanwhile extends Error {}
+
+function sameRole(a: RoleInput, b: RoleInput): boolean {
+  return (
+    a.name === b.name &&
+    a.description === b.description &&
+    [...a.permissions].sort().join(" ") === [...b.permissions].sort().join(" ")
+  );
+}
+
+function inputOf(role: Role): RoleInput {
+  return { name: role.name, description: role.description, permissions: role.permissions };
+}
+
 /**
- * An existing custom role. Each change is saved at once and can be undone; name and description
- * save when the field is left or Enter is pressed.
+ * An existing custom role the user holds every permission of. Each change is saved at once and
+ * can be undone; name and description save when the field is left or Enter is pressed. Roles
+ * carry no version, so undo first re-reads the role and refuses when someone changed it since.
  */
 function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
   const { t } = useI18n();
@@ -192,7 +265,10 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
   const nameText = useNameError();
   const [name, setName] = useState(role.name);
   const [description, setDescription] = useState(role.description);
-  const [nameError, setNameError] = useState<string | undefined>(undefined);
+  const [errors, setErrors] = useState<{
+    name?: string | undefined;
+    description?: string | undefined;
+  }>({});
   // The fields follow the stored role when it changes (a save, an undo, someone else's change).
   const [shown, setShown] = useState({ name: role.name, description: role.description });
   if (shown.name !== role.name || shown.description !== role.description) {
@@ -200,39 +276,81 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
     setName(role.name);
     setDescription(role.description);
   }
-  const stored: RoleInput = {
-    name: role.name,
-    description: role.description,
-    permissions: role.permissions,
-  };
+  const stored = inputOf(role);
+  // What was last sent, so Enter followed by leaving the field does not save the same twice.
+  const lastSent = useRef<RoleInput | null>(null);
 
   const save = useMutation({
-    mutationFn: (input: { next: RoleInput; previous: RoleInput; undo: boolean }) =>
-      updateRole(orgId, role.id, input.next),
-    onSuccess: async (_, { next, previous, undo }) => {
-      await queryClient.invalidateQueries({ queryKey: adminKeys.org(orgId) });
-      const message = t("admin.roles.saved", { name: next.name });
-      notice.show(
-        undo
-          ? { message }
-          : { message, undo: () => save.mutate({ next: previous, previous: next, undo: true }) },
-      );
+    mutationFn: async (input: { change: Partial<RoleInput>; expected?: RoleInput }) => {
+      if (input.expected !== undefined) {
+        const current = (await listRoles(orgId)).find((candidate) => candidate.id === role.id);
+        if (current === undefined || !sameRole(inputOf(current), input.expected)) {
+          throw new ChangedMeanwhile();
+        }
+      }
+      return updateRole(orgId, role.id, input.change);
     },
-    onError: (error) => notice.showError(errorText(t, error, ROLE_ERRORS)),
+    onSuccess: async (saved, { change, expected }) => {
+      await queryClient.invalidateQueries({ queryKey: adminKeys.org(orgId) });
+      lastSent.current = null;
+      const message = t(expected === undefined ? "admin.roles.saved" : "admin.roles.restored", {
+        name: saved.name,
+      });
+      if (expected !== undefined) {
+        notice.show({ message });
+        return;
+      }
+      // Undo puts back the fields this change touched, if the role is still as saved here.
+      const previous: Partial<RoleInput> = {};
+      for (const field of Object.keys(change) as (keyof RoleInput)[]) {
+        Object.assign(previous, { [field]: stored[field] });
+      }
+      notice.show({
+        message,
+        undo: () => save.mutate({ change: previous, expected: inputOf(saved) }),
+      });
+    },
+    onError: async (error) => {
+      lastSent.current = null;
+      if (error instanceof ChangedMeanwhile) {
+        await queryClient.invalidateQueries({ queryKey: adminKeys.roles(orgId) });
+        notice.showError(t("admin.common.changedMeanwhile"));
+        return;
+      }
+      const field = fieldOf(error);
+      if (field !== undefined) {
+        setErrors({ [field]: errorText(t, error, ROLE_ERRORS) });
+        return;
+      }
+      notice.showError(errorText(t, error, ROLE_ERRORS));
+    },
   });
 
   function apply(change: Partial<RoleInput>) {
     const next = { ...stored, ...change };
-    if (JSON.stringify(next) !== JSON.stringify(stored)) {
-      save.mutate({ next, previous: stored, undo: false });
+    if (save.isPending || sameRole(next, stored)) {
+      return;
     }
+    if (lastSent.current !== null && sameRole(next, lastSent.current)) {
+      return;
+    }
+    lastSent.current = next;
+    save.mutate({ change });
   }
 
   function commitName() {
     const problem = nameText(name);
-    setNameError(problem);
+    setErrors({ ...errors, name: problem });
     if (problem === undefined) {
       apply({ name: trimWhitespace(name) });
+    }
+  }
+
+  function commitDescription() {
+    const problem = descriptionError(t, description);
+    setErrors({ ...errors, description: problem });
+    if (problem === undefined) {
+      apply({ description: description.trim() });
     }
   }
 
@@ -245,32 +363,30 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
         autoComplete="off"
         onValueChange={(value) => {
           setName(value);
-          setNameError(undefined);
+          setErrors({ ...errors, name: undefined });
         }}
         onBlur={commitName}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
+          // Enter also confirms an input method's candidate; that must not save.
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
             commitName();
           }
         }}
-        error={nameError}
+        error={errors.name}
       />
-      <TextField
-        label={t("admin.roles.description")}
+      <DescriptionField
         value={description}
-        autoComplete="off"
-        onValueChange={setDescription}
-        onBlur={() => apply({ description: description.trim() })}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            apply({ description: description.trim() });
-          }
+        error={errors.description}
+        onChange={(value) => {
+          setDescription(value);
+          setErrors({ ...errors, description: undefined });
         }}
+        onBlur={commitDescription}
       />
       <PermissionPicker
         selected={role.permissions}
-        disabled={save.isPending}
-        isAllowed={(permission) => isKnownPermission(permission) && access.has(permission)}
+        pending={save.isPending}
+        isAllowed={(permission) => grantable(access, permission)}
         onToggle={(permission) =>
           apply({
             permissions: role.permissions.includes(permission)
@@ -283,22 +399,68 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
   );
 }
 
+/** The role description: several lines, at most 500 characters, with the count shown. */
+function DescriptionField({
+  value,
+  error,
+  onChange,
+  onBlur,
+  ref,
+}: {
+  value: string;
+  error: string | undefined;
+  onChange: (value: string) => void;
+  onBlur?: () => void;
+  ref?: Ref<HTMLTextAreaElement>;
+}) {
+  const { t } = useI18n();
+  const id = useId();
+  const count = characterCount(value.trim());
+  return (
+    <div className="field">
+      <label className="field__label" htmlFor={id}>
+        {t("admin.roles.description")}
+      </label>
+      <textarea
+        ref={ref}
+        id={id}
+        className="input admin-textarea"
+        value={value}
+        rows={3}
+        aria-invalid={error === undefined ? undefined : true}
+        aria-describedby={`${id}-count${error === undefined ? "" : ` ${id}-error`}`}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        onBlur={onBlur}
+      />
+      <p className="field__hint" id={`${id}-count`}>
+        {t("admin.roles.descriptionCount", { count, max: MAX_ROLE_DESCRIPTION })}
+      </p>
+      {error === undefined ? null : (
+        <p className="field__error" id={`${id}-error`}>
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * The permission catalog grouped by area, with what each permission allows. Permissions the user
- * does not hold cannot be added (nobody grants more than they hold), but can be taken away.
+ * does not hold, and those only the owner role has, cannot be added.
  */
 function PermissionPicker({
   selected,
   isAllowed,
   onToggle,
   readOnly = false,
-  disabled = false,
+  pending = false,
 }: {
   selected: readonly string[];
   isAllowed: (permission: string) => boolean;
   onToggle: (permission: string) => void;
   readOnly?: boolean;
-  disabled?: boolean;
+  /** A change is on its way: the boxes stay focusable but ignore clicks. */
+  pending?: boolean;
 }) {
   const { t } = useI18n();
   const unknown = selected.filter((permission) => !isKnownPermission(permission));
@@ -309,14 +471,21 @@ function PermissionPicker({
           {group.permissions.map((permission) => {
             const checked = selected.includes(permission);
             const blocked = !checked && !isAllowed(permission);
+            let note: string | undefined;
+            if (!readOnly && blocked) {
+              note = t(
+                OWNER_ONLY.includes(permission) ? "admin.roles.ownerOnly" : "admin.roles.notHeld",
+              );
+            }
             return (
               <PermissionRow
                 key={permission}
                 permission={permission}
                 text={t(PERMISSION_TEXT[permission])}
                 checked={checked}
-                disabled={readOnly || disabled || blocked}
-                note={!readOnly && blocked ? t("admin.roles.notHeld") : undefined}
+                disabled={readOnly || blocked}
+                pending={pending}
+                note={note}
                 onToggle={() => onToggle(permission)}
               />
             );
@@ -355,6 +524,7 @@ function PermissionRow({
   text,
   checked,
   disabled,
+  pending = false,
   note,
   onToggle,
 }: {
@@ -362,6 +532,7 @@ function PermissionRow({
   text: string;
   checked: boolean;
   disabled: boolean;
+  pending?: boolean;
   note?: string | undefined;
   onToggle: () => void;
 }) {
@@ -373,8 +544,13 @@ function PermissionRow({
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-disabled={pending || undefined}
         aria-describedby={`${id}-text`}
-        onChange={onToggle}
+        onChange={() => {
+          if (!pending) {
+            onToggle();
+          }
+        }}
       />
       <label htmlFor={id} className="admin-permission__label">
         <code>{permission}</code>

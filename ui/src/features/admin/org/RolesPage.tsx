@@ -2,8 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
-import { adminKeys, deleteRole, type Role } from "../api";
-import { roleLabel } from "../catalog";
+import { adminKeys, deleteRole, MAX_CUSTOM_ROLES, type Role } from "../api";
+import { holdsAll, roleLabel } from "../catalog";
 import { ConfirmDialog } from "../components/Dialog";
 import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
@@ -24,6 +24,7 @@ export function RolesPage() {
   const notice = useNotice();
   const [deleting, setDeleting] = useState<Role | null>(null);
   const list = roles.data ?? [];
+  const atLimit = list.filter((role) => !role.builtin).length >= MAX_CUSTOM_ROLES;
   const keys = useRowKeys(list.length);
 
   const remove = useMutation({
@@ -41,7 +42,11 @@ export function RolesPage() {
       lead="admin.roles.lead"
       allowed={allowedWhen(access, canRead)}
       actions={
-        canWrite ? (
+        !canWrite ? undefined : atLimit ? (
+          <p className="admin-section__lead">
+            {t("admin.roles.limitReached", { count: MAX_CUSTOM_ROLES })}
+          </p>
+        ) : (
           <Link
             to="/admin/roles/$roleId"
             params={{ roleId: "new" }}
@@ -49,7 +54,7 @@ export function RolesPage() {
           >
             {t("admin.roles.create")}
           </Link>
-        ) : undefined
+        )
       }
     >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
@@ -84,7 +89,7 @@ export function RolesPage() {
               <div className="admin-row__actions">
                 {role.builtin ? (
                   <span className="admin-badge">{t("admin.roles.builtin")}</span>
-                ) : canWrite ? (
+                ) : canWrite && holdsAll(access.has, role.permissions) ? (
                   <button
                     type="button"
                     className="button button--secondary"

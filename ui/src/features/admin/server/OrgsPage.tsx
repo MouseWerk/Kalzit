@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useId, useRef, useState } from "react";
+import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
@@ -16,6 +17,7 @@ import { Dialog } from "../components/Dialog";
 import { usePagedList } from "../components/lists";
 import { NameDialog } from "../components/NameDialog";
 import { Notice, useNotice } from "../components/Notice";
+import { PagedSelect } from "../components/PagedSelect";
 import { useRowKeys } from "../components/rows";
 import { LoadState, Section } from "../components/Section";
 import { errorText } from "../errors";
@@ -98,12 +100,12 @@ export function OrgsPage() {
           label={t("admin.orgs.name")}
           initial={renaming.name}
           submitLabel={t("admin.common.save")}
-          errors={{ conflict: "admin.orgs.nameTaken" }}
           onClose={() => setRenaming(null)}
           onSubmit={async (name) => {
             const org = renaming;
             await renameOrg(org.id, name);
             await refresh();
+            // Organizations carry no version: undo puts back the name as it was before.
             notice.show({
               message: t("admin.orgs.renamed", { name }),
               undo: () => {
@@ -128,19 +130,32 @@ function CreateOrgDialog({
 }) {
   const { t } = useI18n();
   const ownerId = useId();
-  const users = useQuery({
-    queryKey: [...adminKeys.users, "picker"],
-    queryFn: () => listUsers(undefined, MAX_PAGE_SIZE),
-  });
+  const formId = useId();
+  const users = usePagedList([...adminKeys.users, "picker"], (cursor) =>
+    listUsers(cursor, MAX_PAGE_SIZE),
+  );
   const [name, setName] = useState("");
   const [owner, setOwner] = useState("");
   const [nameError, setNameError] = useState<string | undefined>(undefined);
   const nameRef = useRef<HTMLInputElement>(null);
-  const candidates = (users.data?.items ?? []).filter((user) => !user.disabled);
-  const chosen = owner === "" ? candidates[0]?.id : owner;
+  // Only accounts that can sign in can run the new organization.
+  const picker = users.picker((user) => ({
+    id: user.id,
+    label: t("admin.common.nameAndEmail", { name: user.name, email: user.email }),
+  }));
+  const enabled = users.items?.filter((user) => !user.disabled).map((user) => user.id);
+  const options = picker.options?.filter((option) => enabled?.includes(option.id));
+  const chosen = options?.find((option) => option.id === owner) ?? options?.[0];
+  const noOwner = options !== undefined && options.length === 0 && !picker.hasMore;
   const create = useMutation({
     mutationFn: (ownerUserId: string) => createOrg({ name: trimWhitespace(name), ownerUserId }),
-    onSuccess: () => onCreated(trimWhitespace(name)),
+    onSuccess: (created) => onCreated(created.name),
+    onError: (error) => {
+      if (isApiError(error, "validation") && error.field === "name") {
+        setNameError(t("validation.serverRejected"));
+        nameRef.current?.focus();
+      }
+    },
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -154,12 +169,37 @@ function CreateOrgDialog({
       nameRef.current?.focus();
       return;
     }
-    create.mutate(chosen);
+    create.mutate(chosen.id);
   }
 
+  const formError =
+    create.error === null || (isApiError(create.error) && create.error.field === "name")
+      ? null
+      : errorText(t, create.error, { "validation:ownerUserId": "admin.orgs.ownerGone" });
+
   return (
-    <Dialog open title={t("admin.orgs.createTitle")} onClose={onClose} initialFocus={nameRef}>
-      <form className="form" noValidate onSubmit={submit}>
+    <Dialog
+      open
+      title={t("admin.orgs.createTitle")}
+      onClose={onClose}
+      initialFocus={nameRef}
+      footer={
+        <>
+          <button type="button" className="button button--secondary" onClick={onClose}>
+            {t("admin.common.cancel")}
+          </button>
+          <button
+            type="submit"
+            form={formId}
+            className="button button--primary"
+            aria-disabled={create.isPending || chosen === undefined}
+          >
+            {t("admin.orgs.createSubmit")}
+          </button>
+        </>
+      }
+    >
+      <form id={formId} className="form" noValidate onSubmit={submit}>
         <TextField
           ref={nameRef}
           label={t("admin.orgs.name")}
@@ -175,37 +215,24 @@ function CreateOrgDialog({
           <label className="field__label" htmlFor={ownerId}>
             {t("admin.orgs.owner")}
           </label>
-          {users.data === undefined ? (
-            <LoadState error={users.error} onRetry={() => void users.refetch()} />
+          {noOwner ? (
+            <p className="admin-error">{t("admin.orgs.noOwner")}</p>
           ) : (
-            <select
+            <PagedSelect
               id={ownerId}
-              className="select"
-              value={chosen}
-              onChange={(event) => setOwner(event.currentTarget.value)}
-            >
-              {candidates.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {t("admin.common.nameAndEmail", { name: user.name, email: user.email })}
-                </option>
-              ))}
-            </select>
+              value={chosen?.id ?? ""}
+              onChange={setOwner}
+              {...picker}
+              options={options}
+            />
           )}
           <p className="field__hint">{t("admin.orgs.ownerHint")}</p>
         </div>
-        {create.error === null ? null : (
+        {formError === null ? null : (
           <p className="admin-error" role="alert">
-            {errorText(t, create.error, { conflict: "admin.orgs.nameTaken" })}
+            {formError}
           </p>
         )}
-        <div className="admin-dialog__footer">
-          <button type="button" className="button button--secondary" onClick={onClose}>
-            {t("admin.common.cancel")}
-          </button>
-          <button type="submit" className="button button--primary" aria-disabled={create.isPending}>
-            {t("admin.orgs.createSubmit")}
-          </button>
-        </div>
       </form>
     </Dialog>
   );

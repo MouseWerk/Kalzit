@@ -17,9 +17,19 @@ export function usePagedList<T>(
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled,
   });
+  const items = query.data?.pages.flatMap((page) => page.items);
   return {
     query,
-    items: query.data?.pages.flatMap((page) => page.items),
+    /** The loaded items as picker options, with the paging a picker needs. */
+    picker: (option: (item: T) => { id: string; label: string }) => ({
+      options: items?.map(option),
+      error: query.error,
+      onRetry: () => void query.refetch(),
+      hasMore: query.hasNextPage,
+      onMore: () => void query.fetchNextPage(),
+      loadingMore: query.isFetchingNextPage,
+    }),
+    items,
     hasMore: query.hasNextPage,
     loadMore: () => void query.fetchNextPage(),
     loadingMore: query.isFetchingNextPage,

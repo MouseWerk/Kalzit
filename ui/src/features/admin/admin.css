@@ -337,6 +337,37 @@
     gap: var(--space-3);
   }
 
+  .admin-filters > .field {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Long names in pickers must not push the page wider than a phone (360 px). */
+  .admin-filters .select,
+  .admin-section .field .select,
+  .admin-dialog .field .select {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .admin-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .admin-textarea {
+    min-height: 5rem;
+    resize: vertical;
+  }
+
+  .admin-access__title {
+    font-size: var(--font-size-md);
+  }
+
   .admin-audit {
     display: grid;
     gap: var(--space-4);
@@ -371,15 +402,6 @@
 
   .admin-link-button:hover {
     background: var(--bg-active);
-  }
-
-  .button--danger {
-    background: var(--danger-bg);
-    color: var(--danger-text);
-  }
-
-  .button--danger:hover:not(:disabled, [aria-disabled="true"]) {
-    color: var(--text);
   }
 
   /* Dialogs */
@@ -547,17 +569,19 @@
   /* "Why?" popover */
 
   .admin-why {
-    position: relative;
     display: inline-block;
   }
 
+  /* Fixed to the window, placed by WhyCanI, so a scrolling dialog does not clip it. */
   .admin-popover {
-    position: absolute;
-    inset-block-start: calc(100% + var(--space-1));
-    inset-inline-end: 0;
-    z-index: var(--z-menu);
+    position: fixed;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    z-index: var(--z-toast);
     display: grid;
-    width: min(22rem, calc(100vw - var(--space-8)));
+    width: min(22rem, calc(100vw - var(--space-4)));
+    max-height: calc(100dvh - var(--space-4));
+    overflow-y: auto;
     gap: var(--space-2);
     padding: var(--space-4);
     border: var(--border-width) solid var(--border);

@@ -2,14 +2,20 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { type Language, useI18n } from "../../../i18n/i18n";
 import { type AuditEvent, type AuditFilter, adminKeys, listAudit } from "../api";
-import { auditActionLabel, knownAuditActions } from "../catalog";
-import { endOfDay, formatDateTime, formatValue, startOfDay } from "./format";
+import { AUDIT_AREAS, auditActionLabel, knownAuditActions } from "../catalog";
+import { formatDateTime, formatSummary, startOfDay, startOfNextDay } from "./format";
+import { PagedSelect, type PickerOption } from "./PagedSelect";
 import { useRowKeys } from "./rows";
 import { LoadState } from "./Section";
 
-export interface ActorOption {
-  id: string;
-  label: string;
+/** A list to filter by (people, organizations), loaded page by page. */
+export interface PickerSource {
+  options: readonly PickerOption[] | undefined;
+  error: unknown;
+  onRetry: () => void;
+  hasMore: boolean;
+  onMore: () => void;
+  loadingMore: boolean;
 }
 
 interface FilterInput {
@@ -17,42 +23,51 @@ interface FilterInput {
   action: string;
   from: string;
   to: string;
+  orgId: string;
 }
 
-const NO_FILTER: FilterInput = { actor: "", action: "", from: "", to: "" };
+const NO_FILTER: FilterInput = { actor: "", action: "", from: "", to: "", orgId: "" };
 
 function toFilter(input: FilterInput): AuditFilter {
   return {
     actor: input.actor === "" ? undefined : input.actor,
     action: input.action === "" ? undefined : input.action,
     from: startOfDay(input.from),
-    to: endOfDay(input.to),
+    to: startOfNextDay(input.to),
+    orgId: input.orgId === "" ? undefined : input.orgId,
   };
 }
 
 /**
  * The audit log of an organization, or of the server when `orgId` is null: newest first, filtered
- * by who, what and when, one page at a time. Filters apply as they change.
+ * by who, what (one action or a whole area, the server filters by prefix) and when, one page at a
+ * time. Filters apply as they change.
  */
 export function AuditLog({
   orgId,
   actors,
+  orgs,
 }: {
   orgId: string | null;
-  /** People to filter by; without them the actor filter is not offered. */
-  actors: readonly ActorOption[] | undefined;
+  /** People to filter by; without them the person filter is not offered. */
+  actors: PickerSource | undefined;
+  /** Server audit log: organizations to narrow it to. */
+  orgs?: PickerSource | undefined;
 }) {
   const { t, language } = useI18n();
-  const ids = { actor: useId(), action: useId(), from: useId(), to: useId() };
+  const ids = { actor: useId(), action: useId(), from: useId(), to: useId(), org: useId() };
   const [input, setInput] = useState<FilterInput>(NO_FILTER);
   // Cursors of the pages before the current one; the last entry is the current page's cursor.
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const filter = toFilter(input);
+  const backwards =
+    filter.from !== undefined && filter.to !== undefined && filter.from >= filter.to;
   const cursor = cursors.at(-1);
   const page = useQuery({
     queryKey: [...adminKeys.audit(orgId, filter), cursor ?? ""],
     queryFn: () => listAudit(orgId, filter, cursor),
     placeholderData: keepPreviousData,
+    enabled: !backwards,
   });
   const events = page.data?.items ?? [];
   const keys = useRowKeys(events.length);
@@ -63,6 +78,7 @@ export function AuditLog({
     setCursors([undefined]);
   }
 
+  const toErrorId = `${ids.to}-error`;
   return (
     <div className="admin-audit">
       {/* biome-ignore lint/a11y/useSemanticElements: jsdom, which the tests run in, does not know the search element yet; the role gives the same landmark. */}
@@ -72,19 +88,27 @@ export function AuditLog({
             <label className="field__label" htmlFor={ids.actor}>
               {t("admin.audit.actor")}
             </label>
-            <select
+            <PagedSelect
               id={ids.actor}
-              className="select"
               value={input.actor}
-              onChange={(event) => change("actor", event.currentTarget.value)}
-            >
-              <option value="">{t("admin.audit.anyone")}</option>
-              {actors.map((actor) => (
-                <option key={actor.id} value={actor.id}>
-                  {actor.label}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => change("actor", value)}
+              anyLabel={t("admin.audit.anyone")}
+              {...actors}
+            />
+          </div>
+        )}
+        {orgs === undefined ? null : (
+          <div className="field">
+            <label className="field__label" htmlFor={ids.org}>
+              {t("admin.serverAudit.orgFilter")}
+            </label>
+            <PagedSelect
+              id={ids.org}
+              value={input.orgId}
+              onChange={(value) => change("orgId", value)}
+              anyLabel={t("admin.serverAudit.anyOrg")}
+              {...orgs}
+            />
           </div>
         )}
         <div className="field">
@@ -98,11 +122,20 @@ export function AuditLog({
             onChange={(event) => change("action", event.currentTarget.value)}
           >
             <option value="">{t("admin.audit.anyAction")}</option>
-            {actions.map((action) => (
-              <option key={action} value={action}>
-                {auditActionLabel(t, action)}
-              </option>
-            ))}
+            <optgroup label={t("admin.audit.areas")}>
+              {Object.entries(AUDIT_AREAS).map(([prefix, label]) => (
+                <option key={prefix} value={prefix}>
+                  {t(label)}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label={t("admin.audit.actions")}>
+              {actions.map((action) => (
+                <option key={action} value={action}>
+                  {auditActionLabel(t, action)}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </div>
         <div className="field">
@@ -126,12 +159,19 @@ export function AuditLog({
             type="date"
             className="input"
             value={input.to}
+            aria-invalid={backwards ? true : undefined}
+            aria-describedby={backwards ? toErrorId : undefined}
             onChange={(event) => change("to", event.currentTarget.value)}
           />
+          {backwards ? (
+            <p className="field__error" id={toErrorId}>
+              {t("admin.audit.toBeforeFrom")}
+            </p>
+          ) : null}
         </div>
       </div>
 
-      {page.data === undefined ? (
+      {backwards ? null : page.data === undefined ? (
         <LoadState error={page.error} onRetry={() => void page.refetch()} />
       ) : events.length === 0 ? (
         <p className="admin-empty">{t("admin.audit.empty")}</p>
@@ -139,7 +179,15 @@ export function AuditLog({
         <ul className="admin-list" aria-label={t("admin.audit.events")} {...keys.listProps}>
           {events.map((event, index) => (
             <li key={event.id} className="admin-row admin-row--audit" {...keys.rowProps(index)}>
-              <AuditRow event={event} showOrg={orgId === null} language={language} />
+              <AuditRow
+                event={event}
+                orgName={
+                  orgId === null
+                    ? (id) => orgs?.options?.find((option) => option.id === id)?.label ?? id
+                    : undefined
+                }
+                language={language}
+              />
             </li>
           ))}
         </ul>
@@ -157,7 +205,7 @@ export function AuditLog({
         <button
           type="button"
           className="button button--secondary"
-          disabled={page.data?.nextCursor === null || page.data === undefined}
+          disabled={backwards || page.data?.nextCursor === null || page.data === undefined}
           onClick={() => {
             const next = page.data?.nextCursor;
             if (next !== null && next !== undefined) {
@@ -174,17 +222,21 @@ export function AuditLog({
 
 function AuditRow({
   event,
-  showOrg,
+  orgName,
   language,
 }: {
   event: AuditEvent;
-  showOrg: boolean;
+  /** Server audit log: the name of an event's organization. */
+  orgName: ((id: string) => string) | undefined;
   language: Language;
 }) {
   const { t } = useI18n();
   const actor = event.actorName ?? event.actorUserId ?? t("admin.audit.system");
   const resource =
-    event.resourceType === null ? null : `${event.resourceType} ${event.resourceId ?? ""}`.trim();
+    event.resourceType === null
+      ? null
+      : t("admin.audit.resource", { type: event.resourceType, id: event.resourceId ?? "" }).trim();
+  const summary = formatSummary(event.summary);
   return (
     <>
       <div className="admin-row__main">
@@ -198,12 +250,12 @@ function AuditRow({
         </span>
       </div>
       <div className="admin-row__detail">
-        {resource === null ? null : <code className="admin-row__meta">{resource}</code>}
-        {event.summary === null || event.summary === undefined || event.summary === "" ? null : (
-          <span className="admin-row__meta">{formatValue(event.summary)}</span>
-        )}
-        {showOrg && event.orgId !== null && event.orgId !== undefined ? (
-          <span className="admin-row__meta">{t("admin.serverAudit.org", { id: event.orgId })}</span>
+        {resource === null ? null : <span className="admin-row__meta">{resource}</span>}
+        {summary === "" ? null : <span className="admin-row__meta">{summary}</span>}
+        {orgName !== undefined && event.orgId !== null ? (
+          <span className="admin-row__meta">
+            {t("admin.serverAudit.org", { name: orgName(event.orgId) })}
+          </span>
         ) : null}
       </div>
       <time className="admin-row__meta" dateTime={new Date(event.createdAt).toISOString()}>
