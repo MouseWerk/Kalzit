@@ -285,9 +285,7 @@ where
     let sql = match resource {
         Resource::Folder(_) => "SELECT COUNT(*) FROM folders WHERE org_id = $1 AND id = $2",
         Resource::Dashboard(_) => "SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND id = $2",
-        // The data source table arrives with stream C (migration 0006); until its lookup is wired
-        // here, every well-formed data source id counts as existing.
-        Resource::Datasource(_) => return Ok(true),
+        Resource::Datasource(_) => "SELECT COUNT(*) FROM datasources WHERE org_id = $1 AND id = $2",
     };
     let (n,): (i64,) = sqlx::query_as(sql).bind(org_id).bind(resource.id()).fetch_one(db).await?;
     Ok(n > 0)
@@ -549,7 +547,7 @@ impl AccessIndex {
         .await?;
         let grants: Vec<GrantRow> = sqlx::query_as(
             "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
-             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard') ORDER BY id",
+             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard', 'datasource') ORDER BY id",
         )
         .bind(&ctx.org_id)
         .fetch_all(&mut *conn)
@@ -591,6 +589,22 @@ impl AccessIndex {
         let mut chain = Vec::new();
         self.folder_links(folder_id, &mut chain);
         self.decide(ResourceType::Folder, &chain)
+    }
+
+    /// What the caller may do on a data source, or `None` when they may not see it.
+    pub fn datasource(&self, datasource_id: &str) -> Option<BTreeSet<Permission>> {
+        let chain =
+            [ChainLink { resource_type: ResourceType::Datasource, id: datasource_id.to_string(), restricted: false }];
+        self.decide(ResourceType::Datasource, &chain)
+    }
+
+    /// The data sources the caller holds a grant on (org-wide visibility aside).
+    pub fn granted_datasources(&self) -> BTreeSet<&str> {
+        self.grants
+            .iter()
+            .filter(|g| g.resource_type == ResourceType::Datasource.as_str())
+            .map(|g| g.resource_id.as_str())
+            .collect()
     }
 
     /// What the caller may do on a dashboard in `folder_id`, or `None` when they may not see it.

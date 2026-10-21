@@ -257,10 +257,16 @@ mod tests {
     fn transactions_start_through_db_begin() {
         let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
         let this = src.join("db.rs");
+        // The data source drivers open read-only transactions on the users' databases, not on
+        // Kalzit's own; they choose their BEGIN for that engine.
+        let sources = src.join("datasources");
         let mut files = vec![src];
         let mut offenders = Vec::new();
         let mut scanned = 0;
         while let Some(path) = files.pop() {
+            if path == sources {
+                continue;
+            }
             if path.is_dir() {
                 files.extend(std::fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
                 continue;

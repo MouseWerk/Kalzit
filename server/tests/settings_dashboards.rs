@@ -66,6 +66,15 @@ async fn test_app(db_url: Option<String>, tweak: impl FnOnce(&mut Config)) -> Te
     t.org = setup.body["orgs"][0]["id"].as_str().unwrap().to_string();
     let owner_id = setup.body["id"].as_str().unwrap().to_string();
     t.owner = t.session_for(&owner_id).await;
+    // The data source the sample models query; saving checks that it exists in the organization.
+    sqlx::query(
+        "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
+         VALUES ('ds-1', $1, 'Bestellungen', 'sqlite', '{}', 0, 0)",
+    )
+    .bind(&t.org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
     t
 }
 
