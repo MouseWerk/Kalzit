@@ -284,6 +284,62 @@ on_both_databases! {
     dashboards_moved_out_of_restriction_stay_hidden_once_purged: |_| {};
 }
 
+/// Lock contention on SQLite is never a 500. Another connection holds the database's write lock
+/// for longer than the app waits: reads go on (WAL), writes answer `503 busy` with `Retry-After`,
+/// and once the lock is free the same write succeeds. The app's wait is cut to 300 ms so the test
+/// does not sit out the production timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_locked_database_answers_busy_not_internal() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.paths.data_dir = dir.path().to_path_buf();
+    let url = config.database_url();
+    let pool = kalzit::db::connect_with(&url, 4, std::time::Duration::from_millis(300)).await.unwrap();
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+    let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    let app = router(state.clone()).layer(MockConnectInfo(peer));
+    let mut t = TestApp { app, clock, state, _dir: dir, owner: String::new(), org: String::new() };
+    let setup = t
+        .send(
+            Method::POST,
+            "/api/setup",
+            Some(json!({ "token": SETUP_CODE, "orgName": "Org", "name": "Jörg Müller",
+                         "email": "joerg@example.de", "password": "Grün und sicher 2026" })),
+            None,
+        )
+        .await;
+    assert_eq!(setup.status, StatusCode::OK, "{}", setup.body);
+    t.org = setup.body["orgs"][0]["id"].as_str().unwrap().to_string();
+    t.owner = t.session_for(setup.body["id"].as_str().unwrap()).await;
+
+    // Another writer (a second server process, a backup tool) takes the write lock and keeps it.
+    use sqlx::Connection;
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    sqlx::query("BEGIN EXCLUSIVE").execute(&mut holder).await.unwrap();
+
+    let read = t.get("~/folders", &t.owner).await;
+    assert_eq!(read.status, StatusCode::OK, "reads are not blocked by a writer: {}", read.body);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(t.path("~/folders"))
+        .header(header::HOST, "kalzit.test")
+        .header(header::COOKIE, &t.owner)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "name": "Wartet" }).to_string()))
+        .unwrap();
+    let res = t.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.headers().get(header::RETRY_AFTER).map(|v| v.to_str().unwrap()), Some("1"));
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "busy", "{body}");
+
+    sqlx::query("COMMIT").execute(&mut holder).await.unwrap();
+    let again = t.post("~/folders", json!({ "name": "Wartet" }), &t.owner).await;
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);
+}
+
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_runs_the_audit_retention() {
