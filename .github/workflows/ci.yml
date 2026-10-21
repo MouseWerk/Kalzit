@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --test api postgres -- --nocapture
+      - run: cargo test --locked --test api --test access postgres -- --nocapture
 
   # Data sources against real servers. The passwords below belong to throwaway containers
   # reachable only from this job; they protect nothing and are not secrets. PostgreSQL uses a
