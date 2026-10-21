@@ -199,7 +199,13 @@ resource. Levels include the ones before them:
 Folder grants apply to the folder's subfolders and dashboards. Subjects: `user` (a member's user
 id), `team` (a team id), `role` (a role key: every member holding that role, as org role or
 through a team). A member's permissions on a resource are their org-wide permissions plus their
-grants on it.
+grants on it. Grants extend a role: the folder and dashboard routes are open to every member and
+check the permission on the resource, so a viewer with an `edit` grant on a folder saves, creates
+and deletes dashboards there (`docs/api/settings-dashboards.md`, "Access to folders and
+dashboards"); the top level, outside every folder, still takes the org-wide permission. The
+folder and dashboard answers carry `access` (`write`, `delete`, `permissions`) computed this way.
+Grants on a resource are deleted when it is purged; a grant created while its resource is being
+purged answers `404`.
 
 Restricted folders: the nearest restricted folder above a resource (or the resource itself)
 governs it. There the org-wide permissions count only for members holding `folders:permissions`

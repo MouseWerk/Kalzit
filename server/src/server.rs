@@ -53,6 +53,11 @@ impl Running {
 
 /// Runs the server until Ctrl+C or SIGTERM.
 pub async fn run(config: Config) -> Result<()> {
+    // A mistyped or invalid KALZIT_SETTING_* variable stops the start instead of being ignored.
+    // Names and values that are not UTF-8 cannot be settings; `Config::load` refuses such
+    // KALZIT_* variables already.
+    let vars = std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
+    crate::settings::check_environment(vars).map_err(anyhow::Error::msg)?;
     let setup_code = std::env::var("KALZIT_SETUP_TOKEN").ok().filter(|s| !s.trim().is_empty());
     let running = start(config, setup_code).await?;
     let handles = running.handles.clone();
@@ -77,6 +82,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
 
     let state = AppState::new(config.clone(), pool, Arc::new(SystemClock), setup_code).await?;
     db::spawn_session_cleanup(state.clone());
+    crate::routes::audit::spawn_retention(state.clone());
     let app = router(state.clone());
     let mut running = Running { http_addr: None, https_addr: None, handles: Vec::new(), listeners: JoinSet::new() };
 
