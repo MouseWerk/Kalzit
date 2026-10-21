@@ -276,8 +276,12 @@ impl<'a> Resource<'a> {
 }
 
 /// Whether `resource` exists in `org_id` (trashed folders and dashboards count: grants on them
-/// stay until they are purged).
-pub async fn resource_exists(db: &sqlx::AnyPool, org_id: &str, resource: Resource<'_>) -> ApiResult<bool> {
+/// stay until they are purged). Works on the pool or inside a transaction (`&mut *tx`); a
+/// transaction holding `lock_org` must use its own connection.
+pub async fn resource_exists<'c, E>(db: E, org_id: &str, resource: Resource<'_>) -> ApiResult<bool>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
     let sql = match resource {
         Resource::Folder(_) => "SELECT COUNT(*) FROM folders WHERE org_id = $1 AND id = $2",
         Resource::Dashboard(_) => "SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND id = $2",

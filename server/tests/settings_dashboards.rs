@@ -268,6 +268,7 @@ on_both_databases! {
     dashboards_cannot_slip_into_a_folder_being_trashed: |_| {};
     grants_open_restricted_folders: |_| {};
     purging_deletes_grants: |_| {};
+    purges_and_new_grants_leave_no_orphans: |_| {};
 }
 
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
@@ -1118,6 +1119,46 @@ async fn purging_deletes_grants(t: TestApp) {
     assert_eq!(t.delete(&format!("~/dashboards/{alone}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.grants_on(&[&alone]).await, 0);
     assert_eq!(t.grants_on(&[&kept]).await, 1, "other grants stay");
+}
+
+/// Grants created while their resource is purged: either the grant comes first and goes with
+/// the purge, or it answers not_found; never a grant on a resource that is gone.
+async fn purges_and_new_grants_leave_no_orphans(t: TestApp) {
+    t.member("Vera", "viewer").await;
+    let vera = t.user_id("Vera").await;
+    let grant = |resource_type: &str, id: &str| {
+        json!({ "subjectType": "user", "subjectId": vera, "resourceType": resource_type, "resourceId": id,
+                "level": "view" })
+    };
+    for round in 0..10 {
+        let folder = id_of(t.post("~/folders", json!({ "name": format!("F{round}") }), &t.owner).await);
+        let inside =
+            id_of(t.post("~/dashboards", json!({ "folderId": folder, "model": model("Drin") }), &t.owner).await);
+        let alone = id_of(t.post("~/dashboards", json!({ "model": model("Allein") }), &t.owner).await);
+        t.delete(&format!("~/folders/{folder}"), &t.owner).await;
+        t.delete(&format!("~/dashboards/{alone}"), &t.owner).await;
+        let (purge_folder, purge_alone) = (format!("~/folders/{folder}/purge"), format!("~/dashboards/{alone}/purge"));
+        let (pf, pa, gf, gi, ga) = tokio::join!(
+            t.delete(&purge_folder, &t.owner),
+            t.delete(&purge_alone, &t.owner),
+            t.post("~/grants", grant("folder", &folder), &t.owner),
+            t.post("~/grants", grant("dashboard", &inside), &t.owner),
+            t.post("~/grants", grant("dashboard", &alone), &t.owner),
+        );
+        assert_eq!((pf.status, pa.status), (StatusCode::NO_CONTENT, StatusCode::NO_CONTENT));
+        for g in [&gf, &gi, &ga] {
+            assert!(matches!(g.status, StatusCode::CREATED | StatusCode::NOT_FOUND), "{} {}", g.status, g.body);
+        }
+        let (orphans,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM resource_grants g WHERE \
+             (g.resource_type = 'folder' AND NOT EXISTS (SELECT 1 FROM folders f WHERE f.id = g.resource_id)) \
+             OR (g.resource_type = 'dashboard' AND NOT EXISTS (SELECT 1 FROM dashboards d WHERE d.id = g.resource_id))",
+        )
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+        assert_eq!(orphans, 0, "round {round}");
+    }
 }
 
 async fn old_versions_beyond_the_retention_are_dropped(t: TestApp) {
