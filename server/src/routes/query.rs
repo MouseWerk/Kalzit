@@ -56,7 +56,7 @@ pub const MAX_OPTIONS: usize = 10_000;
 const OPTIONS_REF_ID: &str = "options";
 
 /// Bounds the variables of a request: count, names and total size.
-fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
+pub(super) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
     let refuse = |e: ApiError| Err(e.with_field("variables"));
     if variables.len() > MAX_VARIABLES {
         return refuse(
@@ -122,7 +122,7 @@ async fn query(
 
 /// The current stored model of a dashboard the caller may read. Unknown, trashed and invisible
 /// dashboards are all `not_found`.
-async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResult<DashboardModel> {
+pub(super) async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResult<DashboardModel> {
     // The dashboard and its current version in one read, so a version pruned in between cannot
     // turn into an error.
     let row: Option<(Option<i64>, Option<String>)> = sqlx::query_as(
@@ -193,7 +193,7 @@ fn custom_options(options: Option<&Value>) -> BTreeSet<String> {
 /// - Query, textbox and interval variables are free values. They are bound as parameters in SQL
 ///   and escaped into quoted strings in PromQL; they may not be identifiers, since nothing limits
 ///   them to the dashboard's own list.
-fn resolve_variables(
+pub(super) fn resolve_variables(
     model: &DashboardModel,
     requested: &BTreeMap<String, Value>,
 ) -> ApiResult<(BTreeMap<String, Value>, BTreeSet<String>)> {
@@ -256,6 +256,18 @@ async fn panel_query(
 ) -> ApiResult<Json<QueryResponse>> {
     let model = readable_model(&state, &ctx, &dashboard_id).await?;
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
+    // A library panel's queries are its own; the dashboard showing it authorizes them as it does
+    // its own stored queries (dashboards::library).
+    let linked;
+    let panel = match &panel.library_panel_id {
+        Some(id) => {
+            let row = crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
+            let content = crate::dashboards::library::stored_content(&row.model)?;
+            linked = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
+            &linked
+        }
+        None => panel,
+    };
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;

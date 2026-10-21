@@ -1,6 +1,7 @@
 //! Dashboards: the model and the checks a save goes through. The routes live in
 //! `routes/dashboards.rs`.
 
+pub mod library;
 pub mod model;
 
 use sqlx::AnyPool;
@@ -95,6 +96,20 @@ mod tests {
             "variables": [ { "name": "v", "type": "query", "datasourceId": "ds-var" } ]
         }))
         .unwrap();
+        // Annotation queries are stored queries like any other: changing one needs the right.
+        let mut annotated = model.clone();
+        annotated.annotations.push(model::AnnotationQuery {
+            id: "a".into(),
+            name: "A".into(),
+            datasource_id: "ds-ann".into(),
+            query: json!({ "sql": "SELECT 1" }),
+            enabled: true,
+            color: None,
+        });
+        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &annotated, Some(&annotated))
+            .await
+            .map(|_| ());
+        assert!(e.is_ok(), "an unchanged annotation query is not checked again");
         // An id that names no data source of the organization is refused, whatever the rights.
         let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model, None).await.unwrap_err();
         assert_eq!((e.code, e.field), ("validation", Some("model")));
@@ -116,5 +131,10 @@ mod tests {
         assert!(e.message.contains("ds-var"), "{}", e.message);
         // An unchanged stored query needs no right on its source.
         assert!(check_dashboard_sources(&db, &ctx(&[Permission::DashboardsWrite]), &model, Some(&model)).await.is_ok());
+        // A new annotation query is checked like a panel's.
+        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &annotated, Some(&model))
+            .await
+            .unwrap_err();
+        assert!(e.message.contains("ds-ann"), "{}", e.message);
     }
 }
