@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { contrastRatio } from "../test/contrast";
+import { contrastRatio, perceivedDistance, VISIONS } from "../test/contrast";
 import { listCssFiles, parseCss, type StyleRule, stripComments } from "../test/cssParse";
 
 /**
@@ -405,6 +405,34 @@ describe("contrast in every theme", () => {
         [`--chart-${n}`, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
     ),
   ];
+
+  // Chart series must be told apart by everyone: every pair at least SERIES_APART and series that
+  // usually sit next to each other at least NEIGHBOURS_APART, under normal vision and the three
+  // common deficiencies (perceivedDistance: OKLab distance x100 after simulation).
+  const SERIES_APART = 6;
+  const NEIGHBOURS_APART = 12;
+  for (const scheme of ["light", "dark"] as const) {
+    it(`keeps chart series distinguishable for every color vision (${scheme})`, () => {
+      const series = [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+        resolveColor(base, scheme, `--chart-${n}`),
+      );
+      const tooClose: string[] = [];
+      for (const vision of VISIONS) {
+        for (let i = 0; i < series.length; i++) {
+          for (let j = i + 1; j < series.length; j++) {
+            const distance = perceivedDistance(series[i] ?? "", series[j] ?? "", vision);
+            const minimum = j === i + 1 ? NEIGHBOURS_APART : SERIES_APART;
+            if (distance < minimum) {
+              tooClose.push(
+                `${vision} chart-${i + 1}/chart-${j + 1}: ${distance.toFixed(1)} < ${minimum}`,
+              );
+            }
+          }
+        }
+      }
+      expect(tooClose).toEqual([]);
+    });
+  }
 
   for (const theme of themes) {
     it(`meets AA in the ${theme.name} theme`, () => {
