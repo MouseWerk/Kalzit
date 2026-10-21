@@ -103,6 +103,20 @@ pub async fn login(
     limiter.refund(&ip_key);
 
     let mut tx = state.db.begin().await?;
+    // Lock the user row and confirm it still holds the hash we verified and is still enabled. A
+    // password change or a disable takes the same lock, so a sign-in that raced one either sees
+    // the change and fails here, or commits first and has its session ended by the change.
+    let still_valid = sqlx::query(
+        "UPDATE users SET password_hash = password_hash WHERE id = $1 AND password_hash = $2 AND disabled = 0",
+    )
+    .bind(&row.id)
+    .bind(row.password_hash.as_deref())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if still_valid == 0 {
+        return Err(invalid_credentials());
+    }
     // Signing in again replaces the session this browser had, instead of leaving it behind.
     if let Some(old) = session::read_cookie(&headers) {
         session::delete(&mut *tx, &old).await?;
