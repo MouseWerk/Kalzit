@@ -240,12 +240,15 @@ fn parse_env_value(raw: &str) -> Value {
 /// configured in `kalzit.toml`, with a valid value. A typo would otherwise be ignored silently.
 pub fn check_environment(vars: impl IntoIterator<Item = (String, String)>) -> Result<(), String> {
     for (name, raw) in vars {
-        if !name.starts_with(SETTING_ENV_PREFIX) {
+        // Windows matches variable names regardless of case, so `kalzit_setting_...` would be read
+        // by `std::env::var` later; it is checked the same way here.
+        let upper = name.to_ascii_uppercase();
+        if !upper.starts_with(SETTING_ENV_PREFIX) {
             continue;
         }
         let Some(def) = REGISTRY
             .iter()
-            .find(|d| d.scope == Scope::Server && config_backed(d.key).is_none() && env_var_name(d.key) == name)
+            .find(|d| d.scope == Scope::Server && config_backed(d.key).is_none() && env_var_name(d.key) == upper)
         else {
             return Err(format!("unknown variable {name}: there is no such server setting"));
         };
@@ -715,6 +718,10 @@ mod tests {
             assert!(err.contains(name), "{err}");
         }
         assert_eq!(env_var_name("audit.retention_days"), "KALZIT_SETTING_AUDIT_RETENTION_DAYS");
+        // Case does not hide a variable from the check (Windows reads it regardless of case).
+        let err = check_environment(vars(&[("kalzit_setting_audit_retention_days", "0")])).unwrap_err();
+        assert!(err.contains("kalzit_setting_audit_retention_days"), "{err}");
+        assert!(check_environment(vars(&[("Kalzit_Setting_Audit_Retention_Days", "30")])).is_ok());
     }
 
     fn rows(value: i64) -> Loaded {

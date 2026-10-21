@@ -198,7 +198,7 @@ impl Config {
         for (name, raw) in env {
             let Some(rest) = name.strip_prefix(ENV_PREFIX) else { continue };
             // Runtime settings (`KALZIT_SETTING_<KEY>`) are checked by `settings::check_environment`.
-            if OTHER_VARIABLES.contains(&rest) || rest.starts_with(SETTING_PREFIX) {
+            if OTHER_VARIABLES.contains(&rest) || rest.to_ascii_uppercase().starts_with(SETTING_PREFIX) {
                 continue;
             }
             let lower = rest.to_ascii_lowercase();
@@ -393,8 +393,10 @@ mod tests {
 
     #[test]
     fn runtime_setting_variables_pass_through() {
-        let c = Config::from_sources("", env(&[("KALZIT_SETTING_AUDIT_RETENTION_DAYS", "30")]));
-        assert!(c.is_ok(), "{:?}", c.err());
+        for name in ["KALZIT_SETTING_AUDIT_RETENTION_DAYS", "KALZIT_setting_audit_retention_days"] {
+            let c = Config::from_sources("", env(&[(name, "30")]));
+            assert!(c.is_ok(), "{name}: {:?}", c.err());
+        }
     }
 
     #[test]
