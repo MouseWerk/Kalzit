@@ -5,11 +5,21 @@ import { useI18n } from "../../i18n/i18n";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { alignSeries } from "./align";
-import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
+import { TONES } from "../fieldConfig/fieldConfig";
+import {
+  ChartShell,
+  type PlotArea,
+  SERIES_COLORS,
+  seriesClass,
+  type TimeSeriesChartProps,
+} from "./ChartShell";
 import "../panels.css";
 
-/** The palette classes, one probe each. */
-const SERIES_CLASSES = Array.from({ length: SERIES_COLORS }, (_, i) => `series-${i + 1}`);
+/** The palette and tone classes, one probe each. */
+const SERIES_CLASSES = [
+  ...Array.from({ length: SERIES_COLORS }, (_, i) => `series-${i + 1}`),
+  ...TONES.map((tone) => `tone--${tone}`),
+];
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -63,15 +73,20 @@ export function UplotTimeSeriesChart({
   series,
   timeRange,
   title,
-  unit,
   lineWidth,
-  showLegend,
+  legend,
+  tooltip,
+  format,
+  axisFormat,
+  yRange,
 }: TimeSeriesChartProps) {
   const { language } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
   const probesRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
+  const yMin = yRange?.min;
+  const yMax = yRange?.max;
   const { width, height } = useElementSize(boxRef);
   const themeVersion = useThemeVersion();
   const [plot, setPlot] = useState<PlotArea>({ left: VALUE_AXIS_SIZE, width: 1 });
@@ -88,7 +103,6 @@ export function UplotTimeSeriesChart({
     const axis = probeColor(probes, ".ts__probe--axis");
     const grid = probeColor(probes, ".ts__probe--grid");
     const font = `${getComputedStyle(probes).fontSize} ${getComputedStyle(probes).fontFamily}`;
-    const number = new Intl.NumberFormat(language, { maximumFractionDigits: 3 });
     // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
     const dates = new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit" });
     const times = new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" });
@@ -105,7 +119,16 @@ export function UplotTimeSeriesChart({
       legend: { show: false },
       // The shell draws the cursor and the readout, the same for keyboard and pointer.
       cursor: { show: false },
-      scales: { x: { time: true, min: timeRange.from, max: timeRange.to } },
+      scales: {
+        x: { time: true, min: timeRange.from, max: timeRange.to },
+        // Fixed ends from the field options; uPlot's own range for the open ones.
+        y: {
+          range: (_u, dataMin, dataMax) => {
+            const [min, max] = uPlot.rangeNum(dataMin, dataMax, 0.1, true);
+            return [yMin ?? min, yMax ?? max];
+          },
+        },
+      },
       axes: [
         {
           ...axisStyle,
@@ -115,14 +138,14 @@ export function UplotTimeSeriesChart({
         {
           ...axisStyle,
           size: VALUE_AXIS_SIZE,
-          values: (_u, values) => values.map((v) => number.format(v)),
+          values: (_u, values) => values.map((v) => axisFormat(v)),
         },
       ],
       series: [
         {},
         ...series.map((s, index) => ({
           label: s.name,
-          stroke: probeColor(probes, `.series-${(index % SERIES_COLORS) + 1}`),
+          stroke: probeColor(probes, `.${seriesClass(s, index)}`),
           width: lineWidth,
           points: { show: false },
           spanGaps: false,
@@ -137,7 +160,7 @@ export function UplotTimeSeriesChart({
       chart.destroy();
       chartRef.current = null;
     };
-  }, [series, timeRange.from, timeRange.to, lineWidth, language, themeVersion]);
+  }, [series, timeRange.from, timeRange.to, lineWidth, language, themeVersion, yMin, yMax]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
   useEffect(() => {
@@ -152,14 +175,16 @@ export function UplotTimeSeriesChart({
     <ChartShell
       series={series}
       title={title}
-      unit={unit}
-      showLegend={showLegend}
+      legend={legend}
+      tooltip={tooltip}
+      format={format}
       boxRef={boxRef}
       plot={plot}
       timeAt={(x) =>
         chartRef.current?.posToVal(x - plot.left, "x") ??
         timeRange.from + ((x - plot.left) / plot.width) * (timeRange.to - timeRange.from)
       }
+      valueAt={(y) => chartRef.current?.posToVal(y, "y") ?? Number.NaN}
     >
       {(cursorX) => (
         <>

@@ -2,86 +2,64 @@ import { useId } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { formatValue, seriesName, timeField, toNumber, valueFields } from "../frame";
-import { EmptyPanel, emptyReason, UnitField } from "../shared";
-import { SERIES_COLORS } from "../timeseries/ChartShell";
+import { EMPTY_FIELD_CONFIG, type Tone, toneClass } from "../fieldConfig/fieldConfig";
+import { legacyUnit } from "../fieldConfig/upgrade";
+import { timeField, toNumber } from "../frame";
+import { StatPreview } from "../picker/previews";
+import { reduceFrames, toneName } from "../reduce";
+import { EmptyPanel, emptyReason, SelectField } from "../shared";
 import { seriesPath, valueExtent } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import { parseReducer, REDUCERS, type Reducer } from "./reduce";
+import "../viz.css";
 
-export const REDUCERS = ["last", "mean", "min", "max", "sum"] as const;
-export type Reducer = (typeof REDUCERS)[number];
+export { REDUCERS, type Reducer, reduceField } from "./reduce";
+
+export const COLOR_MODES = ["none", "value", "background"] as const;
+export const GRAPH_MODES = ["none", "area"] as const;
+export const TEXT_MODES = ["auto", "value", "valueAndName", "name"] as const;
 
 export interface StatOptions {
   reducer: Reducer;
-  unit: string;
-  sparkline: boolean;
+  /** Colors the value or the background by thresholds and mappings. */
+  colorMode: (typeof COLOR_MODES)[number];
+  /** A trend line with a filled area under the value. */
+  graphMode: (typeof GRAPH_MODES)[number];
+  /** auto shows names only when there are several values. */
+  textMode: (typeof TEXT_MODES)[number];
+  /** A unit typed before the field options existed; the field options' unit wins. */
+  unit?: string;
 }
 
 function parseOptions(stored: unknown): StatOptions {
   const value = isRecord(stored) ? stored : {};
-  return {
-    reducer: REDUCERS.find((r) => r === value.reducer) ?? "last",
-    unit: typeof value.unit === "string" ? value.unit : "",
-    sparkline: value.sparkline !== false,
+  const options: StatOptions = {
+    reducer: parseReducer(value.reducer),
+    colorMode: COLOR_MODES.find((m) => m === value.colorMode) ?? "none",
+    // Before graphMode, `sparkline: false` turned the trend line off.
+    graphMode:
+      GRAPH_MODES.find((m) => m === value.graphMode) ??
+      (value.sparkline === false ? "none" : "area"),
+    textMode: TEXT_MODES.find((m) => m === value.textMode) ?? "auto",
   };
-}
-
-/**
- * Reduces a field to one value. int64 stays exact through BigInt for every reducer but the mean,
- * so a counter like 9007199254740993 is not shown rounded.
- */
-export function reduceField(
-  field: Field,
-  reducer: Reducer,
-): { value: unknown; type: Field["type"] } {
-  const present = field.values.filter((v) => v !== null && v !== undefined);
-  if (present.length === 0) {
-    return { value: null, type: field.type };
+  if (typeof value.unit === "string" && value.unit !== "") {
+    options.unit = value.unit;
   }
-  if (reducer === "last") {
-    return { value: present.at(-1), type: field.type };
-  }
-  if (field.type === "int64" && reducer !== "mean") {
-    try {
-      const values = present.map((v) => BigInt(String(v)));
-      let result = values[0] as bigint;
-      for (const v of values.slice(1)) {
-        if (reducer === "sum") result += v;
-        if (reducer === "min" && v < result) result = v;
-        if (reducer === "max" && v > result) result = v;
-      }
-      return { value: result.toString(), type: "int64" };
-    } catch {
-      // Not a decimal string after all; fall through to numbers.
-    }
-  }
-  // One pass in a loop: spreading 100,000 values into Math.min would overflow the call stack.
-  let count = 0;
-  let sum = 0;
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-  for (const raw of present) {
-    const value = toNumber(raw);
-    if (value === null) {
-      continue;
-    }
-    count++;
-    sum += value;
-    if (value < min) min = value;
-    if (value > max) max = value;
-  }
-  if (count === 0) {
-    return { value: null, type: "number" };
-  }
-  const result =
-    reducer === "min" ? min : reducer === "max" ? max : reducer === "sum" ? sum : sum / count;
-  return { value: result, type: "number" };
+  return options;
 }
 
 const SPARK_WIDTH = 200;
 const SPARK_HEIGHT = 40;
 
-function Sparkline({ frame, field, index }: { frame: Frame; field: Field; index: number }) {
+function Sparkline({
+  frame,
+  field,
+  colorClass,
+}: {
+  frame: Frame;
+  field: Field;
+  colorClass: string;
+}) {
   const time = timeField(frame);
   if (time === undefined) {
     return null;
@@ -104,41 +82,67 @@ function Sparkline({ frame, field, index }: { frame: Frame; field: Field; index:
     },
     SPARK_WIDTH,
   );
+  // The area closes the line along the bottom; a gap in the data leaves the area open there.
+  const area = d.includes("M", 1) ? "" : `${d}L${SPARK_WIDTH} ${SPARK_HEIGHT}L0 ${SPARK_HEIGHT}Z`;
   return (
     <svg
-      className="stat__sparkline"
+      className={`stat__sparkline ${colorClass}`}
       viewBox={`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`}
       preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <path className={`stat__spark series-${(index % SERIES_COLORS) + 1}`} d={d} />
+      {area === "" ? null : <path className="stat__area" d={area} />}
+      <path className="stat__spark" d={d} />
     </svg>
   );
 }
 
-function StatPanel({ frames, options }: PanelProps<StatOptions>) {
-  const { language } = useI18n();
-  const items = frames.flatMap((frame) => valueFields(frame).map((field) => ({ frame, field })));
+function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelProps<StatOptions>) {
+  const { t, language } = useI18n();
+  const config = legacyUnit(fieldConfig, options.unit);
+  const items = reduceFrames(frames, config, options.reducer, language);
   if (items.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
+  const showName =
+    options.textMode === "valueAndName" ||
+    options.textMode === "name" ||
+    (options.textMode === "auto" && items.length > 1);
+  const showValue = options.textMode !== "name";
   return (
     <ul className="stat">
-      {items.map(({ frame, field }, index) => {
-        const { value, type } = reduceField(field, options.reducer);
-        const unit = options.unit !== "" ? options.unit : (field.unit ?? "");
-        const text = formatValue(type, value, language);
+      {items.map((item) => {
+        const tone: Tone | undefined = item.display.tone ?? item.options.color;
+        const colored = options.colorMode !== "none" && tone !== undefined;
+        const classes = [
+          "stat__item",
+          colored ? toneClass(tone) : "",
+          colored && options.colorMode === "background" ? "stat__item--background" : "",
+          colored && options.colorMode === "value" ? "stat__item--value" : "",
+        ].join(" ");
+        const text = item.display.text === "" ? "–" : item.display.text;
+        const state = toneName(item.display.tone);
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: fields keep their order in the result
-          <li key={index} className="stat__item">
-            {items.length > 1 ? (
-              <span className="stat__name truncate">{seriesName(field)}</span>
+          <li key={item.index} className={classes}>
+            {showName ? <span className="stat__name truncate">{item.name}</span> : null}
+            {showValue ? (
+              <span className="stat__value">
+                {text}
+                {item.display.suffix === "" || item.display.text === "" ? null : (
+                  <span className="stat__unit">{` ${item.display.suffix}`}</span>
+                )}
+                {state === undefined ? null : (
+                  <span className="visually-hidden">{` (${t(state)})`}</span>
+                )}
+              </span>
             ) : null}
-            <span className="stat__value">
-              {text === "" ? "–" : text}
-              {unit === "" || text === "" ? null : <span className="stat__unit"> {unit}</span>}
-            </span>
-            {options.sparkline ? <Sparkline frame={frame} field={field} index={index} /> : null}
+            {options.graphMode === "area" ? (
+              <Sparkline
+                frame={item.frame}
+                field={item.field}
+                colorClass={toneClass(item.options.color ?? (colored ? tone : undefined), item.index)}
+              />
+            ) : null}
           </li>
         );
       })}
@@ -148,39 +152,37 @@ function StatPanel({ frames, options }: PanelProps<StatOptions>) {
 
 function StatEditor({ options, onChange }: PanelEditorProps<StatOptions>) {
   const { t } = useI18n();
-  const reducerId = useId();
-  const sparkId = useId();
+  const id = useId();
   return (
     <>
-      <div className="field">
-        <label className="field__label" htmlFor={reducerId}>
-          {t("dashboards.panels.reducer")}
-        </label>
-        <select
-          id={reducerId}
-          className="select"
-          value={options.reducer}
-          onChange={(event) =>
-            onChange({ ...options, reducer: event.currentTarget.value as Reducer })
-          }
-        >
-          {REDUCERS.map((reducer) => (
-            <option key={reducer} value={reducer}>
-              {t(`dashboards.panels.reducer.${reducer}`)}
-            </option>
-          ))}
-        </select>
-      </div>
-      <UnitField value={options.unit} onChange={(unit) => onChange({ ...options, unit })} />
-      <label className="checkbox" htmlFor={sparkId}>
-        <input
-          id={sparkId}
-          type="checkbox"
-          checked={options.sparkline}
-          onChange={(event) => onChange({ ...options, sparkline: event.currentTarget.checked })}
-        />
-        {t("dashboards.panels.sparkline")}
-      </label>
+      <SelectField
+        id={`${id}-reducer`}
+        label={t("dashboards.panels.reducer")}
+        value={options.reducer}
+        choices={REDUCERS.map((r) => [r, t(`dashboards.panels.reducer.${r}`)])}
+        onChange={(reducer) => onChange({ ...options, reducer })}
+      />
+      <SelectField
+        id={`${id}-color`}
+        label={t("panels.stat.colorMode")}
+        value={options.colorMode}
+        choices={COLOR_MODES.map((m) => [m, t(`panels.stat.colorMode.${m}`)])}
+        onChange={(colorMode) => onChange({ ...options, colorMode })}
+      />
+      <SelectField
+        id={`${id}-graph`}
+        label={t("panels.stat.graphMode")}
+        value={options.graphMode}
+        choices={GRAPH_MODES.map((m) => [m, t(`panels.stat.graphMode.${m}`)])}
+        onChange={(graphMode) => onChange({ ...options, graphMode })}
+      />
+      <SelectField
+        id={`${id}-text`}
+        label={t("panels.stat.textMode")}
+        value={options.textMode}
+        choices={TEXT_MODES.map((m) => [m, t(`panels.stat.textMode.${m}`)])}
+        onChange={(textMode) => onChange({ ...options, textMode })}
+      />
     </>
   );
 }
@@ -188,8 +190,11 @@ function StatEditor({ options, onChange }: PanelEditorProps<StatOptions>) {
 export const statPanel: PanelPlugin<StatOptions> = {
   type: "stat",
   name: "dashboards.panels.stat",
+  description: "panels.describe.stat",
   shapes: ["frame"],
   options: parseOptions,
   Panel: StatPanel,
   Editor: StatEditor,
+  fieldOptions: ["standard", "range", "thresholds", "mappings", "color", "overrides"],
+  Preview: StatPreview,
 };
