@@ -33,10 +33,12 @@ where
     let token = hex::encode(rand::random::<[u8; 32]>());
     let expires = now_ms + cfg.lifetime_hours as i64 * HOUR_MS;
     sqlx::query(
-        "INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO sessions (token_hash, id, user_id, created_at, last_seen_at, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(hash_token(&token))
+    // The id users see when they list and end their sessions; the hash never leaves the server.
+    .bind(uuid::Uuid::now_v7().to_string())
     .bind(user_id)
     .bind(now_ms)
     .bind(now_ms)
@@ -77,14 +79,18 @@ pub async fn lookup(db: &AnyPool, cfg: &SessionConfig, now_ms: i64, token: &str)
     Ok(user)
 }
 
+/// A session last seen at or before this time has ended through the idle limit. With the idle
+/// timeout off, no session is that old.
+pub fn idle_cutoff(cfg: &SessionConfig, now_ms: i64) -> i64 {
+    let idle_ms = cfg.idle_timeout_hours as i64 * HOUR_MS;
+    if idle_ms > 0 { now_ms - idle_ms } else { i64::MIN }
+}
+
 /// Removes every session past its lifetime or idle limit; returns how many.
 pub async fn delete_ended(db: &AnyPool, cfg: &SessionConfig, now_ms: i64) -> Result<u64, sqlx::Error> {
-    let idle_ms = cfg.idle_timeout_hours as i64 * HOUR_MS;
-    // With the idle timeout off, the second condition compares against a time no session has.
-    let idle_cutoff = if idle_ms > 0 { now_ms - idle_ms } else { i64::MIN };
     let done = sqlx::query("DELETE FROM sessions WHERE expires_at <= $1 OR last_seen_at <= $2")
         .bind(now_ms)
-        .bind(idle_cutoff)
+        .bind(idle_cutoff(cfg, now_ms))
         .execute(db)
         .await?;
     Ok(done.rows_affected())
@@ -96,6 +102,22 @@ where
 {
     sqlx::query("DELETE FROM sessions WHERE token_hash = $1").bind(hash_token(token)).execute(db).await?;
     Ok(())
+}
+
+/// Ends every session of `user_id` except the one whose token is `keep` (the caller's own, when
+/// they change their password); returns how many ended.
+pub async fn delete_for_user<'c, E>(db: E, user_id: &str, keep: Option<&str>) -> ApiResult<u64>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
+    // No hash is empty, so without `keep` every session matches.
+    let keep_hash = keep.map(hash_token).unwrap_or_default();
+    let done = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2")
+        .bind(user_id)
+        .bind(keep_hash)
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected())
 }
 
 pub fn read_cookie(headers: &HeaderMap) -> Option<String> {
