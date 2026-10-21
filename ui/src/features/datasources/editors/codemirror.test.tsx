@@ -98,4 +98,32 @@ describe("CodeMirror query editor", () => {
     startCompletion(view);
     expect(await screen.findByRole("option", { name: /amount/ })).toBeTruthy();
   });
+
+  it("closes the suggestions when Ctrl+Enter runs the query", async () => {
+    const onRun = vi.fn();
+    const schema = {
+      kind: "tables" as const,
+      tables: [{ name: "orders", columns: [{ name: "amount", type: "numeric" }] }],
+    };
+    render(
+      <CodeMirrorEditor
+        language="sql"
+        label="Query"
+        value="SELECT am FROM orders"
+        onChange={() => undefined}
+        onRun={onRun}
+        complete={(text, cursor, explicit) => sqlCompletions(text, cursor, schema, explicit)}
+      />,
+    );
+    const textbox = await screen.findByRole("textbox", { name: "Query" });
+    const view = viewOf(textbox);
+    view.dispatch({ selection: { anchor: 9 } });
+    const { completionStatus, startCompletion } = await import("@codemirror/autocomplete");
+    startCompletion(view);
+    await screen.findByRole("option", { name: /amount/ });
+    fireEvent.keyDown(textbox, { key: "Enter", code: "Enter", ctrlKey: true });
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(completionStatus(view.state)).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("option", { name: /amount/ })).toBeNull());
+  });
 });

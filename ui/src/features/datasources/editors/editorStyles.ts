@@ -9,6 +9,10 @@ const handled = new WeakSet<Document>();
  * mirrored into a constructed style sheet, which the policy allows, and kept in sync as CodeMirror
  * adds rules. Only the element this first mount added is mirrored, so no other blocked inline
  * style gets through. Where styles apply anyway (no policy, tests), nothing changes.
+ *
+ * The browser still logs one CSP notice ("Applying inline style violates ...") for the refused
+ * element; that is expected and harmless. Only a per-response nonce from the server, passed to
+ * `EditorView.cspNonce`, would avoid it.
  */
 export function withEditorStyles<T>(doc: Document, mount: () => T): T {
   if (handled.has(doc)) {
@@ -24,10 +28,28 @@ export function withEditorStyles<T>(doc: Document, mount: () => T): T {
   return result;
 }
 
+/**
+ * Whether the browser refused the element: no sheet at all, or (in some browsers) an empty sheet
+ * although the element has text.
+ */
+function refused(style: HTMLStyleElement): boolean {
+  const sheet = style.sheet;
+  if (sheet === null) {
+    return true;
+  }
+  let rules = 0;
+  try {
+    rules = sheet.cssRules.length;
+  } catch {
+    return true;
+  }
+  return rules === 0 && (style.textContent ?? "").trim() !== "";
+}
+
 function mirrorIfBlocked(doc: Document, style: HTMLStyleElement): void {
   const view = doc.defaultView;
   if (
-    style.sheet !== null ||
+    !refused(style) ||
     view === null ||
     typeof view.CSSStyleSheet !== "function" ||
     !Array.isArray(doc.adoptedStyleSheets)

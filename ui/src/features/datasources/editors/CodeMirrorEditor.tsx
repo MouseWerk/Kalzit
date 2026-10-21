@@ -192,7 +192,9 @@ export function CodeMirrorEditor({
                 keymap.of([
                   {
                     key: "Mod-Enter",
-                    run: () => {
+                    run: (target) => {
+                      // Running closes the suggestions; they belong to the text, not the result.
+                      closeCompletion(target);
                       propsRef.current.onRun?.();
                       return propsRef.current.onRun !== undefined;
                     },
