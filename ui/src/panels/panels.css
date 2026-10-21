@@ -1,0 +1,323 @@
+@layer components {
+  /*
+   * Series colors. They read the chart palette tokens (--chart-1 ... --chart-8) once tokens.css
+   * has them; until then they fall back to existing tokens that meet 3:1 on every surface.
+   */
+  .series-1 {
+    --series-color: var(--chart-1, var(--accent));
+  }
+
+  .series-2 {
+    --series-color: var(--chart-2, var(--success-text));
+  }
+
+  .series-3 {
+    --series-color: var(--chart-3, var(--danger-text));
+  }
+
+  .series-4 {
+    --series-color: var(--chart-4, var(--text-muted));
+  }
+
+  .series-5 {
+    --series-color: var(--chart-5, var(--accent-text));
+  }
+
+  .series-6 {
+    --series-color: var(--chart-6, var(--border-strong));
+  }
+
+  .series-7 {
+    --series-color: var(--chart-7, var(--text));
+  }
+
+  .series-8 {
+    --series-color: var(--chart-8, var(--focus-ring));
+  }
+
+  .panel-empty {
+    display: grid;
+    height: 100%;
+    place-items: center;
+    padding: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-align: center;
+  }
+
+  .panel-note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Time series */
+
+  .ts {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .ts__plot {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .ts__svg,
+  .bar__svg {
+    display: block;
+    position: absolute;
+    inset: 0;
+  }
+
+  .ts__grid {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .ts__label {
+    fill: var(--text-muted);
+    font-size: var(--font-size-xs);
+    dominant-baseline: middle;
+  }
+
+  .ts__line {
+    fill: none;
+    stroke: var(--series-color);
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+
+  .ts__cursor {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .ts__tooltip {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-start: var(--hover-x, 0);
+    z-index: var(--z-sticky);
+    display: grid;
+    gap: var(--space-1);
+    max-width: 20rem;
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    font-size: var(--font-size-xs);
+    pointer-events: none;
+    transform: translateX(var(--space-2));
+  }
+
+  .ts__tooltip-time {
+    color: var(--text-muted);
+  }
+
+  .ts__tooltip-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ts__tooltip-value {
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ts__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    max-height: 4.5rem;
+    padding: var(--space-1) 0 0;
+    overflow: auto;
+    list-style: none;
+    font-size: var(--font-size-xs);
+  }
+
+  .ts__legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .ts__swatch {
+    flex: none;
+    width: 0.75rem;
+    height: 0.25rem;
+    border-radius: var(--radius-sm);
+    background: var(--series-color);
+  }
+
+  /* Bars */
+
+  .bar {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .bar__plot {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .bar__rect {
+    fill: var(--series-color);
+  }
+
+  /* Stat */
+
+  .stat {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: var(--space-3);
+    height: 100%;
+    align-content: center;
+    list-style: none;
+  }
+
+  .stat__item {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .stat__name {
+    max-width: 100%;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .stat__value {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+
+  .stat__unit {
+    color: var(--text-muted);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .stat__sparkline {
+    width: 100%;
+    height: 2.5rem;
+  }
+
+  .stat__spark {
+    fill: none;
+    stroke: var(--series-color);
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+  }
+
+  /* Table: fixed row height so only the rows in view are rendered. */
+
+  .table-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .vt {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .vt:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .vt__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .vt__head {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: var(--z-sticky);
+    padding: 0;
+    border-bottom: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+    text-align: start;
+  }
+
+  .vt__sort {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    width: 100%;
+    height: var(--vt-row-height);
+    padding: 0 var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-weight: var(--font-weight-medium);
+    text-align: inherit;
+    cursor: pointer;
+  }
+
+  .vt__sort:hover {
+    background: var(--bg-hover);
+  }
+
+  .vt__sort:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .vt__sort-mark {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .vt__row {
+    height: var(--vt-row-height);
+  }
+
+  .vt__cell {
+    max-width: 24rem;
+    padding: 0 var(--space-2);
+    border-bottom: var(--border-width) solid var(--border);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .vt__cell--number,
+  .vt__cell--int64 {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  .vt__cell--number .vt__sort,
+  .vt__cell--int64 .vt__sort {
+    justify-content: flex-end;
+  }
+
+  .vt__spacer td {
+    height: var(--vt-spacer, 0);
+    padding: 0;
+    border: 0;
+  }
+}
