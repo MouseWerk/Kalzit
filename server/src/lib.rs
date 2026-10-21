@@ -7,6 +7,7 @@ pub mod authz;
 pub mod clock;
 pub mod config;
 pub mod dashboards;
+pub mod data_dir;
 pub mod datasources;
 pub mod db;
 pub mod error;

@@ -267,7 +267,8 @@ mod tests {
     async fn events_about_hidden_folders_and_their_dashboards_are_left_out() {
         let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
         let clock = std::sync::Arc::new(crate::clock::ManualClock::new(0));
-        // A data directory of its own: the server state keeps its secrets key there.
+        // A data directory of its own: never the system folder, and the server state keeps its
+        // secrets key there.
         let dir = tempfile::tempdir().unwrap();
         let mut config = crate::config::Config::default();
         config.paths.data_dir = dir.path().to_path_buf();

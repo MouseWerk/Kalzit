@@ -287,6 +287,98 @@ type QueryResult =
   the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
   since they hold client addresses.
 
+## Data directory
+
+- Default: `%ProgramData%\Kalzit\data` on Windows (from the `ProgramData` variable; without it
+  the start fails and asks for `paths.data_dir`), `/var/lib/kalzit` on Linux and other Unix
+  systems. Never the working directory, which for a Windows service is `C:\Windows\System32`.
+- `[paths] data_dir` in `kalzit.toml` or `KALZIT_PATHS_DATA_DIR` override it. Relative paths
+  in `kalzit.toml` (`paths.data_dir`, `tls.cert_file`, `tls.key_file` and a `sqlite:` file in
+  `database.url`) are relative to the folder of that file, also when the file itself is named
+  relatively (`KALZIT_CONFIG=conf/kalzit.toml`). A relative data directory from the environment
+  is relative to the working directory, and the server logs a warning that it depends on it.
+- At start, `data_dir::prepare` runs before `db::connect`, so the folder is checked before the
+  database opens. A missing directory is created private from its first moment: on Linux with
+  mode 0700, on Windows through `CreateDirectoryW`
+  with a protected ACL, inherited by its contents, for SYSTEM, Administrators and the account
+  Kalzit runs as (`OW`, the owner). When Kalzit creates a missing `%ProgramData%\Kalzit` on the
+  way, that folder gets SYSTEM and Administrators full access and Users read and execute, with
+  no create rights for users; the creating account (`OW`, not inherited) may only read it and
+  add subfolders (`0x1200ad`), so a non-admin service account can create `data` but cannot
+  write files there or change the folder's entries. If a non-elevated user ran Kalzit first,
+  that user owns the folder, and a service started later refuses it and prints the `icacls`
+  hint.
+- An existing directory is never changed, only checked; it holds password hashes and sessions,
+  so the start is refused rather than warned about:
+  - Linux: it must belong to the account Kalzit runs as (compared with the owner of a probe
+    file) and be closed to group and others (`mode & 0o077 == 0`). The error names
+    `chmod 700` and the systemd `StateDirectoryMode=0700`.
+  - Windows: its owner must be SYSTEM, Administrators or the account Kalzit runs as, and no
+    other account (Everyone, Users, Authenticated Users, other users) may read or write it. The
+    error names the `icacls` commands that fix it. `CREATOR OWNER` entries are accepted: only
+    accounts that may create files there get them, and those are limited to the trusted ones.
+  - Both: the directory must be writable (a probe file created with `create_new` and removed).
+- Before reading `%ProgramData%\Kalzit\kalzit.toml` (the path compared without case, after
+  canonicalizing), the folder and the file are checked the same way, except that others may
+  read them: a configuration that a non-admin could change would decide where the data lives
+  and which certificate is served. The folder is also checked at start whenever the data
+  directory lies inside it (as written or with junctions resolved), with or without a
+  `kalzit.toml`. A folder owned by an account other than SYSTEM or Administrators whose owner
+  entry can still change its DACL (left from an interrupted creation) is refused as well.
+- Windows also checks the state files that exist (`kalzit.db`, `-wal`, `-shm`, `secrets.key`,
+  `secrets.key.dpapi`, `setup-token.txt`): a file keeps the entries it was created with, so one
+  moved in from elsewhere may be open to others. The error names `icacls ... /reset`.
+- The folder is meant for elevated admin tools (an elevated prompt, `icacls`, an installer).
+  Opening it in a non-elevated Explorer and clicking "Continue" adds an explicit entry for your
+  own account; Kalzit then refuses to start until it is removed
+  (`icacls "%ProgramData%\Kalzit\data" /remove <account>`).
+- `setup-token.txt` and the key files are created with their own file ACL (SYSTEM,
+  Administrators, owner) on Windows and mode 0600 on Linux, through `data_dir::acl`, which also
+  serves `secrets.rs`.
+- One info line names the data directory and the database. `db::redact` parses the URL (`url`) and
+  rebuilds it from scheme, user, `***` for a password, host, port and path; query values are shown
+  only for harmless keys (`sslmode`, `application_name`, `connect_timeout`, `mode`, `host`,
+  `port`, `dbname`, ...), all others as `***`. A URL with an `@` after its authority (the text from
+  `://` to the first `/`, `?` or `#`) is ambiguous: a password with raw special characters may
+  have become port, path or query (`u:2024/Summer@db` parses as port 2024). It is logged as
+  `scheme://***` only, and a warning at start says to percent-encode the password. A URL that does
+  not parse is shown as `<unparseable database url>`, one without an authority (`postgres:u:pw@db`)
+  as `scheme:***`; `sqlite:` URLs are shown as they are. The redaction stays generic, but at load
+  `database.url` must be `sqlite:...`, `postgres://...` or `postgresql://...` (Kalzit's own database is
+  SQLite or PostgreSQL); anything else is refused, and the error does not repeat the value. The
+  `connect` error uses the same function.
+- Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
+  `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback
+  key file for data source secrets when no other key source is configured (`secrets.key` on
+  Linux, `secrets.key.dpapi` on Windows).
+- The database file is also checked for a network drive (see "Storage (SQLite)"): a data
+  directory on a UNC path, a mapped network drive, NFS, CIFS/SMB or 9p is refused when the
+  database opens. Backups and restores are under "Backups".
+
+### Running as a service
+
+- Linux (systemd): run as a dedicated user and let systemd create the directories:
+
+  ```ini
+  [Service]
+  User=kalzit
+  ExecStart=/usr/local/bin/kalzit serve
+  StateDirectory=kalzit
+  StateDirectoryMode=0700
+  ConfigurationDirectory=kalzit
+  ```
+
+  `StateDirectory=kalzit` creates `/var/lib/kalzit` owned by `User`. Without systemd, create it
+  with `sudo install -d -o kalzit -m 0700 /var/lib/kalzit`. `/etc/kalzit/kalzit.toml` should be
+  owned by root and not writable by the service user.
+- Windows: run the service as a virtual account (`NT SERVICE\Kalzit`) or as LocalSystem. Kalzit
+  creates `%ProgramData%\Kalzit\data` on the first start with access for SYSTEM, Administrators
+  and the service account only. If an installer or an admin creates the folder beforehand, it
+  must have the same rights (owner SYSTEM, Administrators or the service account, no access for
+  others), or the start is refused. Changing the service account later means granting the new
+  account access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`) and
+  making it or Administrators the owner.
+
 ## Storage (SQLite)
 
 - SQLite runs on one host with its file on a local disk: a data directory on a network drive
@@ -313,10 +405,23 @@ type QueryResult =
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).
-- Backups while the server runs: `VACUUM INTO 'backup.db'` (one consistent file) or the sqlite3
-  shell's `.backup`. With the server stopped: copy `kalzit.db`, `kalzit.db-wal` and
-  `kalzit.db-shm` together (after a graceful stop the last two are usually gone). Never copy only
-  `kalzit.db` of a running server.
+
+## Backups
+
+One place for everything a backup needs:
+
+- What: `kalzit.db` with `kalzit.db-wal` and `kalzit.db-shm`, and the key file when no external key
+  source is used (`secrets.key` on Linux, `secrets.key.dpapi` on Windows). Without the key, stored
+  data source secrets cannot be decrypted; a DPAPI key file only works on the same computer.
+- While the server runs: `VACUUM INTO 'backup.db'` (one consistent file) or the sqlite3 shell's
+  `.backup backup.db` (the SQLite backup API). Never copy only `kalzit.db` of a running server: what
+  is still in the WAL file is lost.
+- With the server stopped: copy `kalzit.db`, `kalzit.db-wal` and `kalzit.db-shm` together (after a
+  graceful stop the last two are usually gone).
+- Restore: copy the files into the data directory, do not move them. A copy takes the directory's
+  private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
+  that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
+  Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
 
 ## Migrations
 
