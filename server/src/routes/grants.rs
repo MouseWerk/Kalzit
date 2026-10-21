@@ -168,6 +168,11 @@ async fn create(
 
     let mut tx = state.db.begin().await?;
     lock_org(&mut tx, &ctx.org_id).await?;
+    // Purging takes the same lock, so this holds for the rest of the transaction: no grant is left
+    // behind on a resource purged between the check above and here.
+    if !resource_exists(&mut *tx, &ctx.org_id, resource).await? {
+        return Err(ApiError::not_found());
+    }
     ensure_subject(&mut tx, &ctx.org_id, &req.subject_type, &req.subject_id).await?;
     let existing: Option<(String, String)> = sqlx::query_as(
         "SELECT id, level FROM resource_grants WHERE org_id = $1 AND resource_type = $2 AND resource_id = $3 \

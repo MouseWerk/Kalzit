@@ -1,6 +1,10 @@
 pub mod admin_orgs;
+pub mod admin_settings;
 pub mod admin_users;
+pub mod audit;
 pub mod auth;
+pub mod dashboards;
+pub mod folders;
 pub mod grants;
 pub mod health;
 pub mod me;
@@ -24,6 +28,10 @@ pub fn all() -> Vec<table::RouteDef> {
         setup::routes(),
         auth::routes(),
         orgs::routes(),
+        admin_settings::routes(),
+        audit::routes(),
+        folders::routes(),
+        dashboards::routes(),
         members::routes(),
         teams::routes(),
         roles::routes(),

@@ -93,7 +93,7 @@ describe("roles", () => {
     await user.type(name, "  Admin ");
     await user.click(screen.getByRole("button", { name: "Create role" }));
     const builtin =
-      "The names owner, admin, editor and viewer belong to the built-in roles. Choose another name.";
+      "The names owner, admin, editor and viewer are reserved for the built-in roles Owner, Admin, Editor and Viewer. Choose another name.";
     expect(screen.getByText(builtin)).toBeTruthy();
     expect(name.getAttribute("aria-invalid")).toBe("true");
     expect(sent(server, "POST")).toEqual([]);
@@ -117,7 +117,7 @@ describe("roles", () => {
     await user.type(name, "VIEWER{Enter}");
     expect(
       screen.getByText(
-        "The names owner, admin, editor and viewer belong to the built-in roles. Choose another name.",
+        "The names owner, admin, editor and viewer are reserved for the built-in roles Owner, Admin, Editor and Viewer. Choose another name.",
       ),
     ).toBeTruthy();
     expect(sent(server, "PATCH")).toEqual([]);

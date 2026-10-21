@@ -2,6 +2,7 @@
 //! variables. Network and TLS settings are only configurable here, never in the UI, so a wrong
 //! value cannot lock the admin out of the settings page.
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +14,8 @@ const ENV_PREFIX: &str = "KALZIT_";
 const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log"];
 /// `KALZIT_*` variables that are not settings. Any other `KALZIT_*` name is a typo and an error.
 const OTHER_VARIABLES: &[&str] = &["CONFIG", "SETUP_TOKEN", "TEST_POSTGRES_URL"];
+/// `KALZIT_SETTING_<KEY>`: runtime settings from `settings::REGISTRY`, not configuration sections.
+const SETTING_PREFIX: &str = "SETTING_";
 /// Settings without a default value; they do not appear in the serialized defaults.
 const OPTIONAL_KEYS: &[&str] = &["public_url", "cert_file", "key_file", "url"];
 /// Ten years. Longer values would overflow the millisecond arithmetic and make no sense anyway.
@@ -28,6 +31,10 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub paths: PathsConfig,
     pub log: LogConfig,
+    /// The settings `kalzit.toml` sets, as `section.key`, so the settings page can tell a value
+    /// from the file from the default even when both are equal.
+    #[serde(skip)]
+    pub file_keys: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -182,10 +189,16 @@ impl Config {
     /// Merges a TOML document with `KALZIT_<SECTION>_<KEY>` variables and validates the result.
     pub fn from_sources(toml_text: &str, env: impl IntoIterator<Item = (String, String)>) -> Result<Self> {
         let mut doc: toml::Table = toml::from_str(toml_text).context("parsing TOML")?;
+        let file_keys: BTreeSet<String> = doc
+            .iter()
+            .filter_map(|(section, v)| v.as_table().map(|t| (section, t)))
+            .flat_map(|(section, table)| table.keys().map(move |key| format!("{section}.{key}")))
+            .collect();
         let defaults = toml::Table::try_from(Config::default()).context("serializing the defaults")?;
         for (name, raw) in env {
             let Some(rest) = name.strip_prefix(ENV_PREFIX) else { continue };
-            if OTHER_VARIABLES.contains(&rest) {
+            // Runtime settings (`KALZIT_SETTING_<KEY>`) are checked by `settings::check_environment`.
+            if OTHER_VARIABLES.contains(&rest) || rest.to_ascii_uppercase().starts_with(SETTING_PREFIX) {
                 continue;
             }
             let lower = rest.to_ascii_lowercase();
@@ -206,7 +219,8 @@ impl Config {
             let value = env_value(&name, &raw, default, key)?;
             table.insert(key.to_string(), value);
         }
-        let config: Config = toml::Value::Table(doc).try_into().context("reading settings")?;
+        let mut config: Config = toml::Value::Table(doc).try_into().context("reading settings")?;
+        config.file_keys = file_keys;
         config.validate()?;
         Ok(config)
     }
@@ -363,6 +377,26 @@ mod tests {
         .unwrap();
         assert_eq!(c.security.trusted_proxies.len(), 2);
         assert!(!c.security.hsts);
+    }
+
+    #[test]
+    fn file_keys_record_what_the_file_sets() {
+        let c = Config::from_sources(
+            "[sessions]\nlifetime_hours = 720\n",
+            env(&[("KALZIT_SESSIONS_IDLE_TIMEOUT_HOURS", "3")]),
+        )
+        .unwrap();
+        // The file names the default value; the environment is not the file.
+        assert_eq!(c.file_keys.iter().collect::<Vec<_>>(), ["sessions.lifetime_hours"]);
+        assert!(Config::from_sources("", env(&[])).unwrap().file_keys.is_empty());
+    }
+
+    #[test]
+    fn runtime_setting_variables_pass_through() {
+        for name in ["KALZIT_SETTING_AUDIT_RETENTION_DAYS", "KALZIT_setting_audit_retention_days"] {
+            let c = Config::from_sources("", env(&[(name, "30")]));
+            assert!(c.is_ok(), "{name}: {:?}", c.err());
+        }
     }
 
     #[test]
