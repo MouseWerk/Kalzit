@@ -39,6 +39,8 @@ pub struct SettingDef {
     pub default: fn() -> Value,
     /// Settings that could lock an admin out (network, TLS) are file or environment only.
     pub ui_editable: bool,
+    /// English. The UI shows its own label and description from `ui/src/i18n/*/admin.json`
+    /// (a test there fails for a key without them) and this text only for keys it does not know.
     pub description: &'static str,
 }
 
@@ -165,7 +167,9 @@ fn rule(key: &str) -> Option<Rule> {
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),
         "appearance.default_theme" => Rule::OneOf(&["system", "light", "dark", "contrast"]),
-        "sessions.lifetime_hours" | "sessions.idle_timeout_hours" => Rule::Int { min: 0, max: 10 * 365 * 24 },
+        // The same bounds as `config.rs`, which checks the file and environment at startup.
+        "sessions.lifetime_hours" => Rule::Int { min: 1, max: 10 * 365 * 24 },
+        "sessions.idle_timeout_hours" => Rule::Int { min: 0, max: 10 * 365 * 24 },
         "dashboards.version_retention" => Rule::Int { min: 0, max: 100_000 },
         "dashboards.default_time_range" => Rule::TimeRange,
         _ => return None,
@@ -710,6 +714,18 @@ mod tests {
         }
         assert!(validate("datasources.sqlite_dirs", &json!(["D:/Daten/Ümlaut"])).is_ok());
         assert!(validate("no.such", &json!(1)).is_err());
+    }
+
+    /// Matches `config.rs`: a session lasts at least an hour; idle timeout 0 means never.
+    #[test]
+    fn session_lifetime_needs_at_least_an_hour() {
+        let max = 10 * 365 * 24;
+        assert!(validate("sessions.lifetime_hours", &json!(0)).is_err());
+        assert!(validate("sessions.lifetime_hours", &json!(1)).is_ok());
+        assert!(validate("sessions.lifetime_hours", &json!(max)).is_ok());
+        assert!(validate("sessions.lifetime_hours", &json!(max + 1)).is_err());
+        assert!(validate("sessions.idle_timeout_hours", &json!(0)).is_ok());
+        assert!(validate("sessions.idle_timeout_hours", &json!(max + 1)).is_err());
     }
 
     #[test]

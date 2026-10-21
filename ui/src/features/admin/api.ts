@@ -403,7 +403,7 @@ export interface Setting {
   editable: boolean;
   /** The stored version an update must name; 0 when never saved. */
   version: number;
-  /** English, from the server; shown until the UI has its own texts. */
+  /** English, from the server; shown only for a key this UI has no texts for (catalog.ts). */
   description: string;
   updatedAt: number | null;
   updatedBy: string | null;
