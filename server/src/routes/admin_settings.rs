@@ -148,7 +148,7 @@ async fn patch(
     }
 
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let Some(version) = settings::store(&mut tx, org_id, key, &body.value, body.version, &user.id, now).await? else {
         drop(tx);
         settings::cache(state).invalidate(org_id);
@@ -165,7 +165,17 @@ async fn patch(
         at_ms: now,
     };
     audit::record(&mut tx, &event).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     settings::cache(state).invalidate(org_id);
-    Ok(Json(view(def, current(state, org_id, key).await?)))
+    // Built from what was just stored, without another read: once the change is committed,
+    // nothing may fail as "busy, nothing changed". The value comes from the database now, since
+    // the environment and the file were ruled out above.
+    let stored = Effective {
+        value: body.value,
+        source: Source::Database,
+        version,
+        updated_by: Some(user.id.clone()),
+        updated_at: Some(now),
+    };
+    Ok(Json(view(def, stored)))
 }

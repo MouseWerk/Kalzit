@@ -608,7 +608,10 @@ pub async fn apply_patch(
 }
 
 /// The names of the secret fields that have a value, for `{"set": true}` in the API.
-pub async fn set_fields(db: &sqlx::AnyPool, datasource_id: &str) -> Result<Vec<String>, sqlx::Error> {
+pub async fn set_fields<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    datasource_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> =
         sqlx::query_as("SELECT field FROM datasource_secrets WHERE datasource_id = $1 ORDER BY field")
             .bind(datasource_id)
@@ -741,7 +744,7 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
 /// Re-encrypts every blob not yet under `new` in one transaction; nothing changes when any blob
 /// cannot be decrypted.
 async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -> Result<usize> {
-    let mut tx = db.begin().await?;
+    let mut tx = crate::db::begin(db).await?;
     let rows: Vec<(String, String, String, String, String)> =
         sqlx::query_as("SELECT datasource_id, field, key_id, nonce, ciphertext FROM datasource_secrets")
             .fetch_all(&mut *tx)
@@ -771,7 +774,7 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         .await?;
         count += 1;
     }
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(count)
 }
 

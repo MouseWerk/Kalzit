@@ -742,6 +742,8 @@ pub fn ensure_owner_remains(current_role: &str, new_role: Option<&str>, other_ow
 // Lock order. Transactions that lock more than one kind of row take them in this order, so two of
 // them can never wait on each other in a cycle (a deadlock on PostgreSQL):
 //   1. user rows of server admins (`lock_server_admins`, administration only);
+//   1b. the user row of the account being disabled (`lock_orgs_left_without_owner`) or made the
+//       owner of a new organization (`routes/admin_orgs.rs`);
 //   2. organization rows (`lock_org`), several of them in id order;
 //   3. custom role rows (`lock_role`);
 //   4. owner rows of org_members (`lock_owners`, `lock_orgs_left_without_owner`).
@@ -797,6 +799,10 @@ pub async fn lock_owners(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: 
 /// above `lock_org`), then those organizations' owner rows, and counts the organizations that would
 /// be left without an enabled owner.
 pub async fn lock_orgs_left_without_owner(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<i64> {
+    // The user's own row first (user rows come before organization rows in the lock order). It
+    // also makes this safe as the first statement of a transaction: on SQLite a transaction that
+    // reads first can fail at its first write when another commit made its snapshot stale.
+    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
     let owned: Vec<(String,)> =
         sqlx::query_as("SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'owner' ORDER BY org_id")
             .bind(user_id)
@@ -1276,7 +1282,7 @@ mod resource_tests {
         exec(&db, "INSERT INTO users (id, email, name, disabled, created_at) VALUES ('d', 'd@example.de', 'D', 1, 0)")
             .await;
         exec(&db, "INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ('o', 'd', 'owner', 0)").await;
-        let mut tx = db.begin().await.unwrap();
+        let mut tx = crate::db::begin(&db).await.unwrap();
         lock_org(&mut tx, "o").await.unwrap();
         // A disabled owner does not count: u is the only enabled one.
         assert_eq!(lock_owners(&mut tx, "o", "u").await.unwrap(), 0);
@@ -1286,6 +1292,6 @@ mod resource_tests {
         assert_eq!(lock_server_admins(&mut tx).await.unwrap(), 0);
         assert_eq!(lock_role(&mut tx, "o", "viewer").await.unwrap().unwrap().name, "viewer");
         assert!(lock_role(&mut tx, "o", "gone").await.unwrap().is_none());
-        tx.commit().await.unwrap();
+        crate::db::commit(tx).await.unwrap();
     }
 }

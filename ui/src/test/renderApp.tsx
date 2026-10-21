@@ -26,10 +26,13 @@ async function preloadLazyPages(): Promise<string[]> {
 /** The ids of the lazy pages loaded before any test of a file runs. */
 export const PRELOADED_PAGES = await preloadLazyPages();
 
-/** Renders the whole app (router, guards, query cache) at `path`, without retries. */
-export function renderApp(path: string) {
+/**
+ * Renders the whole app (router, guards, query cache) at `path`, without retries unless a test
+ * is about them.
+ */
+export function renderApp(path: string, options: { retry?: boolean } = {}) {
   const history = createMemoryHistory({ initialEntries: [path] });
-  const app = createApp({ history, retry: false });
+  const app = createApp({ history, retry: options.retry ?? false });
   const user = userEvent.setup();
   const view = render(<App app={app} />);
   const location = () => app.router.state.location;

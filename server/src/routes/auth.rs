@@ -96,13 +96,22 @@ pub async fn login(
     let Some(row) = row.filter(|r| ok && r.disabled == 0) else {
         tracing::info!(client = %info.client_ip, "failed sign-in");
         // The id of an existing account is recorded, never the email that was typed.
-        crate::audit::record(&mut *state.db.acquire().await?, &audit("auth.sign_in_failed", known_id)).await?;
+        // A failed sign-in answers the same whatever happens to its audit entry: a busy database
+        // must not turn it into "try again", which would invite repeated password guesses past
+        // the point where the attempt was already counted.
+        let recorded = match state.db.acquire().await {
+            Ok(mut conn) => crate::audit::record(&mut conn, &audit("auth.sign_in_failed", known_id)).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = recorded {
+            tracing::warn!(client = %info.client_ip, "recording a failed sign-in in the audit log failed: {e}");
+        }
         return Err(invalid_credentials());
     };
     limiter.reset(&email_key);
     limiter.refund(&ip_key);
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     // Lock the user row and confirm it still holds the hash we verified and is still enabled. A
     // password change or a disable takes the same lock, so a sign-in that raced one either sees
     // the change and fails here, or commits first and has its session ended by the change.
@@ -126,11 +135,13 @@ pub async fn login(
     event.actor_user_id = Some(&row.id);
     event.resource_id = Some(&row.id);
     crate::audit::record(&mut tx, &event).await?;
-    tx.commit().await?;
+    // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
     let user = SessionUser { id: row.id, email: row.email, name: row.name, is_server_admin: row.is_server_admin };
+    let answer = me(&mut *tx, user).await?;
+    crate::db::commit(tx).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    Ok((headers, Json(me(&state.db, user).await?)))
+    Ok((headers, Json(answer)))
 }
 
 pub async fn logout(
