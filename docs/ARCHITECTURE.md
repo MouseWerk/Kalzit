@@ -31,7 +31,13 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   type is generated from it and every code has a translation (tested). Codes: `validation`, `unauthenticated`, `forbidden`,
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
   `rate_limited`, `cross_origin`, `invalid_credentials`, `setup_done`, `invalid_setup_token`,
-  `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `internal`.
+  `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `busy`, `internal`.
+  `busy` (503, with `Retry-After`) means the database could not give the request its lock in time
+  (SQLite `SQLITE_BUSY`; PostgreSQL serialization failure, lock timeout or deadlock, the last also
+  logged as a lock-order bug). Handlers read everything their reply needs inside the transaction,
+  before the commit, so `busy` only ever comes before anything was committed: nothing was changed
+  and the request may be sent again. An error after a commit, an exhausted connection pool and
+  `SQLITE_LOCKED` answer `internal`.
 - A resource the caller may not see answers `not_found`, so ids cannot be probed: other
   organizations, and restricted folders (and their dashboards) the caller has no grant for. `forbidden`
   is for what the caller can see but not do. `/api/admin` answers `forbidden` to signed-in
@@ -291,8 +297,9 @@ type QueryResult =
   `database.url`) are relative to the folder of that file, also when the file itself is named
   relatively (`KALZIT_CONFIG=conf/kalzit.toml`). A relative data directory from the environment
   is relative to the working directory, and the server logs a warning that it depends on it.
-- At start (`data_dir::prepare`, before the database opens) a missing directory is created
-  private from its first moment: on Linux with mode 0700, on Windows through `CreateDirectoryW`
+- At start, `data_dir::prepare` runs before `db::connect`, so the folder is checked before the
+  database opens. A missing directory is created private from its first moment: on Linux with
+  mode 0700, on Windows through `CreateDirectoryW`
   with a protected ACL, inherited by its contents, for SYSTEM, Administrators and the account
   Kalzit runs as (`OW`, the owner). When Kalzit creates a missing `%ProgramData%\Kalzit` on the
   way, that folder gets SYSTEM and Administrators full access and Users read and execute, with
@@ -343,15 +350,9 @@ type QueryResult =
   `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback
   key file for data source secrets when no other key source is configured (`secrets.key` on
   Linux, `secrets.key.dpapi` on Windows).
-- Backups: copy `kalzit.db`, `kalzit.db-wal` and `kalzit.db-shm` together while the server is
-  stopped, or use the SQLite backup API (`sqlite3 kalzit.db ".backup backup.db"`), which works
-  while the server is stopped or running. Copying only `kalzit.db` of a running server loses
-  what is still in the WAL file. Back up the key file too (when it is used); without it stored
-  data source secrets cannot be decrypted. A DPAPI key file only works on the same computer.
-  To restore, copy the files into the data directory, do not move them: a copy takes the
-  directory's private entries, a moved file keeps its old ones, and Kalzit refuses it. Restore
-  tools that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well,
-  and Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
+- The database file is also checked for a network drive (see "Storage (SQLite)"): a data
+  directory on a UNC path, a mapped network drive, NFS, CIFS/SMB or 9p is refused when the
+  database opens. Backups and restores are under "Backups".
 
 ### Running as a service
 
@@ -377,6 +378,50 @@ type QueryResult =
   account access to the data directory (`icacls ... /grant "NT SERVICE\Kalzit":(OI)(CI)F`) and
   making it or Administrators the owner.
 
+## Storage (SQLite)
+
+- SQLite runs on one host with its file on a local disk: a data directory on a network drive
+  (UNC path or mapped network drive on Windows, NFS, CIFS/SMB, 9p and similar on Linux) is refused
+  at start. Shared storage or several Kalzit servers on one database need PostgreSQL.
+- WAL mode (`kalzit.db` plus `kalzit.db-wal` and `kalzit.db-shm`), `synchronous = FULL`, a 15 s
+  busy timeout and `journal_size_limit` = 64 MiB. Readers never wait for writers. Every
+  transaction starts through `db::begin`: `BEGIN IMMEDIATE` on SQLite, so it holds the write lock
+  from the start and never fails on a stale read snapshot. Every commit goes through
+  `db::commit`, which marks the request as having saved something: later database errors of that
+  request answer `internal`, never `busy`. Clippy refuses sqlx's own `begin` and `commit`
+  elsewhere (`clippy.toml`); the data source drivers' read-only transactions on the users'
+  databases are the marked exceptions. A graceful stop (Ctrl+C, SIGTERM, and on Windows closing
+  the console or shutting down, with a 3 s grace instead of 10 s) closes the database, which
+  folds the WAL back into `kalzit.db`.
+- Reads never wait on writers: the one write a read request makes, the session's last-seen time,
+  runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
+  the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
+  tries again, since its touch is still due. An older touch never overwrites a newer one. On
+  SQLite the touches use a small pool of their own whose connections wait at most 1 s for the
+  write lock: SQLite keeps waiting even after a touch is aborted, and a stop, which aborts all
+  touches before it closes the database, would otherwise wait the full 15 s. The requests'
+  connections keep their 15 s. A failed touch is logged at debug level only.
+- Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
+  check lets the start go on when it cannot tell (no readable mount table, a path without drive
+  letter, an unknown drive type, systems other than Windows and Linux).
+
+## Backups
+
+One place for everything a backup needs:
+
+- What: `kalzit.db` with `kalzit.db-wal` and `kalzit.db-shm`, and the key file when no external key
+  source is used (`secrets.key` on Linux, `secrets.key.dpapi` on Windows). Without the key, stored
+  data source secrets cannot be decrypted; a DPAPI key file only works on the same computer.
+- While the server runs: `VACUUM INTO 'backup.db'` (one consistent file) or the sqlite3 shell's
+  `.backup backup.db` (the SQLite backup API). Never copy only `kalzit.db` of a running server: what
+  is still in the WAL file is lost.
+- With the server stopped: copy `kalzit.db`, `kalzit.db-wal` and `kalzit.db-shm` together (after a
+  graceful stop the last two are usually gone).
+- Restore: copy the files into the data directory, do not move them. A copy takes the directory's
+  private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
+  that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
+  Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
+
 ## Migrations
 
 Numbered and never edited after release (`engineering/data-and-apis.md`).
@@ -389,6 +434,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0004 | server settings, org settings | stream B |
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
+| 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
 
 ## M1 work streams
 

@@ -197,9 +197,11 @@ struct DatasourceView {
     deleted_at: Option<i64>,
 }
 
-async fn view(state: &AppState, ds: Datasource) -> ApiResult<DatasourceView> {
+/// The answer for one data source, read through `conn`: after a change, the change's own
+/// transaction before its commit, so a failing read can still be answered as "nothing changed".
+async fn view_in(conn: &mut sqlx::AnyConnection, ds: Datasource) -> ApiResult<DatasourceView> {
     let secrets =
-        secrets::set_fields(&state.db, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
+        secrets::set_fields(&mut *conn, &ds.id).await?.into_iter().map(|f| (f, json!({ "set": true }))).collect();
     Ok(DatasourceView {
         id: ds.id,
         name: ds.name,
@@ -216,6 +218,11 @@ async fn view(state: &AppState, ds: Datasource) -> ApiResult<DatasourceView> {
 async fn precheck_targets(state: &AppState, kind: &Kind, settings: &Value) -> ApiResult<()> {
     let policy = state.datasources.policy(state).await?;
     datasources::precheck_targets(&policy, kind, settings).map_err(|(b, field)| blocked(b.0, field))
+}
+
+/// `view_in` on a pooled connection, where no change is involved.
+async fn view(state: &AppState, ds: Datasource) -> ApiResult<DatasourceView> {
+    view_in(&mut *state.db.acquire().await?, ds).await
 }
 
 fn conflict_on_name(e: sqlx::Error) -> ApiError {
@@ -298,7 +305,7 @@ async fn create(
     }
     let id = new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $6)",
@@ -319,9 +326,10 @@ async fn create(
         "secrets": secrets.keys().collect::<Vec<_>>(),
     });
     record(&mut tx, &event(&ctx, &info, "datasource.created", &id, summary, now)).await?;
-    tx.commit().await?;
-    let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
-    Ok((StatusCode::CREATED, Json(view(&state, ds).await?)))
+    let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
+    let answer = view_in(&mut tx, ds).await?;
+    crate::db::commit(tx).await?;
+    Ok((StatusCode::CREATED, Json(answer)))
 }
 
 /// A data source the caller may act on with `permission`, after the org-level rule.
@@ -431,7 +439,7 @@ async fn update(
     }
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE datasources SET name = $1, settings = $2, updated_at = $3 WHERE id = $4 AND org_id = $5")
         .bind(&name)
         .bind(settings.to_string())
@@ -443,10 +451,11 @@ async fn update(
         .map_err(conflict_on_name)?;
     secrets::apply_patch(&mut tx, state.datasources.keyring(), &ds.id, &body.secrets).await?;
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
-    tx.commit().await?;
+    let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
+    let answer = view_in(&mut tx, saved).await?;
+    crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
-    let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &ds.id).await?;
-    Ok(Json(view(&state, ds).await?))
+    Ok(Json(answer))
 }
 
 async fn delete(
@@ -457,7 +466,7 @@ async fn delete(
 ) -> ApiResult<StatusCode> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
     let now = state.clock.now_ms().max(ds.updated_at + 1);
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE datasources SET deleted_at = $1, updated_at = $1 WHERE id = $2 AND org_id = $3")
         .bind(now)
         .bind(&ds.id)
@@ -465,7 +474,7 @@ async fn delete(
         .execute(&mut *tx)
         .await?;
     record(&mut tx, &event(&ctx, &info, "datasource.deleted", &ds.id, json!({}), now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -481,7 +490,7 @@ async fn restore(
         return Err(name_conflict());
     }
     let now = state.clock.now_ms().max(ds.updated_at + 1);
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("UPDATE datasources SET deleted_at = NULL, updated_at = $1 WHERE id = $2 AND org_id = $3")
         .bind(now)
         .bind(&ds.id)
@@ -490,9 +499,10 @@ async fn restore(
         .await
         .map_err(conflict_on_name)?;
     record(&mut tx, &event(&ctx, &info, "datasource.restored", &ds.id, json!({}), now)).await?;
-    tx.commit().await?;
-    let ds = datasources::resolve_in_org(&state.db, &ctx.org_id, &ds.id).await?;
-    Ok(Json(view(&state, ds).await?))
+    let restored = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
+    let answer = view_in(&mut tx, restored).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(answer))
 }
 
 async fn health(

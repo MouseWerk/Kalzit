@@ -166,7 +166,7 @@ async fn create(
     let resource = Resource::new(resource_type, &req.resource_id);
     let held = managed_resource(&state, &ctx, resource).await?;
 
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     // Purging takes the same lock, so this holds for the rest of the transaction: no grant is left
     // behind on a resource purged between the check above and here.
@@ -250,7 +250,7 @@ async fn create(
         .bind(&id)
         .fetch_one(&mut *tx)
         .await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((status, Json(grant)))
 }
 
@@ -281,7 +281,7 @@ async fn delete(
         let held = managed_resource(&state, &ctx, Resource::new(resource_type, &resource_id)).await?;
         ensure_holds(&held, &level_permissions(resource_type, &level).unwrap_or_default())?;
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = crate::db::begin(&state.db).await?;
         lock_org(&mut tx, &ctx.org_id).await?;
         let done = sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND id = $2 AND level = $3")
             .bind(&ctx.org_id)
@@ -302,7 +302,7 @@ async fn delete(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "grantId": grant_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "grant.deleted", (resource_type.as_str(), &resource_id), summary).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

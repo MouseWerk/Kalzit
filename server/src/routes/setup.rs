@@ -190,10 +190,22 @@ pub async fn complete(
 
     let org_id = new_id();
     let user_id = new_id();
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
+    // The one row of `setup_lock` (fixed key) is written first: of two servers on one database
+    // doing setup at once, the second waits for the first and then fails on the key, on
+    // PostgreSQL as on SQLite. An early return rolls everything back.
+    let claimed = sqlx::query("INSERT INTO setup_lock (id, done_at) VALUES (1, $1)").bind(now).execute(&mut *tx).await;
+    match claimed {
+        Ok(_) => {}
+        Err(e) if super::support::is_unique_violation(&e) => {
+            // Another server on the same database finished setup first; this one is done too.
+            close_gate(&mut gate);
+            return Err(setup_done());
+        }
+        Err(e) => return Err(e.into()),
+    }
     let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(&mut *tx).await?;
     if users > 0 {
-        // Another server on the same database finished setup first; this one is done too.
         close_gate(&mut gate);
         return Err(setup_done());
     }
@@ -231,17 +243,20 @@ pub async fn complete(
         at_ms: now,
     };
     crate::audit::record(&mut tx, &event).await?;
-    tx.commit().await?;
+    // The session and the answer are part of the transaction: once it is committed, nothing may
+    // fail as "busy, nothing changed".
+    let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
+    let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
+    let answer = me(&mut *tx, user).await?;
+    crate::db::commit(tx).await?;
 
     close_gate(&mut gate);
     drop(gate);
     tracing::info!(user = %user_id, org = %org_id, "setup complete");
 
-    let token = session::create(&state.db, &state.config.sessions, now, &user_id).await?;
-    let user = SessionUser { id: user_id, email, name, is_server_admin: 1 };
     let mut headers = HeaderMap::new();
     headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
-    Ok((headers, Json(me(&state.db, user).await?)))
+    Ok((headers, Json(answer)))
 }
 
 #[cfg(test)]

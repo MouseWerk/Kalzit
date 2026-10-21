@@ -17,7 +17,7 @@ use crate::error::ApiError;
 use crate::routes::setup::SetupGate;
 use crate::routes::{self, health};
 use crate::secrets::Keyring;
-use crate::{net, web};
+use crate::{db, net, web};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,6 +28,8 @@ pub struct AppState {
     pub setup: Arc<SetupGate>,
     pub secrets: Arc<Keyring>,
     pub datasources: Arc<DataSources>,
+    /// Session last-seen updates in flight (`auth::session::Touches`).
+    pub touches: Arc<crate::auth::session::Touches>,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
+        let touches = Arc::new(crate::auth::session::Touches::new(&db, &config.database_url()));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -46,6 +49,7 @@ impl AppState {
             setup: Arc::new(setup),
             secrets,
             datasources,
+            touches,
         })
     }
 }
@@ -61,6 +65,8 @@ pub fn router(state: AppState) -> Router {
         .route("/readyz", get(health::readyz))
         .nest("/api", api)
         .fallback(web::static_files)
+        // Each request gets its own "committed" flag, so errors after a commit are not "busy".
+        .layer(axum::middleware::from_fn(db::scope_requests))
         .layer(from_fn_with_state(state.clone(), net::origin_check))
         .layer(from_fn_with_state(state.clone(), net::security_headers))
         .layer(from_fn_with_state(state.clone(), net::request_info))

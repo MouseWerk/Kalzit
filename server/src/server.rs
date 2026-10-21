@@ -25,6 +25,10 @@ use crate::{db, tls};
 
 /// Time in-flight requests get to finish after a stop signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+/// After a console close or shutdown event Windows ends the process within about five seconds;
+/// open requests get less, so the database is closed before that.
+#[cfg(windows)]
+const WINDOWS_CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 /// A started server: the bound addresses (useful with port 0) and the listener tasks.
 pub struct Running {
@@ -32,6 +36,8 @@ pub struct Running {
     pub https_addr: Option<SocketAddr>,
     handles: Vec<Handle<SocketAddr>>,
     listeners: JoinSet<Result<()>>,
+    db: sqlx::AnyPool,
+    touches: Arc<crate::auth::session::Touches>,
 }
 
 impl Running {
@@ -42,12 +48,20 @@ impl Running {
         }
     }
 
-    /// Waits until every listener has stopped; the first listener error ends the wait.
+    /// Waits until every listener has stopped, then closes the database; the first listener
+    /// error ends the wait. Closing lets SQLite checkpoint its WAL into the database file, so a
+    /// copy of `kalzit.db` taken while the server is stopped is complete on its own.
     pub async fn wait(mut self) -> Result<()> {
+        let mut outcome = Ok(());
         while let Some(result) = self.listeners.join_next().await {
-            result.context("listener task")??;
+            if let Err(e) = result.context("listener task").and_then(|r| r) {
+                outcome = Err(e);
+                break;
+            }
         }
-        Ok(())
+        self.touches.abort_all().await;
+        self.db.close().await;
+        outcome
     }
 }
 
@@ -62,10 +76,10 @@ pub async fn run(config: Config) -> Result<()> {
     let running = start(config, setup_code).await?;
     let handles = running.handles.clone();
     tokio::spawn(async move {
-        wait_for_stop_signal().await;
+        let grace = wait_for_stop_signal().await;
         tracing::info!("stop signal received, finishing open requests");
         for handle in handles {
-            handle.graceful_shutdown(Some(SHUTDOWN_GRACE));
+            handle.graceful_shutdown(Some(grace));
         }
     });
     running.wait().await?;
@@ -93,7 +107,14 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
     let app = router(state.clone());
-    let mut running = Running { http_addr: None, https_addr: None, handles: Vec::new(), listeners: JoinSet::new() };
+    let mut running = Running {
+        http_addr: None,
+        https_addr: None,
+        handles: Vec::new(),
+        listeners: JoinSet::new(),
+        db: state.db.clone(),
+        touches: state.touches.clone(),
+    };
 
     if let Some(addr) = config.https_addr() {
         let rustls = RustlsConfig::from_config(tls::server_config(&config.tls)?);
@@ -185,7 +206,8 @@ fn redirect_to_https(req: &Request, https_port: u16, public_url: Option<&str>) -
     }
 }
 
-async fn wait_for_stop_signal() {
+/// Waits for a request to stop and answers how long open requests get to finish.
+async fn wait_for_stop_signal() -> Duration {
     let ctrl_c = async {
         if let Err(e) = tokio::signal::ctrl_c().await {
             tracing::warn!("cannot listen for Ctrl+C: {e}");
@@ -203,11 +225,36 @@ async fn wait_for_stop_signal() {
                 std::future::pending::<()>().await;
             }
         }
+        SHUTDOWN_GRACE
     };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    // Closing the console window and shutting Windows down also stop the server gracefully, so the
+    // database is closed and its WAL checkpointed. Windows ends the process a few seconds after
+    // these events, so open requests get a short grace and the database is closed in time. Not
+    // signing off: behind a service wrapper, any user signing off would stop the server. Running
+    // as a Windows service needs a service control handler instead; that comes with the service
+    // installer.
+    #[cfg(windows)]
+    let terminate = async {
+        use tokio::signal::windows::{ctrl_close, ctrl_shutdown};
+        match (ctrl_close(), ctrl_shutdown()) {
+            (Ok(mut close), Ok(mut shutdown)) => {
+                tokio::select! {
+                    _ = close.recv() => {}
+                    _ = shutdown.recv() => {}
+                }
+            }
+            (close, shutdown) => {
+                let failed = [close.err(), shutdown.err()].into_iter().flatten().next();
+                tracing::warn!("cannot listen for console close and shutdown: {failed:?}");
+                std::future::pending::<()>().await;
+            }
+        }
+        WINDOWS_CLOSE_GRACE
+    };
+    #[cfg(not(any(unix, windows)))]
+    let terminate = std::future::pending::<Duration>();
     tokio::select! {
-        () = ctrl_c => {}
-        () = terminate => {}
+        () = ctrl_c => SHUTDOWN_GRACE,
+        grace = terminate => grace,
     }
 }

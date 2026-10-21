@@ -236,6 +236,8 @@ impl DataSourcePlugin for MsSql {
         let prepared = sql::prepare_query(self, conn, &req, Engine::MsSql).await?;
         let pool = pool(conn).await?;
         let mut lease = lease(conn, &pool).await?;
+        // A transaction on the user's SQL Server, through tiberius and raw SQL: not one of Kalzit's
+        // own (db::begin), so clippy's rule on sqlx transactions does not apply here.
         simple(lease.client(), "BEGIN TRANSACTION").await?;
         let mut q = Query::new(prepared.sql.clone());
         for bind in prepared.binds {

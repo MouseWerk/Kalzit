@@ -84,13 +84,15 @@ async fn create(
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
     let id = super::new_id();
     let now = state.clock.now_ms();
-    let mut tx = state.db.begin().await?;
-    let owner: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE id = $1 AND disabled = 0")
+    let mut tx = crate::db::begin(&state.db).await?;
+    // Locks the owner's row, which also makes the transaction write first (docs/ARCHITECTURE.md,
+    // "write first"): a disable of that account waits for this to finish.
+    let owner = sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1 AND disabled = 0")
         .bind(&req.owner_user_id)
-        .fetch_optional(&mut *tx)
+        .execute(&mut *tx)
         .await?;
     // A disabled account cannot sign in, so it could not use the organization it owns.
-    if owner.is_none() {
+    if owner.rows_affected() == 0 {
         return Err(ApiError::validation("no such account, or it is disabled").with_field("ownerUserId"));
     }
     sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, $2, $3)")
@@ -110,7 +112,7 @@ async fn create(
     let summary = json!({ "orgId": id, "ownerUserId": req.owner_user_id });
     audit(&mut tx, &actor, Some(&id), "org.created", ("org", &id), summary).await?;
     let org = load(&mut *tx, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(org)))
 }
 
@@ -128,7 +130,7 @@ async fn rename(
     JsonBody(req): JsonBody<RenameRequest>,
 ) -> ApiResult<Json<AdminOrg>> {
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = crate::db::begin(&state.db).await?;
     let done =
         sqlx::query("UPDATE orgs SET name = $1 WHERE id = $2").bind(&name).bind(&org_id).execute(&mut *tx).await?;
     if done.rows_affected() == 0 {
@@ -138,6 +140,6 @@ async fn rename(
     let summary = json!({ "orgId": org_id, "fields": ["name"] });
     audit(&mut tx, &actor, Some(&org_id), "org.renamed", ("org", &org_id), summary).await?;
     let org = load(&mut *tx, &org_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(org))
 }

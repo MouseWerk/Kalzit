@@ -196,6 +196,7 @@ impl DataSourcePlugin for Postgres {
         let check = async {
             let pool = pool(conn).await?;
             let mut c = pool.acquire().await.map_err(failed)?;
+            #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
             let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
             let (version, superuser): (String, bool) = sqlx::query_as(
                 "SELECT current_setting('server_version'), COALESCE((SELECT rolsuper FROM pg_roles \
@@ -220,6 +221,7 @@ impl DataSourcePlugin for Postgres {
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let pool = pool(conn).await?;
         let mut c = pool.acquire().await.map_err(failed)?;
+        #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
         let rows: Vec<(String, String, String, String)> = sqlx::query_as(
             "SELECT CAST(table_schema AS TEXT), CAST(table_name AS TEXT), CAST(column_name AS TEXT), \
@@ -239,6 +241,7 @@ impl DataSourcePlugin for Postgres {
         let prepared = sql::prepare_query(self, conn, &req, Engine::Postgres).await?;
         let pool = pool(conn).await?;
         let mut c = pool.acquire().await.map_err(failed)?;
+        #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
         // The server stops the statement itself, also when this request is dropped mid-query.
         let timeout_ms = req.limits.timeout.as_millis().max(1);

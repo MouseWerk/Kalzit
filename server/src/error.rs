@@ -27,6 +27,7 @@ pub const ERROR_CODES: &[&str] = &[
     "datasource_target_blocked",
     "query_timeout",
     "query_rejected",
+    "busy",
     "internal",
 ];
 
@@ -86,7 +87,68 @@ impl ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        Self::internal("database", e)
+        // Once this request committed a change, "busy, nothing changed" would be untrue.
+        if crate::db::committed() {
+            return Self::internal("database, after a commit", e);
+        }
+        match contention(&e) {
+            Some(Contention::Busy) => {
+                tracing::warn!("database busy, answering 503: {e}");
+                Self::busy()
+            }
+            Some(Contention::Deadlock) => {
+                // The client may retry, but a deadlock means two transactions took their locks in
+                // different orders: a bug in the lock order (authz.rs).
+                tracing::error!("database deadlock, answering 503; check the lock order: {e}");
+                Self::busy()
+            }
+            // A pool without a free connection is an outage or leaked connections, and
+            // SQLITE_LOCKED a conflict inside one connection: faults, not contention.
+            None => Self::internal("database", e),
+        }
+    }
+}
+
+impl ApiError {
+    /// The database could not give this request its lock in time (other writers, a backup). It
+    /// is only answered where nothing was committed yet, so the client may simply send the request
+    /// again (`Retry-After`).
+    pub fn busy() -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "busy", "the database is busy; try again in a moment")
+    }
+}
+
+enum Contention {
+    Busy,
+    Deadlock,
+}
+
+/// Lock contention, as opposed to a fault: SQLite's `SQLITE_BUSY` (with its extended codes), and
+/// PostgreSQL's serialization failure, lock timeout and deadlock.
+fn contention(e: &sqlx::Error) -> Option<Contention> {
+    let sqlx::Error::Database(d) = e else { return None };
+    if d.try_downcast_ref::<sqlx::sqlite::SqliteError>().is_some() {
+        return sqlite_contention(d.code().as_deref());
+    }
+    if d.try_downcast_ref::<sqlx::postgres::PgDatabaseError>().is_some() {
+        return postgres_contention(d.code().as_deref());
+    }
+    None
+}
+
+/// SQLite's extended result codes keep the primary code in the low byte; only SQLITE_BUSY (5:
+/// another connection holds the lock) is contention. SQLITE_LOCKED (6) is a conflict inside one
+/// connection, a bug.
+fn sqlite_contention(code: Option<&str>) -> Option<Contention> {
+    let primary = code.and_then(|c| c.parse::<i32>().ok()).map(|c| c & 0xff);
+    (primary == Some(5)).then_some(Contention::Busy)
+}
+
+fn postgres_contention(code: Option<&str>) -> Option<Contention> {
+    match code {
+        Some("40001" | "55P03") => Some(Contention::Busy),
+        Some("40P01") => Some(Contention::Deadlock),
+        _ => None,
     }
 }
 
@@ -100,7 +162,12 @@ impl IntoResponse for ApiError {
         if let Some(current) = self.current {
             body["current"] = current;
         }
-        (self.status, Json(body)).into_response()
+        let mut res = (self.status, Json(body)).into_response();
+        if self.code == "busy" {
+            // Locks are held for milliseconds; a second is plenty before trying again.
+            res.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("1"));
+        }
+        res
     }
 }
 
@@ -117,6 +184,43 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"]["code"], "version_conflict");
         assert_eq!(body["current"]["version"], 4);
+    }
+
+    #[tokio::test]
+    async fn contention_is_busy_with_a_retry_hint_and_faults_stay_internal() {
+        let busy = ApiError::busy();
+        assert_eq!((busy.status, busy.code), (StatusCode::SERVICE_UNAVAILABLE, "busy"));
+        let res = busy.into_response();
+        assert_eq!(res.headers().get(axum::http::header::RETRY_AFTER).unwrap(), "1");
+        // An exhausted pool is an outage or a leak, not contention.
+        assert_eq!(ApiError::from(sqlx::Error::PoolTimedOut).code, "internal");
+        assert_eq!(ApiError::from(sqlx::Error::RowNotFound).code, "internal");
+    }
+
+    /// SQLITE_BUSY from a real lock is busy; SQLITE_LOCKED (a conflict within one connection) is
+    /// a fault.
+    #[tokio::test]
+    async fn only_sqlite_busy_is_contention() {
+        use sqlx::Connection;
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().unwrap();
+        let url = crate::config::sqlite_url(&dir.path().join("k.db"));
+        let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+        sqlx::query("CREATE TABLE t (x BIGINT)").execute(&mut holder).await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+        let mut other = sqlx::AnyConnection::connect(&url).await.unwrap();
+        sqlx::query("PRAGMA busy_timeout = 10").execute(&mut other).await.unwrap();
+        let busy = sqlx::query("INSERT INTO t VALUES (1)").execute(&mut other).await.unwrap_err();
+        assert_eq!(ApiError::from(busy).code, "busy");
+
+        // Extended codes: BUSY_RECOVERY (261) and BUSY_SNAPSHOT (517) are busy; LOCKED (6) and
+        // LOCKED_SHAREDCACHE (262) are not.
+        for (code, busy) in [("5", true), ("261", true), ("517", true), ("6", false), ("262", false), ("1", false)] {
+            assert_eq!(sqlite_contention(Some(code)).is_some(), busy, "{code}");
+        }
+        assert!(matches!(postgres_contention(Some("40P01")), Some(Contention::Deadlock)));
+        assert!(matches!(postgres_contention(Some("40001")), Some(Contention::Busy)));
+        assert!(postgres_contention(Some("23505")).is_none());
     }
 
     #[test]

@@ -42,6 +42,8 @@ export function LoginPage() {
 
   const signIn = useMutation({
     mutationFn: login,
+    // A sign-in is never repeated on its own: each attempt counts against the sign-in limit.
+    retry: false,
     onSuccess: async (me) => {
       queryClient.setQueryData(meQuery.queryKey, me);
       await router.navigate({ href: search.redirect ?? "/", replace: true });
