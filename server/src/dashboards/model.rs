@@ -22,6 +22,10 @@ const MAX_GRID_Y: u32 = 10_000;
 const MAX_PANEL_HEIGHT: u32 = 200;
 const MAX_PANELS: usize = 500;
 const MAX_TARGETS: usize = 50;
+const MAX_TRANSFORMATIONS: usize = 50;
+/// The stored model, serialized. Every save keeps a copy in the history, so this bounds the
+/// history's growth too; real dashboards stay far below it.
+pub const MAX_MODEL_BYTES: usize = 1024 * 1024;
 const MAX_VARIABLES: usize = 100;
 const MAX_ID_CHARS: usize = 64;
 pub const MAX_TITLE_CHARS: usize = 200;
@@ -134,6 +138,11 @@ pub fn parse(raw: Value) -> Result<DashboardModel, String> {
     let current = migrate(raw)?;
     let model: DashboardModel = serde_json::from_value(current).map_err(|e| format!("model: {e}"))?;
     validate(&model)?;
+    // Measured as stored (defaults filled in), so what is kept is what is limited.
+    let bytes = serde_json::to_vec(&model).map_err(|e| format!("model: {e}"))?.len();
+    if bytes > MAX_MODEL_BYTES {
+        return Err(format!("model takes {bytes} bytes; at most {MAX_MODEL_BYTES} are allowed"));
+    }
     Ok(model)
 }
 
@@ -243,6 +252,9 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
         check_grid(&p.grid).map_err(|e| format!("{at}.grid: {e}"))?;
+        if p.transformations.len() > MAX_TRANSFORMATIONS {
+            return Err(format!("{at}.transformations takes at most {MAX_TRANSFORMATIONS} entries"));
+        }
         if p.targets.len() > MAX_TARGETS {
             return Err(format!("{at}.targets takes at most {MAX_TARGETS} entries"));
         }
@@ -263,7 +275,8 @@ fn check_grid(g: &Grid) -> Result<(), String> {
     if g.w == 0 || g.w > GRID_COLUMNS {
         return Err(format!("w must be 1 to {GRID_COLUMNS}"));
     }
-    if g.x + g.w > GRID_COLUMNS {
+    // Checked: x and w come from the client and may be anything up to u32::MAX.
+    if g.x.checked_add(g.w).is_none_or(|end| end > GRID_COLUMNS) {
         return Err(format!("x + w must not exceed {GRID_COLUMNS} columns"));
     }
     if g.h == 0 || g.h > MAX_PANEL_HEIGHT {
@@ -443,6 +456,34 @@ mod tests {
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");
         }
+    }
+
+    #[test]
+    fn huge_grid_numbers_are_refused_without_overflow() {
+        for (x, w) in [(u32::MAX, 1), (1, u32::MAX), (u32::MAX, u32::MAX), (u32::MAX, 0)] {
+            let mut model = with(sample(), &["panels", "0", "grid", "x"], json!(x));
+            model = with(model, &["panels", "0", "grid", "w"], json!(w));
+            let err = parse(model).unwrap_err();
+            assert!(err.contains("panels[0].grid"), "{x} {w}: {err}");
+        }
+    }
+
+    #[test]
+    fn sizes_and_counts_are_bounded() {
+        let big = with(sample(), &["panels", "0", "options"], json!({ "text": "x".repeat(MAX_MODEL_BYTES) }));
+        assert!(parse(big).unwrap_err().contains("at most 1048576"));
+        let many = with(sample(), &["panels", "0", "transformations"], json!(vec![json!({}); MAX_TRANSFORMATIONS + 1]));
+        assert!(parse(many).unwrap_err().contains("transformations takes at most"));
+        let targets: Vec<Value> =
+            (0..=MAX_TARGETS).map(|i| json!({ "refId": format!("R{i}"), "datasourceId": "ds", "query": {} })).collect();
+        assert!(parse(with(sample(), &["panels", "0", "targets"], json!(targets))).unwrap_err().contains("targets"));
+        let variables: Vec<Value> =
+            (0..=MAX_VARIABLES).map(|i| json!({ "name": format!("v{i}"), "type": "constant" })).collect();
+        assert!(parse(with(sample(), &["variables"], json!(variables))).unwrap_err().contains("variables"));
+        let panels: Vec<Value> = (0..=MAX_PANELS)
+            .map(|i| json!({ "id": format!("p{i}"), "type": "text", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 } }))
+            .collect();
+        assert!(parse(with(sample(), &["panels"], json!(panels))).unwrap_err().contains("panels"));
     }
 
     #[test]
