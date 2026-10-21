@@ -235,12 +235,9 @@ async fn postgres_refuses_kalzits_own_database() {
 #[tokio::test]
 async fn postgres_errors_never_show_the_password() {
     let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
-    let (host, port, user, _, database) = parts(&url);
+    let (host, port, user, password, database) = parts(&url);
+    let secret = password.expect("the CI database uses a password, so scrubbing is exercised");
     let t = T::new(None).await;
-    // With trust authentication (CI) the password is ignored and the login works; otherwise it
-    // fails. Either way the password must not come back, also not inside a database error that
-    // repeats the query text.
-    let secret = "pw_Geheim_4711";
     let id = t
         .create(
             "postgres",
@@ -248,10 +245,21 @@ async fn postgres_errors_never_show_the_password() {
             json!({ "password": secret }),
         )
         .await;
-    let r = t.query(&id, json!({ "sql": format!("SELECT {secret}") })).await;
-    assert!(r["error"].is_object(), "{r}");
-    assert!(!r.to_string().contains(secret), "{r}");
-    assert!(!t.health(&id).await.to_string().contains(secret));
+    // The login works; then the database repeats a literal holding the password, case kept.
+    assert_eq!(t.health(&id).await["ok"], true);
+    let literal = format!("x{secret}x");
+    let r = t.query(&id, json!({ "sql": format!("SELECT CAST('{literal}' AS integer)") })).await;
+    assert_eq!(r["error"]["code"], "datasource_error", "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("integer"), "{r}");
+    assert!(!r.to_string().contains(&secret), "{r}");
+    // A wrong password in an authentication error does not come back either.
+    let wrong = format!("{secret}-falsch");
+    let bad =
+        t.send(Method::PATCH, &format!("/datasources/{id}"), Some(json!({ "secrets": { "password": wrong } }))).await.1;
+    assert!(!bad.to_string().contains(&wrong));
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], false, "{h}");
+    assert!(!h.to_string().contains(&wrong), "{h}");
 }
 
 #[tokio::test]
@@ -337,9 +345,19 @@ async fn mssql_reads_and_rolls_back() {
         .await;
     assert_eq!(types(&r), ["int64", "number", "string", "time", "bool"], "{r}");
     assert_eq!(r["result"]["frame"]["fields"][2]["values"][0], "Österreich");
-    for sql in ["SELECT * INTO neu FROM sys.objects", "SELECT * FROM OPENROWSET('SQLNCLI', 'x', 'SELECT 1') AS r"] {
+    for sql in [
+        "SELECT * INTO neu FROM sys.objects",
+        "SELECT * FROM OPENROWSET('SQLNCLI', 'x', 'SELECT 1') AS r",
+        "SELECT name FROM sys.objects WITH (TABLOCKX)",
+        "SELECT name FROM sys.objects WITH (UPDLOCK, HOLDLOCK)",
+        "SELECT o.name FROM sys.objects o JOIN sys.columns c WITH (XLOCK) ON c.object_id = o.object_id",
+        "SELECT name FROM sys.objects OPTION (TABLE HINT (sys.objects, TABLOCKX))",
+        "SELECT NEXT VALUE FOR dbo.s",
+    ] {
         assert_eq!(t.query(&id, json!({ "sql": sql })).await["error"]["code"], "query_rejected", "{sql}");
     }
+    let nolock = t.query(&id, json!({ "sql": "SELECT TOP 1 name FROM sys.objects WITH (NOLOCK)" })).await;
+    assert!(nolock["result"].is_object(), "{nolock}");
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "tables");
 
@@ -349,7 +367,12 @@ async fn mssql_reads_and_rolls_back() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let slow = t
-        .query(&id, json!({ "sql": "SELECT COUNT_BIG(*) AS n FROM sys.all_objects a CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c" }))
+        .query(
+            &id,
+            json!({ "sql": "SELECT COUNT_BIG(*) AS n FROM sys.all_objects a CROSS JOIN sys.all_objects b \
+                       CROSS JOIN sys.all_objects c CROSS JOIN sys.all_objects d \
+                       WHERE CHECKSUM(a.name, b.name, c.name, d.name) = 42" }),
+        )
         .await;
     assert_eq!(slow["error"]["code"], "query_timeout", "{slow}");
     let after = t.query(&id, json!({ "sql": "SELECT 1 AS eins" })).await;

@@ -220,8 +220,12 @@ impl DataSourcePlugin for MySql {
         let mut tx = sqlx::Connection::begin_with(&mut *c, "START TRANSACTION READ ONLY").await.map_err(failed)?;
         let statement =
             (&mut *tx).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(failed)?;
-        let decoders: Vec<Decoder> =
+        // The types known when preparing; MariaDB reports parameters in the select list only
+        // with the result, so the first row's column types replace these.
+        let mut decoders: Vec<Decoder> =
             statement.columns().iter().map(|c| Decoder::for_type(c.type_info().name())).collect();
+        let mut type_names: Vec<String> =
+            statement.columns().iter().map(|c| c.type_info().name().to_string()).collect();
         let columns = statement
             .columns()
             .iter()
@@ -230,18 +234,7 @@ impl DataSourcePlugin for MySql {
             .collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
         frame.executed_query(prepared.sql.clone());
-        for (col, d) in statement.columns().iter().zip(&decoders) {
-            if matches!(d, Decoder::Unsupported) {
-                frame.notice(
-                    NoticeSeverity::Warning,
-                    format!(
-                        "{} has the type {}, which is not shown; convert it in the query",
-                        col.name(),
-                        col.type_info().name()
-                    ),
-                );
-            }
-        }
+        let names: Vec<String> = statement.columns().iter().map(|c| c.name().to_string()).collect();
         let mut query = statement.query();
         for bind in prepared.binds {
             query = match bind {
@@ -257,7 +250,16 @@ impl DataSourcePlugin for MySql {
         let mut binary_notice = false;
         {
             let mut rows = query.fetch(&mut *tx);
+            let mut first = true;
             while let Some(row) = rows.try_next().await.map_err(failed)? {
+                if first {
+                    first = false;
+                    decoders = row.columns().iter().map(|c| Decoder::for_type(c.type_info().name())).collect();
+                    type_names = row.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+                    for (column, d) in frame.columns_mut().iter_mut().zip(&decoders) {
+                        column.field_type = Some(d.field_type());
+                    }
+                }
                 let values = decoders
                     .iter()
                     .enumerate()
@@ -274,6 +276,14 @@ impl DataSourcePlugin for MySql {
         }
         if binary_notice {
             frame.notice(NoticeSeverity::Warning, "binary values that are not text are shown empty");
+        }
+        for ((name, type_name), d) in names.iter().zip(&type_names).zip(&decoders) {
+            if matches!(d, Decoder::Unsupported) {
+                frame.notice(
+                    NoticeSeverity::Warning,
+                    format!("{name} has the type {type_name}, which is not shown; convert it in the query"),
+                );
+            }
         }
         tx.rollback().await.map_err(failed)?;
         Ok(QueryResult::Frame { frame: frame.finish() })

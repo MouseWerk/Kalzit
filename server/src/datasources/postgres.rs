@@ -110,6 +110,14 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
         }
         let own = conn.own_database().postgres_identity().await?;
         let recheck = matches!(mode, PgSslMode::VerifyFull).then(|| (conn.policy_arc(), s.host.clone(), port));
+        // One connection outside the pool first: a pool whose connections are all refused only
+        // reports a timeout, which would hide why (Kalzit's own database).
+        if let Some(own) = &own {
+            let mut probe = sqlx::PgConnection::connect_with(&options).await.map_err(failed)?;
+            let checked = check_identity(&mut probe, own).await;
+            let _ = sqlx::Connection::close(probe).await;
+            checked.map_err(failed)?;
+        }
         PgPoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
@@ -123,15 +131,10 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
                         super::recheck_name(&policy, &host, port).await?;
                     }
                     // Every new connection is checked, not only the first: the pool reconnects.
-                    let Some(own) = own else { return Ok(()) };
-                    let identity: (String, String) = sqlx::query_as(IDENTITY_SQL)
-                        .fetch_one(&mut *c)
-                        .await
-                        .map_err(|e| sqlx::Error::Configuration(Box::new(IdentityUnknown(e.to_string()))))?;
-                    if identity == own {
-                        return Err(sqlx::Error::Configuration(Box::new(OwnDatabase)));
+                    match own {
+                        Some(own) => check_identity(c, &own).await,
+                        None => Ok(()),
                     }
-                    Ok(())
                 })
             })
             .connect_with(options)
@@ -139,6 +142,18 @@ async fn pool(conn: &Connection) -> Result<Arc<PgPool>, SourceError> {
             .map_err(failed)
     })
     .await
+}
+
+/// Refuses a connection to Kalzit's own database (`own` is its system identifier and name).
+async fn check_identity(c: &mut sqlx::PgConnection, own: &(String, String)) -> Result<(), sqlx::Error> {
+    let identity: (String, String) = sqlx::query_as(IDENTITY_SQL)
+        .fetch_one(&mut *c)
+        .await
+        .map_err(|e| sqlx::Error::Configuration(Box::new(IdentityUnknown(e.to_string()))))?;
+    if identity == *own {
+        return Err(sqlx::Error::Configuration(Box::new(OwnDatabase)));
+    }
+    Ok(())
 }
 
 fn failed(e: sqlx::Error) -> SourceError {
