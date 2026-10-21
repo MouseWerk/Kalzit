@@ -152,11 +152,19 @@ type QueryResult =
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
   (`PanelQueryRequest`, runs the panel's stored queries, needs `dashboards:read` on that
   dashboard). Because stored queries run with the viewer's rights, **saving a dashboard checks
-  `datasources:query` on every data source its panels and variables use** (stream B), so an editor
-  cannot reach a data source through a panel they could not query directly. Query-type dashboard
+  `datasources:query` on every data source its new or changed panel and variable queries use**,
+  so an editor cannot reach a data source through a panel they could not query directly. The
+  right is checked when a query is saved, not when it runs: an editor who later loses access
+  leaves working dashboards behind, and removing the query from the dashboard is how to stop it. Query-type dashboard
   variables run the same way through
-  `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` (stream C). Both answer `QueryResponse`: per `refId` either `{result}` or `{error}`. Queries run
-  in parallel with a per-user concurrency limit and are cancelled when the client goes away.
+  `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`
+  (`VariableOptionsRequest`, answers `VariableOptionsResponse`). The panel route answers
+  `QueryResponse`: per `refId` either `{result}` or `{error}`. Free queries, health and schema
+  are checked per data source (role or grant) on every request. Reading the dashboard is what
+  authorizes its stored queries: the caller needs no data source permission, but only data
+  sources the stored model references (and that exist in the organization) are run. Queries run
+  in parallel with per-user and server-wide concurrency limits and are cancelled when the client
+  goes away.
   `QueryItem.cursor`/`limit` page through a `DocumentSet` (M2).
 
 ## Data sources
@@ -220,6 +228,10 @@ type QueryResult =
     the log. Backups of the database need the key; without it secrets are unrecoverable and must
     be entered again.
   - `kalzit secrets rotate` re-encrypts every blob with a new key.
+  - Settings fields that decide where secrets are sent (host, port, database, user, TLS checks,
+    URL, path) are marked `target` in the kind's settings schema. A change to one requires every
+    stored secret to be sent again (or removed) in the same change, so a secret is never
+    redirected to a new target.
   - API patch semantics for a secret field: omitted = keep, `null` = remove, string = set. The API
     never returns a secret, only `{"set": true}`.
   - Errors from sources (`datasource_error`), "Test connection" output and audit summaries are

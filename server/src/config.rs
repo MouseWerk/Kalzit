@@ -13,7 +13,19 @@ use serde::{Deserialize, Serialize};
 const ENV_PREFIX: &str = "KALZIT_";
 const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log"];
 /// `KALZIT_*` variables that are not settings. Any other `KALZIT_*` name is a typo and an error.
-const OTHER_VARIABLES: &[&str] = &["CONFIG", "SETUP_TOKEN", "TEST_POSTGRES_URL"];
+const OTHER_VARIABLES: &[&str] = &[
+    "CONFIG",
+    "SETUP_TOKEN",
+    "SECRETS_KEY",
+    "SECRETS_NEW_KEY",
+    "SECRETS_OLD_KEY",
+    "TEST_POSTGRES_URL",
+    "TEST_MYSQL_URL",
+    "TEST_MARIADB_URL",
+    "TEST_REQUIRE_DATABASES",
+    "TEST_MSSQL_URL",
+    "TEST_PROMETHEUS_URL",
+];
 /// `KALZIT_SETTING_<KEY>`: runtime settings from `settings::REGISTRY`, not configuration sections.
 const SETTING_PREFIX: &str = "SETTING_";
 /// Settings without a default value; they do not appear in the serialized defaults.
@@ -402,6 +414,8 @@ mod tests {
     #[test]
     fn unrelated_environment_is_ignored() {
         assert!(Config::from_sources("", env(&[("KALZIT_CONFIG", "x"), ("PATH", "y")])).is_ok());
+        // The secrets key and the test database URLs are read elsewhere, not settings.
+        assert!(Config::from_sources("", env(&[("KALZIT_SECRETS_KEY", "x"), ("KALZIT_TEST_MYSQL_URL", "y")])).is_ok());
     }
 
     #[test]

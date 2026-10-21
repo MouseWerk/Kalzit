@@ -4,7 +4,7 @@ export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_fo
 
 export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
 
-export type SettingKey = "datasources.sqlite_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "audit.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "dashboards.default_time_range";
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "audit.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "dashboards.default_time_range";
 
 export type Shape = "frame" | "documents" | "graph";
 
@@ -82,7 +82,8 @@ propertyKeys: { [key in string]: Array<string> }, };
 
 export type QueryRequest = { queries: Array<QueryItem>, timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, 
 /**
- * Dashboard variables; they become bind parameters, never text in the query.
+ * Variable values: bound as parameters in SQL, escaped into strings in PromQL, and checked
+ * against the schema when used as identifiers (docs/api/datasources.md).
  */
 variables: Record<string, unknown>, };
 
@@ -101,6 +102,24 @@ export type PanelQueryRequest = { timeRange: TimeRange,
  * Continues the `DocumentSet` of a target, by `refId`.
  */
 cursors: { [key in string]: string }, limit?: number, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, };
+
+export type VariableOptionsRequest = { timeRange: TimeRange, 
+/**
+ * The other variables' current values; the variable's own name is refused.
+ */
+variables: Record<string, unknown>, };
+
+export type VariableOption = { value: string, label: string, };
+
+export type VariableOptionsResponse = { 
+/**
+ * Distinct by `value`, in the order the query returned them.
+ */
+options: Array<VariableOption>, 
+/**
+ * True when the list was cut at the option limit or the query's row limit.
+ */
+truncated: boolean, };
 
 export type TimeRange = { from: number, to: number, };
 
