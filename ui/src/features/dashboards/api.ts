@@ -237,9 +237,18 @@ export async function fetchDashboard(
 /** Creates version 1; the title is the model's. */
 export async function createDashboard(
   orgId: string,
-  input: { folderId: string | null; model: DashboardModel },
+  input: {
+    folderId: string | null;
+    model: DashboardModel;
+    /** Leaves the time range out, so the server applies the organization's default. */
+    defaultTimeRange?: boolean;
+  },
 ): Promise<{ id: string }> {
-  return parseDashboard(await send("POST", orgPath(orgId, "dashboards"), input));
+  const { timeRange: _timeRange, ...rest } = input.model;
+  const model = input.defaultTimeRange === true ? rest : input.model;
+  return parseDashboard(
+    await send("POST", orgPath(orgId, "dashboards"), { folderId: input.folderId, model }),
+  );
 }
 
 /** Saves a new version. A newer stored version answers `version_conflict` (409). */

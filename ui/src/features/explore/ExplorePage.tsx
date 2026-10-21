@@ -21,10 +21,14 @@ import {
 import { errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
 import { datasourcesQuery, kindsQuery, runQuery } from "../datasources/api";
+import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
+
+// Explore always shows a query editor; its editor starts loading with the page.
+preloadCodeEditor();
 
 const LAST_DATASOURCE_KEY = "kalzit.explore.datasource";
 /** The single query of Explore; panels created from it keep this reference id. */

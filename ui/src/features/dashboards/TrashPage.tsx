@@ -12,6 +12,7 @@ import {
   FOLDERS_KEY,
   fetchDashboards,
   fetchTrashedFolders,
+  foldersQuery,
   purgeDashboard,
   purgeFolder,
   restoreDashboard,
@@ -67,6 +68,9 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
     queryFn: ({ signal }) => fetchTrashedFolders(orgId, signal),
     enabled: canFolders,
   });
+  // Folders not in the trash: a dashboard whose folder is among them was not trashed with a
+  // folder, whatever the time.
+  const liveFolders = useQuery({ ...foldersQuery(orgId), enabled: canFolders });
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
     await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
@@ -86,16 +90,26 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
   });
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
 
-  if (dashboards.isPending || (canFolders && folders.isPending)) {
+  if (dashboards.isPending || (canFolders && (folders.isPending || liveFolders.isPending))) {
     return <p className="loading">{t("common.loading")}</p>;
   }
   if (dashboards.isError || folders.isError) {
     return <FormAlert>{errorMessage(t, dashboards.error ?? folders.error)}</FormAlert>;
   }
-  // A folder is trashed with everything below it at one moment and restored the same way, so a
-  // dashboard trashed at the same moment as a listed folder is shown through that folder. Any
-  // other trashed dashboard is listed, whether or not its folder is in the caller's list.
-  const withFolder = new Set((folders.data ?? []).map((f) => f.deletedAt));
+  // A folder is trashed with everything below it at one moment and restored the same way. A
+  // dashboard goes with a listed folder when both were trashed at that moment and its folder is
+  // that folder or lies below it, which shows as a folder that is no longer live. Every other
+  // trashed dashboard is listed on its own, whether or not its folder is in the caller's list.
+  const trashedAt = new Map((folders.data ?? []).map((f) => [f.deletedAt, f.id]));
+  const live = new Set((liveFolders.data ?? []).map((f) => f.id));
+  const wentWithFolder = (d: { folderId: string | null; deletedAt: number | null }) => {
+    const folder = trashedAt.get(d.deletedAt);
+    return (
+      folder !== undefined &&
+      d.folderId !== null &&
+      (d.folderId === folder || !live.has(d.folderId))
+    );
+  };
   const items: TrashItem[] = [
     ...(folders.data ?? []).map((f) => ({
       kind: "folder" as const,
@@ -105,7 +119,7 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
     })),
     ...dashboards.data.pages
       .flatMap((page) => page.items)
-      .filter((d) => d.folderId === null || !withFolder.has(d.deletedAt))
+      .filter((d) => !wentWithFolder(d))
       .map((d) => ({
         kind: "dashboard" as const,
         id: d.id,

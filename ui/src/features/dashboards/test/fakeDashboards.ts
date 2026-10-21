@@ -57,6 +57,12 @@ export interface FakeDashboardsState {
   grants: Record<string, { write?: boolean; delete?: boolean }>;
   /** Data sources the caller may see but not query (a grant taken away). */
   unqueryable: string[];
+  /** Variables whose options answer says more exist than were sent. */
+  truncatedOptions: string[];
+  /** The organization setting `dashboards.default_time_range`, applied on create. */
+  orgDefaultTimeRange: { from: string; to: string };
+  /** Titles of dashboards created without a time range of their own. */
+  createdWithoutRange: string[];
   /** Every request of the options route, to check what was asked and how often. */
   variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
@@ -233,6 +239,9 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     variableOptions: {},
     grants: {},
     unqueryable: [],
+    truncatedOptions: [],
+    orgDefaultTimeRange: { from: "now-6h", to: "now" },
+    createdWithoutRange: [],
     variableRequests: [],
     panelQueries: [],
     holdPanelQueries: false,
@@ -442,15 +451,22 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (!can("dashboards:write")) return error(403, "forbidden");
       const extra = unknownField(body, ["model", "folderId", "message"]);
       if (extra !== undefined) return validation(extra);
-      const problem = modelProblem(body.model);
+      // Created without a time range, a dashboard gets the organization's default (stream B).
+      const sent = body.model as Record<string, unknown> | undefined;
+      let model: unknown = sent;
+      if (sent !== undefined && sent.timeRange === undefined) {
+        state.createdWithoutRange.push(String(sent.title));
+        model = { ...sent, timeRange: { ...state.orgDefaultTimeRange } };
+      }
+      const problem = modelProblem(model);
       if (problem !== null) return validation("model", problem);
-      const refused = datasourceCheck(body.model as DashboardModel);
+      const refused = datasourceCheck(model as DashboardModel);
       if (refused !== null) return refused;
       const folderId = (body.folderId as string | null | undefined) ?? null;
       if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
         return error(404, "not_found");
       }
-      const created = addDashboard(state, `dash-new-${nextId++}`, body.model as DashboardModel, {
+      const created = addDashboard(state, `dash-new-${nextId++}`, model as DashboardModel, {
         folderId,
       });
       latest(created).message = typeof body.message === "string" ? body.message : "";
@@ -485,7 +501,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         return validation("variables");
       state.variableRequests.push({ name, body });
       const options = state.variableOptions[name] ?? [];
-      return json(200, { options, truncated: false });
+      return json(200, { options, truncated: state.truncatedOptions.includes(name) });
     }
     if (parts[2] === "versions" && method === "GET") {
       const denied = needs("dashboards:read");

@@ -89,6 +89,8 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
     return () => window.clearTimeout(timer);
   }, [query, search.q, navigate]);
   const folder = folders.data?.find((f) => f.id === search.folder);
+  // Creating dashboards and folders and opening the trash follow the organization role in M1:
+  // there is no item yet whose grants could extend it. Actions on an item use its `access`.
   const canWrite = permissions.has("dashboards:write");
 
   const select = (id: string | undefined) =>
@@ -346,6 +348,7 @@ function NewDashboardDialog({
       createDashboard(orgId, {
         folderId: folder,
         model: emptyModel(title.trim()),
+        defaultTimeRange: true,
       }),
     onSuccess: async ({ id }) => {
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
@@ -564,7 +567,10 @@ function FolderActions({
               {t("dashboards.folders.restrict")}
             </label>
           ) : null}
-          <AccessButton resource={{ kind: "folder", id: folder.id, name: folder.name }} />
+          <AccessButton
+            resource={{ kind: "folder", id: folder.id, name: folder.name }}
+            allowed={folder.access?.permissions}
+          />
           <button
             type="button"
             className="button button--secondary"

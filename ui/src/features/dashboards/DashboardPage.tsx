@@ -7,6 +7,7 @@ import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AccessButton } from "./accessIntegration";
 import {
   DASHBOARDS_KEY,
@@ -47,7 +48,11 @@ function saveErrorText(t: Translate, error: unknown): string {
     return t("dashboards.save.forbidden");
   }
   if (isApiError(error, "validation") && error.field === "model") {
-    return t("dashboards.save.modelRefused");
+    // The server names the place in English ("model.panels[0].grid: ..."); only the missing
+    // data source is common enough for its own text.
+    return /data source .* does not exist/.test(error.message)
+      ? t("dashboards.save.modelRefused")
+      : t("dashboards.save.modelInvalid", { detail: error.message });
   }
   return errorMessage(t, error);
 }
@@ -134,6 +139,12 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
   const canDelete = dashboard.access?.delete ?? permissions.has("dashboards:delete");
 
   const [draft, setDraft] = useState<DashboardModel | null>(null);
+  // Edit mode is where query editors appear; start loading the editor before one opens.
+  useEffect(() => {
+    if (draft !== null) {
+      void preloadCodeEditor();
+    }
+  }, [draft]);
   const model = draft ?? dashboard.model;
   const [values, setValues] = useState(() => initialVariables(dashboard.model.variables));
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
@@ -354,6 +365,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
                 {t("dashboards.versions")}
               </Link>
               <AccessButton
+                allowed={dashboard.access?.permissions}
                 resource={{ kind: "dashboard", id: dashboard.id, name: dashboard.title }}
               />
               {canDelete && !inTrash ? (

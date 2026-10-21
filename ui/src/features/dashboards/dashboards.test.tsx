@@ -1,16 +1,13 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
+import { mayManageAccess } from "./accessIntegration";
 import { fetchDashboards } from "./api";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { PANEL_QUERY_CONCURRENCY } from "./queryQueue";
 import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
-import { preloadDataPages } from "./test/lazyPages";
-
-// Lazy pages are loaded once up front, so no test waits on a cold module transform.
-beforeAll(preloadDataPages);
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
@@ -125,6 +122,10 @@ describe("dashboard browser", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Capacity" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Add panel" }).length).toBeGreaterThan(0);
     expect(location().pathname).toBe("/dashboards/dash-new-1");
+    // Sent without a time range, so the server applies the organization's default.
+    expect(server.areas.dashboards.createdWithoutRange).toEqual(["Capacity"]);
+    const post = server.calls.find((c) => c.method === "POST" && c.path.endsWith("/dashboards"));
+    expect(post?.body).not.toHaveProperty(["model", "timeRange"]);
     const created = server.areas.dashboards.dashboards.at(-1);
     expect(created === undefined ? "" : latest(created).model.title).toBe("Capacity");
   });
@@ -233,6 +234,20 @@ describe("dashboard view", () => {
     expect(server.areas.datasources.queries.at(-1)).toMatchObject({
       queries: [{ refId: "A", query: { sql: "SELECT name, score FROM customers" } }],
     });
+  });
+
+  it("says when there are more options than the answer lists", async () => {
+    const server = setup("viewer", []);
+    latest(storedSales(server)).model = {
+      ...latest(storedSales(server)).model,
+      variables: [
+        { name: "city", type: "query", datasourceId: PG_ID, query: { sql: "SELECT city FROM a" } },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [{ value: "graz", label: "Graz" }];
+    server.areas.dashboards.truncatedOptions.push("city");
+    renderApp("/dashboards/d-sales");
+    expect(await screen.findByText(/More values exist than are listed/)).toBeTruthy();
   });
 
   it("explains a variable the saved dashboard does not have", async () => {
@@ -567,6 +582,31 @@ describe("rights and refusals", () => {
     expect(storedSales(server).versions).toHaveLength(1);
   });
 
+  it("shows the server's own message for other refusals of the model", async () => {
+    const server = setup("editor");
+    server.failNext("/api/orgs/o1/dashboards/d-sales", 422, "validation", "PUT", "model");
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(
+      await within(dialog).findByText(
+        "The server did not accept the dashboard: server message for validation",
+      ),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/no longer exists/)).toBeNull();
+  });
+
+  it("follows the resource's own right to manage access", () => {
+    const has = (permission: string) => permission === "dashboards:share";
+    expect(mayManageAccess("dashboard", undefined, { has })).toBe(true);
+    expect(mayManageAccess("dashboard", false, { has })).toBe(false);
+    expect(mayManageAccess("folder", true, { has })).toBe(true);
+    expect(mayManageAccess("folder", undefined, { has })).toBe(false);
+  });
+
   it("passes the query's abort signal to the request", async () => {
     installFakeServer({ signedIn: true, user: asRole("viewer") });
     const controller = new AbortController();
@@ -600,6 +640,18 @@ describe("history and trash", () => {
     lost.deletedAt = Date.now();
     renderApp("/dashboards/trash");
     expect(await screen.findByRole("button", { name: "Restore “Elsewhere”" })).toBeTruthy();
+  });
+
+  it("lists a dashboard trashed alone even at the moment a folder was trashed", async () => {
+    const server = setup("admin");
+    const at = Date.now() - 1000;
+    const folder = addFolder(server.areas.dashboards, "f-old", "Old");
+    folder.deletedAt = at;
+    // In a live folder, trashed on its own at the same millisecond.
+    storedSales(server).deletedAt = at;
+    renderApp("/dashboards/trash");
+    expect(await screen.findByRole("button", { name: "Restore “Old”" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Restore “Sales”" })).toBeTruthy();
   });
 
   it("moves a dashboard to the trash and restores it from there", async () => {

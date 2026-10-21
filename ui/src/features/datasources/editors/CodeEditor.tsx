@@ -211,10 +211,37 @@ function TextareaCodeEditor({
 const HAS_LAYOUT =
   typeof Range !== "undefined" && typeof Range.prototype.getClientRects === "function";
 
-// CodeMirror loads with the first query editor, so the start bundle does not carry it.
-const LazyCodeMirrorEditor = lazy(() =>
-  import("./CodeMirrorEditor").then((module) => ({ default: module.CodeMirrorEditor })),
-);
+type EditorModule = { default: (props: CodeEditorProps) => ReactNode };
+let loaded: EditorModule | null = null;
+let loading: Promise<EditorModule> | null = null;
+
+/**
+ * Starts loading CodeMirror, for pages that are about to show a query editor (Explore, edit
+ * mode). Loaded in time, the editor appears directly instead of replacing the plain one while
+ * someone types in it.
+ */
+export function preloadCodeEditor(): Promise<EditorModule> | null {
+  if (!HAS_LAYOUT) {
+    return null;
+  }
+  loading ??= import("./CodeMirrorEditor").then((module) => {
+    loaded = { default: module.CodeMirrorEditor };
+    return loaded;
+  });
+  return loading;
+}
+
+// CodeMirror loads with the first query editor, so the start bundle does not carry it. Once it
+// has loaded, the thenable resolves at once, so React renders the editor without a fallback.
+const LazyCodeMirrorEditor = lazy(() => {
+  const ready = loaded;
+  if (ready !== null) {
+    // A thenable that resolves synchronously; React then needs no fallback render.
+    // biome-ignore lint/suspicious/noThenProperty: a thenable is exactly what React.lazy takes
+    return { then: (resolve: (module: EditorModule) => void) => resolve(ready) } as never;
+  }
+  return preloadCodeEditor() as Promise<EditorModule>;
+});
 
 /**
  * The query text editor: CodeMirror 6 in browsers, the plain text area while it loads and where

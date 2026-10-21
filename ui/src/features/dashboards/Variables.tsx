@@ -166,7 +166,7 @@ function VariableControl({
           { timeRange: range, variables: inputs },
           signal,
         );
-        return answer.options;
+        return answer;
       }
       const response = await runQuery(
         orgId,
@@ -179,7 +179,7 @@ function VariableControl({
         },
         signal,
       );
-      return optionsFromResponse(response);
+      return { options: optionsFromResponse(response), truncated: false };
     },
     enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.
@@ -214,7 +214,7 @@ function VariableControl({
     const list =
       variable.type === "custom" || variable.type === "interval"
         ? optionValues(variable).map((v) => ({ value: v, label: v }))
-        : (options.data ?? []);
+        : (options.data?.options ?? []);
     const known = list.some((option) => option.value === value);
     control = (
       <select
@@ -241,6 +241,9 @@ function VariableControl({
         {label}
       </label>
       {control}
+      {options.data?.truncated === true ? (
+        <span className="field__hint">{t("dashboards.variables.truncated")}</span>
+      ) : null}
       {optionsError === null ? null : (
         <span className="field__error" id={`${id}-error`}>
           {optionsError}

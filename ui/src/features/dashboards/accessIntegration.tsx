@@ -1,6 +1,6 @@
 import { type ComponentType, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
-import { useOrgPermissions } from "../../org/useOrg";
+import { type OrgPermissions, useOrgPermissions } from "../../org/useOrg";
 
 /** A folder, dashboard or data source whose grants the access dialog edits. */
 export interface AccessResource {
@@ -39,13 +39,35 @@ const MANAGE_PERMISSION = {
   datasource: "datasources:permissions",
 } as const;
 
+/**
+ * Whether the button shows: the resource's own `access.permissions` (grants included) when the
+ * server sent it, else the organization permission for that kind of resource.
+ */
+export function mayManageAccess(
+  kind: AccessResource["kind"],
+  allowed: boolean | undefined,
+  permissions: Pick<OrgPermissions, "has">,
+): boolean {
+  return allowed ?? permissions.has(MANAGE_PERMISSION[kind]);
+}
+
 /** "Access…" button that opens the access dialog for one resource. */
-export function AccessButton({ resource }: { resource: AccessResource }) {
+export function AccessButton({
+  resource,
+  allowed,
+}: {
+  resource: AccessResource;
+  /**
+   * Whether the caller may manage grants on this very resource (`access.permissions` in the
+   * answer, grants included). Absent: the organization permission decides.
+   */
+  allowed?: boolean | undefined;
+}) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
   const [open, setOpen] = useState(false);
   const Dialog = ACCESS_DIALOG;
-  if (Dialog === null || !permissions.has(MANAGE_PERMISSION[resource.kind])) {
+  if (Dialog === null || !mayManageAccess(resource.kind, allowed, permissions)) {
     return null;
   }
   return (
