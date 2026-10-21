@@ -183,6 +183,14 @@ fn stored_model(raw: &str) -> ApiResult<Value> {
     model::migrate(value).map_err(|e| ApiError::internal("dashboards", e))
 }
 
+/// The stored model of the dashboard's current version.
+async fn current_model(state: &AppState, row: &DashboardRow) -> ApiResult<model::DashboardModel> {
+    let raw = model_at(&state.db, &row.id, row.version).await?.ok_or_else(|| {
+        ApiError::internal("dashboards", format!("dashboard {} lacks its version {}", row.id, row.version))
+    })?;
+    model::parse(stored_model(&raw)?).map_err(|e| ApiError::internal("dashboards", e))
+}
+
 async fn model_at(db: &sqlx::AnyPool, dashboard_id: &str, version: i64) -> ApiResult<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
@@ -400,7 +408,7 @@ async fn create(
     let model = parse_model(raw)?;
     let message = clean_message(body.message.as_deref())?;
     authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
-    check_dashboard_sources(&state.db, &ctx, &model).await?;
+    check_dashboard_sources(&state.db, &ctx, &model, None).await?;
 
     let id = new_id();
     let keep = version_retention(&state).await?;
@@ -558,7 +566,8 @@ async fn save(
     if body.version != row.version {
         return Err(ApiError::version_conflict(json!(view(&state, &ctx, row).await?)));
     }
-    check_dashboard_sources(&state.db, &ctx, &model).await?;
+    let stored = current_model(&state, &row).await?;
+    check_dashboard_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion { model: &model, message: &message, restored_from: None };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
 }
@@ -797,7 +806,8 @@ async fn restore_version(
     let stored: Value = serde_json::from_str(&raw).map_err(|e| ApiError::internal("dashboards", e))?;
     // Rules may have tightened since that version was saved; it must pass today's.
     let model = parse_model(stored)?;
-    check_dashboard_sources(&state.db, &ctx, &model).await?;
+    let current = current_model(&state, &row).await?;
+    check_dashboard_sources(&state.db, &ctx, &model, Some(&current)).await?;
     let new = NewVersion { model: &model, message: "", restored_from: Some(summary.version) };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
 }

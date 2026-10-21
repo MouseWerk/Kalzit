@@ -547,7 +547,7 @@ impl AccessIndex {
         .await?;
         let grants: Vec<GrantRow> = sqlx::query_as(
             "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
-             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard') ORDER BY id",
+             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard', 'datasource') ORDER BY id",
         )
         .bind(&ctx.org_id)
         .fetch_all(&mut *conn)
@@ -589,6 +589,22 @@ impl AccessIndex {
         let mut chain = Vec::new();
         self.folder_links(folder_id, &mut chain);
         self.decide(ResourceType::Folder, &chain)
+    }
+
+    /// What the caller may do on a data source, or `None` when they may not see it.
+    pub fn datasource(&self, datasource_id: &str) -> Option<BTreeSet<Permission>> {
+        let chain =
+            [ChainLink { resource_type: ResourceType::Datasource, id: datasource_id.to_string(), restricted: false }];
+        self.decide(ResourceType::Datasource, &chain)
+    }
+
+    /// The data sources the caller holds a grant on (org-wide visibility aside).
+    pub fn granted_datasources(&self) -> BTreeSet<&str> {
+        self.grants
+            .iter()
+            .filter(|g| g.resource_type == ResourceType::Datasource.as_str())
+            .map(|g| g.resource_id.as_str())
+            .collect()
     }
 
     /// What the caller may do on a dashboard in `folder_id`, or `None` when they may not see it.

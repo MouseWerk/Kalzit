@@ -152,12 +152,15 @@ type QueryResult =
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
   (`PanelQueryRequest`, runs the panel's stored queries, needs `dashboards:read` on that
   dashboard). Because stored queries run with the viewer's rights, **saving a dashboard checks
-  `datasources:query` on every data source its panels and variables use** (stream B), so an editor
-  cannot reach a data source through a panel they could not query directly. Query-type dashboard
+  `datasources:query` on every data source its new or changed panel and variable queries use**,
+  so an editor cannot reach a data source through a panel they could not query directly. The
+  right is checked when a query is saved, not when it runs: an editor who later loses access
+  leaves working dashboards behind, and removing the query from the dashboard is how to stop it. Query-type dashboard
   variables run the same way through
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`
   (`VariableOptionsRequest`, answers `VariableOptionsResponse`). The panel route answers
-  `QueryResponse`: per `refId` either `{result}` or `{error}`. Reading the dashboard is what
+  `QueryResponse`: per `refId` either `{result}` or `{error}`. Free queries, health and schema
+  are checked per data source (role or grant) on every request. Reading the dashboard is what
   authorizes its stored queries: the caller needs no data source permission, but only data
   sources the stored model references (and that exist in the organization) are run. Queries run
   in parallel with per-user and server-wide concurrency limits and are cancelled when the client

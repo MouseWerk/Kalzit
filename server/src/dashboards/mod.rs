@@ -10,23 +10,31 @@ use crate::error::{ApiError, ApiResult};
 use model::DashboardModel;
 
 /// Stored queries run with the rights of whoever views the dashboard, so whoever saves one must be
-/// allowed to query every data source its panels and query variables use; otherwise an editor
-/// could reach a data source through a panel they could not query directly.
+/// allowed to query every data source its new or changed queries use; otherwise an editor could
+/// reach a data source through a panel they could not query directly. The right is checked when
+/// a query is saved, not when it runs.
 ///
-/// Each id must name a data source of this organization (one in the trash counts, it can come
-/// back).
-pub async fn check_dashboard_sources(db: &AnyPool, ctx: &OrgCtx, model: &DashboardModel) -> ApiResult<()> {
-    for id in model.datasource_ids() {
+/// Queries already in `previous` (the stored version) with the same data source and text are not
+/// checked again, so someone may rename or rearrange a dashboard whose queries they could not
+/// write themselves. Each newly used id must name a data source of this organization (one in the
+/// trash counts, it can come back): `422 validation` otherwise. A source the caller may not query
+/// (or not see) is `403 forbidden`, naming it.
+pub async fn check_dashboard_sources(
+    db: &AnyPool,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    previous: Option<&DashboardModel>,
+) -> ApiResult<()> {
+    let unchanged = previous.map(DashboardModel::stored_queries).unwrap_or_default();
+    let changed: std::collections::BTreeSet<&str> =
+        model.stored_queries().into_iter().filter(|q| !unchanged.contains(q)).map(|(id, _)| id).collect();
+    for id in changed {
         if !authz::resource_exists(db, &ctx.org_id, Resource::Datasource(id)).await? {
             return Err(ApiError::validation(format!("data source {id} does not exist")).with_field("model"));
         }
         match authz::check_resource(db, ctx, Permission::DatasourcesQuery, Resource::Datasource(id)).await {
             Ok(()) => {}
-            // The caller cannot see this data source, so it does not exist for them.
-            Err(e) if e.code == "not_found" => {
-                return Err(ApiError::validation(format!("data source {id} does not exist")).with_field("model"));
-            }
-            Err(e) if e.code == "forbidden" => {
+            Err(e) if e.code == "not_found" || e.code == "forbidden" => {
                 return Err(ApiError::forbidden(format!("you may not query data source {id}")));
             }
             Err(e) => return Err(e),
@@ -60,7 +68,7 @@ mod tests {
         }))
         .unwrap();
         // An id that names no data source of the organization is refused, whatever the rights.
-        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model).await.unwrap_err();
+        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model, None).await.unwrap_err();
         assert_eq!((e.code, e.field), ("validation", Some("model")));
         sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)").execute(&db).await.unwrap();
         sqlx::query(
@@ -69,13 +77,16 @@ mod tests {
         .execute(&db)
         .await
         .unwrap();
-        assert!(check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model).await.is_ok());
+        assert!(check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model, None).await.is_ok());
         // Sees data sources but may not query them: refused, naming the variable's source.
-        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesRead]), &model).await.unwrap_err();
+        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesRead]), &model, None).await.unwrap_err();
         assert_eq!(e.code, "forbidden");
         assert!(e.message.contains("ds-var"), "{}", e.message);
-        // Does not see data sources at all: for them the id does not exist.
-        let e = check_dashboard_sources(&db, &ctx(&[Permission::DashboardsWrite]), &model).await.unwrap_err();
-        assert_eq!((e.code, e.field), ("validation", Some("model")));
+        // Does not see the data source at all: refused as not allowed, naming it.
+        let e = check_dashboard_sources(&db, &ctx(&[Permission::DashboardsWrite]), &model, None).await.unwrap_err();
+        assert_eq!(e.code, "forbidden");
+        assert!(e.message.contains("ds-var"), "{}", e.message);
+        // An unchanged stored query needs no right on its source.
+        assert!(check_dashboard_sources(&db, &ctx(&[Permission::DashboardsWrite]), &model, Some(&model)).await.is_ok());
     }
 }

@@ -1,13 +1,13 @@
-//! Queries: free queries (`POST /orgs/{orgId}/query`) for members with `datasources:query`, and a
-//! dashboard's stored queries (a panel's targets, a query variable's options) for whoever may read
-//! the dashboard. All of them run through `datasources::run_queries`. Documented in
-//! docs/api/datasources.md.
+//! Queries: free queries (`POST /orgs/{orgId}/query`), authorized per data source with
+//! `datasources:query` (role or grant), and a dashboard's stored queries (a panel's targets, a
+//! query variable's options) for whoever may read the dashboard. All of them run through
+//! `datasources::run_queries`. Documented in docs/api/datasources.md.
 //!
 //! Stored queries: reading the dashboard is what authorizes them. Saving a dashboard required
-//! `datasources:query` on every data source it uses (`dashboards::check_dashboard_sources`), so a
-//! viewer reaches exactly the sources an authorized editor put there, and only with the stored
-//! queries; the request contributes only the time range, limits and variable values (bound, never
-//! spliced into the query).
+//! `datasources:query` on every data source its new or changed queries use
+//! (`dashboards::check_dashboard_sources`), so a viewer reaches only sources an authorized editor
+//! put there, and only with the stored queries. The request adds the time range, limits and
+//! variable values; values of constant and custom variables are checked against the dashboard.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,7 +20,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model::{self, DashboardModel, VariableType};
-use crate::datasources::{check_items, check_range, run_queries};
+use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
@@ -30,7 +30,8 @@ use crate::shapes::{
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
-        route(Method::POST, "/orgs/{orgId}/query", Access::Org(Permission::DatasourcesQuery), query),
+        // `datasources:query` per data source (role or grant), checked in the handler.
+        route(Method::POST, "/orgs/{orgId}/query", Access::OrgMember, query),
         // Dashboard routes: `dashboards:read` on the dashboard decides, checked in the handler.
         route(
             Method::POST,
@@ -81,6 +82,7 @@ async fn query(
 ) -> ApiResult<Json<QueryResponse>> {
     check_items(&req.queries)?;
     check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
     // its refId only. Ids of other organizations are not found when they are run.
@@ -109,39 +111,119 @@ async fn query(
 /// The current stored model of a dashboard the caller may read. Unknown, trashed and invisible
 /// dashboards are all `not_found`.
 async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResult<DashboardModel> {
-    let row: Option<(i64, Option<i64>)> =
-        sqlx::query_as("SELECT version, deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
-            .bind(&ctx.org_id)
-            .bind(dashboard_id)
-            .fetch_optional(&state.db)
-            .await?;
-    let Some((version, deleted_at)) = row else { return Err(ApiError::not_found()) };
+    // The dashboard and its current version in one read, so a version pruned in between cannot
+    // turn into an error.
+    let row: Option<(Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT d.deleted_at, v.model FROM dashboards d LEFT JOIN dashboard_versions v \
+         ON v.dashboard_id = d.id AND v.version = d.version WHERE d.org_id = $1 AND d.id = $2",
+    )
+    .bind(&ctx.org_id)
+    .bind(dashboard_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((deleted_at, raw)) = row else { return Err(ApiError::not_found()) };
     check_resource(&state.db, ctx, Permission::DashboardsRead, Resource::Dashboard(dashboard_id)).await?;
     if deleted_at.is_some() {
         return Err(ApiError::not_found());
     }
-    let (raw,): (String,) =
-        sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
-            .bind(dashboard_id)
-            .bind(version)
-            .fetch_optional(&state.db)
-            .await?
-            .ok_or_else(|| {
-                ApiError::internal("dashboards", format!("dashboard {dashboard_id} lacks version {version}"))
-            })?;
+    let raw =
+        raw.ok_or_else(|| ApiError::internal("dashboards", format!("dashboard {dashboard_id} lacks its version")))?;
     let value: Value = serde_json::from_str(&raw).map_err(|e| ApiError::internal("dashboards", e))?;
     model::parse(value).map_err(|e| ApiError::internal("dashboards", e))
 }
 
-/// Variable values may only name variables the dashboard defines.
-fn check_known_variables(model: &DashboardModel, variables: &BTreeMap<String, Value>) -> ApiResult<()> {
-    let known: BTreeSet<&str> = model.variables.iter().map(|v| v.name.as_str()).collect();
-    match variables.keys().find(|k| !known.contains(k.as_str())) {
-        Some(unknown) => {
-            Err(ApiError::validation(format!("the dashboard has no variable {unknown}")).with_field("variables"))
-        }
-        None => Ok(()),
+fn variables_error(message: String) -> ApiError {
+    ApiError::validation(message).with_field("variables")
+}
+
+/// A variable value as text, for comparing with a list of options: a scalar, or each entry of a
+/// multi-value list.
+fn value_texts(name: &str, value: &Value) -> ApiResult<Vec<String>> {
+    let scalar = |v: &Value| match v {
+        Value::String(s) => Ok(s.clone()),
+        Value::Number(_) | Value::Bool(_) => Ok(v.to_string()),
+        _ => Err(variables_error(format!("variable {name} must be a value or a list of values"))),
+    };
+    match value {
+        Value::Array(items) => items.iter().map(scalar).collect(),
+        other => Ok(vec![scalar(other)?]),
     }
+}
+
+/// The values a custom variable offers: `options` is a list of values or of `{"value": ...}`
+/// objects (with an optional label).
+fn custom_options(options: Option<&Value>) -> BTreeSet<String> {
+    let Some(Value::Array(items)) = options else { return BTreeSet::new() };
+    items
+        .iter()
+        .filter_map(|o| match o {
+            Value::Object(m) => m.get("value"),
+            other => Some(other),
+        })
+        .filter_map(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(_) | Value::Bool(_) => Some(v.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The variable values a dashboard's stored queries run with, and the variables that may be used
+/// as identifiers (`${x:identifier}`).
+///
+/// - Only variables the dashboard defines may be sent.
+/// - A constant's value is the dashboard's (`current`, or its `value`); sending one is refused.
+/// - A custom variable's value (each value, for a list) must be one of its `options`.
+/// - Query, textbox and interval variables are free values. They are bound as parameters in SQL
+///   and escaped into quoted strings in PromQL; they may not be identifiers, since nothing limits
+///   them to the dashboard's own list.
+fn resolve_variables(
+    model: &DashboardModel,
+    requested: &BTreeMap<String, Value>,
+) -> ApiResult<(BTreeMap<String, Value>, BTreeSet<String>)> {
+    let known: BTreeSet<&str> = model.variables.iter().map(|v| v.name.as_str()).collect();
+    if let Some(unknown) = requested.keys().find(|k| !known.contains(k.as_str())) {
+        return Err(variables_error(format!("the dashboard has no variable {unknown}")));
+    }
+    let mut values = BTreeMap::new();
+    let mut identifiers = BTreeSet::new();
+    for v in &model.variables {
+        let given = requested.get(&v.name);
+        match v.kind {
+            VariableType::Constant => {
+                if given.is_some() {
+                    return Err(variables_error(format!(
+                        "{} is a constant; its value comes from the dashboard",
+                        v.name
+                    )));
+                }
+                let stored = match &v.current {
+                    Some(Value::Object(m)) => m.get("value").cloned(),
+                    other => other.clone(),
+                };
+                if let Some(value) = stored.filter(|s| !s.is_null()) {
+                    values.insert(v.name.clone(), value);
+                    identifiers.insert(v.name.clone());
+                }
+            }
+            VariableType::Custom => {
+                if let Some(given) = given {
+                    let allowed = custom_options(v.options.as_ref());
+                    if let Some(outside) = value_texts(&v.name, given)?.into_iter().find(|t| !allowed.contains(t)) {
+                        return Err(variables_error(format!("{outside:?} is not an option of {}", v.name)));
+                    }
+                    values.insert(v.name.clone(), given.clone());
+                    identifiers.insert(v.name.clone());
+                }
+            }
+            VariableType::Query | VariableType::Textbox | VariableType::Interval => {
+                if let Some(given) = given {
+                    values.insert(v.name.clone(), given.clone());
+                }
+            }
+        }
+    }
+    Ok((values, identifiers))
 }
 
 async fn panel_query(
@@ -153,8 +235,9 @@ async fn panel_query(
     let model = readable_model(&state, &ctx, &dashboard_id).await?;
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
     check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
-    check_known_variables(&model, &req.variables)?;
+    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
     let items: Vec<QueryItem> = panel
         .targets
         .iter()
@@ -170,8 +253,17 @@ async fn panel_query(
         return Ok(Json(QueryResponse { results: BTreeMap::new() }));
     }
     check_items(&items)?;
-    let response =
-        run_queries(&state, &ctx, items, req.time_range, req.interval_ms, req.max_data_points, &req.variables).await;
+    let response = run_queries_with(
+        &state,
+        &ctx,
+        items,
+        req.time_range,
+        req.interval_ms,
+        req.max_data_points,
+        &variables,
+        Some(&identifiers),
+    )
+    .await;
     Ok(Json(response))
 }
 
@@ -185,7 +277,6 @@ async fn variable_options(
     let variable = model.variables.iter().find(|v| v.name == name).ok_or_else(ApiError::not_found)?;
     check_range(req.time_range)?;
     check_variables(&req.variables)?;
-    check_known_variables(&model, &req.variables)?;
     if req.variables.contains_key(&name) {
         return Err(ApiError::validation(format!("variable {name} cannot depend on itself")).with_field("variables"));
     }
@@ -194,6 +285,7 @@ async fn variable_options(
     else {
         return Err(ApiError::validation(format!("{name} is not a query variable")));
     };
+    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
     let item = QueryItem {
         ref_id: OPTIONS_REF_ID.into(),
         datasource_id: datasource_id.clone(),
@@ -201,7 +293,8 @@ async fn variable_options(
         cursor: None,
         limit: Some(MAX_OPTIONS as u32),
     };
-    let mut response = run_queries(&state, &ctx, vec![item], req.time_range, None, None, &req.variables).await;
+    let mut response =
+        run_queries_with(&state, &ctx, vec![item], req.time_range, None, None, &variables, Some(&identifiers)).await;
     match response.results.remove(OPTIONS_REF_ID) {
         Some(QueryOutcome::Ok { result }) => Ok(Json(options_from(result)?)),
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),

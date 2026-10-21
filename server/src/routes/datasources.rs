@@ -16,7 +16,7 @@ use super::table::{RouteDef, route};
 use super::{clean_name, new_id};
 use crate::app::AppState;
 use crate::audit::{AuditEvent, record};
-use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{Access, AccessIndex, OrgCtx, Permission, Resource, check_resource};
 use crate::datasources::{self, Datasource, FieldError, HealthReport, Kind, SettingField, SourceSchema, find_in_org};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -25,18 +25,19 @@ use crate::secrets::{self, SecretPatch};
 use crate::shapes::{Page, Shape};
 
 pub fn routes() -> Vec<RouteDef> {
-    use Permission::{DatasourcesQuery, DatasourcesWrite};
+    // Rights on one data source may come from the role or from a grant on it, so every route on a
+    // data source is open to members and the handler checks the source (`check_resource`).
+    // Creating one has no source yet and needs the org-wide permission.
     vec![
         route(Method::GET, "/orgs/{orgId}/datasource-kinds", Access::OrgMember, kinds),
-        // Readable with datasources:read or datasources:query, checked in the handler.
         route(Method::GET, "/orgs/{orgId}/datasources", Access::OrgMember, list),
-        route(Method::POST, "/orgs/{orgId}/datasources", Access::Org(DatasourcesWrite), create),
+        route(Method::POST, "/orgs/{orgId}/datasources", Access::Org(Permission::DatasourcesWrite), create),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, get_one),
-        route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::Org(DatasourcesWrite), update),
-        route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::Org(DatasourcesWrite), delete),
-        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/restore", Access::Org(DatasourcesWrite), restore),
-        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::Org(DatasourcesQuery), health),
-        route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::Org(DatasourcesQuery), schema),
+        route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
+        route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
+        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/restore", Access::OrgMember, restore),
+        route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health),
+        route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema),
     ]
 }
 
@@ -102,11 +103,6 @@ async fn list(
     Extension(ctx): Extension<OrgCtx>,
     params: Result<Query<ListParams>, QueryRejection>,
 ) -> ApiResult<Json<Page<ListItem>>> {
-    if !ctx.permissions.contains(&Permission::DatasourcesRead)
-        && !ctx.permissions.contains(&Permission::DatasourcesQuery)
-    {
-        return Err(ApiError::forbidden("missing permission datasources:read"));
-    }
     let Query(params) = params.map_err(|e| ApiError::validation(e.body_text()))?;
     let limit = match params.limit.as_deref() {
         None => DEFAULT_LIMIT,
@@ -128,17 +124,49 @@ async fn list(
     {
         return Err(ApiError::validation("cursor is not valid").with_field("cursor"));
     }
+    // The role shows every source, or a grant shows that one (with read or query rights).
+    let org_wide = ctx.permissions.contains(&Permission::DatasourcesRead)
+        || ctx.permissions.contains(&Permission::DatasourcesQuery);
+    let granted: Vec<String> = if org_wide {
+        Vec::new()
+    } else {
+        let mut conn = state.db.acquire().await?;
+        let index = AccessIndex::load(&mut conn, &ctx).await?;
+        index
+            .granted_datasources()
+            .into_iter()
+            .filter(|id| {
+                index.datasource(id).is_some_and(|p| {
+                    p.contains(&Permission::DatasourcesRead) || p.contains(&Permission::DatasourcesQuery)
+                })
+            })
+            .map(String::from)
+            .collect()
+    };
+    if !org_wide && granted.is_empty() {
+        return Ok(Json(Page { items: Vec::new(), next_cursor: None }));
+    }
     let deleted = if trash { "deleted_at IS NOT NULL" } else { "deleted_at IS NULL" };
     let after = if params.cursor.is_some() { "AND id < $3" } else { "" };
+    let first = if params.cursor.is_some() { 4 } else { 3 };
+    let only = if org_wide {
+        String::new()
+    } else {
+        let placeholders: Vec<String> = (0..granted.len()).map(|i| format!("${}", first + i)).collect();
+        format!("AND id IN ({})", placeholders.join(", "))
+    };
     let sql = format!(
         "SELECT id, name, kind, created_at, deleted_at FROM datasources WHERE org_id = $1 AND {deleted} {after} \
-         ORDER BY id DESC LIMIT $2"
+         {only} ORDER BY id DESC LIMIT $2"
     );
     let mut q = sqlx::query_as::<_, (String, String, String, i64, Option<i64>)>(sqlx::AssertSqlSafe(sql))
         .bind(&ctx.org_id)
         .bind((limit + 1) as i64);
     if let Some(c) = &params.cursor {
         q = q.bind(c);
+    }
+    for id in &granted {
+        q = q.bind(id);
     }
     let mut rows = q.fetch_all(&state.db).await?;
     let next_cursor = if rows.len() > limit {

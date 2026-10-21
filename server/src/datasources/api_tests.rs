@@ -660,29 +660,31 @@ async fn roles_and_organizations_are_enforced() {
     assert_eq!(t.send(Method::GET, &one, None, Some(&editor)).await.status, StatusCode::OK);
     assert!(t.query(&editor, q.clone()).await.body["results"]["A"]["result"].is_object());
     let create = json!({ "name": "N", "kind": "sqlite", "settings": { "path": file.to_string_lossy() } });
+    let trashed = t.create_sqlite("Papierkorb", &file).await;
+    t.send(Method::DELETE, &t.path(&format!("/datasources/{trashed}")), None, Some(&t.owner)).await;
     for (method, path, body) in [
         (Method::POST, t.path("/datasources"), Some(create.clone())),
         (Method::PATCH, one.clone(), Some(json!({ "name": "N" }))),
         (Method::DELETE, one.clone(), None),
-        (Method::POST, format!("{one}/restore"), Some(json!({}))),
+        (Method::POST, t.path(&format!("/datasources/{trashed}/restore")), Some(json!({}))),
         (Method::GET, t.path("/datasources?trash=true"), None),
     ] {
         let r = t.send(method.clone(), &path, body, Some(&editor)).await;
         assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{method} {path}");
     }
-    // Viewers use data sources only through dashboards.
-    for (method, path) in [
-        (Method::GET, t.path("/datasources")),
-        (Method::POST, t.path("/query")),
-        (Method::POST, format!("{one}/health")),
-        (Method::GET, format!("{one}/schema")),
-    ] {
-        let body = (method == Method::POST).then(|| json!({ "queries": q, "timeRange": { "from": 0, "to": 1 } }));
+    // Viewers have no data source rights of their own: the list is empty, queries do not find
+    // the source, and its routes do not exist for them.
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
+    assert_eq!((r.status, r.body["items"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{}", r.text);
+    let r = t.query(&viewer, q.clone()).await;
+    assert_eq!(r.body["results"]["A"]["error"]["code"], "not_found", "{}", r.text);
+    for (method, path) in
+        [(Method::POST, format!("{one}/health")), (Method::GET, format!("{one}/schema")), (Method::GET, one.clone())]
+    {
+        let body = (method == Method::POST).then(|| json!({}));
         let r = t.send(method.clone(), &path, body, Some(&viewer)).await;
-        assert_eq!(r.status, StatusCode::FORBIDDEN, "{method} {path}: {}", r.text);
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{method} {path}: {}", r.text);
     }
-    let r = t.send(Method::GET, &one, None, Some(&viewer)).await;
-    assert_eq!(r.status, StatusCode::NOT_FOUND, "viewers do not see data sources");
     assert_eq!(t.send(Method::GET, &t.path("/datasource-kinds"), None, Some(&viewer)).await.status, StatusCode::OK);
 
     // Another organization: its routes do not exist for a stranger, and its ids are not found
@@ -853,7 +855,8 @@ fn dashboard_model(ds: &str) -> Value {
             "id": "p1", "type": "table", "title": "Verkäufe", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
             "targets": [
                 { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT id FROM verkauf WHERE land = $land" } },
-                { "refId": "B", "datasourceId": ds, "query": { "sql": "DELETE FROM verkauf" } }
+                { "refId": "B", "datasourceId": ds, "query": { "sql": "DELETE FROM verkauf" } },
+                { "refId": "C", "datasourceId": ds, "query": { "sql": "SELECT id FROM verkauf ORDER BY id" } }
             ],
             "transformations": [], "options": {}, "fieldConfig": {}
         }]
@@ -979,8 +982,190 @@ async fn dashboard_query_requests_are_bounded() {
     assert_eq!(r.code(), "validation");
     let r = t.options(&viewer, &dashboard, "land", json!({ "timeRange": range(), "cursors": {} })).await;
     assert_eq!(r.code(), "validation", "unknown fields are refused");
-    // The row limit applies to stored queries too.
-    let body = json!({ "timeRange": range(), "variables": { "land": "Schweiz" }, "limit": 1 });
+    // The row limit applies to stored queries too: C has three rows.
+    let all = t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": { "land": "x" } })).await;
+    assert_eq!(all.body["results"]["C"]["result"]["frame"]["fields"][0]["values"].as_array().unwrap().len(), 3);
+    let body = json!({ "timeRange": range(), "variables": { "land": "x" }, "limit": 1 });
     let r = t.panel(&viewer, &dashboard, "p1", body).await;
-    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"].as_array().unwrap().len(), 1);
+    let frame = &r.body["results"]["C"]["result"]["frame"];
+    assert_eq!(frame["fields"][0]["values"].as_array().unwrap().len(), 1, "{}", r.text);
+    assert_eq!(frame["meta"]["rowsTruncated"], true);
+    let r = t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "intervalMs": 0 })).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("intervalMs")));
+    let r = t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "intervalMs": u64::MAX })).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("intervalMs")));
+}
+
+/// A grant on a data source gives a member what the role does not, on that source only, and
+/// taking it back takes effect at once.
+#[tokio::test]
+async fn data_source_grants_extend_and_revoke_access() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let shared = t.create_sqlite("Geteilt", &file).await;
+    let other = t.create_sqlite("Andere", &file).await;
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'vera@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let grant = |level: &str| json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": shared, "level": level });
+    let r = t.post("/grants", grant("query")).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let grant_id = r.body["id"].as_str().unwrap().to_string();
+
+    let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
+    let ids: Vec<&str> = list.body["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [shared.as_str()], "only the granted source: {}", list.text);
+    let q = |id: &str| json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT COUNT(*) AS n FROM verkauf" } }]);
+    assert!(t.query(&viewer, q(&shared)).await.body["results"]["A"]["result"].is_object());
+    assert_eq!(t.query(&viewer, q(&other)).await.body["results"]["A"]["error"]["code"], "not_found");
+    let health =
+        t.send(Method::POST, &t.path(&format!("/datasources/{shared}/health")), Some(json!({})), Some(&viewer)).await;
+    assert_eq!(health.body["ok"], true, "{}", health.text);
+    let schema = t.send(Method::GET, &t.path(&format!("/datasources/{shared}/schema")), None, Some(&viewer)).await;
+    assert_eq!(schema.status, StatusCode::OK);
+    let rename = json!({ "name": "Umbenannt" });
+    let r =
+        t.send(Method::PATCH, &t.path(&format!("/datasources/{shared}")), Some(rename.clone()), Some(&viewer)).await;
+    assert_eq!(r.code(), "forbidden", "query rights do not edit");
+
+    // An edit grant lets the member change this source.
+    t.post("/grants", grant("edit")).await;
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{shared}")), Some(rename), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+
+    // Revoked: free queries, health and schema stop at once.
+    let r = t.send(Method::DELETE, &t.path(&format!("/grants/{grant_id}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.text);
+    assert_eq!(t.query(&viewer, q(&shared)).await.body["results"]["A"]["error"]["code"], "not_found");
+    let health =
+        t.send(Method::POST, &t.path(&format!("/datasources/{shared}/health")), Some(json!({})), Some(&viewer)).await;
+    assert_eq!(health.status, StatusCode::NOT_FOUND);
+    let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
+    assert!(list.body["items"].as_array().unwrap().is_empty());
+}
+
+/// Someone allowed to edit a dashboard may rename it although they could not write its queries:
+/// unchanged queries are not checked again.
+#[tokio::test]
+async fn unchanged_queries_need_no_query_rights_when_saving() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let dashboard = t.dashboard(&ds, None).await;
+    let viewer = t.session_for_role("eddi", Some("viewer")).await;
+    let (eddi,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'eddi@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": eddi, "resourceType": "dashboard", "resourceId": dashboard, "level": "edit" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let path = t.path(&format!("/dashboards/{dashboard}"));
+    let mut model = dashboard_model(&ds);
+    model["title"] = json!("Umsatz 2026");
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": model.clone(), "version": 1 })), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    // A changed query needs the right on its source, and says which source.
+    model["panels"][0]["targets"][0]["query"] = json!({ "sql": "SELECT 1" });
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": model.clone(), "version": 2 })), Some(&viewer)).await;
+    assert_eq!(r.code(), "forbidden", "{}", r.text);
+    assert!(r.body["error"]["message"].as_str().unwrap().contains(&ds));
+    // A source that does not exist is a model error.
+    model["panels"][0]["targets"][0]["datasourceId"] = json!(uuid::Uuid::now_v7().to_string());
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": model, "version": 2 })), Some(&t.owner)).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("model")), "{}", r.text);
+}
+
+/// Request values cannot replace what the dashboard fixes: constants, and custom variables
+/// outside their options; only checked variables may become identifiers.
+#[tokio::test]
+async fn dashboard_variables_keep_to_the_dashboard() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let model = json!({
+        "schemaVersion": 1, "title": "V", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "fest", "type": "constant", "current": { "value": "Schweiz" } },
+            { "name": "wahl", "type": "custom", "options": [ { "value": "land" }, "betrag" ] },
+            { "name": "frei", "type": "textbox" },
+            { "name": "abfrage", "type": "query", "datasourceId": ds, "query": { "sql": "SELECT land FROM verkauf" } }
+        ],
+        "panels": [{
+            "id": "p", "type": "table", "title": "T", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [
+                { "refId": "K", "datasourceId": ds, "query": { "sql": "SELECT id FROM verkauf WHERE land = $fest" } },
+                { "refId": "W", "datasourceId": ds, "query": { "sql": "SELECT ${wahl:identifier} FROM verkauf WHERE id = 1" } },
+                { "refId": "F", "datasourceId": ds, "query": { "sql": "SELECT ${frei:identifier} FROM verkauf" } },
+                { "refId": "Q", "datasourceId": ds, "query": { "sql": "SELECT ${abfrage:identifier} FROM verkauf" } }
+            ],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let r = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let run = |vars: Value| {
+        let body = json!({ "timeRange": range(), "variables": vars });
+        let t = &t;
+        let viewer = viewer.clone();
+        let dashboard = dashboard.clone();
+        async move { t.panel(&viewer, &dashboard, "p", body).await }
+    };
+
+    let r = run(json!({ "wahl": "land", "frei": "land", "abfrage": "land" })).await;
+    let res = &r.body["results"];
+    assert_eq!(
+        res["K"]["result"]["frame"]["fields"][0]["values"],
+        json!(["2"]),
+        "the constant's own value: {}",
+        r.text
+    );
+    assert_eq!(res["W"]["result"]["frame"]["fields"][0]["values"], json!(["Österreich"]));
+    // Free and query variables never become identifiers.
+    assert_eq!(res["F"]["error"]["code"], "query_rejected");
+    assert_eq!(res["Q"]["error"]["code"], "query_rejected");
+
+    for vars in [
+        json!({ "fest": "Österreich" }),
+        json!({ "wahl": "id" }),
+        json!({ "wahl": ["land", "sqlite_version()"] }),
+        json!({ "wahl": { "value": "land" } }),
+    ] {
+        let r = run(vars.clone()).await;
+        assert_eq!(
+            (r.code(), r.body["error"]["field"].as_str()),
+            ("validation", Some("variables")),
+            "{vars}: {}",
+            r.text
+        );
+    }
+}
+
+/// The same rules hold for a Prometheus panel: a custom variable keeps to its options.
+#[tokio::test]
+async fn prometheus_panels_keep_variables_to_the_dashboard() {
+    let t = T::new().await;
+    let addr = fake_prometheus().await;
+    let r = t
+        .post(
+            "/datasources",
+            json!({ "name": "Prom", "kind": "prometheus", "settings": { "url": format!("http://{addr}") } }),
+        )
+        .await;
+    let ds = r.body["id"].as_str().unwrap().to_string();
+    let model = json!({
+        "schemaVersion": 1, "title": "P", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "job", "type": "custom", "options": ["api", "db"] } ],
+        "panels": [{
+            "id": "p", "type": "timeseries", "title": "T", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [ { "refId": "A", "datasourceId": ds, "query": { "expr": "up{job=\"$job\"}" } } ],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let dashboard = t.post("/dashboards", json!({ "model": model })).await.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let ok = t.panel(&viewer, &dashboard, "p", json!({ "timeRange": range(), "variables": { "job": "api" } })).await;
+    assert!(ok.body["results"]["A"]["result"].is_object(), "{}", ok.text);
+    let bad = json!({ "timeRange": range(), "variables": { "job": "api\"} or vector(1) or up{job=\"x" } });
+    let r = t.panel(&viewer, &dashboard, "p", bad).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("variables")), "{}", r.text);
 }

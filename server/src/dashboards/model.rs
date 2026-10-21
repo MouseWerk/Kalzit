@@ -125,6 +125,16 @@ pub struct Target {
 }
 
 impl DashboardModel {
+    /// Every stored query as (data source, query text): panel targets and query variables.
+    pub fn stored_queries(&self) -> BTreeSet<(&str, String)> {
+        let targets =
+            self.panels.iter().flat_map(|p| p.targets.iter().map(|t| (t.datasource_id.as_str(), t.query.to_string())));
+        let variables = self.variables.iter().filter_map(|v| {
+            v.datasource_id.as_deref().map(|id| (id, v.query.as_ref().map_or_else(String::new, |q| q.to_string())))
+        });
+        targets.chain(variables).collect()
+    }
+
     /// Every data source the stored queries use: panel targets and query variables.
     pub fn datasource_ids(&self) -> BTreeSet<&str> {
         let targets = self.panels.iter().flat_map(|p| p.targets.iter().map(|t| t.datasource_id.as_str()));

@@ -8,21 +8,25 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | Method | Path | Access |
 |---|---|---|
 | GET | `/orgs/{orgId}/datasource-kinds` | member |
-| GET | `/orgs/{orgId}/datasources` | `datasources:read` or `datasources:query` (`?trash=true`: `datasources:write`) |
-| POST | `/orgs/{orgId}/datasources` | `datasources:write` |
-| GET | `/orgs/{orgId}/datasources/{datasourceId}` | `datasources:read` |
-| PATCH | `/orgs/{orgId}/datasources/{datasourceId}` | `datasources:write` |
-| DELETE | `/orgs/{orgId}/datasources/{datasourceId}` | `datasources:write` |
-| POST | `/orgs/{orgId}/datasources/{datasourceId}/restore` | `datasources:write` |
-| POST | `/orgs/{orgId}/datasources/{datasourceId}/health` | `datasources:query` |
-| GET | `/orgs/{orgId}/datasources/{datasourceId}/schema` | `datasources:query` |
-| POST | `/orgs/{orgId}/query` | `datasources:query` |
+| GET | `/orgs/{orgId}/datasources` | member; lists the sources the caller may read or query (`?trash=true`: org-wide `datasources:write`) |
+| POST | `/orgs/{orgId}/datasources` | `datasources:write` (org-wide) |
+| GET | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:read` on the source |
+| PATCH | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
+| DELETE | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
+| POST | `/orgs/{orgId}/datasources/{datasourceId}/restore` | member; `datasources:write` on the source |
+| POST | `/orgs/{orgId}/datasources/{datasourceId}/health` | member; `datasources:query` on the source |
+| GET | `/orgs/{orgId}/datasources/{datasourceId}/schema` | member; `datasources:query` on the source |
+| POST | `/orgs/{orgId}/query` | member; `datasources:query` on each query's source |
 | POST | `/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query` | member; `dashboards:read` on the dashboard |
 | POST | `/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options` | member; `dashboards:read` on the dashboard |
 
-With the built-in roles, editors read and query data sources, admins and owners also create,
-change and delete them. Viewers have neither: the list answers `403 forbidden`, a single data
-source `404 not_found` (it is not visible to them), and they run queries only through dashboards.
+"On the source" means the org-wide permission of the member's roles, or a grant on that data
+source (`query` gives read and query, `edit` adds write, `admin` adds permissions; see the grants
+API). Grants are checked on every request, so revoking one cuts free queries, health and schema at
+once. With the built-in roles, editors read and query every data source, admins and owners also
+create, change and delete them. A member who may not see a source (a viewer without a grant) gets
+`404 not_found` for it, an empty list, and `not_found` per query; one who sees it but lacks the
+right gets `403 forbidden`. Viewers run queries through dashboards (see below).
 
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
@@ -241,8 +245,12 @@ Exactly one `SELECT` or `WITH` statement. Rejected: other statements, several st
 `SELECT ... INTO`, `FOR UPDATE`/`FOR SHARE` and other locking clauses, data-modifying `WITH`,
 MySQL executable comments (`/*! ... */`), and file, network and session functions (`LOAD_FILE`,
 `pg_read_file`, `lo_import`, `dblink`, `query_to_xml`, `OPENROWSET`, `OPENDATASOURCE`,
-`OPENQUERY`, `load_extension`, named locks, `NEXT VALUE FOR`, ...), also when used as a table in
-`FROM`. MySQL/MariaDB: `--` starts a comment only before a space or control character, as on the
+`OPENQUERY`, `load_extension`, named locks, `NEXT VALUE FOR`, functions with server-side effects
+such as WAL switches, statistics resets, replication slots, backups, advisory locks and
+sequences, ...), also when used as a table in `FROM`. PostgreSQL Unicode-escaped names and strings
+(`U&"..."`, `U&'...'`) are refused. SQL Server table hints other than `NOLOCK` and
+`READUNCOMMITTED` (on tables, joins and CTE references, also in the old `t (HINT)` form) and query
+hints (`OPTION (...)`) are refused. MySQL/MariaDB: `--` starts a comment only before a space or control character, as on the
 server. PostgreSQL and MySQL/MariaDB run in a read-only transaction; SQLite opens the file
 read-only; every transaction is rolled back. PostgreSQL queries run with
 `standard_conforming_strings = on`; MySQL/MariaDB sessions run with `sql_mode =
@@ -250,7 +258,8 @@ NO_ENGINE_SUBSTITUTION` (no `ANSI_QUOTES`, no `NO_BACKSLASH_ESCAPES`), so the se
 as the check did. A MySQL/MariaDB server that supports neither `max_execution_time` nor
 `max_statement_time` is refused, since its queries could not be stopped.
 
-Macros and variables become bind parameters, never text in the SQL:
+Macros and variables become bind parameters; the only variable text in the SQL is a quoted
+identifier, and only from the source's schema:
 
 | Write | Becomes |
 |---|---|
@@ -277,23 +286,49 @@ Macros: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at 
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
 
+`cursor` on a query (and `cursors` on the panel route) continues document results (M2); SQL and
+Prometheus sources ignore it.
+
 ## A dashboard's stored queries
 
 Both routes run only what the dashboard's current version stores; the request adds the time
-range, limits and variable values (bound like all variables, never text in the query).
+range, limits and variable values.
 
 **Who may run them.** Reading the dashboard (`dashboards:read` on it, through the role, a folder
 or a dashboard grant) is what authorizes its stored queries. The caller needs no data source
 permission: viewers have none and still see their dashboards. This is safe because saving a
-dashboard requires `datasources:query` on every data source it uses, so only sources an authorized
-editor placed there are reached, and only with the stored queries. A data source must exist in the
-organization and not be in the trash (otherwise that target answers `not_found`). A dashboard the
+dashboard requires `datasources:query` on every data source its new or changed queries use, so
+only sources an authorized editor placed there are reached, and only with the stored queries. A
+data source must exist in the organization and not be in the trash (otherwise that target answers
+`not_found`).
+
+The consequence: the right to query a source is checked when a query is saved, not when it runs.
+An editor who later loses access to a source leaves working dashboards behind; to stop such a
+query, remove it from the dashboard (or move the dashboard where fewer people may read it).
+Saving checks only queries that are new or changed against the stored version, so someone who may
+edit a dashboard can rename or rearrange it without rights on its sources; a new or changed query
+on a source the saver may not query answers `403 forbidden` naming the source, and an id that
+names no data source of the organization `422 validation` (`field: model`).
+
+A dashboard the
 caller cannot read (another organization, a restricted folder without a grant, unknown or in the
 trash) answers `404 not_found`, and so do unknown panels and variables.
 
-**Variables.** `variables` may only name variables the dashboard defines (otherwise `422
-validation`, `field: variables`); at most 100, names of letters, digits and `_`, all values together
-at most 64 KiB. `timeRange` as for free queries. These limits also hold for `POST /query`.
+**Variables.** `variables` may only name variables the dashboard defines; at most 100, names of
+letters, digits and `_`, all values together at most 64 KiB (these limits also hold for
+`POST /query`). `timeRange` and `intervalMs` (1 ms to one year) as for free queries. Per type:
+
+- `constant`: the value is the dashboard's (`current`, or `current.value`); sending one is refused.
+- `custom`: the value, or each value of a list, must be one of the variable's `options` (a list of
+  values or of `{"value": ..., "label": ...}` objects).
+- `query`, `textbox`, `interval`: free values. They are bound as parameters in SQL and escaped into
+  quoted strings in PromQL.
+- Only `constant` and `custom` variables may be used as identifiers (`${x:identifier}`), since only
+  their values are checked against the dashboard's own list; any other variable used that way
+  answers `query_rejected` for that target. Identifiers must also be in the source's schema.
+
+Breaking a rule answers `422 validation` with `field: variables`. The same rules hold for
+Prometheus label matchers.
 
 ### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
 
@@ -323,5 +358,4 @@ that is not of type `query` is `422 validation`.
 
 ## Not here yet
 
-- Purging data sources from the trash, per-source grants (`resource_grants`), testing settings
-  before saving.
+- Purging data sources from the trash, testing settings before saving.
