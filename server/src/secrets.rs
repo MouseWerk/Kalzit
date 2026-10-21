@@ -27,6 +27,12 @@ pub const KEY_ENV: &str = "KALZIT_SECRETS_KEY";
 /// The new key for `kalzit secrets rotate` when the current one comes from the environment or a
 /// systemd credential, which Kalzit cannot replace itself.
 pub const NEW_KEY_ENV: &str = "KALZIT_SECRETS_NEW_KEY";
+/// The previous key, readable next to an external key: the server decrypts with both, and
+/// `kalzit secrets rotate` moves every blob from it to the current key.
+pub const OLD_KEY_ENV: &str = "KALZIT_SECRETS_OLD_KEY";
+/// Held shared by every running server and exclusively by `kalzit secrets rotate`, so a rotation
+/// never runs while a server could still encrypt with the old key.
+pub const LOCK_FILE: &str = "secrets.lock";
 const SYSTEMD_CREDENTIAL: &str = "kalzit-secrets-key";
 pub const KEY_FILE: &str = "secrets.key";
 #[cfg(windows)]
@@ -113,11 +119,13 @@ pub enum SecretError {
     Undecryptable,
 }
 
-/// The current key, plus a pending one while a rotation is unfinished.
+/// The current key, plus a pending one while a rotation is unfinished (or the old external key).
 pub struct Keyring {
     current: SecretKey,
     others: Vec<SecretKey>,
     source: KeySource,
+    /// The server's shared hold on `LOCK_FILE`, kept for the keyring's lifetime.
+    _lock: Option<std::fs::File>,
 }
 
 impl fmt::Debug for Keyring {
@@ -127,17 +135,85 @@ impl fmt::Debug for Keyring {
 }
 
 impl Keyring {
-    /// Loads the key from the first source that has one, creating the key file on first start.
-    pub fn load(data_dir: &Path) -> Result<Self> {
-        let env_key = std::env::var(KEY_ENV).ok().filter(|v| !v.trim().is_empty());
-        let credentials = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
-        Self::load_from(env_key.as_deref(), credentials.as_deref(), data_dir)
+    /// The server's keyring: holds the rotation lock shared, and creates the key file on first
+    /// start, but only while no secret is stored (a missing key with stored secrets is an error,
+    /// not a reason to start over with a new key).
+    pub async fn load_for_server(data_dir: &Path, db: &sqlx::AnyPool) -> Result<Self> {
+        let lock = open_lock(data_dir)?;
+        match lock.try_lock_shared() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                bail!("`kalzit secrets rotate` is running; start the server when it is done")
+            }
+            Err(std::fs::TryLockError::Error(e)) => return Err(e).context("locking the secrets key"),
+        }
+        let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM datasource_secrets").fetch_one(db).await?;
+        let mut ring = Self::load_env(data_dir, stored == 0)?;
+        ring._lock = Some(lock);
+        let known: Vec<String> = std::iter::once(&ring.current).chain(&ring.others).map(|k| k.id.clone()).collect();
+        let ids: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT key_id FROM datasource_secrets").fetch_all(db).await?;
+        let foreign: Vec<&str> =
+            ids.iter().map(|(id,)| id.as_str()).filter(|id| !known.iter().any(|k| k == id)).collect();
+        if !foreign.is_empty() {
+            tracing::warn!(
+                "stored secrets use keys {foreign:?}, which are not loaded (current key {}); those data sources \
+                 fail until their secrets are entered again or the old key is set as {OLD_KEY_ENV}",
+                ring.current.id
+            );
+        }
+        Ok(ring)
     }
 
-    fn load_from(env_key: Option<&str>, credentials_dir: Option<&Path>, data_dir: &Path) -> Result<Self> {
+    /// Loads the key from the first source that has one. A key file is created only when
+    /// `may_create`; `kalzit secrets rotate` never creates one.
+    pub fn load(data_dir: &Path) -> Result<Self> {
+        Self::load_env(data_dir, false)
+    }
+
+    fn load_env(data_dir: &Path, may_create: bool) -> Result<Self> {
+        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let credentials = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
+        let env_key = var(KEY_ENV).map(Zeroizing::new);
+        let old_key = var(OLD_KEY_ENV).map(Zeroizing::new);
+        Self::load_from(
+            env_key.as_deref().map(String::as_str),
+            old_key.as_deref().map(String::as_str),
+            credentials.as_deref(),
+            data_dir,
+            may_create,
+        )
+    }
+
+    fn load_from(
+        env_key: Option<&str>,
+        old_key: Option<&str>,
+        credentials_dir: Option<&Path>,
+        data_dir: &Path,
+        may_create: bool,
+    ) -> Result<Self> {
+        let mut ring = Self::load_current(env_key, credentials_dir, data_dir, may_create)?;
+        if let Some(text) = old_key {
+            if !matches!(ring.source, KeySource::Environment | KeySource::SystemdCredential) {
+                bail!("{OLD_KEY_ENV} is only used next to {KEY_ENV} or a systemd credential");
+            }
+            let (old, _) = SecretKey::from_base64(text).with_context(|| format!("reading {OLD_KEY_ENV}"))?;
+            if old.id != ring.current.id {
+                ring.others.push(old);
+            }
+        }
+        Ok(ring)
+    }
+
+    fn load_current(
+        env_key: Option<&str>,
+        credentials_dir: Option<&Path>,
+        data_dir: &Path,
+        may_create: bool,
+    ) -> Result<Self> {
         if let Some(text) = env_key {
             let (key, _) = SecretKey::from_base64(text).with_context(|| format!("reading {KEY_ENV}"))?;
-            return Ok(Self { current: key, others: Vec::new(), source: KeySource::Environment });
+            return Ok(Self { current: key, others: Vec::new(), source: KeySource::Environment, _lock: None });
         }
         if let Some(path) = credentials_dir.map(|d| d.join(SYSTEMD_CREDENTIAL)).filter(|p| p.is_file()) {
             let raw = Zeroizing::new(std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?);
@@ -149,11 +225,16 @@ impl Keyring {
                     std::str::from_utf8(&raw).context("the systemd credential is neither 32 bytes nor base64")?;
                 SecretKey::from_base64(text)?.0
             };
-            return Ok(Self { current: key, others: Vec::new(), source: KeySource::SystemdCredential });
+            return Ok(Self { current: key, others: Vec::new(), source: KeySource::SystemdCredential, _lock: None });
         }
         let store = KeyFile::for_data_dir(data_dir)?;
         let current = match store.read(&store.path)? {
             Some(key) => key,
+            None if !may_create => bail!(
+                "no secrets key at {} although data source secrets are stored; restore the key file \
+                 (database backups need it) or set {KEY_ENV}",
+                store.path.display()
+            ),
             None => {
                 let (key, raw) = SecretKey::generate();
                 store.write(&store.path, &raw)?;
@@ -173,12 +254,12 @@ impl Keyring {
             tracing::warn!("an earlier `kalzit secrets rotate` did not finish; run it again to complete it");
             others.push(pending);
         }
-        Ok(Self { current, others, source: store.source })
+        Ok(Self { current, others, source: store.source, _lock: None })
     }
 
     /// A keyring with just this key, for tests and tools.
     pub fn from_key(key: SecretKey) -> Self {
-        Self { current: key, others: Vec::new(), source: KeySource::Environment }
+        Self { current: key, others: Vec::new(), source: KeySource::Environment, _lock: None }
     }
 
     pub fn current_id(&self) -> &str {
@@ -275,6 +356,19 @@ impl KeyFile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(path)?.permissions().mode();
+            if mode & 0o077 != 0 {
+                bail!(
+                    "{} can be read by other users (mode {:o}); run `chmod 600 {}` and start again",
+                    path.display(),
+                    mode & 0o777,
+                    path.display()
+                );
+            }
+        }
         let raw = match self.source {
             #[cfg(windows)]
             KeySource::Dpapi => dpapi::unprotect(&bytes).with_context(|| format!("unprotecting {}", path.display()))?,
@@ -295,14 +389,42 @@ impl KeyFile {
         write_private_atomic(path, &content).with_context(|| format!("writing {}", path.display()))
     }
 
-    /// Makes the pending key the current one. The rename replaces the old file atomically.
+    /// Makes the pending key the current one. The rename replaces the old file atomically, and
+    /// the directory is synced so the rename survives a crash.
     fn promote_pending(&self) -> Result<()> {
-        std::fs::rename(self.pending_path(), &self.path).with_context(|| format!("replacing {}", self.path.display()))
+        std::fs::rename(self.pending_path(), &self.path)
+            .with_context(|| format!("replacing {}", self.path.display()))?;
+        sync_dir(&self.path).with_context(|| format!("syncing the directory of {}", self.path.display()))
     }
 }
 
+fn open_lock(data_dir: &Path) -> Result<std::fs::File> {
+    std::fs::create_dir_all(data_dir).with_context(|| format!("creating {}", data_dir.display()))?;
+    let path = data_dir.join(LOCK_FILE);
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("opening {}", path.display()))
+}
+
+/// Makes a created or renamed directory entry durable (Unix; Windows has no directory fsync and
+/// commits renames with the metadata journal).
+fn sync_dir(file: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if let Some(dir) = file.parent() {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = file;
+    Ok(())
+}
+
 /// Writes through a temporary file and a rename, so a crash never leaves a half-written key. On
-/// Unix the file is created with mode 0600; on Windows it inherits the data directory's ACL.
+/// Unix the file is created with mode 0600; on Windows it gets an ACL for SYSTEM, Administrators
+/// and its owner only (not inherited from the data directory).
 fn write_private_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
@@ -319,10 +441,47 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
         options.mode(0o600);
     }
     let mut file = options.open(&tmp)?;
+    #[cfg(windows)]
+    acl::restrict(&tmp)?;
     file.write_all(content)?;
     file.sync_all()?;
     drop(file);
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path)?;
+    sync_dir(path)
+}
+
+#[cfg(windows)]
+mod acl {
+    //! An explicit, protected DACL for key files: full access for SYSTEM, the Administrators group
+    //! and the file's owner (the account Kalzit runs as), nobody else.
+
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows::Win32::Security::{
+        DACL_SECURITY_INFORMATION, OBJECT_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, SetFileSecurityW,
+    };
+    use windows::core::HSTRING;
+
+    pub const SDDL: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)";
+
+    pub fn restrict(path: &std::path::Path) -> std::io::Result<()> {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: the SDDL string is a valid constant; `sd` receives a LocalAlloc'ed descriptor.
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(SDDL), SDDL_REVISION_1, &mut sd, None)
+        }
+        .map_err(std::io::Error::other)?;
+        let info = OBJECT_SECURITY_INFORMATION(DACL_SECURITY_INFORMATION.0 | PROTECTED_DACL_SECURITY_INFORMATION.0);
+        // SAFETY: `sd` is the descriptor built above, alive until freed below.
+        let ok = unsafe { SetFileSecurityW(&HSTRING::from(path.as_os_str()), info, sd) }.as_bool();
+        let error = std::io::Error::last_os_error();
+        // SAFETY: the descriptor was allocated by the conversion with LocalAlloc.
+        unsafe { LocalFree(Some(HLOCAL(sd.0))) };
+        if ok { Ok(()) } else { Err(error) }
+    }
 }
 
 #[cfg(windows)]
@@ -377,7 +536,7 @@ mod dpapi {
 }
 
 /// A secret field change: absent = keep, `None` (JSON `null`) = remove, `Some` = set.
-pub type SecretPatch = BTreeMap<String, Option<String>>;
+pub type SecretPatch = BTreeMap<String, Option<Zeroizing<String>>>;
 
 pub async fn apply_patch(
     conn: &mut sqlx::AnyConnection,
@@ -460,17 +619,13 @@ pub struct Rotation {
     pub reencrypted: usize,
     pub key_id: String,
     pub source: KeySource,
+    /// What the administrator still has to do.
+    pub next_step: String,
 }
 
 impl fmt::Display for Rotation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "re-encrypted {} secrets with key {}", self.reencrypted, self.key_id)?;
-        match self.source {
-            KeySource::Environment | KeySource::SystemdCredential => {
-                write!(f, "; now replace {} with the value of {NEW_KEY_ENV} before starting the server", self.source)
-            }
-            KeySource::Dpapi | KeySource::File => write!(f, "; the key file was replaced"),
-        }
+        write!(f, "re-encrypted {} secrets with key {}; {}", self.reencrypted, self.key_id, self.next_step)
     }
 }
 
@@ -484,6 +639,14 @@ impl fmt::Display for Rotation {
 /// leaves both keys loadable and resumes with the same new key.
 pub async fn rotate(config: &Config) -> Result<Rotation> {
     let data_dir = &config.paths.data_dir;
+    let lock = open_lock(data_dir)?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            bail!("a Kalzit server is running on this data directory; stop it first")
+        }
+        Err(std::fs::TryLockError::Error(e)) => return Err(e).context("locking the secrets key"),
+    }
     let keyring = Keyring::load(data_dir)?;
     let db = crate::db::connect(&config.database_url(), 1).await?;
     let new_key = std::env::var(NEW_KEY_ENV).ok().filter(|v| !v.trim().is_empty());
@@ -498,10 +661,21 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
         KeySource::Environment | KeySource::SystemdCredential => None,
         KeySource::Dpapi | KeySource::File => Some(KeyFile::for_data_dir(data_dir)?),
     };
-    let new = match (&store, new_key) {
-        (None, None) => {
-            bail!("the secrets key comes from {source}; set {NEW_KEY_ENV} to the new key (base64 of 32 random bytes)")
+    if store.is_none() && new_key.is_none() {
+        // The external key is already the new one and OLD_KEY_ENV names the previous key: move
+        // every blob to the current key.
+        if keyring.others.is_empty() {
+            bail!(
+                "the secrets key comes from {source}; set {NEW_KEY_ENV} to the new key (base64 of 32 random \
+                 bytes), or set {KEY_ENV} to the new key and {OLD_KEY_ENV} to the old one"
+            );
         }
+        let reencrypted = reencrypt_all(db, &keyring, &keyring.current).await?;
+        let next_step = format!("{OLD_KEY_ENV} is no longer needed; remove it");
+        return Ok(Rotation { reencrypted, key_id: keyring.current.id.clone(), source, next_step });
+    }
+    let new = match (&store, new_key) {
+        (None, None) => unreachable!("handled above"),
         (None, Some(text)) => SecretKey::from_base64(text).with_context(|| format!("reading {NEW_KEY_ENV}"))?.0,
         (Some(_), Some(_)) => bail!("{NEW_KEY_ENV} is only used when the key comes from {KEY_ENV} or systemd"),
         (Some(store), None) => {
@@ -520,10 +694,14 @@ async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_
         bail!("the new key is the current key");
     }
     let reencrypted = reencrypt_all(db, &keyring, &new).await?;
-    if let Some(store) = &store {
-        store.promote_pending()?;
-    }
-    Ok(Rotation { reencrypted, key_id: new.id, source })
+    let next_step = match &store {
+        Some(store) => {
+            store.promote_pending()?;
+            "the key file was replaced".to_string()
+        }
+        None => format!("now replace {source} with the value of {NEW_KEY_ENV} before starting the server"),
+    };
+    Ok(Rotation { reencrypted, key_id: new.id, source, next_step })
 }
 
 /// Re-encrypts every blob not yet under `new` in one transaction; nothing changes when any blob
@@ -623,20 +801,20 @@ mod tests {
         let creds = tempfile::tempdir().unwrap();
         std::fs::write(creds.path().join(SYSTEMD_CREDENTIAL), [2u8; 32]).unwrap();
 
-        let ring = Keyring::load_from(Some(&env_key), Some(creds.path()), dir.path()).unwrap();
+        let ring = Keyring::load_from(Some(&env_key), None, Some(creds.path()), dir.path(), true).unwrap();
         assert_eq!(ring.source(), KeySource::Environment);
         assert_eq!(ring.current_id(), SecretKey::from_bytes(&[1u8; 32]).unwrap().id());
 
-        let ring = Keyring::load_from(None, Some(creds.path()), dir.path()).unwrap();
+        let ring = Keyring::load_from(None, None, Some(creds.path()), dir.path(), true).unwrap();
         assert_eq!(ring.source(), KeySource::SystemdCredential);
         assert_eq!(ring.current_id(), SecretKey::from_bytes(&[2u8; 32]).unwrap().id());
         std::fs::write(creds.path().join(SYSTEMD_CREDENTIAL), format!("{}\n", BASE64.encode([3u8; 32]))).unwrap();
-        let ring = Keyring::load_from(None, Some(creds.path()), dir.path()).unwrap();
+        let ring = Keyring::load_from(None, None, Some(creds.path()), dir.path(), true).unwrap();
         assert_eq!(ring.current_id(), SecretKey::from_bytes(&[3u8; 32]).unwrap().id());
 
         // Nothing configured: a key file is created once and reused.
-        let first = Keyring::load_from(None, None, dir.path()).unwrap();
-        let again = Keyring::load_from(None, Some(Path::new("/nonexistent")), dir.path()).unwrap();
+        let first = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let again = Keyring::load_from(None, None, Some(Path::new("/nonexistent")), dir.path(), true).unwrap();
         assert_eq!(first.current_id(), again.current_id());
         #[cfg(windows)]
         {
@@ -653,8 +831,8 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
 
-        assert!(Keyring::load_from(Some("not base64!"), None, dir.path()).is_err());
-        assert!(Keyring::load_from(Some(&BASE64.encode([1u8; 16])), None, dir.path()).is_err());
+        assert!(Keyring::load_from(Some("not base64!"), None, None, dir.path(), true).is_err());
+        assert!(Keyring::load_from(Some(&BASE64.encode([1u8; 16])), None, None, dir.path(), true).is_err());
     }
 
     async fn db_with_source(ids: &[&str]) -> sqlx::AnyPool {
@@ -702,9 +880,14 @@ mod tests {
         let db = db_with_source(&["ds1", "ds2"]).await;
         let ring = Keyring::from_key(key());
         let mut conn = db.acquire().await.unwrap();
-        apply_patch(&mut conn, &ring, "ds1", &[("password".to_string(), Some("s3cr3t".to_string()))].into())
-            .await
-            .unwrap();
+        apply_patch(
+            &mut conn,
+            &ring,
+            "ds1",
+            &[("password".to_string(), Some(Zeroizing::new("s3cr3t".to_string())))].into(),
+        )
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO datasource_secrets (datasource_id, field, key_id, nonce, ciphertext) \
              SELECT 'ds2', field, key_id, nonce, ciphertext FROM datasource_secrets WHERE datasource_id = 'ds1'",
@@ -724,16 +907,22 @@ mod tests {
     async fn rotation_with_a_key_file_replaces_it_and_resumes() {
         let dir = tempfile::tempdir().unwrap();
         let db = db_with_source(&["ds1", "ds2"]).await;
-        let old = Keyring::load_from(None, None, dir.path()).unwrap();
+        let old = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
         let mut conn = db.acquire().await.unwrap();
-        apply_patch(&mut conn, &old, "ds1", &[("password".into(), Some("eins".into()))].into()).await.unwrap();
-        apply_patch(&mut conn, &old, "ds2", &[("password".into(), Some("zwei".into()))].into()).await.unwrap();
+        apply_patch(&mut conn, &old, "ds1", &[("password".into(), Some(Zeroizing::new("eins".to_string())))].into())
+            .await
+            .unwrap();
+        apply_patch(&mut conn, &old, "ds2", &[("password".into(), Some(Zeroizing::new("zwei".to_string())))].into())
+            .await
+            .unwrap();
         drop(conn);
 
         let rotation =
-            rotate_with(&db, Keyring::load_from(None, None, dir.path()).unwrap(), dir.path(), None).await.unwrap();
+            rotate_with(&db, Keyring::load_from(None, None, None, dir.path(), true).unwrap(), dir.path(), None)
+                .await
+                .unwrap();
         assert_eq!(rotation.reencrypted, 2);
-        let new = Keyring::load_from(None, None, dir.path()).unwrap();
+        let new = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
         assert_eq!(new.current_id(), rotation.key_id);
         assert_ne!(new.current_id(), old.current_id());
         assert_eq!(load_all(&db, &new, "ds2").await.unwrap()["password"].as_str(), "zwei");
@@ -743,16 +932,27 @@ mod tests {
         let store = KeyFile::for_data_dir(dir.path()).unwrap();
         let (next, raw) = SecretKey::generate();
         store.write(&store.pending_path(), &raw).unwrap();
-        let both = Keyring::load_from(None, None, dir.path()).unwrap();
+        let both = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
         assert_eq!(both.others.len(), 1);
         let mut conn = db.acquire().await.unwrap();
-        let resumed =
-            Keyring { current: SecretKey::from_bytes(&raw).unwrap(), others: Vec::new(), source: both.source };
-        apply_patch(&mut conn, &resumed, "ds1", &[("password".into(), Some("eins".into()))].into()).await.unwrap();
+        let resumed = Keyring {
+            current: SecretKey::from_bytes(&raw).unwrap(),
+            others: Vec::new(),
+            source: both.source,
+            _lock: None,
+        };
+        apply_patch(
+            &mut conn,
+            &resumed,
+            "ds1",
+            &[("password".into(), Some(Zeroizing::new("eins".to_string())))].into(),
+        )
+        .await
+        .unwrap();
         drop(conn);
         let rotation = rotate_with(&db, both, dir.path(), None).await.unwrap();
         assert_eq!((rotation.reencrypted, rotation.key_id.as_str()), (1, next.id()));
-        let after = Keyring::load_from(None, None, dir.path()).unwrap();
+        let after = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
         assert_eq!(after.current_id(), next.id());
         assert!(after.others.is_empty(), "the pending file became the key file");
         assert_eq!(load_all(&db, &after, "ds1").await.unwrap()["password"].as_str(), "eins");
@@ -764,20 +964,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = db_with_source(&["ds1"]).await;
         let old_text = BASE64.encode([4u8; 32]);
-        let ring = Keyring::load_from(Some(&old_text), None, dir.path()).unwrap();
+        let ring = Keyring::load_from(Some(&old_text), None, None, dir.path(), true).unwrap();
         let mut conn = db.acquire().await.unwrap();
-        apply_patch(&mut conn, &ring, "ds1", &[("password".into(), Some("eins".into()))].into()).await.unwrap();
+        apply_patch(&mut conn, &ring, "ds1", &[("password".into(), Some(Zeroizing::new("eins".to_string())))].into())
+            .await
+            .unwrap();
         drop(conn);
 
-        let missing =
-            rotate_with(&db, Keyring::load_from(Some(&old_text), None, dir.path()).unwrap(), dir.path(), None);
+        let missing = rotate_with(
+            &db,
+            Keyring::load_from(Some(&old_text), None, None, dir.path(), true).unwrap(),
+            dir.path(),
+            None,
+        );
         assert!(missing.await.unwrap_err().to_string().contains(NEW_KEY_ENV));
         let new_text = BASE64.encode([5u8; 32]);
-        let ring = Keyring::load_from(Some(&old_text), None, dir.path()).unwrap();
+        let ring = Keyring::load_from(Some(&old_text), None, None, dir.path(), true).unwrap();
         let rotation = rotate_with(&db, ring, dir.path(), Some(&new_text)).await.unwrap();
         assert_eq!(rotation.reencrypted, 1);
         assert!(rotation.to_string().contains(NEW_KEY_ENV));
-        let new = Keyring::load_from(Some(&new_text), None, dir.path()).unwrap();
+        let new = Keyring::load_from(Some(&new_text), None, None, dir.path(), true).unwrap();
         assert_eq!(load_all(&db, &new, "ds1").await.unwrap()["password"].as_str(), "eins");
         assert!(!dir.path().join(KEY_FILE).exists(), "no key file for an external key");
     }
@@ -787,15 +993,130 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = db_with_source(&["ds1", "ds2"]).await;
         let current_text = BASE64.encode([6u8; 32]);
-        let current = Keyring::load_from(Some(&current_text), None, dir.path()).unwrap();
+        let current = Keyring::load_from(Some(&current_text), None, None, dir.path(), true).unwrap();
         let stranger = Keyring::from_key(key());
         let mut conn = db.acquire().await.unwrap();
-        apply_patch(&mut conn, &current, "ds1", &[("password".into(), Some("eins".into()))].into()).await.unwrap();
-        apply_patch(&mut conn, &stranger, "ds2", &[("password".into(), Some("zwei".into()))].into()).await.unwrap();
+        apply_patch(
+            &mut conn,
+            &current,
+            "ds1",
+            &[("password".into(), Some(Zeroizing::new("eins".to_string())))].into(),
+        )
+        .await
+        .unwrap();
+        apply_patch(
+            &mut conn,
+            &stranger,
+            "ds2",
+            &[("password".into(), Some(Zeroizing::new("zwei".to_string())))].into(),
+        )
+        .await
+        .unwrap();
         drop(conn);
         let err = rotate_with(&db, current, dir.path(), Some(&BASE64.encode([8u8; 32]))).await.unwrap_err();
         assert!(format!("{err:#}").contains("nothing was changed"), "{err:#}");
-        let current = Keyring::load_from(Some(&current_text), None, dir.path()).unwrap();
+        let current = Keyring::load_from(Some(&current_text), None, None, dir.path(), true).unwrap();
         assert_eq!(load_all(&db, &current, "ds1").await.unwrap()["password"].as_str(), "eins");
+    }
+
+    fn patch(value: &str) -> SecretPatch {
+        [("password".to_string(), Some(Zeroizing::new(value.to_string())))].into()
+    }
+
+    #[tokio::test]
+    async fn a_lost_key_file_is_an_error_when_secrets_are_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = db_with_source(&["ds1"]).await;
+        let first = Keyring::load_for_server(dir.path(), &db).await.unwrap();
+        let mut conn = db.acquire().await.unwrap();
+        apply_patch(&mut conn, &first, "ds1", &patch("eins")).await.unwrap();
+        drop(conn);
+        drop(first);
+        for name in [KEY_FILE, "secrets.key.dpapi"] {
+            let _ = std::fs::remove_file(dir.path().join(name));
+        }
+        let err = Keyring::load_for_server(dir.path(), &db).await.unwrap_err();
+        assert!(format!("{err:#}").contains("no secrets key"), "{err:#}");
+        assert!(
+            !dir.path().join(KEY_FILE).exists() && !dir.path().join("secrets.key.dpapi").exists(),
+            "no new key was made"
+        );
+    }
+
+    #[tokio::test]
+    async fn rotation_refuses_while_a_server_holds_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.paths.data_dir = dir.path().to_path_buf();
+        let db = crate::db::connect(&config.database_url(), 1).await.unwrap();
+        let server = Keyring::load_for_server(dir.path(), &db).await.unwrap();
+        let err = rotate(&config).await.unwrap_err();
+        assert!(format!("{err:#}").contains("stop it first"), "{err:#}");
+        drop(server);
+        let done = rotate(&config).await.unwrap();
+        assert_eq!(done.reencrypted, 0);
+        // A rotation in progress keeps a server from starting.
+        let lock = open_lock(dir.path()).unwrap();
+        lock.lock().unwrap();
+        let err = Keyring::load_for_server(dir.path(), &db).await.unwrap_err();
+        assert!(format!("{err:#}").contains("rotate"), "{err:#}");
+    }
+
+    #[tokio::test]
+    async fn an_old_external_key_is_read_and_rotated_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = db_with_source(&["ds1"]).await;
+        let old_text = BASE64.encode([9u8; 32]);
+        let new_text = BASE64.encode([10u8; 32]);
+        let old = Keyring::load_from(Some(&old_text), None, None, dir.path(), true).unwrap();
+        let mut conn = db.acquire().await.unwrap();
+        apply_patch(&mut conn, &old, "ds1", &patch("eins")).await.unwrap();
+        drop(conn);
+        // The server reads blobs of the old key while the new one is current.
+        let both = Keyring::load_from(Some(&new_text), Some(&old_text), None, dir.path(), true).unwrap();
+        assert_eq!(load_all(&db, &both, "ds1").await.unwrap()["password"].as_str(), "eins");
+        let rotation = rotate_with(&db, both, dir.path(), None).await.unwrap();
+        assert_eq!(rotation.reencrypted, 1);
+        assert!(rotation.to_string().contains(OLD_KEY_ENV));
+        let only_new = Keyring::load_from(Some(&new_text), None, None, dir.path(), true).unwrap();
+        assert_eq!(load_all(&db, &only_new, "ds1").await.unwrap()["password"].as_str(), "eins");
+        assert!(
+            Keyring::load_from(None, Some(&old_text), None, dir.path(), true).is_err(),
+            "only next to an external key"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_file_readable_by_others_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let path = dir.path().join(KEY_FILE);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let err = Keyring::load_from(None, None, None, dir.path(), true).unwrap_err();
+        assert!(format!("{err:#}").contains("chmod 600"), "{err:#}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn key_files_get_a_private_acl() {
+        let dir = tempfile::tempdir().unwrap();
+        Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let path = dir.path().join(DPAPI_KEY_FILE);
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!("(Get-Acl -LiteralPath '{}').Sddl", path.display().to_string().replace('\'', "''")))
+            .output()
+            .unwrap();
+        let sddl = String::from_utf8_lossy(&out.stdout).to_string();
+        let dacl = sddl.split("D:").nth(1).unwrap_or_default().trim().to_string();
+        assert!(dacl.starts_with('P'), "not inherited: {sddl}");
+        let trustees: Vec<&str> =
+            dacl.split(')').filter_map(|ace| ace.rsplit(';').next()).filter(|t| !t.is_empty()).collect();
+        assert!(trustees.contains(&"SY") && trustees.contains(&"BA"), "{sddl}");
+        for broad in ["WD", "AU", "BU"] {
+            assert!(!trustees.contains(&broad), "{broad} may not read the key: {sddl}");
+        }
     }
 }
