@@ -10,6 +10,8 @@
 //!
 //! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run.
 
+mod common;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -76,7 +78,7 @@ fn parts(url: &str) -> (String, u16, String, Option<String>, String) {
 
 impl T {
     async fn new(db_url: Option<String>) -> T {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::private_tempdir();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
         config.database.url = db_url;
@@ -232,6 +234,54 @@ async fn postgres_refuses_kalzits_own_database() {
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
 }
 
+/// A constant, a custom and a textbox variable in one statement: each binds its own numbered
+/// parameter, on the panel route as through `/query`.
+#[tokio::test]
+async fn postgres_panels_bind_mixed_variables() {
+    let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
+    let (host, port, user, password, database) = parts(&url);
+    let t = T::new(None).await;
+    let id = t
+        .create(
+            "postgres",
+            json!({ "host": host, "port": port, "database": database, "user": user }),
+            secrets(password),
+        )
+        .await;
+    let sql = "SELECT v FROM (VALUES ('Schweiz'), ('Österreich'), ('Polen'), ('Italien'), ('Spanien')) AS t(v)                WHERE v IN ($k, $wahl, $frei) ORDER BY v";
+    let model = json!({
+        "schemaVersion": 1, "title": "V", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "k", "type": "constant", "current": "Schweiz" },
+            { "name": "wahl", "type": "custom", "options": ["Österreich", "Italien"] },
+            { "name": "frei", "type": "textbox" }
+        ],
+        "panels": [{
+            "id": "p", "type": "table", "title": "T", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let (status, dashboard) = t.send(Method::POST, "/dashboards", Some(json!({ "model": model }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{dashboard}");
+    let dashboard = dashboard["id"].as_str().unwrap();
+    let range = json!({ "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 });
+    let body = json!({ "timeRange": range, "variables": { "wahl": ["Österreich", "Italien"], "frei": "Polen" } });
+    let (status, r) = t.send(Method::POST, &format!("/dashboards/{dashboard}/panels/p/query"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{r}");
+    let frame = &r["results"]["A"]["result"]["frame"];
+    assert_eq!(frame["fields"][0]["values"], json!(["Italien", "Österreich", "Polen", "Schweiz"]), "{r}");
+    assert!(frame["meta"]["executedQuery"].as_str().unwrap().contains("IN ($1, $2, $3, $4)"), "{r}");
+
+    let free = json!({
+        "queries": [{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }],
+        "timeRange": range,
+        "variables": { "k": "Schweiz", "wahl": ["Österreich", "Italien"], "frei": "Polen" }
+    });
+    let (_, r) = t.send(Method::POST, "/query", Some(free)).await;
+    assert_eq!(r["results"]["A"]["result"]["frame"], *frame, "the same answer through /query: {r}");
+}
+
 #[tokio::test]
 async fn postgres_errors_never_show_the_password() {
     let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
@@ -246,11 +296,16 @@ async fn postgres_errors_never_show_the_password() {
         )
         .await;
     // The login works; then the database repeats a literal holding the password, case kept.
-    assert_eq!(t.health(&id).await["ok"], true);
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+    assert!(h["reason"].as_str().is_some_and(|r| r.starts_with("health.connected")), "{h}");
+    assert_eq!(h["params"]["engine"], "PostgreSQL", "{h}");
     let literal = format!("x{secret}x");
     let r = t.query(&id, json!({ "sql": format!("SELECT CAST('{literal}' AS integer)") })).await;
     assert_eq!(r["error"]["code"], "datasource_error", "{r}");
     assert!(r["error"]["message"].as_str().unwrap().contains("integer"), "{r}");
+    assert_eq!(r["error"]["reason"], "source.error", "{r}");
+    assert!(r["error"]["params"]["detail"].as_str().unwrap().contains("integer"), "{r}");
     assert!(!r.to_string().contains(&secret), "{r}");
     // A wrong password in an authentication error does not come back either.
     let wrong = format!("{secret}-falsch");
@@ -259,6 +314,7 @@ async fn postgres_errors_never_show_the_password() {
     assert!(!bad.to_string().contains(&wrong));
     let h = t.health(&id).await;
     assert_eq!(h["ok"], false, "{h}");
+    assert_eq!(h["reason"], "source.error", "{h}");
     assert!(!h.to_string().contains(&wrong), "{h}");
 }
 

@@ -57,9 +57,13 @@ const OPTIONS_REF_ID: &str = "options";
 
 /// Bounds the variables of a request: count, names and total size.
 fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
-    let refuse = |m: String| Err(ApiError::validation(m).with_field("variables"));
+    let refuse = |e: ApiError| Err(e.with_field("variables"));
     if variables.len() > MAX_VARIABLES {
-        return refuse(format!("at most {MAX_VARIABLES} variables"));
+        return refuse(
+            ApiError::validation(format!("at most {MAX_VARIABLES} variables"))
+                .because("variables.too_many")
+                .param("max", MAX_VARIABLES),
+        );
     }
     if let Some(bad) = variables.keys().find(|k| {
         k.is_empty()
@@ -67,10 +71,18 @@ fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
             || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             || k.starts_with(|c: char| c.is_ascii_digit())
     }) {
-        return refuse(format!("{bad:?} is not a variable name"));
+        return refuse(
+            ApiError::validation(format!("{bad:?} is not a variable name"))
+                .because("variables.name_invalid")
+                .param("name", bad),
+        );
     }
     if serde_json::to_string(variables).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
-        return refuse(format!("variable values exceed {MAX_VARIABLES_BYTES} bytes"));
+        return refuse(
+            ApiError::validation(format!("variable values exceed {MAX_VARIABLES_BYTES} bytes"))
+                .because("variables.too_large")
+                .param("bytes", MAX_VARIABLES_BYTES),
+        );
     }
     Ok(())
 }
@@ -102,7 +114,7 @@ async fn query(
         run_queries(&state, &ctx, allowed, req.time_range, req.interval_ms, req.max_data_points, &req.variables).await
     };
     for (ref_id, e) in refused {
-        let error = ErrorBody { code: e.code.to_string(), message: e.message, field: None };
+        let error = crate::datasources::api_error_body(e);
         response.results.insert(ref_id, QueryOutcome::Err { error });
     }
     Ok(Json(response))
@@ -132,8 +144,8 @@ async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> A
     model::parse(value).map_err(|e| ApiError::internal("dashboards", e))
 }
 
-fn variables_error(message: String) -> ApiError {
-    ApiError::validation(message).with_field("variables")
+fn variables_error(reason: &'static str, name: &str, message: String) -> ApiError {
+    ApiError::validation(message).with_field("variables").because(reason).param("name", name)
 }
 
 /// A variable value as text, for comparing with a list of options: a scalar, or each entry of a
@@ -142,7 +154,11 @@ fn value_texts(name: &str, value: &Value) -> ApiResult<Vec<String>> {
     let scalar = |v: &Value| match v {
         Value::String(s) => Ok(s.clone()),
         Value::Number(_) | Value::Bool(_) => Ok(v.to_string()),
-        _ => Err(variables_error(format!("variable {name} must be a value or a list of values"))),
+        _ => Err(variables_error(
+            "variables.value_type",
+            name,
+            format!("variable {name} must be a value or a list of values"),
+        )),
     };
     match value {
         Value::Array(items) => items.iter().map(scalar).collect(),
@@ -183,7 +199,7 @@ fn resolve_variables(
 ) -> ApiResult<(BTreeMap<String, Value>, BTreeSet<String>)> {
     let known: BTreeSet<&str> = model.variables.iter().map(|v| v.name.as_str()).collect();
     if let Some(unknown) = requested.keys().find(|k| !known.contains(k.as_str())) {
-        return Err(variables_error(format!("the dashboard has no variable {unknown}")));
+        return Err(variables_error("variables.unknown", unknown, format!("the dashboard has no variable {unknown}")));
     }
     let mut values = BTreeMap::new();
     let mut identifiers = BTreeSet::new();
@@ -192,10 +208,11 @@ fn resolve_variables(
         match v.kind {
             VariableType::Constant => {
                 if given.is_some() {
-                    return Err(variables_error(format!(
-                        "{} is a constant; its value comes from the dashboard",
-                        v.name
-                    )));
+                    return Err(variables_error(
+                        "variables.constant",
+                        &v.name,
+                        format!("{} is a constant; its value comes from the dashboard", v.name),
+                    ));
                 }
                 let stored = match &v.current {
                     Some(Value::Object(m)) => m.get("value").cloned(),
@@ -210,7 +227,12 @@ fn resolve_variables(
                 if let Some(given) = given {
                     let allowed = custom_options(v.options.as_ref());
                     if let Some(outside) = value_texts(&v.name, given)?.into_iter().find(|t| !allowed.contains(t)) {
-                        return Err(variables_error(format!("{outside:?} is not an option of {}", v.name)));
+                        return Err(variables_error(
+                            "variables.not_an_option",
+                            &v.name,
+                            format!("{outside:?} is not an option of {}", v.name),
+                        )
+                        .param("value", &outside));
                     }
                     values.insert(v.name.clone(), given.clone());
                     identifiers.insert(v.name.clone());
@@ -278,12 +300,18 @@ async fn variable_options(
     check_range(req.time_range)?;
     check_variables(&req.variables)?;
     if req.variables.contains_key(&name) {
-        return Err(ApiError::validation(format!("variable {name} cannot depend on itself")).with_field("variables"));
+        return Err(variables_error(
+            "variables.self_dependency",
+            &name,
+            format!("variable {name} cannot depend on itself"),
+        ));
     }
     let (VariableType::Query, Some(datasource_id), Some(query)) =
         (variable.kind, variable.datasource_id.as_ref(), variable.query.as_ref())
     else {
-        return Err(ApiError::validation(format!("{name} is not a query variable")));
+        return Err(ApiError::validation(format!("{name} is not a query variable"))
+            .because("variables.not_a_query")
+            .param("name", &name));
     };
     let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
     let item = QueryItem {
@@ -313,14 +341,20 @@ fn api_error(error: ErrorBody) -> ApiError {
         "validation" => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
         _ => (StatusCode::BAD_GATEWAY, "datasource_error"),
     };
-    ApiError::new(status, code, error.message)
+    let mut e = ApiError::new(status, code, error.message);
+    if let Some(reason) = error.reason {
+        e = e.with_reason_string(reason, error.params.unwrap_or_default());
+    }
+    e
 }
 
 /// The options of a query variable: values from the frame's first field, labels from the second
 /// (or the value), distinct by value, at most `MAX_OPTIONS`.
 fn options_from(result: QueryResult) -> ApiResult<VariableOptionsResponse> {
     let QueryResult::Frame { frame } = result else {
-        return Err(ApiError::validation("a variable's query must answer a table (frame)"));
+        return Err(
+            ApiError::validation("a variable's query must answer a table (frame)").because("variables.not_a_frame")
+        );
     };
     let fields = frame.fields();
     let mut truncated = frame.meta().is_some_and(|m| m.rows_truncated);

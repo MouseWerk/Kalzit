@@ -30,13 +30,11 @@ pub enum Engine {
     MsSql,
 }
 
-/// Why a query is not run. Answered as `query_rejected` with this text.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct Rejected(pub String);
+/// Why a query is not run, answered as `query_rejected` with its reason code.
+pub use super::detail::Detail as Rejected;
 
-fn reject<T>(msg: impl Into<String>) -> Result<T, Rejected> {
-    Err(Rejected(msg.into()))
+fn reject<T>(reason: &'static str, msg: impl Into<String>) -> Result<T, Rejected> {
+    Err(Rejected::new(reason, msg))
 }
 
 /// A value bound to one placeholder. Each engine converts it to its own types.
@@ -245,24 +243,35 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
             }
             Piece::Identifier(name) => {
                 if ctx.identifier_variables.is_some_and(|allowed| !allowed.contains(*name)) {
-                    return reject(format!(
-                        "variable {name} cannot be an identifier here; only custom and constant dashboard \
-                         variables can"
-                    ));
+                    return Err(Rejected::new(
+                        "sql.identifier_variable_not_allowed",
+                        format!(
+                            "variable {name} cannot be an identifier here; only custom and constant dashboard \
+                             variables can"
+                        ),
+                    )
+                    .with("name", name));
                 }
                 let value = variable(ctx, name)?;
-                let allowed = ctx.identifiers.ok_or_else(|| Rejected("identifier variables need the schema".into()))?;
+                let allowed = ctx.identifiers.ok_or_else(|| {
+                    Rejected::new("sql.identifier_needs_schema", "identifier variables need the schema")
+                })?;
                 let names: Vec<&Value> = match value {
                     Value::Array(items) => items.iter().collect(),
                     other => vec![other],
                 };
                 if names.is_empty() {
-                    return reject(format!("variable {name} has no value"));
+                    return Err(Rejected::new("sql.variable_missing", format!("variable {name} has no value"))
+                        .with("name", name));
                 }
                 let mut quoted = Vec::new();
                 for n in names {
                     let Some(n) = n.as_str().filter(|n| allowed.contains(*n)) else {
-                        return reject(format!("variable {name} is not a table or column of this data source"));
+                        return Err(Rejected::new(
+                            "sql.identifier_unknown",
+                            format!("variable {name} is not a table or column of this data source"),
+                        )
+                        .with("name", name));
                     };
                     quoted.push(quote_identifier(engine, n));
                 }
@@ -280,7 +289,9 @@ pub fn uses_identifier_variables(sql: &str, engine: Engine) -> bool {
 }
 
 fn variable<'v>(ctx: &'v Context<'_>, name: &str) -> Result<&'v Value, Rejected> {
-    ctx.variables.get(name).ok_or_else(|| Rejected(format!("variable {name} has no value")))
+    ctx.variables.get(name).ok_or_else(|| {
+        Rejected::new("sql.variable_missing", format!("variable {name} has no value")).with("name", name)
+    })
 }
 
 fn scalar(name: &str, value: &Value) -> Result<Bind, Rejected> {
@@ -293,7 +304,11 @@ fn scalar(name: &str, value: &Value) -> Result<Bind, Rejected> {
         },
         Value::String(s) => Bind::Text(s.clone()),
         Value::Array(_) | Value::Object(_) => {
-            return reject(format!("variable {name} must be a string, number, boolean or a list of them"));
+            return Err(Rejected::new(
+                "sql.variable_type",
+                format!("variable {name} must be a string, number, boolean or a list of them"),
+            )
+            .with("name", name));
         }
     })
 }
@@ -323,7 +338,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
     // the text, even inside strings, rather than trusting two parsers to agree on where a
     // comment starts.
     if engine == Engine::MySql && (sql.contains("/*!") || sql.contains("/*M!") || sql.contains("/*m!")) {
-        return reject("MySQL executable comments (/*! ... */) are not allowed");
+        return reject("sql.executable_comment", "MySQL executable comments (/*! ... */) are not allowed");
     }
     let bytes = sql.as_bytes();
     let mut pieces = Vec::new();
@@ -353,7 +368,10 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                     && bytes.get(i + 1) == Some(&b'&')
                     && matches!(bytes.get(i + 2), Some(b'"' | b'\'')) =>
             {
-                return reject("Unicode-escaped names and strings (U&\"...\", U&'...') are not allowed");
+                return reject(
+                    "sql.unicode_escape",
+                    "Unicode-escaped names and strings (U&\"...\", U&'...') are not allowed",
+                );
             }
             _ => None,
         };
@@ -370,19 +388,32 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             continue;
         }
         if c == b'$' && sql[i + 1..].starts_with('{') {
-            let close = sql[i..].find('}').map(|p| i + p).ok_or_else(|| Rejected("unclosed ${...}".into()))?;
+            let close = sql[i..]
+                .find('}')
+                .map(|p| i + p)
+                .ok_or_else(|| Rejected::new("sql.unclosed_variable", "unclosed ${...}"))?;
             let inner = &sql[i + 2..close];
             let (name, format) = match inner.split_once(':') {
                 Some((n, f)) => (n, Some(f)),
                 None => (inner, None),
             };
             if !valid_variable_name(name) {
-                return reject(format!("invalid variable name in ${{{inner}}}"));
+                return Err(Rejected::new(
+                    "sql.variable_name_invalid",
+                    format!("invalid variable name in ${{{inner}}}"),
+                )
+                .with("name", inner));
             }
             let piece = match format {
                 None => Piece::Variable(name),
                 Some("identifier") => Piece::Identifier(name),
-                Some(other) => return reject(format!("unknown variable format :{other}; only :identifier exists")),
+                Some(other) => {
+                    return Err(Rejected::new(
+                        "sql.variable_format_unknown",
+                        format!("unknown variable format :{other}; only :identifier exists"),
+                    )
+                    .with("format", other));
+                }
             };
             pieces.push(Piece::Text(&sql[text_start..i]));
             pieces.push(piece);
@@ -413,7 +444,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             }
         };
         if positional {
-            return reject("write variables as $name; parameter placeholders are not supported");
+            return reject("sql.placeholder", "write variables as $name; parameter placeholders are not supported");
         }
         // Step over a whole UTF-8 character so slices stay on character boundaries.
         i += sql[i..].chars().next().map_or(1, char::len_utf8);
@@ -433,7 +464,9 @@ fn line_comment_after_dashes(sql: &str, next: usize, engine: Engine) -> Result<b
     }
     match sql[next..].chars().next() {
         Some(c) if c.is_ascii() => Ok(c.is_ascii_whitespace() || c.is_ascii_control()),
-        Some(c) if c.is_whitespace() => reject("write -- comments with an ordinary space after the dashes"),
+        Some(c) if c.is_whitespace() => {
+            reject("sql.dash_comment_space", "write -- comments with an ordinary space after the dashes")
+        }
         _ => Ok(false),
     }
 }
@@ -455,19 +488,22 @@ fn scan_macro(sql: &str, start: usize) -> Result<(Piece<'_>, usize), Rejected> {
         "__interval_ms" => simple(Piece::IntervalMs),
         "__timeFilter" => {
             if !has_parens {
-                return reject("$__timeFilter needs a column: $__timeFilter(created_at)");
+                return reject("sql.time_filter_column", "$__timeFilter needs a column: $__timeFilter(created_at)");
             }
             let close = sql[name_end..]
                 .find(')')
                 .map(|p| name_end + p)
-                .ok_or_else(|| Rejected("unclosed $__timeFilter(".into()))?;
+                .ok_or_else(|| Rejected::new("sql.unclosed_time_filter", "unclosed $__timeFilter("))?;
             let column = sql[name_end + 1..close].trim();
             if !is_column_reference(column) {
-                return reject("$__timeFilter takes a column name such as created_at or t.\"Zeitpunkt\"");
+                return reject(
+                    "sql.time_filter_column",
+                    "$__timeFilter takes a column name such as created_at or t.\"Zeitpunkt\"",
+                );
             }
             Ok((Piece::TimeFilter(column), close + 1))
         }
-        other => reject(format!("unknown macro ${other}")),
+        other => Err(Rejected::new("sql.macro_unknown", format!("unknown macro ${other}")).with("name", other)),
     }
 }
 
@@ -519,7 +555,7 @@ fn skip_string(bytes: &[u8], start: usize, quote: u8, backslash: bool) -> Result
             _ => i += 1,
         }
     }
-    reject("unclosed quote")
+    reject("sql.unclosed_quote", "unclosed quote")
 }
 
 fn skip_bracket(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
@@ -534,7 +570,7 @@ fn skip_bracket(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
         }
         i += 1;
     }
-    reject("unclosed [")
+    reject("sql.unclosed_bracket", "unclosed [")
 }
 
 fn skip_line(bytes: &[u8], start: usize) -> usize {
@@ -562,7 +598,7 @@ fn skip_block_comment(bytes: &[u8], start: usize, nested: bool) -> Result<usize,
             i += 1;
         }
     }
-    reject("unclosed comment")
+    reject("sql.unclosed_comment", "unclosed comment")
 }
 
 /// `$$...$$` or `$tag$...$tag$`; `None` when the `$` does not open a dollar-quoted string.
@@ -577,7 +613,7 @@ fn dollar_quote_end(sql: &str, start: usize) -> Result<Option<usize>, Rejected> 
     let body = start + delimiter.len();
     match sql[body..].find(&delimiter) {
         Some(p) => Ok(Some(body + p + delimiter.len())),
-        None => reject("unclosed dollar-quoted string"),
+        None => reject("sql.unclosed_dollar_quote", "unclosed dollar-quoted string"),
     }
 }
 
@@ -597,32 +633,37 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
     // depend on whether the parser knows the T-SQL form.
     let words = sql.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
     if engine == Engine::MsSql && words.contains("next value for") {
-        return reject("NEXT VALUE FOR changes a sequence and is not allowed");
+        return reject("sql.sequence", "NEXT VALUE FOR changes a sequence and is not allowed");
     }
     // Query hints (`OPTION (...)`, which can take table locks) are refused as a keyword token,
     // wherever the parser would put them; in strings, comments and quoted names (`[option]`) the
     // word is no token and does not count.
     if engine == Engine::MsSql {
-        let tokens = Tokenizer::new(&MsSqlDialect {}, sql)
-            .tokenize()
-            .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
+        let tokens = Tokenizer::new(&MsSqlDialect {}, sql).tokenize().map_err(|e| {
+            Rejected::new("sql.parse_error", format!("the query could not be checked: {e}")).with("detail", e)
+        })?;
         let hint = tokens
             .iter()
             .any(|t| matches!(t, Token::Word(w) if w.keyword == Keyword::OPTION && w.quote_style.is_none()));
         if hint {
-            return reject("query hints (OPTION (...)) are not allowed");
+            return reject("sql.query_hint", "query hints (OPTION (...)) are not allowed");
         }
     }
-    let statements = Parser::parse_sql(dialect(engine).as_ref(), sql)
-        .map_err(|e| Rejected(format!("the query could not be checked: {e}")))?;
+    let statements = Parser::parse_sql(dialect(engine).as_ref(), sql).map_err(|e| {
+        Rejected::new("sql.parse_error", format!("the query could not be checked: {e}")).with("detail", e)
+    })?;
     let [statement] = statements.as_slice() else {
-        return reject(if statements.is_empty() { "the query is empty" } else { "only one statement is allowed" });
+        return if statements.is_empty() {
+            reject("sql.empty", "the query is empty")
+        } else {
+            reject("sql.multiple_statements", "only one statement is allowed")
+        };
     };
     if !matches!(statement, Statement::Query(_)) {
-        return reject("only SELECT and WITH queries are allowed");
+        return reject("sql.not_select", "only SELECT and WITH queries are allowed");
     }
     match statement.visit(&mut ReadOnlyCheck { engine }) {
-        ControlFlow::Break(reason) => Err(Rejected(reason)),
+        ControlFlow::Break(rejected) => Err(rejected),
         ControlFlow::Continue(()) => Ok(()),
     }
 }
@@ -720,46 +761,50 @@ const FORBIDDEN_PREFIXES: &[&str] = &[
 
 /// Refuses a forbidden function, by name. Only function calls are checked (a table called `edit`
 /// is fine), and the PostgreSQL prefix families only on PostgreSQL.
-fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<String> {
+fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
     let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
     match last_name_part(name) {
         Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) => {
-            ControlFlow::Break(format!("{n} is not allowed: it reaches files, other servers or other sessions"))
+            let message = format!("{n} is not allowed: it reaches files, other servers or other sessions");
+            ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", n))
         }
         _ => ControlFlow::Continue(()),
     }
 }
 
 impl Visitor for ReadOnlyCheck {
-    type Break = String;
+    type Break = Rejected;
 
-    fn pre_visit_statement(&mut self, statement: &Statement) -> ControlFlow<String> {
+    fn pre_visit_statement(&mut self, statement: &Statement) -> ControlFlow<Rejected> {
         // Also reached for statements nested in a query, such as `WITH d AS (DELETE ...)`.
         if matches!(statement, Statement::Query(_)) {
             ControlFlow::Continue(())
         } else {
-            ControlFlow::Break("only SELECT and WITH queries are allowed".into())
+            ControlFlow::Break(Rejected::new("sql.not_select", "only SELECT and WITH queries are allowed"))
         }
     }
 
-    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<String> {
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Rejected> {
         if !query.locks.is_empty() {
-            return ControlFlow::Break("locking clauses (FOR UPDATE, FOR SHARE) are not allowed".into());
+            return ControlFlow::Break(Rejected::new(
+                "sql.locking_clause",
+                "locking clauses (FOR UPDATE, FOR SHARE) are not allowed",
+            ));
         }
         if matches!(*query.body, SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_)) {
-            return ControlFlow::Break("only SELECT and WITH queries are allowed".into());
+            return ControlFlow::Break(Rejected::new("sql.not_select", "only SELECT and WITH queries are allowed"));
         }
         ControlFlow::Continue(())
     }
 
-    fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<String> {
+    fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<Rejected> {
         if select.into.is_some() {
-            return ControlFlow::Break("SELECT ... INTO is not allowed".into());
+            return ControlFlow::Break(Rejected::new("sql.select_into", "SELECT ... INTO is not allowed"));
         }
         ControlFlow::Continue(())
     }
 
-    fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<String> {
+    fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<Rejected> {
         // `FROM LATERAL f(...)` and `FROM f(...)` are table factors, not expressions.
         if self.engine == Engine::MsSql {
             // `FROM t OPTION (TABLE HINT (t, TABLOCKX))` and `FROM t x (TABLOCKX)` parse as
@@ -767,7 +812,10 @@ impl Visitor for ReadOnlyCheck {
             // hint or an old-style table hint is behind them.
             if let Some(alias) = factor_alias(factor) {
                 if alias.name.value.eq_ignore_ascii_case("option") && alias.name.quote_style.is_none() {
-                    return ControlFlow::Break("query hints (OPTION (...)) are not allowed".into());
+                    return ControlFlow::Break(Rejected::new(
+                        "sql.query_hint",
+                        "query hints (OPTION (...)) are not allowed",
+                    ));
                 }
                 // A column list naming only harmless hints is the old form of `WITH (NOLOCK)`.
                 let hinted = alias.columns.iter().any(|c| {
@@ -776,10 +824,13 @@ impl Visitor for ReadOnlyCheck {
                         || (MSSQL_HINT_WORDS.contains(&name.as_str()) && !ALLOWED_MSSQL_HINTS.contains(&name.as_str()))
                 });
                 if hinted {
-                    return ControlFlow::Break(format!(
+                    let message = format!(
                         "the table hints after {} are not allowed; write WITH (NOLOCK) instead",
                         alias.name.value
-                    ));
+                    );
+                    return ControlFlow::Break(
+                        Rejected::new("sql.legacy_table_hint", message).with("alias", &alias.name.value),
+                    );
                 }
             }
         }
@@ -798,9 +849,10 @@ impl Visitor for ReadOnlyCheck {
                 );
             }
             if let Some(bad) = hints.iter().find(|h| !ALLOWED_MSSQL_HINTS.contains(&h.as_str())) {
-                return ControlFlow::Break(format!(
+                let message = format!(
                     "the table hint {bad} is not allowed; only NOLOCK, READUNCOMMITTED, INDEX, NOEXPAND and FORCESEEK are"
-                ));
+                );
+                return ControlFlow::Break(Rejected::new("sql.table_hint", message).with("hint", bad));
             }
         }
         // Table functions such as OPENROWSET(...) appear here, with arguments; plain table and
@@ -812,7 +864,7 @@ impl Visitor for ReadOnlyCheck {
         }
     }
 
-    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<String> {
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Rejected> {
         match expr {
             Expr::Function(f) => forbidden(&f.name, self.engine),
             _ => ControlFlow::Continue(()),
@@ -894,7 +946,7 @@ mod tests {
     fn rejected(sql: &str, engine: Engine) -> String {
         let vars = BTreeMap::new();
         match prepare(sql, engine, &ctx(&vars)) {
-            Err(Rejected(reason)) => reason,
+            Err(rejected) => rejected.message,
             Ok(p) => panic!("{engine:?} accepted {sql}: {p:?}"),
         }
     }
@@ -996,7 +1048,7 @@ mod tests {
         let p = prepare(sql, Engine::MsSql, &c).unwrap();
         assert_eq!(p.sql, "SELECT [menge], [preis] FROM [public].[bestellungen]");
         let e = prepare("SELECT * FROM ${fremd:identifier}", Engine::Postgres, &c).unwrap_err();
-        assert!(e.0.contains("not a table or column"), "{e}");
+        assert!(e.message.contains("not a table or column"), "{e}");
         assert!(prepare("SELECT * FROM ${tabelle:raw}", Engine::Postgres, &c).is_err());
         assert!(!uses_identifier_variables("SELECT $tabelle", Engine::Postgres));
         let mut no_schema = ctx(&vars);
@@ -1288,7 +1340,7 @@ mod tests {
         c.identifier_variables = Some(&checked);
         assert!(prepare("SELECT ${spalte:identifier} FROM t", Engine::Postgres, &c).is_ok());
         let e = prepare("SELECT ${frei:identifier} FROM t", Engine::Postgres, &c).unwrap_err();
-        assert!(e.0.contains("cannot be an identifier"), "{e}");
+        assert!(e.message.contains("cannot be an identifier"), "{e}");
         // As a plain value the same variable is fine.
         assert!(prepare("SELECT 1 FROM t WHERE a = $frei", Engine::Postgres, &c).is_ok());
     }
