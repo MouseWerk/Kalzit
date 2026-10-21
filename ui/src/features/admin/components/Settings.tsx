@@ -1,16 +1,16 @@
 import { type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
+import type { SettingKey } from "../../../api/generated/shapes";
 import { LANGUAGES, type MessageKey, useI18n } from "../../../i18n/i18n";
 import { THEMES } from "../../../theme/theme";
 import { isSetting, type Setting } from "../api";
-import { settingName, settingText } from "../catalog";
+import { isKnownSetting, settingName, settingText } from "../catalog";
 import { errorText, SETTING_ERRORS } from "../errors";
 import { Dialog } from "./Dialog";
 import { formatValue } from "./format";
 import { Notice, useNotice } from "./Notice";
 import { useRowKeys } from "./rows";
-import "./settings.css";
 
 interface Conflict {
   key: string;
@@ -20,7 +20,7 @@ interface Conflict {
 }
 
 /** Settings whose value is one of a fixed set, offered as a select with readable names. */
-const CHOICES: Record<string, readonly { value: string; label: MessageKey }[]> = {
+const CHOICES: Partial<Record<SettingKey, readonly { value: string; label: MessageKey }[]>> = {
   "appearance.default_language": LANGUAGES.map((language) => ({
     value: language,
     label: `language.${language}` as const,
@@ -241,14 +241,16 @@ function SettingField({
     <div className="admin-setting__header">
       {label === undefined ? (
         <label htmlFor={id} className="admin-setting__key">
-          <code>{setting.key}</code>
+          <code translate="no">{setting.key}</code>
         </label>
       ) : (
         <>
           <label htmlFor={id} className="admin-setting__key">
             {label}
           </label>
-          <code className="admin-setting__name">{setting.key}</code>
+          <code className="admin-setting__name" translate="no">
+            {setting.key}
+          </code>
         </>
       )}
       <div className="admin-setting__description" id={descriptionId}>
@@ -290,7 +292,7 @@ function SettingField({
     );
   }
 
-  const choices = CHOICES[setting.key];
+  const choices = isKnownSetting(setting.key) ? CHOICES[setting.key] : undefined;
   if (choices !== undefined && typeof value === "string") {
     return (
       <>

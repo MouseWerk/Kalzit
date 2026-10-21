@@ -155,6 +155,7 @@ describe("organization settings", () => {
     const row = within(within(list).getAllByRole("listitem")[0] as HTMLElement);
     expect(row.getByText(RANGE_LABEL).tagName).toBe("LABEL");
     expect(row.getByText(RANGE).tagName).toBe("CODE");
+    expect(row.getByText(RANGE).getAttribute("translate")).toBe("no");
     expect(row.getByText("Time range of new dashboards in this organization.")).toBeTruthy();
     // The fake server's English description is not shown for a setting the UI knows.
     expect(row.queryByText(`The setting ${RANGE}`)).toBeNull();
