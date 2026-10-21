@@ -1,15 +1,11 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
-import { preloadDataPages } from "../dashboards/test/lazyPages";
 import { PG_ID, PROM_ID } from "../datasources/test/fakeDatasources";
-
-// Lazy pages are loaded once up front, so no test waits on a cold module transform.
-beforeAll(preloadDataPages);
 
 function open(role = "editor") {
   const server = installFakeServer({

@@ -1,14 +1,10 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { request } from "../api/client";
-import { preloadDataPages } from "../features/dashboards/test/lazyPages";
 import { expectConsoleOutput } from "../test/console";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { parseLoginSearch } from "./router";
-
-// Lazy pages are loaded once up front, so no test waits on a cold module transform.
-beforeAll(preloadDataPages);
 
 async function signIn(user: ReturnType<typeof renderApp>["user"], password = TEST_PASSWORD) {
   await user.type(await screen.findByLabelText("Email address"), TEST_USER.email);
