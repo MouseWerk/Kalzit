@@ -799,7 +799,7 @@ impl Visitor for ReadOnlyCheck {
             }
             if let Some(bad) = hints.iter().find(|h| !ALLOWED_MSSQL_HINTS.contains(&h.as_str())) {
                 return ControlFlow::Break(format!(
-                    "the table hint {bad} is not allowed; only NOLOCK, READUNCOMMITTED, INDEX and NOEXPAND are"
+                    "the table hint {bad} is not allowed; only NOLOCK, READUNCOMMITTED, INDEX, NOEXPAND and FORCESEEK are"
                 ));
             }
         }
