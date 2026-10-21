@@ -70,6 +70,42 @@
     inset: 0;
   }
 
+  /* uPlot's canvas fills the plot; the probes carry theme colors for it to read. */
+  .ts__uplot {
+    position: absolute;
+    inset: 0;
+  }
+
+  .ts__probes {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xs);
+  }
+
+  .ts__probe {
+    color: var(--series-color);
+  }
+
+  .ts__probe--axis {
+    color: var(--text-muted);
+  }
+
+  .ts__probe--grid {
+    color: var(--border);
+  }
+
+  .ts__cursor-line {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: var(--cursor-x, 0);
+    width: var(--border-width);
+    background: var(--border-strong);
+    pointer-events: none;
+  }
+
   .ts__grid {
     stroke: var(--border);
     stroke-width: 1;
@@ -100,7 +136,7 @@
     z-index: var(--z-sticky);
     display: grid;
     gap: var(--space-1);
-    max-width: 20rem;
+    max-width: var(--size-tooltip-max);
     padding: var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-sm);
@@ -131,7 +167,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1) var(--space-3);
-    max-height: 4.5rem;
+    max-height: var(--size-legend-max);
     padding: var(--space-1) 0 0;
     overflow: auto;
     list-style: none;
@@ -148,8 +184,8 @@
 
   .ts__swatch {
     flex: none;
-    width: 0.75rem;
-    height: 0.25rem;
+    width: var(--space-3);
+    height: var(--space-1);
     border-radius: var(--radius-sm);
     background: var(--series-color);
   }
@@ -176,7 +212,7 @@
 
   .stat {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-card-min), 1fr));
     gap: var(--space-3);
     height: 100%;
     align-content: center;
@@ -213,7 +249,7 @@
 
   .stat__sparkline {
     width: 100%;
-    height: 2.5rem;
+    height: var(--space-10);
   }
 
   .stat__spark {
@@ -293,7 +329,7 @@
   }
 
   .vt__cell {
-    max-width: 24rem;
+    max-width: var(--size-text-max);
     padding: 0 var(--space-2);
     border-bottom: var(--border-width) solid var(--border);
     overflow: hidden;

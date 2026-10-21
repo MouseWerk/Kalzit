@@ -4,7 +4,7 @@ import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { formatValue, rowCount, seriesName, toNumber, valueFields } from "../frame";
 import { EmptyPanel, UnitField } from "../shared";
-import { SERIES_COLORS } from "../timeseries/SvgTimeSeriesChart";
+import { SERIES_COLORS } from "../timeseries/ChartShell";
 import { niceTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";

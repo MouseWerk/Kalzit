@@ -1,28 +1,8 @@
-import { type KeyboardEvent, type PointerEvent, useId, useRef, useState } from "react";
+import { useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
-import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
-import {
-  nearestIndex,
-  niceTicks,
-  type Scale,
-  type Series,
-  seriesPath,
-  timeTicks,
-  valueExtent,
-} from "./series";
-
-export interface TimeSeriesChartProps {
-  series: readonly Series[];
-  timeRange: { from: number; to: number };
-  title: string;
-  unit: string;
-  lineWidth: number;
-  showLegend: boolean;
-}
-
-/** Series colors cycle through this many palette entries (`--series-1` and so on). */
-export const SERIES_COLORS = 8;
+import { ChartShell, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
+import { niceTicks, type Scale, seriesPath, timeTicks, valueExtent } from "./series";
 
 const AXIS_LEFT = 56;
 const AXIS_BOTTOM = 22;
@@ -35,8 +15,9 @@ const PX_PER_TIME_TICK = 110;
 const DAY = 24 * 60 * 60 * 1000;
 
 /**
- * The time series chart drawn as SVG paths. It is the renderer until uPlot is available
- * (`renderer.ts` picks it); the decimated paths keep 100,000 points per series responsive.
+ * The time series drawn as SVG paths, reduced to a few points per pixel column. uPlot draws the
+ * chart in browsers (`UplotTimeSeriesChart`); this one is shown while uPlot loads and where there
+ * is no canvas, such as the tests.
  */
 export function SvgTimeSeriesChart({
   series,
@@ -46,12 +27,9 @@ export function SvgTimeSeriesChart({
   lineWidth,
   showLegend,
 }: TimeSeriesChartProps) {
-  const { t, language } = useI18n();
+  const { language } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
-  const hintId = useId();
   const { width, height } = useElementSize(boxRef);
-  const [hoverX, setHoverX] = useState<number | null>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
 
   const plotWidth = Math.max(width - AXIS_LEFT - PAD_RIGHT, 10);
   const plotHeight = Math.max(height - AXIS_BOTTOM - PAD_TOP, 10);
@@ -81,87 +59,18 @@ export function SvgTimeSeriesChart({
   const valueLabel = new Intl.NumberFormat(language, { maximumFractionDigits: 3 });
   const paths = series.map((s) => seriesPath(s, scale, AXIS_LEFT + plotWidth));
 
-  const hoverTime =
-    hoverX === null ? null : from + ((hoverX - AXIS_LEFT) / plotWidth) * (to - from);
-  const readout =
-    hoverTime === null
-      ? []
-      : series.map((s, index) => {
-          const i = nearestIndex(s.times, hoverTime);
-          return { index, name: s.name, value: i === -1 ? Number.NaN : (s.values[i] as number) };
-        });
-  useStyleVars(tooltipRef, { "--hover-x": `${hoverX ?? 0}px` });
-
-  /**
-   * The readout by keyboard: the plot takes focus, Left and Right move the cursor in steps of a
-   * fiftieth of the width (with Shift a tenth), Home and End jump, and a live region reads out
-   * the values at the cursor.
-   */
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const current = hoverX ?? AXIS_LEFT + plotWidth / 2;
-    const step = plotWidth / (event.shiftKey ? 10 : 50);
-    const keys: Record<string, number> = {
-      ArrowLeft: current - step,
-      ArrowRight: current + step,
-      Home: AXIS_LEFT,
-      End: AXIS_LEFT + plotWidth,
-    };
-    const next = keys[event.key];
-    if (next !== undefined) {
-      event.preventDefault();
-      setHoverX(Math.min(Math.max(next, AXIS_LEFT), AXIS_LEFT + plotWidth));
-    } else if (event.key === "Escape" && hoverX !== null) {
-      event.stopPropagation();
-      setHoverX(null);
-    }
-  }
-
-  const spoken =
-    hoverTime === null
-      ? ""
-      : [
-          new Date(hoverTime).toLocaleString(language),
-          ...readout.map(
-            (row) =>
-              `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : `${valueLabel.format(row.value)}${unit === "" ? "" : ` ${unit}`}`}`,
-          ),
-        ].join(", ");
-
-  function onPointerMove(event: PointerEvent<SVGSVGElement>) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    setHoverX(x >= AXIS_LEFT && x <= AXIS_LEFT + plotWidth ? x : null);
-  }
-
   return (
-    <div className="ts">
-      {/* biome-ignore lint/a11y/useSemanticElements: a focusable plot, not a set of form fields */}
-      <div
-        className="ts__plot"
-        ref={boxRef}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: the plot takes focus for the keyboard readout
-        tabIndex={0}
-        role="group"
-        aria-label={title}
-        aria-describedby={hintId}
-        onKeyDown={onKeyDown}
-        onFocus={() => setHoverX((x) => x ?? AXIS_LEFT + plotWidth / 2)}
-        onBlur={() => setHoverX(null)}
-      >
-        <span className="visually-hidden" id={hintId}>
-          {t("dashboards.panels.readoutHint")}
-        </span>
-        <span className="visually-hidden" role="status">
-          {spoken}
-        </span>
-        <svg
-          className="ts__svg"
-          width={width}
-          height={height}
-          aria-hidden="true"
-          onPointerMove={onPointerMove}
-          onPointerLeave={() => setHoverX(null)}
-        >
+    <ChartShell
+      series={series}
+      title={title}
+      unit={unit}
+      showLegend={showLegend}
+      boxRef={boxRef}
+      plot={{ left: AXIS_LEFT, width: plotWidth }}
+      timeAt={(x) => from + ((x - AXIS_LEFT) / plotWidth) * (to - from)}
+    >
+      {(cursorX) => (
+        <svg className="ts__svg" width={width} height={height} aria-hidden="true">
           {yTicks.map((tick) => (
             <g key={`y${tick}`}>
               <line
@@ -189,54 +98,24 @@ export function SvgTimeSeriesChart({
           ))}
           {paths.map((d, index) => (
             <path
-              // Series keep their order between renders; the name alone can repeat.
-              // biome-ignore lint/suspicious/noArrayIndexKey: see above
+              // biome-ignore lint/suspicious/noArrayIndexKey: series keep their order; names can repeat
               key={index}
               className={`ts__line series-${(index % SERIES_COLORS) + 1}`}
               d={d}
               strokeWidth={lineWidth}
             />
           ))}
-          {hoverX === null ? null : (
+          {cursorX === null ? null : (
             <line
               className="ts__cursor"
-              x1={hoverX}
-              x2={hoverX}
+              x1={cursorX}
+              x2={cursorX}
               y1={PAD_TOP}
               y2={PAD_TOP + plotHeight}
             />
           )}
         </svg>
-        {hoverTime === null ? null : (
-          <div className="ts__tooltip" ref={tooltipRef} aria-hidden="true">
-            <div className="ts__tooltip-time">{new Date(hoverTime).toLocaleString(language)}</div>
-            {readout.map((row) => (
-              <div key={row.index} className="ts__tooltip-row">
-                <span className={`ts__swatch series-${(row.index % SERIES_COLORS) + 1}`} />
-                <span className="truncate">{row.name}</span>
-                <span className="ts__tooltip-value">
-                  {Number.isNaN(row.value)
-                    ? ""
-                    : `${valueLabel.format(row.value)}${unit === "" ? "" : ` ${unit}`}`}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {showLegend && series.length > 0 ? (
-        <ul className="ts__legend">
-          {series.map((s, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: same order as the paths above
-            <li key={index} className="ts__legend-item">
-              <span className={`ts__swatch series-${(index % SERIES_COLORS) + 1}`} />
-              <span className="truncate" title={s.name}>
-                {s.name}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
+      )}
+    </ChartShell>
   );
 }

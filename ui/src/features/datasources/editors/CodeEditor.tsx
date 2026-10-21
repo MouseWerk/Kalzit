@@ -1,6 +1,8 @@
 import {
   type KeyboardEvent,
+  lazy,
   type ReactNode,
+  Suspense,
   useId,
   useLayoutEffect,
   useRef,
@@ -15,8 +17,7 @@ export type CodeLanguage = "sql" | "promql";
 
 /**
  * The contract every query text editor implements. Query editors depend on this, not on an
- * editor library: the plain text area below works today, and a CodeMirror 6 implementation can
- * replace it in `CodeEditor` without touching the SQL and PromQL editors.
+ * editor library: `CodeMirrorEditor` and the plain text area below both take these props.
  */
 export interface CodeEditorProps {
   value: string;
@@ -39,7 +40,7 @@ const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
 };
 
 /**
- * Fallback editor: a text area over a highlighted copy of its text. The text area keeps every
+ * Plain editor: a text area over a highlighted copy of its text. The text area keeps every
  * native behavior (undo, selection, input methods, screen readers); the layer behind it only
  * colors the same characters, which is why both share font, padding and wrapping exactly.
  */
@@ -204,7 +205,28 @@ function TextareaCodeEditor({
 }
 
 /**
- * The editor in use. When the CodeMirror 6 packages are available, a `CodeMirrorEditor` with the
- * same props goes here (SQL and PromQL modes, completion sources from `completion.ts`).
+ * CodeMirror measures text with Range.getClientRects, which only a browser with layout has; in
+ * jsdom (the tests) the plain editor stays.
  */
-export const CodeEditor: (props: CodeEditorProps) => ReactNode = TextareaCodeEditor;
+const HAS_LAYOUT =
+  typeof Range !== "undefined" && typeof Range.prototype.getClientRects === "function";
+
+// CodeMirror loads with the first query editor, so the start bundle does not carry it.
+const LazyCodeMirrorEditor = lazy(() =>
+  import("./CodeMirrorEditor").then((module) => ({ default: module.CodeMirrorEditor })),
+);
+
+/**
+ * The query text editor: CodeMirror 6 in browsers, the plain text area while it loads and where
+ * there is no layout. Both take the same props.
+ */
+export function CodeEditor(props: CodeEditorProps): ReactNode {
+  if (!HAS_LAYOUT) {
+    return <TextareaCodeEditor {...props} />;
+  }
+  return (
+    <Suspense fallback={<TextareaCodeEditor {...props} />}>
+      <LazyCodeMirrorEditor {...props} />
+    </Suspense>
+  );
+}

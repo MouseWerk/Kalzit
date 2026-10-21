@@ -1,10 +1,11 @@
-import { type ReactNode, useId } from "react";
+import { lazy, type ReactNode, Suspense, useId } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
 import { EmptyPanel, UnitField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import type { TimeSeriesChartProps } from "./ChartShell";
+import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import { buildSeries } from "./series";
-import { SvgTimeSeriesChart, type TimeSeriesChartProps } from "./SvgTimeSeriesChart";
 
 export interface TimeSeriesOptions {
   unit: string;
@@ -14,11 +15,25 @@ export interface TimeSeriesOptions {
   showLegend: boolean;
 }
 
-/**
- * The chart renderer. uPlot is the planned one (canvas, built for many points); until the package
- * is added, the SVG chart with per-pixel decimation renders the same props. Swap it here.
- */
-const TimeSeriesChart: (props: TimeSeriesChartProps) => ReactNode = SvgTimeSeriesChart;
+/** jsdom, where the tests run, has no canvas; there the SVG chart draws. */
+const HAS_CANVAS = typeof navigator !== "undefined" && !/jsdom/i.test(navigator.userAgent);
+
+// uPlot loads with the first time series, so the start bundle does not carry it.
+const LazyUplotChart = lazy(() =>
+  import("./UplotTimeSeriesChart").then((module) => ({ default: module.UplotTimeSeriesChart })),
+);
+
+/** uPlot draws the chart; the SVG chart shows meanwhile and where there is no canvas. */
+function TimeSeriesChart(props: TimeSeriesChartProps): ReactNode {
+  if (!HAS_CANVAS) {
+    return <SvgTimeSeriesChart {...props} />;
+  }
+  return (
+    <Suspense fallback={<SvgTimeSeriesChart {...props} />}>
+      <LazyUplotChart {...props} />
+    </Suspense>
+  );
+}
 
 const LINE_WIDTHS = [1, 2, 3] as const;
 
