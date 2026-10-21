@@ -215,9 +215,13 @@ impl DataSourcePlugin for Sqlite {
         let mut mismatches = vec![0_u64; frame.columns_mut().len()];
         let mut rows = query.fetch(&mut *c);
         while let Some(row) = rows.try_next().await.map_err(&stopped)? {
-            let values = row_values(&row, &mut frame, &mut mismatches);
+            let (values, mismatched) = row_values(&row, &mut frame);
             if !frame.push_row(values) {
                 break;
+            }
+            // Only rows that are shown count; a row the limit cut is not in the answer.
+            for i in mismatched {
+                mismatches[i] += 1;
             }
         }
         drop(rows);
@@ -269,9 +273,10 @@ pub fn parse_time_text(s: &str) -> Option<i64> {
 
 /// SQLite types each value, not each column: a column without a declared type takes the type of
 /// its first value, and later values are converted to the column's type where that is lossless.
-/// Values that do not fit are `null` and counted per column in `mismatches`.
-fn row_values(row: &SqliteRow, frame: &mut FrameBuilder, mismatches: &mut [u64]) -> Vec<Value> {
+/// Values that do not fit are `null`; the second part names their columns.
+fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usize>) {
     let mut out = Vec::with_capacity(row.len());
+    let mut mismatched = Vec::new();
     let mut notices = Vec::new();
     for (i, column) in frame.columns_mut().iter_mut().enumerate() {
         let Ok(raw) = row.try_get_raw(i) else {
@@ -304,14 +309,14 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder, mismatches: &mut [u64])
         });
         let value = convert(natural, field_type);
         if value.is_null() {
-            mismatches[i] += 1;
+            mismatched.push(i);
         }
         out.push(value);
     }
     for n in notices {
         frame.notice(NoticeSeverity::Warning, n);
     }
-    out
+    (out, mismatched)
 }
 
 enum Natural {
@@ -325,9 +330,18 @@ enum Natural {
 /// 1973, so both readings cover the dates people store.
 const EPOCH_MS_ABOVE: f64 = 1e11;
 
-fn epoch_ms(n: f64) -> i64 {
+/// Unix milliseconds of a number in a time column, or `None` outside the years 1 to 9999 (the
+/// range every time in an answer keeps to).
+fn epoch_ms(n: f64) -> Option<i64> {
     let ms = if n.abs() > EPOCH_MS_ABOVE { n } else { n * 1000.0 };
-    ms.round() as i64
+    // Compared as a float first: the cast saturates, which would turn any huge value into a
+    // valid-looking time at the edge.
+    let range = super::MIN_TIME_MS as f64..=super::MAX_TIME_MS as f64;
+    range.contains(&ms.round()).then(|| ms.round() as i64)
+}
+
+fn time_value(ms: Option<i64>) -> Value {
+    ms.filter(|ms| (super::MIN_TIME_MS..=super::MAX_TIME_MS).contains(ms)).map_or(Value::Null, |ms| json!(ms))
 }
 
 fn convert(natural: Natural, field_type: FieldType) -> Value {
@@ -345,14 +359,10 @@ fn convert(natural: Natural, field_type: FieldType) -> Value {
         (FieldType::Number, Natural::Real(f)) => serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number),
         (FieldType::Bool, Natural::Int(i)) => json!(i != 0),
         (FieldType::Time, Natural::Int(i)) => {
-            if i.unsigned_abs() > EPOCH_MS_ABOVE as u64 {
-                json!(i)
-            } else {
-                json!(i * 1000)
-            }
+            time_value(if i.unsigned_abs() > EPOCH_MS_ABOVE as u64 { Some(i) } else { i.checked_mul(1000) })
         }
-        (FieldType::Time, Natural::Real(f)) if f.is_finite() => json!(epoch_ms(f)),
-        (FieldType::Time, Natural::Text(t)) => parse_time_text(&t).map_or(Value::Null, |ms| json!(ms)),
+        (FieldType::Time, Natural::Real(f)) if f.is_finite() => time_value(epoch_ms(f)),
+        (FieldType::Time, Natural::Text(t)) => time_value(parse_time_text(&t)),
         (FieldType::String, Natural::Text(t)) => json!(t),
         (FieldType::String, Natural::Int(i)) => json!(i.to_string()),
         (FieldType::String, Natural::Real(f)) => json!(f.to_string()),
@@ -380,6 +390,19 @@ mod tests {
         assert_eq!(convert(Natural::Real(1_767_261_600.25), FieldType::Time), json!(1_767_261_600_250_i64));
         assert_eq!(convert(Natural::Real(1_767_261_600_250.4), FieldType::Time), json!(1_767_261_600_250_i64));
         assert_eq!(convert(Natural::Real(f64::INFINITY), FieldType::Time), Value::Null);
+        // Outside the years 1 to 9999 nothing is a time: neither huge integers (milliseconds far
+        // past 9999) nor reals whose conversion would saturate.
+        let max = crate::datasources::MAX_TIME_MS;
+        let min = crate::datasources::MIN_TIME_MS;
+        assert_eq!(convert(Natural::Int(max), FieldType::Time), json!(max));
+        assert_eq!(convert(Natural::Int(max + 1), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Int(min), FieldType::Time), json!(min));
+        assert_eq!(convert(Natural::Int(min - 1), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Int(i64::MAX), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Int(i64::MIN), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Real(1e30), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Real(-1e30), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Text("+12026-01-01".into()), FieldType::Time), Value::Null);
     }
 
     #[test]

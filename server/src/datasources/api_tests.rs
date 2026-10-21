@@ -699,7 +699,8 @@ async fn sqlite_values_keep_to_their_column_type() {
             "CREATE TABLE z (i INTEGER); INSERT INTO z VALUES (1), (3.0), (1.5), (2.5);
              CREATE VIEW plus AS SELECT i + 1 AS j FROM z;
              CREATE TABLE e (d DATETIME);
-             INSERT INTO e VALUES (1767261600), (1767261600000), (1767261600.5), ('2026-01-01 10:00:00');",
+             INSERT INTO e VALUES (1767261600), (1767261600000), (1767261600.5), ('2026-01-01 10:00:00'),
+                                  (9000000000000000), (1e300);",
         )
         .await;
     let id = t.create_sqlite("Werte", &file).await;
@@ -736,12 +737,26 @@ async fn sqlite_values_keep_to_their_column_type() {
     assert_eq!(frame["fields"][0]["values"], json!(["1", "4", null]));
     assert_eq!(mismatch(&frame).unwrap()["params"], json!({ "column": "n", "count": "1" }));
 
-    // Seconds, milliseconds, fractional seconds and text all name the same time.
+    // Seconds, milliseconds, fractional seconds and text all name the same time; numbers past
+    // the year 9999 are no time.
     let frame = run("SELECT d FROM e ORDER BY rowid").await;
     assert_eq!(frame["fields"][0]["type"], "time");
     let ms = 1_767_261_600_000_i64;
-    assert_eq!(frame["fields"][0]["values"], json!([ms, ms, ms + 500, ms]));
-    assert!(mismatch(&frame).is_none(), "{frame}");
+    assert_eq!(frame["fields"][0]["values"], json!([ms, ms, ms + 500, ms, null, null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"], json!({ "column": "d", "count": "2" }));
+
+    // A row the limit cuts is not in the answer, so its mismatch is not counted.
+    let limited = |limit: u32| {
+        let t = &t;
+        let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT i FROM z ORDER BY rowid" }, "limit": limit }]);
+        async move { t.query(&t.owner, q).await.body["results"]["A"]["result"]["frame"].clone() }
+    };
+    let frame = limited(2).await;
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "3"]));
+    assert!(mismatch(&frame).is_none(), "the cut row holds the first fraction: {frame}");
+    let frame = limited(3).await;
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "3", null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"]["count"], "1");
 }
 
 #[tokio::test]
@@ -1510,9 +1525,11 @@ async fn answers_carry_the_callers_access() {
 
 /// `access` against what each route allows, for every combination of data source permissions on
 /// a custom role (held directly or as a team role) and a grant (none, or query, edit or admin to
-/// the member, their team or their role): 192 principals. Read is `GET`, query is `/health` (and
-/// agrees with a free query), write is a rename, permissions is reading the grants, changeTarget
-/// is a path change; on the trash, `write` and being listed must match whether restore works.
+/// the member, their team or their role): 192 principals. Read is `GET`, query is a free query
+/// (`/health` and `/schema` check the same permission), write is a rename, permissions is
+/// reading the grants, changeTarget is a path change; on the trash, `write` and being listed must
+/// match whether restore works. Every flag must be both true and false for some principals, so a
+/// broken setup cannot pass by allowing nothing.
 #[tokio::test]
 async fn access_matches_what_the_routes_allow() {
     let t = T::new().await;
@@ -1528,6 +1545,8 @@ async fn access_matches_what_the_routes_allow() {
         [("none", ""), ("user", "query"), ("user", "edit"), ("user", "admin"), ("team", "edit"), ("role", "admin")];
     let mut bad = Vec::new();
     let mut n = 0;
+    let mut allowed = [0_usize; 5];
+    let mut restored = 0_usize;
     for mask in 0..16u32 {
         let set: Vec<&str> = perms.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, p)| *p).collect();
         let role_id = uuid::Uuid::now_v7().to_string();
@@ -1616,9 +1635,6 @@ async fn access_matches_what_the_routes_allow() {
                     .map(|r| flags(&r["access"]))
                     .or_else(|| (one.status == StatusCode::OK).then(|| flags(&one.body["access"])))
                     .unwrap_or_default();
-                let health = t
-                    .send(Method::POST, &t.path(&format!("/datasources/{ds}/health")), Some(json!({})), Some(&cookie))
-                    .await;
                 let q = t.send(Method::POST, &t.path("/query"), Some(json!({ "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT 1 AS x" } }], "timeRange": { "from": 0, "to": 1 } })), Some(&cookie)).await;
                 let free_ok = q.body["results"]["A"].get("result").is_some();
                 let write = t
@@ -1658,13 +1674,13 @@ async fn access_matches_what_the_routes_allow() {
                 }
                 let actual = [
                     one.status == StatusCode::OK,
-                    health.status == StatusCode::OK,
+                    free_ok,
                     write.status == StatusCode::OK,
                     gr.status == StatusCode::OK,
                     moved.status == StatusCode::OK,
                 ];
-                if health.status.is_success() != free_ok {
-                    bad.push(format!("{label}: health {} but free query ok={free_ok}", health.status));
+                for (count, yes) in allowed.iter_mut().zip(actual) {
+                    *count += usize::from(yes);
                 }
                 if claimed != actual {
                     bad.push(format!(
@@ -1695,6 +1711,7 @@ async fn access_matches_what_the_routes_allow() {
                     assert!(again.status.is_success(), "{}", again.text);
                 }
                 let restore_ok = restore.status == StatusCode::OK;
+                restored += usize::from(restore_ok);
                 if claimed[2] != restore_ok || row.is_some() != restore_ok {
                     bad.push(format!(
                         "{label}: trash listed={} access={claimed:?} but restore {}",
@@ -1709,16 +1726,11 @@ async fn access_matches_what_the_routes_allow() {
         }
     }
     assert_eq!(n, 192);
-    assert!(
-        bad.is_empty(),
-        "{} of {n} principals disagree:
-{}",
-        bad.len(),
-        bad.join(
-            "
-"
-        )
-    );
+    for (flag, count) in ["read", "query", "write", "permissions", "changeTarget"].iter().zip(allowed) {
+        assert!(count > 0 && count < n, "{flag} is allowed for {count} of {n} principals");
+    }
+    assert!(restored > 0 && restored < n, "restore works for {restored} of {n} principals");
+    assert!(bad.is_empty(), "{} of {n} principals disagree:\n{}", bad.len(), bad.join("\n"));
 }
 
 /// An edit grant on a data source renames it and changes its limits, but where it connects is

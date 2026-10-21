@@ -144,7 +144,7 @@ async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> A
     model::parse(value).map_err(|e| ApiError::internal("dashboards", e))
 }
 
-fn variables_error(reason: &str, name: &str, message: String) -> ApiError {
+fn variables_error(reason: &'static str, name: &str, message: String) -> ApiError {
     ApiError::validation(message).with_field("variables").because(reason).param("name", name)
 }
 
@@ -343,7 +343,7 @@ fn api_error(error: ErrorBody) -> ApiError {
     };
     let mut e = ApiError::new(status, code, error.message);
     if let Some(reason) = error.reason {
-        e = e.with_reason(reason, error.params.unwrap_or_default());
+        e = e.with_reason_string(reason, error.params.unwrap_or_default());
     }
     e
 }

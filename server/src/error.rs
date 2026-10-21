@@ -71,18 +71,21 @@ impl ApiError {
         self
     }
 
-    /// Adds the reason code and its parameters.
-    pub fn with_reason(
-        mut self,
-        reason: impl Into<String>,
-        params: std::collections::BTreeMap<String, String>,
-    ) -> Self {
-        self.reason = Some(Box::new(Reason { code: reason.into(), params }));
+    /// Adds the reason code and its parameters. Reasons are literals, so a test can check each one
+    /// against docs/api/datasources.md.
+    pub fn with_reason(self, reason: &'static str, params: std::collections::BTreeMap<String, String>) -> Self {
+        self.with_reason_string(reason.to_string(), params)
+    }
+
+    /// Like `with_reason`, for a reason that was already checked where it was made and is only
+    /// passed on (a query outcome answered by a single-query route).
+    pub fn with_reason_string(mut self, reason: String, params: std::collections::BTreeMap<String, String>) -> Self {
+        self.reason = Some(Box::new(Reason { code: reason, params }));
         self
     }
 
     /// Adds a reason code without parameters; `param` adds them one by one.
-    pub fn because(self, reason: &str) -> Self {
+    pub fn because(self, reason: &'static str) -> Self {
         self.with_reason(reason, Default::default())
     }
 

@@ -72,12 +72,72 @@ mod tests {
         "settings.updated",
     ];
 
-    /// Every `"namespace.name"` literal in the server's non-test code.
-    fn reasons_in_code(dir: &Path, out: &mut BTreeSet<String>) {
+    /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of
+    /// `NAMESPACES`, so a reason in a new namespace cannot slip past the comparison with the docs.
+    const REASON_CALLS: &[&str] = &[
+        "because(",
+        "with_reason(",
+        "Detail::new(",
+        "FieldError::new(",
+        "Rejected::new(",
+        "Blocked::new(",
+        "SourceError::rejected(",
+        "SourceError::failed(",
+        "reject(",
+    ];
+
+    /// Whether `literal` has the form of a reason: `word.word` in lower case.
+    fn reason_like(literal: &str) -> Option<(&str, &str)> {
+        let (ns, name) = literal.split_once('.')?;
+        let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+        (word(ns) && word(name)).then_some((ns, name))
+    }
+
+    /// The string literals in the arguments of the call whose `(` ends `code[..start]`.
+    fn call_literals(code: &str, start: usize) -> Vec<&str> {
+        let bytes = code.as_bytes();
+        let (mut depth, mut i, mut out) = (1, start, Vec::new());
+        while i < bytes.len() && depth > 0 {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b'"' => {
+                    let begin = i + 1;
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        i += if bytes[i] == b'\\' { 2 } else { 1 };
+                    }
+                    out.push(&code[begin..i.min(code.len())]);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// Reason-like literals at reason call sites whose namespace is unknown.
+    fn unknown_namespaces(path: &Path, code: &str, out: &mut Vec<String>) {
+        for call in REASON_CALLS {
+            for (at, _) in code.match_indices(call) {
+                for literal in call_literals(code, at + call.len()) {
+                    if let Some((ns, _)) = reason_like(literal)
+                        && !NAMESPACES.contains(&ns)
+                    {
+                        out.push(format!("{}: {literal} in {call}...)", path.display()));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every `"namespace.name"` literal in the server's non-test code, and reason call sites with
+    /// a literal of an unknown namespace.
+    fn reasons_in_code(dir: &Path, out: &mut BTreeSet<String>, unknown: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
-                reasons_in_code(&path, out);
+                reasons_in_code(&path, out, unknown);
                 continue;
             }
             let name = path.file_name().unwrap().to_string_lossy();
@@ -86,16 +146,17 @@ mod tests {
             }
             let text = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
             let code = text.split("#[cfg(test)]\nmod tests").next().unwrap();
-            for line in code.lines().filter(|l| !l.trim_start().starts_with("//")) {
+            let code: String =
+                code.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
+            unknown_namespaces(&path, &code, unknown);
+            for line in code.lines() {
                 let mut rest = line;
                 while let Some(start) = rest.find('"') {
                     let after = &rest[start + 1..];
                     let Some(end) = after.find('"') else { break };
                     let literal = &after[..end];
-                    if let Some((ns, name)) = literal.split_once('.')
+                    if let Some((ns, _)) = reason_like(literal)
                         && NAMESPACES.contains(&ns)
-                        && !name.is_empty()
-                        && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
                     {
                         out.insert(literal.to_string());
                     }
@@ -121,12 +182,25 @@ mod tests {
         out
     }
 
+    #[test]
+    fn reason_calls_with_an_unknown_namespace_are_found() {
+        let code = r#"Err(ApiError::validation("x").because("quota.exceeded"))
+            .because("request.limit") Detail::new("health.connected", format!("a {}", f("b")))
+            FieldError::new("port", "port.bad", "the port")"#;
+        let mut unknown = Vec::new();
+        unknown_namespaces(Path::new("x.rs"), code, &mut unknown);
+        assert_eq!(unknown.len(), 2, "{unknown:?}");
+        assert!(unknown[0].contains("quota.exceeded") && unknown[1].contains("port.bad"), "{unknown:?}");
+    }
+
     /// Keeps docs/api/datasources.md in step with the reasons the server answers with.
     #[test]
     fn every_reason_is_documented_and_every_documented_reason_exists() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut code = BTreeSet::new();
-        reasons_in_code(&root.join("src"), &mut code);
+        let mut unknown = Vec::new();
+        reasons_in_code(&root.join("src"), &mut code, &mut unknown);
+        assert!(unknown.is_empty(), "reasons in a namespace the docs check does not know: {unknown:?}");
         for not in NOT_REASONS {
             assert!(code.remove(*not), "{not} is listed as a non-reason but no longer appears in the code");
         }

@@ -288,11 +288,13 @@ limit). Results are frames:
   A value is converted to the column's type where nothing is lost: an integer in a `number`
   column, a whole-number REAL in an `int64` column (its integer). Any other value that does not
   fit, such as `2.5` in an `int64` column, is `null`; one `frame.value_mismatch` notice per
-  column says how many (`count`).
+  column says how many (`count`, counting only rows in the answer, not one the row limit cut).
 - Numbers in a SQLite `time` column are Unix time: a value whose magnitude is above 10^11 is
   milliseconds, any other value seconds (what `unixepoch()` returns; fractions are kept to the
   millisecond). 10^11 seconds lie in the year 5138 and 10^11 milliseconds in 1973, so both
   readings cover the dates people store. Text is read in the forms SQLite's date functions write.
+  A time outside the years 1 to 9999 (for example a huge number) is `null` and counts as a
+  mismatch.
 - SQLite reads the file's current schema on every query, so a table recreated with other column
   types answers with its new types at once.
 - `meta.executedQuery` is the statement as sent, with placeholders instead of values.
