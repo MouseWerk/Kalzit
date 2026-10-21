@@ -237,7 +237,7 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
         };
         audit::record(&mut tx, &event).await?;
     }
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(deleted)
 }
 

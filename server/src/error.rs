@@ -87,6 +87,10 @@ impl ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
+        // Once this request committed a change, "busy, nothing changed" would be untrue.
+        if crate::db::committed() {
+            return Self::internal("database, after a commit", e);
+        }
         match contention(&e) {
             Some(Contention::Busy) => {
                 tracing::warn!("database busy, answering 503: {e}");

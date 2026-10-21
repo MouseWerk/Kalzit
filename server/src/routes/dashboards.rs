@@ -444,7 +444,7 @@ async fn create(
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.created", &id, summary, now)).await?;
     let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut tx, &ctx, row).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(answer)))
 }
 
@@ -529,7 +529,7 @@ async fn write_version(
     audit::record(&mut tx, &event(ctx, info, action, &row.id, summary, now)).await?;
     let saved = fetch(&mut *tx, &ctx.org_id, &row.id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut tx, ctx, saved).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(answer)
 }
 
@@ -606,7 +606,7 @@ async fn trash(
     .execute(&mut *tx)
     .await?;
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.trashed", &id, json!({}), now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -644,7 +644,7 @@ async fn restore(
         audit::record(&mut tx, &event(&ctx, &info, "dashboard.restored", &id, json!({}), now)).await?;
         let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
         let answer = view(&mut tx, &ctx, row).await?;
-        tx.commit().await?;
+        crate::db::commit(tx).await?;
         return Ok(Json(answer));
     }
     // Restored or purged by someone else meanwhile: nothing changed here, answer what is stored.
@@ -706,7 +706,7 @@ async fn purge(
         .execute(&mut *tx)
         .await?;
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.purged", &id, json!({}), now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

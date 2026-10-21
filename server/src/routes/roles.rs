@@ -193,7 +193,7 @@ async fn create(
     let summary = json!({ "roleId": id, "permissions": names(&permissions) });
     audit(&mut tx, &actor, Some(&ctx.org_id), "role.created", ("role", &id), summary).await?;
     let role = load(&mut tx, &ctx.org_id, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(role)))
 }
 
@@ -269,7 +269,7 @@ async fn update(
         audit(&mut tx, &actor, Some(&ctx.org_id), "role.updated", ("role", &role_id), summary).await?;
     }
     let role = load(&mut tx, &ctx.org_id, &role_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(role))
 }
 
@@ -309,6 +309,6 @@ async fn delete(
         .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "role.deleted", ("role", &role_id), json!({ "roleId": role_id })).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }

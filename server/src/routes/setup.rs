@@ -240,7 +240,7 @@ pub async fn complete(
     let token = session::create(&mut *tx, &state.config.sessions, now, &user_id).await?;
     let user = SessionUser { id: user_id.clone(), email, name, is_server_admin: 1 };
     let answer = me(&mut *tx, user).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
 
     close_gate(&mut gate);
     drop(gate);

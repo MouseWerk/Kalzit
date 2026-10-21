@@ -328,7 +328,7 @@ async fn create(
     record(&mut tx, &event(&ctx, &info, "datasource.created", &id, summary, now)).await?;
     let ds = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &id).await?;
     let answer = view_in(&mut tx, ds).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(answer)))
 }
 
@@ -453,7 +453,7 @@ async fn update(
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
     let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, saved).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
     Ok(Json(answer))
 }
@@ -474,7 +474,7 @@ async fn delete(
         .execute(&mut *tx)
         .await?;
     record(&mut tx, &event(&ctx, &info, "datasource.deleted", &ds.id, json!({}), now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -501,7 +501,7 @@ async fn restore(
     record(&mut tx, &event(&ctx, &info, "datasource.restored", &ds.id, json!({}), now)).await?;
     let restored = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, restored).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(answer))
 }
 

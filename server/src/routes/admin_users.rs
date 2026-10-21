@@ -123,7 +123,7 @@ async fn create(
     let summary = json!({ "userId": id, "isServerAdmin": req.is_server_admin });
     audit(&mut tx, &actor, None, "user.created", ("user", &id), summary).await?;
     let user = load(&mut *tx, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -212,6 +212,6 @@ async fn update(
         audit(&mut tx, &actor, None, action, ("user", &user_id), json!({ "userId": user_id })).await?;
     }
     let user = load(&mut *tx, &user_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(user))
 }

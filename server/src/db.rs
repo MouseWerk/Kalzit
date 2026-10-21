@@ -4,6 +4,7 @@
 //! SQLite runs on one host with the database on a local disk; shared storage or several Kalzit
 //! servers on one database need PostgreSQL.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -83,13 +84,46 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
 /// Starts a transaction that holds the write lock from its first statement: `BEGIN IMMEDIATE` on
 /// SQLite, which waits for the lock with the busy timeout instead of failing later when a read
 /// snapshot turns stale (`SQLITE_BUSY_SNAPSHOT`); a plain `BEGIN` on PostgreSQL, whose row locks
-/// do the ordering. Every transaction of the server starts here (a guard test checks it).
+/// do the ordering. Every transaction of the server starts here: clippy refuses sqlx's own
+/// `begin` everywhere else (`clippy.toml`).
+#[expect(clippy::disallowed_methods, reason = "the one place transactions of Kalzit's database start")]
 pub async fn begin(pool: &AnyPool) -> Result<Transaction<'static, Any>, sqlx::Error> {
     if pool.connect_options().database_url.scheme() == "sqlite" {
         pool.begin_with("BEGIN IMMEDIATE").await
     } else {
         pool.begin().await
     }
+}
+
+tokio::task_local! {
+    /// Set once a transaction of the current request has committed (see `commit`).
+    static COMMITTED: Cell<bool>;
+}
+
+/// Commits, and remembers for the rest of the request that something was saved: from then on a
+/// database error answers `internal`, never `busy`, because "nothing changed, send it again" would
+/// no longer be true. Every commit goes through here (clippy refuses sqlx's own elsewhere).
+#[expect(clippy::disallowed_methods, reason = "the one place transactions of Kalzit's database commit")]
+pub async fn commit(tx: Transaction<'static, Any>) -> Result<(), sqlx::Error> {
+    tx.commit().await?;
+    // Outside a request (startup, background tasks, tests) there is no scope and nothing to mark.
+    let _ = COMMITTED.try_with(|c| c.set(true));
+    Ok(())
+}
+
+/// Whether a transaction of the current request has committed.
+pub fn committed() -> bool {
+    COMMITTED.try_with(Cell::get).unwrap_or(false)
+}
+
+/// Runs `request` with its own commit flag; the router installs this around every request.
+pub async fn request_scope<F: Future>(request: F) -> F::Output {
+    COMMITTED.scope(Cell::new(false), request).await
+}
+
+/// The middleware that gives every request its own commit flag (`request_scope`).
+pub async fn scope_requests(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    request_scope(next.run(req)).await
 }
 
 /// The database file of a SQLite URL (as `config::sqlite_url` writes them), `None` for other
@@ -108,9 +142,15 @@ fn sqlite_file(url: &str) -> Option<PathBuf> {
 /// SQLite's locking needs a local disk: on network file systems WAL is unsupported and locks are
 /// unreliable, which corrupts databases. Refused at start with the way out.
 fn ensure_local_disk(file: &Path) -> Result<()> {
-    let dir = file.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    if let Some(kind) = network_storage(&dir) {
+    // The file itself when it exists, so a symbolic link or junction to a share is followed;
+    // before the first start only its directory exists. If neither resolves, the path as given is
+    // checked: the start then fails later, opening the database, with that error.
+    let resolved = std::fs::canonicalize(file).ok().or_else(|| {
+        let dir = file.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        std::fs::canonicalize(dir).ok()
+    });
+    let place = resolved.unwrap_or_else(|| file.to_path_buf());
+    if let Some(kind) = network_storage(&place) {
         anyhow::bail!(
             "the SQLite database {} is on a network drive ({kind}); SQLite needs a local disk. For shared \
              storage or several Kalzit servers on one database, use PostgreSQL (database.url)",
@@ -126,6 +166,8 @@ fn network_storage(dir: &Path) -> Option<String> {
     if is_unc(&path) {
         return Some("a UNC path".into());
     }
+    // A path without a drive letter that is not UNC either (a volume GUID path) is let through:
+    // there is no cheap way to tell, and such paths are local volumes in practice.
     let root = drive_root(&path)?;
     let wide: Vec<u16> = root.encode_utf16().chain([0]).collect();
     /// `GetDriveTypeW` answers this for a remote (network) drive.
@@ -135,14 +177,17 @@ fn network_storage(dir: &Path) -> Option<String> {
         fn GetDriveTypeW(root_path_name: *const u16) -> u32;
     }
     // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call, which only reads it.
+    // An unknown or failed answer (0, 1) counts as local: refusing a start on a guess is worse.
     let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
     (kind == DRIVE_REMOTE).then(|| format!("network drive {root}"))
 }
 
-/// `\\server\share\...` and its long form `\\?\UNC\server\share\...`; not `\\?\C:\...`.
+/// `\\server\share\...` and its long forms `\\?\UNC\...` and `\\.\UNC\...`; not `\\?\C:\...` or
+/// a device path like `\\.\pipe\...`.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn is_unc(path: &str) -> bool {
     path.starts_with(r"\\?\UNC\")
+        || path.starts_with(r"\\.\UNC\")
         || (path.starts_with(r"\\") && !path.starts_with(r"\\?\") && !path.starts_with(r"\\.\"))
 }
 
@@ -157,17 +202,21 @@ fn drive_root(path: &str) -> Option<String> {
 
 #[cfg(target_os = "linux")]
 fn network_storage(dir: &Path) -> Option<String> {
+    // Without a readable mount table (a restricted container) the check cannot tell and lets the
+    // start go on.
     let mounts = std::fs::read_to_string("/proc/self/mounts").ok()?;
     remote_fs_type(&mounts, dir).map(|fs| format!("file system {fs}"))
 }
 
+/// Other systems (macOS, the BSDs) are not checked; Kalzit ships for Windows and Linux.
 #[cfg(not(any(windows, target_os = "linux")))]
 fn network_storage(_dir: &Path) -> Option<String> {
     None
 }
 
-/// File systems that reach the data over the network (or across a VM boundary, like WSL's 9p),
-/// where SQLite's locks cannot be trusted.
+/// File systems that reach the data over the network or across a VM boundary (WSL's 9p, the
+/// virtiofs, grpcfuse and fakeowner shares of Docker Desktop and similar), where SQLite's locks
+/// cannot be trusted.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const REMOTE_FILE_SYSTEMS: &[&str] = &[
     "nfs",
@@ -184,6 +233,9 @@ const REMOTE_FILE_SYSTEMS: &[&str] = &[
     "fuse.sshfs",
     "fuse.glusterfs",
     "fuse.cephfs",
+    "virtiofs",
+    "fuse.grpcfuse",
+    "fakeowner",
 ];
 
 /// The type of the file system that holds `dir`, from a mount table (`/proc/self/mounts`: device,
@@ -251,80 +303,38 @@ pub fn spawn_session_cleanup(state: crate::app::AppState) {
 mod tests {
     use super::*;
 
-    /// Every transaction starts through `begin` (`BEGIN IMMEDIATE` on SQLite), so none can hold a
-    /// read snapshot before its first write. No `.begin()` or `begin_with` anywhere else.
-    #[test]
-    fn transactions_start_through_db_begin() {
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-        let this = src.join("db.rs");
-        // The data source drivers open read-only transactions on the users' databases, not on
-        // Kalzit's own; they choose their BEGIN for that engine.
-        let sources = src.join("datasources");
-        let mut files = vec![src];
-        let mut offenders = Vec::new();
-        let mut scanned = 0;
-        while let Some(path) = files.pop() {
-            if path == sources {
-                continue;
-            }
-            if path.is_dir() {
-                files.extend(std::fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
-                continue;
-            }
-            if path.extension().is_none_or(|e| e != "rs") || path == this {
-                continue;
-            }
-            scanned += 1;
-            let source = std::fs::read_to_string(&path).unwrap();
-            for (i, line) in source.lines().enumerate() {
-                if line.contains(".begin()") || line.contains("begin_with") {
-                    offenders.push(format!("{}:{}", path.display(), i + 1));
-                }
-            }
-        }
-        assert!(scanned > 20, "only {scanned} files scanned; is the guard still looking at the code?");
-        assert!(offenders.is_empty(), "start transactions with db::begin: {offenders:?}");
-    }
+    /// Contention after a commit of the same request is `internal`: the change is saved, so
+    /// "busy, nothing changed, send it again" would be wrong. Without a commit in the request the
+    /// same contention is `busy`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn contention_after_a_commit_is_internal() {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let url = crate::config::sqlite_url(&dir.path().join("k.db"));
+        let pool = connect_with(&url, 2, Duration::from_millis(100)).await.unwrap();
+        sqlx::query("CREATE TABLE t (x BIGINT)").execute(&pool).await.unwrap();
+        let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
 
-    /// After a commit, a handler must not touch the database again: a busy error there would tell
-    /// the client "nothing changed" although the change is saved. Everything a reply needs is
-    /// read inside the transaction. Checked from each `tx.commit()` to the end of its function or
-    /// branch (a `return`, or the function's closing brace).
-    #[test]
-    fn nothing_reads_the_database_after_a_commit() {
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-        // This file holds the guard's own patterns, and no handler.
-        let this = src.join("db.rs");
-        let mut files = vec![src];
-        let mut offenders = Vec::new();
-        let mut commits = 0;
-        while let Some(path) = files.pop() {
-            if path.is_dir() {
-                files.extend(std::fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
-                continue;
-            }
-            if path.extension().is_none_or(|e| e != "rs") || path == this {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).unwrap();
-            let lines: Vec<&str> = source.lines().collect();
-            for (i, line) in lines.iter().enumerate() {
-                if !line.contains("tx.commit().await?") {
-                    continue;
-                }
-                commits += 1;
-                for (j, after) in lines.iter().enumerate().skip(i + 1) {
-                    if *after == "}" || after.trim_start().starts_with("return ") {
-                        break;
-                    }
-                    if after.contains("state.db") || after.contains(".acquire()") || after.contains("(&state,") {
-                        offenders.push(format!("{}:{}", path.display(), j + 1));
-                    }
-                }
-            }
-        }
-        assert!(commits > 20, "only {commits} commits found; is the guard still looking at the code?");
-        assert!(offenders.is_empty(), "database use after a commit: {offenders:?}");
+        // A handler that commits and then reads (writes, here) again while another writer holds
+        // the lock: the second statement hits the contention after the change was saved.
+        let after_commit = async {
+            let mut tx = begin(&pool).await.unwrap();
+            sqlx::query("INSERT INTO t VALUES (1)").execute(&mut *tx).await.unwrap();
+            commit(tx).await.unwrap();
+            sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+            let e = sqlx::query("INSERT INTO t VALUES (2)").execute(&pool).await.unwrap_err();
+            sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+            crate::error::ApiError::from(e).code
+        };
+        assert_eq!(request_scope(after_commit).await, "internal");
+
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+        let nothing_saved = async {
+            let e = sqlx::query("INSERT INTO t VALUES (3)").execute(&pool).await.unwrap_err();
+            crate::error::ApiError::from(e).code
+        };
+        assert_eq!(request_scope(nothing_saved).await, "busy");
+        assert!(!committed(), "outside a request scope nothing is marked");
     }
 
     #[tokio::test]
@@ -378,7 +388,7 @@ mod tests {
 
     #[test]
     fn network_paths_are_recognized() {
-        for unc in [r"\\nas\share\kalzit", r"\\?\UNC\nas\share\kalzit"] {
+        for unc in [r"\\nas\share\kalzit", r"\\?\UNC\nas\share\kalzit", r"\\.\UNC\nas\share\kalzit"] {
             assert!(is_unc(unc), "{unc}");
         }
         for local in [r"C:\ProgramData\Kalzit", r"\\?\C:\ProgramData\Kalzit", r"\\.\pipe\x"] {

@@ -119,7 +119,7 @@ async fn add(
     let summary = json!({ "userId": user_id, "role": role.key });
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.added", ("user", &user_id), summary).await?;
     let member = load(&mut *tx, &ctx.org_id, &user_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(member)))
 }
 
@@ -224,7 +224,7 @@ async fn change_role(
         audit(&mut tx, &actor, Some(&ctx.org_id), "member.role_changed", ("user", &user_id), summary).await?;
     }
     let member = load(&mut *tx, &ctx.org_id, &user_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(member))
 }
 
@@ -257,6 +257,6 @@ async fn remove(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "member.removed", ("user", &user_id), json!({ "userId": user_id }))
         .await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }

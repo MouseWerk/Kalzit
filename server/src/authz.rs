@@ -1292,6 +1292,6 @@ mod resource_tests {
         assert_eq!(lock_server_admins(&mut tx).await.unwrap(), 0);
         assert_eq!(lock_role(&mut tx, "o", "viewer").await.unwrap().unwrap().name, "viewer");
         assert!(lock_role(&mut tx, "o", "gone").await.unwrap().is_none());
-        tx.commit().await.unwrap();
+        crate::db::commit(tx).await.unwrap();
     }
 }

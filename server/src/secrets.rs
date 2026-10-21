@@ -774,7 +774,7 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         .await?;
         count += 1;
     }
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(count)
 }
 

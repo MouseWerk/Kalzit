@@ -112,7 +112,7 @@ async fn create(
     let summary = json!({ "orgId": id, "ownerUserId": req.owner_user_id });
     audit(&mut tx, &actor, Some(&id), "org.created", ("org", &id), summary).await?;
     let org = load(&mut *tx, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(org)))
 }
 
@@ -140,6 +140,6 @@ async fn rename(
     let summary = json!({ "orgId": org_id, "fields": ["name"] });
     audit(&mut tx, &actor, Some(&org_id), "org.renamed", ("org", &org_id), summary).await?;
     let org = load(&mut *tx, &org_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(org))
 }

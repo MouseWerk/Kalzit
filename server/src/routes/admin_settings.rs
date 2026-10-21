@@ -165,7 +165,7 @@ async fn patch(
         at_ms: now,
     };
     audit::record(&mut tx, &event).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     settings::cache(state).invalidate(org_id);
     // Built from what was just stored, without another read: once the change is committed,
     // nothing may fail as "busy, nothing changed". The value comes from the database now, since

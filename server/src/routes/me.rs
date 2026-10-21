@@ -48,7 +48,7 @@ async fn update(
     audit(&mut tx, &actor, None, "user.updated", ("user", &user.id), summary).await?;
     // Read before the commit: once it is committed, nothing may fail as "busy, nothing changed".
     let answer = me(&mut *tx, SessionUser { name, ..user }).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(answer))
 }
 
@@ -112,7 +112,7 @@ async fn change_password(
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user.id, "sessionsEnded": ended });
     audit(&mut tx, &actor, None, "user.password_changed", ("user", &user.id), summary).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -178,7 +178,7 @@ async fn end_session(
     }
     let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, None, "auth.session_ended", ("user", &user.id), json!({ "sessionId": session_id })).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -198,6 +198,6 @@ async fn end_other_sessions(
     let revoked = session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers).as_deref()).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, None, "auth.sessions_revoked", ("user", &user.id), json!({ "revoked": revoked })).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(Revoked { revoked }))
 }

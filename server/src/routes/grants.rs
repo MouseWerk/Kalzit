@@ -250,7 +250,7 @@ async fn create(
         .bind(&id)
         .fetch_one(&mut *tx)
         .await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((status, Json(grant)))
 }
 
@@ -302,7 +302,7 @@ async fn delete(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "grantId": grant_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "grant.deleted", (resource_type.as_str(), &resource_id), summary).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -415,7 +415,7 @@ async fn create(
         keep_access(&mut tx, &ctx, &info, &id, now).await?;
     }
     let created = answer(&mut tx, &ctx, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, created))
 }
 
@@ -602,7 +602,7 @@ async fn update(
         }
     }
     let updated = answer(&mut tx, &ctx, &folder_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(updated)
 }
 
@@ -649,7 +649,7 @@ async fn trash(
     }
     let summary = json!({ "folders": subtree.folders.len(), "dashboards": dashboards });
     audit::record(&mut tx, &event(&ctx, &info, "folder.trashed", &folder_id, summary, now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -697,7 +697,7 @@ async fn restore(
     let summary = json!({ "folders": folders, "dashboards": dashboards });
     audit::record(&mut tx, &event(&ctx, &info, "folder.restored", &folder_id, summary, now)).await?;
     let restored = answer(&mut tx, &ctx, &folder_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(restored)
 }
 
@@ -746,6 +746,6 @@ async fn purge(
     let now = state.clock.now_ms();
     let summary = json!({ "folders": ordered.len(), "dashboards": dashboards });
     audit::record(&mut tx, &event(&ctx, &info, "folder.purged", &folder_id, summary, now)).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }

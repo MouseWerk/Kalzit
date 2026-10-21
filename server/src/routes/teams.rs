@@ -147,7 +147,7 @@ async fn create(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     audit(&mut tx, &actor, Some(&ctx.org_id), "team.created", ("team", &id), json!({ "teamId": id })).await?;
     let team = load(&mut tx, &ctx.org_id, &id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(team)))
 }
 
@@ -184,7 +184,7 @@ async fn rename(
     let summary = json!({ "teamId": team_id, "fields": ["name"] });
     audit(&mut tx, &actor, Some(&ctx.org_id), "team.renamed", ("team", &team_id), summary).await?;
     let team = load(&mut tx, &ctx.org_id, &team_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(team))
 }
 
@@ -231,7 +231,7 @@ async fn delete(
         .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, Some(&ctx.org_id), "team.deleted", ("team", &team_id), json!({ "teamId": team_id })).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -364,7 +364,7 @@ async fn put_member(
             .bind(&user_id)
             .fetch_one(&mut *tx)
             .await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(member))
 }
 
@@ -389,7 +389,7 @@ async fn remove_member(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "teamId": team_id, "userId": user_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_removed", ("team", &team_id), summary).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -438,6 +438,6 @@ async fn set_roles(
     let summary = json!({ "teamId": team_id, "roles": keys });
     audit(&mut tx, &actor, Some(&ctx.org_id), "team.roles_changed", ("team", &team_id), summary).await?;
     let team = load(&mut tx, &ctx.org_id, &team_id).await?;
-    tx.commit().await?;
+    crate::db::commit(tx).await?;
     Ok(Json(team))
 }
