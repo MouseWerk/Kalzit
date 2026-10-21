@@ -1,8 +1,16 @@
+pub mod admin_orgs;
+pub mod admin_users;
 pub mod auth;
+pub mod grants;
 pub mod health;
+pub mod me;
+pub mod members;
 pub mod orgs;
+pub mod roles;
 pub mod setup;
+pub mod support;
 pub mod table;
+pub mod teams;
 
 use serde::Serialize;
 use sqlx::AnyPool;
@@ -12,7 +20,21 @@ use crate::error::{ApiError, ApiResult};
 
 /// Every API route, from each area's table. New areas add their `routes()` here.
 pub fn all() -> Vec<table::RouteDef> {
-    [setup::routes(), auth::routes(), orgs::routes()].into_iter().flatten().collect()
+    [
+        setup::routes(),
+        auth::routes(),
+        orgs::routes(),
+        members::routes(),
+        teams::routes(),
+        roles::routes(),
+        grants::routes(),
+        admin_users::routes(),
+        admin_orgs::routes(),
+        me::routes(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 const MAX_NAME_CHARS: usize = 100;
@@ -106,7 +128,14 @@ mod access_guard {
     /// Routes anyone may call, as "METHOD path". Adding one here is a reviewed decision.
     const PUBLIC: &[&str] = &["GET /setup", "POST /setup", "POST /auth/login", "POST /auth/logout"];
     /// Routes for any signed-in user, regardless of organization.
-    const AUTHENTICATED: &[&str] = &["GET /me"];
+    const AUTHENTICATED: &[&str] = &[
+        "GET /me",
+        "PATCH /me",
+        "POST /me/password",
+        "GET /me/sessions",
+        "DELETE /me/sessions/{sessionId}",
+        "POST /me/sessions/revoke-others",
+    ];
 
     /// The path layout decides the access rule, so a route cannot be scoped to an organization
     /// without the membership check, and an org route cannot be declared public by mistake.
