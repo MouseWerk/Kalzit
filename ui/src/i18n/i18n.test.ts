@@ -100,6 +100,29 @@ describe("catalogs", () => {
       }
     }
   });
+
+  // `fooNamed` is the accessible name of a control whose visible text is `foo`. Speech input
+  // users say what they see, so the name has to contain the visible words in order (WCAG 2.5.3
+  // "Label in Name"); axe flags a mismatch as serious.
+  it("keep the visible text inside the accessible name of a named control", () => {
+    const words = (message: string) =>
+      message
+        .toLowerCase()
+        .replace(/\{\w+\}/g, " ")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+    for (const language of ["en", "de"] as const) {
+      const catalog: Record<string, string> = language === "en" ? en : de;
+      for (const [key, named] of entries(language)) {
+        const visible = key.endsWith("Named") ? catalog[key.slice(0, -"Named".length)] : undefined;
+        if (visible !== undefined) {
+          expect(` ${words(named)} `, `${language}:${key}: ${named}`).toContain(
+            ` ${words(visible)} `,
+          );
+        }
+      }
+    }
+  });
 });
 
 describe("glossary", () => {
