@@ -4,6 +4,12 @@ import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID, PROM_ID } from "./test/fakeDatasources";
 
+/** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
+async function fill(user: ReturnType<typeof renderApp>["user"], field: HTMLElement, text: string) {
+  await user.click(field);
+  await user.paste(text);
+}
+
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
 }
@@ -147,11 +153,11 @@ describe("adding a data source", () => {
     await waitFor(() => expect(document.activeElement).toBe(name));
     expect(lastCall(server, "POST", "/datasources")).toBeUndefined();
 
-    await user.type(name, "Warehouse");
-    await user.type(screen.getByRole("textbox", { name: "Host" }), "db.example.com");
-    await user.type(screen.getByRole("textbox", { name: "Database" }), "dwh");
-    await user.type(screen.getByRole("textbox", { name: "User name" }), "kalzit_reader");
-    await user.type(screen.getByLabelText("Password (optional)"), "pw");
+    await fill(user, name, "Warehouse");
+    await fill(user, screen.getByRole("textbox", { name: "Host" }), "db.example.com");
+    await fill(user, screen.getByRole("textbox", { name: "Database" }), "dwh");
+    await fill(user, screen.getByRole("textbox", { name: "User name" }), "kalzit_reader");
+    await fill(user, screen.getByLabelText("Password (optional)"), "pw");
     await user.click(screen.getByRole("button", { name: "Add data source" }));
 
     await screen.findByRole("heading", { level: 1, name: "Data source" });
@@ -179,10 +185,10 @@ describe("adding a data source", () => {
       "checked",
       true,
     );
-    await user.type(screen.getByRole("textbox", { name: "Name" }), "ERP");
-    await user.type(screen.getByRole("textbox", { name: "Host" }), "sql.internal");
-    await user.type(screen.getByRole("textbox", { name: "Database" }), "erp");
-    await user.type(screen.getByRole("textbox", { name: "User name" }), "reader");
+    await fill(user, screen.getByRole("textbox", { name: "Name" }), "ERP");
+    await fill(user, screen.getByRole("textbox", { name: "Host" }), "sql.internal");
+    await fill(user, screen.getByRole("textbox", { name: "Database" }), "erp");
+    await fill(user, screen.getByRole("textbox", { name: "User name" }), "reader");
     await user.click(screen.getByRole("button", { name: "Add data source" }));
     await waitFor(() =>
       expect(lastCall(server, "POST", "/datasources")?.body).toMatchObject({
@@ -213,11 +219,11 @@ describe("adding a data source", () => {
     const name = await screen.findByRole("textbox", { name: "Name" });
     const port = screen.getByRole("textbox", { name: "Port (optional)" });
     await user.clear(port);
-    await user.type(port, "54.3");
-    await user.type(name, "Sales DB");
-    await user.type(screen.getByRole("textbox", { name: "Host" }), "169.254.169.254");
-    await user.type(screen.getByRole("textbox", { name: "Database" }), "d");
-    await user.type(screen.getByRole("textbox", { name: "User name" }), "u");
+    await fill(user, port, "54.3");
+    await fill(user, name, "Sales DB");
+    await fill(user, screen.getByRole("textbox", { name: "Host" }), "169.254.169.254");
+    await fill(user, screen.getByRole("textbox", { name: "Database" }), "d");
+    await fill(user, screen.getByRole("textbox", { name: "User name" }), "u");
     await user.click(screen.getByRole("button", { name: "Add data source" }));
     expect(screen.getByText("Enter a whole number of 0 or more.")).toBeTruthy();
 
@@ -356,14 +362,14 @@ describe("editing a data source", () => {
     // The name is no target, so the edit grant is enough for it.
     const name = await screen.findByRole("textbox", { name: "Name" });
     await user.clear(name);
-    await user.type(name, "Metrics 2");
+    await fill(user, name, "Metrics 2");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("Saved.");
     // The saved source loads again into a fresh form; meanwhile an admin lowers the grant.
     const url = await screen.findByRole("textbox", { name: "URL" });
     server.areas.datasources.grants[PROM_ID] = "edit";
     await user.clear(url);
-    await user.type(url, "http://prometheus-2:9090");
+    await fill(user, url, "http://prometheus-2:9090");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/but not where it connects/)).toBeTruthy();
     expect(server.areas.datasources.datasources.find((d) => d.id === PROM_ID)?.name).toBe(
@@ -394,7 +400,7 @@ describe("editing a data source", () => {
       prom.secrets.bearerToken = "t0k3n";
     }
     await user.clear(url);
-    await user.type(url, "http://prometheus-2:9090");
+    await fill(user, url, "http://prometheus-2:9090");
     await user.click(screen.getByRole("button", { name: "Save" }));
     const token = await screen.findByLabelText("Bearer token (optional)");
     await waitFor(() => expect(token.getAttribute("aria-invalid")).toBe("true"));

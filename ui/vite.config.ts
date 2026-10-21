@@ -27,5 +27,7 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     restoreMocks: true,
     unstubGlobals: true,
+    // Half the cores: with every core busy, jsdom tests near the 5 s timeout under load.
+    maxWorkers: "50%",
   },
 });

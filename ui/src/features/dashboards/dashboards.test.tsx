@@ -9,6 +9,12 @@ import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { PANEL_QUERY_CONCURRENCY } from "./queryQueue";
 import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
 
+/** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
+async function fill(user: ReturnType<typeof renderApp>["user"], field: HTMLElement, text: string) {
+  await user.click(field);
+  await user.paste(text);
+}
+
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
 }
@@ -486,7 +492,11 @@ describe("editing a dashboard", () => {
     expect(server.areas.datasources.queries.length).toBe(before);
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
-    await user.type(within(dialog).getByRole("textbox", { name: /What changed/ }), "Bigger orders");
+    await fill(
+      user,
+      within(dialog).getByRole("textbox", { name: /What changed/ }),
+      "Bigger orders",
+    );
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -564,8 +574,8 @@ describe("editing a dashboard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add variable" }));
     const name = within(dialog).getByRole("textbox", { name: "Name" });
     await user.clear(name);
-    await user.type(name, "region");
-    await user.type(within(dialog).getByRole("textbox", { name: "Values" }), "eu, us");
+    await fill(user, name, "region");
+    await fill(user, within(dialog).getByRole("textbox", { name: "Values" }), "eu, us");
     await user.click(within(dialog).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
@@ -599,7 +609,7 @@ describe("editing a dashboard", () => {
 
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const saveDialog = screen.getByRole("dialog", { name: "Save dashboard" });
-    await user.type(within(saveDialog).getByRole("textbox", { name: /What changed/ }), "No slow");
+    await fill(user, within(saveDialog).getByRole("textbox", { name: /What changed/ }), "No slow");
     const reads = () =>
       server.calls.filter((c) => c.method === "GET" && c.path.endsWith("/d-sales"));
     const readsBefore = reads().length;
@@ -660,7 +670,7 @@ describe("rights and refusals", () => {
     const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
     const title = within(dialog).getByRole("textbox", { name: "Title" });
     await user.clear(title);
-    await user.type(title, "Sales (granted)");
+    await fill(user, title, "Sales (granted)");
     await user.click(within(dialog).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
