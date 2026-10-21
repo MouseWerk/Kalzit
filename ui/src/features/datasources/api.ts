@@ -69,15 +69,17 @@ export interface DatasourceKind {
 }
 
 /**
- * What the caller may do with one source, grants included: `read` (see it), `query` (free
- * queries, schema, health), `write` (change and delete it), `permissions` (manage its grants and
- * change where it connects).
+ * What the caller may do with one source, grants included (`DatasourceAccess` of stream C):
+ * `read` (see it), `query` (Explore, Test connection, schema), `write` (name, other settings,
+ * limits, secrets, trash and restore), `permissions` (manage its grants), `changeTarget` (change
+ * where it connects, with its secrets).
  */
 export interface DatasourceAccess {
   read: boolean;
   query: boolean;
   write: boolean;
   permissions: boolean;
+  changeTarget: boolean;
 }
 
 export interface DatasourceSummary {
@@ -115,6 +117,8 @@ export function sourceAccess(
       query: permissions.has("datasources:query"),
       write: permissions.has("datasources:write"),
       permissions: permissions.has("datasources:permissions"),
+      // The org-wide write includes moving the target; a grant needs `admin` for it.
+      changeTarget: permissions.has("datasources:write"),
     }
   );
 }
@@ -129,6 +133,7 @@ function parseAccess(value: unknown): DatasourceAccess | undefined {
     query: flag("query"),
     write: flag("write"),
     permissions: flag("permissions"),
+    changeTarget: flag("changeTarget"),
   };
 }
 

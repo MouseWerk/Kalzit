@@ -309,6 +309,20 @@ describe("editing a data source", () => {
     expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
   });
 
+  it("unlocks the target with changeTarget, independent of managing access", async () => {
+    // A custom role that may change sources but not their grants.
+    installFakeServer({
+      signedIn: true,
+      user: asRole("maintainer"),
+      rolePermissions: { maintainer: ["datasources:read", "datasources:write"] },
+    });
+    renderApp(`/data-sources/${PROM_ID}`);
+    const url = await screen.findByRole("textbox", { name: "URL" });
+    expect(url).toHaveProperty("disabled", false);
+    expect(screen.queryByText(/only a data source admin can change/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
+  });
+
   it("says what a refused SQLite path needs", async () => {
     const { server, user } = open("/data-sources/ds-lite");
     server.areas.datasources.datasources.push({

@@ -251,8 +251,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
   // admins hold with the built-in roles; a custom role may allow changing without querying.
   const access = sourceAccess(source.data.access, permissions);
   const canTest = access.query;
-  // Where the source connects needs the org-wide write or an admin grant (permissions).
-  const targetLocked = !(permissions.has("datasources:write") || access.permissions);
+  // Where the source connects needs `changeTarget`: the org-wide write or an admin grant.
+  const targetLocked = !access.changeTarget;
 
   return (
     <div className="ds-edit">

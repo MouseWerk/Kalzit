@@ -435,6 +435,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
             query: may(id, "query"),
             write: may(id, "write"),
             permissions: level(id) === "admin" || can("datasources:permissions"),
+            changeTarget: may(id, "admin"),
           }
         : undefined;
     const view = (ds: StoredDatasource) => publicView(ds, accessOf(ds.id));
