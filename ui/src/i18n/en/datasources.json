@@ -4,7 +4,7 @@
   "datasources.lead": "Connections to the databases and services that Kalzit queries.",
   "datasources.empty.title": "No data sources yet",
   "datasources.empty.text": "Add a data source to query it in Explore and in dashboards. PostgreSQL, MySQL and MariaDB, SQL Server, SQLite and Prometheus are available.",
-  "datasources.empty.textReadOnly": "An admin adds data sources here. Once there is one, you can query it in Explore and in dashboards.",
+  "datasources.empty.textReadOnly": "Here are the data sources your role or access given to you lets you use. An admin adds them and gives access.",
   "datasources.noOrg.title": "No organization",
   "datasources.noOrg.text": "Data sources belong to an organization. Ask an admin to add you to one.",
   "datasources.forbidden.title": "No access",

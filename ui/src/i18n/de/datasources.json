@@ -4,7 +4,7 @@
   "datasources.lead": "Verbindungen zu den Datenbanken und Diensten, die Kalzit abfragt.",
   "datasources.empty.title": "Noch keine Datenquellen",
   "datasources.empty.text": "Füge eine Datenquelle hinzu, um sie in Explore und in Dashboards abzufragen. Verfügbar sind PostgreSQL, MySQL und MariaDB, SQL Server, SQLite und Prometheus.",
-  "datasources.empty.textReadOnly": "Ein Admin legt hier Datenquellen an. Sobald es eine gibt, kannst du sie in Explore und in Dashboards abfragen.",
+  "datasources.empty.textReadOnly": "Hier stehen die Datenquellen, die du über deine Rolle oder einen dir gegebenen Zugriff nutzen darfst. Ein Admin legt sie an und gibt Zugriff.",
   "datasources.noOrg.title": "Keine Organisation",
   "datasources.noOrg.text": "Datenquellen gehören zu einer Organisation. Bitte einen Admin, dich in eine aufzunehmen.",
   "datasources.forbidden.title": "Kein Zugriff",

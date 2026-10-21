@@ -74,7 +74,7 @@ describe("data source list", () => {
     open("/data-sources", "viewer");
     // The server lists only what the caller may read, so a viewer without a grant sees nothing.
     expect(await screen.findByRole("heading", { name: "No data sources yet" })).toBeTruthy();
-    expect(screen.getByText(/An admin adds data sources here/)).toBeTruthy();
+    expect(screen.getByText(/the data sources your role or access given to you/)).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     expect(within(nav).getByRole("link", { name: "Data sources" })).toBeTruthy();
     expect(within(nav).queryByRole("link", { name: "Explore" })).toBeNull();
