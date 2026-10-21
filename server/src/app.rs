@@ -43,8 +43,8 @@ impl AppState {
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
         let touch_limit = crate::auth::session::Touches::limit_for(&db);
-        // The touches, plus one for the hourly jobs.
-        let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 1));
+        // The touches, plus one for each of the two hourly jobs.
+        let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 2));
         let touches = Arc::new(crate::auth::session::Touches::new(background.clone(), touch_limit));
         Ok(Self {
             db,

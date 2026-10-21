@@ -107,6 +107,15 @@ impl Background {
         &self.db
     }
 
+    /// Connections of the own pool in use right now: background writes running or waiting for
+    /// the lock (tests). 0 without an own pool.
+    pub fn connections_in_use(&self) -> u32 {
+        if !self.own_pool {
+            return 0;
+        }
+        self.db.size().saturating_sub(self.db.num_idle() as u32)
+    }
+
     /// Runs `task` until it ends or the server stops; after the stop it does not start.
     pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
         if let Some(tasks) = self.lock_tasks().as_mut() {
@@ -355,21 +364,82 @@ pub fn redact(url: &str) -> String {
 
 const SECRET_PARAMS: &[&str] = &["password", "pass", "pwd", "sslpassword", "sslkey"];
 
+/// When a recurring job runs: at the start and then every `interval`. A run that finds the
+/// database busy is tried again after each of `retries` in turn, as long as that comes before the
+/// next run.
+#[derive(Clone, Debug)]
+pub struct Schedule {
+    pub interval: Duration,
+    pub retries: Vec<Duration>,
+}
+
+impl Schedule {
+    /// Every hour; after `busy` again in 1, 2 and 4 minutes.
+    pub fn hourly() -> Self {
+        let minutes = |m: u64| Duration::from_secs(m * 60);
+        Self { interval: minutes(60), retries: vec![minutes(1), minutes(2), minutes(4)] }
+    }
+}
+
+/// Why a job run failed: `Busy` is tried again by the schedule's retries.
+pub enum JobError {
+    Busy(String),
+    Failed(String),
+}
+
+/// Runs `job` as a background task on `schedule`; `what` names it in the log.
+pub fn spawn_job<F, Fut>(background: &Background, what: &'static str, schedule: Schedule, mut job: F)
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), JobError>> + Send,
+{
+    background.spawn(async move {
+        let mut tick = tokio::time::interval(schedule.interval);
+        loop {
+            let next = tick.tick().await + schedule.interval;
+            let mut retries = schedule.retries.iter();
+            loop {
+                match job().await {
+                    Ok(()) => break,
+                    Err(JobError::Busy(e)) => match retries.next() {
+                        Some(&wait) if tokio::time::Instant::now() + wait < next => {
+                            tracing::debug!("{what}: the database is busy, trying again in {wait:?}: {e}");
+                            tokio::time::sleep(wait).await;
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "{what} failed, the database stayed busy; next run in {:?}: {e}",
+                                schedule.interval
+                            );
+                            break;
+                        }
+                    },
+                    Err(JobError::Failed(e)) => {
+                        tracing::warn!("{what} failed, next run in {:?}: {e}", schedule.interval);
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Deletes sessions that have ended, every hour. Sessions are otherwise only deleted when their
 /// cookie is presented again, and most expired cookies never come back.
 pub fn spawn_session_cleanup(state: crate::app::AppState) {
-    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
     let background = state.background.clone();
-    background.spawn(async move {
-        let mut tick = tokio::time::interval(INTERVAL);
-        loop {
-            tick.tick().await;
+    spawn_job(&background, "removing ended sessions", Schedule::hourly(), move || {
+        let state = state.clone();
+        async move {
             let now = state.clock.now_ms();
-            let db = state.background.db();
-            match crate::auth::session::delete_ended(db, &state.config.sessions, now).await {
-                Ok(0) => {}
-                Ok(n) => tracing::debug!("removed {n} ended sessions"),
-                Err(e) => tracing::warn!("removing ended sessions failed, will retry in an hour: {e}"),
+            match crate::auth::session::delete_ended(state.background.db(), &state.config.sessions, now).await {
+                Ok(0) => Ok(()),
+                Ok(n) => {
+                    tracing::debug!("removed {n} ended sessions");
+                    Ok(())
+                }
+                Err(e) if crate::error::is_contention(&e) => Err(JobError::Busy(e.to_string())),
+                Err(e) => Err(JobError::Failed(e.to_string())),
             }
         }
     });

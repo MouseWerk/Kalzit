@@ -31,7 +31,14 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 const WINDOWS_CLOSE_GRACE: Duration = Duration::from_secs(3);
 /// How long closing the database may take at a stop. Normally it is quick; it waits longer only
 /// for a statement that waits for a lock another program holds.
-const CLOSE_WAIT: Duration = Duration::from_secs(2);
+pub const CLOSE_WAIT: Duration = Duration::from_secs(2);
+
+/// How a stop went.
+#[derive(Debug)]
+pub struct Stopped {
+    /// The database closed within its budget, so SQLite checkpointed its WAL.
+    pub closed_in_time: bool,
+}
 
 /// A started server: the bound addresses (useful with port 0) and the listener tasks.
 pub struct Running {
@@ -58,7 +65,7 @@ impl Running {
     /// into the database file, so a copy of `kalzit.db` taken while the server is stopped is
     /// complete on its own. The close gets `CLOSE_WAIT`, less when the process ends sooner; past
     /// that the stop goes on without it.
-    pub async fn wait(mut self) -> Result<()> {
+    pub async fn wait(mut self) -> Result<Stopped> {
         let mut outcome = Ok(());
         while let Some(result) = self.listeners.join_next().await {
             if let Err(e) = result.context("listener task").and_then(|r| r) {
@@ -72,13 +79,21 @@ impl Running {
             self.background.stop().await;
             self.db.close().await;
         };
-        if tokio::time::timeout(budget, close).await.is_err() {
+        let closed_in_time = tokio::time::timeout(budget, close).await.is_ok();
+        if !closed_in_time {
             tracing::warn!(
                 "the database did not close within {budget:?}; a statement still waits for a lock another \
                  program holds. Nothing committed is lost; the next start completes the WAL checkpoint"
             );
         }
-        outcome
+        outcome.map(|()| Stopped { closed_in_time })
+    }
+
+    /// Database connections in use right now, the background pool's included (tests: with no
+    /// request open, these are background writes running or waiting for the lock).
+    pub fn connections_in_use(&self) -> u32 {
+        let main = self.db.size().saturating_sub(self.db.num_idle() as u32);
+        main + self.background.connections_in_use()
     }
 }
 

@@ -304,6 +304,8 @@ type QueryResult =
   folds the WAL back into `kalzit.db`. The close gets 2 s, on Windows at most what is left of the
   grace; when a statement still waits for a lock another program holds, the stop goes on without
   it and logs a warning. Nothing committed is lost, and the next start completes the checkpoint.
+  A supervisor must allow for that: give `docker stop` `--stop-timeout 15` (its default of 10 s
+  is shorter than the 10 s grace plus the close); systemd's default of 90 s is enough.
 - Reads never wait on writers: the one write a read request makes, the session's last-seen time,
   runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
   the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
@@ -314,7 +316,9 @@ type QueryResult =
   small pool of their own whose connections wait at most 1 s for the write lock: SQLite keeps
   waiting even after a statement is aborted, and closing the database would wait the full 15 s.
   The requests' connections keep their 15 s. Each of these writes is repeated later, so a
-  dropped one costs nothing.
+  dropped one costs nothing. An hourly run that finds the database busy is tried again after 1,
+  2 and 4 minutes, as long as that is before the next run (`db::Schedule`): the audit retention
+  is a privacy rule and must not slip by an hour.
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).
