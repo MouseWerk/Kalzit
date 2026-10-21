@@ -318,18 +318,43 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         permissions: can("dashboards:share"),
       };
     };
-    // Saving checks datasources:query on every data source the model uses: one that does not
-    // exist (or is not visible) is 422 on model, one the caller may not query is 403.
-    const datasourceCheck = (model: DashboardModel): Response | null => {
+    // Saving checks datasources:query on the sources of new or changed queries only, compared
+    // with the stored version (docs/api/datasources.md); any change to a variable definition
+    // counts as a change of every query. A source the caller cannot see (or that does not
+    // exist) is 422 on model, one they see but may not query is 403 naming it.
+    const datasourceCheck = (model: DashboardModel, stored?: DashboardModel): Response | null => {
+      const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+      const allChanged = stored === undefined || !same(model.variables, stored.variables);
+      const storedTarget = (panelId: string, refId: string) =>
+        stored?.panels.find((p) => p.id === panelId)?.targets.find((t) => t.refId === refId);
       const ids = [
-        ...model.panels.flatMap((p) => p.targets.map((t) => t.datasourceId)),
-        ...model.variables.flatMap((v) => (v.datasourceId === undefined ? [] : [v.datasourceId])),
+        ...model.panels.flatMap((p) =>
+          p.targets
+            .filter((t) => {
+              const before = storedTarget(p.id, t.refId);
+              return (
+                allChanged ||
+                before === undefined ||
+                !same([before.datasourceId, before.query], [t.datasourceId, t.query])
+              );
+            })
+            .map((t) => t.datasourceId),
+        ),
+        ...(allChanged
+          ? model.variables.flatMap((v) => (v.datasourceId === undefined ? [] : [v.datasourceId]))
+          : []),
       ];
+      const grants = areas.datasources.grants;
       for (const id of ids) {
-        if (!areas.datasources.datasources.some((d) => d.id === id && d.deletedAt === undefined)) {
+        const exists = areas.datasources.datasources.some(
+          (d) => d.id === id && d.deletedAt === undefined,
+        );
+        const sees =
+          can("datasources:read") || can("datasources:query") || grants[id] !== undefined;
+        if (!exists || !sees) {
           return validation("model", `data source ${id} does not exist`);
         }
-        const granted = areas.datasources.grants[id] !== undefined;
+        const granted = grants[id] !== undefined;
         if ((!can("datasources:query") && !granted) || state.unqueryable.includes(id)) {
           return json(403, {
             error: { code: "forbidden", message: `no query right on data source ${id}` },
@@ -570,7 +595,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (dashboard.deletedAt !== null) return error(409, "conflict");
       const problem = modelProblem(body.model);
       if (problem !== null) return validation("model", problem);
-      const refused = datasourceCheck(body.model as DashboardModel);
+      const refused = datasourceCheck(body.model as DashboardModel, latest(dashboard).model);
       if (refused !== null) return refused;
       if (body.version !== latest(dashboard).version) {
         return json(409, {

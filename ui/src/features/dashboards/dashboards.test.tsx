@@ -687,12 +687,53 @@ describe("rights and refusals", () => {
     }
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
+    // A copy is a new query on the source, which the save checks.
+    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Duplicate “Slow”" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(await within(dialog).findByText(text)).toBeTruthy();
     expect(storedSales(server).versions).toHaveLength(1);
+  });
+
+  it("saves a rename without rights on the dashboard's sources", async () => {
+    // No query right on the source: unchanged queries are not checked again.
+    const server = setup("editor");
+    server.areas.dashboards.unqueryable.push(PG_ID);
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Remove “Slow”" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
+  });
+
+  it("checks every query again when a variable changes", async () => {
+    const server = setup("editor");
+    server.areas.dashboards.unqueryable.push(PG_ID);
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    const settings = screen.getByRole("dialog", { name: "Dashboard settings" });
+    await user.click(within(settings).getByRole("button", { name: "Add variable" }));
+    await user.click(within(settings).getByRole("button", { name: "Apply" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText(/data source you may not query/)).toBeTruthy();
+  });
+
+  it("answers an unseen source as a model problem, not as a refusal", async () => {
+    const server = setup("viewer");
+    server.areas.dashboards.grants["d-sales"] = { write: true };
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(within(panelOf("Slow")).getByRole("button", { name: "Duplicate “Slow”" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText(/no longer exists/)).toBeTruthy();
   });
 
   it("shows the server's own message for other refusals of the model", async () => {
