@@ -54,7 +54,15 @@ documents: unknown[],
 /**
  * Sampled from the result: every field path with its types and how many documents have it.
  */
-schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, };
+schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, 
+/**
+ * Why the set was cut, values that are not shown, ... (codes as for frames).
+ */
+notices: Array<Notice>, 
+/**
+ * The query as sent, after macros and variables were bound (shown in the inspector).
+ */
+executedQuery?: string, };
 
 export type FieldSchema = { 
 /**

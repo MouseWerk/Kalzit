@@ -184,6 +184,13 @@ pub struct DocumentSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub truncated: Option<Truncated>,
+    /// Why the set was cut, values that are not shown, ... (codes as for frames).
+    #[serde(default)]
+    pub notices: Vec<Notice>,
+    /// The query as sent, after macros and variables were bound (shown in the inspector).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub executed_query: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
