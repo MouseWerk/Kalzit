@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
+import { withEditorStyles } from "./editorStyles";
 import { type Token, tokenizePromql, tokenizeSql } from "./syntax";
 
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
@@ -176,38 +177,43 @@ export function CodeMirrorEditor({
         })),
       };
     };
-    const view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          history(),
-          Prec.high(
-            keymap.of([
-              {
-                key: "Mod-Enter",
-                run: () => {
-                  propsRef.current.onRun?.();
-                  return propsRef.current.onRun !== undefined;
-                },
-              },
-            ]),
-          ),
-          keymap.of([...completionKeymap, ...defaultKeymap, ...historyKeymap]),
-          autocompletion({ override: [source], icons: false }),
-          highlighter(language),
-          EditorView.lineWrapping,
-          theme,
-          attributes.current.of(EditorView.contentAttributes.of({})),
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              propsRef.current.onChange(update.state.doc.toString());
-            }
-            setCompleting(completionStatus(update.state) !== null);
+    // The server's CSP blocks CodeMirror's style element; see withEditorStyles.
+    const view = withEditorStyles(
+      host.ownerDocument,
+      () =>
+        new EditorView({
+          parent: host,
+          state: EditorState.create({
+            doc: value,
+            extensions: [
+              history(),
+              Prec.high(
+                keymap.of([
+                  {
+                    key: "Mod-Enter",
+                    run: () => {
+                      propsRef.current.onRun?.();
+                      return propsRef.current.onRun !== undefined;
+                    },
+                  },
+                ]),
+              ),
+              keymap.of([...completionKeymap, ...defaultKeymap, ...historyKeymap]),
+              autocompletion({ override: [source], icons: false }),
+              highlighter(language),
+              EditorView.lineWrapping,
+              theme,
+              attributes.current.of(EditorView.contentAttributes.of({})),
+              EditorView.updateListener.of((update) => {
+                if (update.docChanged) {
+                  propsRef.current.onChange(update.state.doc.toString());
+                }
+                setCompleting(completionStatus(update.state) !== null);
+              }),
+            ],
           }),
-        ],
-      }),
-    });
+        }),
+    );
     viewRef.current = view;
     return () => {
       view.destroy();
