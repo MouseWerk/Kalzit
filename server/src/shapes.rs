@@ -356,6 +356,83 @@ pub struct VariableOptionsResponse {
     pub truncated: bool,
 }
 
+/// Export file formats (docs/api/analysis.md). Frames export as CSV, JSON or Excel; documents
+/// (NDJSON) and graphs (GraphML) follow with their milestones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ExportFormat {
+    Csv,
+    Json,
+    Xlsx,
+}
+
+/// Decides the CSV separator and decimal mark: German `;` and `,`, English `,` and `.`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ExportLanguage {
+    De,
+    En,
+}
+
+/// `POST /api/orgs/{orgId}/export`: a free query's result, after its steps, as a file. Needs
+/// `data:export` and `datasources:query` on every data source, as running it does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportRequest {
+    pub queries: Vec<QueryItem>,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// Analysis steps, as a panel stores them in `transformations`.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "unknown[]"))]
+    pub steps: Vec<Value>,
+    pub format: ExportFormat,
+    pub language: ExportLanguage,
+    /// The frame to export, by `refId`; the first frame when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub frame: Option<String>,
+    /// The file name's base, such as the Explore data source's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub title: Option<String>,
+}
+
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: the stored
+/// panel's result, after its stored steps, as a file. Needs `data:export` and `dashboards:read`
+/// on the dashboard, as viewing it does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelExportRequest {
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    pub format: ExportFormat,
+    pub language: ExportLanguage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub frame: Option<String>,
+}
+
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -529,6 +606,10 @@ mod tests {
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),
             DatasourceAccess::decl(&cfg),
+            ExportFormat::decl(&cfg),
+            ExportLanguage::decl(&cfg),
+            ExportRequest::decl(&cfg),
+            PanelExportRequest::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

@@ -5,6 +5,7 @@ pub mod audit;
 pub mod auth;
 pub mod dashboards;
 pub mod datasources;
+pub mod export;
 pub mod folders;
 pub mod grants;
 pub mod health;
@@ -35,6 +36,7 @@ pub fn all() -> Vec<table::RouteDef> {
         dashboards::routes(),
         datasources::routes(),
         query::routes(),
+        export::routes(),
         members::routes(),
         teams::routes(),
         roles::routes(),

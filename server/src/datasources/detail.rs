@@ -59,6 +59,9 @@ mod tests {
         "server",
         "health",
         "frame",
+        "steps",
+        "expression",
+        "export",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.

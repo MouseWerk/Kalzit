@@ -9,12 +9,31 @@ use serde_json::Value;
 
 /// The version this server writes. A model with a higher version comes from a newer Kalzit and is
 /// refused rather than guessed at.
-pub const SCHEMA_VERSION: u64 = 1;
+///
+/// - 1: first version; `transformations` had no defined content.
+/// - 2: `transformations` holds analysis steps (`crate::analysis`).
+pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.
 /// A step changes only what its version changed and sets the new `schemaVersion`.
 type Step = fn(Value) -> Result<Value, String>;
-const STEPS: &[Step] = &[];
+const STEPS: &[Step] = &[v1_to_v2];
+
+/// Version 1 defined no content for a panel's `transformations` and nothing interpreted them, so
+/// they are emptied: version 2 reads them as analysis steps and would refuse anything else.
+fn v1_to_v2(mut model: Value) -> Result<Value, String> {
+    if let Some(panels) = model.get_mut("panels").and_then(Value::as_array_mut) {
+        for panel in panels {
+            if let Some(p) = panel.as_object_mut()
+                && p.contains_key("transformations")
+            {
+                p.insert("transformations".into(), Value::Array(Vec::new()));
+            }
+        }
+    }
+    model["schemaVersion"] = Value::from(2);
+    Ok(model)
+}
 
 /// The grid has 24 columns; rows are unbounded but a dashboard this tall is a mistake.
 pub const GRID_COLUMNS: u32 = 24;
@@ -22,7 +41,6 @@ const MAX_GRID_Y: u32 = 10_000;
 const MAX_PANEL_HEIGHT: u32 = 200;
 const MAX_PANELS: usize = 500;
 const MAX_TARGETS: usize = 50;
-const MAX_TRANSFORMATIONS: usize = 50;
 /// The stored model, serialized. Every save keeps a copy in the history, so this bounds the
 /// history's growth too; real dashboards stay far below it.
 pub const MAX_MODEL_BYTES: usize = 1024 * 1024;
@@ -262,9 +280,6 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
         check_grid(&p.grid).map_err(|e| format!("{at}.grid: {e}"))?;
-        if p.transformations.len() > MAX_TRANSFORMATIONS {
-            return Err(format!("{at}.transformations takes at most {MAX_TRANSFORMATIONS} entries"));
-        }
         if p.targets.len() > MAX_TARGETS {
             return Err(format!("{at}.targets takes at most {MAX_TARGETS} entries"));
         }
@@ -277,6 +292,8 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
             }
             check_id(&format!("{at}.datasourceId"), &t.datasource_id)?;
         }
+        // Steps work on the frames of this panel's own queries.
+        crate::analysis::check_steps(&p.transformations, &ref_ids, &format!("{at}.transformations"))?;
     }
     Ok(())
 }
@@ -405,7 +422,7 @@ mod tests {
 
     fn sample() -> Value {
         json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "title": "Umsatz Übersicht",
             "timeRange": { "from": "now-6h", "to": "now" },
             "variables": [
@@ -482,7 +499,7 @@ mod tests {
     fn sizes_and_counts_are_bounded() {
         let big = with(sample(), &["panels", "0", "options"], json!({ "text": "x".repeat(MAX_MODEL_BYTES) }));
         assert!(parse(big).unwrap_err().contains("at most 1048576"));
-        let many = with(sample(), &["panels", "0", "transformations"], json!(vec![json!({}); MAX_TRANSFORMATIONS + 1]));
+        let many = with(sample(), &["panels", "0", "transformations"], json!(vec![json!({}); crate::analysis::MAX_STEPS + 1]));
         assert!(parse(many).unwrap_err().contains("transformations takes at most"));
         let targets: Vec<Value> =
             (0..=MAX_TARGETS).map(|i| json!({ "refId": format!("R{i}"), "datasourceId": "ds", "query": {} })).collect();
@@ -545,9 +562,47 @@ mod tests {
     }
 
     #[test]
+    fn version_1_transformations_are_emptied() {
+        let mut v1 = with(sample(), &["schemaVersion"], json!(1));
+        v1 = with(v1, &["panels", "0", "transformations"], json!([{ "id": "x", "anything": true }, 7]));
+        let v2 = v1_to_v2(v1.clone()).unwrap();
+        assert_eq!(v2["schemaVersion"], 2);
+        assert_eq!(v2["panels"][0]["transformations"], json!([]));
+        assert!(v2["panels"][1].get("transformations").is_none(), "absent stays absent");
+        assert_eq!(v2["panels"][0]["targets"], v1["panels"][0]["targets"], "nothing else changes");
+        assert!(parse(v1).is_ok(), "a stored version 1 model still reads");
+    }
+
+    #[test]
+    fn panels_keep_validated_analysis_steps() {
+        let steps = json!([
+            { "id": "s1", "type": "calculate", "frame": "A", "name": "Brutto", "expression": "[betrag] * 1.19" },
+            { "id": "s2", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "outer", "disabled": true }
+        ]);
+        let model = parse(with(sample(), &["panels", "0", "transformations"], steps.clone())).unwrap();
+        assert_eq!(model.panels[0].transformations, steps.as_array().unwrap().clone());
+        for (bad, expect) in [
+            (json!([{ "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1 +" }]),
+             "model.panels[0].transformations[0].expression: unexpected input at 4"),
+            (json!([{ "id": "s", "type": "calculate", "frame": "C", "name": "x", "expression": "1" }]),
+             "model.panels[0].transformations[0]: there is no query C"),
+            (json!([{ "id": "s", "type": "zauber" }]), "model.panels[0].transformations[0]: unknown variant"),
+        ] {
+            let err = parse(with(sample(), &["panels", "0", "transformations"], bad)).unwrap_err();
+            assert!(err.contains(expect), "{err}");
+        }
+        // A panel without queries has no frames for steps to work on.
+        let err = parse(with(sample(), &["panels", "1", "transformations"], json!([
+            { "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }
+        ])))
+        .unwrap_err();
+        assert!(err.contains("panels[1].transformations[0]: there is no query A"), "{err}");
+    }
+
+    #[test]
     fn newer_or_missing_versions_are_refused_clearly() {
-        let err = migrate(with(sample(), &["schemaVersion"], json!(2))).unwrap_err();
-        assert!(err.contains("newer Kalzit") && err.contains("up to 1"), "{err}");
+        let err = migrate(with(sample(), &["schemaVersion"], json!(3))).unwrap_err();
+        assert!(err.contains("newer Kalzit") && err.contains("up to 2"), "{err}");
         for bad in [json!(0), json!("1"), Value::Null, json!(-1)] {
             assert!(migrate(with(sample(), &["schemaVersion"], bad.clone())).is_err(), "{bad}");
         }
