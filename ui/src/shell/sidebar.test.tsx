@@ -131,6 +131,12 @@ describe("sub-pages in the navigation", () => {
         .map((link) => link.textContent),
     ).toEqual(["Members", "Roles", "Organization settings", "Audit log"]);
     expect(within(list).getAllByRole("list", { name: "Server" })).toHaveLength(1);
+    // Sub-pages have no icon, so the rail and phones must not hide their labels as they do the
+    // entries' (.nav-link__label).
+    for (const link of within(list).getAllByRole("link")) {
+      expect(link.querySelector(".nav-link__label")).toBeNull();
+      expect(link.querySelector(".nav-sublink__label")?.textContent).toBe(link.textContent);
+    }
 
     await user.click(chevron);
     expect(chevron.getAttribute("aria-expanded")).toBe("false");

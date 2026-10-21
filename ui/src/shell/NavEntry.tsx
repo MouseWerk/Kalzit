@@ -168,11 +168,11 @@ function ChildList({
           <li key={child.to}>
             <Link
               to={child.to}
-              className="nav-link nav-link--child"
+              className="nav-sublink"
               title={t(child.label)}
               onClick={onNavigate}
             >
-              <span className="nav-link__label">{t(child.label)}</span>
+              <span className="nav-sublink__label">{t(child.label)}</span>
             </Link>
           </li>
         ));

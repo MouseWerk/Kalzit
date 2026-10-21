@@ -333,6 +333,7 @@
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
+    scrollbar-width: thin;
   }
 
   .shell__nav-list {
@@ -390,6 +391,7 @@
 
   .nav-link__label,
   .nav-sublink__label {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
