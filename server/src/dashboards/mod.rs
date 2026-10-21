@@ -13,10 +13,13 @@ use model::DashboardModel;
 /// allowed to query every data source its panels and query variables use; otherwise an editor
 /// could reach a data source through a panel they could not query directly.
 ///
-/// That each id names a data source of this organization is checked here too once data sources
-/// exist (migration 0006); the orchestrator adds that lookup when both streams are merged.
+/// Each id must name a data source of this organization (one in the trash counts, it can come
+/// back).
 pub async fn check_dashboard_sources(db: &AnyPool, ctx: &OrgCtx, model: &DashboardModel) -> ApiResult<()> {
     for id in model.datasource_ids() {
+        if !authz::resource_exists(db, &ctx.org_id, Resource::Datasource(id)).await? {
+            return Err(ApiError::validation(format!("data source {id} does not exist")).with_field("model"));
+        }
         match authz::check_resource(db, ctx, Permission::DatasourcesQuery, Resource::Datasource(id)).await {
             Ok(()) => {}
             // The caller cannot see this data source, so it does not exist for them.
@@ -55,6 +58,16 @@ mod tests {
             "schemaVersion": 1, "title": "T", "timeRange": { "from": "now-1h", "to": "now" },
             "variables": [ { "name": "v", "type": "query", "datasourceId": "ds-var" } ]
         }))
+        .unwrap();
+        // An id that names no data source of the organization is refused, whatever the rights.
+        let e = check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model).await.unwrap_err();
+        assert_eq!((e.code, e.field), ("validation", Some("model")));
+        sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)").execute(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO datasources (id, org_id, name, kind, settings, created_at, updated_at)              VALUES ('ds-var', 'o', 'V', 'sqlite', '{}', 0, 0)",
+        )
+        .execute(&db)
+        .await
         .unwrap();
         assert!(check_dashboard_sources(&db, &ctx(&[Permission::DatasourcesQuery]), &model).await.is_ok());
         // Sees data sources but may not query them: refused, naming the variable's source.

@@ -285,9 +285,7 @@ where
     let sql = match resource {
         Resource::Folder(_) => "SELECT COUNT(*) FROM folders WHERE org_id = $1 AND id = $2",
         Resource::Dashboard(_) => "SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND id = $2",
-        // The data source table arrives with stream C (migration 0006); until its lookup is wired
-        // here, every well-formed data source id counts as existing.
-        Resource::Datasource(_) => return Ok(true),
+        Resource::Datasource(_) => "SELECT COUNT(*) FROM datasources WHERE org_id = $1 AND id = $2",
     };
     let (n,): (i64,) = sqlx::query_as(sql).bind(org_id).bind(resource.id()).fetch_one(db).await?;
     Ok(n > 0)

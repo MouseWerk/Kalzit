@@ -658,13 +658,6 @@ pub const MAX_QUERIES_PER_REQUEST: usize = 50;
 const CONNECTION_REFRESH: Duration = Duration::from_secs(10 * 60);
 /// Health checks and schema reads get the query timeout, but never longer than this.
 const MAX_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
-/// Queries running at once on the whole server, whoever runs them; further ones wait. A fixed
-/// value until the settings registry has `datasources.max_parallel_queries`.
-const MAX_RUNNING_QUERIES: usize = 64;
-/// Result bytes all requests together may hold at once (each request is also bounded by
-/// `datasources.max_response_bytes`). A fixed value until the settings registry has
-/// `datasources.max_inflight_bytes`.
-const MAX_INFLIGHT_RESULT_BYTES: usize = 1 << 30;
 /// How long the target rules built from the settings are reused (canonicalized directories).
 const POLICY_REFRESH: Duration = Duration::from_secs(60);
 /// The range a query may ask for: the years 1 to 9999, as Unix milliseconds.
@@ -700,8 +693,13 @@ pub struct DataSources {
     database_url: String,
     connections: Mutex<HashMap<String, Cached>>,
     user_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
-    running: Arc<Semaphore>,
-    inflight_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    /// Queries running at once on the whole server (`datasources.max_parallel_queries`), with the
+    /// limit it was built for; a changed setting gets a new semaphore (queries already running
+    /// finish on the old one).
+    running: Mutex<(usize, Arc<Semaphore>)>,
+    /// Result bytes all requests together may hold (`datasources.max_inflight_bytes`); replaced
+    /// the same way when the setting changes.
+    inflight_bytes: Mutex<(usize, Arc<std::sync::atomic::AtomicUsize>)>,
     policy_cache: Mutex<Option<CachedPolicy>>,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
@@ -719,8 +717,8 @@ impl DataSources {
             database_url,
             connections: Mutex::new(HashMap::new()),
             user_slots: Mutex::new(HashMap::new()),
-            running: Arc::new(Semaphore::new(MAX_RUNNING_QUERIES)),
-            inflight_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(MAX_INFLIGHT_RESULT_BYTES)),
+            running: Mutex::new((0, Arc::new(Semaphore::new(0)))),
+            inflight_bytes: Mutex::new((0, Arc::new(std::sync::atomic::AtomicUsize::new(0)))),
             policy_cache: Mutex::new(None),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
@@ -784,16 +782,28 @@ impl DataSources {
     }
 
     /// Waits for a slot of the user and one of the server. The caller's timeout covers the wait.
-    pub async fn slots(&self, user_id: &str) -> Result<QuerySlots, SourceError> {
+    pub async fn slots(&self, state: &AppState, user_id: &str) -> Result<QuerySlots, SourceError> {
+        let limit = self
+            .setting_u64(state, "datasources.max_parallel_queries")
+            .await
+            .map_err(|e| SourceError::Failed(e.message))?
+            .max(1) as usize;
+        let server = {
+            let mut running = self.running.lock().expect("running lock");
+            if running.0 != limit {
+                *running = (limit, Arc::new(Semaphore::new(limit)));
+            }
+            running.1.clone()
+        };
         let closed = |_| SourceError::Failed("the server is shutting down".into());
         let user = self.user_slots(user_id).acquire_owned().await.map_err(closed)?;
-        let server = self.running.clone().acquire_owned().await.map_err(closed)?;
+        let server = server.acquire_owned().await.map_err(closed)?;
         Ok(QuerySlots { _user: user, _server: server })
     }
 
     #[cfg(test)]
     pub(crate) fn inflight_available(&self) -> usize {
-        self.inflight_bytes.load(std::sync::atomic::Ordering::SeqCst)
+        self.inflight_bytes.lock().expect("inflight lock").1.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The limits for one source: its own settings within the server-wide maxima.
@@ -808,7 +818,15 @@ impl DataSources {
 
     async fn response_budget(&self, state: &AppState) -> ApiResult<ResponseBudget> {
         let max = self.setting_u64(state, "datasources.max_response_bytes").await? as usize;
-        Ok(ResponseBudget::within(max, self.inflight_bytes.clone()))
+        let limit = self.setting_u64(state, "datasources.max_inflight_bytes").await? as usize;
+        let pool = {
+            let mut inflight = self.inflight_bytes.lock().expect("inflight lock");
+            if inflight.0 != limit {
+                *inflight = (limit, Arc::new(std::sync::atomic::AtomicUsize::new(limit)));
+            }
+            inflight.1.clone()
+        };
+        Ok(ResponseBudget::within(max, pool))
     }
 
     /// The cached connection of a data source, or a new one.
@@ -964,7 +982,7 @@ async fn run_one(
     let started = Instant::now();
     let run = async {
         // Waiting for a free slot counts against the query's own timeout.
-        let _slots = registry.slots(&ctx.user.id).await?;
+        let _slots = registry.slots(state, &ctx.user.id).await?;
         let conn = registry.connection(state, &ds).await?;
         let req = SourceQuery {
             ref_id: item.ref_id.clone(),
@@ -1058,7 +1076,7 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         return Ok(failed(blocked.into(), None));
     }
     let run = async {
-        let _slots = registry.slots(user_id).await?;
+        let _slots = registry.slots(state, user_id).await?;
         let conn = registry.connection(state, ds).await?;
         let health = kind.plugin.health(&conn).await;
         Ok::<_, SourceError>((conn, health))
@@ -1088,7 +1106,7 @@ pub async fn read_schema(state: &AppState, user_id: &str, ds: &Datasource) -> Ap
     let budget = registry.response_budget(state).await?;
     let timeout = registry.limits(state, ds, budget).await?.timeout;
     let run = async {
-        let _slots = registry.slots(user_id).await?;
+        let _slots = registry.slots(state, user_id).await?;
         let conn = registry.connection(state, ds).await?;
         let schema = kind.plugin.schema(&conn).await;
         Ok::<_, SourceError>((conn, schema))
