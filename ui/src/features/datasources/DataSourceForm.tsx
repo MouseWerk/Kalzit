@@ -27,6 +27,7 @@ import {
   sourceAccess,
   updateDatasource,
 } from "./api";
+import { errorReason, reasonText } from "./reasons";
 import "./datasources.css";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
@@ -45,8 +46,9 @@ function readOnlyHint(t: Translate, kind: DatasourceKind): string {
 }
 
 /**
- * Text for a field the server named in an error: a refused target and a name in use are said as
- * such; anything else is a value the server did not accept.
+ * Text for a field the server named in an error: its reason when the server sent one (see
+ * reasons.ts), else a refused target and a name in use are said as such, and anything else is a
+ * value the server did not accept.
  */
 function serverFieldText(
   t: Translate,
@@ -60,19 +62,17 @@ function serverFieldText(
   if (field === "settings" || field === "secrets") {
     return null;
   }
+  const reason = errorReason(error);
+  const reasoned = reason === undefined ? undefined : reasonText(t, reason);
+  if (reasoned !== undefined) {
+    return { field, text: reasoned };
+  }
   // A secret named in a 422: the target moved and the secret has to be entered again.
   if (error.code === "validation" && secretFields.includes(field)) {
     return { field, text: t("datasources.secret.reenter") };
   }
   if (error.code === "datasource_target_blocked") {
-    // A SQLite path has its own rules (allowed folders, not Kalzit's data); say those.
-    return {
-      field,
-      text:
-        field === "path"
-          ? t("datasources.form.pathBlocked")
-          : t("errors.datasource_target_blocked"),
-    };
+    return { field, text: t("errors.datasource_target_blocked") };
   }
   if (error.code === "conflict" && field === "name") {
     return { field, text: t("datasources.form.nameTaken") };
@@ -323,6 +323,28 @@ function EditDataSource({ orgId }: { orgId: string }) {
   );
 }
 
+/**
+ * What a connection test found, below its heading: the reason in the UI's language (with the
+ * source's own wording in it), else the failure's code and the server's text.
+ */
+function healthText(t: Translate, health: Health) {
+  const text =
+    health.reason === undefined
+      ? undefined
+      : reasonText(t, { reason: health.reason, params: health.params, fallback: health.message });
+  if (text !== undefined) {
+    return <span className="ds-health__message">{text}</span>;
+  }
+  return (
+    <>
+      {health.ok || health.code === undefined ? null : (
+        <span>{errorCodeMessage(t, health.code)}</span>
+      )}
+      {health.message === "" ? null : <span className="ds-health__message">{health.message}</span>}
+    </>
+  );
+}
+
 /** The outcome of "Test connection", in a live region so it is announced. */
 export function HealthResult({ health, error }: { health: Health | null; error: Error | null }) {
   const { t } = useI18n();
@@ -344,12 +366,7 @@ export function HealthResult({ health, error }: { health: Health | null; error: 
               ? t("datasources.health.ok", { ms: Math.round(health.latencyMs) })
               : t("datasources.health.failed")}
           </strong>
-          {health.ok || health.code === undefined ? null : (
-            <span>{errorCodeMessage(t, health.code)}</span>
-          )}
-          {health.message === "" ? null : (
-            <span className="ds-health__message">{health.message}</span>
-          )}
+          {healthText(t, health)}
         </div>
       </div>
     );
@@ -444,8 +461,6 @@ function SettingsForm({
     ),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
-  // Whether the last submit changed a target field, to explain a 403 for it.
-  const [movedTarget, setMovedTarget] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [focusInvalid, setFocusInvalid] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
@@ -455,8 +470,6 @@ function SettingsForm({
     error,
     secret.map((spec) => spec.name),
   );
-  // An edit grant may change everything but where the source connects (docs/api/datasources.md).
-  const targetRefused = isApiError(error, "forbidden") && movedTarget;
   const fieldError = (field: string) =>
     errors[field] ?? (server?.field === field ? server.text : undefined);
 
@@ -516,7 +529,6 @@ function SettingsForm({
       settings !== undefined &&
       stored !== undefined &&
       plain.some((spec) => spec.target && !sameJson(settings?.[spec.name], stored[spec.name]));
-    setMovedTarget(movesTarget);
     const reenter: string[] = [];
     const secretOutput: Record<string, string | null> = {};
     for (const spec of secret) {
@@ -610,13 +622,7 @@ function SettingsForm({
       ) : targetLocked && plain.some((spec) => spec.target) ? (
         <p className="field__hint">{t("datasources.form.targetLocked")}</p>
       ) : null}
-      <FormAlert>
-        {error === null || server !== null
-          ? null
-          : targetRefused
-            ? t("datasources.form.targetForbidden")
-            : errorMessage(t, error)}
-      </FormAlert>
+      <FormAlert>{error === null || server !== null ? null : errorMessage(t, error)}</FormAlert>
       <TextField
         label={t("datasources.form.name")}
         value={name}

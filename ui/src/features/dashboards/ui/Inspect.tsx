@@ -3,7 +3,8 @@ import { useI18n } from "../../../i18n/i18n";
 import { rowCount } from "../../../panels/frame";
 import type { TargetOutcome } from "../results";
 import "../dashboards.css";
-import { errorCodeMessage } from "./errors";
+import { noticeText } from "../../datasources/reasons";
+import { errorBodyMessage } from "./errors";
 
 /**
  * What each query did: the statement as executed (macros expanded), notices from the source,
@@ -30,7 +31,7 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
             <div className="notice notice--danger">
               <Icon name="alert" />
               <div>
-                <p>{errorCodeMessage(t, outcome.error.code)}</p>
+                <p>{errorBodyMessage(t, outcome.error)}</p>
                 {outcome.error.message === "" ? null : (
                   <p className="inspect__detail">
                     {t("dashboards.inspect.detail")} <code>{outcome.error.message}</code>
@@ -63,7 +64,7 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
                     {notice.severity === "warning"
                       ? t("dashboards.inspect.warning")
                       : t("dashboards.inspect.info")}{" "}
-                    {notice.text}
+                    {noticeText(t, notice)}
                   </span>
                 </p>
               ))}

@@ -138,6 +138,8 @@ export interface StoredDatasource {
 
 export interface WireHealth {
   ok: boolean;
+  reason?: string;
+  params?: Record<string, string>;
   message: string;
   latencyMs: number;
   code?: string;
@@ -330,6 +332,17 @@ function checkSettings(
     ) {
       return json(422, {
         error: { code: "datasource_target_blocked", message: "target refused", field: name },
+      });
+    }
+    // SQLite files only from the admin-allowed folders, here /data (docs: target reasons).
+    if (name === "path" && kind.kind === "sqlite" && !String(value).startsWith("/data/")) {
+      return json(422, {
+        error: {
+          code: "datasource_target_blocked",
+          message: "the SQLite file is not in an allowed directory",
+          field: "path",
+          reason: "target.sqlite_path_refused",
+        },
       });
     }
   }
@@ -569,7 +582,13 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       }
       return json(
         200,
-        state.health[ds.id] ?? { ok: true, message: "PostgreSQL 17.2", latencyMs: 12 },
+        state.health[ds.id] ?? {
+          ok: true,
+          reason: "health.connected",
+          params: { engine: "PostgreSQL", version: "17.2" },
+          message: "PostgreSQL 17.2",
+          latencyMs: 12,
+        },
       );
     }
     if (!may(ds.id, "write")) {
@@ -593,7 +612,14 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       );
       // A target change needs org-wide write or an admin grant; an edit grant is not enough.
       if (movedTarget !== undefined && !may(ds.id, "admin")) {
-        return error(403, "forbidden");
+        return json(403, {
+          error: {
+            code: "forbidden",
+            message: `changing ${movedTarget.name} needs the admin level on this data source`,
+            reason: "datasource.target_change_forbidden",
+            params: { field: movedTarget.name },
+          },
+        });
       }
       if (movedTarget !== undefined) {
         const missing = Object.keys(ds.secrets).find((name) => !(name in secrets));

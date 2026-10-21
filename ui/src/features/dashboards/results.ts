@@ -3,7 +3,10 @@ import type { Frame, QueryResponse, QueryResult } from "../../api/generated/shap
 /** One target's outcome, in target order, flattened from the response's map by refId. */
 export type TargetOutcome =
   | { refId: string; result: QueryResult }
-  | { refId: string; error: { code: string; message: string } };
+  | {
+      refId: string;
+      error: { code: string; message: string; reason?: string; params?: Record<string, string> };
+    };
 
 /**
  * Splits a response into results and errors, in the order of the refIds asked for. A refId the
@@ -16,7 +19,7 @@ export function outcomesOf(response: QueryResponse, refIds: readonly string[]): 
       return { refId, result: outcome.result };
     }
     if (outcome !== undefined && "error" in outcome) {
-      return { refId, error: { code: outcome.error.code, message: outcome.error.message } };
+      return { refId, error: outcome.error };
     }
     return { refId, error: { code: "internal", message: "no result for this query" } };
   });

@@ -12,7 +12,7 @@ import "./dashboards.css";
 import type { GridPos, PanelModel } from "./model";
 import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
 import { Dialog } from "./ui/Dialog";
-import { errorCodeMessage, errorMessage } from "./ui/errors";
+import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
 import { type PanelQueryInput, usePanelResults } from "./usePanelResults";
 
@@ -280,7 +280,7 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
               {errors.length > 1 || !failedAll
                 ? `${t("dashboards.inspect.query", { refId: e.refId })}: `
                 : ""}
-              {errorCodeMessage(t, e.code)}
+              {errorBodyMessage(t, e)}
             </span>
           </li>
         ))}

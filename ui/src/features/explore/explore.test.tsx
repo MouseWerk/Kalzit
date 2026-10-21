@@ -64,7 +64,16 @@ describe("Explore", () => {
           meta: {
             executedQuery: "SELECT n FROM t WHERE ts BETWEEN $1 AND $2",
             rowsTruncated: true,
-            notices: [{ severity: "warning", text: "Index not used" }],
+            notices: [
+              // A code the UI knows is translated with its params; an unknown one shows its text.
+              {
+                severity: "warning",
+                code: "frame.value_mismatch",
+                params: { column: "ts", count: "3" },
+                text: "3 SQLite values of ts do not fit its type",
+              },
+              { severity: "info", code: "future.notice", text: "Index not used" },
+            ],
           },
         },
       },
@@ -75,6 +84,9 @@ describe("Explore", () => {
     const panel = screen.getByRole("tabpanel");
     expect(within(panel).getByText("SELECT n FROM t WHERE ts BETWEEN $1 AND $2")).toBeTruthy();
     expect(within(panel).getByText(/Index not used/)).toBeTruthy();
+    expect(
+      within(panel).getByText(/3 values of ts do not fit its type and are left empty/),
+    ).toBeTruthy();
     expect(within(panel).getByText("2 rows, 1 fields")).toBeTruthy();
   });
 

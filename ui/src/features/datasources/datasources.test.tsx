@@ -357,13 +357,7 @@ describe("editing a data source", () => {
       updatedAt: 1,
     });
     const path = await screen.findByRole("textbox", { name: "Absolute path of the database file" });
-    server.failNext(
-      "/api/orgs/o1/datasources/ds-lite",
-      422,
-      "datasource_target_blocked",
-      "PATCH",
-      "path",
-    );
+    // The fake refuses files outside /data with the reason target.sqlite_path_refused.
     await user.clear(path);
     await user.paste("/etc/shadow.db");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -427,7 +421,8 @@ describe("editing a data source", () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
     await user.click(await screen.findByRole("button", { name: "Test connection" }));
     expect(await screen.findByText("Connected in 12 ms")).toBeTruthy();
-    expect(screen.getByText("PostgreSQL 17.2")).toBeTruthy();
+    // The health reason with its params, in the UI's language.
+    expect(screen.getByText("Connected to PostgreSQL 17.2.")).toBeTruthy();
 
     server.areas.datasources.health[PG_ID] = {
       ok: false,

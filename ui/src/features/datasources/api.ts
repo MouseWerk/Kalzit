@@ -1,12 +1,15 @@
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord, request } from "../../api/client";
 import type {
+  DatasourceAccess,
   Page,
   Permission,
   QueryRequest,
   QueryResponse,
   Shape,
 } from "../../api/generated/shapes";
+import { stringParams } from "./reasons";
+import { BUSY_RETRY } from "./retry";
 
 /*
  * Data sources and free queries as docs/api/datasources.md (stream C) specifies them. Every call
@@ -69,18 +72,12 @@ export interface DatasourceKind {
 }
 
 /**
- * What the caller may do with one source, grants included (`DatasourceAccess` of stream C):
+ * What the caller may do with one source, grants included (generated from the server):
  * `read` (see it), `query` (Explore, Test connection, schema), `write` (name, other settings,
  * limits, secrets, trash and restore), `permissions` (manage its grants), `changeTarget` (change
  * where it connects, with its secrets).
  */
-export interface DatasourceAccess {
-  read: boolean;
-  query: boolean;
-  write: boolean;
-  permissions: boolean;
-  changeTarget: boolean;
-}
+export type { DatasourceAccess };
 
 export interface DatasourceSummary {
   id: string;
@@ -89,7 +86,7 @@ export interface DatasourceSummary {
   createdAt: number;
   /** Set for items of the trash. */
   deletedAt?: number;
-  /** Absent from servers that do not send it yet; `sourceAccess` then uses the org role. */
+  /** Always sent by the server; `sourceAccess` covers an answer without it. */
   access?: DatasourceAccess;
 }
 
@@ -104,8 +101,9 @@ export interface Datasource {
 }
 
 /**
- * The caller's rights on one source: the server's `access` when it sent one, else the
- * organization permissions, which a grant can only extend.
+ * The caller's rights on one source: the server's `access`, which it always sends. Kept as the
+ * one place with a fallback for robustness: an answer without `access` (a proxy cache, a
+ * mismatched server) uses the organization permissions instead of hiding every action.
  */
 export function sourceAccess(
   access: DatasourceAccess | undefined,
@@ -137,8 +135,13 @@ function parseAccess(value: unknown): DatasourceAccess | undefined {
   };
 }
 
+/** The answer of "Test connection" (docs/api/datasources.md, Test connection). */
 export interface Health {
   ok: boolean;
+  /** What happened, as a reason the UI translates (`health.connected`, `source.error`, ...). */
+  reason?: string;
+  params?: Record<string, string>;
+  /** The English text of the reason. */
   message: string;
   latencyMs: number;
   /** Only when the test failed: datasource_error, datasource_target_blocked or query_timeout. */
@@ -368,6 +371,13 @@ export async function checkHealth(orgId: string, id: string): Promise<Health> {
   if (!health.ok && typeof health.code === "string") {
     result.code = health.code;
   }
+  if (typeof health.reason === "string" && health.reason !== "") {
+    result.reason = health.reason;
+  }
+  const params = stringParams(health.params);
+  if (params !== undefined) {
+    result.params = params;
+  }
   return result;
 }
 
@@ -436,6 +446,6 @@ export function schemaQuery(orgId: string, id: string) {
     queryKey: [DATASOURCES_KEY, orgId, "schema", id],
     queryFn: ({ signal }) => fetchSchema(orgId, id, signal),
     staleTime: 5 * 60_000,
-    retry: false,
+    ...BUSY_RETRY,
   });
 }

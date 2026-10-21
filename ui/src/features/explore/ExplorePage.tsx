@@ -24,6 +24,7 @@ import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasou
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
+import { BUSY_RETRY } from "../datasources/retry";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
 
@@ -101,7 +102,7 @@ function Explore({ orgId }: { orgId: string }) {
     queryKey: ["explore", orgId, submitted],
     enabled: submitted !== null,
     staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
+    ...BUSY_RETRY,
     queryFn: async ({ signal }) => {
       const run = submitted as Submitted;
       const timeRange = { from: run.from, to: run.to };
