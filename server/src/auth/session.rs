@@ -120,8 +120,12 @@ impl Touches {
             return;
         };
         let background = self.background.clone();
+        let stopping = background.stopping();
         self.background.spawn(async move {
             let _permit = permit;
+            if stopping.is_cancelled() {
+                return;
+            }
             // A touch that waited for the lock never moves a newer one back.
             let update =
                 sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token_hash = $2 AND last_seen_at < $1")

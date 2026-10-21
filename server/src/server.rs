@@ -91,6 +91,7 @@ impl Running {
 
     /// Database connections in use right now, the background pool's included (tests: with no
     /// request open, these are background writes running or waiting for the lock).
+    #[doc(hidden)]
     pub fn connections_in_use(&self) -> u32 {
         let main = self.db.size().saturating_sub(self.db.num_idle() as u32);
         main + self.background.connections_in_use()

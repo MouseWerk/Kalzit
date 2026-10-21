@@ -441,7 +441,8 @@ async fn stopping_the_server_checkpoints_the_database() {
     let wal = dir.path().join("kalzit.db-wal");
     assert!(wal.exists(), "the database runs in WAL mode");
     server.shutdown();
-    server.wait().await.unwrap();
+    let stopped = server.wait().await.unwrap();
+    assert!(stopped.closed_in_time, "the database closed within its budget");
     assert!(!wal.exists(), "the WAL is folded into the database once the server stops");
 }
 

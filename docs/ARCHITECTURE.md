@@ -404,10 +404,12 @@ type QueryResult =
   tries again, since its touch is still due. An older touch never overwrites a newer one. A
   failed touch is logged at debug level only.
 - Background writes: the touches and the hourly jobs (session cleanup, audit retention) run as
-  tasks a stop aborts before it closes the database (`db::Background`). On SQLite they use a
-  small pool of their own whose connections wait at most 1 s for the write lock: SQLite keeps
-  waiting even after a statement is aborted, and closing the database would wait the full 15 s.
-  The requests' connections keep their 15 s. Each of these writes is repeated later, so a
+  tasks a stop ends before it closes the database (`db::Background`). The stop signals them;
+  they start no new statement and leave their sleeps, and the stop waits up to 1.5 s for the
+  statement they are in, so every connection is back and closed with the pool. Only a task still
+  running after that is aborted. On SQLite they use a small pool of their own whose connections
+  wait at most 1 s for the write lock: SQLite keeps waiting even after a statement is aborted,
+  and closing the database would wait the full 15 s. The requests' connections keep their 15 s. Each of these writes is repeated later, so a
   dropped one costs nothing. An hourly run that finds the database busy is tried again after 1,
   2 and 4 minutes, as long as that is before the next run (`db::Schedule`): the audit retention
   is a privacy rule and must not slip by an hour.

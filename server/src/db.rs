@@ -13,6 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use sqlx::any::AnyPoolOptions;
 use sqlx::{Any, AnyPool, Transaction};
+use tokio_util::sync::CancellationToken;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
@@ -87,9 +88,16 @@ pub fn side_pool(pool: &AnyPool, url: &str, max_connections: u32, busy_timeout: 
 pub struct Background {
     db: AnyPool,
     own_pool: bool,
+    /// Cancelled when the server stops: tasks start no new statement and end their sleeps.
+    stopping: CancellationToken,
     /// `None` once stopped: nothing new starts.
     tasks: Mutex<Option<tokio::task::JoinSet<()>>>,
 }
+
+/// How long a stop waits for background tasks to end on their own before it aborts them. A
+/// running statement ends within `BACKGROUND_BUSY_TIMEOUT`; this leaves room for opening its
+/// connection.
+const BACKGROUND_STOP_WAIT: Duration = Duration::from_millis(1500);
 
 impl Background {
     /// For the server's pool `main` on `url`, with up to `max_connections` of its own on SQLite.
@@ -98,8 +106,15 @@ impl Background {
         Self {
             own_pool: own.is_some(),
             db: own.unwrap_or_else(|| main.clone()),
+            stopping: CancellationToken::new(),
             tasks: Mutex::new(Some(tokio::task::JoinSet::new())),
         }
+    }
+
+    /// Cancelled when the server stops. A task checks it before each statement and races it
+    /// against its sleeps; a statement already running is left to finish.
+    pub fn stopping(&self) -> CancellationToken {
+        self.stopping.clone()
     }
 
     /// The pool background writes go through.
@@ -109,6 +124,7 @@ impl Background {
 
     /// Connections of the own pool in use right now: background writes running or waiting for
     /// the lock (tests). 0 without an own pool.
+    #[doc(hidden)]
     pub fn connections_in_use(&self) -> u32 {
         if !self.own_pool {
             return 0;
@@ -116,8 +132,12 @@ impl Background {
         self.db.size().saturating_sub(self.db.num_idle() as u32)
     }
 
-    /// Runs `task` until it ends or the server stops; after the stop it does not start.
+    /// Runs `task` in the background; after the stop began it does not start. The task ends on
+    /// its own when `stopping` is cancelled.
     pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
+        if self.stopping.is_cancelled() {
+            return;
+        }
         if let Some(tasks) = self.lock_tasks().as_mut() {
             // Finished tasks leave their result in the set; drop them so it does not grow.
             while tasks.try_join_next().is_some() {}
@@ -125,13 +145,21 @@ impl Background {
         }
     }
 
-    /// Aborts every task for good and closes the own pool, which waits at most
-    /// `BACKGROUND_BUSY_TIMEOUT` for a write that is waiting for the lock.
+    /// Stops every task for good, then closes the own pool. The tasks are asked to end and get
+    /// `BACKGROUND_STOP_WAIT` to finish the statement they are in, connection opening included,
+    /// so all its connections are back when the pool closes. Only tasks still running after that
+    /// are aborted; SQLite may then close a connection after this returns.
     pub async fn stop(&self) {
+        self.stopping.cancel();
         let tasks = self.lock_tasks().take();
         if let Some(mut tasks) = tasks {
-            tasks.abort_all();
-            while tasks.join_next().await.is_some() {}
+            let ended =
+                tokio::time::timeout(BACKGROUND_STOP_WAIT, async { while tasks.join_next().await.is_some() {} }).await;
+            if ended.is_err() {
+                tracing::warn!("background writes still ran {BACKGROUND_STOP_WAIT:?} after the stop; aborting them");
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+            }
         }
         if self.own_pool {
             self.db.close().await;
@@ -460,18 +488,29 @@ where
     F: FnMut() -> Fut + Send + 'static,
     Fut: Future<Output = Result<(), JobError>> + Send,
 {
+    let stopping = background.stopping();
     background.spawn(async move {
         let mut tick = tokio::time::interval(schedule.interval);
         loop {
-            let next = tick.tick().await + schedule.interval;
+            let due = tokio::select! {
+                () = stopping.cancelled() => return,
+                due = tick.tick() => due,
+            };
+            let next = due + schedule.interval;
             let mut retries = schedule.retries.iter();
             loop {
+                if stopping.is_cancelled() {
+                    return;
+                }
                 match job().await {
                     Ok(()) => break,
                     Err(JobError::Busy(e)) => match retries.next() {
                         Some(&wait) if tokio::time::Instant::now() + wait < next => {
                             tracing::debug!("{what}: the database is busy, trying again in {wait:?}: {e}");
-                            tokio::time::sleep(wait).await;
+                            tokio::select! {
+                                () = stopping.cancelled() => return,
+                                () = tokio::time::sleep(wait) => {}
+                            }
                         }
                         _ => {
                             tracing::warn!(
