@@ -133,10 +133,19 @@ pub async fn run(config: Config) -> Result<()> {
 
 /// Opens the database, runs migrations and binds the listeners.
 pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running> {
-    std::fs::create_dir_all(&config.paths.data_dir)
-        .with_context(|| format!("creating the data directory {}", config.paths.data_dir.display()))?;
+    for warning in &config.warnings {
+        tracing::warn!("{warning}");
+    }
+    crate::data_dir::prepare(&config.paths.data_dir)?;
+    if let Some(warning) = db::ambiguity(&config.database_url()) {
+        tracing::warn!("{warning}");
+    }
     let pool = db::connect(&config.database_url(), config.database.max_connections).await?;
-    tracing::info!("database ready ({})", db::redact(&config.database_url()));
+    tracing::info!(
+        "data directory {}, database {} ready",
+        config.paths.data_dir.display(),
+        db::redact(&config.database_url())
+    );
 
     let state = AppState::new(config.clone(), pool, Arc::new(SystemClock), setup_code).await?;
     db::spawn_session_cleanup(state.clone());

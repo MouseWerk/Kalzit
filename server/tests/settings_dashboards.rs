@@ -14,6 +14,8 @@ use kalzit::config::Config;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod common;
+
 const SETUP_CODE: &str = "test-setup-code-0123456789";
 const DAY_MS: i64 = 24 * 3_600_000;
 
@@ -42,7 +44,7 @@ impl Reply {
 }
 
 async fn test_app(db_url: Option<String>, tweak: impl FnOnce(&mut Config)) -> TestApp {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.database.url = db_url;
@@ -299,7 +301,7 @@ on_both_databases! {
 /// does not sit out the production timeout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_locked_database_answers_busy_not_internal() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     let url = config.database_url();
@@ -431,7 +433,7 @@ async fn a_cancelled_request_leaves_the_busy_timeout_alone() {
 /// backup copies with the server stopped is complete in `kalzit.db` alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stopping_the_server_checkpoints_the_database() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:0".into();
@@ -448,7 +450,7 @@ async fn stopping_the_server_checkpoints_the_database() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_waiting_session_touch_does_not_delay_the_stop() {
     use sqlx::Connection;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:0".into();
@@ -582,7 +584,7 @@ async fn a_busy_retention_run_is_tried_again_before_the_next_run() {
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_runs_the_audit_retention() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:0".into();

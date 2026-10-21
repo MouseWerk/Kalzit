@@ -99,14 +99,22 @@ fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     remove_file_if_present(path);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)?.write_all(content.as_bytes())
+    // Private from its first moment: mode 0600, or on Windows its own protected ACL instead of
+    // whatever the folder passes on.
+    #[cfg(windows)]
+    let mut file = crate::data_dir::acl::create_file(path, crate::data_dir::acl::FILE_SDDL)?;
+    #[cfg(not(windows))]
+    let mut file = {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path)?
+    };
+    file.write_all(content.as_bytes())
 }
 
 fn remove_file_if_present(path: &Path) {
@@ -261,5 +269,31 @@ mod tests {
         assert_eq!(code.len(), 29, "{code}");
         assert_eq!(code.matches('-').count(), 5);
         assert_eq!(hash_code(&code), hash_code(&code.replace('-', " ").to_uppercase()));
+    }
+
+    #[test]
+    fn the_setup_code_file_is_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(TOKEN_FILE);
+        write_private(&file, "abc\n").unwrap();
+        // Written again on the next start: replaced, still private.
+        write_private(&file, "def\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "def\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        #[cfg(windows)]
+        {
+            // Its own protected entries, not the ones the (temporary) folder passes on.
+            let sddl = crate::data_dir::acl::dacl_sddl(&file).unwrap();
+            assert!(sddl.split("D:").nth(1).unwrap_or_default().starts_with('P'), "not protected: {sddl}");
+            let aces = crate::data_dir::acl::aces(&sddl);
+            let mut trustees: Vec<&str> = aces.iter().map(|(_, _, t)| t.as_str()).collect();
+            trustees.sort_unstable();
+            assert_eq!(trustees, ["BA", "OW", "SY"], "{sddl}");
+            assert!(aces.iter().all(|(flags, _, _)| flags.is_empty()), "explicit entries only: {sddl}");
+        }
     }
 }

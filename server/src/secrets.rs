@@ -22,6 +22,8 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::config::Config;
+#[cfg(windows)]
+use crate::data_dir::acl;
 
 pub const KEY_ENV: &str = "KALZIT_SECRETS_KEY";
 /// The new key for `kalzit secrets rotate` when the current one comes from the environment or a
@@ -424,7 +426,7 @@ fn sync_dir(file: &Path) -> std::io::Result<()> {
 
 /// Writes through a temporary file and a rename, so a crash never leaves a half-written key. On
 /// Unix the file is created with mode 0600; on Windows it gets an ACL for SYSTEM, Administrators
-/// and its owner only (not inherited from the data directory).
+/// and its owner only (not inherited from the data directory), set when the file is created.
 fn write_private_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
@@ -433,89 +435,24 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&tmp)?;
     #[cfg(windows)]
-    acl::restrict(&tmp)?;
+    let mut file = acl::create_file(&tmp, acl::FILE_SDDL)?;
+    #[cfg(not(windows))]
+    let mut file = {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(&tmp)?
+    };
     file.write_all(content)?;
     file.sync_all()?;
     drop(file);
     std::fs::rename(&tmp, path)?;
     sync_dir(path)
-}
-
-#[cfg(windows)]
-mod acl {
-    //! An explicit, protected DACL for key files: full access for SYSTEM, the Administrators group
-    //! and the file's owner (the account Kalzit runs as), nobody else.
-
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
-    use windows::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-    };
-    use windows::Win32::Security::{
-        DACL_SECURITY_INFORMATION, OBJECT_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, SetFileSecurityW,
-    };
-    use windows::core::HSTRING;
-
-    pub const SDDL: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)";
-
-    pub fn restrict(path: &std::path::Path) -> std::io::Result<()> {
-        let mut sd = PSECURITY_DESCRIPTOR::default();
-        // SAFETY: the SDDL string is a valid constant; `sd` receives a LocalAlloc'ed descriptor.
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(SDDL), SDDL_REVISION_1, &mut sd, None)
-        }
-        .map_err(std::io::Error::other)?;
-        let info = OBJECT_SECURITY_INFORMATION(DACL_SECURITY_INFORMATION.0 | PROTECTED_DACL_SECURITY_INFORMATION.0);
-        // SAFETY: `sd` is the descriptor built above, alive until freed below.
-        let ok = unsafe { SetFileSecurityW(&HSTRING::from(path.as_os_str()), info, sd) }.as_bool();
-        let error = std::io::Error::last_os_error();
-        // SAFETY: the descriptor was allocated by the conversion with LocalAlloc.
-        unsafe { LocalFree(Some(HLOCAL(sd.0))) };
-        if ok { Ok(()) } else { Err(error) }
-    }
-
-    /// The file's DACL as SDDL, read through the API (tests check what `restrict` set).
-    #[cfg(test)]
-    pub fn dacl_sddl(path: &std::path::Path) -> std::io::Result<String> {
-        use windows::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
-        use windows::Win32::Security::GetFileSecurityW;
-        use windows::core::PWSTR;
-        let name = HSTRING::from(path.as_os_str());
-        let mut needed = 0u32;
-        // SAFETY: a size query with no buffer.
-        let _ = unsafe { GetFileSecurityW(&name, DACL_SECURITY_INFORMATION.0, None, 0, &mut needed) };
-        let mut buffer = vec![0u8; needed as usize];
-        let sd = PSECURITY_DESCRIPTOR(buffer.as_mut_ptr().cast());
-        // SAFETY: `buffer` holds `needed` bytes for the descriptor.
-        if !unsafe { GetFileSecurityW(&name, DACL_SECURITY_INFORMATION.0, Some(sd), needed, &mut needed) }.as_bool() {
-            return Err(std::io::Error::last_os_error());
-        }
-        let mut text = PWSTR::null();
-        // SAFETY: `sd` is the descriptor read above; `text` receives a LocalAlloc'ed string.
-        unsafe {
-            ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                sd,
-                SDDL_REVISION_1,
-                DACL_SECURITY_INFORMATION,
-                &mut text,
-                None,
-            )
-        }
-        .map_err(std::io::Error::other)?;
-        // SAFETY: the conversion returned a NUL-terminated wide string, freed right after.
-        let sddl = unsafe { text.to_string() }.map_err(std::io::Error::other);
-        unsafe { LocalFree(Some(HLOCAL(text.0.cast()))) };
-        sddl
-    }
 }
 
 #[cfg(windows)]
