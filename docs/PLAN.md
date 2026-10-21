@@ -175,17 +175,19 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
     - **Zwingend ein lesender Nutzer**: Rolle `queryreader` (ab 4.1 das gleichwertige Recht
       `EXECUTE_QUERY` je Abfrage). Kalzit prüft die Rechte beim Speichern und beim Verbindungstest
       und lehnt die Datenquelle ab, wenn der Nutzer mehr darf.
-    - **Prüfung des GSQL-Texts** mit einem echten Tokenizer und Parser, kein Muster-Abgleich; was
-      sich nicht parsen lässt, wird abgelehnt. Erlaubt ist genau ein Abfragekörper. Abgelehnt werden
-      `INSERT INTO`, `UPDATE`, `DELETE` und `DELETE FROM` (auch als eigene Anweisung),
-      Attribut-Zuweisungen in `ACCUM`/`POST-ACCUM`, Aufrufe anderer Abfragen, Dateiausgabe (`PRINT
-      ... TO_CSV`, `FILE`-Objekte), Loading Jobs sowie Schema-, Rechte- und Verwaltungsanweisungen
-      (`CREATE`, `ALTER`, `DROP`, `RUN SCHEMA_CHANGE`, `INSTALL QUERY`, `GRANT`, `REVOKE`, `CLEAR
-      GRAPH STORE`). Globale Akkumulatoren (`@@`) gelten nur für einen Lauf und sind kein Schreiben.
-    - Installierte Abfragen werden nur ausgeführt, wenn ihr GSQL-Text lesbar ist und die Prüfung
-      besteht. Ist er nicht lesbar, nur über eine vom Admin freigegebene Liste. Ob der Text über die
-      API lesbar ist und ob `queryreader` ab 4.1 interpretierte Abfragen ausführen darf, wird zu
-      Beginn von M3 gegen eine echte Instanz geklärt.
+    - **Prüfung des GSQL-Texts** mit einem echten Tokenizer und Parser, kein Muster-Abgleich;
+      was sich nicht parsen lässt, wird abgelehnt. Erlaubt ist genau ein Abfragekörper.
+      Abgelehnt werden `INSERT INTO`, `UPDATE`, `DELETE` und `DELETE FROM` (auch als eigene
+      Anweisung), Attribut-Zuweisungen in `ACCUM`/`POST-ACCUM`, Aufrufe anderer Abfragen,
+      Dateiausgabe (`PRINT ... TO_CSV`, `FILE`-Objekte), Loading Jobs sowie Schema-, Rechte- und
+      Verwaltungsanweisungen (`CREATE`, `ALTER`, `DROP`, `RUN SCHEMA_CHANGE`, `INSTALL QUERY`,
+      `GRANT`, `REVOKE`, `CLEAR GRAPH STORE`). Globale Akkumulatoren (`@@`) gelten nur für
+      einen Lauf und sind kein Schreiben.
+    - Installierte Abfragen werden nur ausgeführt, wenn ihr GSQL-Text lesbar ist und die
+      Prüfung besteht. Ist er nicht lesbar, nur über eine vom Admin freigegebene Liste; dann
+      schützt allein der lesende Nutzer vor Schreibzugriffen. Ob der Text über die API lesbar
+      ist und ob `queryreader` ab 4.1 interpretierte Abfragen ausführen darf, wird zu Beginn von
+      M3 gegen eine echte Instanz geklärt.
     - Kalzit ruft weder Upsert- noch Lade-Endpunkte von REST++ auf.
     - Variablen gehen als typisierte Abfrageparameter an REST++, nie als Text in den GSQL-Code.
 - Limits je Datenquelle: Zeitlimit, maximale Dokumente/Knoten, maximale Antwortgröße.
