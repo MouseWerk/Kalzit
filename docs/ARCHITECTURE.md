@@ -32,10 +32,12 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   `not_found`, `method_not_allowed`, `payload_too_large`, `conflict`, `version_conflict`,
   `rate_limited`, `cross_origin`, `invalid_credentials`, `setup_done`, `invalid_setup_token`,
   `datasource_error`, `datasource_target_blocked`, `query_timeout`, `query_rejected`, `busy`, `internal`.
-  `busy` (503, with `Retry-After`) means the database could not give the request its lock in time;
-  nothing was changed and the request may be sent again. Lock contention is never `internal`.
-  SQLite runs in WAL mode, and transactions start with a write, so they wait for the write lock
-  instead of failing on a stale read snapshot.
+  `busy` (503, with `Retry-After`) means the database could not give the request its lock in time
+  (SQLite `SQLITE_BUSY`; PostgreSQL serialization failure, lock timeout or deadlock, the last also
+  logged as a lock-order bug). Handlers read everything their reply needs inside the transaction,
+  before the commit, so `busy` only ever comes before anything was committed: nothing was changed
+  and the request may be sent again. An error after a commit, an exhausted connection pool and
+  `SQLITE_LOCKED` answer `internal`.
 - A resource the caller may not see answers `not_found`, so ids cannot be probed: other
   organizations, and restricted folders (and their dashboards) the caller has no grant for. `forbidden`
   is for what the caller can see but not do. `/api/admin` answers `forbidden` to signed-in
@@ -273,6 +275,21 @@ type QueryResult =
   the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
   since they hold client addresses.
 
+## Storage (SQLite)
+
+- SQLite runs on one host with its file on a local disk: a data directory on a network drive
+  (UNC path or mapped network drive on Windows, NFS, CIFS/SMB, 9p and similar on Linux) is refused
+  at start. Shared storage or several Kalzit servers on one database need PostgreSQL.
+- WAL mode (`kalzit.db` plus `kalzit.db-wal` and `kalzit.db-shm`), `synchronous = FULL`, a 15 s
+  busy timeout and `journal_size_limit` = 64 MiB. Readers never wait for writers. Every
+  transaction starts through `db::begin`: `BEGIN IMMEDIATE` on SQLite, so it holds the write lock
+  from the start and never fails on a stale read snapshot (a guard test allows no other
+  `begin`). A graceful stop closes the database, which folds the WAL back into `kalzit.db`.
+- Backups while the server runs: `VACUUM INTO 'backup.db'` (one consistent file) or the sqlite3
+  shell's `.backup`. With the server stopped: copy `kalzit.db`, `kalzit.db-wal` and
+  `kalzit.db-shm` together (after a graceful stop the last two are usually gone). Never copy only
+  `kalzit.db` of a running server.
+
 ## Migrations
 
 Numbered and never edited after release (`engineering/data-and-apis.md`).
@@ -285,6 +302,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0004 | server settings, org settings | stream B |
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
+| 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
 
 ## M1 work streams
 
