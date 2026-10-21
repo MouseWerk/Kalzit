@@ -513,7 +513,7 @@ async fn a_waiting_session_touch_does_not_delay_the_stop() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_start_job_waiting_for_the_lock_does_not_delay_the_stop() {
     use sqlx::Connection;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::private_tempdir();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.http_addr = "127.0.0.1:0".into();
