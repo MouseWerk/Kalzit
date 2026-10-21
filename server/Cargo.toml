@@ -30,6 +30,9 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 uuid = { version = "1.28.0", features = ["v7"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
+
 [dev-dependencies]
 http-body-util = "0.1.5"
 rcgen = "0.14.10"

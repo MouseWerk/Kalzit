@@ -35,6 +35,21 @@ pub struct Config {
     /// from the file from the default even when both are equal.
     #[serde(skip)]
     pub file_keys: BTreeSet<String>,
+    /// Where `paths.data_dir` came from; decides what a relative path is relative to.
+    #[serde(skip)]
+    pub data_dir_source: Source,
+    /// Problems found while loading that do not stop the start; logged once logging is set up.
+    #[serde(skip)]
+    pub warnings: Vec<String>,
+}
+
+/// The layer a configuration value came from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Source {
+    #[default]
+    Default,
+    File,
+    Environment,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -94,6 +109,9 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PathsConfig {
+    /// Database, setup code and fallback key file. Default: `%ProgramData%\Kalzit\data` on
+    /// Windows, `/var/lib/kalzit` elsewhere. A relative path in `kalzit.toml` is relative to the
+    /// file; one from the environment is relative to the working directory.
     pub data_dir: PathBuf,
 }
 
@@ -150,8 +168,27 @@ impl Default for DatabaseConfig {
 
 impl Default for PathsConfig {
     fn default() -> Self {
-        Self { data_dir: PathBuf::from("data") }
+        // Empty when there is no default (Windows without `ProgramData`); `validate` says so.
+        Self { data_dir: default_data_dir().unwrap_or_default() }
     }
+}
+
+/// The system folder for Kalzit's data, used when nothing is configured.
+#[cfg(windows)]
+pub fn default_data_dir() -> Option<PathBuf> {
+    windows_data_dir(std::env::var_os("ProgramData"))
+}
+
+/// The system folder for Kalzit's data, used when nothing is configured.
+#[cfg(not(windows))]
+pub fn default_data_dir() -> Option<PathBuf> {
+    Some(PathBuf::from("/var/lib/kalzit"))
+}
+
+#[cfg(windows)]
+fn windows_data_dir(program_data: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let base = PathBuf::from(program_data?);
+    base.is_absolute().then(|| base.join("Kalzit").join("data"))
 }
 
 impl Default for LogConfig {
@@ -168,22 +205,49 @@ impl Config {
             Some(p) => Some(p.to_path_buf()),
             None => default_config_paths().into_iter().find(|p| p.is_file()),
         };
-        let text = match &file {
-            Some(p) => {
-                std::fs::read_to_string(p).with_context(|| format!("reading configuration from {}", p.display()))?
-            }
-            None => String::new(),
-        };
         let mut env = Vec::new();
         for (name, value) in std::env::vars_os() {
             let Some(name) = name.to_str().filter(|n| n.starts_with(ENV_PREFIX)) else { continue };
             let value = value.into_string().map_err(|_| anyhow::anyhow!("{name} is not valid UTF-8"))?;
             env.push((name.to_string(), value));
         }
-        Self::from_sources(&text, env).with_context(|| match &file {
+        Self::from_file(file.as_deref(), env)
+    }
+
+    /// Reads `file` (if any), merges `env` and resolves a relative data directory: against the
+    /// directory of the file when it came from there, against the working directory when it came
+    /// from the environment.
+    pub fn from_file(file: Option<&Path>, env: impl IntoIterator<Item = (String, String)>) -> Result<Self> {
+        let text = match file {
+            Some(p) => {
+                std::fs::read_to_string(p).with_context(|| format!("reading configuration from {}", p.display()))?
+            }
+            None => String::new(),
+        };
+        let mut config = Self::from_sources(&text, env).with_context(|| match file {
             Some(p) => format!("in configuration {} or KALZIT_* variables", p.display()),
             None => "in KALZIT_* variables".into(),
-        })
+        })?;
+        let dir = &config.paths.data_dir;
+        if dir.is_relative() {
+            let base = match (config.data_dir_source, file) {
+                (Source::File, Some(f)) => std::path::absolute(f)
+                    .context("resolving the configuration path")?
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default(),
+                _ => std::env::current_dir().context("reading the working directory")?,
+            };
+            if config.data_dir_source == Source::Environment {
+                config.warnings.push(format!(
+                    "KALZIT_PATHS_DATA_DIR \"{}\" is a relative path, so the data directory depends on the \
+                     working directory; use an absolute path",
+                    dir.display()
+                ));
+            }
+            config.paths.data_dir = base.join(dir);
+        }
+        Ok(config)
     }
 
     /// Merges a TOML document with `KALZIT_<SECTION>_<KEY>` variables and validates the result.
@@ -195,6 +259,7 @@ impl Config {
             .flat_map(|(section, table)| table.keys().map(move |key| format!("{section}.{key}")))
             .collect();
         let defaults = toml::Table::try_from(Config::default()).context("serializing the defaults")?;
+        let mut data_dir_source = if file_keys.contains("paths.data_dir") { Source::File } else { Source::Default };
         for (name, raw) in env {
             let Some(rest) = name.strip_prefix(ENV_PREFIX) else { continue };
             // Runtime settings (`KALZIT_SETTING_<KEY>`) are checked by `settings::check_environment`.
@@ -217,10 +282,14 @@ impl Config {
                 continue;
             }
             let value = env_value(&name, &raw, default, key)?;
+            if *section == "paths" && key == "data_dir" {
+                data_dir_source = Source::Environment;
+            }
             table.insert(key.to_string(), value);
         }
         let mut config: Config = toml::Value::Table(doc).try_into().context("reading settings")?;
         config.file_keys = file_keys;
+        config.data_dir_source = data_dir_source;
         config.validate()?;
         Ok(config)
     }
@@ -264,6 +333,15 @@ impl Config {
         }
         if self.database.max_connections == 0 {
             bail!("database.max_connections must be at least 1");
+        }
+        if self.paths.data_dir.to_string_lossy().trim().is_empty() {
+            match self.data_dir_source {
+                Source::Default => bail!(
+                    "the ProgramData environment variable is not set, so there is no default data directory; \
+                     set paths.data_dir or KALZIT_PATHS_DATA_DIR"
+                ),
+                _ => bail!("paths.data_dir is empty"),
+            }
         }
         tracing_subscriber::EnvFilter::try_new(&self.log.level)
             .with_context(|| format!("log.level \"{}\" is not a filter like \"info\"", self.log.level))?;
@@ -484,5 +562,65 @@ mod tests {
         let c = Config::from_sources("[paths]\ndata_dir = 'C:\\ProgramData\\Kalzit'\n", env(&[])).unwrap();
         assert_eq!(c.database_url(), "sqlite:C:/ProgramData/Kalzit/kalzit.db?mode=rwc");
         assert_eq!(sqlite_url(Path::new("/srv/a?b#c%d.db")), "sqlite:/srv/a%3Fb%23c%25d.db?mode=rwc");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_data_dir_is_under_program_data() {
+        assert_eq!(
+            windows_data_dir(Some(r"C:\ProgramData".into())),
+            Some(PathBuf::from(r"C:\ProgramData\Kalzit\data"))
+        );
+        assert_eq!(windows_data_dir(None), None);
+        assert_eq!(windows_data_dir(Some("relative".into())), None);
+        let c = Config::from_sources("", env(&[])).unwrap();
+        assert!(c.paths.data_dir.ends_with(r"Kalzit\data"), "{}", c.paths.data_dir.display());
+        assert!(c.database_url().ends_with("/Kalzit/data/kalzit.db?mode=rwc"), "{}", c.database_url());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn default_data_dir_is_var_lib() {
+        assert_eq!(default_data_dir(), Some(PathBuf::from("/var/lib/kalzit")));
+        let c = Config::from_sources("", env(&[])).unwrap();
+        assert_eq!(c.paths.data_dir, PathBuf::from("/var/lib/kalzit"));
+        assert_eq!(c.database_url(), "sqlite:/var/lib/kalzit/kalzit.db?mode=rwc");
+    }
+
+    #[test]
+    fn a_relative_data_dir_in_the_file_is_relative_to_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        std::fs::write(&file, "[paths]\ndata_dir = \"store\"\n").unwrap();
+        let c = Config::from_file(Some(&file), env(&[])).unwrap();
+        assert_eq!(c.data_dir_source, Source::File);
+        assert_eq!(c.paths.data_dir, dir.path().join("store"));
+        assert!(c.warnings.is_empty());
+
+        let absolute = dir.path().join("elsewhere");
+        let toml = format!("[paths]\ndata_dir = '{}'\n", absolute.display());
+        std::fs::write(&file, toml).unwrap();
+        assert_eq!(Config::from_file(Some(&file), env(&[])).unwrap().paths.data_dir, absolute);
+    }
+
+    #[test]
+    fn the_environment_overrides_the_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        std::fs::write(&file, "[paths]\ndata_dir = \"store\"\n").unwrap();
+        let absolute = dir.path().join("from-env");
+        let c = Config::from_file(Some(&file), env(&[("KALZIT_PATHS_DATA_DIR", &absolute.to_string_lossy())])).unwrap();
+        assert_eq!(c.data_dir_source, Source::Environment);
+        assert_eq!(c.paths.data_dir, absolute);
+        assert!(c.warnings.is_empty());
+
+        // A relative path from the environment stays relative to the working directory, with a warning.
+        let c = Config::from_file(Some(&file), env(&[("KALZIT_PATHS_DATA_DIR", "rel")])).unwrap();
+        assert_eq!(c.paths.data_dir, std::env::current_dir().unwrap().join("rel"));
+        assert_eq!(c.warnings.len(), 1);
+        assert!(c.warnings[0].contains("working directory"), "{}", c.warnings[0]);
+
+        let err = Config::from_sources("", env(&[("KALZIT_PATHS_DATA_DIR", " ")])).unwrap_err();
+        assert!(format!("{err:#}").contains("paths.data_dir"), "{err:#}");
     }
 }

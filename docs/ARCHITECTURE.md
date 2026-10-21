@@ -269,6 +269,29 @@ type QueryResult =
   the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
   since they hold client addresses.
 
+## Data directory
+
+- Default: `%ProgramData%\Kalzit\data` on Windows (from the `ProgramData` variable; without it
+  the start fails and asks for `paths.data_dir`), `/var/lib/kalzit` on Linux and other Unix
+  systems. Never the working directory, which for a Windows service is `C:\Windows\System32`.
+- `[paths] data_dir` in `kalzit.toml` or `KALZIT_PATHS_DATA_DIR` override it. A relative path
+  from `kalzit.toml` is relative to the directory of that file; one from the environment is
+  relative to the working directory, and the server logs a warning that it depends on it.
+- At start (`data_dir::prepare`, before the database opens) a missing directory is created: on
+  Linux with mode 0700, on Windows with a protected ACL (inherited by its contents) for SYSTEM,
+  Administrators and the account Kalzit runs as. An existing directory keeps its ACL; on Linux
+  the start is refused when it is writable by group or others. The start also fails with a
+  clear message when the directory cannot be written. One info line names the data directory
+  and the database (the URL with any password redacted).
+- Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
+  `-shm` files, `setup-token.txt` until the first owner exists, and `secrets.key`, the fallback
+  key file for data source secrets when no other key source is configured.
+- Backups: copy `kalzit.db`, `kalzit.db-wal` and `kalzit.db-shm` together while the server is
+  stopped, or use the SQLite backup API (`sqlite3 kalzit.db ".backup backup.db"`), which works
+  while the server is stopped or running. Copying only `kalzit.db` of a running server loses
+  what is still in the WAL file. Back up `secrets.key` too (when it is used); without it stored
+  data source secrets cannot be decrypted.
+
 ## Migrations
 
 Numbered and never edited after release (`engineering/data-and-apis.md`).

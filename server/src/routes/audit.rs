@@ -267,10 +267,11 @@ mod tests {
     async fn events_about_hidden_folders_and_their_dashboards_are_left_out() {
         let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
         let clock = std::sync::Arc::new(crate::clock::ManualClock::new(0));
-        let state =
-            AppState::new(crate::config::Config::default(), db.clone(), clock, Some("fixed-code-0123456789".into()))
-                .await
-                .unwrap();
+        // Never the default data directory: that is a system folder.
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.paths.data_dir = dir.path().to_path_buf();
+        let state = AppState::new(config, db.clone(), clock, Some("fixed-code-0123456789".into())).await.unwrap();
         for sql in [
             "INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)",
             "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) VALUES \

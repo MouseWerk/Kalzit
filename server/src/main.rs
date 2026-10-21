@@ -35,7 +35,10 @@ fn main() -> ExitCode {
     };
     match cli.command.unwrap_or(Command::Serve) {
         Command::CheckConfig => {
-            println!("configuration is valid");
+            for warning in &config.warnings {
+                eprintln!("kalzit: warning: {warning}");
+            }
+            println!("configuration is valid; data directory {}", config.paths.data_dir.display());
             ExitCode::SUCCESS
         }
         Command::Serve => {
