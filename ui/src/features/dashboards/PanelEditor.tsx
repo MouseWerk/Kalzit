@@ -115,7 +115,6 @@ export function PanelEditor({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={results.data ?? []}
-              hasTargets={results.fetchStatus !== "idle" || results.data !== undefined}
             />
           </div>
         </section>

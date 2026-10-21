@@ -249,7 +249,9 @@ function queryFormProblem(kind: string, query: unknown): string | null {
   }
   const extra = unknownKey(q, ["sql"]);
   if (extra !== undefined) return `unknown query field ${extra}`;
-  return typeof q.sql === "string" ? null : "sql is required";
+  if (typeof q.sql !== "string") return "sql is required";
+  // An empty statement is not a single SELECT or WITH.
+  return q.sql.trim() === "" ? "the query is empty" : null;
 }
 
 /** Runs one query item as the server would: on a live data source, in its documented form. */

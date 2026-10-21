@@ -3,6 +3,7 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { getPanel } from "../../panels/registry";
+import { queryText } from "../datasources/queryKinds";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import type { GridPos, PanelModel } from "./model";
@@ -206,7 +207,6 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           pending={results.isPending && results.fetchStatus !== "idle"}
           error={results.error}
           outcomes={outcomes}
-          hasTargets={results.fetchStatus !== "idle" || results.data !== undefined}
         />
       </div>
       {edit === undefined ? null : (
@@ -236,33 +236,19 @@ interface PanelBodyProps {
   pending: boolean;
   error: Error | null;
   outcomes: readonly TargetOutcome[];
-  hasTargets: boolean;
 }
 
 /**
  * Loading, failure and data of one panel. Errors are mapped per query: one failing query shows
  * its message while the others still draw.
  */
-export function PanelBody({
-  panel,
-  title,
-  range,
-  pending,
-  error,
-  outcomes,
-  hasTargets,
-}: PanelBodyProps) {
+export function PanelBody({ panel, title, range, pending, error, outcomes }: PanelBodyProps) {
   const { t } = useI18n();
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
   }
-  if (!hasTargets && outcomes.length === 0) {
-    return <p className="panel-empty">{t("dashboards.panel.noQuery")}</p>;
-  }
-  if (pending) {
-    return <p className="panel-empty">{t("common.loading")}</p>;
-  }
+  // A failed request comes first: it must never read as "no query yet".
   if (error !== null) {
     return (
       <div className="panel-error" role="alert">
@@ -270,6 +256,12 @@ export function PanelBody({
         <span>{errorMessage(t, error)}</span>
       </div>
     );
+  }
+  if (!panel.targets.some((target) => queryText(target.query).trim() !== "")) {
+    return <p className="panel-empty">{t("dashboards.panel.noQuery")}</p>;
+  }
+  if (pending) {
+    return <p className="panel-empty">{t("common.loading")}</p>;
   }
   const frames = framesOf(outcomes);
   const errors = errorsOf(outcomes);

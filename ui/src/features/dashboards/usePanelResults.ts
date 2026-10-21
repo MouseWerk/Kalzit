@@ -32,9 +32,12 @@ export interface PanelQueryInput {
  */
 export function usePanelResults(input: PanelQueryInput) {
   const { orgId, dashboardId, panel, range, variables, source, run } = input;
-  const targets = panel.targets.filter(
-    (t) => t.datasourceId !== "" && queryText(t.query).trim() !== "",
-  );
+  // The panel route runs every stored target, empty ones included, and answers each refId; a
+  // draft only sends the targets that can run.
+  const targets =
+    source === "stored"
+      ? panel.targets
+      : panel.targets.filter((t) => t.datasourceId !== "" && queryText(t.query).trim() !== "");
   const refIds = targets.map((t) => t.refId);
   return useQuery({
     queryKey: [

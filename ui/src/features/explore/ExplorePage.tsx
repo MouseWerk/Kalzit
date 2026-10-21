@@ -258,7 +258,6 @@ function Explore({ orgId }: { orgId: string }) {
                 pending={result.isPending}
                 error={result.error}
                 outcomes={outcomes}
-                hasTargets
               />
             ) : null}
           </div>

@@ -195,6 +195,37 @@ describe("dashboard view", () => {
     expect(screen.queryByRole("combobox", { name: "tenant" })).toBeNull();
   });
 
+  it.each([
+    [403, "forbidden", "You do not have permission for this."],
+    [500, "internal", /Something went wrong on the server/],
+  ] as const)(
+    "shows a failed panel request (%i) as an error, not as a panel without a query",
+    async (status, code, text) => {
+      const server = setup("viewer");
+      server.failNext("/api/orgs/o1/dashboards/d-sales/panels/p-orders/query", status, code);
+      renderApp("/dashboards/d-sales");
+      await screen.findByRole("heading", { level: 1, name: "Sales" });
+      const orders = await waitFor(() => panelOf("Orders"));
+      expect(await within(orders).findByText(text)).toBeTruthy();
+      expect(within(orders).queryByText("This panel has no query yet.")).toBeNull();
+    },
+  );
+
+  it("asks for every stored target, also an empty one, and shows what the server says", async () => {
+    const panel = {
+      ...sqlPanel("p-two", "Two", "SELECT 1"),
+      targets: [
+        { refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1" } },
+        { refId: "B", datasourceId: PG_ID, query: { sql: "" } },
+      ],
+    };
+    setup("viewer", [panel]);
+    renderApp("/dashboards/d-sales");
+    const two = await waitFor(() => panelOf("Two"));
+    expect(await within(two).findByText(/Query B: .*rejected/)).toBeTruthy();
+    expect(within(two).getByText("Ada")).toBeTruthy();
+  });
+
   it("gives viewers view mode only", async () => {
     setup("viewer");
     renderApp("/dashboards/d-sales");
