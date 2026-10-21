@@ -10,49 +10,58 @@
   :root {
     color-scheme: light dark;
 
-    /* Neutral surfaces, a cool stone gray. */
-    --bg: light-dark(oklch(98.6% 0.003 260), oklch(18.5% 0.006 260));
-    --bg-surface: light-dark(oklch(96.4% 0.004 260), oklch(21% 0.007 260));
-    --bg-raised: light-dark(oklch(100% 0 0), oklch(24% 0.008 260));
-    --bg-hover: light-dark(oklch(93.2% 0.006 260), oklch(27.5% 0.009 260));
-    --bg-active: light-dark(oklch(90.6% 0.008 260), oklch(31% 0.011 260));
-    --border: light-dark(oklch(89.5% 0.006 260), oklch(31% 0.009 260));
-    --border-strong: light-dark(oklch(60% 0.012 260), oklch(58% 0.012 260));
+    /*
+     * Neutral surfaces in the website's warm stone (hue 60 to 80, almost no chroma): paper for
+     * light, a warm near-black for dark, a step less deep than the website so long sessions stay
+     * calm.
+     */
+    --bg: light-dark(oklch(97.6% 0.004 80), oklch(17% 0.004 60));
+    --bg-surface: light-dark(oklch(95.6% 0.006 78), oklch(19.5% 0.005 60));
+    --bg-raised: light-dark(oklch(99.5% 0.002 80), oklch(21.5% 0.006 60));
+    --bg-hover: light-dark(oklch(92.8% 0.008 78), oklch(25% 0.007 60));
+    --bg-active: light-dark(oklch(89.8% 0.01 76), oklch(28.5% 0.008 60));
+    --border: light-dark(oklch(88% 0.008 76), oklch(29% 0.007 60));
+    --border-strong: light-dark(oklch(59% 0.012 70), oklch(56% 0.01 65));
 
-    --text: light-dark(oklch(22% 0.012 260), oklch(94.5% 0.004 260));
-    --text-muted: light-dark(oklch(47% 0.014 260), oklch(74% 0.01 260));
+    --text: light-dark(oklch(21% 0.008 60), oklch(94.5% 0.007 80));
+    --text-muted: light-dark(oklch(44% 0.01 60), oklch(76% 0.01 75));
 
-    /* Accent: primary actions and links only, never frames for states. */
-    --accent: light-dark(oklch(47% 0.13 255), oklch(76% 0.1 255));
-    --accent-hover: light-dark(oklch(42% 0.13 255), oklch(82% 0.08 255));
-    --on-accent: light-dark(oklch(100% 0 0), oklch(18% 0.02 260));
+    /*
+     * Accent: sunstone, the warm copper of calcite in low light. Primary actions and links only,
+     * never frames for states. Lower in chroma than a signal color, so it never reads as a warning.
+     */
+    --accent: light-dark(oklch(50% 0.1 52), oklch(79% 0.085 68));
+    --accent-hover: light-dark(oklch(45% 0.095 50), oklch(85% 0.07 72));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
     /* A busy primary button ("Wird eingerichtet…") stays readable; opacity would drop below AA. */
-    --accent-busy: light-dark(oklch(88% 0.04 255), oklch(36% 0.06 255));
-    --on-accent-busy: light-dark(oklch(30% 0.06 255), oklch(90% 0.03 255));
-    --accent-text: light-dark(oklch(46% 0.14 255), oklch(79% 0.1 255));
+    --accent-busy: light-dark(oklch(89% 0.03 62), oklch(33% 0.035 60));
+    --on-accent-busy: light-dark(oklch(33% 0.05 52), oklch(90% 0.03 72));
+    --accent-text: light-dark(oklch(47% 0.1 50), oklch(81% 0.08 70));
 
     /* Status colors go into icons, small text and tinted fills. */
-    --danger-text: light-dark(oklch(49% 0.17 27), oklch(77% 0.13 25));
-    --danger-bg: light-dark(oklch(95.6% 0.022 27), oklch(26% 0.045 25));
-    --success-text: light-dark(oklch(47% 0.11 150), oklch(78% 0.13 150));
+    --danger-text: light-dark(oklch(48% 0.16 27), oklch(77% 0.12 25));
+    --danger-bg: light-dark(oklch(95.4% 0.022 27), oklch(26% 0.04 25));
+    --success-text: light-dark(oklch(46% 0.1 150), oklch(78% 0.12 150));
     /* Series colors for charts, after the Okabe-Ito order (blue, orange, sky blue, vermillion,
        bluish green, reddish purple, yellow, gray). Lightness and chroma alternate so series stay
        apart for protanopia, deuteranopia and tritanopia too, and each reaches 3:1 on the panel
-       surfaces; styles.test.ts pins both. */
-    --chart-1: light-dark(oklch(57.6% 0.103 241), oklch(74.4% 0.114 268));
-    --chart-2: light-dark(oklch(41.7% 0.09 69), oklch(87.6% 0.097 77));
+       surfaces; styles.test.ts pins both. The orange is the sunstone copper and the gray the
+       warm stone of the surfaces. */
+    --chart-1: light-dark(oklch(57.6% 0.103 241), oklch(74.4% 0.114 262));
+    --chart-2: light-dark(oklch(43% 0.09 60), oklch(87.6% 0.097 74));
     --chart-3: light-dark(oklch(48.2% 0.116 249), oklch(58% 0.154 249));
-    --chart-4: light-dark(oklch(63.8% 0.113 35), oklch(60% 0.192 26));
+    --chart-4: light-dark(oklch(63.8% 0.113 35), oklch(60% 0.192 28));
     --chart-5: light-dark(oklch(41.6% 0.08 161), oklch(93.4% 0.091 156));
     --chart-6: light-dark(oklch(31.2% 0.119 326), oklch(69.7% 0.159 349));
-    --chart-7: light-dark(oklch(49.9% 0.095 88), oklch(77.3% 0.133 109));
-    --chart-8: light-dark(oklch(28% 0 258), oklch(58% 0 254));
+    --chart-7: light-dark(oklch(49.9% 0.095 88), oklch(77.3% 0.133 105));
+    --chart-8: light-dark(oklch(28% 0.008 60), oklch(58% 0.008 60));
 
-    --shadow-color: light-dark(oklch(0% 0 0 / 0.12), oklch(0% 0 0 / 0.5));
-    --shadow-menu: 0 4px 16px var(--shadow-color), 0 1px 3px var(--shadow-color);
+    /* Shadows: soft and low, as on the website's popovers; borders carry the structure. */
+    --shadow-color: light-dark(oklch(21% 0.008 60 / 0.14), oklch(0% 0 0 / 0.55));
+    --shadow-menu: 0 0.5rem 1.5rem -0.5rem var(--shadow-color), 0 1px 2px var(--shadow-color);
 
     /* Focus: neutral, from one token, only on :focus-visible. */
-    --focus-ring: light-dark(oklch(38% 0.012 260), oklch(84% 0.008 260));
+    --focus-ring: light-dark(oklch(36% 0.01 60), oklch(85% 0.008 75));
     --focus-ring-width: 2px;
     --focus-ring-offset: 2px;
     --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
