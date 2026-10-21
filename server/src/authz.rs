@@ -634,6 +634,17 @@ pub fn ensure_owner_remains(current_role: &str, new_role: Option<&str>, other_ow
     Ok(())
 }
 
+// Lock order. Transactions that lock more than one kind of row take them in this order, so two of
+// them can never wait on each other in a cycle (a deadlock on PostgreSQL):
+//   1. user rows of server admins (`lock_server_admins`, administration only);
+//   2. organization rows (`lock_org`), several of them in id order;
+//   3. custom role rows (`lock_role`);
+//   4. owner rows of org_members (`lock_owners`, `lock_orgs_left_without_owner`).
+// A sign-in locks only its own user row and nothing after it.
+// While holding any of these locks, a handler uses only its transaction's connection, never the
+// pool: waiting for a second connection while other writers hold theirs waiting for the lock
+// would drain the pool.
+
 /// Locks the organization's row for the rest of the transaction. Every organization change that
 /// checks before it writes takes this first, so concurrent changes in one organization run one
 /// after the other: on PostgreSQL through the row lock, on SQLite because the transaction starts
@@ -677,9 +688,18 @@ pub async fn lock_owners(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: 
     Ok(owners)
 }
 
-/// Before disabling `user_id`: locks the owner rows of every organization they own and counts
-/// those that would be left without an enabled owner.
+/// Before disabling `user_id`: locks every organization they own (in id order, see the lock order
+/// above `lock_org`), then those organizations' owner rows, and counts the organizations that would
+/// be left without an enabled owner.
 pub async fn lock_orgs_left_without_owner(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<i64> {
+    let owned: Vec<(String,)> =
+        sqlx::query_as("SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'owner' ORDER BY org_id")
+            .bind(user_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    for (org_id,) in &owned {
+        lock_org(conn, org_id).await?;
+    }
     sqlx::query(
         "UPDATE org_members SET role = role WHERE role = 'owner' \
          AND org_id IN (SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'owner')",
