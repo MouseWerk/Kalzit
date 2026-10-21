@@ -15,10 +15,33 @@ use model::DashboardModel;
 /// a query is saved, not when it runs.
 ///
 /// Queries already in `previous` (the stored version) with the same data source and text are not
-/// checked again, as long as no variable definition changed, so someone may rename or rearrange a dashboard whose queries they could not
+/// checked again, as long as no variable changed in what affects queries (`variables_for_queries`), so someone may rename or rearrange a dashboard whose queries they could not
 /// write themselves. Each newly used id must name a data source of this organization (one in the
 /// trash counts, it can come back): `422 validation` otherwise. A source the caller may not query
 /// (or not see) is `403 forbidden`, naming it.
+/// What of a variable affects the stored queries.
+type QueryRelevant<'a> =
+    (&'a str, model::VariableType, Option<&'a serde_json::Value>, Option<&'a serde_json::Value>, Option<&'a str>);
+
+/// What of the variables affects the stored queries: names, types, a constant's value, a custom
+/// variable's options and a query variable's source and query. Labels and the current selection
+/// of other variables do not.
+fn variables_for_queries(model: &DashboardModel) -> Vec<QueryRelevant<'_>> {
+    use model::VariableType::{Constant, Custom};
+    model
+        .variables
+        .iter()
+        .map(|v| {
+            let fixed = match v.kind {
+                Constant => v.current.as_ref(),
+                Custom => v.options.as_ref(),
+                _ => None,
+            };
+            (v.name.as_str(), v.kind, fixed, v.query.as_ref(), v.datasource_id.as_deref())
+        })
+        .collect()
+}
+
 pub async fn check_dashboard_sources(
     db: &AnyPool,
     ctx: &OrgCtx,
@@ -28,7 +51,7 @@ pub async fn check_dashboard_sources(
     // Variables shape what every stored query reads (a constant's value, a custom variable's
     // options, a variable's type), so any change to them makes every query count as changed.
     let unchanged = match previous {
-        Some(p) if p.variables == model.variables => p.stored_queries(),
+        Some(p) if variables_for_queries(p) == variables_for_queries(model) => p.stored_queries(),
         _ => Default::default(),
     };
     let changed: std::collections::BTreeSet<&str> =

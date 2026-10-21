@@ -78,14 +78,14 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(50 * 1024 * 1024),
         ui_editable: true,
-        description: "Largest result one query may produce.",
+        description: "Largest result one request may produce, all its queries together.",
     },
     SettingDef {
         key: "datasources.max_parallel_queries",
         scope: Scope::Server,
         default: || json!(64),
         ui_editable: true,
-        description: "Queries running at once on the whole server; further ones wait within their timeout.",
+        description: "Queries running at once on the whole server; further ones wait for a free slot, at most until their time limit runs out.",
     },
     SettingDef {
         key: "datasources.max_inflight_bytes",

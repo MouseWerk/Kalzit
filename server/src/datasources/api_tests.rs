@@ -1205,10 +1205,16 @@ async fn variable_changes_recheck_every_stored_query() {
         let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 1 })), Some(&viewer)).await;
         assert_eq!(r.code(), "forbidden", "{what}: {}", r.text);
     }
+    // Labels and the selection of query and textbox variables do not affect the queries.
+    let mut m = model.clone();
+    m["variables"][0]["label"] = json!("Land");
+    m["variables"][0]["current"] = json!({ "value": "Schweiz" });
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 1 })), Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     // Without variable changes the same editor may still rename it.
     let mut m = model;
     m["title"] = json!("Neu");
-    let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 1 })), Some(&viewer)).await;
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 2 })), Some(&viewer)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
 }
 
