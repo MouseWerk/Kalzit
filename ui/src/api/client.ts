@@ -126,15 +126,17 @@ export function errorFromResponse(status: number, body: unknown): ApiError {
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-/**
- * Sends a request and returns the parsed JSON body (undefined for 204). Throws ApiError for every
- * failure, so callers only ever handle one error type.
- */
 export interface RequestOptions {
   /** Cancels the request; the rejection is the AbortError itself, not an ApiError. */
   signal?: AbortSignal | undefined;
 }
 
+/**
+ * Sends a request and returns the parsed JSON body (undefined for 204). Throws ApiError for every
+ * failure, so callers only ever handle one error type; a request cancelled through
+ * `options.signal` rejects with the signal's reason instead (an AbortError unless the caller gave
+ * another reason), which is not a failure to report.
+ */
 export async function request(
   method: Method,
   path: string,
@@ -151,12 +153,17 @@ export async function request(
     init.body = JSON.stringify(body);
   }
 
+  // A cancelled request is not a failure to report: whatever the signal was aborted with (an
+  // AbortError or the caller's own reason) is passed through unchanged, also when the abort
+  // happens while the body is still being read.
+  const cancelled = (cause: unknown) =>
+    options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
+
   let response: Response;
   try {
     response = await fetch(path, init);
   } catch (cause) {
-    // A cancelled request is not a failure to report; callers check for it and move on.
-    if (cause instanceof Error && cause.name === "AbortError") {
+    if (cancelled(cause)) {
       throw cause;
     }
     throw new ApiError("network", 0, cause instanceof Error ? cause.message : String(cause));
@@ -166,7 +173,19 @@ export async function request(
     return undefined;
   }
 
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (cause) {
+    if (cancelled(cause)) {
+      throw cause;
+    }
+    throw new ApiError(
+      "network",
+      response.status,
+      cause instanceof Error ? cause.message : String(cause),
+    );
+  }
   let parsed: unknown;
   if (text !== "") {
     try {

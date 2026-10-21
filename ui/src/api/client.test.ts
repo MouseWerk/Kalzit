@@ -118,6 +118,40 @@ describe("request", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
   });
 
+  it("passes a custom abort reason through instead of reporting a network error", async () => {
+    const reason = new Error("navigated away");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_path: string, init: RequestInit) => {
+        throw init.signal?.reason;
+      }),
+    );
+    const controller = new AbortController();
+    controller.abort(reason);
+    const outcome = await request("GET", "/api/x", undefined, { signal: controller.signal }).catch(
+      (e: unknown) => e,
+    );
+    expect(outcome).toBe(reason);
+  });
+
+  it("passes an abort during the body read through", async () => {
+    const controller = new AbortController();
+    const response = new Response("{}", { status: 200 });
+    vi.spyOn(response, "text").mockImplementation(async () => {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response),
+    );
+    const outcome = await request("GET", "/api/x", undefined, { signal: controller.signal }).catch(
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toBeInstanceOf(ApiError);
+    expect((outcome as Error).name).toBe("AbortError");
+  });
+
   it("reports a failed connection as network with status 0", async () => {
     vi.stubGlobal(
       "fetch",
