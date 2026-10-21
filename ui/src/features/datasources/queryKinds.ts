@@ -1,4 +1,5 @@
 import { isRecord } from "../../api/client";
+import { emptyMongoQuery, isMongoQuery, mongoQueryText } from "./mongoQuery";
 
 /**
  * The query forms of the M1 data source kinds (docs/api/datasources.md): SQL sources take exactly
@@ -8,7 +9,9 @@ import { isRecord } from "../../api/client";
  */
 
 export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite"] as const;
-export type EditorFamily = "sql" | "promql";
+export type EditorFamily = "sql" | "promql" | "mongo";
+/** Kinds whose results are documents and whose queries are pipelines (mongoQuery.ts). */
+export const MONGO_KINDS = ["mongodb"] as const;
 
 export interface SqlQuery {
   sql: string;
@@ -24,6 +27,9 @@ export interface PromQuery {
 export function familyOf(kind: string): EditorFamily | undefined {
   if ((SQL_KINDS as readonly string[]).includes(kind)) {
     return "sql";
+  }
+  if ((MONGO_KINDS as readonly string[]).includes(kind)) {
+    return "mongo";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -51,7 +57,11 @@ export function parsePromQuery(query: unknown): PromQuery {
 
 /** A new, empty query in the form the kind expects. */
 export function emptyQuery(kind: string): unknown {
-  return familyOf(kind) === "promql" ? { expr: "" } : { sql: "" };
+  const family = familyOf(kind);
+  if (family === "mongo") {
+    return emptyMongoQuery();
+  }
+  return family === "promql" ? { expr: "" } : { sql: "" };
 }
 
 /** The query text alone, for summaries and for deciding whether there is anything to run. */
@@ -62,6 +72,9 @@ export function queryText(query: unknown): string {
     }
     if (typeof query.expr === "string") {
       return query.expr;
+    }
+    if (isMongoQuery(query)) {
+      return mongoQueryText(query);
     }
   }
   return "";

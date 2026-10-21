@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Frame, Shape } from "../api/generated/shapes";
+import type { DocumentSet, Frame, Shape } from "../api/generated/shapes";
 import type { MessageKey } from "../i18n/i18n";
 
 /**
@@ -33,6 +33,21 @@ export interface PanelProps<Options> {
   timeRange: { from: number; to: number };
   /** Accessible name of the visualization: the panel title. */
   title: string;
+  /** Document sets of every target that answered with documents, in target order. */
+  documents?: readonly DocumentSet[] | undefined;
+  /**
+   * Click-to-filter on a value of document set `index`: there where the query can change
+   * (Explore, the panel editor), absent on dashboards, where viewers only read.
+   */
+  onFilter?: ((filter: DocumentFilter) => void) | undefined;
+}
+
+export interface DocumentFilter {
+  /** Index into `documents`. */
+  index: number;
+  /** A filter path without array indexes (`items.price`). */
+  path: string;
+  value: unknown;
 }
 
 export interface PanelEditorProps<Options> {

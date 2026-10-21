@@ -6,6 +6,7 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
+import { FAKE_MONGO_COLLECTIONS, mongoOutcome, mongoQueryProblem } from "./fakeMongo";
 
 /**
  * Fake routes for data sources and the free query route, written from docs/api/datasources.md
@@ -39,6 +40,9 @@ const TARGET_FIELDS = new Set([
   "path",
   "url",
   "basicAuthUser",
+  "authSource",
+  "tls",
+  "replicaSet",
 ]);
 
 interface WireKind {
@@ -123,6 +127,25 @@ export const FAKE_KINDS: WireKind[] = [
       ...COMMON,
     ],
   },
+  // MongoDB (branch m2/mongodb): the UI's assumption until the server documents the kind.
+  {
+    kind: "mongodb",
+    name: "MongoDB",
+    shapes: ["documents"],
+    hintKey: "datasources.kinds.mongodb.hint",
+    settings: [
+      setting("host", "string", { required: true }),
+      setting("port", "number", { default: 27017 }),
+      setting("database", "string", { required: true }),
+      setting("user", "string"),
+      setting("password", "string", { secret: true }),
+      setting("authSource", "string"),
+      setting("replicaSet", "string"),
+      setting("tls", "bool", { default: true }),
+      setting("caCert", "text"),
+      ...COMMON,
+    ],
+  },
 ];
 
 export interface StoredDatasource {
@@ -159,10 +182,37 @@ export interface FakeDatasourcesState {
   sendAccess: boolean;
   /** Every request body of the free query route, in order. */
   queries: Record<string, unknown>[];
+  /** Collections of MongoDB sources (one set for all of them), by name. */
+  mongo: Record<string, Record<string, unknown>[]>;
 }
 
 export const PG_ID = "ds-pg";
 export const PROM_ID = "ds-prom";
+export const MONGO_ID = "ds-mongo";
+
+/** Adds a MongoDB source with the fake collections and their sampled fields to the schema. */
+export function addMongoSource(state: FakeDatasourcesState): void {
+  const created = Date.UTC(2026, 0, 16);
+  state.datasources.push({
+    id: MONGO_ID,
+    name: "Shop documents",
+    kind: "mongodb",
+    settings: { host: "mongo.internal", port: 27017, database: "shop", user: "reader" },
+    secrets: { password: "s3cret" },
+    createdAt: created,
+    updatedAt: created,
+  });
+  state.schemas[MONGO_ID] = {
+    kind: "collections",
+    collections: [
+      {
+        name: "orders",
+        fields: [{ path: "status", coverage: 1, types: [{ name: "string", share: 1 }] }],
+      },
+      { name: "customers" },
+    ],
+  };
+}
 
 /** Hosts in link-local and metadata ranges are refused, as the target check does. */
 const BLOCKED_HOST = /^(169\.254\.|fe80:|fd00:ec2::254)/i;
@@ -245,6 +295,10 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     return "the query is not an object";
   }
   const q = query as Record<string, unknown>;
+  if (kind === "mongodb") {
+    const problem = mongoQueryProblem(query);
+    return problem !== null && "error" in problem ? problem.error.message : null;
+  }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
     if (extra !== undefined) return `unknown query field ${extra}`;
@@ -271,6 +325,13 @@ export async function answerQuery(
   );
   if (source === undefined) {
     return { error: { code: "not_found", message: "no such data source" } };
+  }
+  if (source.kind === "mongodb") {
+    // The MongoDB rejections carry their reasons (a write stage), so they answer whole.
+    const refused = mongoQueryProblem(item.query);
+    if (refused !== null) {
+      return refused;
+    }
   }
   const problem = queryFormProblem(source.kind, item.query);
   if (problem !== null) {
@@ -413,10 +474,15 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       },
     },
     health: {},
-    respond: defaultOutcome,
+    // MongoDB queries run against the fake collections; everything else as `defaultOutcome`.
+    respond: (item, range) =>
+      typeof (item.query as Record<string, unknown> | null)?.collection === "string"
+        ? mongoOutcome(item, state.mongo)
+        : defaultOutcome(item, range),
     grants: {},
     sendAccess: true,
     queries: [],
+    mongo: FAKE_MONGO_COLLECTIONS(),
   };
 
   const live = () => state.datasources.filter((ds) => ds.deletedAt === undefined);

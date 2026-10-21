@@ -41,9 +41,25 @@ describe("registry", () => {
       ["stat", true],
       ["bar", true],
       ["table", true],
+      ["documents", false],
+      ["schema", false],
+      ["distribution", false],
+      ["document", false],
     ]);
-    // Documents are not accepted by any M1 panel: all are offered, none as fitting.
-    expect(panelsForShapes(["documents"]).every((e) => !e.accepts)).toBe(true);
+    // Documents: the document panels first, then the frame panels, which need a projection.
+    expect(panelsForShapes(["documents"]).map((e) => [e.panel.type, e.accepts])).toEqual([
+      ["documents", true],
+      ["schema", true],
+      ["distribution", true],
+      ["document", true],
+      ["timeseries", false],
+      ["stat", false],
+      ["bar", false],
+      ["table", false],
+    ]);
+    expect(
+      suggestPanel([{ shape: "documents", documents: { documents: [{ a: 1 }], schema: [] } }]),
+    ).toBe("documents");
     expect(suggestPanel([{ shape: "frame", frame: tableFrame }])).toBe("table");
     const series: Frame = {
       fields: [

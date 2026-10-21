@@ -7,10 +7,19 @@ import { getPanel } from "../../panels/registry";
 import "../../panels/panels.css";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
+import type { DocumentFilter } from "../../panels/types";
 import { queryText } from "../datasources/queryKinds";
 import "./dashboards.css";
 import type { GridPos, PanelModel } from "./model";
-import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import {
+  documentsOf,
+  errorsOf,
+  framesOf,
+  isTruncated,
+  otherShapes,
+  projectOutcomes,
+  type TargetOutcome,
+} from "./results";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -239,13 +248,26 @@ interface PanelBodyProps {
   pending: boolean;
   error: Error | null;
   outcomes: readonly TargetOutcome[];
+  /**
+   * Click-to-filter on a document value of the target `refId`. Explore and the panel editor
+   * turn it into a `$match` stage; dashboards leave it out, so viewers only read.
+   */
+  onFilter?: ((refId: string, path: string, value: unknown) => void) | undefined;
 }
 
 /**
  * Loading, failure and data of one panel. Errors are mapped per query: one failing query shows
  * its message while the others still draw.
  */
-export function PanelBody({ panel, title, range, pending, error, outcomes }: PanelBodyProps) {
+export function PanelBody({
+  panel,
+  title,
+  range,
+  pending,
+  error,
+  outcomes: received,
+  onFilter,
+}: PanelBodyProps) {
   const { t } = useI18n();
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
@@ -266,10 +288,13 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
+  // The projection step of a query is part of it: its documents arrive here as a frame.
+  const outcomes = projectOutcomes(received, panel.targets);
   const frames = framesOf(outcomes);
+  const documents = documentsOf(outcomes);
   const errors = errorsOf(outcomes);
-  const shapes = otherShapes(outcomes);
-  const failedAll = frames.length === 0 && errors.length > 0;
+  const shapes = otherShapes(outcomes).filter((shape) => shape !== "documents");
+  const failedAll = frames.length === 0 && documents.length === 0 && errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
       <ul className={failedAll ? "panel-error" : "panel-error panel-error--partial"} role="alert">
@@ -290,26 +315,45 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
     return errorList;
   }
   const { Panel } = plugin;
+  const takesDocuments = plugin.shapes.includes("documents") && documents.length > 0;
+  const takesFrames = plugin.shapes.includes("frame") && frames.length > 0;
+  let note: string | null = null;
+  if (!takesDocuments && !takesFrames) {
+    if (documents.length > 0) {
+      note = t("documents.panel.needsProjection");
+    } else if (frames.length > 0) {
+      note = t("documents.panel.needsDocuments");
+    } else if (shapes.length > 0) {
+      note = t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" });
+    }
+  }
   return (
     <div className="panel-content">
       {errorList}
-      {frames.length === 0 ? (
-        shapes.length > 0 ? (
-          <p className="panel-empty">
-            {t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" })}
-          </p>
-        ) : (
-          <EmptyPanel reason="noData" />
-        )
-      ) : (
+      {takesDocuments || takesFrames ? (
         <div className="panel-content__viz">
           <Panel
             frames={frames}
+            documents={documents.map((d) => d.documents)}
+            onFilter={
+              onFilter === undefined
+                ? undefined
+                : (filter: DocumentFilter) => {
+                    const refId = documents[filter.index]?.refId;
+                    if (refId !== undefined) {
+                      onFilter(refId, filter.path, filter.value);
+                    }
+                  }
+            }
             options={plugin.options(panel.options)}
             timeRange={range}
             title={title}
           />
         </div>
+      ) : note === null ? (
+        <EmptyPanel reason="noData" />
+      ) : (
+        <p className="panel-empty">{note}</p>
       )}
       {isTruncated(outcomes) ? (
         <p className="panel-note">{t("dashboards.panel.truncated")}</p>

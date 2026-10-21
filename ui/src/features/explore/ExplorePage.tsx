@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
+import { isRecord } from "../../api/client";
+import type { Shape } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -11,7 +13,7 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
-import { outcomesOf } from "../dashboards/results";
+import { outcomesOf, projectOutcomes } from "../dashboards/results";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
@@ -24,6 +26,7 @@ import { Inspect } from "../dashboards/ui/Inspect";
 import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
+import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
@@ -121,8 +124,8 @@ function Explore({ orgId }: { orgId: string }) {
     },
   });
 
-  function run(nextRange = range) {
-    if (datasource === undefined || query === null || queryText(query).trim() === "") {
+  function run(nextRange = range, nextQuery: unknown = query) {
+    if (datasource === undefined || nextQuery === null || queryText(nextQuery).trim() === "") {
       return;
     }
     const resolved = resolveRange(nextRange, Date.now());
@@ -133,7 +136,7 @@ function Explore({ orgId }: { orgId: string }) {
     setRangeError(null);
     setSubmitted((current) => ({
       datasourceId: datasource.id,
-      query,
+      query: nextQuery,
       range: nextRange,
       ...resolved.range,
       run: (current?.run ?? 0) + 1,
@@ -155,8 +158,15 @@ function Explore({ orgId }: { orgId: string }) {
   }
 
   const outcomes = result.data ?? [];
-  const results = outcomes.flatMap((o) => ("result" in o ? [o.result] : []));
-  const shapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
+  // The suggestion follows what the panel will get: documents, or the frame of a projection step.
+  const shown =
+    submitted === null
+      ? outcomes
+      : projectOutcomes(outcomes, [{ refId: REF_ID, query: submitted.query }]);
+  const results = shown.flatMap((o) => ("result" in o ? [o.result] : []));
+  const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
+  const projects = isRecord(query) && query.toFrame !== undefined;
+  const shapes: Shape[] = projects ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
   const choices = panelsForShapes(shapes);
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
   const panel: PanelModel = {
@@ -273,6 +283,16 @@ function Explore({ orgId }: { orgId: string }) {
                 pending={result.isPending}
                 error={result.error}
                 outcomes={outcomes}
+                onFilter={
+                  isMongoQuery(query)
+                    ? (_refId, path, value) => {
+                        // The filter becomes a visible $match stage of the query, and runs.
+                        const next = addMatch(parseMongoQuery(query), path, value);
+                        setQueries((current) => ({ ...current, [datasource.id]: next }));
+                        run(range, next);
+                      }
+                    : undefined
+                }
               />
             ) : null}
           </div>

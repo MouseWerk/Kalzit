@@ -5,6 +5,7 @@ import { schemaQuery } from "../api";
 import { familyOf, type PromQuery, parsePromQuery, parseSqlQuery } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
 import { PROMQL_MACROS, promqlCompletions, SQL_MACROS, sqlCompletions } from "./completion";
+import { MongoQueryEditor } from "./MongoQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -26,6 +27,8 @@ export function QueryEditor(props: QueryEditorProps) {
       return <SqlQueryEditor {...props} />;
     case "promql":
       return <PromqlQueryEditor {...props} />;
+    case "mongo":
+      return <MongoQueryEditor {...props} />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }

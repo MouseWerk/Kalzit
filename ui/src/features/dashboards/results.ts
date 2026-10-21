@@ -1,4 +1,6 @@
-import type { Frame, QueryResponse, QueryResult } from "../../api/generated/shapes";
+import { isRecord } from "../../api/client";
+import type { DocumentSet, Frame, QueryResponse, QueryResult } from "../../api/generated/shapes";
+import { parseProjection, projectDocuments } from "../../documents/projection";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
 export type TargetOutcome =
@@ -31,6 +33,42 @@ export function framesOf(outcomes: readonly TargetOutcome[]): Frame[] {
   );
 }
 
+/** The document sets of the outcomes with the refId of each, in target order. */
+export function documentsOf(
+  outcomes: readonly TargetOutcome[],
+): { refId: string; documents: DocumentSet }[] {
+  return outcomes.flatMap((o) =>
+    "result" in o && o.result.shape === "documents"
+      ? [{ refId: o.refId, documents: o.result.documents }]
+      : [],
+  );
+}
+
+/**
+ * Applies the projection step a target's query holds (`toFrame`, documents/projection.ts): its
+ * documents become a frame, visibly, because the query says so. A result that already arrived
+ * as a frame, and every target without the step, passes unchanged.
+ */
+export function projectOutcomes(
+  outcomes: readonly TargetOutcome[],
+  targets: readonly { refId: string; query: unknown }[],
+): TargetOutcome[] {
+  return outcomes.map((outcome) => {
+    if (!("result" in outcome) || outcome.result.shape !== "documents") {
+      return outcome;
+    }
+    const query = targets.find((target) => target.refId === outcome.refId)?.query;
+    const projection = isRecord(query) ? parseProjection(query.toFrame) : undefined;
+    if (projection === undefined || projection.columns.length === 0) {
+      return outcome;
+    }
+    return {
+      refId: outcome.refId,
+      result: { shape: "frame", frame: projectDocuments(outcome.result.documents, projection) },
+    };
+  });
+}
+
 export function errorsOf(outcomes: readonly TargetOutcome[]) {
   return outcomes.flatMap((o) => ("error" in o ? [{ refId: o.refId, ...o.error }] : []));
 }
@@ -43,5 +81,8 @@ export function otherShapes(outcomes: readonly TargetOutcome[]): string[] {
 }
 
 export function isTruncated(outcomes: readonly TargetOutcome[]): boolean {
-  return framesOf(outcomes).some((frame) => frame.meta?.rowsTruncated === true);
+  return (
+    framesOf(outcomes).some((frame) => frame.meta?.rowsTruncated === true) ||
+    documentsOf(outcomes).some(({ documents }) => documents.truncated !== undefined)
+  );
 }

@@ -21,12 +21,13 @@ import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
 import { withEditorStyles } from "./editorStyles";
-import { type Token, tokenizePromql, tokenizeSql } from "./syntax";
+import { type Token, tokenizeJson, tokenizePromql, tokenizeSql } from "./syntax";
 import "./editors.css";
 
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,
   promql: tokenizePromql,
+  json: tokenizeJson,
 };
 
 /** Completion kinds as CodeMirror names its option icons. */

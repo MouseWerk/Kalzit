@@ -75,6 +75,25 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
                 </>
               )}
             </>
+          ) : outcome.result.shape === "documents" ? (
+            <>
+              <p className="inspect__meta">
+                {t("documents.inspect.size", {
+                  documents: number.format(outcome.result.documents.documents.length),
+                  paths: number.format(outcome.result.documents.schema.length),
+                })}
+              </p>
+              {outcome.result.documents.truncated === undefined ? null : (
+                <p className="notice">
+                  <Icon name="alert" />
+                  <span>
+                    {t("documents.summary.truncated", {
+                      limit: number.format(outcome.result.documents.truncated.limit),
+                    })}
+                  </span>
+                </p>
+              )}
+            </>
           ) : (
             <p className="inspect__meta">
               {t("dashboards.inspect.shape", { shape: outcome.result.shape })}

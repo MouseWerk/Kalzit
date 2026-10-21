@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
+import { isRecord } from "../../api/client";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
+import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import { nextRefId, type PanelModel, type Target, type VariableModel } from "./model";
 import { PanelBody } from "./PanelCard";
@@ -70,9 +72,11 @@ export function PanelEditor({
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
   const shapes: Shape[] = [
     ...new Set(
-      panel.targets.flatMap(
-        (target) => kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [],
-      ),
+      panel.targets.flatMap((target): Shape[] => [
+        ...(kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? []),
+        // A projection step turns the target's documents into a frame.
+        ...(isRecord(target.query) && target.query.toFrame !== undefined ? ["frame" as const] : []),
+      ]),
     ),
   ];
   const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes);
@@ -101,6 +105,17 @@ export function PanelEditor({
   }
 
   const run = () => setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
+
+  /** Click-to-filter in the preview: a `$match` stage on that target's query, run at once. */
+  function filterBy(refId: string, path: string, value: unknown) {
+    const targets = panel.targets.map((target) =>
+      target.refId === refId && isMongoQuery(target.query)
+        ? { ...target, query: addMatch(parseMongoQuery(target.query), path, value) }
+        : target,
+    );
+    setPanel((p) => ({ ...p, targets }));
+    setPreview((current) => ({ targets, run: current.run + 1 }));
+  }
   const plugin = choices.find((c) => c.panel.type === panel.type)?.panel;
   const Editor = plugin?.Editor;
 
@@ -133,6 +148,9 @@ export function PanelEditor({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={results.data ?? []}
+              onFilter={
+                panel.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
+              }
             />
           </div>
         </section>

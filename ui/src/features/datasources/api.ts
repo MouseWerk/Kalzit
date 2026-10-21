@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord, request } from "../../api/client";
 import type {
   DatasourceAccess,
+  FieldSchema,
   Page,
   Permission,
   QueryRequest,
@@ -159,7 +160,16 @@ export interface PromSchema {
   labels: string[];
 }
 
-export type SourceSchema = SqlSchema | PromSchema;
+/**
+ * MongoDB (branch m2/mongodb; this is the UI's adapter until docs/api/datasources.md has it): the
+ * collections, each with the fields sampled from it in the result envelope's `FieldSchema` form.
+ */
+export interface CollectionsSchema {
+  kind: "collections";
+  collections: { name: string; fields?: FieldSchema[] }[];
+}
+
+export type SourceSchema = SqlSchema | PromSchema | CollectionsSchema;
 
 export interface DatasourceInput {
   name: string;
@@ -391,6 +401,20 @@ export async function fetchSchema(
     Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
   if (isRecord(value) && value.kind === "metrics") {
     return { kind: "metrics", metrics: strings(value.metrics), labels: strings(value.labels) };
+  }
+  if (isRecord(value) && value.kind === "collections" && Array.isArray(value.collections)) {
+    return {
+      kind: "collections",
+      collections: value.collections.flatMap((item) =>
+        isRecord(item) && typeof item.name === "string"
+          ? [
+              Array.isArray(item.fields)
+                ? { name: item.name, fields: item.fields as FieldSchema[] }
+                : { name: item.name },
+            ]
+          : [],
+      ),
+    };
   }
   if (isRecord(value) && value.kind === "tables" && Array.isArray(value.tables)) {
     return { kind: "tables", tables: value.tables as SqlSchema["tables"] };
