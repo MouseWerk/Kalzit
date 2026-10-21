@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { TimeRange } from "../../api/generated/shapes";
 import { runQuery } from "../datasources/api";
 import { queryText } from "../datasources/queryKinds";
+import { BUSY_RETRY } from "../datasources/retry";
 import { runPanelQuery } from "./api";
 import { type PanelModel, storedQueryVariables, type VariableModel } from "./model";
 import { panelQueries } from "./queryQueue";
@@ -62,7 +63,7 @@ export function usePanelResults(input: PanelQueryInput) {
     // Results belong to one time range; a newer range replaces them instead of serving them old.
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 60_000,
-    retry: false,
+    ...BUSY_RETRY,
     queryFn: ({ signal }): Promise<TargetOutcome[]> =>
       panelQueries.run(async () => {
         const common = {

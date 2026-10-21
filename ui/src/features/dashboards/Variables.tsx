@@ -4,6 +4,7 @@ import { ApiError, isApiError } from "../../api/client";
 import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { runQuery } from "../datasources/api";
+import { BUSY_RETRY } from "../datasources/retry";
 import { fetchVariableOptions, type VariableOption } from "./api";
 import { currentValue, optionChoices, storedQueryVariables, type VariableModel } from "./model";
 import type { TextRange } from "./timeRange";
@@ -190,7 +191,7 @@ function VariableControl({
     enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.
     staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
+    ...BUSY_RETRY,
   });
   const optionsError = options.isError
     ? isApiError(options.error, "not_found")
