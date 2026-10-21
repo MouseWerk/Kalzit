@@ -33,5 +33,8 @@ export default defineConfig({
     // other test runs) slows tests several times; the default 5 s then fails sound tests. A
     // test that hangs still fails.
     testTimeout: 15_000,
+    // The reporter flags tests over 1 s. A flagged test is to be fixed (paste instead of type,
+    // smaller fixtures), not tolerated: the long timeout above is for a busy machine only.
+    slowTestThreshold: 1000,
   },
 });
