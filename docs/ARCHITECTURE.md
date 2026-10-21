@@ -295,8 +295,16 @@ type QueryResult =
 - WAL mode (`kalzit.db` plus `kalzit.db-wal` and `kalzit.db-shm`), `synchronous = FULL`, a 15 s
   busy timeout and `journal_size_limit` = 64 MiB. Readers never wait for writers. Every
   transaction starts through `db::begin`: `BEGIN IMMEDIATE` on SQLite, so it holds the write lock
-  from the start and never fails on a stale read snapshot (a guard test allows no other
-  `begin`). A graceful stop closes the database, which folds the WAL back into `kalzit.db`.
+  from the start and never fails on a stale read snapshot. Every commit goes through
+  `db::commit`, which marks the request as having saved something: later database errors of that
+  request answer `internal`, never `busy`. Clippy refuses sqlx's own `begin` and `commit`
+  elsewhere (`clippy.toml`); the data source drivers' read-only transactions on the users'
+  databases are the marked exceptions. A graceful stop (Ctrl+C, SIGTERM, and on Windows closing
+  the console, signing off or shutting down) closes the database, which folds the WAL back into
+  `kalzit.db`.
+- Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
+  check lets the start go on when it cannot tell (no readable mount table, a path without drive
+  letter, an unknown drive type, systems other than Windows and Linux).
 - Backups while the server runs: `VACUUM INTO 'backup.db'` (one consistent file) or the sqlite3
   shell's `.backup`. With the server stopped: copy `kalzit.db`, `kalzit.db-wal` and
   `kalzit.db-shm` together (after a graceful stop the last two are usually gone). Never copy only
