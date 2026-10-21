@@ -253,8 +253,6 @@
     display: grid;
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     min-height: 100dvh;
-    /* The column itself animates, so the content follows the sidebar without a jump. */
-    transition: grid-template-columns var(--duration-normal) var(--easing);
   }
 
   .shell[data-sidebar="collapsed"] {
@@ -383,8 +381,15 @@
     font-weight: var(--font-weight-semibold);
   }
 
-  /* The entry the current page lies in: weight only, its child carries the tint. */
+  /* The entry the current page lies in, while its sub-pages are in view: weight only. */
+  .nav-link--within {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* ... and while they are hidden (rail, collapsed group): it stands for the page. */
   .nav-link[aria-current="true"] {
+    background: var(--bg-active);
     color: var(--text);
     font-weight: var(--font-weight-semibold);
   }
@@ -433,11 +438,15 @@
     display: grid;
   }
 
+  /* Group headings: small capitals, so they never read as links. */
   .nav-sub__title {
-    padding: var(--space-2) var(--space-2) var(--space-1);
+    padding: var(--space-3) var(--space-2) var(--space-1);
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    line-height: var(--line-height-tight);
+    text-transform: uppercase;
   }
 
   .nav-sub__list {
@@ -460,6 +469,21 @@
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
     box-shadow: var(--shadow-menu);
+  }
+
+  /* The rail's tooltip for keyboard focus (RailTooltip); pointers get the native title. */
+  .rail-tooltip {
+    position: fixed;
+    z-index: var(--z-menu);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+    pointer-events: none;
   }
 
   .nav-flyout__title {
@@ -501,11 +525,6 @@
   .shell[data-sidebar="collapsed"] .nav-link {
     justify-content: center;
     padding-inline: 0;
-  }
-
-  /* Without its sub-pages in view, the entry the current page lies in takes the tint. */
-  .shell[data-sidebar="collapsed"] .nav-link[aria-current="true"] {
-    background: var(--bg-active);
   }
 
   .shell__main {
@@ -562,16 +581,13 @@
       padding-inline-end: var(--space-2);
     }
 
-    /* Sub-pages show only for the entry the current page is in, on a line of their own. */
-    .nav-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-1);
-    }
-
-    .nav-group[data-within] {
-      flex: 1 0 100%;
-      order: 1;
+    /*
+     * The entry stays in line with the others; only the sub-pages of the entry the current page
+     * is in take a line of their own, below the entries.
+     */
+    .nav-group,
+    .nav-group__row {
+      display: contents;
     }
 
     .nav-sub,
@@ -581,6 +597,11 @@
       flex-wrap: wrap;
       gap: var(--space-1);
       padding: 0;
+    }
+
+    .nav-sub {
+      flex: 1 0 100%;
+      order: 1;
     }
 
     .nav-group:not([data-within]) > .nav-sub,
@@ -725,7 +746,12 @@
   }
 
   .shell[data-sidebar="collapsed"] .user-button__text {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .menu {

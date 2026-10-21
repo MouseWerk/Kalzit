@@ -63,6 +63,7 @@
       "Helvetica Neue", Arial, sans-serif;
     --font-mono:
       ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --font-size-2xs: 0.6875rem;
     --font-size-xs: 0.75rem;
     --font-size-sm: 0.8125rem;
     --font-size-md: 0.875rem;
@@ -70,6 +71,8 @@
     --font-size-xl: 1.25rem;
     --line-height-tight: 1.25;
     --line-height: 1.5;
+    /* Uppercase group headings need air between letters to stay legible. */
+    --letter-spacing-caps: 0.06em;
     --font-weight-regular: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;

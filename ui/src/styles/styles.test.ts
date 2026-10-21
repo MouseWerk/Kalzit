@@ -243,6 +243,51 @@ describe("small screens", () => {
     expect(phone.sort()).toEqual([".nav-link__label", ".shell__nav-list"]);
   });
 
+  it("breaks only the sub-pages onto a line of their own, not their entry", () => {
+    const group = rules.find(
+      (rule) =>
+        rule.context.includes("@media (max-width: 48rem)") &&
+        rule.selector.split(",").some((part) => part.trim() === ".nav-group"),
+    );
+    expect(group?.declarations).toContainEqual({ property: "display", value: "contents" });
+    expect(inMedia("@media (max-width: 48rem)", ".nav-sub")).toContainEqual({
+      property: "flex",
+      value: "1 0 100%",
+    });
+  });
+
+  it("sets group headings apart from links with small capitals, not color", () => {
+    const title = rules.find((rule) => rule.selector === ".nav-sub__title")?.declarations ?? [];
+    expect(title).toContainEqual({ property: "text-transform", value: "uppercase" });
+    expect(title).toContainEqual({
+      property: "letter-spacing",
+      value: "var(--letter-spacing-caps)",
+    });
+  });
+
+  it("hides the rail's labels and the account name visually only, keeping them as names", () => {
+    const declarationsFor = (selector: string) =>
+      rules
+        .filter((rule) =>
+          rule.selector
+            .split(",")
+            .map((part) => part.replace(/\s+/g, " ").trim())
+            .includes(selector),
+        )
+        .flatMap((rule) => rule.declarations);
+    for (const selector of [
+      '.shell[data-sidebar="collapsed"] .nav-link__label',
+      '.shell[data-sidebar="collapsed"] .user-button__text',
+    ]) {
+      const declarations = declarationsFor(selector);
+      expect(declarations, selector).toContainEqual({ property: "clip-path", value: "inset(50%)" });
+      expect(
+        declarations.some((d) => d.property === "display" && d.value === "none"),
+        selector,
+      ).toBe(false);
+    }
+  });
+
   it("shows only icons on phones, keeping the label for screen readers", () => {
     const label = inMedia("@media (max-width: 25rem)", ".nav-link__label");
     expect(label).toContainEqual({ property: "clip-path", value: "inset(50%)" });
@@ -252,7 +297,8 @@ describe("small screens", () => {
 
 describe("motion and typography", () => {
   it("animates no layout properties", () => {
-    const LAYOUT = /\b(width|height|margin|padding|top|left|right|bottom|inset|font-size|all)\b/;
+    const LAYOUT =
+      /\b(width|height|margin|padding|top|left|right|bottom|inset|font-size|all|grid-template|grid|flex-basis|flex|gap|min-width|max-width|inline-size|block-size)\b/;
     for (const rule of allRules()) {
       for (const { property, value } of rule.declarations) {
         if (property === "transition" || property === "transition-property") {
