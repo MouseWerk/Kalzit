@@ -1,7 +1,5 @@
-import { createRoute } from "@tanstack/react-router";
+import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
-import { DataSourcesPage } from "./DataSourcesPage";
-import { EditDataSourcePage, NewDataSourcePage } from "./DataSourceForm";
 
 export interface DataSourcesSearch {
   /** A data source just moved to the trash; the list offers to restore it. */
@@ -19,7 +17,7 @@ const datasourcesRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): DataSourcesSearch => ({
     deleted: typeof search.deleted === "string" ? search.deleted : undefined,
   }),
-  component: DataSourcesPage,
+  component: lazyRouteComponent(() => import("./DataSourcesPage"), "DataSourcesPage"),
 });
 
 const newDatasourceRoute = createRoute({
@@ -28,13 +26,13 @@ const newDatasourceRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): NewDataSourceSearch => ({
     kind: typeof search.kind === "string" ? search.kind : undefined,
   }),
-  component: NewDataSourcePage,
+  component: lazyRouteComponent(() => import("./DataSourceForm"), "NewDataSourcePage"),
 });
 
 const editDatasourceRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/data-sources/$datasourceId",
-  component: EditDataSourcePage,
+  component: lazyRouteComponent(() => import("./DataSourceForm"), "EditDataSourcePage"),
 });
 
 export const datasourcesRoutes = [

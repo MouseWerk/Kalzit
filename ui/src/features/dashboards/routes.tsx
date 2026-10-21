@@ -1,9 +1,5 @@
-import { createRoute } from "@tanstack/react-router";
+import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
-import { DashboardPage } from "./DashboardPage";
-import { DashboardsPage } from "./DashboardsPage";
-import { TrashPage } from "./TrashPage";
-import { VersionsPage } from "./VersionsPage";
 
 export interface DashboardsSearch {
   folder?: string | undefined;
@@ -20,7 +16,8 @@ export interface DashboardSearch {
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
 
-// The dashboards area's pages. Nested routes of this area go here too.
+// The dashboards area's pages. Nested routes of this area go here too. Pages load on their first
+// visit, so the bundle every page needs stays small.
 const dashboardsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/dashboards",
@@ -28,13 +25,13 @@ const dashboardsRoute = createRoute({
     folder: text(search.folder),
     q: text(search.q),
   }),
-  component: DashboardsPage,
+  component: lazyRouteComponent(() => import("./DashboardsPage"), "DashboardsPage"),
 });
 
 const trashRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/dashboards/trash",
-  component: TrashPage,
+  component: lazyRouteComponent(() => import("./TrashPage"), "TrashPage"),
 });
 
 const dashboardRoute = createRoute({
@@ -45,13 +42,13 @@ const dashboardRoute = createRoute({
     to: text(search.to),
     edit: search.edit === true || search.edit === "true" ? true : undefined,
   }),
-  component: DashboardPage,
+  component: lazyRouteComponent(() => import("./DashboardPage"), "DashboardPage"),
 });
 
 const versionsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/dashboards/$dashboardId/versions",
-  component: VersionsPage,
+  component: lazyRouteComponent(() => import("./VersionsPage"), "VersionsPage"),
 });
 
 export const dashboardsRoutes = [
