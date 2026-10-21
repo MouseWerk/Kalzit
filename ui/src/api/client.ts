@@ -48,13 +48,24 @@ export class ApiError extends Error {
    * `field` next to code and message); forms use it to mark and focus that field.
    */
   readonly field: string | undefined;
+  /**
+   * The whole parsed error body. A `version_conflict` carries the stored resource as `current`
+   * next to `error`, so a conflict dialog can show it without fetching again.
+   */
+  readonly body: unknown;
 
-  constructor(code: ErrorCode, status: number, message: string, field?: string) {
+  constructor(code: ErrorCode, status: number, message: string, field?: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
     this.field = field;
+    this.body = body;
+  }
+
+  /** The stored resource of a `version_conflict`, when the server sent one. */
+  get current(): unknown {
+    return isRecord(this.body) ? this.body.current : undefined;
   }
 }
 
@@ -107,9 +118,10 @@ export function errorFromResponse(status: number, body: unknown): ApiError {
       status,
       message,
       field,
+      body,
     );
   }
-  return new ApiError(codeForStatus(status), status, `HTTP ${status}`);
+  return new ApiError(codeForStatus(status), status, `HTTP ${status}`, undefined, body);
 }
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -118,9 +130,22 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  * Sends a request and returns the parsed JSON body (undefined for 204). Throws ApiError for every
  * failure, so callers only ever handle one error type.
  */
-export async function request(method: Method, path: string, body?: unknown): Promise<unknown> {
+export interface RequestOptions {
+  /** Cancels the request; the rejection is the AbortError itself, not an ApiError. */
+  signal?: AbortSignal | undefined;
+}
+
+export async function request(
+  method: Method,
+  path: string,
+  body?: unknown,
+  options?: RequestOptions,
+): Promise<unknown> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const init: RequestInit = { method, credentials: "same-origin", headers };
+  if (options?.signal !== undefined) {
+    init.signal = options.signal;
+  }
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -130,6 +155,10 @@ export async function request(method: Method, path: string, body?: unknown): Pro
   try {
     response = await fetch(path, init);
   } catch (cause) {
+    // A cancelled request is not a failure to report; callers check for it and move on.
+    if (cause instanceof Error && cause.name === "AbortError") {
+      throw cause;
+    }
     throw new ApiError("network", 0, cause instanceof Error ? cause.message : String(cause));
   }
 

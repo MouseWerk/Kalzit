@@ -92,6 +92,32 @@ describe("request", () => {
     expect(error.status).toBe(status);
   });
 
+  it("keeps the stored resource of a version conflict", async () => {
+    respond(
+      409,
+      '{"error":{"code":"version_conflict","message":"newer"},"current":{"version":4,"title":"Umsatz"}}',
+    );
+    const error = await failure(request("PUT", "/api/orgs/o/dashboards/d", { version: 3 }));
+    expect(error.code).toBe("version_conflict");
+    expect(error.current).toEqual({ version: 4, title: "Umsatz" });
+  });
+
+  it("passes the abort signal on and rejects a cancelled request with the AbortError itself", async () => {
+    const fetchMock = vi.fn(async (_path: string, init: RequestInit) => {
+      init.signal?.throwIfAborted();
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    controller.abort();
+    const outcome = await request("GET", "/api/x", undefined, { signal: controller.signal }).catch(
+      (e: unknown) => e,
+    );
+    expect(outcome).not.toBeInstanceOf(ApiError);
+    expect((outcome as Error).name).toBe("AbortError");
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
   it("reports a failed connection as network with status 0", async () => {
     vi.stubGlobal(
       "fetch",
