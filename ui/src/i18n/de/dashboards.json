@@ -254,5 +254,7 @@
   "dashboards.save.forbidden": "Du darfst das nicht speichern: Ein Panel oder eine Variable nutzt eine Datenquelle, die du nicht abfragen darfst, oder du darfst dieses Dashboard nicht ändern. Bitte einen Admin um Zugriff oder entferne diese Abfragen.",
   "dashboards.save.modelRefused": "Ein Panel oder eine Variable nutzt eine Datenquelle, die es nicht mehr gibt. Wähle dafür eine andere Datenquelle oder entferne es, und speichere erneut.",
   "dashboards.save.modelInvalid": "Der Server hat das Dashboard nicht angenommen: {detail}",
-  "dashboards.variables.truncated": "Es gibt mehr Werte als aufgeführt. Grenze die Abfrage ein, um den gesuchten zu sehen."
+  "dashboards.variables.truncated": "Es gibt mehr Werte als aufgeführt. Grenze die Abfrage ein, um den gesuchten zu sehen.",
+  "dashboards.editor.readOnlyQuery": "Um diese Abfrage zu ändern, brauchst du Abfragerechte auf ihrer Datenquelle. Umbenennen, anordnen und gestalten kannst du das Panel trotzdem.",
+  "dashboards.editor.noQueryRight": "Um Abfragen hinzuzufügen oder zu ändern, brauchst du Abfragerechte auf einer Datenquelle; frag einen Admin."
 }

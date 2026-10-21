@@ -514,6 +514,8 @@ function DashboardView({
           panel={dialog.panel}
           range={resolved.range}
           variables={values}
+          stored={dashboard.model.panels.find((p) => p.id === dialog.panel.id)}
+          savedVariables={dashboard.model.variables}
           onApply={(panel) => applyPanel(panel, dialog.isNew)}
           onClose={() => setDialog(null)}
         />

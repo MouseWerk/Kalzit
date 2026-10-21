@@ -696,6 +696,27 @@ describe("rights and refusals", () => {
     expect(storedSales(server).versions).toHaveLength(1);
   });
 
+  it("lets an edit grant without query rights restyle a panel and preview its saved queries", async () => {
+    const server = setup("viewer");
+    server.areas.dashboards.grants["d-sales"] = { write: true };
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(within(panelOf("Orders")).getByRole("button", { name: "Edit “Orders”" }));
+    const editor = await screen.findByRole("dialog", { name: "Edit panel" });
+    // The stored query shows as text, with what changing it would need.
+    expect(within(editor).getByText("SELECT * FROM orders")).toBeTruthy();
+    expect(within(editor).getByText(/needs query rights on its data source/)).toBeTruthy();
+    expect(within(editor).queryByText(/no data source/i)).toBeNull();
+    expect(within(editor).queryByRole("button", { name: "Add query" })).toBeNull();
+    // The preview runs the saved panel through its route, never the free query route.
+    const free = server.areas.datasources.queries.length;
+    await user.click(within(editor).getByRole("button", { name: "Run queries" }));
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.some((q) => q.panelId === "p-orders")).toBe(true),
+    );
+    expect(server.areas.datasources.queries.length).toBe(free);
+  });
+
   it("saves a rename without rights on the dashboard's sources", async () => {
     // No query right on the source: unchanged queries are not checked again.
     const server = setup("editor");

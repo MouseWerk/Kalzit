@@ -254,5 +254,7 @@
   "dashboards.save.forbidden": "You may not save this: a panel or variable uses a data source you may not query, or you may not change this dashboard. Ask an admin for access, or remove those queries.",
   "dashboards.save.modelRefused": "A panel or variable uses a data source that no longer exists. Choose another data source for it, or remove it, and save again.",
   "dashboards.save.modelInvalid": "The server did not accept the dashboard: {detail}",
-  "dashboards.variables.truncated": "More values exist than are listed. Narrow the query to see the one you need."
+  "dashboards.variables.truncated": "More values exist than are listed. Narrow the query to see the one you need.",
+  "dashboards.editor.readOnlyQuery": "Changing this query needs query rights on its data source. You can still rename, arrange and restyle the panel.",
+  "dashboards.editor.noQueryRight": "Adding or changing queries needs query rights on a data source; ask an admin."
 }

@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
+import { useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes } from "../../panels/registry";
-import { datasourcesQuery, kindsQuery } from "../datasources/api";
+import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
-import { emptyQuery } from "../datasources/queryKinds";
-import { nextRefId, type PanelModel, type Target } from "./model";
+import { emptyQuery, queryText } from "../datasources/queryKinds";
+import { nextRefId, type PanelModel, type Target, type VariableModel } from "./model";
 import { PanelBody } from "./PanelCard";
 import { Dialog } from "./ui/Dialog";
 import { usePanelResults } from "./usePanelResults";
@@ -17,6 +18,10 @@ interface PanelEditorProps {
   panel: PanelModel;
   range: TimeRange;
   variables: Record<string, string>;
+  /** The panel as saved, absent for a new one; unchanged targets preview through its route. */
+  stored?: PanelModel | undefined;
+  /** The saved dashboard's variables, for the panel route. */
+  savedVariables?: readonly VariableModel[];
   onApply: (panel: PanelModel) => void;
   onClose: () => void;
 }
@@ -28,23 +33,36 @@ export function PanelEditor({
   panel: initial,
   range,
   variables,
+  stored,
+  savedVariables = [],
   onApply,
   onClose,
 }: PanelEditorProps) {
   const { t } = useI18n();
   const titleId = useId();
+  const permissions = useOrgPermissions();
   const [panel, setPanel] = useState(initial);
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
   const kinds = useQuery(kindsQuery(orgId));
+  // Free queries need query rights on the source (the role or a grant); without them a panel
+  // can still be renamed, rearranged and restyled, and its saved queries preview as viewers see
+  // them, through the panel route.
+  const queryable = (datasources.data ?? []).filter(
+    (source) => sourceAccess(source.access, permissions).query,
+  );
+  const mayQuery = permissions.has("datasources:query") || queryable.length > 0;
+  const unchanged =
+    stored !== undefined && JSON.stringify(preview.targets) === JSON.stringify(stored.targets);
   const results = usePanelResults({
     orgId,
     dashboardId,
     panel: { ...panel, targets: preview.targets },
     range,
     variables,
-    source: "draft",
+    saved: savedVariables,
+    source: unchanged ? "stored" : "draft",
     run: preview.run,
   });
 
@@ -68,7 +86,7 @@ export function PanelEditor({
     }));
 
   function addTarget() {
-    const first = datasources.data?.[0];
+    const first = queryable[0];
     setPanel((p) => ({
       ...p,
       targets: [
@@ -176,7 +194,8 @@ export function PanelEditor({
               key={target.refId}
               orgId={orgId}
               target={target}
-              datasources={datasources.data ?? []}
+              datasources={queryable}
+              readOnly={!queryable.some((source) => source.id === target.datasourceId)}
               onChange={(patch) => updateTarget(target.refId, patch)}
               onRemove={() =>
                 setPanel((p) => ({
@@ -187,17 +206,20 @@ export function PanelEditor({
               onRun={run}
             />
           ))}
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={addTarget}
-            disabled={datasources.data === undefined || datasources.data.length === 0}
-          >
-            {t("dashboards.editor.addQuery")}
-          </button>
-          {datasources.data?.length === 0 ? (
+          {mayQuery ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={addTarget}
+              disabled={datasources.data === undefined || queryable.length === 0}
+            >
+              {t("dashboards.editor.addQuery")}
+            </button>
+          ) : null}
+          {mayQuery && datasources.data?.length === 0 ? (
             <p className="field__hint">{t("dashboards.editor.noDatasources")}</p>
           ) : null}
+          {mayQuery ? null : <p className="field__hint">{t("dashboards.editor.noQueryRight")}</p>}
         </section>
       </div>
     </Dialog>
@@ -208,13 +230,17 @@ function TargetEditor({
   orgId,
   target,
   datasources,
+  readOnly,
   onChange,
   onRemove,
   onRun,
 }: {
   orgId: string;
   target: Target;
+  /** The sources the caller may query, to pick from. */
   datasources: readonly { id: string; name: string; kind: string }[];
+  /** The target's source is not one of them: the query shows as stored and stays as it is. */
+  readOnly: boolean;
   onChange: (patch: Partial<Target>) => void;
   onRemove: () => void;
   onRun: () => void;
@@ -222,6 +248,28 @@ function TargetEditor({
   const { t } = useI18n();
   const id = useId();
   const datasource = datasources.find((d) => d.id === target.datasourceId);
+  if (readOnly && target.datasourceId !== "") {
+    return (
+      <section
+        className="target"
+        aria-label={t("dashboards.inspect.query", { refId: target.refId })}
+      >
+        <div className="target__header">
+          <span className="target__ref">{target.refId}</span>
+          <button
+            type="button"
+            className="button button--ghost"
+            onClick={onRemove}
+            aria-label={t("dashboards.editor.removeQuery", { refId: target.refId })}
+          >
+            {t("dashboards.editor.remove")}
+          </button>
+        </div>
+        <pre className="target__stored">{queryText(target.query)}</pre>
+        <p className="field__hint">{t("dashboards.editor.readOnlyQuery")}</p>
+      </section>
+    );
+  }
   return (
     <section className="target" aria-label={t("dashboards.inspect.query", { refId: target.refId })}>
       <div className="target__header">
