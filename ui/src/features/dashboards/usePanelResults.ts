@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import type { TimeRange } from "../../api/generated/shapes";
+import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
 import { queryText } from "../datasources/queryKinds";
-import { BUSY_RETRY } from "../datasources/retry";
 import { runPanelQuery } from "./api";
 import { type PanelModel, storedQueryVariables, type VariableModel } from "./model";
 import { panelQueries } from "./queryQueue";

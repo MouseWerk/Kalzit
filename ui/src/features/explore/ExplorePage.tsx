@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
+import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
@@ -24,7 +25,6 @@ import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasou
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
-import { BUSY_RETRY } from "../datasources/retry";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
 

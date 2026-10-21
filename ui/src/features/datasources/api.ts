@@ -8,8 +8,8 @@ import type {
   QueryResponse,
   Shape,
 } from "../../api/generated/shapes";
+import { BUSY_RETRY } from "../../api/retry";
 import { stringParams } from "./reasons";
-import { BUSY_RETRY } from "./retry";
 
 /*
  * Data sources and free queries as docs/api/datasources.md (stream C) specifies them. Every call
