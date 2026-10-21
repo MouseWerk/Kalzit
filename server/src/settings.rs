@@ -274,10 +274,12 @@ pub struct Effective {
     pub updated_at: Option<i64>,
 }
 
-/// The layering, without IO: `env` looks a variable up, `stored` is the database row.
+/// The layering, without IO: `env` looks a variable up, `file_sets` tells whether `kalzit.toml`
+/// sets a key (`sessions.lifetime_hours`), `stored` is the database row.
 pub fn resolve(
     def: &SettingDef,
     env: &dyn Fn(&str) -> Option<String>,
+    file_sets: &dyn Fn(&str) -> bool,
     config: &Config,
     stored: Option<&Stored>,
 ) -> Result<Effective, String> {
@@ -294,7 +296,7 @@ pub fn resolve(
             let value = (backed.read)(config);
             let source = if env(backed.env_var).is_some() {
                 Source::Env
-            } else if value != (def.default)() {
+            } else if file_sets(def.key) || value != (def.default)() {
                 Source::File
             } else {
                 Source::Default
@@ -317,6 +319,13 @@ pub fn resolve(
         }
     }
     Ok(row((def.default)(), Source::Default))
+}
+
+/// Whether `kalzit.toml` sets a key. The configuration does not record which file keys it read
+/// yet, so a file value equal to the default reports `default` until it does; a value that
+/// differs is reported as `file` either way.
+fn config_file_sets(_key: &str) -> bool {
+    false
 }
 
 fn process_env(name: &str) -> Option<String> {
@@ -453,7 +462,7 @@ async fn stored_rows(state: &AppState, org_id: Option<&str>) -> ApiResult<Arc<Ha
 }
 
 fn resolved(state: &AppState, def: &SettingDef, stored: Option<&Stored>) -> ApiResult<Effective> {
-    resolve(def, &process_env, &state.config, stored).map_err(|e| ApiError::internal("settings", e))
+    resolve(def, &process_env, &config_file_sets, &state.config, stored).map_err(|e| ApiError::internal("settings", e))
 }
 
 /// The effective value of a server setting.
@@ -613,11 +622,11 @@ mod tests {
         let no_env = |_: &str| None;
         let env = |name: &str| (name == "KALZIT_SETTING_AUDIT_RETENTION_DAYS").then(|| "30".to_string());
 
-        let d = resolve(def, &no_env, &config, None).unwrap();
+        let d = resolve(def, &no_env, &|_: &str| false, &config, None).unwrap();
         assert_eq!((d.value, d.source, d.version), (json!(365), Source::Default, 0));
-        let db = resolve(def, &no_env, &config, Some(&stored(json!(90)))).unwrap();
+        let db = resolve(def, &no_env, &|_: &str| false, &config, Some(&stored(json!(90)))).unwrap();
         assert_eq!((&db.value, db.source, db.version, db.updated_at), (&json!(90), Source::Database, 3, Some(7)));
-        let e = resolve(def, &env, &config, Some(&stored(json!(90)))).unwrap();
+        let e = resolve(def, &env, &|_: &str| false, &config, Some(&stored(json!(90)))).unwrap();
         assert_eq!((&e.value, e.source), (&json!(30), Source::Env));
         // The stored version stays visible, so the UI can show that a value waits underneath.
         assert_eq!(e.version, 3);
@@ -630,9 +639,9 @@ mod tests {
         let theme = server_def("appearance.default_theme");
         let env =
             |v: &'static str| move |name: &str| (name == "KALZIT_SETTING_APPEARANCE_DEFAULT_THEME").then(|| v.into());
-        assert_eq!(resolve(theme, &env("dark"), &config, None).unwrap().value, json!("dark"));
-        assert_eq!(resolve(theme, &env("\"light\""), &config, None).unwrap().value, json!("light"));
-        let err = resolve(theme, &env("pink"), &config, None).unwrap_err();
+        assert_eq!(resolve(theme, &env("dark"), &|_: &str| false, &config, None).unwrap().value, json!("dark"));
+        assert_eq!(resolve(theme, &env("\"light\""), &|_: &str| false, &config, None).unwrap().value, json!("light"));
+        let err = resolve(theme, &env("pink"), &|_: &str| false, &config, None).unwrap_err();
         assert!(err.contains("KALZIT_SETTING_APPEARANCE_DEFAULT_THEME"), "{err}");
     }
 
@@ -641,12 +650,16 @@ mod tests {
         let def = server_def("sessions.lifetime_hours");
         let no_env = |_: &str| None;
         let mut config = Config::default();
-        assert_eq!(resolve(def, &no_env, &config, None).unwrap().source, Source::Default);
+        assert_eq!(resolve(def, &no_env, &|_: &str| false, &config, None).unwrap().source, Source::Default);
         config.sessions.lifetime_hours = 12;
-        let file = resolve(def, &no_env, &config, Some(&stored(json!(99)))).unwrap();
+        let file = resolve(def, &no_env, &|_: &str| false, &config, Some(&stored(json!(99)))).unwrap();
         assert_eq!((file.value, file.source), (json!(12), Source::File), "the database never applies here");
         let env = |name: &str| (name == "KALZIT_SESSIONS_LIFETIME_HOURS").then(|| "12".to_string());
-        let from_env = resolve(def, &env, &config, None).unwrap();
+        let from_env = resolve(def, &env, &|_: &str| false, &config, None).unwrap();
+        // The file names the default value explicitly: still the file's value.
+        let in_file = |key: &str| key == "sessions.lifetime_hours";
+        let explicit = resolve(def, &no_env, &in_file, &Config::default(), None).unwrap();
+        assert_eq!(explicit.source, Source::File);
         assert_eq!(from_env.source, Source::Env);
         assert!(!editable(def, &from_env));
     }
@@ -656,16 +669,16 @@ mod tests {
         let def = find("dashboards.default_time_range", Scope::Org).unwrap();
         let env = |_: &str| Some("{\"from\":\"now-1h\",\"to\":\"now\"}".to_string());
         let config = Config::default();
-        assert_eq!(resolve(def, &env, &config, None).unwrap().source, Source::Default);
+        assert_eq!(resolve(def, &env, &|_: &str| false, &config, None).unwrap().source, Source::Default);
         let range = json!({ "from": "now-24h", "to": "now" });
-        let db = resolve(def, &env, &config, Some(&stored(range.clone()))).unwrap();
+        let db = resolve(def, &env, &|_: &str| false, &config, Some(&stored(range.clone()))).unwrap();
         assert_eq!((db.value, db.source), (range, Source::Database));
     }
 
     #[test]
     fn invalid_stored_values_fall_back_to_the_default() {
         let def = server_def("audit.retention_days");
-        let r = resolve(def, &|_: &str| None, &Config::default(), Some(&stored(json!(0)))).unwrap();
+        let r = resolve(def, &|_: &str| None, &|_: &str| false, &Config::default(), Some(&stored(json!(0)))).unwrap();
         assert_eq!((r.value, r.source), (json!(365), Source::Default));
     }
 
