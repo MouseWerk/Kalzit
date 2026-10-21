@@ -6,10 +6,10 @@ Kalzit ist eine selbst gehostete Plattform zur Visualisierung und Auswertung von
 Funktionsumfang von Grafana (Dashboards, Datenquellen, Rollen, Teams, Plugins), neu entworfen. Sie
 richtet sich nicht nur an Monitoring, sondern an jede Art von Daten: Geschäftsdaten, Produktdaten,
 Beziehungsnetze, Metriken. Der Unterschied: Dokumentdatenbanken (MongoDB) und Graphdatenbanken
-(Neo4j, Memgraph) sind gleichberechtigte, native Datenformen. Ein Ergebnis aus MongoDB bleibt ein
-Baum von Dokumenten, ein Ergebnis aus Neo4j bleibt ein Graph aus Knoten und Kanten. Nichts wird
-intern in eine Tabelle gepresst. Daneben werden alle üblichen Quellen unterstützt (MySQL,
-PostgreSQL, SQL Server, Prometheus, ...). Server läuft auf Windows und Linux.
+(Neo4j, Memgraph, TigerGraph) sind gleichberechtigte, native Datenformen. Ein Ergebnis aus MongoDB
+bleibt ein Baum von Dokumenten, ein Ergebnis aus Neo4j bleibt ein Graph aus Knoten und Kanten.
+Nichts wird intern in eine Tabelle gepresst. Daneben werden alle üblichen Quellen unterstützt
+(MySQL, PostgreSQL, SQL Server, Prometheus, ...). Server läuft auf Windows und Linux.
 
 Grundlage: https://github.com/mauricekleindienst/AICodeGuidelines. Kalzit ist eine Neuentwicklung,
 kein Fork: kein Grafana-Code, kein Grafana-Name oder -Logo im Produkt. Lizenz: AGPL-3.0. Betrieb:
@@ -29,7 +29,7 @@ Jede Abfrage liefert einen **Result Envelope** mit genau einer Form:
 type QueryResult =
   | { shape: "frame";     frame: Frame }        // Zeitreihen, SQL-Tabellen, Metriken
   | { shape: "documents"; docs: DocumentSet }   // MongoDB & Co.
-  | { shape: "graph";     graph: GraphSet };    // Neo4j, Memgraph & Co.
+  | { shape: "graph";     graph: GraphSet };    // Neo4j, Memgraph, TigerGraph & Co.
 
 interface DocumentSet {
   documents: Document[];          // Original-BSON als typisiertes JSON (ObjectId, Date, Decimal128,
@@ -74,7 +74,7 @@ Regeln:
 - **Geo**: GeoJSON-Felder direkt auf einer Karte.
 - Zeitreihe, Stat, Balken funktionieren über eine sichtbare Projektion (s. o.).
 
-### Graphen (Neo4j, Memgraph)
+### Graphen (Neo4j, Memgraph, TigerGraph)
 
 - **Netzwerk-Panel** (WebGL, Sigma.js + Graphology): Force-Layout, Farbe nach Label, Größe nach
   Property oder Grad, Kantenstärke nach Property, Beschriftung je nach Zoomstufe.
@@ -135,6 +135,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | MongoDB | documents | `mongodb` | M2 |
 | Elasticsearch, OpenSearch | documents (Treffer), frame (Aggregationen) | HTTP-API | M2 |
 | Neo4j, Memgraph | graph | `neo4rs` (Bolt) | M3 |
+| TigerGraph 3.10+ und 4.x (GSQL) | graph | HTTP-Client-Factory: REST++ `/query/{graph}/{query}` für installierte, GSQL-Server `/gsql/v1/queries/interpret` für interpretierte Abfragen; Token über `/gsql/v1/tokens` (3.x: `/requesttoken`) aus einem Secret im Credential Store | M3 |
 | InfluxDB (1.x InfluxQL, 2.x/3.x SQL und Flux) | frame | HTTP-API | M5 |
 | Loki (Logs) | frame mit Log-Zeilen | HTTP-API | M5 |
 | ClickHouse | frame | HTTP/native | M5 |
@@ -170,6 +171,25 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
     Empfehlung und Prüfung eines DB-Users mit `read`-Rolle.
   - Neo4j/Memgraph: Ausführung in Read-Transaktionen (`AccessMode::Read`); `CREATE`, `MERGE`,
     `DELETE`, `SET`, `CALL ... write` werden abgelehnt.
+  - TigerGraph kennt keine Read-Transaktion wie Bolt, daher sichern zwei Ebenen ab:
+    - **Zwingend ein lesender Nutzer**: Rolle `queryreader` (ab 4.1 das gleichwertige Recht
+      `EXECUTE_QUERY` je Abfrage). Kalzit prüft die Rechte beim Speichern und beim Verbindungstest
+      und lehnt die Datenquelle ab, wenn der Nutzer mehr darf.
+    - **Prüfung des GSQL-Texts** mit einem echten Tokenizer und Parser, kein Muster-Abgleich;
+      was sich nicht parsen lässt, wird abgelehnt. Erlaubt ist genau ein Abfragekörper.
+      Abgelehnt werden `INSERT INTO`, `UPDATE`, `DELETE` und `DELETE FROM` (auch als eigene
+      Anweisung), Attribut-Zuweisungen in `ACCUM`/`POST-ACCUM`, Aufrufe anderer Abfragen,
+      Dateiausgabe (`PRINT ... TO_CSV`, `FILE`-Objekte), Loading Jobs sowie Schema-, Rechte- und
+      Verwaltungsanweisungen (`CREATE`, `ALTER`, `DROP`, `RUN SCHEMA_CHANGE`, `INSTALL QUERY`,
+      `GRANT`, `REVOKE`, `CLEAR GRAPH STORE`). Globale Akkumulatoren (`@@`) gelten nur für
+      einen Lauf und sind kein Schreiben.
+    - Installierte Abfragen werden nur ausgeführt, wenn ihr GSQL-Text lesbar ist und die
+      Prüfung besteht. Ist er nicht lesbar, nur über eine vom Admin freigegebene Liste; dann
+      schützt allein der lesende Nutzer vor Schreibzugriffen. Ob der Text über die API lesbar
+      ist und ob `queryreader` ab 4.1 interpretierte Abfragen ausführen darf, wird zu Beginn von
+      M3 gegen eine echte Instanz geklärt.
+    - Kalzit ruft weder Upsert- noch Lade-Endpunkte von REST++ auf.
+    - Variablen gehen als typisierte Abfrageparameter an REST++, nie als Text in den GSQL-Code.
 - Limits je Datenquelle: Zeitlimit, maximale Dokumente/Knoten, maximale Antwortgröße.
 - Collection- bzw. Label-Allowlist pro Datenquelle möglich.
 - Guard-Tests prüfen genau diese Ablehnungen (Testfälle mit schreibenden Abfragen).
@@ -276,7 +296,7 @@ mit Rückgängig (Ausnahme nach `design/principles.md`, in `CLAUDE.md` festgehal
 | Bereich | Wahl | Begründung |
 |---|---|---|
 | Server | Rust (axum, tokio, sqlx) | Ein natives Binary für Windows und Linux, Windows-Dienst ohne Zusatz, bekannter Stack aus Arcalo |
-| Treiber | `mongodb` (offiziell), `neo4rs` (Bolt, auch Memgraph), `sqlx` (PostgreSQL, MySQL/MariaDB, SQLite), `tiberius` (SQL Server), HTTP-Client-Factory für API-Quellen | Native Typen bleiben erhalten (BSON, Bolt-Strukturen, SQL-Typen) |
+| Treiber | `mongodb` (offiziell), `neo4rs` (Bolt, auch Memgraph), `sqlx` (PostgreSQL, MySQL/MariaDB, SQLite), `tiberius` (SQL Server), HTTP-Client-Factory für API-Quellen (Prometheus, Elasticsearch, TigerGraph) | Native Typen bleiben erhalten (BSON, Bolt-Strukturen, SQL-Typen) |
 | Eigene Daten | SQLite (Standard, ein Server), PostgreSQL (mehrere Instanzen/HA) | Kein Pflicht-Datenbankserver für kleine Installationen |
 | Frontend | React 19.3 mit React Compiler 1.0, TypeScript 7 (nativer Compiler), Vite 8 (Rolldown), TanStack Router und Query | Stand Oktober 2026; größtes Ökosystem für Panels und Plugin-Autoren, typsichere Routen |
 | CSS | Eigene Tokens in modernem CSS: OKLCH-Farben, `light-dark()`, Cascade Layers, Container Queries, View Transitions, Popover-API und Anchor Positioning | Kein CSS-Framework nötig, Guard-Tests prüfen die Regeln |
@@ -308,10 +328,10 @@ zuerst in den Papierkorb mit Rückgängig.
 | Ebene | Was |
 |---|---|
 | Unit | Result Envelope, Schema-Sampling (polymorphe Felder, Umlaute/Emoji in Feldnamen), Rechteauflösung, Dashboard-Migrationen |
-| Integration | Jede Datenquelle gegen die echte Datenbank in Containern (MongoDB, Neo4j, Memgraph, PostgreSQL, MySQL, MariaDB, SQL Server, Prometheus, ...) (lokal und CI, Linux; Windows mit Dienst-Installationen oder Fakes) |
+| Integration | Jede Datenquelle gegen die echte Datenbank in Containern (MongoDB, Neo4j, Memgraph, PostgreSQL, MySQL, MariaDB, SQL Server, Prometheus, ...) (lokal und CI, Linux; Windows mit Dienst-Installationen oder Fakes). TigerGraph ist für den PR-Check zu groß (mehrere GB, 8 GB RAM, Entwicklerlizenz, kein Windows-Container): im PR-Check ein REST++-Fake, gegen die echte Instanz ein nächtlicher Linux-Job |
 | Contract | Plugin-Protokoll gegen ein Test-Plugin; abstürzende und hängende Plugins |
 | E2E | Playwright gegen den Produktions-Build, auf Linux und Windows; Login einmal pro Lauf |
-| Guard | Nur-Lesen-Regeln (Mongo `$out`/`$merge`, Cypher-Schreibklauseln), CSS-Design-Regeln, ein HTTP-Client, i18n-Parität, Rechteprüfung an jeder Route |
+| Guard | Nur-Lesen-Regeln (Mongo `$out`/`$merge`, Cypher-Schreibklauseln, GSQL-Schreibanweisungen), CSS-Design-Regeln, ein HTTP-Client, i18n-Parität, Rechteprüfung an jeder Route |
 | Budget | Deterministischer Datengenerator: 1 Mio. Dokumente, Graph mit 100.000 Knoten / 500.000 Kanten. Ziele z. B. Netzwerk-Panel 20.000 Knoten in < 1 s gezeichnet, Dokument-Explorer scrollt flüssig bei 10.000 Treffern |
 
 Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; CI-Rot hat Vorrang.
@@ -330,8 +350,11 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 3. **M2 MongoDB nativ**: Treiber, Pipeline-Editor mit Stufen-Vorschau, Schema-Sampling,
    Dokument-Explorer, Schema-Panel, Feldverteilung, Projektionen, Change Streams;
    Elasticsearch/OpenSearch, CSV/JSON/HTTP-JSON; gespeicherte Auswertungen.
-4. **M3 Graph nativ**: Neo4j und Memgraph über Bolt, Cypher-Editor, Netzwerk-, Hierarchie- und
-   Pfad-Panel, Explorer-Modus, Graph-Aggregationen, Variablen über Formen hinweg.
+4. **M3 Graph nativ**: Neo4j und Memgraph über Bolt mit Cypher-Editor, TigerGraph über GSQL mit
+   GSQL-Editor und Auswahl installierter Abfragen (Knoten- und Kantenmengen aus `PRINT`-Blöcken
+   werden zum `graph`, Knoten-ID ist Typ plus ID, Kanten-IDs werden abgeleitet; Kanten erscheinen
+   nur, wenn die Abfrage sie ausgibt; andere `PRINT`-Werte werden zum `frame`), Netzwerk-,
+   Hierarchie- und Pfad-Panel, Explorer-Modus, Graph-Aggregationen, Variablen über Formen hinweg.
 5. **M4 Plugins**: externe Plugin-Prozesse, Manifest, Signaturen, Katalog, Rust-SDK, Beispiel-Plugins
    (eine Datenquelle, ein Panel).
 6. **M5 Betrieb**: OIDC, LDAP/AD, 2FA (TOTP, Passkeys), SMTP und Einladungen, ACME, Dienstkonten, Audit-Log, Windows-Dienst und MSI, deb/rpm,
@@ -350,7 +373,7 @@ Getroffen (stehen auch in `CLAUDE.md`):
 1. Server in Rust.
 2. Lizenz AGPL-3.0.
 3. Nur selbst gehostet.
-4. Graph-Quellen zum Start: Neo4j und Memgraph.
+4. Graph-Quellen zum Start: Neo4j, Memgraph und TigerGraph.
 5. UI auf Deutsch mit „du“ und Englisch.
 6. Alle üblichen Datenquellen werden unterstützt (Abschnitt 3), nicht nur MongoDB und Graphen.
 7. Ausrichtung: Plattform zur Visualisierung und Auswertung von Daten allgemein, nicht nur Monitoring.
