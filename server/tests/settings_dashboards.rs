@@ -344,6 +344,17 @@ async fn a_locked_database_answers_busy_not_internal() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["error"]["code"], "busy", "{body}");
 
+    // A failed sign-in stays a failed sign-in, even when its audit entry cannot be written.
+    let wrong = t
+        .send(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "email": "joerg@example.de", "password": "falsch falsch falsch" })),
+            None,
+        )
+        .await;
+    assert_eq!((wrong.status, wrong.code()), (StatusCode::UNAUTHORIZED, "invalid_credentials"), "{}", wrong.body);
+
     sqlx::query("COMMIT").execute(&mut holder).await.unwrap();
     let again = t.post("~/folders", json!({ "name": "Wartet" }), &t.owner).await;
     assert_eq!(again.status, StatusCode::CREATED, "{}", again.body);

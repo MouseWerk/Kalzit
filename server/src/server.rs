@@ -209,7 +209,29 @@ async fn wait_for_stop_signal() {
             }
         }
     };
-    #[cfg(not(unix))]
+    // Closing the console window, signing off and shutting Windows down also stop the server
+    // gracefully, so the database is closed and its WAL checkpointed. Windows ends the process a
+    // few seconds after these events, so open requests may be cut short. Running as a Windows
+    // service needs a service control handler instead; that comes with the service installer.
+    #[cfg(windows)]
+    let terminate = async {
+        use tokio::signal::windows::{ctrl_close, ctrl_logoff, ctrl_shutdown};
+        match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
+            (Ok(mut close), Ok(mut logoff), Ok(mut shutdown)) => {
+                tokio::select! {
+                    _ = close.recv() => {}
+                    _ = logoff.recv() => {}
+                    _ = shutdown.recv() => {}
+                }
+            }
+            (close, logoff, shutdown) => {
+                let failed = [close.err(), logoff.err(), shutdown.err()].into_iter().flatten().next();
+                tracing::warn!("cannot listen for console close, logoff and shutdown: {failed:?}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(any(unix, windows)))]
     let terminate = std::future::pending::<()>();
     tokio::select! {
         () = ctrl_c => {}
