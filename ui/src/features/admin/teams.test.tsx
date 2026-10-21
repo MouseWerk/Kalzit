@@ -167,6 +167,21 @@ describe("teams", () => {
     expect(screen.queryByRole("button", { name: "Add member…" })).toBeNull();
   });
 
+  it("does not offer any team role while the team has one the user does not hold", async () => {
+    await openAdmin("/admin/teams/t1", {
+      permissions: ALL_PERMISSIONS.filter((permission) => permission !== "audit:read"),
+      setup: (admin) => {
+        Object.assign(admin.teams[0] ?? {}, { roles: ["r1"] });
+      },
+    });
+    const roles = await screen.findByRole("group", { name: "Roles of the team" });
+    // The user holds everything the viewer role has, but the server also checks the Auditor role
+    // the team has now, so adding the viewer role would be refused.
+    const viewer = await within(roles).findByRole("checkbox", { name: "Viewer" });
+    expect((viewer as HTMLInputElement).checked).toBe(false);
+    expect((viewer as HTMLInputElement).disabled).toBe(true);
+  });
+
   it("lets a maintainer of the team manage its members without teams:members", async () => {
     const { user, admin } = await openAdmin("/admin/teams/t1", {
       permissions: ["teams:read", "users:read", "audit:read"],

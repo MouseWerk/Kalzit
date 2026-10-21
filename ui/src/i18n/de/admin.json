@@ -101,6 +101,8 @@
   "admin.roles.name": "Name",
   "admin.roles.description": "Beschreibung",
   "admin.roles.nameTaken": "Eine Rolle mit diesem Namen gibt es schon. Wähle einen anderen Namen.",
+  "admin.roles.nameBuiltin": "Die Namen owner, admin, editor und viewer gehören den festen Rollen. Wähle einen anderen Namen.",
+  "admin.roles.nameNotAllowed": "Dieser Name gehört zu einer festen Rolle oder ist nicht erlaubt. Wähle einen anderen Namen.",
   "admin.roles.notHeld": "Du kannst nur Rechte vergeben, die du selbst hast.",
   "admin.roles.cannotGrant": "Du kannst keine Rechte vergeben, die du selbst nicht hast.",
   "admin.roles.unknownPermission": "Ein Recht, das diese Version der Oberfläche noch nicht kennt.",

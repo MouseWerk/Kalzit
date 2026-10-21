@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { generatedUnion } from "../../test/generated";
 import { PERMISSION_GROUPS, PERMISSION_TEXT } from "./catalog";
 import { openAdmin, sent } from "./test/openAdmin";
@@ -87,6 +87,42 @@ describe("roles", () => {
     ).toBeTruthy();
   });
 
+  it("refuses the name of a built-in role before sending, and explains the server's refusal", async () => {
+    const { user, server } = await openAdmin("/admin/roles/new");
+    const name = await screen.findByLabelText("Name");
+    await user.type(name, "  Admin ");
+    await user.click(screen.getByRole("button", { name: "Create role" }));
+    const builtin =
+      "The names owner, admin, editor and viewer belong to the built-in roles. Choose another name.";
+    expect(screen.getByText(builtin)).toBeTruthy();
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(sent(server, "POST")).toEqual([]);
+
+    // A name the server refuses for a reason this interface does not know yet.
+    await user.clear(name);
+    await user.type(name, "Reader");
+    server.failNext("/api/orgs/o1/roles", 422, "validation", "POST", "name");
+    await user.click(screen.getByRole("button", { name: "Create role" }));
+    expect(
+      await screen.findByText(
+        "This name belongs to a built-in role or is not allowed. Choose another name.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("does not rename a custom role to a built-in role's name", async () => {
+    const { user, server } = await openAdmin("/admin/roles/r1");
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "VIEWER{Enter}");
+    expect(
+      screen.getByText(
+        "The names owner, admin, editor and viewer belong to the built-in roles. Choose another name.",
+      ),
+    ).toBeTruthy();
+    expect(sent(server, "PATCH")).toEqual([]);
+  });
+
   it("keeps the description to 500 characters, over several lines", async () => {
     const { user, server } = await openAdmin("/admin/roles/new");
     await user.type(await screen.findByLabelText("Name"), "Writer");
@@ -160,6 +196,39 @@ describe("roles", () => {
     await user.tab();
     await screen.findByText("Role “Reviewer” was saved.");
     expect(sent(server, "PATCH")).toEqual(["/api/orgs/o1/roles/r1"]);
+  });
+
+  it("saves a name committed while the previous save is on its way, once that save ends", async () => {
+    const { user, admin, server } = await openAdmin("/admin/roles/r1");
+    // Hold the first save until the second name has been committed.
+    const answer = globalThis.fetch;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let holding = true;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (holding && init?.method === "PATCH") {
+        holding = false;
+        const response = answer(input, init);
+        await held;
+        return response;
+      }
+      return answer(input, init);
+    });
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Reviewer{Enter}");
+    await waitFor(() => expect(sent(server, "PATCH")).toHaveLength(1));
+    await user.clear(name);
+    await user.type(name, "Inspector{Enter}");
+    await user.clear(name);
+    await user.type(name, "Examiner{Enter}");
+    expect(sent(server, "PATCH")).toHaveLength(1);
+    release();
+    expect(await screen.findByText("Role “Examiner” was saved.")).toBeTruthy();
+    expect(admin.roles.find((role) => role.id === "r1")?.name).toBe("Examiner");
+    expect(sent(server, "PATCH")).toHaveLength(2);
   });
 
   it("does not let anyone add permissions they do not hold", async () => {
