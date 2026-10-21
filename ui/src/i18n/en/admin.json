@@ -174,7 +174,7 @@
   "admin.access.cannotPick": "You may not see users, teams or roles, so you cannot pick whom to give access.",
   "admin.access.whyManage": "Who may change this access?",
   "admin.why.button": "Why?",
-  "admin.why.buttonLabel": "Why do I have {permission}?",
+  "admin.why.buttonLabel": "Why do I have this permission? {permission}",
   "admin.why.title": "Where this permission comes from",
   "admin.why.none": "You do not have this permission.",
   "admin.why.orgRole": "Your role in the organization: {role}",

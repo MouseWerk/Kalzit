@@ -1,0 +1,58 @@
+@layer components {
+  .explore {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .explore__toolbar,
+  .explore__result-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .explore__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .explore__result {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .explore__panel {
+    height: var(--size-result);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    overflow: auto;
+  }
+
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .tabs__tab {
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .tabs__tab:hover {
+    background: var(--bg-hover);
+  }
+
+  /* Selected tab: neutral tint and weight, no underline in the accent color. */
+  .tabs__tab[aria-selected="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+}

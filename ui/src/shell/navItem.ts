@@ -25,6 +25,13 @@ export interface NavItem {
   exact?: boolean;
   /** Hides the entry without the needed permissions; absent means always shown. */
   visible?: (permissions: OrgPermissions) => boolean;
+  /**
+   * A hook that shows the entry although `visible` hid it, from data the area loads (a grant on
+   * one resource, say). The shell calls it only for a hidden entry, once per render of that entry;
+   * it should read through TanStack Query, so the data is cached and not fetched again on every
+   * render, and answer false while loading.
+   */
+  useGranted?: () => boolean;
   /** Sub-pages; the entry becomes a disclosure that lists the visible ones. */
   children?: readonly NavChild[];
   /** Accessible name of the sub-page list; defaults to "nav.children" with the entry's label. */

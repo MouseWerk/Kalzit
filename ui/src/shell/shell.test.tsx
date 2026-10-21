@@ -54,18 +54,22 @@ describe("app shell", () => {
     }
   });
 
-  it("shows the empty states of the placeholder pages", async () => {
-    const { user } = await openShell();
-    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+  it("shows the empty states of an organization without data", async () => {
+    // Empty before the first render: the app caches the data source list for a while.
+    const server = installFakeServer({ signedIn: true, user: TEST_USER });
+    server.areas.datasources.datasources = [];
+    const { user } = renderApp("/");
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     const pages: [string, string][] = [
       ["Dashboards", "No dashboards yet"],
-      ["Explore", "Explore is not available yet"],
+      ["Explore", "No data source to query"],
       ["Data sources", "No data sources yet"],
       // The administration opens on its overview of sections, headed by the organization.
       ["Administration", "Organization “Analytical Engines”"],
     ];
     for (const [link, emptyTitle] of pages) {
-      await user.click(within(nav).getByRole("link", { name: link }));
+      // Entries that depend on permissions appear once those are loaded.
+      await user.click(await within(nav).findByRole("link", { name: link }));
       expect(await screen.findByRole("heading", { level: 2, name: emptyTitle })).toBeTruthy();
       expect(document.title).toBe(`${link} – Kalzit`);
     }
