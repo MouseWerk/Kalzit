@@ -35,7 +35,7 @@
     justify-content: center;
     gap: var(--space-2);
     min-height: var(--control-height);
-    padding: var(--space-2) var(--space-4);
+    padding: var(--space-1) var(--space-3);
     border: var(--border-width) solid transparent;
     border-radius: var(--radius-md);
     font-weight: var(--font-weight-medium);
@@ -172,7 +172,7 @@
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
-    padding: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-md);
     background: var(--bg-hover);
     color: var(--text);
@@ -255,21 +255,34 @@
     min-height: 100dvh;
   }
 
+  .shell[data-sidebar="collapsed"] {
+    grid-template-columns: var(--sidebar-rail-width) minmax(0, 1fr);
+  }
+
   .shell__sidebar {
     position: sticky;
     inset-block-start: 0;
     display: flex;
     flex-direction: column;
+    min-width: 0;
     height: 100dvh;
-    gap: var(--space-4);
-    padding: var(--space-4) var(--space-3);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-2);
     border-inline-end: var(--border-width) solid var(--border);
     background: var(--bg-surface);
   }
 
+  .shell__top {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
   .shell__brand {
     display: grid;
-    gap: var(--space-px);
+    flex: 1;
+    min-width: 0;
     padding-inline: var(--space-2);
     color: var(--text);
     text-decoration: none;
@@ -279,35 +292,68 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    min-height: var(--nav-row-height);
     font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
   }
 
   .shell__org {
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Icon buttons in the sidebar: the collapse toggle and the disclosure chevrons. */
+  .shell__toggle,
+  .nav-group__toggle {
+    display: grid;
+    flex: none;
+    width: var(--space-6);
+    height: var(--space-6);
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      color var(--duration-fast) var(--easing);
+  }
+
+  .shell__toggle:hover,
+  .nav-group__toggle:hover {
+    background: var(--bg-active);
+    color: var(--text);
   }
 
   .shell__nav {
     flex: 1;
     min-height: 0;
+    overflow-x: hidden;
     overflow-y: auto;
+    scrollbar-width: thin;
   }
 
+  /* minmax(0, 1fr): a long label shrinks with the column instead of pushing it wider. */
   .shell__nav-list {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-px);
     padding: 0;
     list-style: none;
   }
 
-  .nav-link {
+  .nav-link,
+  .nav-sublink {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    min-height: var(--control-height);
-    padding: var(--space-1) var(--space-2);
+    gap: var(--space-2);
+    min-height: var(--nav-row-height);
+    padding: 0 var(--space-2);
     border-radius: var(--radius-md);
     color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     text-decoration: none;
     white-space: nowrap;
     transition:
@@ -315,26 +361,189 @@
       color var(--duration-fast) var(--easing);
   }
 
-  .nav-link:hover {
+  /* Sub-pages have no icon to fall back on, so a long name wraps instead of being cut. */
+  .nav-sublink {
+    padding-block: var(--space-1);
+    line-height: var(--line-height-tight);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .nav-link:hover,
+  .nav-sublink:hover {
     background: var(--bg-hover);
     color: var(--text);
   }
 
-  /* The nav list scrolls on small screens, so the ring goes inside to avoid clipping. */
-  .nav-link:focus-visible {
+  /* The nav list scrolls, so the ring goes inside to avoid clipping. */
+  .nav-link:focus-visible,
+  .nav-sublink:focus-visible,
+  .nav-group__toggle:focus-visible,
+  .shell__toggle:focus-visible {
     outline-offset: calc(var(--focus-ring-width) * -1);
   }
 
   /* Current page: neutral tint and weight, no frame or bar. */
-  .nav-link[aria-current="page"] {
+  .nav-link[aria-current="page"],
+  .nav-sublink[aria-current="page"] {
     background: var(--bg-active);
     color: var(--text);
     font-weight: var(--font-weight-semibold);
   }
 
+  /* The entry the current page lies in, while its sub-pages are in view: weight only. */
+  .nav-link--within {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* ... and while they are hidden (rail, collapsed group): it stands for the page. */
+  .nav-link[aria-current="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .nav-link__label,
+  .nav-sublink__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Disclosure: the row links to the entry, the chevron at its end opens the sub-pages. */
+
+  .nav-group__row {
+    position: relative;
+  }
+
+  .nav-group__row > .nav-link {
+    padding-inline-end: var(--space-8);
+  }
+
+  .nav-group__toggle {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: var(--space-1);
+    margin-block: auto;
+  }
+
+  .nav-group__chevron {
+    transition: transform var(--duration-fast) var(--easing);
+  }
+
+  .nav-group__toggle[aria-expanded="true"] .nav-group__chevron {
+    transform: rotate(90deg);
+  }
+
+  /* Sub-pages line up with the entry's label: icon plus gap. */
+  .nav-sub {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-px);
+    padding: var(--space-px) 0 var(--space-1) var(--space-6);
+    list-style: none;
+  }
+
+  .nav-sub__group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Group headings: small capitals, so they never read as links. */
+  .nav-sub__title {
+    padding: var(--space-3) var(--space-2) var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-caps);
+    line-height: var(--line-height-tight);
+    text-transform: uppercase;
+  }
+
+  .nav-sub__list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-px);
+    padding: 0;
+    list-style: none;
+  }
+
+  /* The rail's flyout, fixed next to the rail (placed by NavEntry). */
+  .nav-flyout {
+    position: fixed;
+    z-index: var(--z-menu);
+    display: grid;
+    min-width: 12rem;
+    max-width: 20rem;
+    max-height: calc(100dvh - var(--space-2));
+    overflow-y: auto;
+    padding: var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  /* The rail's tooltip for keyboard focus (RailTooltip); pointers get the native title. */
+  .rail-tooltip {
+    position: fixed;
+    z-index: var(--z-menu);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .nav-flyout__title {
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .nav-flyout .nav-sub {
+    padding: 0;
+  }
+
+  /* Icon rail: labels stay as accessible names, titles are the tooltips. */
+
+  .shell[data-sidebar="collapsed"] .shell__top {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .shell[data-sidebar="collapsed"] .shell__brand {
+    flex: none;
+    padding-inline: 0;
+  }
+
+  .shell[data-sidebar="collapsed"] .shell__brand-text,
+  .shell[data-sidebar="collapsed"] .nav-link__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .shell[data-sidebar="collapsed"] .shell__org {
+    display: none;
+  }
+
+  .shell[data-sidebar="collapsed"] .nav-link {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
   .shell__main {
     min-width: 0;
-    padding: var(--space-8) var(--space-8) var(--space-12);
+    padding: var(--space-6) var(--space-8) var(--space-10);
   }
 
   .shell__content {
@@ -359,9 +568,14 @@
       border-block-end: var(--border-width) solid var(--border);
     }
 
-    .shell__brand {
+    .shell__top {
       flex: 1;
-      min-width: 0;
+    }
+
+    /* The bar on top has nothing to collapse. */
+    .shell__toggle,
+    .nav-group__toggle {
+      display: none;
     }
 
     /* The links wrap instead of scrolling, so no label is ever cut off at the edge. */
@@ -377,8 +591,40 @@
       gap: var(--space-1);
     }
 
+    .nav-group__row > .nav-link {
+      padding-inline-end: var(--space-2);
+    }
+
+    /*
+     * The entry stays in line with the others; only the sub-pages of the entry the current page
+     * is in take a line of their own, below the entries.
+     */
+    .nav-group,
+    .nav-group__row {
+      display: contents;
+    }
+
+    .nav-sub,
+    .nav-sub__group,
+    .nav-sub__list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-1);
+      padding: 0;
+    }
+
+    .nav-sub {
+      flex: 1 0 100%;
+      order: 1;
+    }
+
+    .nav-group:not([data-within]) > .nav-sub,
+    .nav-sub__title {
+      display: none;
+    }
+
     .shell__main {
-      padding: var(--space-6) var(--space-4) var(--space-10);
+      padding: var(--space-5) var(--space-4) var(--space-10);
     }
   }
 
@@ -402,7 +648,7 @@
 
   .page {
     display: grid;
-    gap: var(--space-6);
+    gap: var(--space-5);
   }
 
   .page__header {
@@ -420,7 +666,7 @@
     display: grid;
     justify-items: center;
     gap: var(--space-3);
-    padding: var(--space-12) var(--space-6);
+    padding: var(--space-10) var(--space-6);
     border: var(--border-width) dashed var(--border);
     border-radius: var(--radius-lg);
     text-align: center;
@@ -428,8 +674,8 @@
 
   .empty-state__icon {
     display: grid;
-    width: var(--space-12);
-    height: var(--space-12);
+    width: var(--space-10);
+    height: var(--space-10);
     place-items: center;
     border-radius: var(--radius-pill);
     background: var(--bg-hover);
@@ -437,7 +683,7 @@
   }
 
   .empty-state__title {
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-md);
   }
 
   .empty-state__text {
@@ -464,7 +710,8 @@
     align-items: center;
     width: 100%;
     gap: var(--space-2);
-    padding: var(--space-2);
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
     border: 0;
     border-radius: var(--radius-md);
     background: transparent;
@@ -479,12 +726,12 @@
   .user-button__avatar {
     display: grid;
     flex: none;
-    width: var(--space-8);
-    height: var(--space-8);
+    width: var(--avatar-size);
+    height: var(--avatar-size);
     place-items: center;
     border-radius: var(--radius-pill);
     background: var(--bg-active);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
   }
 
@@ -495,12 +742,30 @@
   }
 
   .user-button__name {
+    font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
   }
 
   .user-button__email {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
+    line-height: var(--line-height-tight);
+  }
+
+  /* The icon rail shows only the avatar; the hidden name stays the button's accessible name. */
+  .shell[data-sidebar="collapsed"] .user-button {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .shell[data-sidebar="collapsed"] .user-button__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .menu {
@@ -516,6 +781,7 @@
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
     box-shadow: var(--shadow-menu);
+    font-size: var(--font-size-sm);
   }
 
   @media (max-width: 48rem) {

@@ -36,7 +36,8 @@ export interface StyleRule {
   context: string[];
 }
 
-const GROUPING_AT_RULES = /^@(layer|media|supports|container)\b/;
+// Keyframes too, so each frame is a rule of its own with the @keyframes in its context.
+const GROUPING_AT_RULES = /^@(layer|media|supports|container|keyframes)\b/;
 
 export function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, "");
