@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type RouterHistory, RouterProvider } from "@tanstack/react-router";
 import { meQuery } from "../api/auth";
-import { type ErrorCode, isApiError } from "../api/client";
+import { type ErrorCode, isApiError, isRecord } from "../api/client";
 import { safeRedirect } from "../auth/redirect";
 import { type AppRouter, createAppRouter } from "./router";
 
@@ -16,11 +16,17 @@ export function shouldRetryQuery(failureCount: number, error: unknown): boolean 
 }
 
 /**
- * A change is tried again only when the server said it changed nothing (`busy`); any other
- * failure may have happened after the change was saved.
+ * A change is tried again only when the server itself said it changed nothing: a `busy` code in
+ * the error body. A bare 503 (from a proxy, say) also reads as `busy` for its message, but nothing
+ * vouches that the change did not happen, so it is not repeated; any other failure may have come
+ * after the change was saved.
  */
 export function shouldRetryMutation(failureCount: number, error: unknown): boolean {
-  return failureCount < MAX_RETRIES && isApiError(error, "busy");
+  if (failureCount >= MAX_RETRIES || !isApiError(error, "busy")) {
+    return false;
+  }
+  const body = error.body;
+  return isRecord(body) && isRecord(body.error) && body.error.code === "busy";
 }
 
 /** The wait before the next try: what the server asked for (`Retry-After`), else growing. */

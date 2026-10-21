@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { ApiError } from "../api/client";
+import { ApiError, errorFromResponse } from "../api/client";
 import { retryDelayMs, shouldRetryMutation, shouldRetryQuery } from "./app";
 
 const busy = (retryAfterMs?: number) =>
-  new ApiError("busy", 503, "busy", undefined, undefined, retryAfterMs);
+  new ApiError(
+    "busy",
+    503,
+    "busy",
+    undefined,
+    { error: { code: "busy", message: "the database is busy" } },
+    retryAfterMs,
+  );
 
 describe("retries", () => {
   it("retries busy, network and internal queries a few times, nothing else", () => {
@@ -19,6 +26,14 @@ describe("retries", () => {
     expect(shouldRetryMutation(0, new ApiError("internal", 500, ""))).toBe(false);
     expect(shouldRetryMutation(0, new ApiError("network", 0, ""))).toBe(false);
     expect(shouldRetryMutation(2, busy())).toBe(false);
+  });
+
+  it("does not repeat a change after a bare 503 nobody vouches for", () => {
+    const proxy = errorFromResponse(503, undefined, "1");
+    expect(proxy.code).toBe("busy");
+    expect(shouldRetryMutation(0, proxy)).toBe(false);
+    // A query may still be asked again: reading changes nothing.
+    expect(shouldRetryQuery(0, proxy)).toBe(true);
   });
 
   it("waits as long as Retry-After asks, otherwise longer each time", () => {
