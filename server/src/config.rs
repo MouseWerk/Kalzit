@@ -35,9 +35,9 @@ pub struct Config {
     /// from the file from the default even when both are equal.
     #[serde(skip)]
     pub file_keys: BTreeSet<String>,
-    /// Where `paths.data_dir` came from; decides what a relative path is relative to.
+    /// The settings `KALZIT_*` variables set, as `section.key`; they win over the file.
     #[serde(skip)]
-    pub data_dir_source: Source,
+    pub env_keys: BTreeSet<String>,
     /// Problems found while loading that do not stop the start; logged once logging is set up.
     #[serde(skip)]
     pub warnings: Vec<String>,
@@ -185,10 +185,21 @@ pub fn default_data_dir() -> Option<PathBuf> {
     Some(PathBuf::from("/var/lib/kalzit"))
 }
 
+/// `%ProgramData%\Kalzit`: the system configuration file and the default data directory.
+#[cfg(windows)]
+pub fn program_data_folder() -> Option<PathBuf> {
+    windows_program_data_folder(std::env::var_os("ProgramData"))
+}
+
+#[cfg(windows)]
+fn windows_program_data_folder(program_data: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let base = PathBuf::from(program_data?);
+    base.is_absolute().then(|| base.join("Kalzit"))
+}
+
 #[cfg(windows)]
 fn windows_data_dir(program_data: Option<std::ffi::OsString>) -> Option<PathBuf> {
-    let base = PathBuf::from(program_data?);
-    base.is_absolute().then(|| base.join("Kalzit").join("data"))
+    windows_program_data_folder(program_data).map(|folder| folder.join("data"))
 }
 
 impl Default for LogConfig {
@@ -211,12 +222,32 @@ impl Config {
             let value = value.into_string().map_err(|_| anyhow::anyhow!("{name} is not valid UTF-8"))?;
             env.push((name.to_string(), value));
         }
+        // The system file decides where the data lives and which certificate is served, so a
+        // non-admin must not be able to change it.
+        #[cfg(windows)]
+        if let (Some(f), Some(folder)) = (&file, program_data_folder())
+            && f.parent() == Some(folder.as_path())
+        {
+            crate::data_dir::check_admin_only(&folder)?;
+            crate::data_dir::check_admin_only(f)?;
+        }
         Self::from_file(file.as_deref(), env)
     }
 
-    /// Reads `file` (if any), merges `env` and resolves a relative data directory: against the
-    /// directory of the file when it came from there, against the working directory when it came
-    /// from the environment.
+    /// Where the value of `section.key` came from.
+    pub fn source(&self, key: &str) -> Source {
+        if self.env_keys.contains(key) {
+            Source::Environment
+        } else if self.file_keys.contains(key) {
+            Source::File
+        } else {
+            Source::Default
+        }
+    }
+
+    /// Reads `file` (if any), merges `env` and resolves relative paths: those from the file
+    /// (data directory, certificate and key, a SQLite database URL) against the folder of the
+    /// file; a data directory from the environment against the working directory, with a warning.
     pub fn from_file(file: Option<&Path>, env: impl IntoIterator<Item = (String, String)>) -> Result<Self> {
         let text = match file {
             Some(p) => {
@@ -228,17 +259,37 @@ impl Config {
             Some(p) => format!("in configuration {} or KALZIT_* variables", p.display()),
             None => "in KALZIT_* variables".into(),
         })?;
-        let dir = &config.paths.data_dir;
-        if dir.is_relative() {
-            let base = match (config.data_dir_source, file) {
-                (Source::File, Some(f)) => std::path::absolute(f)
+        let file_dir = match file {
+            Some(f) => Some(
+                std::path::absolute(f)
                     .context("resolving the configuration path")?
                     .parent()
                     .map(Path::to_path_buf)
                     .unwrap_or_default(),
-                _ => std::env::current_dir().context("reading the working directory")?,
+            ),
+            None => None,
+        };
+        // Only a value that really came from the file is relative to it.
+        let from_file = |c: &Config, key: &str| file_dir.as_ref().filter(|_| c.source(key) == Source::File);
+
+        if let Some(base) = from_file(&config, "tls.cert_file") {
+            config.tls.cert_file = config.tls.cert_file.as_ref().map(|p| base.join(p));
+        }
+        if let Some(base) = from_file(&config, "tls.key_file") {
+            config.tls.key_file = config.tls.key_file.as_ref().map(|p| base.join(p));
+        }
+        if let Some(base) = from_file(&config, "database.url")
+            && let Some(url) = config.database.url.as_deref().and_then(|u| resolve_sqlite_url(u, base))
+        {
+            config.database.url = Some(url);
+        }
+        let dir = &config.paths.data_dir;
+        if dir.is_relative() {
+            let base = match from_file(&config, "paths.data_dir") {
+                Some(base) => base.clone(),
+                None => std::env::current_dir().context("reading the working directory")?,
             };
-            if config.data_dir_source == Source::Environment {
+            if config.source("paths.data_dir") == Source::Environment {
                 config.warnings.push(format!(
                     "KALZIT_PATHS_DATA_DIR \"{}\" is a relative path, so the data directory depends on the \
                      working directory; use an absolute path",
@@ -259,7 +310,7 @@ impl Config {
             .flat_map(|(section, table)| table.keys().map(move |key| format!("{section}.{key}")))
             .collect();
         let defaults = toml::Table::try_from(Config::default()).context("serializing the defaults")?;
-        let mut data_dir_source = if file_keys.contains("paths.data_dir") { Source::File } else { Source::Default };
+        let mut env_keys = BTreeSet::new();
         for (name, raw) in env {
             let Some(rest) = name.strip_prefix(ENV_PREFIX) else { continue };
             // Runtime settings (`KALZIT_SETTING_<KEY>`) are checked by `settings::check_environment`.
@@ -277,19 +328,17 @@ impl Config {
             let table = doc.entry(section.to_string()).or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let toml::Value::Table(table) = table else { bail!("[{section}] is not a table") };
             // An empty optional setting (`KALZIT_DATABASE_URL=` in docker-compose) means "not set".
+            env_keys.insert(format!("{section}.{key}"));
             if default.is_none() && raw.trim().is_empty() {
                 table.remove(key);
                 continue;
             }
             let value = env_value(&name, &raw, default, key)?;
-            if *section == "paths" && key == "data_dir" {
-                data_dir_source = Source::Environment;
-            }
             table.insert(key.to_string(), value);
         }
         let mut config: Config = toml::Value::Table(doc).try_into().context("reading settings")?;
         config.file_keys = file_keys;
-        config.data_dir_source = data_dir_source;
+        config.env_keys = env_keys;
         config.validate()?;
         Ok(config)
     }
@@ -335,7 +384,7 @@ impl Config {
             bail!("database.max_connections must be at least 1");
         }
         if self.paths.data_dir.to_string_lossy().trim().is_empty() {
-            match self.data_dir_source {
+            match self.source("paths.data_dir") {
                 Source::Default => bail!(
                     "the ProgramData environment variable is not set, so there is no default data directory; \
                      set paths.data_dir or KALZIT_PATHS_DATA_DIR"
@@ -369,8 +418,30 @@ impl Config {
 /// Windows drive letter (`C:`) would be read as a host name. Characters that end the path in a URL
 /// are percent-encoded; sqlx decodes them again.
 pub fn sqlite_url(path: &Path) -> String {
-    let path = path.to_string_lossy().replace('\\', "/").replace('%', "%25").replace('?', "%3F").replace('#', "%23");
-    format!("sqlite:{path}?mode=rwc")
+    format!("sqlite:{}?mode=rwc", sqlite_path(path))
+}
+
+fn sqlite_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/").replace('%', "%25").replace('?', "%3F").replace('#', "%23")
+}
+
+/// A `sqlite:` URL with a relative file path, rebased onto `base`. `None` for every other URL:
+/// other engines, absolute paths and in-memory databases.
+fn resolve_sqlite_url(url: &str, base: &Path) -> Option<String> {
+    let rest = url.strip_prefix("sqlite:")?;
+    let rest = rest.strip_prefix("//").unwrap_or(rest);
+    let (path, query) = match rest.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (rest, None),
+    };
+    if path.is_empty() || path.starts_with([':', '/', '\\']) || Path::new(path).is_absolute() {
+        return None;
+    }
+    let joined = format!("sqlite:{}/{path}", sqlite_path(base).trim_end_matches('/'));
+    Some(match query {
+        Some(query) => format!("{joined}?{query}"),
+        None => joined,
+    })
 }
 
 /// Converts an environment value to the type the setting has, so `KALZIT_TLS_MIN_VERSION=1.3`
@@ -409,8 +480,8 @@ fn env_value(name: &str, raw: &str, default: Option<&toml::Value>, key: &str) ->
 fn default_config_paths() -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::from("kalzit.toml")];
     #[cfg(windows)]
-    if let Some(program_data) = std::env::var_os("ProgramData") {
-        paths.push(PathBuf::from(program_data).join("Kalzit").join("kalzit.toml"));
+    if let Some(folder) = program_data_folder() {
+        paths.push(folder.join("kalzit.toml"));
     }
     #[cfg(unix)]
     paths.push(PathBuf::from("/etc/kalzit/kalzit.toml"));
@@ -593,7 +664,7 @@ mod tests {
         let file = dir.path().join("kalzit.toml");
         std::fs::write(&file, "[paths]\ndata_dir = \"store\"\n").unwrap();
         let c = Config::from_file(Some(&file), env(&[])).unwrap();
-        assert_eq!(c.data_dir_source, Source::File);
+        assert_eq!(c.source("paths.data_dir"), Source::File);
         assert_eq!(c.paths.data_dir, dir.path().join("store"));
         assert!(c.warnings.is_empty());
 
@@ -610,7 +681,7 @@ mod tests {
         std::fs::write(&file, "[paths]\ndata_dir = \"store\"\n").unwrap();
         let absolute = dir.path().join("from-env");
         let c = Config::from_file(Some(&file), env(&[("KALZIT_PATHS_DATA_DIR", &absolute.to_string_lossy())])).unwrap();
-        assert_eq!(c.data_dir_source, Source::Environment);
+        assert_eq!(c.source("paths.data_dir"), Source::Environment);
         assert_eq!(c.paths.data_dir, absolute);
         assert!(c.warnings.is_empty());
 
@@ -622,5 +693,48 @@ mod tests {
 
         let err = Config::from_sources("", env(&[("KALZIT_PATHS_DATA_DIR", " ")])).unwrap_err();
         assert!(format!("{err:#}").contains("paths.data_dir"), "{err:#}");
+    }
+
+    /// `KALZIT_CONFIG=conf/kalzit.toml`: paths in the file are relative to `conf`, not to the
+    /// working directory.
+    #[test]
+    fn paths_in_a_relatively_named_file_are_relative_to_its_folder() {
+        let dir = tempfile::Builder::new().prefix("config-test").tempdir_in(".").unwrap();
+        let relative = PathBuf::from(dir.path().file_name().unwrap());
+        let file = relative.join("kalzit.toml");
+        std::fs::write(
+            &file,
+            "[paths]\ndata_dir = \"store\"\n[tls]\ncert_file = \"certs/cert.pem\"\nkey_file = \"certs/key.pem\"\n\
+             [database]\nurl = \"sqlite:db/kalzit.db?mode=rwc\"\n",
+        )
+        .unwrap();
+        let folder = std::path::absolute(&relative).unwrap();
+        let c = Config::from_file(Some(&file), env(&[])).unwrap();
+        assert_eq!(c.paths.data_dir, folder.join("store"));
+        assert_eq!(c.tls.cert_file, Some(folder.join("certs/cert.pem")));
+        assert_eq!(c.tls.key_file, Some(folder.join("certs/key.pem")));
+        assert_eq!(c.database_url(), format!("sqlite:{}/db/kalzit.db?mode=rwc", sqlite_path(&folder)));
+
+        // Values from the environment are not rebased onto the file's folder.
+        let c = Config::from_file(
+            Some(&file),
+            env(&[("KALZIT_TLS_CERT_FILE", "env.pem"), ("KALZIT_DATABASE_URL", "sqlite:env.db")]),
+        )
+        .unwrap();
+        assert_eq!(c.tls.cert_file, Some(PathBuf::from("env.pem")));
+        assert_eq!(c.database_url(), "sqlite:env.db");
+    }
+
+    #[test]
+    fn only_relative_sqlite_urls_are_rebased() {
+        let base = Path::new("/etc/kalzit");
+        assert_eq!(resolve_sqlite_url("sqlite:k.db", base).as_deref(), Some("sqlite:/etc/kalzit/k.db"));
+        assert_eq!(
+            resolve_sqlite_url("sqlite://k.db?mode=rwc", base).as_deref(),
+            Some("sqlite:/etc/kalzit/k.db?mode=rwc")
+        );
+        for url in ["sqlite::memory:", "sqlite:/var/k.db", "sqlite:", "postgres://h/db", "mysql://h/db"] {
+            assert_eq!(resolve_sqlite_url(url, base), None, "{url}");
+        }
     }
 }

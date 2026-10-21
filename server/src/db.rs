@@ -20,16 +20,28 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
 
 /// The URL without a password, for log lines.
 pub fn redact(url: &str) -> String {
-    let (base, query) = match url.split_once('?') {
-        Some((b, q)) => (b, Some(q)),
-        None => (url, None),
-    };
-    let base = match (base.find("://"), base.rfind('@')) {
-        (Some(scheme_end), Some(at)) if at > scheme_end => {
-            let user = base[scheme_end + 3..at].split(':').next().unwrap_or("");
-            format!("{}://{}:***@{}", &base[..scheme_end], user, &base[at + 1..])
+    // The userinfo first: a password may hold a raw `?`, `#` or `/`, so the last `@` ends it.
+    // An `@` further right (in the query) only hides more than needed.
+    let (prefix, rest) = match url.find("://") {
+        Some(scheme_end) => {
+            let after = &url[scheme_end + 3..];
+            match after.rfind('@') {
+                Some(at) => {
+                    let userinfo = &after[..at];
+                    let prefix = match userinfo.split_once(':') {
+                        Some((user, _)) => format!("{}://{user}:***@", &url[..scheme_end]),
+                        None => format!("{}://{userinfo}@", &url[..scheme_end]),
+                    };
+                    (prefix, &after[at + 1..])
+                }
+                None => (url[..scheme_end + 3].to_string(), after),
+            }
         }
-        _ => base.to_string(),
+        None => (String::new(), url),
+    };
+    let (base, query) = match rest.split_once('?') {
+        Some((b, q)) => (format!("{prefix}{b}"), Some(q)),
+        None => (format!("{prefix}{rest}"), None),
     };
     let Some(query) = query else { return base };
     // PostgreSQL also takes credentials as parameters: ?user=u&password=secret.
@@ -75,5 +87,16 @@ mod tests {
             redact("postgres://db/kalzit?user=u&Password=secret&sslmode=require"),
             "postgres://db/kalzit?user=u&Password=***&sslmode=require"
         );
+        // Raw `?`, `#`, `/` and `@` in the password stay hidden.
+        assert_eq!(redact("postgres://kalzit:a?b@db/kalzit"), "postgres://kalzit:***@db/kalzit");
+        assert_eq!(redact("postgres://kalzit:a#b@db/kalzit"), "postgres://kalzit:***@db/kalzit");
+        assert_eq!(redact("postgres://kalzit:a/b@db/kalzit"), "postgres://kalzit:***@db/kalzit");
+        assert_eq!(
+            redact("postgres://kalzit:a@b?c@db/kalzit?sslmode=require"),
+            "postgres://kalzit:***@db/kalzit?sslmode=require"
+        );
+        // No password, nothing to hide.
+        assert_eq!(redact("postgres://kalzit@db/kalzit"), "postgres://kalzit@db/kalzit");
+        assert_eq!(redact("postgres://db/kalzit"), "postgres://db/kalzit");
     }
 }
