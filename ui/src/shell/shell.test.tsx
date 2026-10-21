@@ -55,9 +55,11 @@ describe("app shell", () => {
   });
 
   it("shows the empty states of an organization without data", async () => {
-    const { user, server } = await openShell();
+    // Empty before the first render: the app caches the data source list for a while.
+    const server = installFakeServer({ signedIn: true, user: TEST_USER });
     server.areas.datasources.datasources = [];
-    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    const { user } = renderApp("/");
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     const pages: [string, string][] = [
       ["Dashboards", "No dashboards yet"],
       ["Explore", "No data source to query"],

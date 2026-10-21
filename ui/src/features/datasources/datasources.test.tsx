@@ -110,6 +110,22 @@ describe("data source list", () => {
     expect(screen.queryByRole("link", { name: "Add data source" })).toBeNull();
   });
 
+  it("shows Explore in the nav to a viewer with only a query grant, from cached data", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PG_ID] = "query";
+    const { user } = renderApp("/");
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    expect(await within(nav).findByRole("link", { name: "Explore" })).toBeTruthy();
+    const lists = () =>
+      server.calls.filter((c) => c.method === "GET" && /\/datasources(\?|$)/.test(c.path)).length;
+    const before = lists();
+    // Moving through the app renders the shell again; the list is not fetched again.
+    await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
+    await user.click(within(nav).getByRole("link", { name: "Explore" }));
+    await screen.findByRole("combobox", { name: "Data source" });
+    expect(lists()).toBe(before);
+  });
+
   it("opens Explore for a viewer with a query grant, with only that source", async () => {
     const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
     server.areas.datasources.grants[PG_ID] = "query";

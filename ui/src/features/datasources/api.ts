@@ -413,10 +413,14 @@ export function kindsQuery(orgId: string) {
 export const DATASOURCES_KEY = "datasources";
 
 /** All data sources, for pickers. */
+/** Pickers and the nav read the list often; changes here invalidate it (DATASOURCES_KEY). */
+const LIST_STALE_MS = 60_000;
+
 export function datasourcesQuery(orgId: string) {
   return queryOptions({
     queryKey: [DATASOURCES_KEY, orgId, "all"],
     queryFn: ({ signal }) => fetchAllDatasources(orgId, signal),
+    staleTime: LIST_STALE_MS,
   });
 }
 
