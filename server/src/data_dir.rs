@@ -31,7 +31,24 @@ fn prepare_with(dir: &Path, config_folder: Option<&Path>) -> Result<()> {
         bail!("the data directory {} is not a directory", dir.display());
     }
     #[cfg(windows)]
-    acl::check(dir, acl::Others::NoAccess)?;
+    {
+        // `%ProgramData%\Kalzit` decides over the data inside it, whether a `kalzit.toml` exists
+        // or not: someone who may write it could swap the data directory.
+        if let Some(folder) = config_folder
+            && is_within(dir, folder)
+        {
+            acl::check_admin_only(folder)?;
+        }
+        acl::check(dir, acl::Others::NoAccess)?;
+        // Files keep the entries they were created with; one copied or moved in from elsewhere
+        // may be open to others although the folder is not.
+        for name in STATE_FILES {
+            let path = dir.join(name);
+            if path.exists() {
+                acl::check_file(&path)?;
+            }
+        }
+    }
     let probe = write_probe(dir)?;
     #[cfg(unix)]
     {
@@ -45,6 +62,44 @@ fn prepare_with(dir: &Path, config_folder: Option<&Path>) -> Result<()> {
 
 #[cfg(windows)]
 pub use acl::check_admin_only;
+
+/// Files in the data directory that hold the server's state; each must be private on its own.
+#[cfg(windows)]
+const STATE_FILES: &[&str] = &[
+    "kalzit.db",
+    "kalzit.db-wal",
+    "kalzit.db-shm",
+    "secrets.key",
+    "secrets.key.dpapi",
+    crate::routes::setup::TOKEN_FILE,
+];
+
+/// The path in canonical, lower-case form: Windows paths compare without regard to case and
+/// to how they were spelled (`C:\ProgramData` versus `c:\programdata\.\`). `None` when it does
+/// not exist.
+#[cfg(windows)]
+fn canonical_lower(path: &Path) -> Option<std::path::PathBuf> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    Some(std::path::PathBuf::from(canonical.to_string_lossy().to_lowercase()))
+}
+
+/// Whether `path` is `folder` or lies inside it.
+#[cfg(windows)]
+pub fn is_within(path: &Path, folder: &Path) -> bool {
+    match (canonical_lower(path), canonical_lower(folder)) {
+        (Some(path), Some(folder)) => path.starts_with(folder),
+        _ => false,
+    }
+}
+
+/// Whether `file` lies directly in `folder`.
+#[cfg(windows)]
+pub fn is_directly_in(file: &Path, folder: &Path) -> bool {
+    match (canonical_lower(file), canonical_lower(folder)) {
+        (Some(file), Some(folder)) => file.parent() == Some(folder.as_path()),
+        _ => false,
+    }
+}
 
 fn creation_hint(dir: &Path, e: &std::io::Error) -> String {
     if e.kind() != std::io::ErrorKind::PermissionDenied {
@@ -185,9 +240,10 @@ pub mod acl {
     /// The data directory: the same entries, inherited by the files and folders created in it.
     pub const DIR_SDDL: &str = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)";
     /// `%ProgramData%\Kalzit`: SYSTEM and Administrators full, Users read and execute (the service
-    /// account reads `kalzit.toml`), no create rights for users. The creating account may manage
-    /// the folder itself (not inherited), so a service account can create `data` in it.
-    pub const CONFIG_DIR_SDDL: &str = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;;FA;;;OW)";
+    /// account reads `kalzit.toml`), no create rights for users. The creating account may read
+    /// the folder and add subfolders (not inherited), so a service account can create `data`,
+    /// but it can neither write files there nor change the folder's entries.
+    pub const CONFIG_DIR_SDDL: &str = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;;0x1200ad;;;OW)";
 
     const SYSTEM: &str = "S-1-5-18";
     const ADMINISTRATORS: &str = "S-1-5-32-544";
@@ -291,12 +347,16 @@ pub mod acl {
     /// set once more through the auto-inheritance API: a descriptor passed at creation does not
     /// mark its entries as inheritable the modern way, so files created inside would get copies
     /// instead of inherited entries.
+    ///
+    /// Until then the creating account also holds read-control and write-DAC (not inherited):
+    /// an `OW` entry replaces the owner's implicit right to change the DACL, and `CONFIG_DIR_SDDL`
+    /// grants the owner less than that.
     pub fn create_dir(path: &Path, sddl: &str) -> std::io::Result<()> {
-        let sd = Descriptor::from_sddl(sddl)?;
-        let attributes = sd.attributes();
-        // SAFETY: `attributes` points at `sd`, which outlives the call.
+        let initial = Descriptor::from_sddl(&format!("{sddl}(A;;0x60000;;;OW)"))?;
+        let attributes = initial.attributes();
+        // SAFETY: `attributes` points at `initial`, which outlives the call.
         unsafe { CreateDirectoryW(&HSTRING::from(path.as_os_str()), Some(&attributes)) }.map_err(io_error)?;
-        if let Err(e) = sd.apply(path) {
+        if let Err(e) = Descriptor::from_sddl(sddl).and_then(|sd| sd.apply(path)) {
             // Private already, but not as intended; leave nothing half-done behind.
             if let Err(removal) = std::fs::remove_dir(path) {
                 tracing::warn!("removing the new directory {} after a failed ACL update: {removal}", path.display());
@@ -467,10 +527,8 @@ pub mod acl {
     /// Refuses an object that others own or may read or write (`Others::NoAccess`), or write
     /// (`Others::ReadOnly`), with an `icacls` command that fixes it.
     pub fn check(path: &Path, others: Others) -> Result<()> {
-        let (owner, dacl) =
-            read(path).map_err(|e| anyhow::anyhow!("reading the access list of {}: {e}", path.display()))?;
         let me = current_user().map_err(|e| anyhow::anyhow!("reading the account Kalzit runs as: {e}"))?;
-        let Some(problem) = problem(&owner, dacl.as_deref(), &me, others) else { return Ok(()) };
+        let Some(problem) = find_problem(path, &me, others)? else { return Ok(()) };
         let inherit = if path.is_dir() { "(OI)(CI)" } else { "" };
         let users = match others {
             Others::NoAccess => format!("*{me}:{inherit}F"),
@@ -486,9 +544,28 @@ pub mod acl {
         )
     }
 
+    fn find_problem(path: &Path, me: &str, others: Others) -> Result<Option<String>> {
+        let (owner, dacl) =
+            read(path).map_err(|e| anyhow::anyhow!("reading the access list of {}: {e}", path.display()))?;
+        Ok(problem(&owner, dacl.as_deref(), me, others))
+    }
+
     /// `%ProgramData%\Kalzit` and its `kalzit.toml`: others may read, only admins may write.
     pub fn check_admin_only(path: &Path) -> Result<()> {
         check(path, Others::ReadOnly)
+    }
+
+    /// A state file in the (already checked) data directory: nobody else may read or write it.
+    /// The fix is to let it take the directory's entries again.
+    pub fn check_file(path: &Path) -> Result<()> {
+        let me = current_user().map_err(|e| anyhow::anyhow!("reading the account Kalzit runs as: {e}"))?;
+        let Some(problem) = find_problem(path, &me, Others::NoAccess)? else { return Ok(()) };
+        bail!(
+            "{p} is not private enough: {problem}. From an elevated prompt, run \
+             `icacls \"{p}\" /setowner *{ADMINISTRATORS}` and `icacls \"{p}\" /reset`, so it takes the \
+             entries of the data directory again",
+            p = path.display(),
+        )
     }
 
     /// The DACL of a file or directory as SDDL (tests check what was set).
@@ -703,6 +780,56 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn a_config_folder_writable_by_users_is_refused_without_a_config_file() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("Kalzit");
+        std::fs::create_dir(&folder).unwrap();
+        // Users may create files and folders, as ProgramData itself allows them.
+        acl::restrict(&folder, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)(A;;0x1200af;;;BU)").unwrap();
+        let dir = folder.join("data");
+        let text = format!("{:#}", prepare_with(&dir, Some(&folder)).unwrap_err());
+        assert!(text.contains("S-1-5-32-545 may write") && text.contains("icacls"), "{text}");
+        // Spelled in other case, it is still the same folder.
+        let upper = std::path::PathBuf::from(dir.to_string_lossy().to_uppercase());
+        let text = format!("{:#}", prepare_with(&upper, Some(&folder)).unwrap_err());
+        assert!(text.contains("S-1-5-32-545 may write"), "{text}");
+        // Elsewhere, the folder does not matter.
+        prepare_with(&root.path().join("other"), Some(&folder)).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn state_files_open_to_others_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("data");
+        prepare_with(&dir, None).unwrap();
+        for name in STATE_FILES {
+            let file = dir.join(name);
+            std::fs::write(&file, b"x").unwrap();
+            prepare_with(&dir, None).unwrap();
+            // Moved in from a folder where Users could read it.
+            acl::restrict(&file, "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)(A;;FR;;;BU)").unwrap();
+            let text = format!("{:#}", prepare_with(&dir, None).unwrap_err());
+            assert!(text.contains(name) && text.contains("/reset"), "{name}: {text}");
+            std::fs::remove_file(&file).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_paths_compare_without_case() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("kalzit.toml");
+        std::fs::write(&file, "").unwrap();
+        let upper_folder = std::path::PathBuf::from(root.path().to_string_lossy().to_uppercase());
+        assert!(is_directly_in(&file, &upper_folder));
+        assert!(is_directly_in(&root.path().join(".").join("KALZIT.TOML"), root.path()));
+        assert!(!is_directly_in(&file, &root.path().join("other")));
+        assert!(!is_directly_in(&root.path().join("missing.toml"), root.path()));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn a_missing_config_folder_is_created_admin_only() {
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("Kalzit");
@@ -713,11 +840,16 @@ mod tests {
         let users: Vec<_> = aces.iter().filter(|(_, _, t)| t == "BU").collect();
         assert_eq!(users.len(), 1, "{sddl}");
         assert!(users[0].1 == "0x1200a9", "Users read and execute only: {sddl}");
+        // The creating account may add the `data` folder, but not write files or change entries.
+        let owner: Vec<_> = aces.iter().filter(|(_, _, t)| t == "OW").collect();
+        assert_eq!(owner.len(), 1, "{sddl}");
+        assert!(owner[0].0.is_empty() && owner[0].1 == "0x1200ad", "{sddl}");
         acl::check_admin_only(&folder).unwrap();
         let text = format!("{:#}", acl::check(&folder, acl::Others::NoAccess).unwrap_err());
         assert!(text.contains("S-1-5-32-545"), "{text}");
-        // A writable configuration file is refused.
-        let file = folder.join("kalzit.toml");
+        // A writable configuration file is refused. (It lives next to the folder: without an
+        // elevated token, the creating account may not write files in the folder, by design.)
+        let file = root.path().join("kalzit.toml");
         std::fs::write(&file, "").unwrap();
         acl::restrict(&file, "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FW;;;BU)").unwrap();
         let text = format!("{:#}", check_admin_only(&file).unwrap_err());

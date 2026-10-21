@@ -238,7 +238,7 @@ impl Config {
         // non-admin must not be able to change it.
         #[cfg(windows)]
         if let (Some(f), Some(folder)) = (&file, program_data_folder())
-            && f.parent() == Some(folder.as_path())
+            && crate::data_dir::is_directly_in(f, &folder)
         {
             crate::data_dir::check_admin_only(&folder)?;
             crate::data_dir::check_admin_only(f)?;

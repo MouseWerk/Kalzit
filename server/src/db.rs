@@ -20,39 +20,60 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
 
 /// The URL without a password, for log lines.
 pub fn redact(url: &str) -> String {
-    // The userinfo first: a password may hold a raw `?`, `#` or `/`, so the last `@` ends it.
-    // An `@` further right (in the query) only hides more than needed.
     let (prefix, rest) = match url.find("://") {
         Some(scheme_end) => {
+            let scheme = &url[..scheme_end];
             let after = &url[scheme_end + 3..];
-            match after.rfind('@') {
+            match userinfo_end(after) {
                 Some(at) => {
                     let userinfo = &after[..at];
                     let prefix = match userinfo.split_once(':') {
-                        Some((user, _)) => format!("{}://{user}:***@", &url[..scheme_end]),
-                        None => format!("{}://{userinfo}@", &url[..scheme_end]),
+                        Some((user, _)) => format!("{scheme}://{user}:***@"),
+                        None => format!("{scheme}://{userinfo}@"),
                     };
                     (prefix, &after[at + 1..])
                 }
-                None => (url[..scheme_end + 3].to_string(), after),
+                None => (format!("{scheme}://"), after),
             }
         }
         None => (String::new(), url),
     };
-    let (base, query) = match rest.split_once('?') {
-        Some((b, q)) => (format!("{prefix}{b}"), Some(q)),
-        None => (format!("{prefix}{rest}"), None),
-    };
-    let Some(query) = query else { return base };
-    // PostgreSQL also takes credentials as parameters: ?user=u&password=secret.
-    let query: Vec<String> = query
-        .split('&')
-        .map(|pair| match pair.split_once('=') {
-            Some((key, _)) if SECRET_PARAMS.contains(&key.to_ascii_lowercase().as_str()) => format!("{key}=***"),
-            _ => pair.to_string(),
+    // PostgreSQL also takes credentials as parameters (`?user=u&password=secret`). Every `?` or
+    // `&` segment is checked, so an odd split above cannot let one through.
+    let masked: String = rest
+        .split_inclusive(['?', '&'])
+        .map(|piece| {
+            let (segment, delimiter) = match piece.strip_suffix(['?', '&']) {
+                Some(segment) => (segment, &piece[segment.len()..]),
+                None => (piece, ""),
+            };
+            match segment.split_once('=') {
+                Some((key, _)) if SECRET_PARAMS.contains(&key.to_ascii_lowercase().as_str()) => {
+                    format!("{key}=***{delimiter}")
+                }
+                _ => piece.to_string(),
+            }
         })
         .collect();
-    format!("{base}?{}", query.join("&"))
+    format!("{prefix}{masked}")
+}
+
+/// The `@` that ends the userinfo in `after` (the URL after `://`). A password may hold a raw
+/// `?`, `#`, `/` or `@`, so it is the last `@` that is not inside the query; an `@` is in the
+/// query when a `?` before it is followed by a `key=` (`?application_name=a@b`). Then the host
+/// stays visible and the query parameters are masked one by one.
+fn userinfo_end(after: &str) -> Option<usize> {
+    let in_query = |before: &str| before.match_indices('?').any(|(q, _)| before[q + 1..].contains('='));
+    if let Some(at) = after.match_indices('@').map(|(at, _)| at).rfind(|&at| !in_query(&after[..at])) {
+        return Some(at);
+    }
+    // `user:pa?ss=1@host`: the password itself looks like a query. A `host:port?...@` (digits
+    // after the colon) is not userinfo, so the host is never hidden.
+    let first = after.find('@')?;
+    let before_query = after[..first].split('?').next().unwrap_or_default();
+    let (user, password) = before_query.split_once(':')?;
+    let plain = !user.is_empty() && !user.contains('/') && !password.chars().all(|c| c.is_ascii_digit());
+    plain.then_some(first)
 }
 
 const SECRET_PARAMS: &[&str] = &["password", "pass", "pwd", "sslpassword", "sslkey"];
@@ -95,6 +116,20 @@ mod tests {
             redact("postgres://kalzit:a@b?c@db/kalzit?sslmode=require"),
             "postgres://kalzit:***@db/kalzit?sslmode=require"
         );
+        // An `@` in the query neither hides the host nor lets a secret parameter through.
+        assert_eq!(
+            redact("postgres://db/kalzit?application_name=a@b&password=secret"),
+            "postgres://db/kalzit?application_name=a@b&password=***"
+        );
+        assert_eq!(
+            redact("postgres://u:pw@db/k?options=x@y&password=z"),
+            "postgres://u:***@db/k?options=x@y&password=***"
+        );
+        assert_eq!(
+            redact("postgres://db:5432?application_name=a@b&pwd=s"),
+            "postgres://db:5432?application_name=a@b&pwd=***"
+        );
+        assert_eq!(redact("postgres://u:pa?ss=1@db/k"), "postgres://u:***@db/k");
         // No password, nothing to hide.
         assert_eq!(redact("postgres://kalzit@db/kalzit"), "postgres://kalzit@db/kalzit");
         assert_eq!(redact("postgres://db/kalzit"), "postgres://db/kalzit");

@@ -296,8 +296,11 @@ type QueryResult =
   with a protected ACL, inherited by its contents, for SYSTEM, Administrators and the account
   Kalzit runs as (`OW`, the owner). When Kalzit creates a missing `%ProgramData%\Kalzit` on the
   way, that folder gets SYSTEM and Administrators full access and Users read and execute, with
-  no create rights for users; the creating account may manage the folder itself (not inherited),
-  so a non-admin service account can create `data` in it.
+  no create rights for users; the creating account (`OW`, not inherited) may only read it and
+  add subfolders (`0x1200ad`), so a non-admin service account can create `data` but cannot
+  write files there or change the folder's entries. If a non-elevated user ran Kalzit first,
+  that user owns the folder, and a service started later refuses it and prints the `icacls`
+  hint.
 - An existing directory is never changed, only checked; it holds password hashes and sessions,
   so the start is refused rather than warned about:
   - Linux: it must belong to the account Kalzit runs as (compared with the owner of a probe
@@ -308,9 +311,14 @@ type QueryResult =
     error names the `icacls` commands that fix it. `CREATOR OWNER` entries are accepted: only
     accounts that may create files there get them, and those are limited to the trusted ones.
   - Both: the directory must be writable (a probe file created with `create_new` and removed).
-- Before reading `%ProgramData%\Kalzit\kalzit.toml`, the folder and the file are checked the same
-  way, except that others may read them: a configuration that a non-admin could change would
-  decide where the data lives and which certificate is served.
+- Before reading `%ProgramData%\Kalzit\kalzit.toml` (the path compared without case, after
+  canonicalizing), the folder and the file are checked the same way, except that others may
+  read them: a configuration that a non-admin could change would decide where the data lives
+  and which certificate is served. The folder is also checked at start whenever the data
+  directory lies inside it, with or without a `kalzit.toml`.
+- Windows also checks the state files that exist (`kalzit.db`, `-wal`, `-shm`, `secrets.key`,
+  `secrets.key.dpapi`, `setup-token.txt`): a file keeps the entries it was created with, so one
+  moved in from elsewhere may be open to others. The error names `icacls ... /reset`.
 - The folder is meant for elevated admin tools (an elevated prompt, `icacls`, an installer).
   Opening it in a non-elevated Explorer and clicking "Continue" adds an explicit entry for your
   own account; Kalzit then refuses to start until it is removed
@@ -328,6 +336,8 @@ type QueryResult =
   while the server is stopped or running. Copying only `kalzit.db` of a running server loses
   what is still in the WAL file. Back up the key file too (when it is used); without it stored
   data source secrets cannot be decrypted. A DPAPI key file only works on the same computer.
+  To restore, copy the files into the data directory, do not move them: a copy takes the
+  directory's private entries, a moved file keeps its old ones, and Kalzit refuses it.
 
 ### Running as a service
 

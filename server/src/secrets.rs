@@ -426,7 +426,7 @@ fn sync_dir(file: &Path) -> std::io::Result<()> {
 
 /// Writes through a temporary file and a rename, so a crash never leaves a half-written key. On
 /// Unix the file is created with mode 0600; on Windows it gets an ACL for SYSTEM, Administrators
-/// and its owner only (not inherited from the data directory).
+/// and its owner only (not inherited from the data directory), set when the file is created.
 fn write_private_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
@@ -435,16 +435,19 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&tmp)?;
     #[cfg(windows)]
-    acl::restrict(&tmp, acl::FILE_SDDL)?;
+    let mut file = acl::create_file(&tmp, acl::FILE_SDDL)?;
+    #[cfg(not(windows))]
+    let mut file = {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(&tmp)?
+    };
     file.write_all(content)?;
     file.sync_all()?;
     drop(file);
