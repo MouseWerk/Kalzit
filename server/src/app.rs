@@ -28,6 +28,8 @@ pub struct AppState {
     pub setup: Arc<SetupGate>,
     pub secrets: Arc<Keyring>,
     pub datasources: Arc<DataSources>,
+    /// Session last-seen updates in flight (`auth::session::Touches`).
+    pub touches: Arc<crate::auth::session::Touches>,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
+        let touches = Arc::new(crate::auth::session::Touches::for_pool(db.options().get_max_connections()));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -46,6 +49,7 @@ impl AppState {
             setup: Arc::new(setup),
             secrets,
             datasources,
+            touches,
         })
     }
 }

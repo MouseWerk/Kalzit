@@ -239,6 +239,8 @@ async fn sessions_expire_after_lifetime_and_idle_time() {
     for _ in 0..4 {
         t.clock.advance_ms(2 * HOUR_MS);
         assert_eq!(t.get("/api/me", Some(&cookie)).await.status, StatusCode::OK);
+        // The last-seen update runs in the background; it lands before the clock moves on.
+        t.state.touches.settle().await;
     }
     // ...but not past its lifetime.
     t.clock.advance_ms(2 * HOUR_MS + 1);

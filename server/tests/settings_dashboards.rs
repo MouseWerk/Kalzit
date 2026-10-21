@@ -378,8 +378,53 @@ async fn a_due_session_touch_does_not_wait_for_a_writer() {
     sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
     assert!(took < std::time::Duration::from_secs(3), "the read waited {took:?} for the writer");
-    // Once the lock is free, the next due request updates it again.
-    assert_eq!(t.get("/me", &t.owner).await.status, StatusCode::OK);
+    // The update waited for the lock in the background and lands once it is free.
+    t.state.touches.settle().await;
+    let last_seen: i64 =
+        sqlx::query_scalar("SELECT MAX(last_seen_at) FROM sessions").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(last_seen, t.clock.now_ms());
+}
+
+/// A request dropped at any point while its session touch is due leaves every pooled
+/// connection with the normal busy timeout.
+#[tokio::test]
+async fn a_cancelled_request_leaves_the_busy_timeout_alone() {
+    use sqlx::Connection;
+    use std::future::Future;
+    use std::task::Poll;
+    let t = test_app(None, |_| {}).await;
+    let url = t.state.config.database_url();
+    let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
+    t.clock.advance_ms(6 * 60 * 1000);
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut holder).await.unwrap();
+    // Drop the request after 0, 1, 2, ... polls, until it would finish on its own.
+    for polls in 0.. {
+        let mut request = Box::pin(t.get("/me", &t.owner));
+        let mut done = false;
+        for _ in 0..polls {
+            done = std::future::poll_fn(|cx| Poll::Ready(request.as_mut().poll(cx).is_ready())).await;
+            if done {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        drop(request);
+        if done {
+            break;
+        }
+    }
+    sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
+    t.state.touches.settle().await;
+
+    let max = t.state.db.options().get_max_connections();
+    let mut conns = Vec::new();
+    for _ in 0..max {
+        conns.push(t.state.db.acquire().await.unwrap());
+    }
+    for conn in &mut conns {
+        let timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout").fetch_one(&mut **conn).await.unwrap();
+        assert_eq!(timeout, kalzit::db::SQLITE_BUSY_TIMEOUT.as_millis() as i64);
+    }
 }
 
 /// A graceful stop closes the database, so SQLite checkpoints its WAL and removes it: what a

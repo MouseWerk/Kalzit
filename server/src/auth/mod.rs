@@ -22,7 +22,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         }
         let token = session::read_cookie(&parts.headers).ok_or_else(ApiError::unauthenticated)?;
         let now = state.clock.now_ms();
-        session::lookup(&state.db, &state.config.sessions, now, &token)
+        session::lookup(&state.db, &state.touches, &state.config.sessions, now, &token)
             .await?
             .map(CurrentUser)
             .ok_or_else(ApiError::unauthenticated)
