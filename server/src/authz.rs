@@ -783,6 +783,10 @@ pub async fn lock_owners(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: 
 /// above `lock_org`), then those organizations' owner rows, and counts the organizations that would
 /// be left without an enabled owner.
 pub async fn lock_orgs_left_without_owner(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<i64> {
+    // The user's own row first (user rows come before organization rows in the lock order). It
+    // also makes this safe as the first statement of a transaction: on SQLite a transaction that
+    // reads first can fail at its first write when another commit made its snapshot stale.
+    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(user_id).execute(&mut *conn).await?;
     let owned: Vec<(String,)> =
         sqlx::query_as("SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'owner' ORDER BY org_id")
             .bind(user_id)

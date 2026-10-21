@@ -112,6 +112,62 @@ pub fn spawn_session_cleanup(state: crate::app::AppState) {
 mod tests {
     use super::*;
 
+    /// Guard for the write-first rule (see `connect_with`): after every `begin()` in the server,
+    /// the first database statement is a write or one of the lock helpers, which start with one.
+    /// A transaction that reads first holds a SQLite read snapshot, and its first write then
+    /// fails at once (`SQLITE_BUSY_SNAPSHOT`, no waiting) when another writer committed in
+    /// between. A source check, since wrapping every transaction to watch its first statement
+    /// would touch every call site and the sqlx types they use.
+    #[test]
+    fn transactions_write_first() {
+        const WRITES: &[&str] = &[
+            "UPDATE ",
+            "INSERT ",
+            "DELETE ",
+            "lock_org(",
+            "lock_place(",
+            "locked_tree(",
+            "lock_server_admins(",
+            "lock_orgs_left_without_owner(",
+            "settings::store(",
+            "session::delete",
+            "delete_for_user(",
+        ];
+        const READS: &[&str] =
+            &["SELECT ", "fetch_", "::load(", "load(&mut", "_role(", "resource_exists(", "_checked("];
+        let first = |text: &str, markers: &[&str]| markers.iter().filter_map(|m| text.find(m)).min();
+        let mut files = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut checked = 0;
+        while let Some(path) = files.pop() {
+            if path.is_dir() {
+                files.extend(std::fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") || path.ends_with("db.rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<&str> = source.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !line.contains(".begin().await") {
+                    continue;
+                }
+                let after: String = lines[i + 1..(i + 16).min(lines.len())]
+                    .iter()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let write = first(&after, WRITES);
+                let read = first(&after, READS);
+                let ok = matches!((write, read), (Some(w), Some(r)) if w < r) || (write.is_some() && read.is_none());
+                assert!(ok, "{}:{}: the transaction must write before it reads", path.display(), i + 1);
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "only {checked} transactions found; is the guard still looking at the code?");
+    }
+
     #[tokio::test]
     async fn sqlite_runs_in_wal_mode_with_the_busy_timeout() {
         let dir = tempfile::tempdir().unwrap();

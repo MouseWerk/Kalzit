@@ -85,12 +85,14 @@ async fn create(
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
-    let owner: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE id = $1 AND disabled = 0")
+    // Locks the owner's row, which also makes the transaction write first (docs/ARCHITECTURE.md,
+    // "write first"): a disable of that account waits for this to finish.
+    let owner = sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1 AND disabled = 0")
         .bind(&req.owner_user_id)
-        .fetch_optional(&mut *tx)
+        .execute(&mut *tx)
         .await?;
     // A disabled account cannot sign in, so it could not use the organization it owns.
-    if owner.is_none() {
+    if owner.rows_affected() == 0 {
         return Err(ApiError::validation("no such account, or it is disabled").with_field("ownerUserId"));
     }
     sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, $2, $3)")

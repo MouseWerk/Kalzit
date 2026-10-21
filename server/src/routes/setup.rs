@@ -183,18 +183,20 @@ pub async fn complete(
     let org_id = new_id();
     let user_id = new_id();
     let mut tx = state.db.begin().await?;
-    let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(&mut *tx).await?;
-    if users > 0 {
-        // Another server on the same database finished setup first; this one is done too.
-        close_gate(&mut gate);
-        return Err(setup_done());
-    }
+    // The write comes first, so the count below is read under the write lock (SQLite), not from
+    // a snapshot a concurrent commit could make stale; an early return rolls the insert back.
     sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, $2, $3)")
         .bind(&org_id)
         .bind(&org_name)
         .bind(now)
         .execute(&mut *tx)
         .await?;
+    let (users,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(&mut *tx).await?;
+    if users > 0 {
+        // Another server on the same database finished setup first; this one is done too.
+        close_gate(&mut gate);
+        return Err(setup_done());
+    }
     sqlx::query(
         "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at) \
          VALUES ($1, $2, $3, $4, 1, 0, $5)",
