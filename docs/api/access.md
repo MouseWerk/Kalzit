@@ -40,10 +40,13 @@ them all with their names and permissions.
   role, lowering or deleting a grant) also need the caller to hold what is taken away, so nobody
   changes someone with more rights than themselves. Refused with `403 forbidden`; the message
   names the missing permissions.
-- **The last owner** of an organization cannot be removed or demoted: `409 conflict`. Owners can
-  only be made by owners (they alone hold `org:delete`).
+- **An enabled owner remains.** The last enabled owner of an organization cannot be removed,
+  demoted or disabled: `409 conflict` (disabled owners do not count). Owners can only be made by
+  owners: they alone hold `org:delete`, which no custom role may contain.
 - **The last active server admin** (admin and not disabled) cannot be disabled or lose the role:
   `409 conflict`.
+- **Concurrent changes.** Changes within one organization run one after the other, so two equal
+  requests at the same moment answer as if sent in sequence (never `500`).
 
 ## Members
 
@@ -76,8 +79,9 @@ current role exceeds the caller's permissions), `409 conflict` (last owner). Aud
 `member.role_changed` (only when the role changes).
 
 **`DELETE`** removes the membership, the member's team memberships in this organization and the
-grants to them here; the account stays. Errors: `404`, `403`, `409 conflict` (last owner). Audit
-`member.removed`.
+grants to them here; the account stays. The caller must hold what the member loses: their org
+role, the roles of their teams here and the permissions of their grants. Errors: `404`, `403`,
+`409 conflict` (last owner). Audit `member.removed`.
 
 ## Teams
 
@@ -116,7 +120,8 @@ interface TeamMember {
 An unknown team id (or one of another organization) is `404` on every team route.
 
 **`POST`** and **`PATCH`** `{ "name": string }` (trimmed, 1 to 100 characters, no control
-characters). Errors: `validation` `name`, `409 conflict` `name` (name taken in the organization).
+characters). Errors: `validation` `name`, `409 conflict` `name` (name taken in the organization,
+compared without regard to case, umlauts included).
 Audit `team.created`, `team.renamed`.
 
 **`DELETE`** removes the team, its memberships, its roles and the grants to it. Needs the caller to
@@ -160,9 +165,10 @@ An organization has at most 100 custom roles.
 
 **`POST`** `{ "name": string, "description"?: string, "permissions": Permission[] }`. Name as for
 teams, and not a built-in role name in any case; description at most 500 characters, line breaks
-allowed. Errors: `validation` `name` / `description` / `permissions` (unknown permission),
-`409 conflict` `name` (taken), `409 conflict` (100 custom roles), `403` (permissions the caller
-does not hold). Audit `role.created`.
+allowed. Errors: `validation` `name` / `description` / `permissions` (unknown permission, or
+`org:delete`, which belongs to owners only), `409 conflict` `name` (taken, compared without regard
+to case), `409 conflict` (100 custom roles), `403` (permissions the caller does not hold). Audit
+`role.created`.
 
 **`PATCH`** `{ "name"?, "description"?, "permissions"? }` (each optional; `permissions` replaces
 the set). Errors: `403` (a built-in role id, or the current or new permissions exceed the
@@ -193,9 +199,14 @@ resource. Levels include the ones before them:
 Folder grants apply to the folder's subfolders and dashboards. Subjects: `user` (a member's user
 id), `team` (a team id), `role` (a role key: every member holding that role, as org role or
 through a team). A member's permissions on a resource are their org-wide permissions plus their
-grants on it. In a restricted folder (and below) the org-wide permissions count only for members
-holding `folders:permissions` (admins and owners); everyone else needs a grant, and without one
-the folder and what is inside it are `404`.
+grants on it.
+
+Restricted folders: the nearest restricted folder above a resource (or the resource itself)
+governs it. There the org-wide permissions count only for members holding `folders:permissions`
+(admins and owners); everyone else needs a grant on that folder or below it, and without one the
+folder and what is inside it are `404`. Grants on folders above it do not reach into it, so a
+restricted subfolder narrows access: with restricted "Finanzen" (Finance team may view) holding
+restricted "Gehaelter" (HR team may view), Finance members see "Finanzen" but not "Gehaelter".
 
 ```ts
 interface Grant {
@@ -300,11 +311,12 @@ interface AdminOrg {
 **`PATCH /admin/users/{userId}`** `{ "name"?, "disabled"?, "isServerAdmin"?, "password"? }`.
 Disabling ends all the account's sessions at once. A new password ends the account's sessions
 (when admins set their own, except the session of this request). Errors: `404`, validation of
-`name` / `password`, `409 conflict` (last active server admin). Audit `user.updated` (fields
+`name` / `password`, `409 conflict` (last active server admin, or disabling the last enabled
+owner of an organization). Audit `user.updated` (fields
 `name`, `isServerAdmin`, `password`), `user.disabled`, `user.enabled`.
 
 **`POST /admin/orgs`** `{ "name", "ownerUserId" }` creates the organization with that account as
-its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such account). Audit
+its owner. Errors: `validation` `name`, `validation` `ownerUserId` (no such account, or it is disabled). Audit
 `org.created`.
 
 **`PATCH /admin/orgs/{orgId}`** `{ "name" }`. Errors: `404`, `validation` `name`. Audit
@@ -328,15 +340,17 @@ interface SessionView {
 |---|---|
 | `PATCH /me` | `200 Me` (as `GET /me`) |
 | `POST /me/password` | `204` |
-| `GET /me/sessions` | `200 Page<SessionView>`, newest first |
+| `GET /me/sessions` | `200 Page<SessionView>`, newest first; sessions past their lifetime or idle limit are left out |
 | `DELETE /me/sessions/{sessionId}` | `204` |
 | `POST /me/sessions/revoke-others` | `200 { "revoked": number }` |
 
 **`PATCH /me`** `{ "name" }`. Errors: `validation` `name`. Audit `user.updated`.
 
 **`POST /me/password`** `{ "current", "new" }`. Ends every other session of the account; this one
-stays. Attempts per account are limited like sign-ins (the same number per window); after that
-the answer is `429 rate_limited`, a correct password resets the count. Errors: `validation` `current` (not correct), `validation` `new`
+stays. Attempts count against a budget of their own and against the account email's sign-in
+budget (failed sign-ins and failed checks here add up); once either is used up the answer is
+`429 rate_limited`. A correct password resets both. Of two changes at the same moment with the same
+current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.
 
 **`DELETE /me/sessions/{sessionId}`** ends one of the caller's sessions (also the current one,

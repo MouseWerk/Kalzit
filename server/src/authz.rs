@@ -282,17 +282,20 @@ pub async fn resource_exists(_db: &sqlx::AnyPool, _org_id: &str, _resource: Reso
     Ok(true)
 }
 
-/// Whether a folder is marked restricted. Stream B's migration 0005 adds the flag to `folders`;
-/// until the orchestrator wires it here, every folder is unrestricted.
-pub async fn folder_is_restricted(_db: &sqlx::AnyPool, _org_id: &str, _folder_id: &str) -> ApiResult<bool> {
-    Ok(false)
+/// One folder of a folder chain and whether it is marked restricted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderLink {
+    pub id: String,
+    pub restricted: bool,
 }
 
-/// The folder and its ancestors, nearest first, so folder grants inherit to subfolders. Stream
-/// B's migration 0005 adds `folders.parent_id`; until the orchestrator wires the walk here, this
-/// is just the folder itself.
-pub async fn folder_ancestors(_db: &sqlx::AnyPool, _org_id: &str, folder_id: &str) -> ApiResult<Vec<String>> {
-    Ok(vec![folder_id.to_string()])
+/// The folder and its ancestors, nearest first (the folder itself first), so folder grants
+/// inherit to subfolders and the nearest restricted folder can be found. Stream B provides the
+/// real walk with this signature in `crate::folders` (migration 0005 adds `folders.parent_id` and
+/// the restricted flag); until the orchestrator wires it here, this is just the folder itself,
+/// unrestricted.
+pub async fn folder_chain(_db: &sqlx::AnyPool, _org_id: &str, folder_id: &str) -> ApiResult<Vec<FolderLink>> {
+    Ok(vec![FolderLink { id: folder_id.to_string(), restricted: false }])
 }
 
 /// The folder a dashboard lives in, so folder grants inherit to its dashboards. Stream B's
@@ -440,29 +443,55 @@ impl GrantRow {
     }
 }
 
-/// What decides the caller's access to one resource: whether it lies in a restricted folder, and
-/// the caller's grants on it and the folders above it.
+/// What decides the caller's access to one resource: whether a restricted folder governs it, and
+/// the caller's grants that reach it.
 #[derive(Debug, Default)]
 struct ResourceFacts {
     restricted: bool,
     grants: Vec<GrantRow>,
 }
 
+/// One step from the resource up to the top folder: the resource itself, then its folders.
+#[derive(Clone, Debug)]
+struct ChainLink {
+    resource_type: ResourceType,
+    id: String,
+    restricted: bool,
+}
+
+/// The nearest restricted folder governs: only grants on it or below it count, so a restricted
+/// subfolder narrows access and grants on folders above it do not reach into it. Without a
+/// restricted folder, grants anywhere in the chain count. `grants` are the caller's grants on any
+/// link of `chain` (nearest first).
+fn narrow(chain: &[ChainLink], grants: Vec<GrantRow>) -> ResourceFacts {
+    let governing = chain.iter().position(|link| link.restricted);
+    let reach = &chain[..governing.map_or(chain.len(), |i| i + 1)];
+    let grants = grants
+        .into_iter()
+        .filter(|g| reach.iter().any(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id))
+        .collect();
+    ResourceFacts { restricted: governing.is_some(), grants }
+}
+
 async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>) -> ApiResult<ResourceFacts> {
     let org_id = ctx.org_id.as_str();
-    let mut chain = vec![(resource.resource_type(), resource.id().to_string())];
+    let link = |resource_type, id: &str, restricted| ChainLink { resource_type, id: id.to_string(), restricted };
+    let mut chain = Vec::new();
     let folder = match resource {
         Resource::Folder(id) => Some(id.to_string()),
-        Resource::Dashboard(id) => dashboard_folder(db, org_id, id).await?,
-        Resource::Datasource(_) => None,
+        Resource::Dashboard(id) => {
+            chain.push(link(ResourceType::Dashboard, id, false));
+            dashboard_folder(db, org_id, id).await?
+        }
+        Resource::Datasource(id) => {
+            chain.push(link(ResourceType::Datasource, id, false));
+            None
+        }
     };
     if let Some(folder) = folder {
-        chain.retain(|(t, _)| *t != ResourceType::Folder);
-        chain.extend(folder_ancestors(db, org_id, &folder).await?.into_iter().map(|id| (ResourceType::Folder, id)));
-    }
-    let mut restricted = false;
-    for (_, id) in chain.iter().filter(|(t, _)| *t == ResourceType::Folder) {
-        restricted |= folder_is_restricted(db, org_id, id).await?;
+        for f in folder_chain(db, org_id, &folder).await? {
+            chain.push(link(ResourceType::Folder, &f.id, f.restricted));
+        }
     }
 
     // The subjects the caller is: themselves, their teams, and every role they hold.
@@ -485,19 +514,19 @@ async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>
     };
 
     let mut grants = Vec::new();
-    for (resource_type, id) in &chain {
+    for link in &chain {
         let rows: Vec<GrantRow> = sqlx::query_as(
             "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
              WHERE org_id = $1 AND resource_type = $2 AND resource_id = $3 ORDER BY id",
         )
         .bind(org_id)
-        .bind(resource_type.as_str())
-        .bind(id)
+        .bind(link.resource_type.as_str())
+        .bind(&link.id)
         .fetch_all(db)
         .await?;
         grants.extend(rows.into_iter().filter(|g| is_caller(g)));
     }
-    Ok(ResourceFacts { restricted, grants })
+    Ok(narrow(&chain, grants))
 }
 
 /// Whether the org-wide permissions count on this resource. In a restricted folder they do only
@@ -595,29 +624,78 @@ fn conflict(message: &str) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, "conflict", message)
 }
 
-/// Refuses to remove or demote the last owner. `new_role` is `None` when the member is removed.
-pub fn ensure_owner_remains(current_role: &str, new_role: Option<&str>, owners: i64) -> ApiResult<()> {
+/// Refuses to leave an organization without an enabled owner. `other_owners` counts the enabled
+/// owners besides the member being changed; `new_role` is `None` when the member is removed.
+pub fn ensure_owner_remains(current_role: &str, new_role: Option<&str>, other_owners: i64) -> ApiResult<()> {
     let leaves_owners = current_role == BuiltinRole::Owner.as_str() && new_role != Some(BuiltinRole::Owner.as_str());
-    if leaves_owners && owners <= 1 {
+    if leaves_owners && other_owners == 0 {
         return Err(conflict("the last owner of an organization cannot be removed or demoted"));
     }
     Ok(())
 }
 
-/// Locks the owner rows of `org_id` for the rest of the transaction and counts them, so two
-/// owners demoting each other at the same time cannot both succeed.
-pub async fn lock_owners(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<i64> {
-    // A no-op update takes the row locks on PostgreSQL and the write lock on SQLite; both drivers
+/// Locks the organization's row for the rest of the transaction. Every organization change that
+/// checks before it writes takes this first, so concurrent changes in one organization run one
+/// after the other: on PostgreSQL through the row lock, on SQLite because the transaction starts
+/// with a write (one that reads first and writes later fails with "database is locked" when
+/// another writer got in between).
+pub async fn lock_org(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<()> {
+    // A no-op update takes the row lock on PostgreSQL and the write lock on SQLite; both drivers
     // understand it, unlike `SELECT ... FOR UPDATE`.
+    sqlx::query("UPDATE orgs SET name = name WHERE id = $1").bind(org_id).execute(&mut *conn).await?;
+    Ok(())
+}
+
+/// Resolves a role key inside a transaction and, for a custom role, locks its row, so it cannot be
+/// changed or deleted while it is being assigned.
+pub async fn lock_role(conn: &mut sqlx::AnyConnection, org_id: &str, key: &str) -> ApiResult<Option<RoleInfo>> {
+    if BuiltinRole::parse(key).is_none() {
+        sqlx::query("UPDATE roles SET name = name WHERE org_id = $1 AND id = $2")
+            .bind(org_id)
+            .bind(key)
+            .execute(&mut *conn)
+            .await?;
+    }
+    resolve_role(&mut *conn, org_id, key).await
+}
+
+/// Locks the owner rows of `org_id` for the rest of the transaction and counts the enabled owners
+/// other than `user_id`, so two owners demoting each other at the same time cannot both succeed.
+pub async fn lock_owners(conn: &mut sqlx::AnyConnection, org_id: &str, user_id: &str) -> ApiResult<i64> {
     sqlx::query("UPDATE org_members SET role = role WHERE org_id = $1 AND role = 'owner'")
         .bind(org_id)
         .execute(&mut *conn)
         .await?;
-    let (owners,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND role = 'owner'")
-        .bind(org_id)
-        .fetch_one(&mut *conn)
-        .await?;
+    let (owners,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM org_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.org_id = $1 AND m.role = 'owner' AND m.user_id <> $2 AND u.disabled = 0",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_one(&mut *conn)
+    .await?;
     Ok(owners)
+}
+
+/// Before disabling `user_id`: locks the owner rows of every organization they own and counts
+/// those that would be left without an enabled owner.
+pub async fn lock_orgs_left_without_owner(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<i64> {
+    sqlx::query(
+        "UPDATE org_members SET role = role WHERE role = 'owner' \
+         AND org_id IN (SELECT org_id FROM org_members WHERE user_id = $1 AND role = 'owner')",
+    )
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    let (orphaned,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM org_members m WHERE m.user_id = $1 AND m.role = 'owner' AND NOT EXISTS \
+         (SELECT 1 FROM org_members o JOIN users u ON u.id = o.user_id \
+          WHERE o.org_id = m.org_id AND o.role = 'owner' AND o.user_id <> m.user_id AND u.disabled = 0)",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(orphaned)
 }
 
 /// Refuses to leave the server without an active server admin. `is_active_admin` is the user's
@@ -840,10 +918,50 @@ mod resource_tests {
         assert!(held.contains(&Permission::FoldersRead) && !held.contains(&Permission::FoldersWrite));
     }
 
+    fn link(resource_type: ResourceType, id: &str, restricted: bool) -> ChainLink {
+        ChainLink { resource_type, id: id.into(), restricted }
+    }
+
+    fn team_grant(team: &str, resource_type: &str, resource_id: &str) -> GrantRow {
+        GrantRow { subject_type: "team".into(), subject_id: team.into(), ..grant(resource_type, resource_id, "view") }
+    }
+
+    #[test]
+    fn the_nearest_restricted_folder_governs() {
+        // Restricted "Finanzen" (Finance may view) holds restricted "Gehaelter" (HR may view).
+        let finance_grants = || vec![team_grant("finance", "folder", "finanzen")];
+        let finanzen = [link(ResourceType::Folder, "finanzen", true), link(ResourceType::Folder, "root", false)];
+        let gehaelter = [
+            link(ResourceType::Folder, "gehaelter", true),
+            link(ResourceType::Folder, "finanzen", true),
+            link(ResourceType::Folder, "root", false),
+        ];
+        let viewer = BuiltinRole::Viewer.permissions();
+        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&finanzen, finance_grants())).is_some());
+        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&gehaelter, finance_grants())).is_none());
+        let hr = vec![team_grant("hr", "folder", "gehaelter")];
+        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&gehaelter, hr)).is_some());
+
+        // A dashboard inside "Gehaelter": its own grants and the folder's count, not those above.
+        let mut dashboard = vec![link(ResourceType::Dashboard, "lohn", false)];
+        dashboard.extend(gehaelter.iter().cloned());
+        assert!(permissions_on(&viewer, ResourceType::Dashboard, &narrow(&dashboard, finance_grants())).is_none());
+        let own = vec![grant("dashboard", "lohn", "view")];
+        assert!(permissions_on(&viewer, ResourceType::Dashboard, &narrow(&dashboard, own)).is_some());
+
+        // Without a restricted folder, grants anywhere in the chain inherit down.
+        let open = [link(ResourceType::Folder, "sub", false), link(ResourceType::Folder, "top", false)];
+        let facts = narrow(&open, vec![grant("folder", "top", "edit")]);
+        assert!(!facts.restricted && facts.grants.len() == 1);
+        // Admins see restricted folders through their role.
+        let admin = BuiltinRole::Admin.permissions();
+        assert!(permissions_on(&admin, ResourceType::Folder, &narrow(&gehaelter, vec![])).is_some());
+    }
+
     #[tokio::test]
     async fn custom_and_team_roles_add_up() {
         let db = db().await;
-        exec(&db, "INSERT INTO roles (id, org_id, name, description, created_at) VALUES ('r1', 'o', 'Auditor', '', 0)")
+        exec(&db, "INSERT INTO roles (id, org_id, name, name_key, description, created_at) VALUES ('r1', 'o', 'Auditor', 'auditor', '', 0)")
             .await;
         exec(&db, "INSERT INTO role_permissions (role_id, permission) VALUES ('r1', 'audit:read')").await;
         // Names the server does not know (from a newer or older version) grant nothing.
@@ -853,7 +971,11 @@ mod resource_tests {
         // A custom role of another organization is no role here.
         assert!(effective_permissions(&db, "u", "other", "r1").await.unwrap().is_empty());
 
-        exec(&db, "INSERT INTO teams (id, org_id, name, created_at) VALUES ('t1', 'o', 'Betrieb', 0)").await;
+        exec(
+            &db,
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('t1', 'o', 'Betrieb', 'betrieb', 0)",
+        )
+        .await;
         exec(&db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)")
             .await;
         exec(&db, "INSERT INTO team_roles (team_id, role) VALUES ('t1', 'editor')").await;
@@ -879,7 +1001,11 @@ mod resource_tests {
     async fn grants_match_the_user_their_teams_and_their_roles() {
         let db = db().await;
         let viewer = ctx(BuiltinRole::Viewer);
-        exec(&db, "INSERT INTO teams (id, org_id, name, created_at) VALUES ('t1', 'o', 'Betrieb', 0)").await;
+        exec(
+            &db,
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('t1', 'o', 'Betrieb', 'betrieb', 0)",
+        )
+        .await;
         exec(&db, "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('t1', 'u', 'member', 0)")
             .await;
         for sql in [
@@ -914,9 +1040,8 @@ mod resource_tests {
     #[tokio::test]
     async fn inheritance_stub_is_the_folder_itself() {
         let db = db().await;
-        assert_eq!(folder_ancestors(&db, "o", "f").await.unwrap(), ["f"]);
+        assert_eq!(folder_chain(&db, "o", "f").await.unwrap(), [FolderLink { id: "f".into(), restricted: false }]);
         assert_eq!(dashboard_folder(&db, "o", "d").await.unwrap(), None);
-        assert!(!folder_is_restricted(&db, "o", "f").await.unwrap());
         exec(
             &db,
             "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
@@ -942,10 +1067,11 @@ mod resource_tests {
 
     #[test]
     fn the_last_owner_stays() {
-        assert_eq!(ensure_owner_remains("owner", Some("admin"), 1).unwrap_err().code, "conflict");
-        assert_eq!(ensure_owner_remains("owner", None, 1).unwrap_err().code, "conflict");
-        assert!(ensure_owner_remains("owner", Some("owner"), 1).is_ok());
-        assert!(ensure_owner_remains("owner", None, 2).is_ok());
+        // The count is of the other enabled owners.
+        assert_eq!(ensure_owner_remains("owner", Some("admin"), 0).unwrap_err().code, "conflict");
+        assert_eq!(ensure_owner_remains("owner", None, 0).unwrap_err().code, "conflict");
+        assert!(ensure_owner_remains("owner", Some("owner"), 0).is_ok());
+        assert!(ensure_owner_remains("owner", None, 1).is_ok());
         assert!(ensure_owner_remains("admin", None, 0).is_ok());
     }
 
@@ -961,9 +1087,19 @@ mod resource_tests {
     async fn owner_and_admin_counts_are_taken_under_lock() {
         let db = db().await;
         exec(&db, "UPDATE org_members SET role = 'owner'").await;
+        exec(&db, "INSERT INTO users (id, email, name, disabled, created_at) VALUES ('d', 'd@example.de', 'D', 1, 0)")
+            .await;
+        exec(&db, "INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ('o', 'd', 'owner', 0)").await;
         let mut tx = db.begin().await.unwrap();
-        assert_eq!(lock_owners(&mut tx, "o").await.unwrap(), 1);
+        lock_org(&mut tx, "o").await.unwrap();
+        // A disabled owner does not count: u is the only enabled one.
+        assert_eq!(lock_owners(&mut tx, "o", "u").await.unwrap(), 0);
+        assert_eq!(lock_owners(&mut tx, "o", "d").await.unwrap(), 1);
+        assert_eq!(lock_orgs_left_without_owner(&mut tx, "u").await.unwrap(), 1);
+        assert_eq!(lock_orgs_left_without_owner(&mut tx, "d").await.unwrap(), 0);
         assert_eq!(lock_server_admins(&mut tx).await.unwrap(), 0);
+        assert_eq!(lock_role(&mut tx, "o", "viewer").await.unwrap().unwrap().name, "viewer");
+        assert!(lock_role(&mut tx, "o", "gone").await.unwrap().is_none());
         tx.commit().await.unwrap();
     }
 }

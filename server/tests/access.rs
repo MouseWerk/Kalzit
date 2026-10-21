@@ -10,7 +10,7 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use kalzit::app::{AppState, router};
-use kalzit::clock::ManualClock;
+use kalzit::clock::{Clock, ManualClock};
 use kalzit::config::Config;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -146,6 +146,33 @@ impl TestApp {
         s
     }
 
+    /// Sends the calls at the same moment, each from its own task; the answers in call order.
+    async fn parallel(&self, calls: Vec<(Method, String, Value, Session)>) -> Vec<(StatusCode, Value)> {
+        let mut tasks = Vec::new();
+        for (method, path, body, who) in calls {
+            let app = self.app.clone();
+            tasks.push(tokio::spawn(async move {
+                let req = Request::builder()
+                    .method(method)
+                    .uri(format!("/api{}", path.trim_start_matches("/api")))
+                    .header(header::HOST, "kalzit.test")
+                    .header(header::COOKIE, &who.cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap();
+                let res = app.oneshot(req).await.unwrap();
+                let status = res.status();
+                let bytes = res.into_body().collect().await.unwrap().to_bytes();
+                (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+            }));
+        }
+        let mut out = Vec::new();
+        for task in tasks {
+            out.push(task.await.unwrap());
+        }
+        out
+    }
+
     async fn permissions(&self, org: &str, who: &Session) -> Vec<String> {
         let r = self.get(&format!("/api/orgs/{org}"), who).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
@@ -275,36 +302,102 @@ async fn owners_and_admins_cannot_hand_out_or_take_more_than_they_hold() {
     assert_eq!(t.delete(&ada_path, &ada).await.status, StatusCode::CONFLICT, "ada is the last owner now");
 }
 
-#[tokio::test]
-async fn concurrent_owner_demotions_keep_one_owner() {
-    let t = test_app(None).await;
-    let (owner, org) = t.setup().await;
-    let ada = t.member(&owner, &org, "Ada", "ada@example.de", "owner").await;
-    // Both owners step down at the same moment; one must be refused.
-    let mut set = tokio::task::JoinSet::new();
-    for who in [owner.clone(), ada.clone()] {
-        let app = t.app.clone();
-        let path = format!("/api/orgs/{org}/members/{}", who.user_id);
-        set.spawn(async move {
-            let req = Request::builder()
-                .method(Method::PATCH)
-                .uri(path)
-                .header(header::HOST, "kalzit.test")
-                .header(header::COOKIE, &who.cookie)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({ "role": "admin" }).to_string()))
-                .unwrap();
-            app.oneshot(req).await.unwrap().status()
-        });
-    }
-    let mut statuses = set.join_all().await;
+/// Both owners step down at the same moment; one must be refused.
+async fn check_concurrent_owner_demotions(t: &TestApp, owner: &Session, org: &str) {
+    let ada = t.member(owner, org, "Ada", "ada@example.de", "owner").await;
+    let calls = [owner, &ada].map(|who| {
+        (Method::PATCH, format!("/api/orgs/{org}/members/{}", who.user_id), json!({ "role": "admin" }), who.clone())
+    });
+    let mut statuses: Vec<StatusCode> = t.parallel(calls.to_vec()).await.into_iter().map(|(s, _)| s).collect();
     statuses.sort();
     assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
-    let (owners,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE role = 'owner'").fetch_one(&t.state.db).await.unwrap();
+    let (owners,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM org_members WHERE org_id = $1 AND role = 'owner'")
+        .bind(org)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
     assert_eq!(owners, 1);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_owner_demotions_keep_one_owner() {
+    let t = test_app(None).await;
+    let (owner, org) = t.setup().await;
+    check_concurrent_owner_demotions(&t, &owner, &org).await;
+}
+
+/// Two admins give up their admin role at the same moment; one must be refused. (Each revokes their
+/// own, so the loser is refused by the guard, not by the access check.)
+async fn check_concurrent_admin_revocations(t: &TestApp, admin: &Session) {
+    let r = t
+        .post(
+            "/api/admin/users",
+            json!({ "name": "Ada", "email": "root2@example.de", "password": PASSWORD,
+                                              "isServerAdmin": true }),
+            admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let second = t.login("root2@example.de").await;
+    let calls = [admin, &second].map(|who| {
+        (Method::PATCH, format!("/api/admin/users/{}", who.user_id), json!({ "isServerAdmin": false }), who.clone())
+    });
+    let mut statuses: Vec<StatusCode> = t.parallel(calls.to_vec()).await.into_iter().map(|(s, _)| s).collect();
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+    let (admins,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE is_server_admin = 1 AND disabled = 0")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(admins, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_admin_revocations_keep_one_admin() {
+    let t = test_app(None).await;
+    let (admin, _) = t.setup().await;
+    check_concurrent_admin_revocations(&t, &admin).await;
+}
+
+/// The same request sent several times at once: grants and team member PUT answer 200 with the
+/// one row, adding a member answers 409 for all but the first; never a 500.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parallel_duplicate_writes_are_answered_cleanly() {
+    const COPIES: usize = 6;
+    let t = test_app(None).await;
+    let (owner, org) = t.setup().await;
+    let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
+    let dashboard = uuid();
+
+    let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
+                        "resourceId": dashboard, "level": "edit" });
+    let calls = vec![(Method::POST, format!("/api/orgs/{org}/grants"), grant, owner.clone()); COPIES];
+    let replies = t.parallel(calls).await;
+    let mut statuses: Vec<StatusCode> = replies.iter().map(|(s, _)| *s).collect();
+    statuses.sort();
+    assert_eq!(statuses[0], StatusCode::OK, "{replies:?}");
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::CREATED).count(), 1, "{replies:?}");
+    assert!(statuses.iter().all(|s| *s == StatusCode::OK || *s == StatusCode::CREATED), "{replies:?}");
+    let ids: std::collections::BTreeSet<&str> = replies.iter().map(|(_, b)| b["id"].as_str().unwrap()).collect();
+    assert_eq!(ids.len(), 1, "one grant: {replies:?}");
+
+    t.user(&owner, "Neu", "neu@example.de").await;
+    let add = json!({ "email": "neu@example.de", "role": "viewer" });
+    let calls = vec![(Method::POST, format!("/api/orgs/{org}/members"), add, owner.clone()); COPIES];
+    let replies = t.parallel(calls).await;
+    let created = replies.iter().filter(|(s, _)| *s == StatusCode::CREATED).count();
+    let conflicts =
+        replies.iter().filter(|(s, b)| *s == StatusCode::CONFLICT && b["error"]["field"] == "email").count();
+    assert_eq!((created, conflicts), (1, COPIES - 1), "{replies:?}");
+
+    let team = t.post(&format!("/api/orgs/{org}/teams"), json!({ "name": "Betrieb" }), &owner).await;
+    let path = format!("/api/orgs/{org}/teams/{}/members/{}", team.body["id"].as_str().unwrap(), vic.user_id);
+    let calls = vec![(Method::PUT, path, json!({}), owner.clone()); COPIES];
+    let replies = t.parallel(calls).await;
+    assert!(replies.iter().all(|(s, b)| *s == StatusCode::OK && b["role"] == "member"), "{replies:?}");
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM team_members").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(rows, 1);
+}
 #[tokio::test]
 async fn teams_members_and_team_roles() {
     let t = test_app(None).await;
@@ -418,13 +511,24 @@ async fn custom_roles_are_created_assigned_changed_and_deleted() {
     for (body, field) in [
         (json!({ "name": "Prüfer", "permissions": [] }), "name"),
         (json!({ "name": "Admin", "permissions": [] }), "name"),
+        // Case-insensitive, also beyond ASCII.
+        (json!({ "name": "PRÜFER", "permissions": [] }), "name"),
         (json!({ "name": "X", "permissions": ["rockets:launch"] }), "permissions"),
         (json!({ "name": "X", "description": "a\u{0}b", "permissions": [] }), "description"),
     ] {
         assert_eq!(t.post(&roles, body.clone(), &ada).await.field(), field, "{body}");
     }
-    // Admins lack org:delete, so they cannot put it into a role.
-    let r = t.post(&roles, json!({ "name": "Löscher", "permissions": ["org:delete"] }), &ada).await;
+    // org:delete belongs to owners alone: no custom role may contain it, not even an owner's.
+    for who in [&ada, &owner] {
+        let r = t.post(&roles, json!({ "name": "Löscher", "permissions": ["org:delete"] }), who).await;
+        assert_eq!((r.code(), r.field()), ("validation", "permissions"), "{}", r.body);
+    }
+    // Someone who manages roles but lacks users:write cannot put it into a role.
+    let body = json!({ "name": "Rollenpflege", "permissions": ["roles:read", "roles:write"] });
+    let keeper_role = t.post(&roles, body, &owner).await;
+    let keeper_role = keeper_role.body["id"].as_str().unwrap();
+    let keeper = t.member(&owner, &org, "Kim", "kim@example.de", keeper_role).await;
+    let r = t.post(&roles, json!({ "name": "Mehr", "permissions": ["users:write"] }), &keeper).await;
     assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"));
 
     // A member with the custom role holds exactly its permissions.
@@ -434,7 +538,9 @@ async fn custom_roles_are_created_assigned_changed_and_deleted() {
     let r = t.patch(&role, json!({ "permissions": ["audit:read"], "name": "Revision" }), &ada).await;
     assert_eq!((r.body["name"].as_str(), r.body["permissions"].clone()), (Some("Revision"), json!(["audit:read"])));
     assert_eq!(t.permissions(&org, &bob).await, ["audit:read"]);
-    let r = t.patch(&role, json!({ "permissions": ["org:delete"] }), &ada).await;
+    let r = t.patch(&role, json!({ "permissions": ["org:delete"] }), &owner).await;
+    assert_eq!(r.field(), "permissions");
+    let r = t.patch(&role, json!({ "permissions": ["users:write"] }), &keeper).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     // Built-in roles are fixed; unknown ids are not found.
@@ -451,7 +557,11 @@ async fn custom_roles_are_created_assigned_changed_and_deleted() {
     assert_eq!(t.put(&team_roles, json!({ "roles": [role_id] }), &ada).await.status, StatusCode::OK);
     assert_eq!(t.delete(&role, &ada).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.get(&team_roles.replace("/roles", ""), &ada).await.body["roles"], json!([]), "team role removed too");
-    assert_eq!(t.get(&roles, &owner).await.body["items"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        t.get(&roles, &owner).await.body["items"].as_array().unwrap().len(),
+        5,
+        "four built-ins and Rollenpflege"
+    );
 
     let actions = t.audit_actions().await;
     for action in ["role.created", "role.updated", "role.deleted"] {
@@ -762,6 +872,146 @@ async fn users_manage_their_own_name_password_and_sessions() {
 }
 
 #[tokio::test]
+async fn removing_a_member_needs_what_they_hold_through_teams_and_grants() {
+    let t = test_app(None).await;
+    let (owner, org) = t.setup().await;
+    // Holds what a viewer has, plus managing members.
+    let permissions = ["dashboards:read", "folders:read", "analyses:read", "teams:read", "users:read", "users:write"];
+    let body = json!({ "name": "Personal", "permissions": permissions });
+    let hr_role = t.post(&format!("/api/orgs/{org}/roles"), body, &owner).await;
+    let hr = t.member(&owner, &org, "Hanna", "hanna@example.de", hr_role.body["id"].as_str().unwrap()).await;
+    let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
+    let vic_path = format!("/api/orgs/{org}/members/{}", vic.user_id);
+
+    // Vic is admin through a team: removing Vic would take that away.
+    let team = t.post(&format!("/api/orgs/{org}/teams"), json!({ "name": "Leitung" }), &owner).await;
+    let team = format!("/api/orgs/{org}/teams/{}", team.body["id"].as_str().unwrap());
+    t.put(&format!("{team}/members/{}", vic.user_id), json!({}), &owner).await;
+    assert_eq!(t.put(&format!("{team}/roles"), json!({ "roles": ["admin"] }), &owner).await.status, StatusCode::OK);
+    let r = t.delete(&vic_path, &hr).await;
+    assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", r.body);
+
+    // Out of the team, Vic still holds an admin grant on a dashboard.
+    t.delete(&format!("{team}/members/{}", vic.user_id), &owner).await;
+    let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
+                        "resourceId": uuid(), "level": "admin" });
+    assert_eq!(t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await.status, StatusCode::CREATED);
+    assert_eq!(t.delete(&vic_path, &hr).await.status, StatusCode::FORBIDDEN);
+
+    // With neither, a plain viewer can be removed.
+    let plain = t.member(&owner, &org, "Pia", "pia@example.de", "viewer").await;
+    let r = t.delete(&format!("/api/orgs/{org}/members/{}", plain.user_id), &hr).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+}
+
+#[tokio::test]
+async fn names_are_unique_regardless_of_case_and_deleted_teams_leave_nothing() {
+    let t = test_app(None).await;
+    let (owner, org) = t.setup().await;
+    let teams = format!("/api/orgs/{org}/teams");
+    let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
+    let r = t.post(&teams, json!({ "name": "Ölförderung" }), &owner).await;
+    let team = format!("{teams}/{}", r.body["id"].as_str().unwrap());
+    let r = t.post(&teams, json!({ "name": "ÖLFÖRDERUNG" }), &owner).await;
+    assert_eq!((r.status, r.field()), (StatusCode::CONFLICT, "name"));
+    let other = t.post(&teams, json!({ "name": "Andere" }), &owner).await;
+    let other = format!("{teams}/{}", other.body["id"].as_str().unwrap());
+    assert_eq!(t.patch(&other, json!({ "name": "ölförderung" }), &owner).await.status, StatusCode::CONFLICT);
+    // Changing only the case of a team's own name is fine.
+    assert_eq!(t.patch(&team, json!({ "name": "ÖLförderung" }), &owner).await.status, StatusCode::OK);
+
+    t.put(&format!("{team}/members/{}", vic.user_id), json!({}), &owner).await;
+    t.put(&format!("{team}/roles"), json!({ "roles": ["editor"] }), &owner).await;
+    assert_eq!(t.delete(&team, &owner).await.status, StatusCode::NO_CONTENT);
+    for table in ["team_members", "team_roles"] {
+        let (rows,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+}
+
+#[tokio::test]
+async fn disabled_accounts_do_not_count_as_owners() {
+    let t = test_app(None).await;
+    let (admin, org) = t.setup().await;
+    let ada = t.user(&admin, "Ada", "ada@example.de").await;
+    let ada_path = format!("/api/admin/users/{}", ada.user_id);
+    t.patch(&ada_path, json!({ "disabled": true }), &admin).await;
+    let r = t.post("/api/admin/orgs", json!({ "name": "Zweite", "ownerUserId": ada.user_id }), &admin).await;
+    assert_eq!((r.code(), r.field()), ("validation", "ownerUserId"));
+    t.patch(&ada_path, json!({ "disabled": false }), &admin).await;
+
+    // Ada becomes a second owner of the first organization, then is disabled: the admin, still
+    // an owner there, is now its last enabled owner.
+    let r = t
+        .post(&format!("/api/orgs/{org}/members"), json!({ "email": "ada@example.de", "role": "owner" }), &admin)
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert_eq!(t.patch(&ada_path, json!({ "disabled": true }), &admin).await.status, StatusCode::OK);
+    let r = t.patch(&format!("/api/orgs/{org}/members/{}", admin.user_id), json!({ "role": "admin" }), &admin).await;
+    assert_eq!((r.status, r.code()), (StatusCode::CONFLICT, "conflict"), "a disabled owner does not count");
+    // And the last enabled owner of an organization cannot be disabled.
+    let r = t
+        .post(
+            "/api/admin/users",
+            json!({ "name": "Root", "email": "root@example.de", "password": PASSWORD,
+                                              "isServerAdmin": true }),
+            &admin,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let root = t.login("root@example.de").await;
+    let r = t.patch(&format!("/api/admin/users/{}", admin.user_id), json!({ "disabled": true }), &root).await;
+    assert_eq!((r.status, r.code()), (StatusCode::CONFLICT, "conflict"), "{}", r.body);
+    // With Ada enabled again, the admin may be disabled.
+    t.patch(&ada_path, json!({ "disabled": false }), &root).await;
+    let r = t.patch(&format!("/api/admin/users/{}", admin.user_id), json!({ "disabled": true }), &root).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+#[tokio::test]
+async fn ended_sessions_are_not_listed() {
+    let t = test_app(None).await;
+    let (owner, _) = t.setup().await;
+    let other = t.login("joerg@example.de").await;
+    // The other session reaches its lifetime; the hourly cleanup has not run yet.
+    sqlx::query("UPDATE sessions SET expires_at = $1 WHERE token_hash <> $2")
+        .bind(t.clock.now_ms())
+        .bind(kalzit::auth::session::hash_token(owner.cookie.split_once('=').unwrap().1))
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.get("/api/me/sessions", &owner).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{}", r.body);
+    assert_eq!(items[0]["current"], true);
+    assert_eq!(t.get("/api/me", &other).await.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn failed_sign_ins_and_password_checks_share_the_email_budget() {
+    let t = test_app(None).await;
+    let (owner, _) = t.setup().await;
+    let limit = t.state.config.security.login_max_failures;
+    for _ in 0..limit {
+        let r = t
+            .send(
+                Method::POST,
+                "/api/auth/login",
+                Some(json!({ "email": "joerg@example.de", "password": "falsch falsch" })),
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    let r =
+        t.post("/api/me/password", json!({ "current": PASSWORD, "new": "Ein neues langes Passwort" }), &owner).await;
+    assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+}
+
+#[tokio::test]
 async fn guessing_the_current_password_is_rate_limited() {
     let t = test_app(None).await;
     let (owner, _) = t.setup().await;
@@ -814,6 +1064,8 @@ async fn postgres_access_model() {
     assert_eq!(t.get("/api/me/sessions", &vic).await.body["items"].as_array().unwrap().len(), 1);
     let r = t.patch(&format!("/api/admin/users/{}", owner.user_id), json!({ "disabled": true }), &owner).await;
     assert_eq!(r.code(), "conflict");
+    check_concurrent_owner_demotions(&t, &owner, &org).await;
+    check_concurrent_admin_revocations(&t, &owner).await;
     drop(t);
 
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin_pool).await.unwrap();

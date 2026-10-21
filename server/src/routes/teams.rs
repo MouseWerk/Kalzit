@@ -11,7 +11,7 @@ use serde_json::json;
 use super::support::{Actor, PageQuery, Paging, QueryParams, audit, conflict, is_unique_violation};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{Access, BuiltinRole, OrgCtx, Permission, ensure_holds, resolve_role};
+use crate::authz::{Access, BuiltinRole, OrgCtx, Permission, ensure_holds, lock_org, lock_role, resolve_role};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -134,10 +134,12 @@ async fn create(
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
-    sqlx::query("INSERT INTO teams (id, org_id, name, created_at) VALUES ($1, $2, $3, $4)")
+    lock_org(&mut tx, &ctx.org_id).await?;
+    sqlx::query("INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ($1, $2, $3, $4, $5)")
         .bind(&id)
         .bind(&ctx.org_id)
         .bind(&name)
+        .bind(name.to_lowercase())
         .bind(now)
         .execute(&mut *tx)
         .await
@@ -166,8 +168,10 @@ async fn rename(
 ) -> ApiResult<Json<Team>> {
     let name = super::clean_name(&req.name, "name").map_err(|e| e.with_field("name"))?;
     let mut tx = state.db.begin().await?;
-    let done = sqlx::query("UPDATE teams SET name = $1 WHERE org_id = $2 AND id = $3")
+    lock_org(&mut tx, &ctx.org_id).await?;
+    let done = sqlx::query("UPDATE teams SET name = $1, name_key = $2 WHERE org_id = $3 AND id = $4")
         .bind(&name)
+        .bind(name.to_lowercase())
         .bind(&ctx.org_id)
         .bind(&team_id)
         .execute(&mut *tx)
@@ -207,6 +211,7 @@ async fn delete(
     Path((_, team_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     load(&mut tx, &ctx.org_id, &team_id).await?;
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
     sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND subject_type = 'team' AND subject_id = $2")
@@ -214,7 +219,11 @@ async fn delete(
         .bind(&team_id)
         .execute(&mut *tx)
         .await?;
-    // Members and roles of the team go with it (ON DELETE CASCADE).
+    // Explicit rather than through ON DELETE CASCADE, which SQLite applies only with foreign keys
+    // switched on for the connection.
+    for sql in ["DELETE FROM team_members WHERE team_id = $1", "DELETE FROM team_roles WHERE team_id = $1"] {
+        sqlx::query(sql).bind(&team_id).execute(&mut *tx).await?;
+    }
     sqlx::query("DELETE FROM teams WHERE org_id = $1 AND id = $2")
         .bind(&ctx.org_id)
         .bind(&team_id)
@@ -306,6 +315,7 @@ async fn put_member(
         return Err(ApiError::validation("role must be member or maintainer").with_field("role"));
     }
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     ensure_may_manage_members(&mut tx, &ctx, &team_id).await?;
     let in_org: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
@@ -365,6 +375,7 @@ async fn remove_member(
     Path((_, team_id, user_id)): Path<(String, String, String)>,
 ) -> ApiResult<StatusCode> {
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     ensure_may_manage_members(&mut tx, &ctx, &team_id).await?;
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
     let done = sqlx::query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
@@ -400,6 +411,7 @@ async fn set_roles(
         return Err(ApiError::validation(format!("a team can have at most {MAX_TEAM_ROLES} roles")).with_field("roles"));
     }
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     load(&mut tx, &ctx.org_id, &team_id).await?;
     let mut changed = team_permissions(&mut tx, &ctx.org_id, &team_id).await?;
     for key in &keys {
@@ -407,7 +419,7 @@ async fn set_roles(
         if key == BuiltinRole::Owner.as_str() {
             return Err(ApiError::validation("owner cannot be a team role").with_field("roles"));
         }
-        let info = resolve_role(&mut *tx, &ctx.org_id, key)
+        let info = lock_role(&mut tx, &ctx.org_id, key)
             .await?
             .ok_or_else(|| ApiError::validation(format!("no such role: {key}")).with_field("roles"))?;
         changed.extend(info.permissions);

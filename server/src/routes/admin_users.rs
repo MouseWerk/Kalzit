@@ -11,7 +11,7 @@ use super::support::{Actor, PageQuery, Paging, QueryParams, audit, conflict, is_
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::auth::{SessionUser, password, session};
-use crate::authz::{Access, ensure_admin_remains, lock_server_admins};
+use crate::authz::{Access, ensure_admin_remains, lock_orgs_left_without_owner, lock_server_admins};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -160,6 +160,11 @@ async fn update(
     let disabled = req.disabled.unwrap_or(current.disabled.0);
     let is_admin = req.is_server_admin.unwrap_or(current.is_server_admin.0);
     ensure_admin_remains(current.is_server_admin.0 && !current.disabled.0, is_admin && !disabled, admins)?;
+    if disabled && !current.disabled.0 && lock_orgs_left_without_owner(&mut tx, &user_id).await? > 0 {
+        return Err(conflict(
+            "this account is the last enabled owner of an organization; make someone else owner first",
+        ));
+    }
 
     let mut fields = Vec::new();
     if let Some(name) = &name {

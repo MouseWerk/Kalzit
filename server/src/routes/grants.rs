@@ -12,7 +12,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{
     Access, GrantSource, OrgCtx, Permission, Resource, ResourceType, ensure_holds, explain, level_permissions,
-    resolve_role, resource_exists, resource_permissions,
+    lock_org, resolve_role, resource_exists, resource_permissions,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -167,6 +167,7 @@ async fn create(
     let held = managed_resource(&state, &ctx, resource).await?;
 
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     ensure_subject(&mut tx, &ctx.org_id, &req.subject_type, &req.subject_id).await?;
     let existing: Option<(String, String)> = sqlx::query_as(
         "SELECT id, level FROM resource_grants WHERE org_id = $1 AND resource_type = $2 AND resource_id = $3 \
@@ -254,26 +255,24 @@ async fn delete(
     Extension(info): Extension<RequestInfo>,
     Path((_, grant_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
+    let mut tx = state.db.begin().await?;
+    // The level checked is the one deleted: a concurrent change of the grant waits for this.
+    lock_org(&mut tx, &ctx.org_id).await?;
     let row: Option<(String, String, String)> =
         sqlx::query_as("SELECT resource_type, resource_id, level FROM resource_grants WHERE org_id = $1 AND id = $2")
             .bind(&ctx.org_id)
             .bind(&grant_id)
-            .fetch_optional(&state.db)
+            .fetch_optional(&mut *tx)
             .await?;
     let Some((resource_type, resource_id, level)) = row else { return Err(ApiError::not_found()) };
     let resource_type = ResourceType::parse(&resource_type).ok_or_else(ApiError::not_found)?;
     let held = managed_resource(&state, &ctx, Resource::new(resource_type, &resource_id)).await?;
     ensure_holds(&held, &level_permissions(resource_type, &level).unwrap_or_default())?;
-
-    let mut tx = state.db.begin().await?;
-    let done = sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND id = $2")
+    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND id = $2")
         .bind(&ctx.org_id)
         .bind(&grant_id)
         .execute(&mut *tx)
         .await?;
-    if done.rows_affected() == 0 {
-        return Err(ApiError::not_found());
-    }
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "grantId": grant_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "grant.deleted", (resource_type.as_str(), &resource_id), summary).await?;

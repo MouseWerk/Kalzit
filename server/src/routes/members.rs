@@ -1,5 +1,7 @@
 //! The members of an organization and their roles (docs/api/access.md, "Members").
 
+use std::collections::BTreeSet;
+
 use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode};
 use axum::{Extension, Json};
@@ -9,7 +11,10 @@ use serde_json::json;
 use super::support::{Actor, PageQuery, Paging, QueryParams, audit, conflict};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{Access, OrgCtx, Permission, ensure_holds, ensure_owner_remains, lock_owners, resolve_role};
+use crate::authz::{
+    Access, OrgCtx, Permission, ResourceType, RoleInfo, ensure_holds, ensure_owner_remains, level_permissions,
+    lock_org, lock_owners, lock_role, resolve_role,
+};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -83,12 +88,11 @@ async fn add(
     JsonBody(req): JsonBody<AddRequest>,
 ) -> ApiResult<(StatusCode, Json<Member>)> {
     let email = super::normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
-    let role = resolve_role(&state.db, &ctx.org_id, &req.role)
-        .await?
-        .ok_or_else(|| ApiError::validation("no such role").with_field("role"))?;
-    ensure_holds(&ctx.permissions, &role.permissions)?;
-
     let mut tx = state.db.begin().await?;
+    // First, so that two requests adding the same account run one after the other and the second
+    // finds the membership.
+    lock_org(&mut tx, &ctx.org_id).await?;
+    let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let user: Option<(String,)> =
         sqlx::query_as("SELECT id FROM users WHERE email = $1").bind(&email).fetch_optional(&mut *tx).await?;
     // Adding works for existing accounts only; invitations by mail come with `users:invite`.
@@ -125,25 +129,74 @@ struct RoleRequest {
     role: String,
 }
 
-/// The member's current role inside the transaction, after the owner rows are locked, with the
-/// guards every change of a member passes: the caller holds what the member had (nobody changes
-/// someone with more rights than themselves), and an owner remains.
+/// The role to give, resolved and locked inside the transaction so it cannot be deleted meanwhile,
+/// and within what the caller holds.
+async fn assignable_role(tx: &mut sqlx::AnyConnection, ctx: &OrgCtx, key: &str) -> ApiResult<RoleInfo> {
+    let role = lock_role(tx, &ctx.org_id, key)
+        .await?
+        .ok_or_else(|| ApiError::validation("no such role").with_field("role"))?;
+    ensure_holds(&ctx.permissions, &role.permissions)?;
+    Ok(role)
+}
+
+/// What a member loses besides their org role when they leave: the roles of their teams here and
+/// their own grants.
+async fn held_through_membership(
+    tx: &mut sqlx::AnyConnection,
+    org_id: &str,
+    user_id: &str,
+) -> ApiResult<BTreeSet<Permission>> {
+    let mut out = BTreeSet::new();
+    let team_roles: Vec<(String,)> = sqlx::query_as(
+        "SELECT r.role FROM team_roles r JOIN teams t ON t.id = r.team_id \
+         JOIN team_members m ON m.team_id = t.id WHERE t.org_id = $1 AND m.user_id = $2",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (key,) in team_roles {
+        if let Some(info) = resolve_role(&mut *tx, org_id, &key).await? {
+            out.extend(info.permissions);
+        }
+    }
+    let grants: Vec<(String, String)> = sqlx::query_as(
+        "SELECT resource_type, level FROM resource_grants WHERE org_id = $1 AND subject_type = 'user' AND subject_id = $2",
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (resource_type, level) in grants {
+        if let Some(t) = ResourceType::parse(&resource_type) {
+            out.extend(level_permissions(t, &level).unwrap_or_default());
+        }
+    }
+    Ok(out)
+}
+
+/// The member's current role inside the transaction, after the organization and its owner rows
+/// are locked, with the guards every change of a member passes: the caller holds what the member
+/// loses (nobody changes someone with more rights than themselves), and an enabled owner remains.
+/// `new_role` is `None` when the member is removed.
 async fn current_role_checked(
     tx: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
     user_id: &str,
     new_role: Option<&str>,
 ) -> ApiResult<String> {
-    let owners = lock_owners(tx, &ctx.org_id).await?;
+    let owners = lock_owners(tx, &ctx.org_id, user_id).await?;
     let current: Option<(String,)> = sqlx::query_as("SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(&ctx.org_id)
         .bind(user_id)
         .fetch_optional(&mut *tx)
         .await?;
     let Some((current,)) = current else { return Err(ApiError::not_found()) };
-    if let Some(info) = resolve_role(&mut *tx, &ctx.org_id, &current).await? {
-        ensure_holds(&ctx.permissions, &info.permissions)?;
+    let mut taken = resolve_role(&mut *tx, &ctx.org_id, &current).await?.map(|r| r.permissions).unwrap_or_default();
+    if new_role.is_none() {
+        taken.extend(held_through_membership(tx, &ctx.org_id, user_id).await?);
     }
+    ensure_holds(&ctx.permissions, &taken)?;
     ensure_owner_remains(&current, new_role, owners)?;
     Ok(current)
 }
@@ -155,12 +208,9 @@ async fn change_role(
     Path((_, user_id)): Path<(String, String)>,
     JsonBody(req): JsonBody<RoleRequest>,
 ) -> ApiResult<Json<Member>> {
-    let role = resolve_role(&state.db, &ctx.org_id, &req.role)
-        .await?
-        .ok_or_else(|| ApiError::validation("no such role").with_field("role"))?;
-    ensure_holds(&ctx.permissions, &role.permissions)?;
-
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
+    let role = assignable_role(&mut tx, &ctx, &req.role).await?;
     let previous = current_role_checked(&mut tx, &ctx, &user_id, Some(&role.key)).await?;
     if previous != role.key {
         sqlx::query("UPDATE org_members SET role = $1 WHERE org_id = $2 AND user_id = $3")
@@ -185,6 +235,7 @@ async fn remove(
     Path((_, user_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     current_role_checked(&mut tx, &ctx, &user_id, None).await?;
     // Team memberships and grants in this organization go with the membership; the account and
     // its memberships elsewhere stay.

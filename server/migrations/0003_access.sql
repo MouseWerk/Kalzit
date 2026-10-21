@@ -8,8 +8,11 @@ CREATE TABLE teams (
     id          TEXT PRIMARY KEY,
     org_id      TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
+    -- The name in lowercase (Unicode-aware, computed by the server), so names that differ only in
+    -- case cannot both exist; SQLite's own lower() folds ASCII only.
+    name_key    TEXT NOT NULL,
     created_at  BIGINT NOT NULL,
-    UNIQUE (org_id, name)
+    UNIQUE (org_id, name_key)
 );
 
 -- `role` is `member` or `maintainer`; maintainers may manage the members of their team.
@@ -27,9 +30,10 @@ CREATE TABLE roles (
     id           TEXT PRIMARY KEY,
     org_id       TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
+    name_key     TEXT NOT NULL,
     description  TEXT NOT NULL,
     created_at   BIGINT NOT NULL,
-    UNIQUE (org_id, name)
+    UNIQUE (org_id, name_key)
 );
 
 -- `permission` is the catalog name (`dashboards:read`); names the server no longer knows grant

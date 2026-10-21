@@ -73,8 +73,11 @@ async fn change_password(
     if req.current.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_current());
     }
+    // Its own budget, and the sign-in budget of the account's email, so the two together allow
+    // no more guesses than sign-ins alone.
     let limit_key = format!("password:{}", user.id);
-    if !state.login_limiter.try_acquire(&[&limit_key], now) {
+    let email_key = format!("email:{}", user.email);
+    if !state.login_limiter.try_acquire(&[&limit_key, &email_key], now) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -83,19 +86,26 @@ async fn change_password(
     }
     let (stored,): (Option<String>,) =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1").bind(&user.id).fetch_one(&state.db).await?;
-    if !password::verify(req.current, stored).await {
+    if !password::verify(req.current, stored.clone()).await {
         return Err(wrong_current());
     }
     state.login_limiter.reset(&limit_key);
+    state.login_limiter.reset(&email_key);
     password::check_policy(&req.new).map_err(|e| ApiError::validation(e).with_field("new"))?;
     let hash = password::hash(req.new).await.map_err(|e| ApiError::internal("hashing password", e))?;
 
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+    // Only if the password is still the one just verified: of two changes at once, the second
+    // fails as if its current password were wrong.
+    let changed = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3")
         .bind(&hash)
         .bind(&user.id)
+        .bind(&stored)
         .execute(&mut *tx)
         .await?;
+    if changed.rows_affected() == 0 {
+        return Err(wrong_current());
+    }
     let ended = session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers).as_deref()).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user.id, "sessionsEnded": ended });
@@ -125,15 +135,20 @@ async fn list_sessions(
     QueryParams(q): QueryParams<PageQuery>,
 ) -> ApiResult<Json<Page<SessionView>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
+    let now = state.clock.now_ms();
     let mut rows: Vec<SessionView> = sqlx::query_as(
         "SELECT id, token_hash, created_at, last_seen_at, expires_at FROM sessions \
          WHERE user_id = $1 AND (created_at < $2 OR (created_at = $2 AND id < $3)) \
-         ORDER BY created_at DESC, id DESC LIMIT $4",
+         AND expires_at > $5 AND last_seen_at > $6 ORDER BY created_at DESC, id DESC LIMIT $4",
     )
     .bind(&user.id)
     .bind(paging.before_time())
     .bind(paging.before_id())
     .bind(paging.fetch_limit())
+    // Ended sessions (past their lifetime or idle limit) stay in the table until the hourly
+    // cleanup, but they are gone for the user.
+    .bind(now)
+    .bind(session::idle_cutoff(&state.config.sessions, now))
     .fetch_all(&state.db)
     .await?;
     let own = session::read_cookie(&headers).map(|t| session::hash_token(&t));

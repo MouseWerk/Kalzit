@@ -11,7 +11,9 @@ use serde_json::json;
 use super::support::{Actor, audit, clean_text, conflict, is_unique_violation};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{Access, BuiltinRole, OrgCtx, Permission, RoleInfo, ensure_holds, resolve_role};
+use crate::authz::{
+    Access, BuiltinRole, OrgCtx, Permission, RoleInfo, ensure_holds, lock_org, lock_role, resolve_role,
+};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -84,9 +86,14 @@ async fn list(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) 
 
 fn parse_permissions(raw: &[String]) -> ApiResult<BTreeSet<Permission>> {
     raw.iter()
-        .map(|p| {
-            Permission::parse(p)
-                .ok_or_else(|| ApiError::validation(format!("unknown permission {p}")).with_field("permissions"))
+        .map(|p| match Permission::parse(p) {
+            // Owners alone may delete the organization; a custom role would make owners outside
+            // the last-owner rule.
+            Some(Permission::OrgDelete) => {
+                Err(ApiError::validation("org:delete belongs to owners only").with_field("permissions"))
+            }
+            Some(permission) => Ok(permission),
+            None => Err(ApiError::validation(format!("unknown permission {p}")).with_field("permissions")),
         })
         .collect()
 }
@@ -163,20 +170,24 @@ async fn create(
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     let (count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM roles WHERE org_id = $1").bind(&ctx.org_id).fetch_one(&mut *tx).await?;
     if count >= MAX_CUSTOM_ROLES {
         return Err(conflict(format!("an organization can have at most {MAX_CUSTOM_ROLES} custom roles")));
     }
-    sqlx::query("INSERT INTO roles (id, org_id, name, description, created_at) VALUES ($1, $2, $3, $4, $5)")
-        .bind(&id)
-        .bind(&ctx.org_id)
-        .bind(&name)
-        .bind(&description)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| if is_unique_violation(&e) { duplicate_name() } else { e.into() })?;
+    sqlx::query(
+        "INSERT INTO roles (id, org_id, name, name_key, description, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(&id)
+    .bind(&ctx.org_id)
+    .bind(&name)
+    .bind(name.to_lowercase())
+    .bind(&description)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| if is_unique_violation(&e) { duplicate_name() } else { e.into() })?;
     write_permissions(&mut tx, &id, &permissions).await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({ "roleId": id, "permissions": names(&permissions) });
@@ -199,7 +210,8 @@ async fn custom_role(conn: &mut sqlx::AnyConnection, org_id: &str, role_id: &str
     if BuiltinRole::parse(role_id).is_some() {
         return Err(ApiError::forbidden("built-in roles cannot be changed"));
     }
-    resolve_role(&mut *conn, org_id, role_id).await?.ok_or_else(ApiError::not_found)
+    // Locked, so a member cannot be given the role while it is changed or deleted.
+    lock_role(conn, org_id, role_id).await?.ok_or_else(ApiError::not_found)
 }
 
 async fn update(
@@ -218,13 +230,15 @@ async fn update(
     let permissions = req.permissions.as_deref().map(parse_permissions).transpose()?;
 
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     let current = custom_role(&mut tx, &ctx.org_id, &role_id).await?;
     // Changing a role changes the rights of everyone holding it, in both directions.
     ensure_holds(&ctx.permissions, &current.permissions)?;
     let mut fields = Vec::new();
     if let Some(name) = &name {
-        sqlx::query("UPDATE roles SET name = $1 WHERE org_id = $2 AND id = $3")
+        sqlx::query("UPDATE roles SET name = $1, name_key = $2 WHERE org_id = $3 AND id = $4")
             .bind(name)
+            .bind(name.to_lowercase())
             .bind(&ctx.org_id)
             .bind(&role_id)
             .execute(&mut *tx)
@@ -266,6 +280,7 @@ async fn delete(
     Path((_, role_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let mut tx = state.db.begin().await?;
+    lock_org(&mut tx, &ctx.org_id).await?;
     let current = custom_role(&mut tx, &ctx.org_id, &role_id).await?;
     ensure_holds(&ctx.permissions, &current.permissions)?;
     // Members whose org role this is would be left with no role; they get another one first.
