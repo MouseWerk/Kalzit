@@ -93,7 +93,7 @@ interface Setting {
   source: "env" | "file" | "database" | "default";
   editable: boolean;              // false: set in the environment or kalzit.toml, or never UI-editable
   version: number;                // stored version an update must name; 0 = never saved
-  description: string;            // English, for tooltips until the UI has its own texts
+  description: string;            // English; the UI shows its own texts and uses this only for keys it does not know (SettingKey)
   updatedAt: number | null;       // of the stored value
   updatedBy: string | null;       // user id
 }

@@ -1,9 +1,11 @@
 import { type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
+import type { SettingKey } from "../../../api/generated/shapes";
 import { LANGUAGES, type MessageKey, useI18n } from "../../../i18n/i18n";
 import { THEMES } from "../../../theme/theme";
 import { isSetting, type Setting } from "../api";
+import { isKnownSetting, settingName, settingText } from "../catalog";
 import { errorText, SETTING_ERRORS } from "../errors";
 import { Dialog } from "./Dialog";
 import { formatValue } from "./format";
@@ -18,7 +20,7 @@ interface Conflict {
 }
 
 /** Settings whose value is one of a fixed set, offered as a select with readable names. */
-const CHOICES: Record<string, readonly { value: string; label: MessageKey }[]> = {
+const CHOICES: Partial<Record<SettingKey, readonly { value: string; label: MessageKey }[]>> = {
   "appearance.default_language": LANGUAGES.map((language) => ({
     value: language,
     label: `language.${language}` as const,
@@ -56,7 +58,7 @@ export function useSettingChanges({
       setRejected(null);
       await queryClient.invalidateQueries({ queryKey });
       notice.show({
-        message: t("admin.settings.saved", { key: saved.key }),
+        message: t("admin.settings.saved", { name: settingName(t, saved.key) }),
         undo: () =>
           save.mutate({
             key: saved.key,
@@ -172,14 +174,18 @@ export function SettingsList({
   );
 }
 
-/** The server's description (English until the UI has its own texts) and the default value. */
+/**
+ * The setting's description from the catalogs and its default value. Only for a setting this UI
+ * does not know (a newer server) the server's English description stands in.
+ */
 export function SettingDescription({ setting }: { setting: Setting }) {
   const { t } = useI18n();
+  const text = settingText(t, setting);
   return (
     <>
-      {setting.description === "" ? null : (
-        <p className="admin-setting__text" lang="en">
-          {setting.description}
+      {text.description === "" ? null : (
+        <p className="admin-setting__text" lang={text.fromServer ? "en" : undefined}>
+          {text.description}
         </p>
       )}
       <p className="admin-setting__text">
@@ -229,11 +235,24 @@ function SettingField({
   const committed = useRef<string | null>(null);
   const error = invalid ?? rejected;
 
+  // The label is the heading; the key stays visible for KALZIT_SETTING_* and kalzit.toml.
+  const label = settingText(t, setting).label;
   const header = (
     <div className="admin-setting__header">
-      <label htmlFor={id} className="admin-setting__key">
-        <code>{setting.key}</code>
-      </label>
+      {label === undefined ? (
+        <label htmlFor={id} className="admin-setting__key">
+          <code translate="no">{setting.key}</code>
+        </label>
+      ) : (
+        <>
+          <label htmlFor={id} className="admin-setting__key">
+            {label}
+          </label>
+          <code className="admin-setting__name" translate="no">
+            {setting.key}
+          </code>
+        </>
+      )}
       <div className="admin-setting__description" id={descriptionId}>
         {description}
         {reason === undefined ? null : <p className="admin-setting__reason">{reason}</p>}
@@ -273,7 +292,7 @@ function SettingField({
     );
   }
 
-  const choices = CHOICES[setting.key];
+  const choices = isKnownSetting(setting.key) ? CHOICES[setting.key] : undefined;
   if (choices !== undefined && typeof value === "string") {
     return (
       <>
@@ -435,7 +454,9 @@ function ConflictDialog({
         </>
       }
     >
-      <p>{t("admin.conflict.text", { key: conflict?.key ?? "" })}</p>
+      <p>
+        {t("admin.conflict.text", { name: conflict === null ? "" : settingName(t, conflict.key) })}
+      </p>
       <dl className="admin-conflict">
         <dt>{t("admin.conflict.stored")}</dt>
         <dd>

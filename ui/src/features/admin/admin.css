@@ -393,6 +393,12 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /* The key under the label, quiet, for KALZIT_SETTING_* and kalzit.toml. */
+  .admin-setting__name {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
   .admin-setting__description {
     display: grid;
     justify-items: start;
