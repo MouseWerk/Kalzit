@@ -12,6 +12,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{Access, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
+use crate::folders;
 use crate::paging::{self, QueryParams};
 use crate::settings;
 use crate::shapes::Page;
@@ -82,7 +83,7 @@ async fn list_org(
     if q.org_id.is_some() {
         return Err(ApiError::validation("orgId is a filter of the server view only").with_field("orgId"));
     }
-    list(&state, Some(ctx.org_id.as_str()), q).await
+    list(&state, Some(ctx.org_id.as_str()), folders::sees_restricted(&ctx), q).await
 }
 
 async fn list_server(
@@ -90,11 +91,21 @@ async fn list_server(
     QueryParams(mut q): QueryParams<AuditQuery>,
 ) -> ApiResult<Json<Page<AuditItem>>> {
     let org = q.org_id.take();
-    list(&state, org.as_deref(), q).await
+    if org.as_deref().is_some_and(|o| o.trim().is_empty()) {
+        return Err(ApiError::validation("orgId must not be empty").with_field("orgId"));
+    }
+    list(&state, org.as_deref(), true, q).await
 }
 
-/// Newest first; `org_id` `None` lists every event of the server, sign-ins included.
-async fn list(state: &AppState, org_id: Option<&str>, q: AuditQuery) -> ApiResult<Json<Page<AuditItem>>> {
+/// Newest first; `org_id` `None` lists every event of the server, sign-ins included. Without
+/// `sees_restricted`, events about folders and dashboards inside restricted folders are left out,
+/// as the resources themselves are.
+async fn list(
+    state: &AppState,
+    org_id: Option<&str>,
+    sees_restricted: bool,
+    q: AuditQuery,
+) -> ApiResult<Json<Page<AuditItem>>> {
     let limit = paging::limit(q.limit)?;
     let after: Option<(i64, String)> = paging::decode_cursor(q.cursor.as_deref())?;
     if let (Some(from), Some(to)) = (q.from, q.to)
@@ -104,8 +115,8 @@ async fn list(state: &AppState, org_id: Option<&str>, q: AuditQuery) -> ApiResul
     }
     let (after_ms, after_id) = after.unzip();
     // Absent filters are bound as NULL; the casts give PostgreSQL the parameter types.
-    let rows: Vec<AuditRow> = sqlx::query_as(
-        "SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.action, e.resource_type, \
+    let rows: Vec<AuditRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{} SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.action, e.resource_type, \
          e.resource_id, e.summary, e.created_at \
          FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id \
          WHERE (CAST($1 AS TEXT) IS NULL OR e.org_id = $1) \
@@ -116,8 +127,14 @@ async fn list(state: &AppState, org_id: Option<&str>, q: AuditQuery) -> ApiResul
          AND (CAST($6 AS BIGINT) IS NULL OR e.created_at >= $6) \
          AND (CAST($7 AS BIGINT) IS NULL OR e.created_at < $7) \
          AND (CAST($8 AS BIGINT) IS NULL OR e.created_at < $8 OR (e.created_at = $8 AND e.id < $9)) \
+         AND (CAST($11 AS BIGINT) = 1 OR NOT ( \
+           (COALESCE(e.resource_type, '') = 'folder' \
+            AND COALESCE(e.resource_id, '') IN (SELECT id FROM hidden_folders)) \
+           OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
+             (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND d.folder_id IN (SELECT id FROM hidden_folders))))) \
          ORDER BY e.created_at DESC, e.id DESC LIMIT $10",
-    )
+        folders::HIDDEN_FOLDERS_CTE
+    )))
     .bind(org_id)
     .bind(q.actor.as_deref())
     .bind(q.action.as_deref().filter(|a| !a.is_empty()))
@@ -128,6 +145,7 @@ async fn list(state: &AppState, org_id: Option<&str>, q: AuditQuery) -> ApiResul
     .bind(after_ms)
     .bind(after_id.as_deref())
     .bind(limit as i64 + 1)
+    .bind(sees_restricted as i64)
     .fetch_all(&state.db)
     .await?;
 
@@ -200,4 +218,44 @@ pub fn spawn_retention(state: AppState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Built-in roles that read the audit log also see restricted folders, so this runs the
+    /// query directly, as for a custom role with `audit:read` alone.
+    #[tokio::test]
+    async fn events_about_hidden_folders_and_their_dashboards_are_left_out() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        let clock = std::sync::Arc::new(crate::clock::ManualClock::new(0));
+        let state =
+            AppState::new(crate::config::Config::default(), db.clone(), clock, Some("fixed-code-0123456789".into()))
+                .await
+                .unwrap();
+        for sql in [
+            "INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)",
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) VALUES \
+             ('secret', 'o', NULL, 'S', 1, 1, 0, 0), ('inner', 'o', 'secret', 'I', 0, 1, 0, 0), \
+             ('open', 'o', NULL, 'O', 0, 1, 0, 0)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at) VALUES \
+             ('hidden', 'o', 'inner', 'H', 'h', 1, 0, 0), ('shown', 'o', 'open', 'S', 's', 1, 0, 0)",
+            "INSERT INTO audit_events (id, org_id, action, resource_type, resource_id, summary, created_at) VALUES \
+             ('1', 'o', 'folder.created', 'folder', 'secret', '{}', 1), \
+             ('2', 'o', 'folder.created', 'folder', 'inner', '{}', 2), \
+             ('3', 'o', 'dashboard.saved', 'dashboard', 'hidden', '{}', 3), \
+             ('4', 'o', 'dashboard.saved', 'dashboard', 'shown', '{}', 4), \
+             ('5', 'o', 'folder.created', 'folder', 'open', '{}', 5), \
+             ('6', 'o', 'settings.updated', NULL, NULL, '{}', 6)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let ids = |page: Page<AuditItem>| page.items.into_iter().map(|e| e.id).collect::<Vec<_>>();
+        let query = || serde_json::from_value::<AuditQuery>(serde_json::json!({})).unwrap();
+        let limited = list(&state, Some("o"), false, query()).await.unwrap().0;
+        assert_eq!(ids(limited), ["6", "5", "4"]);
+        let all = list(&state, Some("o"), true, query()).await.unwrap().0;
+        assert_eq!(ids(all).len(), 6);
+    }
 }
