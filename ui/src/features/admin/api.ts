@@ -1,8 +1,8 @@
 /**
- * Calls of the administration area: organization members, teams, roles, grants, settings and
- * audit log, the server administration, and the signed-in user's own account. Every response is
- * checked against the contract (docs/ARCHITECTURE.md), so a mismatch fails as `invalid_response`
- * instead of rendering half a page.
+ * Calls of the administration area: organization members, teams, roles, grants, explain, settings
+ * and audit log, the server administration, and the signed-in user's own account. The shapes
+ * follow the server's API documents (docs/api/access.md, docs/api/settings-dashboards.md); every
+ * response is checked, so a mismatch fails as `invalid_response` instead of rendering half a page.
  */
 import { expectShape, isRecord, request } from "../../api/client";
 
@@ -16,11 +16,7 @@ const isBoolean: Check = (value) => typeof value === "boolean";
 const isAny: Check = () => true;
 
 function nullable(check: Check): Check {
-  return (value) => value === null || value === undefined || check(value);
-}
-
-function optional(check: Check): Check {
-  return (value) => value === undefined || check(value);
+  return (value) => value === null || check(value);
 }
 
 function oneOf(...values: readonly string[]): Check {
@@ -36,33 +32,37 @@ function shape<T>(fields: Record<keyof T, Check>): (value: unknown) => value is 
     isRecord(value) && Object.entries<Check>(fields).every(([name, check]) => check(value[name]));
 }
 
-/** A list page, `{ items, nextCursor }`. */
+/** A list page, `Page<T>`: `{ items, nextCursor }`. */
 export interface ListPage<T> {
   items: T[];
   nextCursor: string | null;
 }
 
-/**
- * Lists answer `Page<T>`; a bare array is accepted as a single page, so a route that answers the
- * whole list at once (roles, grants) reads the same way.
- */
+/** Every list route answers `Page<T>`; anything else is a contract mismatch. */
 function pageOf<T>(guard: (value: unknown) => value is T) {
-  return (value: unknown): value is ListPage<T> | T[] =>
-    (Array.isArray(value) && value.every(guard)) ||
-    (isRecord(value) &&
-      Array.isArray(value.items) &&
-      value.items.every(guard) &&
-      (value.nextCursor === null ||
-        value.nextCursor === undefined ||
-        typeof value.nextCursor === "string"));
+  return (value: unknown): value is ListPage<T> =>
+    isRecord(value) &&
+    Array.isArray(value.items) &&
+    value.items.every(guard) &&
+    (value.nextCursor === null || typeof value.nextCursor === "string");
 }
 
-function asPage<T>(value: ListPage<T> | T[]): ListPage<T> {
-  return Array.isArray(value) ? { items: value, nextCursor: null } : value;
+async function getPage<T>(
+  path: string,
+  guard: (value: unknown) => value is T,
+  what: string,
+): Promise<ListPage<T>> {
+  return expectShape(await request("GET", path), pageOf(guard), what);
 }
 
-function arrayGuard<T>(guard: (value: unknown) => value is T) {
-  return (value: unknown): value is T[] => Array.isArray(value) && value.every(guard);
+async function send<T>(
+  method: "POST" | "PUT" | "PATCH",
+  path: string,
+  body: unknown,
+  guard: (value: unknown) => value is T,
+  what: string,
+): Promise<T> {
+  return expectShape(await request(method, path, body), guard, what);
 }
 
 function query(params: Record<string, string | number | undefined>): string {
@@ -82,7 +82,7 @@ function orgPath(orgId: string, rest: string): string {
   return `/api/orgs/${enc(orgId)}${rest}`;
 }
 
-/** The largest page the server hands out (docs/ARCHITECTURE.md); pickers ask for this much. */
+/** The largest page the server hands out (`?limit=` 1 to 200); pickers ask for this much. */
 export const MAX_PAGE_SIZE = 200;
 
 // Members
@@ -91,7 +91,7 @@ export interface Member {
   userId: string;
   email: string;
   name: string;
-  /** A built-in role name (owner, admin, editor, viewer) or the id of a custom role. */
+  /** A role key: a built-in name (owner, admin, editor, viewer) or a custom role id. */
   role: string;
   joinedAt: number;
 }
@@ -104,21 +104,16 @@ const isMember = shape<Member>({
   joinedAt: isNumber,
 });
 
-export async function listMembers(
-  orgId: string,
-  cursor?: string,
-  limit?: number,
-): Promise<ListPage<Member>> {
-  const path = orgPath(orgId, `/members${query({ cursor, limit })}`);
-  return asPage(expectShape(await request("GET", path), pageOf(isMember), "members"));
+export function listMembers(orgId: string, cursor?: string, limit?: number) {
+  return getPage(orgPath(orgId, `/members${query({ cursor, limit })}`), isMember, "members");
 }
 
-export async function addMember(orgId: string, input: { email: string; role: string }) {
-  await request("POST", orgPath(orgId, "/members"), input);
+export function addMember(orgId: string, input: { email: string; role: string }) {
+  return send("POST", orgPath(orgId, "/members"), input, isMember, "member");
 }
 
-export async function changeMemberRole(orgId: string, userId: string, role: string) {
-  await request("PATCH", orgPath(orgId, `/members/${enc(userId)}`), { role });
+export function changeMemberRole(orgId: string, userId: string, role: string) {
+  return send("PATCH", orgPath(orgId, `/members/${enc(userId)}`), { role }, isMember, "member");
 }
 
 export async function removeMember(orgId: string, userId: string) {
@@ -130,98 +125,94 @@ export async function removeMember(orgId: string, userId: string) {
 export const TEAM_ROLES = ["member", "maintainer"] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
 
+/** A team may have at most this many roles (server rule). */
+export const MAX_TEAM_ROLES = 20;
+
 export interface Team {
   id: string;
   name: string;
+  /** Role keys, sorted; never "owner". */
+  roles: string[];
   memberCount: number;
-  /** Role ids assigned to the team; only the single-team route sends them. */
-  roles?: string[] | undefined;
+  createdAt: number;
 }
 
 const isTeam = shape<Team>({
   id: isString,
   name: isString,
+  roles: arrayOf(isString),
   memberCount: isNumber,
-  roles: optional(arrayOf(isString)),
+  createdAt: isNumber,
 });
 
 export interface TeamMember {
   userId: string;
-  name: string;
   email: string;
-  teamRole: TeamRole;
+  name: string;
+  role: TeamRole;
+  addedAt: number;
 }
 
 const isTeamMember = shape<TeamMember>({
   userId: isString,
-  name: isString,
   email: isString,
-  teamRole: oneOf(...TEAM_ROLES),
+  name: isString,
+  role: oneOf(...TEAM_ROLES),
+  addedAt: isNumber,
 });
 
-export async function listTeams(
-  orgId: string,
-  cursor?: string,
-  limit?: number,
-): Promise<ListPage<Team>> {
-  const path = orgPath(orgId, `/teams${query({ cursor, limit })}`);
-  return asPage(expectShape(await request("GET", path), pageOf(isTeam), "teams"));
+export function listTeams(orgId: string, cursor?: string, limit?: number) {
+  return getPage(orgPath(orgId, `/teams${query({ cursor, limit })}`), isTeam, "teams");
 }
 
 export async function fetchTeam(orgId: string, teamId: string): Promise<Team> {
   return expectShape(await request("GET", orgPath(orgId, `/teams/${enc(teamId)}`)), isTeam, "team");
 }
 
-export async function createTeam(orgId: string, name: string): Promise<Team | undefined> {
-  const created = await request("POST", orgPath(orgId, "/teams"), { name });
-  return isTeam(created) ? created : undefined;
+export function createTeam(orgId: string, name: string) {
+  return send("POST", orgPath(orgId, "/teams"), { name }, isTeam, "team");
 }
 
-export async function renameTeam(orgId: string, teamId: string, name: string) {
-  await request("PATCH", orgPath(orgId, `/teams/${enc(teamId)}`), { name });
+export function renameTeam(orgId: string, teamId: string, name: string) {
+  return send("PATCH", orgPath(orgId, `/teams/${enc(teamId)}`), { name }, isTeam, "team");
 }
 
 export async function deleteTeam(orgId: string, teamId: string) {
   await request("DELETE", orgPath(orgId, `/teams/${enc(teamId)}`));
 }
 
-export async function listTeamMembers(
-  orgId: string,
-  teamId: string,
-  cursor?: string,
-): Promise<ListPage<TeamMember>> {
+export function listTeamMembers(orgId: string, teamId: string, cursor?: string) {
   const path = orgPath(orgId, `/teams/${enc(teamId)}/members${query({ cursor })}`);
-  return asPage(expectShape(await request("GET", path), pageOf(isTeamMember), "team members"));
+  return getPage(path, isTeamMember, "team members");
 }
 
-export async function putTeamMember(
-  orgId: string,
-  teamId: string,
-  userId: string,
-  teamRole: TeamRole,
-) {
-  await request("PUT", orgPath(orgId, `/teams/${enc(teamId)}/members/${enc(userId)}`), {
-    teamRole,
-  });
+/** Adds the member to the team, or changes their team role. */
+export function putTeamMember(orgId: string, teamId: string, userId: string, role: TeamRole) {
+  const path = orgPath(orgId, `/teams/${enc(teamId)}/members/${enc(userId)}`);
+  return send("PUT", path, { role }, isTeamMember, "team member");
 }
 
 export async function removeTeamMember(orgId: string, teamId: string, userId: string) {
   await request("DELETE", orgPath(orgId, `/teams/${enc(teamId)}/members/${enc(userId)}`));
 }
 
-export async function setTeamRoles(orgId: string, teamId: string, roles: string[]) {
-  await request("PUT", orgPath(orgId, `/teams/${enc(teamId)}/roles`), { roles });
+export function setTeamRoles(orgId: string, teamId: string, roles: string[]) {
+  const path = orgPath(orgId, `/teams/${enc(teamId)}/roles`);
+  return send("PUT", path, { roles }, isTeam, "team");
 }
 
 // Roles
 
 export interface Role {
+  /** The role key: a built-in name or a custom role id. */
   id: string;
+  /** Built-in roles carry their key here; the UI translates them by id. */
   name: string;
   description: string;
   builtin: boolean;
   /** Strings, not Permission: the server may know permissions newer than this UI. */
   permissions: string[];
+  createdAt: number | null;
 }
 
 const isRole = shape<Role>({
@@ -230,7 +221,13 @@ const isRole = shape<Role>({
   description: isString,
   builtin: isBoolean,
   permissions: arrayOf(isString),
+  createdAt: nullable(isNumber),
 });
+
+/** An organization has at most this many custom roles (server rule). */
+export const MAX_CUSTOM_ROLES = 100;
+/** The longest role description the server accepts. */
+export const MAX_ROLE_DESCRIPTION = 500;
 
 export interface RoleInput {
   name: string;
@@ -238,17 +235,17 @@ export interface RoleInput {
   permissions: string[];
 }
 
+/** Every role of the organization; the server answers them as one page. */
 export async function listRoles(orgId: string): Promise<Role[]> {
-  return expectShape(await request("GET", orgPath(orgId, "/roles")), arrayGuard(isRole), "roles");
+  return (await getPage(orgPath(orgId, "/roles"), isRole, "roles")).items;
 }
 
-export async function createRole(orgId: string, input: RoleInput): Promise<Role | undefined> {
-  const created = await request("POST", orgPath(orgId, "/roles"), input);
-  return isRole(created) ? created : undefined;
+export function createRole(orgId: string, input: RoleInput) {
+  return send("POST", orgPath(orgId, "/roles"), input, isRole, "role");
 }
 
-export async function updateRole(orgId: string, roleId: string, input: RoleInput) {
-  await request("PATCH", orgPath(orgId, `/roles/${enc(roleId)}`), input);
+export function updateRole(orgId: string, roleId: string, input: Partial<RoleInput>) {
+  return send("PATCH", orgPath(orgId, `/roles/${enc(roleId)}`), input, isRole, "role");
 }
 
 export async function deleteRole(orgId: string, roleId: string) {
@@ -266,7 +263,7 @@ export type SubjectType = (typeof SUBJECT_TYPES)[number];
 export const GRANT_LEVELS = ["view", "edit", "admin", "query"] as const;
 export type GrantLevel = (typeof GRANT_LEVELS)[number];
 
-/** Folders and dashboards are viewed, data sources are queried (docs/ARCHITECTURE.md). */
+/** Folders and dashboards are viewed, data sources are queried (docs/api/access.md, Grants). */
 export function levelsFor(resourceType: ResourceType): readonly GrantLevel[] {
   return resourceType === "datasource" ? ["query", "edit", "admin"] : ["view", "edit", "admin"];
 }
@@ -275,10 +272,12 @@ export interface Grant {
   id: string;
   subjectType: SubjectType;
   subjectId: string;
+  /** User name, team name, custom role name, or the built-in role key. */
   subjectName: string;
   resourceType: ResourceType;
   resourceId: string;
   level: GrantLevel;
+  createdAt: number;
 }
 
 const isGrant = shape<Grant>({
@@ -289,6 +288,7 @@ const isGrant = shape<Grant>({
   resourceType: oneOf(...RESOURCE_TYPES),
   resourceId: isString,
   level: oneOf(...GRANT_LEVELS),
+  createdAt: isNumber,
 });
 
 export interface GrantInput {
@@ -299,148 +299,194 @@ export interface GrantInput {
   level: GrantLevel;
 }
 
-export async function listGrants(
+/**
+ * The grants on exactly this resource. Answers `forbidden` when the caller may not manage its
+ * access, which is how the access dialog learns whether it may change anything.
+ */
+export function listGrants(
   orgId: string,
   resourceType: ResourceType,
   resourceId: string,
-): Promise<Grant[]> {
-  const path = orgPath(orgId, `/grants${query({ resourceType, resourceId })}`);
-  return expectShape(await request("GET", path), arrayGuard(isGrant), "grants");
+  cursor?: string,
+) {
+  const path = orgPath(orgId, `/grants${query({ resourceType, resourceId, cursor })}`);
+  return getPage(path, isGrant, "grants");
 }
 
-export async function addGrant(orgId: string, input: GrantInput) {
-  await request("POST", orgPath(orgId, "/grants"), input);
+/** Creates the grant, or changes the level of the subject's existing grant on the resource. */
+export function addGrant(orgId: string, input: GrantInput) {
+  return send("POST", orgPath(orgId, "/grants"), input, isGrant, "grant");
 }
 
 export async function removeGrant(orgId: string, grantId: string) {
   await request("DELETE", orgPath(orgId, `/grants/${enc(grantId)}`));
 }
 
-export const EXPLAIN_KINDS = ["orgRole", "teamRole", "customRole", "grant"] as const;
-export type ExplainKind = (typeof EXPLAIN_KINDS)[number];
+export type GrantSource =
+  | { kind: "orgRole"; role: string }
+  | { kind: "customRole"; roleId: string; roleName: string }
+  | { kind: "teamRole"; teamId: string; teamName: string; role: string; roleName: string }
+  | {
+      kind: "grant";
+      grantId: string;
+      subjectType: SubjectType;
+      subjectId: string;
+      resourceType: ResourceType;
+      resourceId: string;
+      level: GrantLevel;
+    };
 
-export interface ExplainEntry {
-  kind: ExplainKind;
-  name: string;
+const SOURCE_CHECKS: Record<GrantSource["kind"], (value: Record<string, unknown>) => boolean> = {
+  orgRole: shape<{ role: string }>({ role: isString }),
+  customRole: shape<{ roleId: string; roleName: string }>({ roleId: isString, roleName: isString }),
+  teamRole: shape<{ teamId: string; teamName: string; role: string; roleName: string }>({
+    teamId: isString,
+    teamName: isString,
+    role: isString,
+    roleName: isString,
+  }),
+  grant: shape<Omit<Extract<GrantSource, { kind: "grant" }>, "kind">>({
+    grantId: isString,
+    subjectType: oneOf(...SUBJECT_TYPES),
+    subjectId: isString,
+    resourceType: oneOf(...RESOURCE_TYPES),
+    resourceId: isString,
+    level: oneOf(...GRANT_LEVELS),
+  }),
+};
+
+function isGrantSource(value: unknown): value is GrantSource {
+  return (
+    isRecord(value) &&
+    typeof value.kind === "string" &&
+    Object.hasOwn(SOURCE_CHECKS, value.kind) &&
+    SOURCE_CHECKS[value.kind as GrantSource["kind"]](value)
+  );
 }
 
-const isExplainEntry = shape<ExplainEntry>({ kind: oneOf(...EXPLAIN_KINDS), name: isString });
+export interface Explanation {
+  permission: string;
+  allowed: boolean;
+  sources: GrantSource[];
+}
+
+const isExplanation = shape<Explanation>({
+  permission: isString,
+  allowed: isBoolean,
+  sources: arrayOf(isGrantSource),
+});
 
 export async function explainPermission(
   orgId: string,
   permission: string,
   resource?: { type: ResourceType; id: string },
-): Promise<ExplainEntry[]> {
+): Promise<Explanation> {
   const path = orgPath(
     orgId,
     `/explain${query({ permission, resourceType: resource?.type, resourceId: resource?.id })}`,
   );
-  return expectShape(await request("GET", path), arrayGuard(isExplainEntry), "explain");
+  return expectShape(await request("GET", path), isExplanation, "explain");
 }
 
-// Settings (organization and server share the versioned update)
-
-export interface OrgSetting {
-  key: string;
-  value: unknown;
-  version: number;
-  editable: boolean;
-}
-
-const isOrgSetting = shape<OrgSetting>({
-  key: isString,
-  value: isAny,
-  version: isNumber,
-  editable: isBoolean,
-});
+// Settings (organization and server have the same shape and versioned update)
 
 export const SETTING_SOURCES = ["env", "file", "database", "default"] as const;
 export type SettingSource = (typeof SETTING_SOURCES)[number];
 
-export interface ServerSetting extends OrgSetting {
+export interface Setting {
+  key: string;
+  scope: "server" | "org";
+  value: unknown;
+  default: unknown;
   source: SettingSource;
+  /** False: set in the environment or kalzit.toml, or never changeable in the UI. */
+  editable: boolean;
+  /** The stored version an update must name; 0 when never saved. */
+  version: number;
+  /** English, from the server; shown until the UI has its own texts. */
   description: string;
+  updatedAt: number | null;
+  updatedBy: string | null;
 }
 
-const isServerSetting = shape<ServerSetting>({
+const isSetting = shape<Setting>({
   key: isString,
+  scope: oneOf("server", "org"),
   value: isAny,
-  version: isNumber,
-  editable: isBoolean,
+  default: isAny,
   source: oneOf(...SETTING_SOURCES),
+  editable: isBoolean,
+  version: isNumber,
   description: isString,
+  updatedAt: nullable(isNumber),
+  updatedBy: nullable(isString),
 });
 
-export async function listOrgSettings(orgId: string): Promise<OrgSetting[]> {
-  const path = orgPath(orgId, "/settings");
-  return expectShape(await request("GET", path), arrayGuard(isOrgSetting), "settings");
+export async function listOrgSettings(orgId: string): Promise<Setting[]> {
+  return (await getPage(orgPath(orgId, "/settings"), isSetting, "settings")).items;
 }
 
-export async function updateOrgSetting(
-  orgId: string,
-  key: string,
-  value: unknown,
-  version: number,
-) {
-  await request("PATCH", orgPath(orgId, `/settings/${enc(key)}`), { value, version });
+export function updateOrgSetting(orgId: string, key: string, value: unknown, version: number) {
+  const path = orgPath(orgId, `/settings/${enc(key)}`);
+  return send("PATCH", path, { value, version }, isSetting, "setting");
 }
 
-export async function listServerSettings(): Promise<ServerSetting[]> {
-  const body = await request("GET", "/api/admin/settings");
-  return expectShape(body, arrayGuard(isServerSetting), "server settings");
+export async function listServerSettings(): Promise<Setting[]> {
+  return (await getPage("/api/admin/settings", isSetting, "server settings")).items;
 }
 
-export async function updateServerSetting(key: string, value: unknown, version: number) {
-  await request("PATCH", `/api/admin/settings/${enc(key)}`, { value, version });
+export function updateServerSetting(key: string, value: unknown, version: number) {
+  const path = `/api/admin/settings/${enc(key)}`;
+  return send("PATCH", path, { value, version }, isSetting, "setting");
 }
 
 // Audit
 
 export interface AuditEvent {
   id: string;
-  action: string;
+  /** Null for server events such as sign-ins. */
+  orgId: string | null;
   actorUserId: string | null;
   actorName: string | null;
   actorAddress: string | null;
+  action: string;
   resourceType: string | null;
   resourceId: string | null;
-  /** Ids and changed field names (docs/ARCHITECTURE.md); text or a small object. */
-  summary: unknown;
+  /** Ids and changed field names, never secrets or typed text. */
+  summary: Record<string, unknown>;
   createdAt: number;
-  /** Only in the server audit log. */
-  orgId?: string | null | undefined;
 }
 
 const isAuditEvent = shape<AuditEvent>({
   id: isString,
-  action: isString,
+  orgId: nullable(isString),
   actorUserId: nullable(isString),
   actorName: nullable(isString),
   actorAddress: nullable(isString),
+  action: isString,
   resourceType: nullable(isString),
   resourceId: nullable(isString),
-  summary: isAny,
+  summary: isRecord,
   createdAt: isNumber,
-  orgId: nullable(isString),
 });
 
 export interface AuditFilter {
   actor?: string | undefined;
+  /** An action or an area prefix such as `team.`. */
   action?: string | undefined;
   /** Unix milliseconds, inclusive. */
   from?: number | undefined;
+  /** Unix milliseconds, exclusive. */
   to?: number | undefined;
+  /** Server audit log only: one organization. */
+  orgId?: string | undefined;
 }
 
 /** Org audit log, or the server's when `orgId` is null. */
-export async function listAudit(
-  orgId: string | null,
-  filter: AuditFilter,
-  cursor?: string,
-): Promise<ListPage<AuditEvent>> {
+export function listAudit(orgId: string | null, filter: AuditFilter, cursor?: string) {
   const base = orgId === null ? "/api/admin/audit" : orgPath(orgId, "/audit");
-  const path = `${base}${query({ ...filter, cursor })}`;
-  return asPage(expectShape(await request("GET", path), pageOf(isAuditEvent), "audit"));
+  const params = orgId === null ? filter : { ...filter, orgId: undefined };
+  return getPage(`${base}${query({ ...params, cursor })}`, isAuditEvent, "audit");
 }
 
 // Server administration
@@ -477,38 +523,42 @@ export type UserPatch = Partial<{
   password: string;
 }>;
 
-export async function listUsers(cursor?: string, limit?: number): Promise<ListPage<AdminUser>> {
-  const path = `/api/admin/users${query({ cursor, limit })}`;
-  return asPage(expectShape(await request("GET", path), pageOf(isAdminUser), "users"));
+export function listUsers(cursor?: string, limit?: number) {
+  return getPage(`/api/admin/users${query({ cursor, limit })}`, isAdminUser, "users");
 }
 
-export async function createUser(input: NewUserInput) {
-  await request("POST", "/api/admin/users", input);
+export function createUser(input: NewUserInput) {
+  return send("POST", "/api/admin/users", input, isAdminUser, "user");
 }
 
-export async function updateUser(userId: string, patch: UserPatch) {
-  await request("PATCH", `/api/admin/users/${enc(userId)}`, patch);
+export function updateUser(userId: string, patch: UserPatch) {
+  return send("PATCH", `/api/admin/users/${enc(userId)}`, patch, isAdminUser, "user");
 }
 
 export interface AdminOrg {
   id: string;
   name: string;
   memberCount: number;
+  createdAt: number;
 }
 
-const isAdminOrg = shape<AdminOrg>({ id: isString, name: isString, memberCount: isNumber });
+const isAdminOrg = shape<AdminOrg>({
+  id: isString,
+  name: isString,
+  memberCount: isNumber,
+  createdAt: isNumber,
+});
 
-export async function listOrgs(cursor?: string): Promise<ListPage<AdminOrg>> {
-  const path = `/api/admin/orgs${query({ cursor })}`;
-  return asPage(expectShape(await request("GET", path), pageOf(isAdminOrg), "organizations"));
+export function listOrgs(cursor?: string, limit?: number) {
+  return getPage(`/api/admin/orgs${query({ cursor, limit })}`, isAdminOrg, "organizations");
 }
 
-export async function createOrg(input: { name: string; ownerUserId: string }) {
-  await request("POST", "/api/admin/orgs", input);
+export function createOrg(input: { name: string; ownerUserId: string }) {
+  return send("POST", "/api/admin/orgs", input, isAdminOrg, "organization");
 }
 
-export async function renameOrg(orgId: string, name: string) {
-  await request("PATCH", `/api/admin/orgs/${enc(orgId)}`, { name });
+export function renameOrg(orgId: string, name: string) {
+  return send("PATCH", `/api/admin/orgs/${enc(orgId)}`, { name }, isAdminOrg, "organization");
 }
 
 // The signed-in user's own account
@@ -516,38 +566,42 @@ export async function renameOrg(orgId: string, name: string) {
 export interface Session {
   id: string;
   createdAt: number;
+  /** Updated at most every 5 minutes. */
   lastSeenAt: number;
+  expiresAt: number;
+  /** The session of this browser. */
   current: boolean;
-  userAgent?: string | null | undefined;
 }
 
 const isSession = shape<Session>({
   id: isString,
   createdAt: isNumber,
   lastSeenAt: isNumber,
+  expiresAt: isNumber,
   current: isBoolean,
-  userAgent: nullable(isString),
 });
 
 export async function updateMyName(name: string) {
   await request("PATCH", "/api/me", { name });
 }
 
+/** Changes the password; the server ends every other session of the account. */
 export async function changeMyPassword(input: { current: string; new: string }) {
   await request("POST", "/api/me/password", input);
 }
 
-export async function listMySessions(): Promise<Session[]> {
-  const body = await request("GET", "/api/me/sessions");
-  return expectShape(body, arrayGuard(isSession), "sessions");
+export function listMySessions(cursor?: string) {
+  return getPage(`/api/me/sessions${query({ cursor })}`, isSession, "sessions");
 }
 
 export async function revokeSession(sessionId: string) {
   await request("DELETE", `/api/me/sessions/${enc(sessionId)}`);
 }
 
-export async function revokeOtherSessions() {
-  await request("POST", "/api/me/sessions/revoke-others");
+export async function revokeOtherSessions(): Promise<number> {
+  const body = await request("POST", "/api/me/sessions/revoke-others");
+  const revoked = isRecord(body) ? body.revoked : undefined;
+  return expectShape(revoked, (value): value is number => isNumber(value), "revoke others");
 }
 
 // Query keys: everything of an organization's administration under one prefix, so a change can

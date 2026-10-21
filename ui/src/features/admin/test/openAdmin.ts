@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import type { Me } from "../../../api/auth";
-import { generatedUnion } from "../../../test/generated";
 import { installFakeServer, TEST_USER } from "../../../test/fakeServer";
+import { generatedUnion } from "../../../test/generated";
 import { renderApp } from "../../../test/renderApp";
 import { type FakeAdminState, fakeAdmin } from "./fakeAdmin";
 
@@ -34,6 +34,8 @@ export async function openAdmin(path: string, options: OpenAdminOptions = {}) {
     rolePermissions: { tester: options.permissions ?? ALL_PERMISSIONS },
   });
   const admin = fakeAdmin(server);
+  // The fake checks the same permissions the UI hides by.
+  admin.callerPermissions = new Set(options.permissions ?? ALL_PERMISSIONS);
   options.setup?.(admin);
   const rendered = renderApp(path);
   await screen.findByRole("navigation", { name: "Main navigation" });
