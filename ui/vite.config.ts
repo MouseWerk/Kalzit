@@ -29,5 +29,9 @@ export default defineConfig({
     unstubGlobals: true,
     // Half the cores: with every core busy, jsdom tests near the 5 s timeout under load.
     maxWorkers: "50%",
+    // A jsdom test takes about 1 s at most on an idle machine, but other work on it (builds,
+    // other test runs) slows tests several times; the default 5 s then fails sound tests. A
+    // test that hangs still fails.
+    testTimeout: 15_000,
   },
 });
