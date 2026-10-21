@@ -28,8 +28,9 @@
     color: var(--danger-text);
   }
 
+  /* Hover keeps the danger tint; the underline shows the button reacts. */
   .button--danger:hover:not(:disabled, [aria-disabled="true"]) {
-    background: var(--bg-active);
+    text-decoration: underline;
   }
 
   .toolbar {

@@ -498,9 +498,7 @@ function SettingsForm({
         <Icon name="lock" />
         <span>{readOnlyHint(t, kind)}</span>
       </div>
-      <FormAlert>
-        {error !== null && server === null ? errorMessage(t, error) : null}
-      </FormAlert>
+      <FormAlert>{error !== null && server === null ? errorMessage(t, error) : null}</FormAlert>
       <TextField
         label={t("datasources.form.name")}
         value={name}

@@ -1,5 +1,6 @@
-import { useRef } from "react";
-import { GRID_COLUMNS, type GridPos, type PanelModel, readingOrder } from "./model";
+import { useRef, useState } from "react";
+import { useI18n } from "../../i18n/i18n";
+import { clampGrid, GRID_COLUMNS, type GridPos, type PanelModel, readingOrder } from "./model";
 import { PanelCard } from "./PanelCard";
 import type { PanelQueryInput } from "./usePanelResults";
 
@@ -9,6 +10,11 @@ const FALLBACK_ROW_HEIGHT = 32;
 interface DashboardGridProps {
   panels: readonly PanelModel[];
   query: Omit<PanelQueryInput, "panel">;
+  /**
+   * The saved panels. In edit mode a panel whose queries differ from its saved version (or that
+   * is new) runs through the free query route; every other panel keeps the panel route.
+   */
+  storedPanels?: readonly PanelModel[];
   edit?:
     | {
         onEdit: (id: string) => void;
@@ -23,8 +29,11 @@ interface DashboardGridProps {
  * The 24-column grid. Panels are in reading order in the document, so Tab and screen readers go
  * top to bottom and left to right whatever order they were added in.
  */
-export function DashboardGrid({ panels, query, edit }: DashboardGridProps) {
+export function DashboardGrid({ panels, query, storedPanels = [], edit }: DashboardGridProps) {
+  const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const stored = new Map(storedPanels.map((p) => [p.id, JSON.stringify(p.targets)]));
 
   function cellSize() {
     const grid = ref.current;
@@ -41,25 +50,49 @@ export function DashboardGrid({ panels, query, edit }: DashboardGridProps) {
   }
 
   return (
-    <div className="dash-grid" ref={ref}>
-      {readingOrder(panels).map((panel) => (
-        <PanelCard
-          key={panel.id}
-          panel={panel}
-          query={query}
-          edit={
-            edit === undefined
-              ? undefined
-              : {
-                  onEdit: () => edit.onEdit(panel.id),
-                  onDuplicate: () => edit.onDuplicate(panel.id),
-                  onRemove: () => edit.onRemove(panel.id),
-                  onGrid: (grid) => edit.onGrid(panel.id, grid),
-                  cellSize,
-                }
-          }
-        />
-      ))}
-    </div>
+    <>
+      <div className="dash-grid" ref={ref}>
+        {readingOrder(panels).map((panel) => {
+          const changed =
+            edit !== undefined && stored.get(panel.id) !== JSON.stringify(panel.targets);
+          return (
+            <PanelCard
+              key={panel.id}
+              panel={panel}
+              query={{ ...query, source: changed ? "draft" : "stored" }}
+              edit={
+                edit === undefined
+                  ? undefined
+                  : {
+                      onEdit: () => edit.onEdit(panel.id),
+                      onDuplicate: () => edit.onDuplicate(panel.id),
+                      onRemove: () => edit.onRemove(panel.id),
+                      onGrid: (grid, byKeyboard) => {
+                        edit.onGrid(panel.id, grid);
+                        if (byKeyboard) {
+                          const g = clampGrid(grid);
+                          setAnnouncement(
+                            t("dashboards.panel.placed", {
+                              title:
+                                panel.title === "" ? t("dashboards.panel.untitled") : panel.title,
+                              column: g.x + 1,
+                              row: g.y + 1,
+                              width: g.w,
+                              height: g.h,
+                            }),
+                          );
+                        }
+                      },
+                      cellSize,
+                    }
+              }
+            />
+          );
+        })}
+      </div>
+      <p className="visually-hidden" role="status">
+        {announcement}
+      </p>
+    </>
   );
 }

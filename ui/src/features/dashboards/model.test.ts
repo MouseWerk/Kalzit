@@ -3,6 +3,7 @@ import { diffModels } from "./diff";
 import { buildTree } from "./FolderTree";
 import {
   clampGrid,
+  cleanVariable,
   emptyModel,
   nextRefId,
   type PanelModel,
@@ -30,6 +31,8 @@ describe("grid layout", () => {
   it("keeps panels inside the 24 columns and at least the minimum size", () => {
     expect(clampGrid({ x: 20, y: -3, w: 8, h: 0 })).toEqual({ x: 16, y: 0, w: 8, h: 2 });
     expect(clampGrid({ x: -1, y: 0, w: 40, h: 4 })).toEqual({ x: 0, y: 0, w: 24, h: 4 });
+    // The server's limits: h at most 200, y at most 10,000.
+    expect(clampGrid({ x: 0, y: 20_000, w: 6, h: 500 })).toEqual({ x: 0, y: 10_000, w: 6, h: 200 });
   });
 
   it("pushes overlapped panels down, repeatedly, and leaves others alone", () => {
@@ -73,6 +76,27 @@ describe("model", () => {
     expect(model.panels).toHaveLength(1);
     expect(model.panels[0]?.grid).toEqual({ x: 18, y: 0, w: 6, h: 8 });
     expect(model.variables).toEqual([{ name: "region", type: "textbox" }]);
+  });
+
+  it("keeps variables as stored, also what this UI does not edit", () => {
+    const stored = [
+      { name: "tenant", type: "constant", query: { sql: "SELECT 1" }, current: ["a", "b"] },
+      { name: "step", type: "interval", options: [60, "5m", { raw: true }], current: 60 },
+      { name: "region", type: "custom", options: ["eu"], label: "" },
+    ];
+    const model = parseModel({ ...emptyModel("x"), variables: stored }, "x");
+    const back = JSON.parse(JSON.stringify(model.variables.map(cleanVariable)));
+    expect(back).toEqual([
+      { name: "tenant", type: "constant", query: { sql: "SELECT 1" }, current: ["a", "b"] },
+      { name: "step", type: "interval", options: [60, "5m", { raw: true }], current: 60 },
+      // An empty label is dropped; the server wants none rather than "".
+      { name: "region", type: "custom", options: ["eu"] },
+    ]);
+    // A datasourceId stays only on a query variable.
+    expect(cleanVariable({ name: "v", type: "custom", datasourceId: "ds" })).toEqual({
+      name: "v",
+      type: "custom",
+    });
   });
 
   it("describes the changes between two models", () => {

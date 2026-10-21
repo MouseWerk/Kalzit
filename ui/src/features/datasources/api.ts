@@ -17,15 +17,17 @@ export function orgPath(orgId: string, ...segments: string[]): string {
 
 type Method = Parameters<typeof request>[0];
 
-/** The one place the data areas send requests, so cancellation is passed on everywhere. */
+/**
+ * The one place the data areas send requests. A cancelled request rejects with the AbortError,
+ * which TanStack Query treats as a cancellation, not as a failure.
+ */
 export function send(
   method: Method,
   path: string,
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  signal?.throwIfAborted();
-  return request(method, path, body);
+  return request(method, path, body, { signal });
 }
 
 export const SETTING_TYPES = ["string", "text", "number", "bool", "select"] as const;
@@ -195,7 +197,13 @@ function parseDatasource(value: unknown): Datasource {
       secrets[field] = { set: isRecord(state) && state.set === true };
     }
   }
-  return { id: summary.id, name: summary.name, kind: summary.kind, settings: value.settings, secrets };
+  return {
+    id: summary.id,
+    name: summary.name,
+    kind: summary.kind,
+    settings: value.settings,
+    secrets,
+  };
 }
 
 function isHealth(value: unknown): value is Health {

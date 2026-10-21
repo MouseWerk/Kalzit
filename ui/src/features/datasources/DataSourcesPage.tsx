@@ -37,7 +37,10 @@ export function DataSourcesPage() {
         {t("datasources.noOrg.text")}
       </EmptyState>
     );
-  } else if (canSeeDatasources(permissions) && (trash !== true || permissions.has("datasources:write"))) {
+  } else if (
+    canSeeDatasources(permissions) &&
+    (trash !== true || permissions.has("datasources:write"))
+  ) {
     body = (
       <DataSourceList
         key={trash === true ? "trash" : "list"}

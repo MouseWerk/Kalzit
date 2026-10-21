@@ -1,6 +1,12 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -23,12 +29,15 @@ import {
   updateFolder,
 } from "./api";
 import "./dashboards.css";
-import { descendantIds, FolderTree } from "./FolderTree";
+import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
 import { emptyModel } from "./model";
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
 const listRoute = getRouteApi("/_app/dashboards");
+
+/** Pause in typing after which the dashboard search runs. */
+const SEARCH_DELAY_MS = 250;
 
 export function DashboardsPage() {
   const { t } = useI18n();
@@ -61,9 +70,24 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
     mutationFn: (id: string) => restoreFolder(orgId, id),
     onSuccess: async () => {
       setDeletedFolder(null);
+      // Restoring a folder brings its dashboards back too.
       await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+      await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
     },
   });
+  // The search field updates at once; the list follows after a pause in typing.
+  const [query, setQuery] = useState(search.q ?? "");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (query !== (search.q ?? "")) {
+        void navigate({
+          search: (prev) => ({ ...prev, q: query === "" ? undefined : query }),
+          replace: true,
+        });
+      }
+    }, SEARCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [query, search.q, navigate]);
   const folder = folders.data?.find((f) => f.id === search.folder);
   const canWrite = permissions.has("dashboards:write");
 
@@ -97,7 +121,7 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
         <div className="browser__header">
           <h2 className="section-title" id={`${searchId}-title`}>
             {folder?.name ?? t("dashboards.folders.all")}
-            {folder?.restricted === true ? (
+            {isRestricted(folders.data ?? [], search.folder) ? (
               <span className="browser__restricted">
                 <Icon name="lock" />
                 {t("dashboards.folders.restricted")}
@@ -149,14 +173,8 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             type="search"
             className="input"
             placeholder={t("dashboards.search")}
-            value={search.q ?? ""}
-            onChange={(event) => {
-              const q = event.currentTarget.value;
-              void navigate({
-                search: (prev) => ({ ...prev, q: q === "" ? undefined : q }),
-                replace: true,
-              });
-            }}
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
           />
         </div>
         <DashboardList
@@ -206,6 +224,8 @@ function DashboardList({
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
+    // A new search keeps showing the previous results until its own arrive, without "Loading".
+    placeholderData: keepPreviousData,
   });
   const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
 
@@ -504,7 +524,11 @@ function FolderActions({
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<"edit" | "delete" | null>(null);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+  // Deleting or restoring a folder moves its dashboards too, so both lists are read again.
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
+    await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+  };
   const restrict = useMutation({
     mutationFn: (restricted: boolean) =>
       updateFolder(orgId, folder.id, { restricted, version: folder.version }),

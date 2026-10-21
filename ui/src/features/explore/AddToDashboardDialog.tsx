@@ -1,6 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { FormAlert } from "../../components/FormAlert";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
@@ -19,6 +25,9 @@ import { errorMessage } from "../dashboards/ui/errors";
 
 /** A panel from Explore spans the full width; it is the one thing the user just looked at. */
 const PANEL_GRID = { x: 0, w: 24, h: 9 };
+
+/** Pause in typing after which the dashboard search runs. */
+const SEARCH_DELAY_MS = 250;
 
 interface AddToDashboardDialogProps {
   orgId: string;
@@ -40,10 +49,20 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
   const [title, setTitle] = useState("");
   const [folder, setFolder] = useState("");
   const [problem, setProblem] = useState<string | undefined>(undefined);
-  const dashboards = useQuery({
-    queryKey: [DASHBOARDS_KEY, orgId, "pick"],
-    queryFn: () => fetchDashboards(orgId, {}),
+  const [search, setSearch] = useState("");
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQ(search.trim()), SEARCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+  const dashboards = useInfiniteQuery({
+    queryKey: [DASHBOARDS_KEY, orgId, "pick", q],
+    queryFn: ({ pageParam }) => fetchDashboards(orgId, { q, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    placeholderData: keepPreviousData,
   });
+  const choices = dashboards.data?.pages.flatMap((page) => page.items) ?? [];
   const folders = useQuery(foldersQuery(orgId));
 
   const add = useMutation({
@@ -141,6 +160,16 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
         </fieldset>
         {target === "existing" ? (
           <div className="field">
+            <label className="field__label" htmlFor={`${pickId}-search`}>
+              {t("dashboards.search")}
+            </label>
+            <input
+              id={`${pickId}-search`}
+              type="search"
+              className="input"
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+            />
             <label className="field__label" htmlFor={pickId}>
               {t("explore.add.dashboard")}
             </label>
@@ -156,7 +185,7 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
               aria-describedby={problem === undefined ? undefined : `${pickId}-error`}
             >
               <option value="">{t("explore.add.pick")}</option>
-              {(dashboards.data?.items ?? []).map((d) => (
+              {choices.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.title === "" ? t("dashboards.untitled") : d.title}
                 </option>
@@ -167,6 +196,16 @@ export function AddToDashboardDialog({ orgId, panel, range, onClose }: AddToDash
                 {problem}
               </p>
             )}
+            {dashboards.hasNextPage ? (
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={() => void dashboards.fetchNextPage()}
+                disabled={dashboards.isFetchingNextPage}
+              >
+                {t("dashboards.loadMore")}
+              </button>
+            ) : null}
           </div>
         ) : (
           <>

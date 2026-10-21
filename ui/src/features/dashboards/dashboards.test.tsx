@@ -17,7 +17,7 @@ function sqlPanel(id: string, title: string, sql: string, x = 0, y = 0): PanelMo
     type: "table",
     title,
     grid: { x, y, w: 12, h: 8 },
-    targets: [{ refId: "A", datasourceId: PG_ID, query: { sql, format: "table" } }],
+    targets: [{ refId: "A", datasourceId: PG_ID, query: { sql } }],
     transformations: [],
     options: {},
     fieldConfig: {},
@@ -37,11 +37,11 @@ function setup(role = "editor", panels?: PanelModel[]) {
       {
         ...sqlPanel("p-mixed", "Mixed", "SELECT 1", 0, 8),
         targets: [
-          { refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1", format: "table" } },
+          { refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1" } },
           {
             refId: "B",
             datasourceId: PG_ID,
-            query: { sql: "-- fail:query_rejected", format: "table" },
+            query: { sql: "-- fail:query_rejected" },
           },
         ],
       },
@@ -75,12 +75,15 @@ function storedSales(server: ReturnType<typeof setup>): StoredDashboard {
 const panelOf = (title: string) => screen.getByRole("article", { name: title });
 
 describe("dashboard browser", () => {
-  it("marks restricted folders for those who see them", async () => {
-    setup("admin");
+  it("marks restricted folders for those who see them, subfolders included", async () => {
+    const server = setup("admin");
+    addFolder(server.areas.dashboards, "f-pay", "Payroll", { parentId: "f-hr" });
     const { user } = renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
     expect(await within(tree).findByRole("button", { name: "People, Restricted" })).toBeTruthy();
     expect(within(tree).getByRole("button", { name: "Operations" })).toBeTruthy();
+    // The subfolder inherits the restriction and shows it.
+    expect(within(tree).getByRole("button", { name: "Payroll, Restricted" })).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
 
     await user.click(within(tree).getByRole("button", { name: "People, Restricted" }));
@@ -130,7 +133,7 @@ describe("dashboard view", () => {
 
     const orders = await waitFor(() => {
       const panel = panelOf("Orders");
-      within(panel).getByText("9007199254740993");
+      within(panel).getByText("9,007,199,254,740,993");
       return panel;
     });
     expect(within(orders).getAllByRole("row").length).toBeGreaterThan(1);
@@ -156,6 +159,40 @@ describe("dashboard view", () => {
     const body = calls[0]?.body as { timeRange: { from: number; to: number } };
     expect(typeof body.timeRange.from).toBe("number");
     expect(body.timeRange.to - body.timeRange.from).toBe(6 * 3_600_000);
+  });
+
+  it("opens edit mode from ?edit=true only for those who may edit", async () => {
+    setup("viewer");
+    const { location } = renderApp("/dashboards/d-sales?edit=true");
+    await screen.findByRole("heading", { level: 1, name: "Sales" });
+    await waitFor(() => expect(location().search).not.toHaveProperty("edit"));
+    expect(screen.queryByRole("button", { name: "Add panel" })).toBeNull();
+  });
+
+  it("reads query variable options from the QueryResponse of the options route", async () => {
+    const server = setup("viewer", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        {
+          name: "region",
+          type: "query",
+          datasourceId: PG_ID,
+          query: { sql: "SELECT r, n FROM t" },
+        },
+        { name: "tenant", type: "constant", query: { keep: true }, current: ["a", "b"] },
+      ],
+    };
+    server.areas.dashboards.variableOptions.region = [
+      { value: "eu", label: "Europe" },
+      { value: "us", label: "United States" },
+    ];
+    renderApp("/dashboards/d-sales");
+    const select = await screen.findByRole("combobox", { name: "region" });
+    expect(await within(select).findByRole("option", { name: "United States" })).toBeTruthy();
+    // A constant has nothing to choose and is not shown.
+    expect(screen.queryByRole("combobox", { name: "tenant" })).toBeNull();
   });
 
   it("gives viewers view mode only", async () => {
@@ -209,12 +246,17 @@ describe("editing a dashboard", () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const before = server.areas.datasources.queries.length;
     const handle = within(panelOf("Orders")).getByRole("button", { name: "Arrange “Orders”" });
     handle.focus();
     await user.keyboard("{ArrowDown}{ArrowDown}{Shift>}{ArrowRight}{/Shift}");
     expect(document.activeElement).toBe(
       within(panelOf("Orders")).getByRole("button", { name: "Arrange “Orders”" }),
     );
+    // Moving by keyboard is announced.
+    expect(screen.getByText("Orders: column 1, row 3, 13 columns wide, 8 rows high.")).toBeTruthy();
+    // Moving panels does not change their queries: they stay on the panel route.
+    expect(server.areas.datasources.queries.length).toBe(before);
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.type(within(dialog).getByRole("textbox", { name: /What changed/ }), "Bigger orders");
@@ -243,7 +285,6 @@ describe("editing a dashboard", () => {
     const editor = within(dialog).getByRole("textbox", { name: "Query A" });
     // Typed with fireEvent: the completion list would otherwise take Enter and Tab.
     fireEvent.change(editor, { target: { value: "SELECT amount FROM orders" } });
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Format" }), "table");
     await user.click(within(dialog).getByRole("radio", { name: "Table" }));
     await user.click(within(dialog).getByRole("button", { name: "Run queries" }));
     expect(await within(dialog).findByText("Grace")).toBeTruthy();
@@ -265,7 +306,7 @@ describe("editing a dashboard", () => {
         {
           refId: "A",
           datasourceId: PG_ID,
-          query: { sql: "SELECT amount FROM orders", format: "table" },
+          query: { sql: "SELECT amount FROM orders" },
         },
       ],
     });
@@ -316,14 +357,17 @@ describe("editing a dashboard", () => {
     saveAsOther(stored, theirs);
 
     await user.click(screen.getByRole("button", { name: "Save…" }));
-    await user.click(
-      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
-        name: "Save",
-      }),
-    );
+    const saveDialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.type(within(saveDialog).getByRole("textbox", { name: /What changed/ }), "No slow");
+    const reads = () =>
+      server.calls.filter((c) => c.method === "GET" && c.path.endsWith("/d-sales"));
+    const readsBefore = reads().length;
+    await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
     const conflict = await screen.findByRole("dialog", {
       name: "Someone else saved this dashboard",
     });
+    // The stored version came with the 409 answer; it is not read again.
+    expect(reads().length).toBe(readsBefore);
     const mine = within(conflict).getByRole("region", { name: "Your changes" });
     const others = within(conflict).getByRole("region", {
       name: "Saved by others in the meantime",
@@ -336,6 +380,8 @@ describe("editing a dashboard", () => {
     );
     await waitFor(() => expect(stored.versions).toHaveLength(3));
     expect(latest(stored).model.panels.map((p) => p.id)).toEqual(["p-orders", "p-mixed"]);
+    // The message typed for the save is kept for the overwrite.
+    expect(latest(stored).message).toBe("No slow");
   });
 
   it("can drop my changes and open the other version after a conflict", async () => {
@@ -400,8 +446,9 @@ describe("history and trash", () => {
     expect(storedSales(server).deletedAt).not.toBeNull();
 
     await user.click(screen.getByRole("link", { name: "Trash" }));
-    // The folder is listed; the dashboard trashed with it is listed as well.
+    // One subtree is one entry: the folder, not the dashboard that went with it.
     expect(await screen.findByRole("button", { name: "Restore “Operations”" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Restore “Sales”" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Restore “Operations”" }));
     await waitFor(() => expect(storedSales(server).deletedAt).toBeNull());
 

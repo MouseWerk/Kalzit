@@ -48,12 +48,7 @@ const setting = (
 
 const COMMON = [setting("queryTimeoutSecs", "number"), setting("maxRows", "number")];
 
-function sqlKind(
-  kind: string,
-  name: string,
-  port: number,
-  tls: WireSetting[],
-): WireKind {
+function sqlKind(kind: string, name: string, port: number, tls: WireSetting[]): WireKind {
   return {
     kind,
     name,
@@ -246,7 +241,9 @@ export async function answerQuery(
   item: QueryItem,
   range: TimeRange,
 ): Promise<QueryOutcome> {
-  const source = state.datasources.find((d) => d.id === item.datasourceId && d.deletedAt === undefined);
+  const source = state.datasources.find(
+    (d) => d.id === item.datasourceId && d.deletedAt === undefined,
+  );
   if (source === undefined) {
     return { error: { code: "not_found", message: "no such data source" } };
   }
@@ -301,7 +298,10 @@ function checkSettings(
     if (name === "port" && ((value as number) < 1 || (value as number) > 65535)) {
       return validation("port");
     }
-    if ((name === "host" || name === "url") && BLOCKED_HOST.test(String(value).replace(/^https?:\/\//, ""))) {
+    if (
+      (name === "host" || name === "url") &&
+      BLOCKED_HOST.test(String(value).replace(/^https?:\/\//, ""))
+    ) {
       return json(422, {
         error: { code: "datasource_target_blocked", message: "target refused", field: name },
       });
@@ -403,7 +403,9 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         return validation("queries");
       }
       for (const item of items) {
-        if (unknownKey(item as unknown as Record<string, unknown>, QUERY_ITEM_FIELDS) !== undefined) {
+        if (
+          unknownKey(item as unknown as Record<string, unknown>, QUERY_ITEM_FIELDS) !== undefined
+        ) {
           return validation("queries");
         }
       }
@@ -427,7 +429,9 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
         return validation(extra);
       }
       const trash = search.get("trash") === "true";
-      if (trash ? !can("datasources:write") : !(can("datasources:read") || can("datasources:query"))) {
+      if (
+        trash ? !can("datasources:write") : !(can("datasources:read") || can("datasources:query"))
+      ) {
         return error(403, "forbidden");
       }
       const limit = Number(search.get("limit") ?? 50);
@@ -507,7 +511,10 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       if (Object.keys(body).length > 0) {
         return validation(Object.keys(body)[0] ?? "");
       }
-      return json(200, state.health[ds.id] ?? { ok: true, message: "PostgreSQL 17.2", latencyMs: 12 });
+      return json(
+        200,
+        state.health[ds.id] ?? { ok: true, message: "PostgreSQL 17.2", latencyMs: 12 },
+      );
     }
     if (!can("datasources:write")) {
       return error(403, "forbidden");

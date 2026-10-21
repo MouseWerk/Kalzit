@@ -81,7 +81,7 @@
   "dashboards.save": "Save…",
   "dashboards.save.title": "Save dashboard",
   "dashboards.save.message": "What changed (optional)",
-  "dashboards.save.messageHint": "Shown in the history, so others know what this version is about.",
+  "dashboards.save.messageHint": "Shown in the history, so others know what this version is about. Up to 500 characters.",
   "dashboards.save.submit": "Save",
   "dashboards.save.saving": "Saving…",
   "dashboards.versions": "History",
@@ -99,7 +99,6 @@
   "dashboards.conflict.keepEditing": "Keep editing",
   "dashboards.conflict.takeTheirs": "Discard mine, open theirs",
   "dashboards.conflict.overwrite": "Save mine as the newest version",
-  "dashboards.conflict.overwriteMessage": "Saved over a newer version after a conflict",
   "dashboards.diff.none": "No changes.",
   "dashboards.diff.title": "Title changed from “{from}” to “{to}”",
   "dashboards.diff.timeRange": "Time range changed",
@@ -110,7 +109,7 @@
   "dashboards.diff.panelChanged": "Panel “{title}” changed",
   "dashboards.diff.panelMoved": "Panel “{title}” moved or resized",
   "dashboards.history.title": "History",
-  "dashboards.history.lead": "Every save is a version. Restoring an older one saves it again as the newest version; nothing is lost.",
+  "dashboards.history.lead": "Every save is a version. Restoring an older one saves it again as the newest version. The server keeps a limited number of versions and removes the oldest beyond it.",
   "dashboards.history.back": "Back to “{title}”",
   "dashboards.history.version": "Version",
   "dashboards.history.saved": "Saved",
@@ -244,5 +243,11 @@
   "dashboards.trash.purgeTitle": "Delete for good?",
   "dashboards.trash.purgeConfirm": "Delete for good",
   "dashboards.trash.purgeText": "“{title}” and all its versions will be deleted. This cannot be undone.",
-  "dashboards.trash.purgeFolderText": "“{title}” will be deleted with its subfolders, their dashboards and all versions. This cannot be undone."
+  "dashboards.trash.purgeFolderText": "“{title}” will be deleted with its subfolders, their dashboards and all versions. This cannot be undone.",
+  "dashboards.panels.legendTemplate": "Series names (optional)",
+  "dashboards.panels.legendTemplateHint": "Label names in double braces, such as {{job}} on {{instance}}. Empty uses the field names.",
+  "dashboards.panels.readoutHint": "Left and right arrow keys read out the values at a point in time; Shift moves in larger steps.",
+  "dashboards.panels.noValue": "no value",
+  "dashboards.folders.restrictedInheritedHint": "Restricted through a folder above it: only members with access, admins and owners see it.",
+  "dashboards.panel.placed": "{title}: column {column}, row {row}, {width} columns wide, {height} rows high."
 }

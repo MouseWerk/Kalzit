@@ -101,6 +101,15 @@ function parseDashboard(value: unknown): Dashboard {
   return { ...summary, model: parseModel(value.model, summary.title) };
 }
 
+/** The stored dashboard of a `version_conflict` answer, or null when it is not one. */
+export function dashboardFromBody(value: unknown): Dashboard | null {
+  try {
+    return parseDashboard(value);
+  } catch {
+    return null;
+  }
+}
+
 function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: string) {
   if (!isRecord(value) || !Array.isArray(value.items)) {
     return invalid(what);
@@ -233,10 +242,7 @@ export async function fetchVersions(
 ): Promise<Page<DashboardVersion>> {
   const path = orgPath(orgId, "dashboards", id, "versions");
   return parsePage(
-    await send(
-      "GET",
-      cursor === undefined ? path : `${path}?cursor=${encodeURIComponent(cursor)}`,
-    ),
+    await send("GET", cursor === undefined ? path : `${path}?cursor=${encodeURIComponent(cursor)}`),
     parseVersion,
     "version list",
   );

@@ -3,12 +3,14 @@ import { type ReactNode, useId, useState } from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { fetchVariableOptions } from "./api";
-import type { VariableModel } from "./model";
+import { currentValue, optionValues, type VariableModel } from "./model";
 import { errorMessage } from "./ui/errors";
 
 /** The value each variable starts with: its stored current value, else the first fixed value. */
 export function initialVariables(variables: readonly VariableModel[]): Record<string, string> {
-  return Object.fromEntries(variables.map((v) => [v.name, v.current ?? v.options?.[0] ?? ""]));
+  return Object.fromEntries(
+    variables.map((v) => [v.name, currentValue(v) ?? optionValues(v)[0] ?? ""]),
+  );
 }
 
 interface VariablesBarProps {
@@ -80,11 +82,14 @@ function VariableControl({
   );
   const options = useQuery({
     queryKey: ["variable-options", orgId, dashboardId, variable.name, range.from, range.to, others],
-    queryFn: () =>
-      fetchVariableOptions(orgId, dashboardId, variable.name, {
-        timeRange: range,
-        variables: others,
-      }),
+    queryFn: ({ signal }) =>
+      fetchVariableOptions(
+        orgId,
+        dashboardId,
+        variable.name,
+        { timeRange: range, variables: others },
+        signal,
+      ),
     enabled: variable.type === "query",
     staleTime: 60_000,
     retry: false,
@@ -111,7 +116,7 @@ function VariableControl({
   } else {
     const list =
       variable.type === "custom" || variable.type === "interval"
-        ? (variable.options ?? []).map((v) => ({ value: v, label: v }))
+        ? optionValues(variable).map((v) => ({ value: v, label: v }))
         : (options.data ?? []);
     const known = list.some((option) => option.value === value);
     control = (

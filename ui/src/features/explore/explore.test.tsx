@@ -32,12 +32,11 @@ describe("Explore", () => {
   it("runs a query with an absolute time range and shows the result in a matching panel", async () => {
     const { server, user } = open();
     await screen.findByRole("combobox", { name: "Data source" });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Format" }), "table");
     const before = Date.now();
     await runSql(user, "SELECT * FROM customers");
     expect(await screen.findByText("Grace")).toBeTruthy();
-    // A table result without time opens as a table, with int64 exact.
-    expect(screen.getByText("9007199254740993")).toBeTruthy();
+    // A result without time opens as a table, with int64 exact (grouped like numbers).
+    expect(screen.getByText("9,007,199,254,740,993")).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Visualization" })).toHaveProperty(
       "value",
       "table",
@@ -48,7 +47,7 @@ describe("Explore", () => {
       {
         refId: "A",
         datasourceId: PG_ID,
-        query: { sql: "SELECT * FROM customers", format: "table" },
+        query: { sql: "SELECT * FROM customers" },
       },
     ]);
     expect(sent.timeRange.to).toBeGreaterThanOrEqual(before);
@@ -92,6 +91,47 @@ describe("Explore", () => {
     expect(screen.queryByRole("combobox", { name: "Format" })).toBeNull();
   });
 
+  it("sends a PromQL query exactly as {expr, instant?, minStepMs?} and draws a time series", async () => {
+    const { server, user } = open();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Data source" }), PROM_ID);
+    fireEvent.change(screen.getByRole("textbox", { name: "Query" }), {
+      target: { value: "rate(http_requests_total[5m])" },
+    });
+    await user.type(screen.getByRole("textbox", { name: /Minimum step/ }), "15");
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    // A frame with a time field opens as a time series.
+    expect(await screen.findByRole("group", { name: "Result" })).toBeTruthy();
+    const sent = server.areas.datasources.queries.at(-1) as unknown as QueryRequest;
+    expect(sent.queries[0]?.query).toEqual({
+      expr: "rate(http_requests_total[5m])",
+      minStepMs: 15000,
+    });
+
+    await user.click(screen.getByRole("checkbox", { name: /Instant query/ }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() =>
+      expect(
+        (server.areas.datasources.queries.at(-1) as unknown as QueryRequest).queries[0]?.query,
+      ).toEqual({
+        expr: "rate(http_requests_total[5m])",
+        instant: true,
+        minStepMs: 15000,
+      }),
+    );
+  });
+
+  it("keeps the tabs' ids unique and every aria-controls pointing at a panel", async () => {
+    const { user } = open();
+    await runSql(user, "SELECT 1");
+    await screen.findByText("Grace");
+    for (const tab of screen.getAllByRole("tab")) {
+      const controls = tab.getAttribute("aria-controls") ?? "";
+      expect(document.getElementById(controls)?.getAttribute("role")).toBe("tabpanel");
+    }
+    await user.click(screen.getByRole("tab", { name: "Inspect" }));
+    expect(screen.getByRole("tabpanel", { name: "Inspect" })).toBeTruthy();
+  });
+
   it("adds the query as a panel to an existing dashboard", async () => {
     const { server, user, location } = open();
     addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
@@ -111,7 +151,7 @@ describe("Explore", () => {
     expect(saved.model.panels).toHaveLength(1);
     expect(saved.model.panels[0]).toMatchObject({
       type: "table",
-      targets: [{ refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1", format: "table" } }],
+      targets: [{ refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1" } }],
     });
   });
 });

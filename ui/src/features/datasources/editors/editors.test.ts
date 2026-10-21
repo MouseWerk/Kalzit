@@ -3,7 +3,9 @@ import type { PromSchema, SqlSchema } from "../api";
 import { promqlCompletions, sqlCompletions } from "./completion";
 import { tokenizePromql, tokenizeSql } from "./syntax";
 
+// Wire shapes of GET .../schema in docs/api/datasources.md.
 const SQL: SqlSchema = {
+  kind: "tables",
   tables: [
     {
       schema: "public",
@@ -18,10 +20,9 @@ const SQL: SqlSchema = {
 };
 
 const PROM: PromSchema = {
-  metrics: [
-    { name: "http_requests_total", help: "Requests served", labels: ["job", "status"] },
-    { name: "up", labels: ["instance"] },
-  ],
+  kind: "metrics",
+  metrics: ["http_requests_total", "up"],
+  labels: ["instance", "job", "status"],
 };
 
 const labels = (result: ReturnType<typeof sqlCompletions>) => result?.options.map((o) => o.label);
@@ -64,13 +65,19 @@ describe("PromQL completion", () => {
   });
 
   it("offers the labels of the metric inside braces, and nothing inside a value", () => {
-    expect(labels(promqlCompletions("http_requests_total{", 20, PROM))).toEqual(["job", "status"]);
-    expect(labels(promqlCompletions('up{instance="a", ', 17, PROM))).toEqual(["instance"]);
+    // The schema has one label list for the whole source.
+    expect(labels(promqlCompletions("http_requests_total{", 20, PROM))).toEqual([
+      "instance",
+      "job",
+      "status",
+    ]);
+    expect(labels(promqlCompletions('up{instance="a", j', 18, PROM))).toEqual(["job"]);
     expect(promqlCompletions('up{instance="lo', 15, PROM)).toBeNull();
   });
 
   it("offers durations inside brackets", () => {
     expect(labels(promqlCompletions("rate(up[5", 9, PROM))).toEqual(["5m"]);
+    expect(labels(promqlCompletions("rate(up[$__ra", 13, PROM))).toEqual(["$__rate_interval"]);
   });
 });
 

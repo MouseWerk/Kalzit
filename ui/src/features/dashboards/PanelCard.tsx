@@ -12,12 +12,15 @@ import { errorCodeMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
 import { type PanelQueryInput, usePanelResults } from "./usePanelResults";
 
+/** The width at which dashboards.css switches to one column. */
+const SINGLE_COLUMN = "(max-width: 48rem)";
+
 export interface PanelEditActions {
   onEdit: () => void;
   onDuplicate: () => void;
   onRemove: () => void;
   /** A new position or size; the grid pushes overlapped panels down. */
-  onGrid: (grid: GridPos) => void;
+  onGrid: (grid: GridPos, byKeyboard: boolean) => void;
   /** Size of one grid cell in px, for turning a pointer drag into cells. */
   cellSize: () => { width: number; height: number };
 }
@@ -75,11 +78,18 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
     const [dx, dy] = step;
     const { x, y, w, h } = panel.grid;
     keepHandleFocus.current = true;
-    edit.onGrid(event.shiftKey ? { x, y, w: w + dx, h: h + dy } : { x: x + dx, y: y + dy, w, h });
+    edit.onGrid(
+      event.shiftKey ? { x, y, w: w + dx, h: h + dy } : { x: x + dx, y: y + dy, w, h },
+      true,
+    );
   }
 
   function startDrag(event: PointerEvent<HTMLElement>, mode: "move" | "resize") {
-    if (edit === undefined || event.button !== 0) {
+    // Small screens show every panel full width in one column, where dragging across columns
+    // would move panels nobody can see move; the arrange button works there.
+    const singleColumn =
+      typeof window.matchMedia === "function" && window.matchMedia(SINGLE_COLUMN).matches;
+    if (edit === undefined || event.button !== 0 || singleColumn) {
       return;
     }
     event.preventDefault();
@@ -97,7 +107,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
       const key = `${next.x},${next.y},${next.w},${next.h}`;
       if (key !== last) {
         last = key;
-        edit.onGrid(next);
+        edit.onGrid(next, false);
       }
     };
     const onUp = () => {

@@ -39,7 +39,11 @@ export function parsePromQuery(query: unknown): PromQuery {
   if (value.instant === true) {
     parsed.instant = true;
   }
-  if (typeof value.minStepMs === "number" && Number.isInteger(value.minStepMs) && value.minStepMs > 0) {
+  if (
+    typeof value.minStepMs === "number" &&
+    Number.isInteger(value.minStepMs) &&
+    value.minStepMs > 0
+  ) {
     parsed.minStepMs = value.minStepMs;
   }
   return parsed;

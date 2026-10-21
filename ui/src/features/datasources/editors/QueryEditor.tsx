@@ -34,7 +34,13 @@ function useSchema(orgId: string, datasourceId: string) {
   return { schema: schema.data, failed: schema.isError };
 }
 
-function MacroHelp({ macros, lead }: { macros: { name: string; help: MessageKey }[]; lead: MessageKey }) {
+function MacroHelp({
+  macros,
+  lead,
+}: {
+  macros: { name: string; help: MessageKey }[];
+  lead: MessageKey;
+}) {
   const { t } = useI18n();
   return (
     <details className="query-editor__help">
@@ -121,9 +127,7 @@ function PromqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         rows={3}
         value={value.expr}
         onChange={(expr) => update({ expr })}
-        complete={(text, cursor, explicit) =>
-          promqlCompletions(text, cursor, promSchema, explicit)
-        }
+        complete={(text, cursor, explicit) => promqlCompletions(text, cursor, promSchema, explicit)}
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>

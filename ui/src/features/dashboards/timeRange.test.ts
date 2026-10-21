@@ -62,10 +62,21 @@ describe("resolveTime", () => {
     expect(resolveTime("now-1y", local(2028, 2, 29, 10))).toBe(local(2027, 2, 28, 10));
   });
 
-  it("reads absolute times: ISO with offset, local ISO and epoch milliseconds", () => {
+  it("reads absolute times: ISO with an offset, local date and time, and a date alone", () => {
     expect(resolveTime("2026-10-20T08:00:00.000Z", now)).toBe(Date.UTC(2026, 9, 20, 8));
+    expect(resolveTime("2026-10-20T08:15:00+02:00", now)).toBe(Date.UTC(2026, 9, 20, 6, 15));
     expect(resolveTime("2026-10-20T08:00", now)).toBe(local(2026, 10, 20, 8));
-    expect(resolveTime("1760947200000", now)).toBe(1_760_947_200_000);
+    // A date alone is local midnight, not UTC midnight (which would be 02:00 in Berlin).
+    expect(resolveTime("2026-10-20", now)).toBe(local(2026, 10, 20));
+    expect(resolveTime("2026-02-30", now)).toBeNull();
+  });
+
+  it("refuses what the server's time grammar refuses", () => {
+    // Epoch milliseconds, steps of more than five digits.
+    expect(resolveTime("1760947200000", now)).toBeNull();
+    expect(resolveTime("now-100000m", now)).toBeNull();
+    expect(resolveTime("now-99999m", now)).toBe(now - 99_999 * 60_000);
+    expect(resolveTime("now-1d+2h/h", now)).toBe(local(2026, 10, 19, 16));
   });
 
   it("rejects what is not a time", () => {

@@ -31,6 +31,18 @@ export function buildTree(folders: readonly Folder[]): FolderNode[] {
   return roots;
 }
 
+/** Whether the folder or a folder above it is restricted; subfolders inherit the restriction. */
+export function isRestricted(folders: readonly Folder[], id: string | undefined): boolean {
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  for (let f = id === undefined ? undefined : byId.get(id); f !== undefined; ) {
+    if (f.restricted) {
+      return true;
+    }
+    f = f.parentId === null ? undefined : byId.get(f.parentId);
+  }
+  return false;
+}
+
 /** Ids of a folder and all folders below it, so a folder cannot be moved into itself. */
 export function descendantIds(folders: readonly Folder[], id: string): Set<string> {
   const ids = new Set([id]);
@@ -73,7 +85,8 @@ export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
     }
   }
 
-  const renderNodes = (nodes: FolderNode[]) => (
+  // Subfolders inherit a restriction; they show the lock too, with their own explanation.
+  const renderNodes = (nodes: FolderNode[], inherited = false) => (
     <ul className="folder-tree__list">
       {nodes.map(({ folder, children }) => (
         <li key={folder.id}>
@@ -82,17 +95,23 @@ export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
             className="folder-tree__item"
             aria-current={selected === folder.id ? "true" : undefined}
             onClick={() => onSelect(folder.id)}
-            title={folder.restricted ? t("dashboards.folders.restrictedHint") : undefined}
+            title={
+              folder.restricted
+                ? t("dashboards.folders.restrictedHint")
+                : inherited
+                  ? t("dashboards.folders.restrictedInheritedHint")
+                  : undefined
+            }
           >
             <span className="truncate">{folder.name}</span>
-            {folder.restricted ? (
+            {folder.restricted || inherited ? (
               <span className="folder-tree__restricted">
                 <Icon name="lock" />
                 <span className="visually-hidden">{`, ${t("dashboards.folders.restricted")}`}</span>
               </span>
             ) : null}
           </button>
-          {children.length === 0 ? null : renderNodes(children)}
+          {children.length === 0 ? null : renderNodes(children, inherited || folder.restricted)}
         </li>
       ))}
     </ul>

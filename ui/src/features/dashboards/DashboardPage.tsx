@@ -13,6 +13,7 @@ import {
   DASHBOARDS_KEY,
   dashboardQuery,
   deleteDashboard,
+  dashboardFromBody,
   fetchDashboard,
   restoreDashboard,
   saveDashboard,
@@ -115,9 +116,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
   const inTrash = dashboard.deletedAt !== null;
   const canEdit = permissions.has("dashboards:write") && !inTrash;
 
-  const [draft, setDraft] = useState<DashboardModel | null>(() =>
-    search.edit === true && !inTrash ? dashboard.model : null,
-  );
+  const [draft, setDraft] = useState<DashboardModel | null>(null);
   const model = draft ?? dashboard.model;
   const [values, setValues] = useState(() => initialVariables(dashboard.model.variables));
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
@@ -126,18 +125,23 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
     | { kind: "panel"; panel: PanelModel; isNew: boolean }
     | { kind: "settings" }
     | { kind: "save" }
-    | { kind: "conflict"; current: Dashboard }
+    | { kind: "conflict"; current: Dashboard; message: string }
     | { kind: "discard" }
     | { kind: "delete" }
     | null
   >(null);
 
-  // "?edit" opens edit mode once; it must not reopen it after a save remounts the view.
+  // "?edit" opens edit mode once, and only for someone who may edit; it must not reopen it after
+  // a save remounts the view. Permissions arrive after the first render, so this waits for them.
   useEffect(() => {
-    if (search.edit === true) {
-      void routeNavigate({ search: (prev) => ({ ...prev, edit: undefined }), replace: true });
+    if (search.edit !== true || !permissions.loaded) {
+      return;
     }
-  }, [search.edit, routeNavigate]);
+    if (canEdit) {
+      setDraft((current) => current ?? dashboard.model);
+    }
+    void routeNavigate({ search: (prev) => ({ ...prev, edit: undefined }), replace: true });
+  }, [search.edit, permissions.loaded, canEdit, dashboard.model, routeNavigate]);
 
   const textRange: TextRange =
     draft === null && search.from !== undefined && search.to !== undefined
@@ -150,11 +154,27 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
     if (refresh <= 0) {
       return;
     }
-    const timer = window.setInterval(
-      () => setClock((c) => ({ now: Date.now(), run: c.run + 1 })),
-      refresh * 1000,
-    );
-    return () => window.clearInterval(timer);
+    // A tab in the background does not refresh; it catches up when it is shown again.
+    let missed = false;
+    const run = () => setClock((c) => ({ now: Date.now(), run: c.run + 1 }));
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        run();
+      } else {
+        missed = true;
+      }
+    }, refresh * 1000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && missed) {
+        missed = false;
+        run();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh]);
 
   const save = useMutation({
@@ -172,14 +192,16 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
       setDraft(null);
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
     },
-    onError: async (error) => {
+    onError: async (error, { message }) => {
       if (isApiError(error, "version_conflict")) {
-        // The answer carries the stored dashboard, but the client keeps only the error code;
-        // reading it again gives the same thing.
-        const current = await fetchDashboard(orgId, dashboard.id).catch(() => null);
+        // The answer carries the stored dashboard as `current`; only when it is missing or
+        // unreadable is it read again.
+        const current =
+          dashboardFromBody(error.current) ??
+          (await fetchDashboard(orgId, dashboard.id).catch(() => null));
         if (current !== null) {
           save.reset();
-          setDialog({ kind: "conflict", current });
+          setDialog({ kind: "conflict", current, message });
         }
       }
     },
@@ -418,9 +440,10 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
                 dashboardId: dashboard.id,
                 range: resolved.range,
                 variables: values,
-                source: draft === null ? "stored" : "draft",
+                source: "stored",
                 run: clock.run,
               }}
+              storedPanels={dashboard.model.panels}
               edit={editActions}
             />
           )}
@@ -475,7 +498,7 @@ function DashboardView({ orgId, dashboard }: { orgId: string; dashboard: Dashboa
             save.mutate({
               next: draft,
               version: dialog.current.version,
-              message: t("dashboards.conflict.overwriteMessage"),
+              message: dialog.message,
             })
           }
           onTakeTheirs={() => {

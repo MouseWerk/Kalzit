@@ -101,6 +101,11 @@
     border-top: var(--border-width) solid var(--border);
   }
 
+  .ds-textarea {
+    min-height: 7rem;
+    resize: vertical;
+  }
+
   /* Query editors */
 
   .query-editor {
@@ -115,7 +120,7 @@
     gap: var(--space-4);
   }
 
-  .query-editor__legend {
+  .query-editor__step {
     min-width: 14rem;
   }
 
@@ -193,19 +198,20 @@
     color: transparent;
   }
 
-  .code-token--keyword,
-  .code-token--function {
+  /* Keywords by weight; color is for functions, values and macros. */
+  .code-token--keyword {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .code-token--function,
+  .code-token--number,
+  .code-token--duration {
     color: var(--accent-text);
   }
 
   .code-token--string,
   .code-token--macro {
     color: var(--success-text);
-  }
-
-  .code-token--number,
-  .code-token--duration {
-    color: var(--danger-text);
   }
 
   .code-token--comment,

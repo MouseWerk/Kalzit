@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
@@ -12,6 +12,7 @@ import {
   FOLDERS_KEY,
   fetchDashboards,
   fetchTrashedFolders,
+  foldersQuery,
   purgeDashboard,
   purgeFolder,
   restoreDashboard,
@@ -55,10 +56,15 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
   const { t, language } = useI18n();
   const queryClient = useQueryClient();
   const [purging, setPurging] = useState<TrashItem | null>(null);
-  const dashboards = useQuery({
+  const dashboards = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "trash"],
-    queryFn: () => fetchDashboards(orgId, { trashed: true }),
+    queryFn: ({ pageParam }) => fetchDashboards(orgId, { trashed: true, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
   });
+  // Folders not in the trash: a trashed dashboard in any other folder went with its folder and
+  // is restored with it, so it is listed only through that folder.
+  const liveFolders = useQuery(foldersQuery(orgId));
   const folders = useQuery({
     queryKey: [FOLDERS_KEY, orgId, "trash"],
     queryFn: () => fetchTrashedFolders(orgId),
@@ -83,12 +89,17 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
   });
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
 
-  if (dashboards.isPending || (canFolders && folders.isPending)) {
+  if (dashboards.isPending || liveFolders.isPending || (canFolders && folders.isPending)) {
     return <p className="loading">{t("common.loading")}</p>;
   }
-  if (dashboards.isError || folders.isError) {
-    return <FormAlert>{errorMessage(t, dashboards.error ?? folders.error)}</FormAlert>;
+  if (dashboards.isError || folders.isError || liveFolders.isError) {
+    return (
+      <FormAlert>
+        {errorMessage(t, dashboards.error ?? folders.error ?? liveFolders.error)}
+      </FormAlert>
+    );
   }
+  const live = new Set(liveFolders.data.map((f) => f.id));
   const items: TrashItem[] = [
     ...(folders.data ?? []).map((f) => ({
       kind: "folder" as const,
@@ -96,12 +107,15 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
       name: f.name,
       deletedAt: f.deletedAt,
     })),
-    ...dashboards.data.items.map((d) => ({
-      kind: "dashboard" as const,
-      id: d.id,
-      name: d.title === "" ? t("dashboards.untitled") : d.title,
-      deletedAt: d.deletedAt,
-    })),
+    ...dashboards.data.pages
+      .flatMap((page) => page.items)
+      .filter((d) => d.folderId === null || live.has(d.folderId))
+      .map((d) => ({
+        kind: "dashboard" as const,
+        id: d.id,
+        name: d.title === "" ? t("dashboards.untitled") : d.title,
+        deletedAt: d.deletedAt,
+      })),
   ];
   const back = (
     <Link to="/dashboards" className="versions__back">
@@ -167,6 +181,16 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
           ))}
         </tbody>
       </table>
+      {dashboards.hasNextPage ? (
+        <button
+          type="button"
+          className="button button--secondary"
+          onClick={() => void dashboards.fetchNextPage()}
+          disabled={dashboards.isFetchingNextPage}
+        >
+          {t("dashboards.loadMore")}
+        </button>
+      ) : null}
       {purging === null ? null : (
         <ConfirmDialog
           title={t("dashboards.trash.purgeTitle")}

@@ -8,6 +8,19 @@ import { setTheme } from "./src/theme/theme";
 // calls it on every navigation. Scrolling has no observable effect without layout anyway.
 window.scrollTo = () => undefined;
 
+// The data areas load their pages lazily (features/<area>/routes.tsx). Loading them here, before
+// any test runs, keeps a test's first navigation from waiting on a cold module transform, which
+// let the first findBy of a test time out now and then.
+await Promise.all([
+  import("./src/features/dashboards/DashboardsPage"),
+  import("./src/features/dashboards/DashboardPage"),
+  import("./src/features/dashboards/TrashPage"),
+  import("./src/features/dashboards/VersionsPage"),
+  import("./src/features/datasources/DataSourcesPage"),
+  import("./src/features/datasources/DataSourceForm"),
+  import("./src/features/explore/ExplorePage"),
+]);
+
 beforeEach(() => {
   startConsoleGuard();
   setLanguage("en");

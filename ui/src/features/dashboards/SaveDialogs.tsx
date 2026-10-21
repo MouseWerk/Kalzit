@@ -7,8 +7,8 @@ import { type Change, diffModels } from "./diff";
 import type { DashboardModel } from "./model";
 import { Dialog } from "./ui/Dialog";
 
-/** A version message longer than this is a description, not a message. */
-const MESSAGE_MAX = 200;
+/** The server's limit on a version message (docs/api/settings-dashboards.md). */
+const MESSAGE_MAX = 500;
 
 export function SaveDialog({
   busy,

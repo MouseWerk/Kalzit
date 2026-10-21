@@ -81,7 +81,7 @@
   "dashboards.save": "Speichern…",
   "dashboards.save.title": "Dashboard speichern",
   "dashboards.save.message": "Was hat sich geändert (optional)",
-  "dashboards.save.messageHint": "Erscheint im Verlauf, damit andere wissen, worum es in dieser Version geht.",
+  "dashboards.save.messageHint": "Erscheint im Verlauf, damit andere wissen, worum es in dieser Version geht. Bis zu 500 Zeichen.",
   "dashboards.save.submit": "Speichern",
   "dashboards.save.saving": "Wird gespeichert…",
   "dashboards.versions": "Verlauf",
@@ -99,7 +99,6 @@
   "dashboards.conflict.keepEditing": "Weiter bearbeiten",
   "dashboards.conflict.takeTheirs": "Meine verwerfen, andere öffnen",
   "dashboards.conflict.overwrite": "Meine als neueste Version speichern",
-  "dashboards.conflict.overwriteMessage": "Nach einem Konflikt über eine neuere Version gespeichert",
   "dashboards.diff.none": "Keine Änderungen.",
   "dashboards.diff.title": "Titel von „{from}“ in „{to}“ geändert",
   "dashboards.diff.timeRange": "Zeitraum geändert",
@@ -110,7 +109,7 @@
   "dashboards.diff.panelChanged": "Panel „{title}“ geändert",
   "dashboards.diff.panelMoved": "Panel „{title}“ verschoben oder in der Größe geändert",
   "dashboards.history.title": "Verlauf",
-  "dashboards.history.lead": "Jedes Speichern ist eine Version. Wiederherstellen speichert eine ältere Version erneut als neueste; dabei geht nichts verloren.",
+  "dashboards.history.lead": "Jedes Speichern ist eine Version. Wiederherstellen speichert eine ältere Version erneut als neueste. Der Server behält eine begrenzte Zahl von Versionen und entfernt die ältesten darüber hinaus.",
   "dashboards.history.back": "Zurück zu „{title}“",
   "dashboards.history.version": "Version",
   "dashboards.history.saved": "Gespeichert",
@@ -244,5 +243,11 @@
   "dashboards.trash.purgeTitle": "Endgültig löschen?",
   "dashboards.trash.purgeConfirm": "Endgültig löschen",
   "dashboards.trash.purgeText": "„{title}“ wird mit allen Versionen gelöscht. Das lässt sich nicht rückgängig machen.",
-  "dashboards.trash.purgeFolderText": "„{title}“ wird mit seinen Unterordnern, deren Dashboards und allen Versionen gelöscht. Das lässt sich nicht rückgängig machen."
+  "dashboards.trash.purgeFolderText": "„{title}“ wird mit seinen Unterordnern, deren Dashboards und allen Versionen gelöscht. Das lässt sich nicht rückgängig machen.",
+  "dashboards.panels.legendTemplate": "Namen der Reihen (optional)",
+  "dashboards.panels.legendTemplateHint": "Label-Namen in doppelten geschweiften Klammern, etwa {{job}} auf {{instance}}. Leer nutzt die Feldnamen.",
+  "dashboards.panels.readoutHint": "Die Pfeiltasten links und rechts lesen die Werte zu einem Zeitpunkt vor; mit Umschalt in größeren Schritten.",
+  "dashboards.panels.noValue": "kein Wert",
+  "dashboards.folders.restrictedInheritedHint": "Eingeschränkt durch einen Ordner darüber: nur Mitglieder mit Zugriff, Admins und Eigentümer sehen ihn.",
+  "dashboards.panel.placed": "{title}: Spalte {column}, Zeile {row}, {width} Spalten breit, {height} Zeilen hoch."
 }

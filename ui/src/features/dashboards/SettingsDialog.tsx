@@ -7,6 +7,8 @@ import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
 import {
   cleanVariable,
+  currentValue,
+  optionValues,
   type DashboardModel,
   VARIABLE_TYPES,
   type VariableModel,
@@ -170,7 +172,7 @@ function VariableEditor({
   const id = useId();
   const datasources = useQuery({ ...datasourcesQuery(orgId), enabled: variable.type === "query" });
   const datasource = datasources.data?.find((d) => d.id === variable.datasourceId);
-  const [valuesText, setValuesText] = useState((variable.options ?? []).join(", "));
+  const [valuesText, setValuesText] = useState(optionValues(variable).join(", "));
   return (
     <section className="variable-editor" aria-label={variable.name}>
       <div className="variable-editor__row">
@@ -266,7 +268,7 @@ function VariableEditor({
       ) : null}
       <TextField
         label={t("dashboards.variables.default")}
-        value={variable.current ?? ""}
+        value={currentValue(variable) ?? ""}
         onValueChange={(current) => onChange({ current })}
         autoComplete="off"
       />
