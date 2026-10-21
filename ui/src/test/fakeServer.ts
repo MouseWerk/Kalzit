@@ -36,6 +36,8 @@ const READ_PERMISSIONS: Permission[] = ["dashboards:read", "folders:read", "anal
 const EDIT_PERMISSIONS: Permission[] = [
   "dashboards:write",
   "dashboards:delete",
+  // Org-internal sharing is an editor right on the server (authz.rs).
+  "dashboards:share",
   "folders:write",
   "datasources:query",
   "datasources:read",

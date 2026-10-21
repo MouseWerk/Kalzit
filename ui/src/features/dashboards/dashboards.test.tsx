@@ -613,6 +613,24 @@ describe("rights and refusals", () => {
     expect(mayManageAccess("folder", undefined, { has })).toBe(false);
   });
 
+  it.each([
+    ["dashboard", "/dashboards/d-sales", "Access to “Sales”"],
+    ["folder", "/dashboards?folder=f-ops", "Access to “Operations”"],
+    ["data source", `/data-sources/${PG_ID}`, "Access to “Sales DB”"],
+  ])("opens the access dialog for a %s", async (_, path, title) => {
+    setup("admin");
+    const { user } = renderApp(path);
+    await user.click(await screen.findByRole("button", { name: "Access…" }));
+    expect(await screen.findByRole("dialog", { name: title })).toBeTruthy();
+  });
+
+  it("offers no access dialog to a viewer without the right to share", async () => {
+    setup("viewer");
+    renderApp("/dashboards/d-sales");
+    await screen.findByRole("heading", { level: 1, name: "Sales" });
+    expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
+  });
+
   it("passes the query's abort signal to the request", async () => {
     installFakeServer({ signedIn: true, user: asRole("viewer") });
     const controller = new AbortController();
