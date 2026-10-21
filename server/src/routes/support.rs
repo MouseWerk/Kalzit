@@ -48,12 +48,30 @@ pub struct Paging {
     before_id: String,
 }
 
+/// `limit` checked against the API's bounds (1 to 200, default 50).
+pub fn page_limit(raw: Option<u32>) -> ApiResult<u32> {
+    match raw.unwrap_or(DEFAULT_LIMIT) {
+        n @ 1..=MAX_LIMIT => Ok(n),
+        _ => Err(ApiError::validation(format!("limit must be 1 to {MAX_LIMIT}")).with_field("limit")),
+    }
+}
+
+/// A cursor for lists ordered by something other than `(time, id)` (titles, version numbers):
+/// the position of the last item as hex-encoded JSON, opaque to clients.
+pub fn encode_cursor<T: serde::Serialize>(position: &T) -> String {
+    hex::encode(serde_json::to_vec(position).unwrap_or_default())
+}
+
+pub fn decode_cursor<T: DeserializeOwned>(raw: Option<&str>) -> ApiResult<Option<T>> {
+    let Some(raw) = raw else { return Ok(None) };
+    let bad = || ApiError::validation("cursor is not valid").with_field("cursor");
+    let bytes = hex::decode(raw).map_err(|_| bad())?;
+    serde_json::from_slice(&bytes).map(Some).map_err(|_| bad())
+}
+
 impl Paging {
     pub fn new(limit: Option<u32>, cursor: Option<&str>) -> ApiResult<Self> {
-        let limit = limit.unwrap_or(DEFAULT_LIMIT);
-        if limit == 0 || limit > MAX_LIMIT {
-            return Err(ApiError::validation(format!("limit must be 1 to {MAX_LIMIT}")).with_field("limit"));
-        }
+        let limit = page_limit(limit)?;
         let Some(cursor) = cursor else {
             // Every row sorts before this, so the first page needs no second query shape.
             return Ok(Self { limit, before_time: i64::MAX, before_id: String::new() });
@@ -160,6 +178,17 @@ mod tests {
         }
         assert!(Paging::new(Some(0), None).is_err() && Paging::new(Some(201), None).is_err());
         assert!(Paging::new(Some(200), None).is_ok());
+    }
+
+    #[test]
+    fn positional_cursors_round_trip_and_reject_garbage() {
+        let c = encode_cursor(&("Ümlaut", "id"));
+        assert_eq!(decode_cursor::<(String, String)>(Some(&c)).unwrap(), Some(("Ümlaut".into(), "id".into())));
+        assert_eq!(decode_cursor::<(String, String)>(None).unwrap(), None);
+        for bad in ["zz", "00", &encode_cursor(&7)] {
+            assert_eq!(decode_cursor::<(String, String)>(Some(bad)).unwrap_err().field, Some("cursor"), "{bad}");
+        }
+        assert_eq!(page_limit(None).unwrap(), 50);
     }
 
     #[test]

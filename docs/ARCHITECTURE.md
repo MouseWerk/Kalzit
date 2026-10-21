@@ -99,10 +99,17 @@ Guards that keep this airtight:
     for admins.
   - `admin`: everything except `org:delete`. `owner`: everything.
 - **Custom roles**: a named set of permissions per organization.
-- **Restricted folders**: a folder can be marked restricted. Then only members with a grant on it
-  (directly, through a team or a role), admins and owners see it and its subfolders and
-  dashboards; for everyone else they do not exist (`not_found`). Unrestricted folders follow the
-  role defaults. Grants can extend a member's rights on any folder, dashboard or data source.
+- **Restricted folders**: a folder can be marked restricted. The nearest restricted folder at or
+  above a folder or dashboard governs it: only grants (directly, through a team or a role) on that
+  folder or below it count, so a restricted subfolder narrows access and grants above it do not
+  reach in; a grant on a dashboard opens that dashboard alone. Org-wide permissions apply inside
+  only for members holding `folders:permissions` (admins and owners). For everyone else such
+  folders and dashboards do not exist (`not_found`), lists, search and the organization's audit
+  view leave them out, and changes of a whole subtree that contains them (trash, restore, purge,
+  move) are `forbidden`. Unrestricted folders follow the role defaults. Grants can extend a
+  member's rights on any folder, dashboard or data source. `authz::check_resource` decides single
+  resources (with `folders::folder_chain`); lists filter in SQL with `folders::VISIBILITY_CTE`,
+  which applies the same rule and is tested against `check_resource`.
 - **Grants**: a member's org role, plus the roles of their teams, plus resource grants
   (`resource_grants`: subject user/team/role, resource folder/dashboard/datasource, level
   `view|edit|admin` for folders and dashboards, `query|edit|admin` for data sources). Effective
@@ -250,7 +257,11 @@ type QueryResult =
   `settings::get_org(&state, org_id, key)`. The foundation ships the registry and both functions
   answering defaults; stream B adds the layers and tables behind the same signatures. Effective server value =
   environment > file > database > default; `GET /api/admin/settings` reports value and source,
-  and settings from the environment or file are read-only in the UI.
+  and settings from the environment or file are read-only in the UI. Settings that live in the
+  configuration use `KALZIT_<SECTION>_<KEY>`; all other server settings can be set with
+  `KALZIT_SETTING_<KEY>` (key in upper snake case), checked at start (`settings::check_environment`).
+  `Config::file_keys` records what `kalzit.toml` set, for the `file` source. The server deletes
+  audit events past their retention every hour (`routes::audit::spawn_retention`).
 - `audit_events`: written with `audit::record(&mut tx, &AuditEvent { .. })` inside the
   transaction of the change. Actions are `<area>.<verb>` (`setup.completed`, `auth.signed_in`,
   `auth.sign_in_failed`, `team.created`). Summaries hold ids and changed field names, never

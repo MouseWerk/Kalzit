@@ -275,35 +275,27 @@ impl<'a> Resource<'a> {
     }
 }
 
-/// Whether `resource` exists in `org_id`. The folder, dashboard and data source tables arrive with
-/// streams B (migration 0005) and C (migration 0006); until the orchestrator wires their lookups
-/// here, every well-formed id counts as existing.
-pub async fn resource_exists(_db: &sqlx::AnyPool, _org_id: &str, _resource: Resource<'_>) -> ApiResult<bool> {
-    Ok(true)
+/// Whether `resource` exists in `org_id` (trashed folders and dashboards count: grants on them
+/// stay until they are purged). Works on the pool or inside a transaction (`&mut *tx`); a
+/// transaction holding `lock_org` must use its own connection.
+pub async fn resource_exists<'c, E>(db: E, org_id: &str, resource: Resource<'_>) -> ApiResult<bool>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
+    let sql = match resource {
+        Resource::Folder(_) => "SELECT COUNT(*) FROM folders WHERE org_id = $1 AND id = $2",
+        Resource::Dashboard(_) => "SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND id = $2",
+        // The data source table arrives with stream C (migration 0006); until its lookup is wired
+        // here, every well-formed data source id counts as existing.
+        Resource::Datasource(_) => return Ok(true),
+    };
+    let (n,): (i64,) = sqlx::query_as(sql).bind(org_id).bind(resource.id()).fetch_one(db).await?;
+    Ok(n > 0)
 }
 
-/// One folder of a folder chain and whether it is marked restricted.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FolderLink {
-    pub id: String,
-    pub restricted: bool,
-}
-
-/// The folder and its ancestors, nearest first (the folder itself first), so folder grants
-/// inherit to subfolders and the nearest restricted folder can be found. Stream B provides the
-/// real walk with this signature in `crate::folders` (migration 0005 adds `folders.parent_id` and
-/// the restricted flag); until the orchestrator wires it here, this is just the folder itself,
-/// unrestricted.
-pub async fn folder_chain(_db: &sqlx::AnyPool, _org_id: &str, folder_id: &str) -> ApiResult<Vec<FolderLink>> {
-    Ok(vec![FolderLink { id: folder_id.to_string(), restricted: false }])
-}
-
-/// The folder a dashboard lives in, so folder grants inherit to its dashboards. Stream B's
-/// migration 0005 adds `dashboards.folder_id`; until the orchestrator wires it here, dashboards
-/// are in no folder.
-pub async fn dashboard_folder(_db: &sqlx::AnyPool, _org_id: &str, _dashboard_id: &str) -> ApiResult<Option<String>> {
-    Ok(None)
-}
+/// The folder chain (the folder itself first, then its parents) and a dashboard's folder, so
+/// folder grants inherit and the nearest restricted folder can be found.
+pub use crate::folders::{FolderLink, dashboard_folder, folder_chain};
 
 /// A role as members and teams hold it: a built-in role, or a custom role of the organization.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -529,10 +521,109 @@ async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>
     Ok(narrow(&chain, grants))
 }
 
-/// Whether the org-wide permissions count on this resource. In a restricted folder they do only
-/// for members who manage folder permissions (admins and owners); everyone else needs a grant.
+/// What decides access to many folders and dashboards at once, read in three queries, so lists can
+/// say per row what the caller may do without a query per row. It applies the same rule as
+/// `check_resource` (`narrow` and `permissions_on`); a test keeps the two in step.
+pub struct AccessIndex {
+    org: BTreeSet<Permission>,
+    /// Folder id to (parent, restricted).
+    folders: std::collections::HashMap<String, (Option<String>, bool)>,
+    grants: Vec<GrantRow>,
+}
+
+impl AccessIndex {
+    /// Reads through `conn`: a pooled connection, or a transaction that holds `lock_org`.
+    pub async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
+        let folders: Vec<(String, Option<String>, i64)> =
+            sqlx::query_as("SELECT id, parent_id, restricted FROM folders WHERE org_id = $1")
+                .bind(&ctx.org_id)
+                .fetch_all(&mut *conn)
+                .await?;
+        let teams: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT t.id, r.role FROM team_members m JOIN teams t ON t.id = m.team_id \
+             LEFT JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2",
+        )
+        .bind(&ctx.user.id)
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let grants: Vec<GrantRow> = sqlx::query_as(
+            "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
+             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard') ORDER BY id",
+        )
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let team_ids: BTreeSet<&str> = teams.iter().map(|(id, _)| id.as_str()).collect();
+        let mut role_keys: BTreeSet<&str> = teams.iter().filter_map(|(_, r)| r.as_deref()).collect();
+        role_keys.insert(&ctx.role);
+        let grants = grants
+            .into_iter()
+            .filter(|g| match g.subject_type.as_str() {
+                "user" => g.subject_id == ctx.user.id,
+                "team" => team_ids.contains(g.subject_id.as_str()),
+                "role" => role_keys.contains(g.subject_id.as_str()),
+                _ => false,
+            })
+            .collect();
+        Ok(Self {
+            org: ctx.permissions.clone(),
+            folders: folders.into_iter().map(|(id, parent, r)| (id, (parent, r != 0))).collect(),
+            grants,
+        })
+    }
+
+    fn folder_links(&self, folder_id: &str, chain: &mut Vec<ChainLink>) {
+        let mut next = Some(folder_id.to_string());
+        while let Some(id) = next {
+            // A cycle cannot be stored (moves refuse it); the bound keeps a damaged table harmless.
+            if chain.len() > 64 {
+                break;
+            }
+            let Some((parent, restricted)) = self.folders.get(&id) else { break };
+            next = parent.clone();
+            chain.push(ChainLink { resource_type: ResourceType::Folder, id, restricted: *restricted });
+        }
+    }
+
+    /// What the caller may do on a folder, or `None` when they may not see it.
+    pub fn folder(&self, folder_id: &str) -> Option<BTreeSet<Permission>> {
+        let mut chain = Vec::new();
+        self.folder_links(folder_id, &mut chain);
+        self.decide(ResourceType::Folder, &chain)
+    }
+
+    /// What the caller may do on a dashboard in `folder_id`, or `None` when they may not see it.
+    pub fn dashboard(&self, dashboard_id: &str, folder_id: Option<&str>) -> Option<BTreeSet<Permission>> {
+        let mut chain =
+            vec![ChainLink { resource_type: ResourceType::Dashboard, id: dashboard_id.to_string(), restricted: false }];
+        if let Some(folder) = folder_id {
+            self.folder_links(folder, &mut chain);
+        }
+        self.decide(ResourceType::Dashboard, &chain)
+    }
+
+    fn decide(&self, resource_type: ResourceType, chain: &[ChainLink]) -> Option<BTreeSet<Permission>> {
+        let reaching = self
+            .grants
+            .iter()
+            .filter(|g| chain.iter().any(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id))
+            .cloned()
+            .collect();
+        permissions_on(&self.org, resource_type, &narrow(chain, reaching))
+    }
+}
+
+/// Whether org-wide permissions reach into restricted folders: only for members who manage folder
+/// permissions (admins and owners); everyone else needs a grant there. The listing SQL
+/// (`folders::VISIBILITY_CTE`) applies the same rule.
+pub fn role_sees_restricted(org: &BTreeSet<Permission>) -> bool {
+    org.contains(&Permission::FoldersPermissions)
+}
+
+/// Whether the org-wide permissions count on this resource (see `role_sees_restricted`).
 fn role_applies(org: &BTreeSet<Permission>, facts: &ResourceFacts) -> bool {
-    !facts.restricted || org.contains(&Permission::FoldersPermissions)
+    !facts.restricted || role_sees_restricted(org)
 }
 
 /// What the caller may do on a resource, or `None` when they may not see it at all.
@@ -860,6 +951,12 @@ mod resource_tests {
     async fn hidden_resources_are_not_found_and_visible_ones_forbidden() {
         let db = db().await;
         let viewer = ctx(BuiltinRole::Viewer);
+        exec(
+            &db,
+            "INSERT INTO dashboards (id, org_id, title, search_title, version, created_at, updated_at) \
+             VALUES ('d', 'o', 'D', 'd', 1, 0, 0)",
+        )
+        .await;
         // A viewer sees dashboards but may not change them.
         let e = check_resource(&db, &viewer, Permission::DashboardsWrite, Resource::Dashboard("d")).await.unwrap_err();
         assert_eq!(e.code, "forbidden");
@@ -1023,6 +1120,13 @@ mod resource_tests {
         let viewer = ctx(BuiltinRole::Viewer);
         exec(
             &db,
+            "INSERT INTO dashboards (id, org_id, title, search_title, version, created_at, updated_at) VALUES \
+             ('d1', 'o', 'D', 'd', 1, 0, 0), ('d2', 'o', 'D', 'd', 1, 0, 0), ('d3', 'o', 'D', 'd', 1, 0, 0), \
+             ('d4', 'o', 'D', 'd', 1, 0, 0)",
+        )
+        .await;
+        exec(
+            &db,
             "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('t1', 'o', 'Betrieb', 'betrieb', 0)",
         )
         .await;
@@ -1058,19 +1162,67 @@ mod resource_tests {
     }
 
     #[tokio::test]
-    async fn inheritance_stub_is_the_folder_itself() {
+    async fn the_access_index_agrees_with_check_resource_on_dashboards() {
         let db = db().await;
-        assert_eq!(folder_chain(&db, "o", "f").await.unwrap(), [FolderLink { id: "f".into(), restricted: false }]);
-        assert_eq!(dashboard_folder(&db, "o", "d").await.unwrap(), None);
-        exec(
-            &db,
+        for sql in [
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) \
+             VALUES ('open', 'o', NULL, 'O', 0, 1, 0, 0), ('secret', 'o', NULL, 'S', 1, 1, 0, 0)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at) \
+             VALUES ('top', 'o', NULL, 'T', 't', 1, 0, 0), ('in_open', 'o', 'open', 'O', 'o', 1, 0, 0), \
+             ('own_grant', 'o', 'secret', 'G', 'g', 1, 0, 0), ('hidden', 'o', 'secret', 'H', 'h', 1, 0, 0)",
+            "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+             VALUES ('g1', 'o', 'user', 'u', 'dashboard', 'own_grant', 'edit', 0), \
+             ('g2', 'o', 'user', 'u', 'folder', 'open', 'edit', 0)",
+        ] {
+            exec(&db, sql).await;
+        }
+        for role in [BuiltinRole::Viewer, BuiltinRole::Editor, BuiltinRole::Admin] {
+            let ctx = ctx(role);
+            let index = AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            for (id, folder) in
+                [("top", None), ("in_open", Some("open")), ("own_grant", Some("secret")), ("hidden", Some("secret"))]
+            {
+                let held = resource_permissions(&db, &ctx, Resource::Dashboard(id)).await.unwrap();
+                assert_eq!(index.dashboard(id, folder), held, "{role:?} {id}");
+            }
+        }
+        // The cases that matter: the own grant opens the dashboard in the hidden folder, nothing
+        // else in it.
+        let viewer = AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx(BuiltinRole::Viewer)).await.unwrap();
+        assert!(viewer.dashboard("own_grant", Some("secret")).unwrap().contains(&Permission::DashboardsWrite));
+        assert!(viewer.dashboard("hidden", Some("secret")).is_none());
+        assert!(viewer.folder("secret").is_none());
+    }
+
+    #[tokio::test]
+    async fn folder_grants_inherit_through_the_stored_tree() {
+        let db = db().await;
+        for sql in [
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) \
+             VALUES ('f', 'o', NULL, 'F', 0, 1, 0, 0), ('sub', 'o', 'f', 'S', 0, 1, 0, 0), \
+             ('g', 'o', NULL, 'G', 0, 1, 0, 0), ('secret', 'o', 'f', 'X', 1, 1, 0, 0)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at) \
+             VALUES ('d', 'o', 'sub', 'D', 'd', 1, 0, 0), ('hidden', 'o', 'secret', 'H', 'h', 1, 0, 0)",
             "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
              VALUES ('g1', 'o', 'user', 'u', 'folder', 'f', 'edit', 0)",
-        )
-        .await;
+        ] {
+            exec(&db, sql).await;
+        }
+        assert_eq!(dashboard_folder(&db, "o", "d").await.unwrap().as_deref(), Some("sub"));
+        assert_eq!(folder_chain(&db, "o", "sub").await.unwrap().len(), 2);
         let viewer = ctx(BuiltinRole::Viewer);
-        assert!(check_resource(&db, &viewer, Permission::FoldersWrite, Resource::Folder("f")).await.is_ok());
-        assert!(check_resource(&db, &viewer, Permission::FoldersWrite, Resource::Folder("g")).await.is_err());
+        let can = |p, r| check_resource(&db, &viewer, p, r);
+        assert!(can(Permission::FoldersWrite, Resource::Folder("f")).await.is_ok());
+        assert!(can(Permission::FoldersWrite, Resource::Folder("sub")).await.is_ok());
+        assert!(can(Permission::DashboardsWrite, Resource::Dashboard("d")).await.is_ok());
+        assert_eq!(can(Permission::FoldersWrite, Resource::Folder("g")).await.unwrap_err().code, "forbidden");
+        // The grant on "f" does not reach into the restricted folder below it.
+        assert_eq!(can(Permission::DashboardsRead, Resource::Dashboard("hidden")).await.unwrap_err().code, "not_found");
+        // Ids that are not in this organization do not exist.
+        assert_eq!(can(Permission::FoldersRead, Resource::Folder("nope")).await.unwrap_err().code, "not_found");
+        assert!(resource_exists(&db, "o", Resource::Dashboard("d")).await.unwrap());
+        assert!(!resource_exists(&db, "other", Resource::Dashboard("d")).await.unwrap());
+        assert!(!resource_exists(&db, "o", Resource::Folder("nope")).await.unwrap());
     }
 
     #[test]
