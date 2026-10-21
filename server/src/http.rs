@@ -1,7 +1,11 @@
 //! The one HTTP client factory. Every outgoing HTTP request (data sources such as Prometheus)
-//! uses a client from here: timeouts, the system proxy settings, the platform's certificate store
-//! plus an optional extra CA, and the target check (`datasources::targets`) on every connection
-//! and every redirect. A guard test fails when another module builds its own client.
+//! uses a client from here: timeouts, the platform's certificate store plus an optional extra
+//! CA, and the target check (`datasources::targets`) on every connection and every redirect. A
+//! guard test fails when another module builds its own client.
+//!
+//! Data source traffic never goes through a proxy (system proxy variables are ignored): a proxy
+//! resolves names itself, so the target check could not see the address it connects to. A
+//! configurable proxy that tunnels to the checked address can come later.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -105,6 +109,7 @@ pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
         .user_agent(concat!("Kalzit/", env!("CARGO_PKG_VERSION")))
         // Redirects are followed in `send`, which checks each target first.
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .dns_resolver(Arc::new(CheckedResolver(opts.policy.clone())));
     if let Some(pem) = opts.extra_root_pem.as_deref().filter(|p| !p.trim().is_empty()) {
         for cert in reqwest::Certificate::from_pem_bundle(pem.as_bytes())
@@ -145,19 +150,15 @@ impl HttpClient {
         Err(HttpError::Other(format!("more than {MAX_REDIRECTS} redirects")))
     }
 
-    /// The resolver checks every direct connection; this also covers address literals (which
-    /// skip the resolver) and requests through a proxy (which resolves the name itself).
+    /// Names are checked by the resolver when the client connects (there is no proxy); this
+    /// covers the scheme and address literals, which skip the resolver.
     async fn check_url(&self, url: &Url) -> Result<(), HttpError> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(Blocked(format!("{} URLs are not allowed", url.scheme())).into());
         }
         let host = url.host_str().ok_or_else(|| HttpError::Other("the URL has no host".into()))?;
-        let port = url.port_or_known_default().unwrap_or(0);
-        match parse_ip_literal(host) {
-            Some(ip) => self.policy.check_ip(host, ip)?,
-            None => {
-                self.policy.resolve(host, port).await?;
-            }
+        if let Some(ip) = parse_ip_literal(host) {
+            self.policy.check_ip(host, ip)?;
         }
         Ok(())
     }

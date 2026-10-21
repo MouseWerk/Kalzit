@@ -6,7 +6,7 @@
 //! kept for the TLS certificate check.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
 use serde::Deserialize;
@@ -67,15 +67,21 @@ struct Settings {
 
 type Client = tiberius::Client<Compat<TcpStream>>;
 
-/// tiberius has no pool: idle clients wait here, the semaphore bounds the open ones.
+/// tiberius has no pool: idle clients wait here (with the time they were returned), the
+/// semaphore bounds the open ones.
 struct Pool {
-    idle: Mutex<Vec<Client>>,
+    idle: Mutex<Vec<(Client, Instant)>>,
     slots: Semaphore,
 }
 
+/// Idle clients older than this are closed instead of reused.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a dropped lease may take to cancel its query and close.
+const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A client on loan; it goes back to the pool only through `release`, after a clean finish. A
-/// client dropped mid-query (timeout, cancelled request) is closed instead, since its stream is
-/// in an unknown state.
+/// client dropped mid-query (timeout, cancelled request) sends SQL Server an attention (cancel)
+/// so the statement stops on the server, and is then closed.
 struct Lease<'p> {
     pool: &'p Pool,
     client: Option<Client>,
@@ -89,8 +95,22 @@ impl Lease<'_> {
 
     fn release(mut self) {
         if let Some(c) = self.client.take() {
-            self.pool.idle.lock().expect("pool lock").push(c);
+            self.pool.idle.lock().expect("pool lock").push((c, Instant::now()));
         }
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        let Some(mut client) = self.client.take() else { return };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        runtime.spawn(async move {
+            let stop = async {
+                let _ = client.cancel_query().await;
+                let _ = client.close().await;
+            };
+            let _ = tokio::time::timeout(CANCEL_TIMEOUT, stop).await;
+        });
     }
 }
 
@@ -131,7 +151,12 @@ async fn open(conn: &Connection) -> Result<Client, SourceError> {
 
 async fn lease<'p>(conn: &Connection, pool: &'p Pool) -> Result<Lease<'p>, SourceError> {
     let permit = pool.slots.acquire().await.map_err(|_| SourceError::Failed("the pool is closed".into()))?;
-    let idle = pool.idle.lock().expect("pool lock").pop();
+    let idle = {
+        let mut idle = pool.idle.lock().expect("pool lock");
+        // Closed by dropping; an idle client has no statement to cancel.
+        idle.retain(|(_, since)| since.elapsed() < IDLE_TIMEOUT);
+        idle.pop().map(|(c, _)| c)
+    };
     let client = match idle {
         Some(c) => c,
         None => open(conn).await?,

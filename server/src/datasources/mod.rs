@@ -1200,7 +1200,8 @@ mod tests {
             "queryTimeoutSecs"
         );
         assert_eq!(bad(serde_json::json!([])).field, "settings");
-        let secrets: crate::secrets::SecretPatch = [("token".to_string(), Some("x".to_string()))].into();
+        let secrets: crate::secrets::SecretPatch =
+            [("token".to_string(), Some(zeroize::Zeroizing::new("x".to_string())))].into();
         assert_eq!(kind.validate_secrets(&secrets).unwrap_err().field, "secrets");
     }
 

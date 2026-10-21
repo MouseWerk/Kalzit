@@ -43,7 +43,13 @@ pub struct TargetPolicy {
     data_dir: PathBuf,
     /// Kalzit's own SQLite database when it lives outside the data directory.
     own_sqlite: Option<PathBuf>,
+    /// Canonical forms of the allowed directories.
     sqlite_dirs: Vec<PathBuf>,
+    /// The allowed directories as written and as canonicalized, normalized without touching the
+    /// file system, for the check before any file system access.
+    sqlite_dirs_lexical: Vec<PathBuf>,
+    /// Whether an allowed directory is a network (UNC) path; only then are UNC paths accepted.
+    sqlite_unc_allowed: bool,
     /// `None` = no restriction. A configured list whose entries are all invalid restricts to
     /// nothing rather than allowing everything.
     allowed: Option<Vec<AllowedTarget>>,
@@ -55,7 +61,9 @@ impl TargetPolicy {
     pub fn new(data_dir: &Path, own_db_url: &str, sqlite_dirs: &[String], allowed_targets: &[String]) -> Self {
         let data_dir = canonical_or_absolute(data_dir);
         let own_sqlite = own_sqlite_path(own_db_url).map(|p| canonical_or_absolute(&p));
-        let sqlite_dirs = sqlite_dirs
+        let sqlite_unc_allowed = sqlite_dirs.iter().any(|d| is_unc(d));
+        let sqlite_dirs_raw = sqlite_dirs;
+        let sqlite_dirs: Vec<PathBuf> = sqlite_dirs
             .iter()
             .filter_map(|d| match std::fs::canonicalize(d) {
                 Ok(p) if p.is_dir() => Some(p),
@@ -81,34 +89,43 @@ impl TargetPolicy {
                 })
                 .collect()
         });
-        Self { data_dir, own_sqlite, sqlite_dirs, allowed }
+        let mut sqlite_dirs_lexical: Vec<PathBuf> = sqlite_dirs_raw
+            .iter()
+            .filter(|d| Path::new(d).is_absolute())
+            .filter_map(|d| normalize_lexically(Path::new(d)))
+            .collect();
+        sqlite_dirs_lexical.extend(sqlite_dirs.iter().map(|d| strip_verbatim(d.clone())));
+        Self { data_dir, own_sqlite, sqlite_dirs, sqlite_dirs_lexical, sqlite_unc_allowed, allowed }
     }
 
     /// The canonical file a SQLite source may open, or why not.
+    ///
+    /// The path is first checked as written, without touching the file system, so a path
+    /// outside the allowed directories (a network share, a device) is never even looked up.
+    /// Then it is canonicalized (symlinks and junctions resolved) and checked again; the caller
+    /// opens the canonical path. Every refusal has the same message, so the answer does not tell
+    /// whether a file exists.
     pub fn check_sqlite_path(&self, raw: &str) -> Result<PathBuf, Blocked> {
+        let refused = || Blocked(SQLITE_REFUSED.into());
         let path = Path::new(raw);
         if !path.is_absolute() {
             return Err(Blocked("the SQLite path must be absolute".into()));
         }
-        // Symlinks and junctions are resolved first, so a link inside an allowed directory
-        // cannot point at a file elsewhere.
-        let canonical =
-            std::fs::canonicalize(path).map_err(|e| Blocked(format!("the SQLite file cannot be opened: {e}")))?;
-        if canonical.starts_with(&self.data_dir) {
-            return Err(Blocked("Kalzit's own data directory cannot be a data source".into()));
+        if is_unc(raw) && !self.sqlite_unc_allowed {
+            return Err(refused());
         }
-        if let Some(own) = &self.own_sqlite
-            && is_same_database_file(&canonical, own)
+        let lexical = normalize_lexically(path).ok_or_else(refused)?;
+        if !self.sqlite_dirs_lexical.iter().any(|dir| within(&lexical, dir)) {
+            return Err(refused());
+        }
+        let canonical = std::fs::canonicalize(&lexical).map_err(|_| refused())?;
+        let own = self.own_sqlite.as_ref().is_some_and(|own| is_same_database_file(&canonical, own));
+        if canonical.starts_with(&self.data_dir)
+            || own
+            || !self.sqlite_dirs.iter().any(|dir| canonical.starts_with(dir))
+            || !canonical.is_file()
         {
-            return Err(Blocked("Kalzit's own database cannot be a data source".into()));
-        }
-        if !self.sqlite_dirs.iter().any(|dir| canonical.starts_with(dir)) {
-            return Err(Blocked(
-                "the SQLite file is outside the directories allowed in datasources.sqlite_dirs".into(),
-            ));
-        }
-        if !canonical.is_file() {
-            return Err(Blocked("the SQLite path is not a file".into()));
+            return Err(refused());
         }
         Ok(strip_verbatim(canonical))
     }
@@ -215,6 +232,44 @@ impl TargetPolicy {
             }
         }
         Err(ResolveError::Dns { host: host.to_string(), reason: format!("cannot connect ({last})") })
+    }
+}
+
+const SQLITE_REFUSED: &str =
+    "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, or cannot be opened";
+
+/// `\\server\share`, `\\?\...`, `\\.\device` (and the same with forward slashes): paths
+/// that leave the local disks. Only Windows reads them that way.
+fn is_unc(path: &str) -> bool {
+    cfg!(windows)
+        && (path.starts_with(r"\\") || path.starts_with("//") || path.starts_with(r"\/") || path.starts_with(r"/\"))
+}
+
+/// `.` and `..` resolved by name only; `None` when `..` would climb above the root.
+fn normalize_lexically(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() || out.as_os_str().is_empty() {
+                    return None;
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+/// `path` lies in `dir`, by components; on Windows without regard to case, as the file system.
+fn within(path: &Path, dir: &Path) -> bool {
+    if cfg!(windows) {
+        let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+        lower(path).starts_with(lower(dir))
+    } else {
+        path.starts_with(dir)
     }
 }
 
@@ -422,7 +477,13 @@ mod tests {
         assert!(!ok.to_string_lossy().starts_with(r"\\?\"));
         // The data directory stays refused even when an admin lists it.
         let e = p.check_sqlite_path(data.join("kalzit.db").to_str().unwrap()).unwrap_err();
-        assert!(e.0.contains("data directory"), "{e}");
+        assert_eq!(e.0, SQLITE_REFUSED);
+        // A missing file and a file outside answer the same, so existence does not leak.
+        let missing = p.check_sqlite_path(allowed.join("fehlt.db").to_str().unwrap()).unwrap_err();
+        let outside = p.check_sqlite_path(other.join("geheim.db").to_str().unwrap()).unwrap_err();
+        let outside_missing = p.check_sqlite_path(other.join("fehlt.db").to_str().unwrap()).unwrap_err();
+        assert_eq!((missing.0.as_str(), outside.0.as_str()), (SQLITE_REFUSED, SQLITE_REFUSED));
+        assert_eq!(outside_missing, outside);
         assert!(p.check_sqlite_path(other.join("geheim.db").to_str().unwrap()).is_err());
         let sneaky = allowed.join("..").join("anderswo").join("geheim.db");
         assert!(p.check_sqlite_path(sneaky.to_str().unwrap()).is_err());
@@ -455,7 +516,7 @@ mod tests {
         }
         let p = TargetPolicy::new(&data, "sqlite::memory:", &[allowed.to_string_lossy().to_string()], &[]);
         let e = p.check_sqlite_path(link.join("kalzit.db").to_str().unwrap()).unwrap_err();
-        assert!(e.0.contains("data directory"), "{e}");
+        assert_eq!(e.0, SQLITE_REFUSED);
     }
 
     #[test]
@@ -473,6 +534,29 @@ mod tests {
         assert!(p.check_sqlite_path(shared.join("kalzit.db").to_str().unwrap()).is_err());
         assert!(p.check_sqlite_path(shared.join("kalzit.db-wal").to_str().unwrap()).is_err());
         assert!(p.check_sqlite_path(shared.join("andere.db").to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn paths_are_checked_by_name_before_the_file_system() {
+        assert_eq!(normalize_lexically(Path::new("/a/b/../c/./d")), Some(PathBuf::from("/a/c/d")));
+        assert_eq!(normalize_lexically(Path::new("/a/../..")), None);
+        let root = tempfile::tempdir().unwrap();
+        let allowed = root.path().join("erlaubt");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let p = TargetPolicy::new(
+            &root.path().join("data"),
+            "sqlite::memory:",
+            &[allowed.to_string_lossy().to_string()],
+            &[],
+        );
+        // Climbing out by name is refused before anything is looked up.
+        let climb = format!("{}{}..{}x.db", allowed.display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR);
+        assert_eq!(p.check_sqlite_path(&climb).unwrap_err().0, SQLITE_REFUSED);
+        #[cfg(windows)]
+        for unc in [r"\\server\share\x.db", r"\\?\C:\x.db", r"\\.\PhysicalDrive0", "//server/share/x.db"] {
+            assert!(is_unc(unc), "{unc}");
+            assert_eq!(p.check_sqlite_path(unc).unwrap_err().0, SQLITE_REFUSED, "{unc}");
+        }
     }
 
     #[test]

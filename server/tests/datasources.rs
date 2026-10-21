@@ -1,8 +1,10 @@
-//! Data sources against real databases, through the router. Each test runs when its
-//! `KALZIT_TEST_<SOURCE>_URL` is set (CI service containers) and prints a notice otherwise:
+//! Data sources against real databases, through the router. Each test needs its
+//! `KALZIT_TEST_<SOURCE>_URL`; the CI job `datasources` sets all of them from service containers
+//! together with `KALZIT_TEST_REQUIRE_DATABASES=1`, which turns a missing URL into a failure.
+//! Elsewhere a missing URL skips the test with a printed notice.
 //!
 //! - `KALZIT_TEST_POSTGRES_URL`: `postgres://user[:password]@host:port/database`
-//! - `KALZIT_TEST_MYSQL_URL`: `mysql://user[:password]@host:port/database`
+//! - `KALZIT_TEST_MYSQL_URL`, `KALZIT_TEST_MARIADB_URL`: `mysql://user[:password]@host:port/database`
 //! - `KALZIT_TEST_MSSQL_URL`: `mssql://user:password@host:port/database` (self-signed certificate)
 //! - `KALZIT_TEST_PROMETHEUS_URL`: `http://host:port`
 //!
@@ -34,6 +36,9 @@ struct T {
 fn env(name: &str) -> Option<String> {
     match std::env::var(name) {
         Ok(v) if !v.trim().is_empty() => Some(v),
+        _ if std::env::var("KALZIT_TEST_REQUIRE_DATABASES").is_ok_and(|v| v == "1") => {
+            panic!("{name} is not set, but KALZIT_TEST_REQUIRE_DATABASES=1 requires every database")
+        }
         _ => {
             eprintln!("{name} not set, test not run");
             None
@@ -185,6 +190,8 @@ async fn postgres_reads_in_a_read_only_transaction() {
     assert_eq!(fields[1]["values"][0], 1.5);
     assert_eq!(fields[2]["values"][0], "Österreich");
     assert_eq!(fields[5]["values"][0], json!({ "a": 1 }));
+    let scs = t.query(&id, json!({ "sql": "SELECT current_setting('standard_conforming_strings') AS s" })).await;
+    assert_eq!(scs["result"]["frame"]["fields"][0]["values"][0], "on", "{scs}");
     assert!(fields[6]["values"][0].is_null());
 
     // The statement check stops writes; a function that writes is stopped by the read-only
@@ -250,6 +257,17 @@ async fn postgres_errors_never_show_the_password() {
 #[tokio::test]
 async fn mysql_reads_read_only_and_never_sends_local_files() {
     let Some(url) = env("KALZIT_TEST_MYSQL_URL") else { return };
+    mysql_like(&url).await;
+}
+
+#[tokio::test]
+async fn mariadb_reads_read_only_and_never_sends_local_files() {
+    let Some(url) = env("KALZIT_TEST_MARIADB_URL") else { return };
+    mysql_like(&url).await;
+}
+
+async fn mysql_like(url: &str) {
+    let url = url.to_string();
     let (host, port, user, password, database) = parts(&url);
     let t = T::new(None).await;
     let id = t
@@ -278,6 +296,11 @@ async fn mysql_reads_read_only_and_never_sends_local_files() {
         .await;
     assert_eq!(types(&r), ["int64", "number", "string", "time"], "{r}");
     assert_eq!(r["result"]["frame"]["fields"][2]["values"][0], "Österreich");
+    // Every session runs with exactly the sql_mode the statement checker assumes.
+    let mode = t.query(&id, json!({ "sql": "SELECT CAST(@@SESSION.sql_mode AS CHAR) AS m" })).await;
+    assert_eq!(mode["result"]["frame"]["fields"][0]["values"][0], "NO_ENGINE_SUBSTITUTION", "{mode}");
+    let lock = t.query(&id, json!({ "sql": "SELECT GET_LOCK('kalzit', 0)" })).await;
+    assert_eq!(lock["error"]["code"], "query_rejected", "{lock}");
     for sql in [
         "SELECT LOAD_FILE('/etc/passwd')",
         "SELECT 1 INTO OUTFILE '/tmp/x'",
@@ -319,6 +342,18 @@ async fn mssql_reads_and_rolls_back() {
     }
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "tables");
+
+    // A query past its time limit is cancelled on the server, and the source stays usable.
+    let (status, body) = t
+        .send(Method::PATCH, &format!("/datasources/{id}"), Some(json!({ "settings": { "host": host, "port": port, "database": database, "user": user, "trustServerCertificate": true, "queryTimeoutSecs": 1 } })))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let slow = t
+        .query(&id, json!({ "sql": "SELECT COUNT_BIG(*) AS n FROM sys.all_objects a CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c" }))
+        .await;
+    assert_eq!(slow["error"]["code"], "query_timeout", "{slow}");
+    let after = t.query(&id, json!({ "sql": "SELECT 1 AS eins" })).await;
+    assert!(after["result"].is_object(), "{after}");
 }
 
 #[tokio::test]
