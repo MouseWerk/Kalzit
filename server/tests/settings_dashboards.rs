@@ -380,7 +380,10 @@ async fn a_due_session_touch_does_not_wait_for_a_writer() {
     sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
     assert!(took < std::time::Duration::from_secs(3), "the read waited {took:?} for the writer");
-    // The update waited for the lock in the background and lands once it is free.
+    // The update waited for the lock in the background, briefly; if it gave up, the touch is
+    // still due and the session's next request writes it.
+    t.state.touches.settle().await;
+    assert_eq!(t.get("/me", &t.owner).await.status, StatusCode::OK);
     t.state.touches.settle().await;
     let last_seen: i64 =
         sqlx::query_scalar("SELECT MAX(last_seen_at) FROM sessions").fetch_one(&t.state.db).await.unwrap();

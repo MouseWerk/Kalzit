@@ -29,9 +29,11 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 /// open requests get less, so the database is closed before that.
 #[cfg(windows)]
 const WINDOWS_CLOSE_GRACE: Duration = Duration::from_secs(3);
-/// How long closing the database may take at a stop. Normally it is quick; it waits longer only
-/// for a statement that waits for a lock another program holds.
-pub const CLOSE_WAIT: Duration = Duration::from_secs(2);
+/// How long closing the database may take at a stop, the background writes' own stop included.
+/// Normally it is quick; it waits longer for a background write that waits for a lock, which on
+/// a loaded machine takes well over its busy timeout, and only a lock another program holds for
+/// longer runs it out.
+pub const CLOSE_WAIT: Duration = Duration::from_secs(5);
 
 /// How a stop went.
 #[derive(Debug)]

@@ -28,8 +28,10 @@ const SQLITE_JOURNAL_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// How long the server's own background writes (session touches, the hourly jobs) wait for the
 /// write lock on SQLite before they give up. Short, because SQLite keeps waiting even when the
-/// write is dropped, and closing the database at a stop waits for that.
-pub const BACKGROUND_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+/// write is dropped, and closing the database at a stop waits for that. Under load SQLite's busy
+/// sleeps overshoot (about half again on Windows), so this stays well inside
+/// `BACKGROUND_STOP_WAIT`.
+pub const BACKGROUND_BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
     connect_with(url, max_connections, SQLITE_BUSY_TIMEOUT).await
@@ -95,9 +97,10 @@ pub struct Background {
 }
 
 /// How long a stop waits for background tasks to end on their own before it aborts them. A
-/// running statement ends within `BACKGROUND_BUSY_TIMEOUT`; this leaves room for opening its
-/// connection.
-const BACKGROUND_STOP_WAIT: Duration = Duration::from_millis(1500);
+/// running statement ends within `BACKGROUND_BUSY_TIMEOUT`, which a loaded machine stretches to
+/// a second or more (measured: opening the connection 0.1 to 0.6 s, then 0.9 s for a 0.5 s busy
+/// timeout); this leaves room for both.
+const BACKGROUND_STOP_WAIT: Duration = Duration::from_secs(3);
 
 impl Background {
     /// For the server's pool `main` on `url`, with up to `max_connections` of its own on SQLite.
