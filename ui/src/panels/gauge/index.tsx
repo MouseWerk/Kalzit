@@ -151,7 +151,8 @@ function GaugePanel({
 }: PanelProps<GaugeOptions>) {
   const { t, language } = useI18n();
   const items = reduceFrames(frames, fieldConfig, options.reducer, language);
-  if (items.length === 0) {
+  // Without any row there is nothing to reduce, even when the fields are there.
+  if (items.length === 0 || emptyReason(frames, "noValues") === "noData") {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
   return (

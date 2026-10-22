@@ -52,7 +52,9 @@ export function PanelPicker({
                 onChange={() => onChange(panel.type)}
               />
               <Preview />
-              <span className="picker__name" id={`${name}-${panel.type}-name`}>{t(panel.name)}</span>
+              <span className="picker__name" id={`${name}-${panel.type}-name`}>
+                {t(panel.name)}
+              </span>
               <span className="picker__hint" id={hintId}>
                 {accepts
                   ? panel.description === undefined

@@ -74,6 +74,13 @@ function columnOf(time: number, from: number, to: number, columns: number): numb
   return Math.min(columns - 1, Math.floor(((time - from) / (to - from || 1)) * columns));
 }
 
+/** A Prometheus bucket bound (`le`): a number, or `+Inf` for the last bucket. */
+function upperBound(le: string | undefined): number | null {
+  if (le === undefined) return null;
+  if (/^\+?inf$/i.test(le.trim())) return Number.POSITIVE_INFINITY;
+  return toNumber(le);
+}
+
 /** Buckets the frames for the heatmap; null when there is no time series to bucket. */
 export function heatmapData(
   frames: readonly Frame[],
@@ -96,7 +103,7 @@ export function heatmapData(
   );
   if (options.mode === "buckets") {
     // Rows ordered by their upper bound (`le`) when every field has one, else as they came.
-    const withBound = series.map((s) => ({ ...s, bound: toNumber(s.field.labels?.le ?? "") }));
+    const withBound = series.map((s) => ({ ...s, bound: upperBound(s.field.labels?.le) }));
     if (withBound.every((s) => s.bound !== null)) {
       withBound.sort((a, b) => (a.bound as number) - (b.bound as number));
     }

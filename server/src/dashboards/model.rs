@@ -147,12 +147,13 @@ impl DashboardModel {
 pub fn parse(raw: Value) -> Result<DashboardModel, String> {
     let current = migrate(raw)?;
     let model: DashboardModel = serde_json::from_value(current).map_err(|e| format!("model: {e}"))?;
-    validate(&model)?;
-    // Measured as stored (defaults filled in), so what is kept is what is limited.
+    // Measured as stored (defaults filled in), so what is kept is what is limited; before the
+    // detailed checks, so an oversized model is refused for its size whatever it holds.
     let bytes = serde_json::to_vec(&model).map_err(|e| format!("model: {e}"))?.len();
     if bytes > MAX_MODEL_BYTES {
         return Err(format!("model takes {bytes} bytes; at most {MAX_MODEL_BYTES} are allowed"));
     }
+    validate(&model)?;
     Ok(model)
 }
 
@@ -262,6 +263,7 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
         check_grid(&p.grid).map_err(|e| format!("{at}.grid: {e}"))?;
+        super::panel_options::check(&p.kind, &p.options, &p.field_config).map_err(|e| format!("{at}.{e}"))?;
         if p.transformations.len() > MAX_TRANSFORMATIONS {
             return Err(format!("{at}.transformations takes at most {MAX_TRANSFORMATIONS} entries"));
         }
@@ -462,6 +464,8 @@ mod tests {
             (vec!["refreshSeconds"], json!(1), "refreshSeconds"),
             (vec!["unknownField"], json!(1), "unknown field"),
             (vec!["panels", "0", "colour"], json!("red"), "unknown field"),
+            (vec!["panels", "0", "options"], json!({ "lineWidth": 9 }), "panels[0].options.lineWidth"),
+            (vec!["panels", "0", "fieldConfig"], json!({ "defaults": { "decimals": 99 } }), "panels[0].fieldConfig"),
         ] {
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");

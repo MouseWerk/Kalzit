@@ -9,6 +9,9 @@ import {
 } from "../fieldConfig/fieldConfig";
 import { timeField, toNumber } from "../frame";
 
+/** Time points a state panel works with at most; longer results are thinned to this. */
+export const MAX_STATE_POINTS = 1000;
+
 /** One value of a state row: its text and the class that colors it. */
 export interface StateValue {
   text: string;
@@ -45,10 +48,25 @@ export function stateData(
   if (frame === undefined || time === undefined) {
     return null;
   }
-  const order = time.values
+  const sorted = time.values
     .map((raw, index) => ({ time: toNumber(raw), index }))
     .filter((p): p is { time: number; index: number } => p.time !== null)
     .sort((a, b) => a.time - b.time);
+  // Far more points than pixels: each stretch keeps its last value, so a long result draws as
+  // fast as a short one. A state shorter than one stretch can drop out; zooming in shows it.
+  const order =
+    sorted.length <= MAX_STATE_POINTS
+      ? sorted
+      : Array.from(
+          { length: MAX_STATE_POINTS },
+          (_, i) =>
+            sorted[
+              Math.min(
+                sorted.length - 1,
+                Math.floor(((i + 1) * sorted.length) / MAX_STATE_POINTS) - 1,
+              )
+            ] as { time: number; index: number },
+        );
   const palette = new Map<string, number>();
   const legend = new Map<string, StateValue>();
   const rows = frame.fields

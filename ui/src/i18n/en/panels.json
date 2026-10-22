@@ -109,6 +109,7 @@
   "panels.mappings.to": "To",
   "panels.mappings.pattern": "Pattern",
   "panels.mappings.text": "Show as",
+  "panels.mappings.rangeInvalid": "“From” must not be above “To”.",
   "panels.overrides.hint": "Options for some fields only. A later override wins over an earlier one.",
   "panels.overrides.add": "Add override",
   "panels.overrides.remove": "Remove override",

@@ -2,6 +2,7 @@
 //! `routes/dashboards.rs`.
 
 pub mod model;
+pub mod panel_options;
 
 use sqlx::AnyPool;
 

@@ -109,6 +109,7 @@
   "panels.mappings.to": "Bis",
   "panels.mappings.pattern": "Muster",
   "panels.mappings.text": "Anzeigen als",
+  "panels.mappings.rangeInvalid": "„Von“ darf nicht über „Bis“ liegen.",
   "panels.overrides.hint": "Optionen nur für bestimmte Felder. Eine spätere Abweichung gewinnt gegen eine frühere.",
   "panels.overrides.add": "Abweichung hinzufügen",
   "panels.overrides.remove": "Abweichung entfernen",

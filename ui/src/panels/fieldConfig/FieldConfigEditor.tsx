@@ -162,6 +162,8 @@ function ThresholdsEditor({
     );
   }
   const steps = value.steps;
+  // Steps keep their place while edited, so a row does not jump under the cursor; reading the
+  // options sorts them by value.
   const update = (index: number, patch: Partial<Thresholds["steps"][number]>) =>
     onChange({
       ...value,
@@ -285,6 +287,11 @@ function MappingEditor({
             value={mapping.to ?? undefined}
             onChange={(to) => onChange({ ...mapping, to: to ?? null })}
           />
+          {mapping.from !== null && mapping.to !== null && mapping.from > mapping.to ? (
+            <p className="field__error" role="alert">
+              {t("panels.mappings.rangeInvalid")}
+            </p>
+          ) : null}
         </>
       ) : null}
       {mapping.type === "regex" ? (

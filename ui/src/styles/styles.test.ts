@@ -420,9 +420,11 @@ describe("motion and typography", () => {
 describe("contrast in every theme", () => {
   const tokenRules = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
 
+  // Every top-level rule of the selector, in order: tokens.css appends blocks (sizes, the
+  // visualization tokens), and a later declaration wins as in the browser.
   function declarationsOf(selector: string): Map<string, string> {
-    const rule = tokenRules.find((r) => r.selector === selector && r.context.length === 1);
-    return new Map(rule?.declarations.map((d) => [d.property, d.value]));
+    const rules = tokenRules.filter((r) => r.selector === selector && r.context.length === 1);
+    return new Map(rules.flatMap((rule) => rule.declarations.map((d) => [d.property, d.value])));
   }
 
   const base = declarationsOf(":root");
@@ -494,6 +496,25 @@ describe("contrast in every theme", () => {
     ["--border-strong", ["--bg", "--bg-surface", "--bg-raised"], UI],
     ["--focus-ring", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], UI],
     ["--accent", ["--bg", "--bg-surface", "--bg-raised"], UI],
+    // Threshold states are marks on the panel surfaces (gauge arcs, bars, cells, large values).
+    ...["--status-ok", "--status-warn", "--status-critical"].map(
+      (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
+    ),
+    // Text sits on the tinted fills of colored stats and table cells.
+    ...["--text", "--text-muted"].map(
+      (name) =>
+        [
+          name,
+          [
+            "--status-ok-bg",
+            "--status-warn-bg",
+            "--status-critical-bg",
+            "--neutral-bg",
+            ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `--chart-${n}-bg`),
+          ],
+          TEXT,
+        ] as [string, string[], number],
+    ),
     // Chart series are meaningful marks on the panel surfaces.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map(
       (n) =>
@@ -526,6 +547,49 @@ describe("contrast in every theme", () => {
         }
       }
       expect(tooClose).toEqual([]);
+    });
+  }
+
+  // Threshold states must be told apart without color vision too; they also carry a name for
+  // screen readers, but on the screen the color is what shows the state.
+  for (const scheme of ["light", "dark"] as const) {
+    it(`keeps threshold states distinguishable for every color vision (${scheme})`, () => {
+      const states = ["ok", "warn", "critical"].map((name) =>
+        resolveColor(base, scheme, `--status-${name}`),
+      );
+      const tooClose: string[] = [];
+      for (const vision of VISIONS) {
+        for (let i = 0; i < states.length; i++) {
+          for (let j = i + 1; j < states.length; j++) {
+            const distance = perceivedDistance(states[i] ?? "", states[j] ?? "", vision);
+            if (distance < NEIGHBOURS_APART) {
+              tooClose.push(`${vision} ${i}/${j}: ${distance.toFixed(1)}`);
+            }
+          }
+        }
+      }
+      expect(tooClose).toEqual([]);
+    });
+
+    it(`grows the heat ramp steadily away from the surface (${scheme})`, () => {
+      const surface = resolveColor(base, scheme, "--bg-surface");
+      const ramp = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => resolveColor(base, scheme, `--heat-${n}`));
+      const contrast = ramp.map((color) => contrastRatio(color, surface));
+      for (let i = 1; i < contrast.length; i++) {
+        expect(contrast[i] ?? 0, `heat-${i + 1} after heat-${i}`).toBeGreaterThan(
+          contrast[i - 1] ?? 0,
+        );
+      }
+      // The strongest step is a mark that must stand out like a series color.
+      expect(contrast.at(-1) ?? 0).toBeGreaterThanOrEqual(UI);
+      for (const vision of VISIONS) {
+        for (let i = 1; i < ramp.length; i++) {
+          expect(
+            perceivedDistance(ramp[i] ?? "", ramp[i - 1] ?? "", vision),
+            `${vision} heat-${i}/heat-${i + 1}`,
+          ).toBeGreaterThanOrEqual(SERIES_APART);
+        }
+      }
     });
   }
 
