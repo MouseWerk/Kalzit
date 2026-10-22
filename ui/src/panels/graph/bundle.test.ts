@@ -31,7 +31,7 @@ function resolveModule(from: string, spec: string): string | undefined {
 }
 
 /** Specifiers a module loads: static imports and re-exports with a value, and `import()`. */
-export function importsOf(source: string, followDynamic: boolean): string[] {
+function importsOf(source: string, followDynamic: boolean): string[] {
   const found: string[] = [];
   for (const [, rawClause, spec] of source.matchAll(
     /^(?:import|export)\s+([^"';]*?)\s*(?:from\s+)?"([^"]+)";/gm,
