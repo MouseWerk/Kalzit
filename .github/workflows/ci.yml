@@ -101,7 +101,7 @@ jobs:
         ports: ["9090:9090"]
       # Security on (basic auth over plain HTTP), so credentials and scrubbing are exercised.
       elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
         env:
           discovery.type: single-node
           xpack.security.enabled: "true"
@@ -112,7 +112,7 @@ jobs:
         ports: ["9200:9200"]
       # The security plugin is off: the test covers a cluster without authentication.
       opensearch:
-        image: opensearchproject/opensearch:3.1.0
+        image: opensearchproject/opensearch:3.9.0
         env:
           discovery.type: single-node
           DISABLE_SECURITY_PLUGIN: "true"
