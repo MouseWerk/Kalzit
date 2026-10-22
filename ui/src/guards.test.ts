@@ -15,10 +15,15 @@ function walk(dir: string): string[] {
   });
 }
 
-const sourceFiles = walk(SRC).map((path) => ({
-  path: relative(UI_ROOT, path).replaceAll("\\", "/"),
-  text: readFileSync(path, "utf8"),
-}));
+// Binary assets (the bundled fonts) are not text; their bytes would match any text rule by chance.
+const BINARY = /\.(woff2?|ttf|otf|png|jpe?g|gif|webp|ico)$/i;
+
+const sourceFiles = walk(SRC)
+  .filter((path) => !BINARY.test(path))
+  .map((path) => ({
+    path: relative(UI_ROOT, path).replaceAll("\\", "/"),
+    text: readFileSync(path, "utf8"),
+  }));
 
 const isTestCode = (path: string) => /\.test\.tsx?$/.test(path) || path.startsWith("src/test/");
 const appCode = sourceFiles.filter(({ path }) => /\.(ts|tsx)$/.test(path) && !isTestCode(path));

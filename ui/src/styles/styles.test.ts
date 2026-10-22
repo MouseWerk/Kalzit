@@ -1,6 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { contrastRatio, perceivedDistance, VISIONS } from "../test/contrast";
 import { listCssFiles, parseCss, type StyleRule, stripComments } from "../test/cssParse";
@@ -410,19 +418,123 @@ describe("motion and typography", () => {
     }
   });
 
-  it("loads no web fonts and nothing from other hosts", () => {
+  it("loads nothing from other hosts", () => {
     for (const { name, source } of files) {
-      expect(/@font-face|url\(\s*["']?(https?:)?\/\//.test(source), name).toBe(false);
+      expect(/url\(\s*["']?([a-z][\w+.-]*:)?\/\//i.test(source), name).toBe(false);
     }
   });
+
+  it("loads fonts only from the bundled, licensed files declared in tokens.css", () => {
+    const disk = {
+      exists: existsSync,
+      list: (dir: string) => (existsSync(dir) ? readdirSync(dir) : []),
+    };
+    expect(fontViolations(files, disk)).toEqual([]);
+  });
+
+  it("catches every way a font could break the bundling rule", () => {
+    const fonts = resolve(SRC_DIR, "assets/fonts");
+    const disk = {
+      exists: (path: string) => resolve(path) === resolve(fonts, "a.woff2"),
+      list: () => ["OFL-a.txt"],
+    };
+    const face = (body: string) => `@layer tokens { @font-face { font-family: "A"; ${body} } }`;
+    const good = 'font-display: swap; src: url("../assets/fonts/a.woff2") format("woff2");';
+    const check = (name: string, source: string) => fontViolations([{ name, source }], disk);
+
+    expect(check(TOKENS_FILE, face(good))).toEqual([]);
+    expect(check(TOKENS_FILE, face('font-display: swap; src: local("Arial");'))).toEqual([]);
+    expect(check("features/x/x.css", face(good))).toEqual([
+      "features/x/x.css: @font-face outside styles/tokens.css",
+    ]);
+    expect(check(TOKENS_FILE, face('src: url("../assets/fonts/a.woff2");'))).toEqual([
+      "styles/tokens.css: @font-face without font-display: swap",
+    ]);
+    expect(
+      check(TOKENS_FILE, face('font-display: block; src: url("../assets/fonts/a.woff2");')),
+    ).toEqual(["styles/tokens.css: @font-face without font-display: swap"]);
+    for (const url of [
+      "https://fonts.example.com/a.woff2",
+      "//fonts.example.com/a.woff2",
+      "/assets/fonts/a.woff2",
+      "data:font/woff2;base64,AAAA",
+      "../assets/a.woff2",
+      "../assets/fonts/b.woff2",
+      "../assets/fonts/a.ttf",
+    ]) {
+      expect(check(TOKENS_FILE, face(`font-display: swap; src: url("${url}");`)), url).toEqual([
+        `styles/tokens.css: font file ${url} is not a bundled woff2 under src/assets/fonts`,
+      ]);
+    }
+    const unlicensed = { ...disk, list: () => ["OFL-b.txt", "README.md"] };
+    expect(fontViolations([{ name: TOKENS_FILE, source: face(good) }], unlicensed)).toEqual([
+      "styles/tokens.css: font file ../assets/fonts/a.woff2 has no license file next to it",
+    ]);
+  });
 });
+
+/**
+ * Fonts are bundled with the app (the server runs offline): faces only in tokens.css, each with
+ * font-display: swap, each file a woff2 under src/assets/fonts that exists and has a license file
+ * named after its family (OFL-<family>.txt) in that folder. The file system is injectable so the
+ * guard itself can be tested.
+ */
+function fontViolations(
+  sheets: { name: string; source: string }[],
+  disk: { exists: (path: string) => boolean; list: (dir: string) => string[] },
+): string[] {
+  const fontsDir = resolve(SRC_DIR, "assets/fonts");
+  const found: string[] = [];
+  for (const { name, source } of sheets) {
+    for (const rule of parseCss(source)) {
+      if (rule.selector !== "@font-face") {
+        continue;
+      }
+      if (name !== TOKENS_FILE) {
+        found.push(`${name}: @font-face outside ${TOKENS_FILE}`);
+        continue;
+      }
+      const display = rule.declarations.find((d) => d.property === "font-display")?.value;
+      if (display !== "swap") {
+        found.push(`${name}: @font-face without font-display: swap`);
+      }
+      const src = rule.declarations.find((d) => d.property === "src")?.value ?? "";
+      for (const [, url = ""] of src.matchAll(/url\(\s*["']?([^"')]*)["']?\s*\)/g)) {
+        const path = resolve(SRC_DIR, dirname(name), url);
+        const bundled =
+          url.startsWith(".") &&
+          url.endsWith(".woff2") &&
+          dirname(path) === fontsDir &&
+          disk.exists(path);
+        if (!bundled) {
+          found.push(`${name}: font file ${url} is not a bundled woff2 under src/assets/fonts`);
+          continue;
+        }
+        // OFL-instrument-sans.txt covers instrument-sans-*.woff2.
+        const file = basename(path);
+        const licensed = disk.list(fontsDir).some((license) => {
+          const family = /^OFL-(.+)\.txt$/.exec(license)?.[1];
+          return (
+            family !== undefined && (file.startsWith(`${family}-`) || file.startsWith(`${family}.`))
+          );
+        });
+        if (!licensed) {
+          found.push(`${name}: font file ${url} has no license file next to it`);
+        }
+      }
+    }
+  }
+  return found;
+}
 
 describe("contrast in every theme", () => {
   const tokenRules = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
 
+  // Every top-level block of the selector, in file order: areas append their tokens in blocks of
+  // their own, and those are checked like the first.
   function declarationsOf(selector: string): Map<string, string> {
-    const rule = tokenRules.find((r) => r.selector === selector && r.context.length === 1);
-    return new Map(rule?.declarations.map((d) => [d.property, d.value]));
+    const rules = tokenRules.filter((r) => r.selector === selector && r.context.length === 1);
+    return new Map(rules.flatMap((rule) => rule.declarations.map((d) => [d.property, d.value])));
   }
 
   const base = declarationsOf(":root");
@@ -489,7 +601,10 @@ describe("contrast in every theme", () => {
     ["--on-accent", ["--accent", "--accent-hover"], TEXT],
     ["--on-accent-busy", ["--accent-busy"], TEXT],
     ["--danger-text", ["--bg", "--bg-surface", "--bg-raised", "--danger-bg"], TEXT],
-    ["--success-text", ["--bg", "--bg-surface", "--bg-raised"], TEXT],
+    ["--success-text", ["--bg", "--bg-surface", "--bg-raised", "--success-bg"], TEXT],
+    ["--warning-text", ["--bg", "--bg-surface", "--bg-raised", "--warning-bg"], TEXT],
+    ["--info-text", ["--bg", "--bg-surface", "--bg-raised", "--info-bg"], TEXT],
+    ["--text", ["--success-bg", "--warning-bg", "--info-bg"], TEXT],
     // Non-text UI that carries meaning: input borders, the focus ring, the primary button fill.
     ["--border-strong", ["--bg", "--bg-surface", "--bg-raised"], UI],
     ["--focus-ring", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], UI],

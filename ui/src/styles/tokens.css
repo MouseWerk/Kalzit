@@ -45,10 +45,10 @@
     /* Series colors for charts, after the Okabe-Ito order (blue, orange, sky blue, vermillion,
        bluish green, reddish purple, yellow, gray). Lightness and chroma alternate so series stay
        apart for protanopia, deuteranopia and tritanopia too, and each reaches 3:1 on the panel
-       surfaces; styles.test.ts pins both. The orange is the sunstone copper and the gray the
-       warm stone of the surfaces. */
+       surfaces; styles.test.ts pins both. The orange sits on the sunstone amber, the blues lean
+       toward the website's frame blue and the gray is the warm stone of the surfaces. */
     --chart-1: light-dark(oklch(57.6% 0.103 241), oklch(74.4% 0.114 262));
-    --chart-2: light-dark(oklch(43% 0.09 60), oklch(87.6% 0.097 74));
+    --chart-2: light-dark(oklch(41.7% 0.09 69), oklch(87.6% 0.097 74));
     --chart-3: light-dark(oklch(48.2% 0.116 249), oklch(58% 0.154 249));
     --chart-4: light-dark(oklch(63.8% 0.113 35), oklch(60% 0.192 28));
     --chart-5: light-dark(oklch(41.6% 0.08 161), oklch(93.4% 0.091 156));
@@ -66,12 +66,16 @@
     --focus-ring-offset: 2px;
     --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
 
-    /* Typography: system fonts only, no downloads. */
+    /*
+     * Typography: the website's faces, bundled with the app (see the @font-face rules at the end of
+     * this file), so nothing is fetched from another host; system fonts stand in while they load.
+     */
     --font-sans:
-      system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell,
-      "Helvetica Neue", Arial, sans-serif;
+      "Instrument Sans Variable", "Instrument Sans Fallback", system-ui, -apple-system, "Segoe UI",
+      Roboto, "Noto Sans", Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
     --font-mono:
-      ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      "JetBrains Mono Variable", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
     --font-size-2xs: 0.6875rem;
     --font-size-xs: 0.75rem;
     --font-size-sm: 0.8125rem;
@@ -103,9 +107,10 @@
 
     --border-width: 1px;
 
-    --radius-sm: 4px;
-    --radius-md: 6px;
-    --radius-lg: 10px;
+    /* Crisp corners as on the website: calcite breaks into clean facets. */
+    --radius-sm: 3px;
+    --radius-md: 4px;
+    --radius-lg: 8px;
     --radius-pill: 999px;
 
     /* Layers, lowest first. */
@@ -148,21 +153,21 @@
 
     --bg: light-dark(oklch(100% 0 0), oklch(0% 0 0));
     --bg-surface: light-dark(oklch(100% 0 0), oklch(0% 0 0));
-    --bg-raised: light-dark(oklch(100% 0 0), oklch(14% 0 0));
-    --bg-hover: light-dark(oklch(91% 0.004 260), oklch(26% 0.006 260));
-    --bg-active: light-dark(oklch(85% 0.006 260), oklch(34% 0.008 260));
-    --border: light-dark(oklch(35% 0 0), oklch(75% 0 0));
-    --border-strong: light-dark(oklch(20% 0 0), oklch(88% 0 0));
+    --bg-raised: light-dark(oklch(100% 0 0), oklch(14% 0.003 60));
+    --bg-hover: light-dark(oklch(91% 0.006 70), oklch(26% 0.006 60));
+    --bg-active: light-dark(oklch(85% 0.008 70), oklch(34% 0.008 60));
+    --border: light-dark(oklch(35% 0.004 60), oklch(75% 0.004 70));
+    --border-strong: light-dark(oklch(20% 0.004 60), oklch(88% 0.004 70));
 
     --text: light-dark(oklch(0% 0 0), oklch(100% 0 0));
-    --text-muted: light-dark(oklch(28% 0.01 260), oklch(88% 0.006 260));
+    --text-muted: light-dark(oklch(28% 0.008 60), oklch(88% 0.006 75));
 
-    --accent: light-dark(oklch(36% 0.15 255), oklch(84% 0.09 255));
-    --accent-hover: light-dark(oklch(30% 0.14 255), oklch(90% 0.06 255));
+    --accent: light-dark(oklch(39% 0.1 48), oklch(85% 0.08 70));
+    --accent-hover: light-dark(oklch(33% 0.09 46), oklch(91% 0.055 72));
     --on-accent: light-dark(oklch(100% 0 0), oklch(0% 0 0));
-    --accent-busy: light-dark(oklch(86% 0.05 255), oklch(32% 0.08 255));
-    --on-accent-busy: light-dark(oklch(12% 0.04 255), oklch(98% 0.01 255));
-    --accent-text: light-dark(oklch(36% 0.16 255), oklch(86% 0.09 255));
+    --accent-busy: light-dark(oklch(87% 0.04 62), oklch(31% 0.05 58));
+    --on-accent-busy: light-dark(oklch(14% 0.03 50), oklch(98% 0.01 75));
+    --accent-text: light-dark(oklch(37% 0.1 48), oklch(87% 0.08 70));
 
     --danger-text: light-dark(oklch(40% 0.17 27), oklch(85% 0.1 25));
     --danger-bg: light-dark(oklch(94% 0.03 27), oklch(22% 0.06 25));
@@ -202,5 +207,140 @@
     --size-legend-max: 4.5rem;
     --size-preview: 18rem;
     --size-result: 24rem;
+  }
+}
+
+/*
+ * The Kalzit look (appended by the brand retune): the bundled website faces, the remaining
+ * status colors, the icon stroke and the skeleton pulse.
+ *
+ * Fonts: SIL OFL 1.1 (licenses next to the files), Latin and Latin Extended subsets, served by
+ * the server itself. Instrument Sans for text, JetBrains Mono for code, Newsreader only for the
+ * headings of the pages before the app (sign-in, setup, status pages).
+ */
+@layer tokens {
+  @font-face {
+    font-family: "Instrument Sans Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400 700;
+    src: url("../assets/fonts/instrument-sans-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  @font-face {
+    font-family: "Instrument Sans Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400 700;
+    src: url("../assets/fonts/instrument-sans-latin-ext-wght-normal.woff2")
+      format("woff2-variations");
+    unicode-range:
+      U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+      U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+      U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  @font-face {
+    font-family: "JetBrains Mono Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url("../assets/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  @font-face {
+    font-family: "JetBrains Mono Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url("../assets/fonts/jetbrains-mono-latin-ext-wght-normal.woff2")
+      format("woff2-variations");
+    unicode-range:
+      U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+      U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+      U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  @font-face {
+    font-family: "Newsreader Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url("../assets/fonts/newsreader-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  @font-face {
+    font-family: "Newsreader Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url("../assets/fonts/newsreader-latin-ext-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+      U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+      U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  /* Local stand-ins with the bundled faces' metrics, so the swap does not shift the layout. */
+  @font-face {
+    font-family: "Instrument Sans Fallback";
+    font-display: swap;
+    src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans");
+    size-adjust: 97%;
+    ascent-override: 100%;
+    descent-override: 25.8%;
+    line-gap-override: 0%;
+  }
+
+  @font-face {
+    font-family: "Newsreader Fallback";
+    font-display: swap;
+    src: local("Georgia"), local("Times New Roman");
+    size-adjust: 92%;
+    ascent-override: 102%;
+    descent-override: 28%;
+    line-gap-override: 0%;
+  }
+
+  :root {
+    --font-display:
+      "Newsreader Variable", "Newsreader Fallback", ui-serif, Georgia, "Times New Roman", serif;
+    --font-weight-display: 400;
+    --letter-spacing-display: -0.02em;
+    --font-size-2xl: 1.625rem;
+
+    /* Cards that stand on the page (the sign-in panel): a shadow lower than a menu's. */
+    --shadow-raised: 0 1px 2px var(--shadow-color), 0 0.5rem 1.5rem -1rem var(--shadow-color);
+
+    /* Status: ok (success), warn (warning), critical (danger) and info, as text and tints. */
+    --success-bg: light-dark(oklch(95.4% 0.025 150), oklch(26% 0.035 150));
+    --warning-text: light-dark(oklch(48% 0.1 70), oklch(82% 0.11 80));
+    --warning-bg: light-dark(oklch(95% 0.035 82), oklch(27% 0.04 75));
+    --info-text: light-dark(oklch(47% 0.09 245), oklch(79% 0.08 245));
+    --info-bg: light-dark(oklch(95.4% 0.018 245), oklch(26% 0.035 245));
+
+    /* Line icons: a little lighter than before, close to the website's 1.4. */
+    --icon-stroke: 1.5;
+
+    /* Skeleton loaders breathe slowly; components.css stops them for reduced motion. */
+    --duration-pulse: 1.4s;
+  }
+
+  :root[data-theme="contrast"] {
+    --success-bg: light-dark(oklch(94% 0.03 150), oklch(22% 0.04 150));
+    --warning-text: light-dark(oklch(38% 0.09 65), oklch(88% 0.1 85));
+    --warning-bg: light-dark(oklch(94% 0.04 85), oklch(22% 0.05 75));
+    --info-text: light-dark(oklch(36% 0.1 250), oklch(87% 0.07 245));
+    --info-bg: light-dark(oklch(94% 0.025 245), oklch(22% 0.04 245));
+    --icon-stroke: 1.75;
   }
 }
