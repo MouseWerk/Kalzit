@@ -188,6 +188,60 @@ jobs:
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run build
 
+  # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
+  # e2e profile (release settings, less optimization, so it builds faster). Not a required check
+  # yet.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-profile
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: cargo build --profile e2e --locked -p kalzit
+      - name: Cache Playwright browsers
+        id: browsers
+        uses: actions/cache@v6
+        with:
+          path: .playwright-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: Install Playwright browsers
+        if: steps.browsers.outputs.cache-hit != 'true'
+        working-directory: ui
+        run: npx playwright install chromium firefox webkit
+      - name: Install browser system packages
+        if: runner.os == 'Linux'
+        working-directory: ui
+        run: npx playwright install-deps chromium firefox webkit
+      - run: npm run e2e
+        working-directory: ui
+      - uses: actions/upload-artifact@v7
+        if: ${{ !success() }}
+        with:
+          name: e2e-${{ matrix.os }}
+          path: ui/e2e/.output
+          if-no-files-found: ignore
+          retention-days: 14
+
   audit:
     name: audit
     runs-on: ubuntu-latest
