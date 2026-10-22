@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   type BrowserContext,
   type BrowserContextOptions,
@@ -6,7 +7,6 @@ import {
   expect,
   type Page,
 } from "@playwright/test";
-import { join } from "node:path";
 import { Api, baseUrl, fixturesDir, OWNER, regionDashboard, unique } from "./api";
 import { t } from "./i18n";
 
@@ -55,7 +55,10 @@ function observe(message: ConsoleMessage): Observed {
  */
 function guard(context: BrowserContext, allowed: readonly RegExp[], seen: Observed[]): void {
   const record = (observed: Observed) => {
-    if (!ALWAYS_ALLOWED.some((ok) => ok(observed)) && !allowed.some((p) => p.test(`${observed.text} ${observed.url}`))) {
+    if (
+      !ALWAYS_ALLOWED.some((ok) => ok(observed)) &&
+      !allowed.some((p) => p.test(`${observed.text} ${observed.url}`))
+    ) {
       seen.push(observed);
     }
   };
@@ -84,15 +87,12 @@ interface WorkerFixtures {
 interface Fixtures {
   consoleGuard: ConsoleGuard;
   /** A page in a context of its own (another person, another language), signed in. */
-  pageAs: (
-    email: string,
-    password: string,
-    options?: BrowserContextOptions,
-  ) => Promise<Page>;
+  pageAs: (email: string, password: string, options?: BrowserContextOptions) => Promise<Page>;
 }
 
 export const test = base.extend<Fixtures, WorkerFixtures>({
   world: [
+    // biome-ignore lint/correctness/noEmptyPattern: Playwright reads the fixtures a function takes from this pattern
     async ({}, use) => {
       const owner = await Api.owner();
       const sourceName = unique("Seiten");
@@ -105,6 +105,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker" },
   ],
   // The server picks a free port at start, so the address is known only after global setup.
+  // biome-ignore lint/correctness/noEmptyPattern: Playwright reads the fixtures a function takes from this pattern
   baseURL: async ({}, use) => {
     await use(baseUrl());
   },
@@ -118,11 +119,11 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     },
     { auto: true },
   ],
-  pageAs: async ({ browser, baseURL, consoleGuard }, use) => {
+  pageAs: async ({ browser, consoleGuard }, use) => {
     const contexts: BrowserContext[] = [];
     const seen: Observed[] = [];
     await use(async (email, password, options = {}) => {
-      const context = await browser.newContext({ baseURL, locale: "en-US", ...options });
+      const context = await browser.newContext({ baseURL: baseUrl(), locale: "en-US", ...options });
       contexts.push(context);
       guard(context, consoleGuard.allowed, seen);
       const page = await context.newPage();

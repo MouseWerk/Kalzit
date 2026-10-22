@@ -14,7 +14,8 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome check --error-on-warnings .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.4",

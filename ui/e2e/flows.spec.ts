@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Api, fixturesDir, SQL, unique } from "./support/api";
+import { Api, fixturesDir, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
@@ -11,7 +11,11 @@ test("a time range chosen on a dashboard lands in the address and survives a rel
   await signInOwner(page);
   await page.goto(`/dashboards/${world.dashboardId}`);
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
-  await page.getByRole("button", { name: t("dashboards.time.buttonLabel", { range: t("dashboards.time.last6h") }) }).click();
+  await page
+    .getByRole("button", {
+      name: t("dashboards.time.buttonLabel", { range: t("dashboards.time.last6h") }),
+    })
+    .click();
   await page.getByRole("button", { name: t("dashboards.time.last24h") }).click();
   await expect(page).toHaveURL(/from=now-24h/);
   await page.reload();
@@ -24,6 +28,11 @@ test("a time range chosen on a dashboard lands in the address and survives a rel
 });
 
 test("Explore adds a panel to an existing dashboard", async ({ page, world }) => {
+  // A dashboard of its own: the shared one stays as the page checks expect it.
+  const owner = await Api.owner();
+  const title = unique("Bestehend");
+  await owner.createDashboard(regionDashboard(title, world.sourceId));
+  await owner.dispose();
   await signInOwner(page);
   await page.goto("/explore");
   await page.getByLabel(t("explore.datasource")).selectOption({ label: world.sourceName });
@@ -34,9 +43,9 @@ test("Explore adds a panel to an existing dashboard", async ({ page, world }) =>
   await result.getByRole("button", { name: t("explore.addToDashboard") }).click();
   const add = page.getByRole("dialog", { name: t("explore.add.title") });
   await add.getByLabel(t("explore.add.existing")).check();
-  await add.getByLabel(t("explore.add.dashboard")).selectOption({ label: world.dashboardTitle });
+  await add.getByLabel(t("explore.add.dashboard"), { exact: true }).selectOption({ label: title });
   await add.getByRole("button", { name: t("explore.add.submit") }).click();
-  await expect(page.getByRole("heading", { name: world.dashboardTitle })).toBeVisible();
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
   await expect(page.locator(".ts__plot")).toHaveCount(2);
 });
 
@@ -49,7 +58,7 @@ test("a data source is renamed, moved to the trash and restored", async ({ page 
   await page.goto(`/data-sources/${id}`);
   const renamed = `${name} neu`;
   await page.getByLabel(t("datasources.form.name")).fill(renamed);
-  await page.getByRole("button", { name: t("datasources.form.save") }).click();
+  await page.getByRole("button", { name: t("datasources.form.save"), exact: true }).click();
   await expect(page.getByText(t("datasources.form.saved"))).toBeVisible();
 
   await page.getByRole("button", { name: t("datasources.delete") }).click();
@@ -60,7 +69,9 @@ test("a data source is renamed, moved to the trash and restored", async ({ page 
   await expect(page.getByRole("cell", { name: renamed })).toHaveCount(0);
 
   await page.getByRole("link", { name: t("datasources.trash.link") }).click();
-  await page.getByRole("button", { name: t("datasources.restoreNamed", { name: renamed }) }).click();
+  await page
+    .getByRole("button", { name: t("datasources.restoreNamed", { name: renamed }) })
+    .click();
   await page.getByRole("link", { name: t("datasources.trash.back") }).click();
   await expect(page.getByRole("link", { name: renamed })).toBeVisible();
 });
@@ -105,9 +116,13 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   await create.getByRole("button", { name: t("dashboards.new.create") }).click();
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
 
-  await page.getByRole("button", { name: t("dashboards.addPanel") }).first().click();
+  await page
+    .getByRole("button", { name: t("dashboards.addPanel") })
+    .first()
+    .click();
   const editorDialog = page.getByRole("dialog", { name: t("dashboards.editor.title") });
   await editorDialog.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
+  await editorDialog.getByRole("button", { name: t("dashboards.editor.addQuery") }).click();
   await editorDialog.getByLabel(t("dashboards.editor.datasource")).selectOption({ label: name });
   await fillQuery(editorDialog, SQL.series);
   await editorDialog.getByRole("button", { name: t("dashboards.editor.run") }).click();

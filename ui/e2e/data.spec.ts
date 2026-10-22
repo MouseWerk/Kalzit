@@ -25,9 +25,12 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await expect(health).toContainText(pattern("datasources.reason.health.connected_read_only"));
 
   // Explore: a time series from the fixture, in the last hour.
-  await page.getByRole("navigation", { name: t("nav.label") }).getByRole("link", {
-    name: t("explore.nav"),
-  }).click();
+  await page
+    .getByRole("navigation", { name: t("nav.label") })
+    .getByRole("link", {
+      name: t("explore.nav"),
+    })
+    .click();
   await page.getByLabel(t("explore.datasource")).selectOption({ label: source });
   await fillQuery(page, SQL.series);
   await page.getByRole("button", { name: t("explore.run") }).click();
@@ -67,7 +70,8 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
 
   // A panel from Explore is named after its data source.
   const panelTitle = source;
-  await page.getByRole("button", { name: t("dashboards.panel.editNamed", { title: panelTitle }) })
+  await page
+    .getByRole("button", { name: t("dashboards.panel.editNamed", { title: panelTitle }) })
     .click();
   const editor = page.getByRole("dialog", { name: t("dashboards.editor.title") });
   await editor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
@@ -84,9 +88,9 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
 
   // Saved and reloaded: the variable lists the regions and the panel shows its series.
   await page.reload();
-  const region = page.getByRole("region", { name: t("dashboards.variables.label") }).getByLabel(
-    "Region",
-  );
+  const region = page
+    .getByRole("region", { name: t("dashboards.variables.label") })
+    .getByLabel("Region");
   await expect(region).toHaveValue("Nord");
   await expect(region.locator("option")).toHaveText(["Nord", "Ost", "Süd", "West"]);
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();

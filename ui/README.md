@@ -16,6 +16,7 @@ and TanStack Query. No CSS framework, no component library, no web fonts. The pr
 | `npm run format:check` | Biome format, checks only |
 | `npm run check` | Biome lint, format and import order together |
 | `npm test` | Vitest: unit, component and guard tests |
+| `npm run e2e` | Playwright against the release binary; see "Testing contracts" in `docs/ARCHITECTURE.md` |
 
 Node 26 or newer. Start the server first (it listens on port 3000), then `npm run dev`. On a fresh data folder the UI
 opens the setup page; the setup code is in `setup-token.txt` in the server's data folder.

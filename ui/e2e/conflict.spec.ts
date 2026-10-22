@@ -5,7 +5,10 @@ import { expect, signInOwner, test } from "./support/test";
 
 async function retitle(page: Page, title: string): Promise<void> {
   // The toolbar's button; an empty dashboard offers a second one in its empty state.
-  await page.getByRole("button", { name: t("dashboards.edit") }).first().click();
+  await page
+    .getByRole("button", { name: t("dashboards.edit") })
+    .first()
+    .click();
   await page.getByRole("button", { name: t("dashboards.settings") }).click();
   const settings = page.getByRole("dialog", { name: t("dashboards.settings.title") });
   await settings.getByLabel(t("dashboards.settings.dashboardTitle")).fill(title);

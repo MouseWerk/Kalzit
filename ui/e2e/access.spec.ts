@@ -63,11 +63,9 @@ test("the owner creates accounts, adds them as members with roles and builds a t
   await page.getByRole("link", { name: team }).click();
   await page.getByRole("button", { name: t("admin.teams.addMember") }).click();
   const add = page.getByRole("dialog", { name: t("admin.teams.addMemberTitle") });
-  await add
-    .getByLabel(t("admin.teams.member"))
-    .selectOption({
-      label: t("admin.common.nameAndEmail", { name: editor.name, email: mail(editor.name) }),
-    });
+  await add.getByLabel(t("admin.teams.member")).selectOption({
+    label: t("admin.common.nameAndEmail", { name: editor.name, email: mail(editor.name) }),
+  });
   await add.getByRole("button", { name: t("admin.teams.addMemberSubmit") }).click();
   await expect(page.getByRole("list", { name: t("admin.teams.members") })).toContainText(
     editor.name,

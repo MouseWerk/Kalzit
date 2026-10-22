@@ -18,10 +18,7 @@ test("a viewer reads a dashboard and changes its variable, but cannot edit or ex
   pageAs,
 }) => {
   const viewer = await owner.createMember(unique("Viktor Viewer"), "viewer");
-  const source = await owner.createSqliteSource(
-    unique("Verkauf"),
-    join(fixturesDir(), "sales.db"),
-  );
+  const source = await owner.createSqliteSource(unique("Verkauf"), join(fixturesDir(), "sales.db"));
   const title = unique("Regionen");
   const dashboardId = await owner.createDashboard(regionDashboard(title, source));
 
@@ -51,7 +48,10 @@ test("a viewer reads a dashboard and changes its variable, but cannot edit or ex
   const answer = await rerun;
   expect(answer.status()).toBe(200);
   type Answer = {
-    results: Record<string, { result?: { frame: { fields: { name: string; values: unknown[] }[] } } }>;
+    results: Record<
+      string,
+      { result?: { frame: { fields: { name: string; values: unknown[] }[] } } }
+    >;
   };
   const body = (await answer.json()) as Answer;
   const amounts = body.results.A?.result?.frame.fields.find((f) => f.name === "amount")?.values;

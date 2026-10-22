@@ -36,10 +36,7 @@ export default defineConfig({
   workers: CI ? 2 : 4,
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  reporter: [
-    ["list"],
-    ["html", { outputFolder: join(OUTPUT, "report"), open: "never" }],
-  ],
+  reporter: [["list"], ["html", { outputFolder: join(OUTPUT, "report"), open: "never" }]],
   use: {
     locale: "en-US",
     timezoneId: "UTC",

@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
+import { baseUrl } from "./support/api";
 import { MAIN_PAGES } from "./support/pages";
 import { expect, signInOwner, test } from "./support/test";
 
@@ -18,9 +19,9 @@ async function seriousViolations(page: Page): Promise<string[]> {
     });
 }
 
-test("sign-in page: no serious accessibility violations", async ({ browser, baseURL }) => {
+test("sign-in page: no serious accessibility violations", async ({ browser }) => {
   // Signed out, as a visitor sees it.
-  const context = await browser.newContext({ baseURL, locale: "en-US" });
+  const context = await browser.newContext({ baseURL: baseUrl(), locale: "en-US" });
   const page = await context.newPage();
   await page.goto("/login");
   await expect(page.getByRole("button").first()).toBeVisible();

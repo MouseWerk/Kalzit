@@ -15,10 +15,10 @@ export interface MainPage {
 const heading =
   (key: string, params: Record<string, string> = {}) =>
   async (page: Page, _world: World, language: Language) => {
-  await expect(
-    page.getByRole("heading", { name: t(key, params, language), exact: true }).first(),
-  ).toBeVisible();
-};
+    await expect(
+      page.getByRole("heading", { name: t(key, params, language), exact: true }).first(),
+    ).toBeVisible();
+  };
 
 const dialog = (page: Page, key: string, language: Language) =>
   expect(page.getByRole("dialog", { name: t(key, {}, language) })).toBeVisible();
@@ -39,7 +39,9 @@ export const MAIN_PAGES: readonly MainPage[] = [
       await dashboardReady(page, world);
       await page.getByRole("button", { name: t("dashboards.edit", {}, language) }).click();
       await page
-        .getByRole("button", { name: t("dashboards.panel.editNamed", { title: "Sales" }, language) })
+        .getByRole("button", {
+          name: t("dashboards.panel.editNamed", { title: "Sales" }, language),
+        })
         .click();
       await dialog(page, "dashboards.editor.title", language);
       await expect(page.getByRole("dialog").locator(".cm-editor")).toBeVisible();
@@ -61,13 +63,19 @@ export const MAIN_PAGES: readonly MainPage[] = [
     path: (w) => `/dashboards/${w.dashboardId}/versions`,
     ready: heading("dashboards.history.title"),
   },
-  { name: "dashboard trash", path: () => "/dashboards/trash", ready: heading("dashboards.trash.title") },
+  {
+    name: "dashboard trash",
+    path: () => "/dashboards/trash",
+    ready: heading("dashboards.trash.title"),
+  },
   { name: "explore", path: () => "/explore", ready: heading("explore.title") },
   {
     name: "explore result",
     path: () => "/explore",
     ready: async (page, world, language) => {
-      await page.getByLabel(t("explore.datasource", {}, language)).selectOption({ label: world.sourceName });
+      await page
+        .getByLabel(t("explore.datasource", {}, language))
+        .selectOption({ label: world.sourceName });
       await fillQuery(page, SQL.series);
       await page.getByRole("button", { name: t("explore.run", {}, language) }).click();
       await expect(

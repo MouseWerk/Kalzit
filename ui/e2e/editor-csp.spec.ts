@@ -10,9 +10,7 @@ import { fillQuery } from "./support/ui";
  * (editorStyles.ts). This runs in every engine, under the real header, and checks that the
  * editor has its frame, layout and theme.
  */
-test("the query editor is styled under the server's Content-Security-Policy", async ({
-  page,
-}) => {
+test("the query editor is styled under the server's Content-Security-Policy", async ({ page }) => {
   const owner = await Api.owner();
   const name = unique("CSP");
   await owner.createSqliteSource(name, join(fixturesDir(), "sales.db"));

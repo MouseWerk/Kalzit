@@ -30,8 +30,9 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
 
   await page.getByLabel(t("setup.token")).fill(token);
   await page.getByRole("button", { name: t("setup.submit") }).click();
-  await expect(page.getByRole("heading", { name: t("home.welcome", { name: OWNER.name }) }))
-    .toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: t("home.welcome", { name: OWNER.name }) }),
+  ).toBeVisible();
   await expect(page.getByText(OWNER.orgName).first()).toBeVisible();
 
   // Setup is done: the setup page now sends people to sign in.
@@ -46,6 +47,7 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
   await expect(page.getByText(t("errors.invalid_credentials"))).toBeVisible();
 
   await signIn(page, OWNER.email, OWNER.password);
-  await expect(page.getByRole("heading", { name: t("home.welcome", { name: OWNER.name }) }))
-    .toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: t("home.welcome", { name: OWNER.name }) }),
+  ).toBeVisible();
 });
