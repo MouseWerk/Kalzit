@@ -246,6 +246,18 @@ struct NewVersion<'a> {
     message: &'a str,
     /// The version this one brings back, for a restore.
     restored_from: Option<i64>,
+    /// Library panels this version references and the stored one did not; checked again under
+    /// the organization's lock, so a library panel deleted meanwhile is not referenced.
+    added_library: std::collections::BTreeSet<&'a str>,
+}
+
+/// The library panels `model` references that `previous` did not.
+fn added_library<'a>(
+    model: &'a model::DashboardModel,
+    previous: Option<&model::DashboardModel>,
+) -> std::collections::BTreeSet<&'a str> {
+    let known = previous.map(model::DashboardModel::library_panel_ids).unwrap_or_default();
+    model.library_panel_ids().into_iter().filter(|id| !known.contains(id)).collect()
 }
 
 /// How many versions to keep per dashboard (0: all). Read before the transaction opens, so the
@@ -467,7 +479,15 @@ async fn create(
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    let new = NewVersion { model: &model, message: &message, restored_from: None };
+    // `lock_place` took the organization's lock; a library panel deleted since the check above
+    // is refused here rather than referenced.
+    library::recheck_added(&mut tx, &ctx.org_id, &model.library_panel_ids()).await?;
+    let new = NewVersion {
+        model: &model,
+        message: &message,
+        restored_from: None,
+        added_library: added_library(&model, None),
+    };
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &id, &model).await?;
     let summary = json!({ "folderId": body.folder_id, "version": 1 });
@@ -528,6 +548,11 @@ async fn write_version(
     let next = row.version + 1;
     let moved = folder_id != row.folder_id.as_deref();
     let mut tx = crate::db::begin(&state.db).await?;
+    // New library panel references take the organization's lock first, as a library panel's
+    // delete does, so a reference never outlives the panel it names.
+    if !moved && !new.added_library.is_empty() {
+        authz::lock_org(&mut tx, &ctx.org_id).await?;
+    }
     if moved {
         lock_place(&mut tx, &ctx.org_id, folder_id).await?;
         // Leaving a restricted folder is remembered, so the purge still hides its old events.
@@ -565,6 +590,7 @@ async fn write_version(
         }
         return Err(ApiError::version_conflict(json!(pool_view(state, ctx, stored).await?)));
     }
+    library::recheck_added(&mut tx, &ctx.org_id, &new.added_library).await?;
     insert_version(&mut tx, &row.id, next, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &row.id, new.model).await?;
     let (action, summary) = match new.restored_from {
@@ -626,7 +652,12 @@ async fn save(
     let stored = current_model(&state, &row).await?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     library::check_references(&state.db, &ctx, &model, Some(&stored)).await?;
-    let new = NewVersion { model: &model, message: &message, restored_from: None };
+    let new = NewVersion {
+        model: &model,
+        message: &message,
+        restored_from: None,
+        added_library: added_library(&model, Some(&stored)),
+    };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
 }
 
@@ -870,7 +901,12 @@ async fn restore_version(
     let current = current_model(&state, &row).await?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&current)).await?;
     library::check_references(&state.db, &ctx, &model, Some(&current)).await?;
-    let new = NewVersion { model: &model, message: "", restored_from: Some(summary.version) };
+    let new = NewVersion {
+        model: &model,
+        message: "",
+        restored_from: Some(summary.version),
+        added_library: added_library(&model, Some(&current)),
+    };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
 }
 

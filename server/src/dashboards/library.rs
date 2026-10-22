@@ -47,6 +47,18 @@ pub async fn fetch<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
     .await?)
 }
 
+/// Whether `folder` is in the trash (a trashed folder takes its subfolders along). Library panels
+/// there do not exist for the routes or for new references until the folder is restored.
+pub async fn in_trashed_folder(db: &AnyPool, org_id: &str, folder: Option<&str>) -> ApiResult<bool> {
+    let Some(folder) = folder else { return Ok(false) };
+    let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
+        .bind(org_id)
+        .bind(folder)
+        .fetch_optional(db)
+        .await?;
+    Ok(matches!(row, Some((Some(_),))))
+}
+
 /// The caller may do `permission` on library panels in `folder` (`None`: the top level, which
 /// takes the org-wide permission). A folder they cannot see is `not_found`.
 pub async fn check_place(db: &AnyPool, ctx: &OrgCtx, permission: Permission, folder: Option<&str>) -> ApiResult<()> {
@@ -104,10 +116,26 @@ pub async fn check_references(
     for id in model.library_panel_ids().difference(&known) {
         let missing = || ApiError::validation(format!("library panel {id} does not exist")).with_field("model");
         let row = fetch(db, &ctx.org_id, id).await?.ok_or_else(missing)?;
+        if in_trashed_folder(db, &ctx.org_id, row.folder_id.as_deref()).await? {
+            return Err(missing());
+        }
         match check_place(db, ctx, Permission::DashboardsRead, row.folder_id.as_deref()).await {
             Ok(()) => {}
             Err(e) if e.code == "not_found" => return Err(missing()),
             Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Inside the save's transaction, after the organization's lock: every library panel the save
+/// adds still exists. A delete takes the same lock before it counts the uses, so either the
+/// delete sees this save's reference and refuses, or this check sees the panel gone and refuses
+/// the save (`422 validation` on `model`).
+pub async fn recheck_added(conn: &mut sqlx::AnyConnection, org_id: &str, ids: &BTreeSet<&str>) -> ApiResult<()> {
+    for id in ids {
+        if fetch(&mut *conn, org_id, id).await?.is_none() {
+            return Err(ApiError::validation(format!("library panel {id} does not exist")).with_field("model"));
         }
     }
     Ok(())
@@ -171,4 +199,33 @@ pub async fn purge_dashboard_rows(
         .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The recheck inside the save's transaction refuses a library panel deleted after the check
+    /// before it: a save racing a delete leaves no reference to a missing panel.
+    #[tokio::test]
+    async fn a_library_panel_deleted_meanwhile_is_refused_inside_the_save() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)").execute(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO library_panels (id, org_id, name, search_name, model, version, created_at, updated_at) \
+             VALUES ('lib', 'o', 'L', 'l', '{}', 1, 0, 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let mut conn = db.acquire().await.unwrap();
+        assert!(recheck_added(&mut conn, "o", &BTreeSet::from(["lib"])).await.is_ok());
+        // Another organization's id is as missing as a deleted one.
+        let e = recheck_added(&mut conn, "other", &BTreeSet::from(["lib"])).await.unwrap_err();
+        assert_eq!((e.code, e.field), ("validation", Some("model")));
+        sqlx::query("DELETE FROM library_panels WHERE id = 'lib'").execute(&mut *conn).await.unwrap();
+        let e = recheck_added(&mut conn, "o", &BTreeSet::from(["lib"])).await.unwrap_err();
+        assert!(e.message.contains("lib"), "{}", e.message);
+        assert!(recheck_added(&mut conn, "o", &BTreeSet::new()).await.is_ok());
+    }
 }

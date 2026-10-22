@@ -99,6 +99,10 @@ async fn answer(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: LibraryRow) -
 /// cannot see is `not_found`.
 async fn load(state: &AppState, ctx: &OrgCtx, id: &str, permission: Permission) -> ApiResult<LibraryRow> {
     let row = library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
+    // In a trashed folder it is gone until the folder comes back, as in the list.
+    if library::in_trashed_folder(&state.db, &ctx.org_id, row.folder_id.as_deref()).await? {
+        return Err(ApiError::not_found());
+    }
     match check_place(&state.db, ctx, Permission::DashboardsRead, row.folder_id.as_deref()).await {
         Err(e) if e.code == "forbidden" => return Err(ApiError::not_found()),
         other => other?,
@@ -199,9 +203,18 @@ async fn list(
     .fetch_all(&mut *conn)
     .await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
+    // Every count in one query, not one per row.
+    let counts: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
+        "SELECT library_panel_id, COUNT(*) FROM library_panel_uses WHERE org_id = $1 GROUP BY library_panel_id",
+    )
+    .bind(&ctx.org_id)
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
     let mut items = Vec::new();
     for row in rows {
-        let uses = use_count(&mut *conn, &row.id).await?;
+        let uses = counts.get(&row.id).copied().unwrap_or(0);
         items.push(view(row, uses, &index, &ctx)?);
     }
     let more = items.len() > limit;

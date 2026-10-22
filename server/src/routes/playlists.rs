@@ -83,24 +83,42 @@ pub struct Playlist {
 /// The dashboards the caller may read, by id with their title; trashed ones are left out.
 struct Readable {
     dashboards: std::collections::HashMap<String, String>,
+    /// Every dashboard of the organization, trashed ones included: an entry naming none of them
+    /// was purged and is dropped on the next save.
+    existing: BTreeSet<String>,
 }
 
 impl Readable {
     async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
         let index = AccessIndex::load(conn, ctx).await?;
-        let rows: Vec<(String, Option<String>, String)> =
-            sqlx::query_as("SELECT id, folder_id, title FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL")
+        let rows: Vec<(String, Option<String>, String, Option<i64>)> =
+            sqlx::query_as("SELECT id, folder_id, title, deleted_at FROM dashboards WHERE org_id = $1")
                 .bind(&ctx.org_id)
                 .fetch_all(&mut *conn)
                 .await?;
+        let existing = rows.iter().map(|(id, ..)| id.clone()).collect();
         let dashboards = rows
             .into_iter()
-            .filter(|(id, folder, _)| {
-                index.dashboard(id, folder.as_deref()).is_some_and(|held| held.contains(&Permission::DashboardsRead))
+            .filter(|(id, folder, _, deleted_at)| {
+                deleted_at.is_none()
+                    && index
+                        .dashboard(id, folder.as_deref())
+                        .is_some_and(|held| held.contains(&Permission::DashboardsRead))
             })
-            .map(|(id, _, title)| (id, title))
+            .map(|(id, _, title, _)| (id, title))
             .collect();
-        Ok(Self { dashboards })
+        Ok(Self { dashboards, existing })
+    }
+
+    /// An entry that stays for others: a dashboard that exists but the caller may not read (or
+    /// that is in the trash).
+    fn hidden(&self, item: &Item) -> bool {
+        match item {
+            Item::Dashboard { dashboard_id } => {
+                !self.dashboards.contains_key(dashboard_id) && self.existing.contains(dashboard_id)
+            }
+            Item::Tag { .. } => false,
+        }
     }
 
     fn sees(&self, item: &Item) -> bool {
@@ -109,6 +127,19 @@ impl Readable {
             Item::Tag { .. } => true,
         }
     }
+}
+
+/// The caller's new entries with the entries they cannot see put back at their old positions
+/// (their index in the stored list, or the end when the list got shorter). Entries naming a
+/// purged dashboard are dropped.
+fn merge_hidden(stored: &[Item], sent: Vec<Item>, readable: &Readable) -> Vec<Item> {
+    let mut items = sent;
+    for (index, item) in stored.iter().enumerate() {
+        if readable.hidden(item) {
+            items.insert(index.min(items.len()), item.clone());
+        }
+    }
+    items
 }
 
 fn stored_items(raw: &str) -> ApiResult<Vec<Item>> {
@@ -273,10 +304,13 @@ async fn save(
     if body.version != row.version {
         return Err(ApiError::version_conflict(json!(view(row, &readable)?)));
     }
-    // Entries the caller cannot see were not sent back; they stay, after the caller's own.
-    let hidden: Vec<Item> = stored_items(&row.items)?.into_iter().filter(|i| !readable.sees(i)).collect();
-    let mut items = body.items;
-    items.extend(hidden);
+    let items = merge_hidden(&stored_items(&row.items)?, body.items, &readable);
+    if items.len() > MAX_ITEMS {
+        return Err(ApiError::validation(format!(
+            "items takes at most {MAX_ITEMS} entries, counting those you cannot see"
+        ))
+        .with_field("items"));
+    }
     let items = serde_json::to_string(&items).map_err(|e| ApiError::internal("playlists", e))?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;

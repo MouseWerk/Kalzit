@@ -63,7 +63,13 @@ Rules:
   every new or changed one, as for panel targets.
 - A new `libraryPanelId` (one the stored version did not have) must name a library panel of the
   organization that the caller may read; otherwise `422 validation` on `model` ("library panel
-  ... does not exist"). Keeping an existing reference needs no access to it.
+  ... does not exist"); one in a trashed folder counts as missing. Keeping an existing reference
+  needs no access to it. A save that adds references takes the organization's lock first and
+  checks them again inside its transaction, as a library panel's delete takes the same lock
+  before it counts the uses, so a reference never outlives the panel it names.
+- A panel with `libraryPanelId` is a slot: it holds the place (`id`, `grid`, `rowId`, `repeat`)
+  and, for readability, `type` and `title`; `targets`, `transformations` and `links` must be
+  empty (`422 validation` on `model`), since the library panel holds them.
 
 `Dashboard` answers carry the library panels the model references:
 
@@ -124,7 +130,9 @@ annotations overlapping the range, oldest first (`time`, then `id`).
 ### `POST /orgs/{orgId}/dashboards/{dashboardId}/annotations`
 
 Body `{"time", "timeEnd"?, "text", "tags"?, "panelId"?}`. Answers `201` with the `Annotation`.
-`422 validation` with field `time`, `timeEnd` (before `time`), `text`, `tags` or `panelId`.
+`422 validation` with field `time`, `timeEnd` (before `time`), `text`, `tags` or `panelId` (not a
+panel of the dashboard's current version). Create, change and delete take the organization's
+lock and check inside their transaction that the dashboard still exists outside the trash.
 
 ### `PATCH /orgs/{orgId}/dashboards/{dashboardId}/annotations/{annotationId}`
 
@@ -161,8 +169,9 @@ interface Playlist {
 
 Reading and playing need org-wide `dashboards:read`, changing needs `dashboards:write`. A
 playlist never names a dashboard to someone who may not read it: entries for such dashboards are
-left out of every answer, and kept (after the caller's own entries) when the caller saves. Naming
-a dashboard the caller cannot read is `422 validation` field `items`. Audited as
+left out of every answer, and kept at their positions when the caller saves. Entries naming a
+purged dashboard are dropped on the next save. The limit of 100 counts the kept entries too.
+Naming a dashboard the caller cannot read is `422 validation` field `items`. Audited as
 `playlist.created`, `playlist.updated`, `playlist.deleted`.
 
 | Route | |
@@ -179,7 +188,9 @@ a dashboard the caller cannot read is `422 validation` field `items`. Audited as
 A panel kept once in a folder and shown by many dashboards. Rights follow the folder: reading
 needs `dashboards:read` there, saving `dashboards:write`, deleting `dashboards:delete` (at the top
 level the org-wide permission). A library panel in a folder the caller cannot see is
-`404 not_found`, and lists leave it out, as they leave out library panels in trashed folders.
+`404 not_found`, and lists leave it out. A library panel in a trashed folder is `404 not_found` on
+every route and cannot be newly referenced until the folder is restored; dashboards that already
+show it keep showing it.
 
 ```ts
 interface LibraryPanelModel {                    // a panel without its place

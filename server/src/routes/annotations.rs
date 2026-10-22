@@ -135,6 +135,24 @@ async fn writable(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResu
     Ok(())
 }
 
+/// First statement of a change's transaction: the organization's lock (ordered against a purge
+/// or trash of the dashboard, which lock it too), then the dashboard must still be there and
+/// outside the trash.
+async fn lock_live(conn: &mut sqlx::AnyConnection, org_id: &str, dashboard_id: &str) -> ApiResult<()> {
+    authz::lock_org(conn, org_id).await?;
+    let live: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
+            .bind(org_id)
+            .bind(dashboard_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    match live {
+        None => Err(ApiError::not_found()),
+        Some((Some(_),)) => Err(conflict("the dashboard is in the trash; restore it first")),
+        Some((None,)) => Ok(()),
+    }
+}
+
 fn check_time(field: &'static str, t: i64) -> ApiResult<()> {
     if (MIN_TIME_MS..=MAX_TIME_MS).contains(&t) {
         Ok(())
@@ -261,22 +279,18 @@ async fn create(
         );
     }
     writable(&state, &ctx, &dashboard_id).await?;
+    if let Some(panel) = &body.panel_id {
+        let model = readable_model(&state, &ctx, &dashboard_id).await?;
+        if !model.panels.iter().any(|p| &p.id == panel) {
+            return Err(
+                ApiError::validation(format!("panelId {panel} is not a panel of the dashboard")).with_field("panelId")
+            );
+        }
+    }
     let id = new_id();
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    // Ordered against a purge of the dashboard, which locks the organization too.
-    authz::lock_org(&mut tx, &ctx.org_id).await?;
-    let live: Option<(Option<i64>,)> =
-        sqlx::query_as("SELECT deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
-            .bind(&ctx.org_id)
-            .bind(&dashboard_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    match live {
-        None => return Err(ApiError::not_found()),
-        Some((Some(_),)) => return Err(conflict("the dashboard is in the trash; restore it first")),
-        Some((None,)) => {}
-    }
+    lock_live(&mut tx, &ctx.org_id, &dashboard_id).await?;
     sqlx::query(
         "INSERT INTO annotations (id, org_id, dashboard_id, panel_id, time_ms, time_end_ms, text, tags, version, \
          created_by, created_at, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10, $9, $10)",
@@ -334,6 +348,7 @@ async fn update(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    lock_live(&mut tx, &ctx.org_id, &dashboard_id).await?;
     let updated = sqlx::query(
         "UPDATE annotations SET time_ms = $1, time_end_ms = $2, text = $3, tags = $4, version = version + 1, \
          updated_by = $5, updated_at = $6 WHERE org_id = $7 AND dashboard_id = $8 AND id = $9 AND version = $10",
@@ -385,6 +400,7 @@ async fn remove(
     writable(&state, &ctx, &dashboard_id).await?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    lock_live(&mut tx, &ctx.org_id, &dashboard_id).await?;
     let gone = sqlx::query("DELETE FROM annotations WHERE org_id = $1 AND dashboard_id = $2 AND id = $3")
         .bind(&ctx.org_id)
         .bind(&dashboard_id)

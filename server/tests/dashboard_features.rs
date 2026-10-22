@@ -27,6 +27,8 @@ struct TestApp {
     clock: Arc<ManualClock>,
     state: AppState,
     _dir: tempfile::TempDir,
+    /// A directory server admins allowed for SQLite sources, for queries that really run.
+    sources: tempfile::TempDir,
     owner: String,
     org: String,
 }
@@ -65,7 +67,8 @@ async fn test_app(db_url: Option<String>) -> TestApp {
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
     let app = router(state.clone()).layer(MockConnectInfo(peer));
-    let mut t = TestApp { app, clock, state, _dir: dir, owner: String::new(), org: String::new() };
+    let sources = common::private_tempdir();
+    let mut t = TestApp { app, clock, state, _dir: dir, sources, owner: String::new(), org: String::new() };
     let setup = t
         .send(
             Method::POST,
@@ -176,6 +179,33 @@ impl TestApp {
 
     async fn dashboard(&self, folder: Option<&str>, model: Value, cookie: &str) -> String {
         self.post("~/dashboards", json!({ "folderId": folder, "model": model }), cookie).await.id()
+    }
+
+    /// A SQLite source whose file holds `releases (ts DATETIME, text TEXT)` with one row, in a
+    /// directory the server admin allowed: its queries really run.
+    async fn working_source(&self) -> String {
+        let dir = self.sources.path();
+        let allowed = self
+            .send(
+                Method::PATCH,
+                "/api/admin/settings/datasources.sqlite_dirs",
+                Some(json!({ "value": [dir.to_string_lossy()], "version": 0 })),
+                Some(&self.owner),
+            )
+            .await;
+        assert_eq!(allowed.status, StatusCode::OK, "{}", allowed.body);
+        let path = dir.join("releases.db");
+        let pool = sqlx::SqlitePool::connect(&kalzit::config::sqlite_url(&path)).await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE releases (ts DATETIME, text TEXT); \
+             INSERT INTO releases VALUES (1799990000000, 'Release 2.4');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let body = json!({ "name": "Releases", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+        self.post("~/datasources", body, &self.owner).await.id()
     }
 
     async fn folder(&self, name: &str, restricted: bool) -> String {
@@ -339,7 +369,7 @@ async fn annotations_follow_the_dashboard_access(t: TestApp) {
     let editor = t.member("Emil", "editor").await;
     let walter = t.member("Walter", "viewer").await;
     let folder = t.folder("Betrieb", false).await;
-    let id = t.dashboard(Some(&folder), plain("Lager"), &t.owner).await;
+    let id = t.dashboard(Some(&folder), model("Lager"), &t.owner).await;
     let path = format!("~/dashboards/{id}/annotations");
     let in_range = format!("{path}?from={}&to={}", T0 - 6 * HOUR, T0);
     assert_eq!(t.get(&in_range, &viewer).await.body["items"], json!([]));
@@ -371,6 +401,7 @@ async fn annotations_follow_the_dashboard_access(t: TestApp) {
         (json!({ "time": T0, "text": "  " }), "text"),
         (json!({ "time": T0, "text": "x", "tags": ["a", "A"] }), "tags"),
         (json!({ "time": T0, "text": "x".repeat(2001) }), "text"),
+        (json!({ "time": T0, "text": "x", "panelId": "nope" }), "panelId"),
     ] {
         let r = t.post(&path, body, &editor).await;
         assert_eq!((r.code(), r.field()), ("validation", field), "{}", r.body);
@@ -429,14 +460,19 @@ async fn annotation_queries_run_as_stored_queries(t: TestApp) {
     let viewer = t.member("Vera", "viewer").await;
     let walter = t.member("Walter", "viewer").await;
     let folder = t.folder("Betrieb", false).await;
+    let source = t.working_source().await;
     let mut m = plain("Releases");
-    m["annotations"] = json!([{ "id": "rel", "name": "Releases", "datasourceId": "ds-1",
-                                 "query": { "sql": "SELECT 1 AS time, 'x' AS text" } }]);
+    m["annotations"] = json!([{ "id": "rel", "name": "Releases", "datasourceId": source,
+                                 "query": { "sql": "SELECT ts AS time, text FROM releases" } }]);
     let id = t.dashboard(Some(&folder), m.clone(), &t.owner).await;
     let body = json!({ "timeRange": range(), "variables": {} });
     let ran = t.post(&format!("~/dashboards/{id}/annotation-queries/rel/query"), body.clone(), &viewer).await;
     assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
-    assert!(ran.body["results"].get("rel").is_some(), "{}", ran.body);
+    // A viewer without any data source right gets the rows, as for a panel's stored query.
+    let fields = &ran.body["results"]["rel"]["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["type"], "time", "{}", ran.body);
+    assert_eq!(fields[0]["values"], json!([1_799_990_000_000_i64]));
+    assert_eq!(fields[1]["values"], json!(["Release 2.4"]));
     let unknown = t.post(&format!("~/dashboards/{id}/annotation-queries/nope/query"), body.clone(), &viewer).await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
     let foreign_var = json!({ "timeRange": range(), "variables": { "nope": "x" } });
@@ -445,14 +481,14 @@ async fn annotation_queries_run_as_stored_queries(t: TestApp) {
 
     // Someone who may edit the dashboard but not query the source cannot add an annotation query.
     t.grant("Walter", "dashboard", &id, "edit").await;
+    let m_saved = m.clone();
     let mut changed = m;
     changed["annotations"][0]["query"] = json!({ "sql": "SELECT 2" });
     let save = t.put(&format!("~/dashboards/{id}"), json!({ "model": changed, "version": 1 }), &walter).await;
     assert_eq!((save.status, save.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", save.body);
     // Renaming it alone is not a new query.
-    let mut renamed = plain("Releases neu");
-    renamed["annotations"] = json!([{ "id": "rel", "name": "Releases", "datasourceId": "ds-1",
-                                       "query": { "sql": "SELECT 1 AS time, 'x' AS text" } }]);
+    let mut renamed = m_saved;
+    renamed["title"] = json!("Releases neu");
     let ok = t.put(&format!("~/dashboards/{id}"), json!({ "model": renamed, "version": 1 }), &walter).await;
     assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
 }
@@ -499,17 +535,39 @@ async fn playlists_show_only_readable_dashboards(t: TestApp) {
     assert_eq!(owner_play.body["items"].as_array().unwrap().len(), 4);
     assert!(owner_play.body["items"].as_array().unwrap().iter().any(|d| d["id"] == json!(hidden_tagged)));
 
-    // Saving as the editor keeps the entry they cannot see.
+    // Saving as the editor keeps the entry they cannot see, at its place (it was first).
     let save = json!({ "version": 1, "name": "Empfang neu", "intervalSeconds": 60,
-                       "items": [{ "type": "dashboard", "dashboardId": a }] });
+                       "items": [{ "type": "dashboard", "dashboardId": b }, { "type": "dashboard", "dashboardId": a }] });
     let saved = t.put(&format!("~/playlists/{id}"), save.clone(), &editor).await;
     assert_eq!((saved.status, saved.body["version"].as_i64()), (StatusCode::OK, Some(2)), "{}", saved.body);
     let stored = t.get(&format!("~/playlists/{id}"), &t.owner).await;
     assert_eq!(
         stored.body["items"],
-        json!([{ "type": "dashboard", "dashboardId": a },
-                                            { "type": "dashboard", "dashboardId": hidden }])
+        json!([{ "type": "dashboard", "dashboardId": hidden },
+               { "type": "dashboard", "dashboardId": b },
+               { "type": "dashboard", "dashboardId": a }])
     );
+    // A purged dashboard's entry is dropped on the next save.
+    t.delete(&format!("~/dashboards/{hidden}"), &t.owner).await;
+    t.delete(&format!("~/dashboards/{hidden}/purge"), &t.owner).await;
+    let owner_save = json!({ "version": 2, "name": "Empfang neu", "intervalSeconds": 60,
+                             "items": [{ "type": "dashboard", "dashboardId": b }, { "type": "dashboard", "dashboardId": a }] });
+    let resaved = t.put(&format!("~/playlists/{id}"), owner_save, &editor).await;
+    assert_eq!(resaved.status, StatusCode::OK, "{}", resaved.body);
+    let stored = t.get(&format!("~/playlists/{id}"), &t.owner).await;
+    assert_eq!(stored.body["items"].as_array().unwrap().len(), 2, "{}", stored.body);
+    // The limit counts the entries kept for others too.
+    let secret_id = t.dashboard(Some(&secret), plain("Noch geheim"), &t.owner).await;
+    let full: Vec<Value> = (0..100).map(|_| json!({ "type": "tag", "tag": "x" })).collect();
+    let mut with_hidden = full.clone();
+    with_hidden.insert(0, json!({ "type": "dashboard", "dashboardId": secret_id }));
+    let owner_full =
+        json!({ "version": 3, "name": "Voll", "intervalSeconds": 60, "items": with_hidden[..100].to_vec() });
+    assert_eq!(t.put(&format!("~/playlists/{id}"), owner_full, &t.owner).await.status, StatusCode::OK);
+    let too_many = json!({ "version": 4, "name": "Voll", "intervalSeconds": 60, "items": full });
+    let refused = t.put(&format!("~/playlists/{id}"), too_many, &editor).await;
+    assert_eq!((refused.code(), refused.field()), ("validation", "items"), "{}", refused.body);
+    t.put(&format!("~/playlists/{id}"), json!({ "version": 4, "name": "Empfang neu", "intervalSeconds": 60, "items": [{ "type": "dashboard", "dashboardId": a }] }), &t.owner).await.id();
     let stale = t.put(&format!("~/playlists/{id}"), save, &editor).await;
     assert_eq!((stale.code(), stale.body["current"]["name"].as_str()), ("version_conflict", Some("Empfang neu")));
     let listed = t.get("~/playlists", &viewer).await;
@@ -577,12 +635,12 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
     let editor = t.member("Emil", "editor").await;
     let viewer = t.member("Vera", "viewer").await;
     let folder = t.folder("Bausteine", false).await;
+    let source = t.working_source().await;
+    let mut content = library_model("Umsatz");
+    content["targets"] =
+        json!([{ "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } }]);
     let lib = t
-        .post(
-            "~/library-panels",
-            json!({ "name": "Umsatz", "folderId": folder, "model": library_model("Umsatz") }),
-            &editor,
-        )
+        .post("~/library-panels", json!({ "name": "Umsatz", "folderId": folder, "model": content }), &editor)
         .await
         .id();
     let a = t.dashboard(None, showing("A", &lib), &editor).await;
@@ -591,7 +649,9 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
     assert_eq!(read.body["libraryPanels"][&lib]["model"]["title"], "Umsatz", "{}", read.body);
 
     // A change shows on every dashboard.
-    let save = json!({ "version": 1, "name": "Umsatz", "model": library_model("Umsatz neu") });
+    let mut renamed = content.clone();
+    renamed["title"] = json!("Umsatz neu");
+    let save = json!({ "version": 1, "name": "Umsatz", "model": renamed });
     t.put(&format!("~/library-panels/{lib}"), save, &editor).await.id();
     let again = t.get(&format!("~/dashboards/{b}"), &viewer).await;
     assert_eq!(again.body["libraryPanels"][&lib]["model"]["title"], "Umsatz neu");
@@ -601,7 +661,13 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
     let q = json!({ "timeRange": range(), "variables": {} });
     let ran = t.post(&format!("~/dashboards/{a}/panels/lp/query"), q, &viewer).await;
     assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
-    assert!(ran.body["results"].get("A").is_some(), "{}", ran.body);
+    // The library panel's own query ran, not the empty slot's.
+    assert_eq!(
+        ran.body["results"]["A"]["result"]["frame"]["fields"][0]["values"],
+        json!(["Release 2.4"]),
+        "{}",
+        ran.body
+    );
 
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &viewer).await;
     assert_eq!((uses.body["items"].as_array().unwrap().len(), uses.body["hidden"].as_i64()), (2, Some(0)));
@@ -630,6 +696,10 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
         .id();
     assert_eq!(t.delete(&format!("~/folders/{folder}"), &t.owner).await.status, StatusCode::NO_CONTENT);
     assert!(t.get("~/library-panels", &t.owner).await.body["items"].as_array().unwrap().is_empty(), "trashed folder");
+    // Gone everywhere while its folder is in the trash: read, uses, and new references.
+    assert_eq!(t.get(&format!("~/library-panels/{other}"), &t.owner).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.get(&format!("~/library-panels/{other}/uses"), &t.owner).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.post("~/dashboards", json!({ "model": showing("Neu", &other) }), &t.owner).await.field(), "model");
     assert_eq!(t.delete(&format!("~/folders/{folder}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.count("SELECT COUNT(*) FROM library_panels WHERE id = $1", &other).await, 0);
 }
@@ -661,6 +731,22 @@ async fn library_panels_in_restricted_folders(t: TestApp) {
         .put(&format!("~/dashboards/{shown}"), json!({ "model": showing("Umbenannt", &lib), "version": 1 }), &editor)
         .await;
     assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
+    // The editor cannot open the library panel itself, so its uses are not theirs to list.
+    assert_eq!(t.get(&format!("~/library-panels/{lib}/uses"), &editor).await.status, StatusCode::NOT_FOUND);
+    // A dashboard in another restricted folder counts as hidden for whoever cannot see it.
+    let other = t.folder("Vorstand", true).await;
+    t.dashboard(Some(&other), showing("Vorstand", &lib), &t.owner).await;
+    let vera = t.member("Vera", "viewer").await;
+    t.grant("Vera", "folder", &secret, "view").await;
+    let partial = t.get(&format!("~/library-panels/{lib}/uses"), &vera).await;
+    assert_eq!(
+        (partial.body["items"].as_array().unwrap().len(), partial.body["hidden"].as_i64()),
+        (2, Some(1)),
+        "{}",
+        partial.body
+    );
+    let all = t.get(&format!("~/library-panels/{lib}/uses"), &t.owner).await;
+    assert_eq!((all.body["items"].as_array().unwrap().len(), all.body["hidden"].as_i64()), (3, Some(0)));
     t.grant("Emil", "folder", &secret, "view").await;
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &editor).await;
     assert_eq!(uses.body["items"].as_array().unwrap().len(), 2, "{}", uses.body);
@@ -674,4 +760,5 @@ async fn library_panels_in_restricted_folders(t: TestApp) {
         )
         .await;
     assert_eq!((moved.status, moved.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", moved.body);
+    assert!(moved.message().contains("folders:permissions"), "{}", moved.body);
 }

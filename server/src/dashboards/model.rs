@@ -496,6 +496,13 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
             if !p.targets.is_empty() {
                 return Err(format!("{at}.targets must be empty: the library panel holds the queries"));
             }
+            // The slot holds the place only; steps and links are the library panel's.
+            if !p.transformations.is_empty() {
+                return Err(format!("{at}.transformations must be empty: the library panel holds them"));
+            }
+            if !p.links.is_empty() {
+                return Err(format!("{at}.links must be empty: the library panel holds them"));
+            }
         }
         check_panel_time(&at, p.time_from.as_deref(), p.time_shift.as_deref())?;
         check_panel_links(&at, &p.links)?;
@@ -1011,6 +1018,8 @@ mod tests {
                 json!([{ "refId": "A", "datasourceId": "ds", "query": {} }]),
                 "library panel holds",
             ),
+            (vec!["panels", "1", "transformations"], json!([{ "type": "x" }]), "transformations must be empty"),
+            (vec!["panels", "1", "links"], json!([{ "title": "x", "url": "/x" }]), "links must be empty"),
         ] {
             let result = parse(with(sample_v2(), &path, value.clone()));
             if expect == "ok" {
