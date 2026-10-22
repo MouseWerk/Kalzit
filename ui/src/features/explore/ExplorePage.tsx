@@ -6,7 +6,13 @@ import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
-import { projectionFor, projectionPaths, withProjection } from "../../documents/projection";
+import {
+  hasProjectionProblems,
+  projectionFor,
+  projectionPaths,
+  storableTransformations,
+  withProjection,
+} from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
@@ -100,6 +106,8 @@ function Explore({ orgId }: { orgId: string }) {
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [filterError, setFilterError] = useState<string | null>(null);
+  // Per data source: whether its editor holds text that does not parse yet.
+  const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
   const [adding, setAdding] = useState(false);
@@ -285,6 +293,11 @@ function Explore({ orgId }: { orgId: string }) {
         query={query}
         onChange={(next) => setQueries((current) => ({ ...current, [datasource.id]: next }))}
         onRun={() => run()}
+        onPendingText={(pending) =>
+          setPendingText((current) =>
+            current[datasource.id] === pending ? current : { ...current, [datasource.id]: pending },
+          )
+        }
         previewRun={() => {
           // Previews run over the range Explore shows, resolved when asked; Explore has no variables.
           const resolved = resolveRange(range, Date.now());
@@ -337,7 +350,7 @@ function Explore({ orgId }: { orgId: string }) {
                 type="button"
                 className="button button--secondary"
                 onClick={() => setAdding(true)}
-                disabled={result.data === undefined}
+                disabled={result.data === undefined || hasProjectionProblems(transformations)}
               >
                 {t("explore.addToDashboard")}
               </button>
@@ -359,12 +372,19 @@ function Explore({ orgId }: { orgId: string }) {
                 pending={result.isPending}
                 error={result.error}
                 outcomes={outcomes}
+                revision={`${submitted.run}:${current.pages.length}`}
                 onFilter={
                   isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
                     ? (_refId, path, value) => {
-                        // The filter joins the query that gave this result, as a visible $match
-                        // stage, and runs; text that does not parse is never replaced.
-                        const added = addMatch(parseMongoQuery(submitted.query), path, value);
+                        // The filter joins the query in the editor (the one that gave this
+                        // result, or the draft typed since) as a visible $match stage, and runs.
+                        // Text that does not parse, in the query or still in a field, is never
+                        // replaced: the filter waits for it.
+                        if (pendingText[datasource.id] === true) {
+                          setFilterError(t("documents.filter.refused.draft"));
+                          return;
+                        }
+                        const added = addMatch(parseMongoQuery(query), path, value);
                         if ("refused" in added) {
                           setFilterError(t(`documents.filter.refused.${added.refused}`));
                           return;
@@ -405,7 +425,11 @@ function Explore({ orgId }: { orgId: string }) {
       {adding && submitted !== null ? (
         <AddToDashboardDialog
           orgId={orgId}
-          panel={{ ...panel, title: datasource.name }}
+          panel={{
+            ...panel,
+            title: datasource.name,
+            transformations: storableTransformations(transformations),
+          }}
           range={submitted.range}
           onClose={() => setAdding(false)}
         />

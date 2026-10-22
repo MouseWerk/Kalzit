@@ -1,8 +1,16 @@
-import { useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
 import { CodeEditor } from "./CodeEditor";
 import type { CompletionResult } from "./completion";
 import "../../../documents/documents.css";
+
+/**
+ * Where fields say that they hold text that does not parse yet, by their id. The query editor
+ * collects it, so nothing from outside (a filter by click) replaces text still being typed.
+ */
+export const PendingTextContext = createContext<(id: string, pending: boolean) => void>(
+  () => undefined,
+);
 
 export interface JsonFieldProps {
   /** Accessible name of the editor. */
@@ -45,6 +53,12 @@ export function JsonField({
   const [text, setText] = useState(value);
   const [synced, setSynced] = useState(value);
   const [error, setError] = useState<string | null>(null);
+  const reportPending = useContext(PendingTextContext);
+  const pending = error !== null;
+  useEffect(() => {
+    reportPending(errorId, pending);
+  }, [reportPending, errorId, pending]);
+  useEffect(() => () => reportPending(errorId, false), [reportPending, errorId]);
   if (value !== synced) {
     setSynced(value);
     setText(value);

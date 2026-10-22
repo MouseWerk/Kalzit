@@ -40,6 +40,11 @@ export interface PanelProps<Options> {
    * (Explore, the panel editor), absent on dashboards, where viewers only read.
    */
   onFilter?: ((filter: DocumentFilter) => void) | undefined;
+  /**
+   * Changes when another result arrives (a run, a page loaded after it); panels that keep a place
+   * in the result, such as a drilldown, start over then.
+   */
+  revision?: string | number | undefined;
 }
 
 export interface DocumentFilter {

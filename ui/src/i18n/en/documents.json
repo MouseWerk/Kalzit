@@ -105,7 +105,6 @@
   "documents.projection.type.int64": "Int64 (exact)",
   "documents.projection.type.string": "Text",
   "documents.projection.type.bool": "Boolean",
-  "documents.projection.type.json": "JSON",
   "documents.type.objectId": "ObjectId",
   "documents.type.date": "Date",
   "documents.type.decimal": "Decimal128",
@@ -152,5 +151,11 @@
   "documents.pipeline.switched.find": "Switched to find; the pipeline was set aside.",
   "documents.pipeline.switched.aggregate": "Switched to the pipeline; the find was set aside.",
   "documents.more.load": "Load more documents",
-  "documents.more.failed": "The next documents could not be loaded."
+  "documents.more.failed": "The next documents could not be loaded.",
+  "documents.projection.error.control": "Remove control characters such as line breaks.",
+  "documents.projection.error.length": "At most {max} characters.",
+  "documents.projection.error.duplicate": "Another column is already named “{name}”. Give this one a name of its own.",
+  "documents.projection.full": "A projection step takes at most {max} columns.",
+  "documents.projection.blocked": "Fix the projection step before applying; the server would refuse it.",
+  "documents.filter.refused.draft": "The filter was not added: the query being edited has text that is not valid JSON. Fix it first; nothing was changed."
 }

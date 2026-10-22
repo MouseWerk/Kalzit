@@ -95,10 +95,20 @@ export const NUMERIC_TYPES = new Set([
   "decimal",
 ]);
 
-/** A date's Unix milliseconds: the value may be ISO 8601 text or a decimal count of ms. */
+/** RFC 3339: a date, a time and a zone, nothing a browser would guess at. */
+const RFC_3339 = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+
+/**
+ * A date's Unix milliseconds: the value is a decimal count of ms (as the server sends it) or RFC
+ * 3339 text, as the analysis engine and the server read dates; anything else is no date.
+ */
 export function dateMs(value: TypedValue): number | null {
   const text = (value.value ?? "").trim();
-  const ms = /^-?\d+$/.test(text) ? Number(text) : Date.parse(text);
+  if (/^-?\d+$/.test(text)) {
+    const ms = Number(text);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  const ms = RFC_3339.test(text) ? Date.parse(text.replace(" ", "T")) : Number.NaN;
   return Number.isFinite(ms) ? ms : null;
 }
 

@@ -40,6 +40,17 @@ async function addStage(user: Opened["user"], name: string, json: string) {
 
 const MATCH = '{"$match": {"status": "paid"}}';
 
+/** Opens the first document of the result and filters by its status. */
+async function filterByStatus(user: Opened["user"]) {
+  const result = screen.getByRole("tree", { name: "Result" });
+  await user.click(within(result).getAllByRole("treeitem")[0] as HTMLElement);
+  const status = within(result)
+    .getAllByRole("treeitem")
+    .find((row) => row.querySelector(".doc-tree__key")?.textContent === "status") as HTMLElement;
+  await user.click(status);
+  await user.click(screen.getByRole("button", { name: "Filter by value" }));
+}
+
 describe("Explore with MongoDB", () => {
   it("runs a pipeline built from stages, sent as text in the server's form", async () => {
     const { server, user } = await open();
@@ -270,26 +281,36 @@ describe("Explore with MongoDB", () => {
 });
 
 describe("Explore with MongoDB, after review", () => {
-  it("filters the query that gave the result, not a draft typed since", async () => {
+  it("adds the filter to the draft typed since the run, keeping it", async () => {
     const { server, user } = await open();
     await addStage(user, "$match", MATCH);
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByText("2 documents.");
-    // A draft stage after the run is not part of the result being filtered.
+    // A draft stage after the run stays: the filter joins it instead of replacing it.
     await addStage(user, "$limit", '{"$limit": 1}');
-    const result = screen.getByRole("tree", { name: "Result" });
-    await user.click(within(result).getAllByRole("treeitem")[0] as HTMLElement);
-    const status = within(result)
-      .getAllByRole("treeitem")
-      .find((row) => row.querySelector(".doc-tree__key")?.textContent === "status") as HTMLElement;
-    await user.click(status);
-    await user.click(screen.getByRole("button", { name: "Filter by value" }));
+    await filterByStatus(user);
     await waitFor(() =>
       expect(sent(server).queries[0]?.query).toEqual({
         collection: "orders",
-        pipeline: `[\n${MATCH},\n{"$match": {"status": "paid"}}\n]`,
+        pipeline: `[\n${MATCH},\n{"$limit": 1},\n{"$match": {"status": "paid"}}\n]`,
       }),
     );
+    expect(screen.getByRole("heading", { name: "Stage 2: $limit" })).toBeTruthy();
+  });
+
+  it("waits with the filter while a field holds text that does not parse", async () => {
+    const { server, user } = await open();
+    await addStage(user, "$match", MATCH);
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("2 documents.");
+    const before = server.areas.datasources.queries.length;
+    const typing = '{"$limit": ';
+    fireEvent.change(screen.getByLabelText("Stage 1"), { target: { value: typing } });
+    await filterByStatus(user);
+    expect(screen.getByText(/the query being edited has text that is not valid JSON/)).toBeTruthy();
+    // The text being typed is still there, and nothing ran.
+    expect(screen.getByLabelText("Stage 1")).toHaveProperty("value", typing);
+    expect(server.areas.datasources.queries).toHaveLength(before);
   });
 
   it("loads more documents through the cursor and shows them after the first page", async () => {
@@ -368,5 +389,64 @@ describe("stage preview", () => {
       timeRange: { from: 1000, to: 2000 },
       variables: { land: "AT" },
     });
+  });
+});
+
+describe("projection steps the server accepts, in Explore", () => {
+  it("says at the field when two columns share a name, and saves nothing until fixed", async () => {
+    const { user } = await open();
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("3 documents.");
+    await user.click(screen.getByRole("button", { name: "Add projection step" }));
+    // No JSON among the types a step stores; bounds come with the fields.
+    expect(
+      within(screen.getByLabelText("Type of column 1")).queryByRole("option", { name: "JSON" }),
+    ).toBeNull();
+    expect(screen.getByLabelText("Field path of column 1").getAttribute("maxlength")).toBe("500");
+    expect(screen.getByLabelText("Name of column 1").getAttribute("maxlength")).toBe("200");
+    fireEvent.change(screen.getByLabelText("Field path of column 1"), {
+      target: { value: "total" },
+    });
+    await user.click(screen.getByRole("button", { name: "Add column" }));
+    fireEvent.change(screen.getByLabelText("Field path of column 2"), {
+      target: { value: "total" },
+    });
+    expect(screen.getByText(/Another column is already named “total”/)).toBeTruthy();
+    expect(screen.getByLabelText("Field path of column 2").getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Add to dashboard…" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    fireEvent.change(screen.getByLabelText("Name of column 2"), { target: { value: "Total 2" } });
+    expect(screen.queryByText(/Another column is already named/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Add to dashboard…" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("stores the step without columns that have no path", async () => {
+    const { server, user, location } = await open();
+    addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("3 documents.");
+    await user.click(screen.getByRole("button", { name: "Add projection step" }));
+    fireEvent.change(screen.getByLabelText("Field path of column 1"), {
+      target: { value: "total" },
+    });
+    await user.click(screen.getByRole("button", { name: "Add column" }));
+    await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
+    const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
+    fireEvent.change(await within(dialog).findByLabelText("Dashboard"), {
+      target: { value: "d-ops" },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Add panel" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-ops"));
+    const saved = latest(server.areas.dashboards.dashboards[0] as never);
+    expect(saved.model.panels[0]?.transformations).toEqual([
+      { id: expect.any(String), type: "toFrame", frame: "A", columns: [{ path: "total" }] },
+    ]);
   });
 });

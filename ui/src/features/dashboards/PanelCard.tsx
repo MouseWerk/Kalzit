@@ -219,6 +219,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           pending={results.isPending && results.fetchStatus !== "idle"}
           error={results.error}
           outcomes={outcomes}
+          revision={results.dataUpdatedAt}
         />
       </div>
       {edit === undefined ? null : (
@@ -253,6 +254,8 @@ interface PanelBodyProps {
    * turn it into a `$match` stage; dashboards leave it out, so viewers only read.
    */
   onFilter?: ((refId: string, path: string, value: unknown) => void) | undefined;
+  /** Changes with every new result: a run, or a page loaded after it. */
+  revision?: string | number | undefined;
 }
 
 /**
@@ -267,6 +270,7 @@ export function PanelBody({
   error,
   outcomes: received,
   onFilter,
+  revision,
 }: PanelBodyProps) {
   const { t } = useI18n();
   const plugin = getPanel(panel.type);
@@ -348,6 +352,7 @@ export function PanelBody({
             options={plugin.options(panel.options)}
             timeRange={range}
             title={title}
+            revision={revision}
           />
         </div>
       ) : note === null ? (

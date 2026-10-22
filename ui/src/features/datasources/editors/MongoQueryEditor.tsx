@@ -19,7 +19,7 @@ import {
   stageNameOf,
   WRITE_STAGES,
 } from "../mongoQuery";
-import { JsonField } from "./JsonField";
+import { JsonField, PendingTextContext } from "./JsonField";
 import { type MongoEditorTarget, mongoCompletions, STAGES } from "./mongoCompletion";
 import type { QueryEditorProps } from "./QueryEditor";
 import "../../../documents/documents.css";
@@ -93,6 +93,7 @@ export function MongoQueryEditor({
   onRun,
   label,
   previewRun,
+  onPendingText,
 }: QueryEditorProps) {
   const { t } = useI18n();
   const collectionId = useId();
@@ -109,6 +110,25 @@ export function MongoQueryEditor({
   ];
 
   const fallback = useContext(PreviewContext);
+  // Fields whose text does not parse yet, by id; the page hears whether there are any.
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  const reportPending = (id: string, isPending: boolean) =>
+    setPending((current) => {
+      if (current.has(id) === isPending) {
+        return current;
+      }
+      const next = new Set(current);
+      if (isPending) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  const anyPending = pending.size > 0;
+  useEffect(() => {
+    onPendingText?.(anyPending);
+  }, [onPendingText, anyPending]);
   // The query of the other mode, kept for one undo after switching.
   const [setAside, setSetAside] = useState<MongoQuery | null>(null);
 
@@ -123,85 +143,87 @@ export function MongoQueryEditor({
 
   return (
     <PreviewContext value={previewRun ?? fallback}>
-      <fieldset className="pipeline">
-        <legend className="visually-hidden">{label ?? t("datasources.editor.label")}</legend>
-        <div className="pipeline__head">
-          <div className="field pipeline__collection">
-            <label className="field__label" htmlFor={collectionId}>
-              {t("documents.pipeline.collection")}
-            </label>
-            <input
-              id={collectionId}
-              className="input input--mono"
-              list={listId}
-              value={value.collection}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => onChange({ ...value, collection: event.currentTarget.value })}
-            />
-            <datalist id={listId}>
-              {collections.map((collection) => (
-                <option key={collection.name} value={collection.name} />
-              ))}
-            </datalist>
-          </div>
-          <fieldset className="pipeline__mode">
-            <legend className="field__label">{t("documents.pipeline.mode")}</legend>
-            {(["aggregate", "find"] as const).map((name) => (
-              <label key={name} className="radio">
-                <input
-                  type="radio"
-                  name={`${collectionId}-mode`}
-                  value={name}
-                  checked={mode === name}
-                  onChange={() => switchMode(name)}
-                />
-                <span>{t(`documents.pipeline.mode.${name}`)}</span>
+      <PendingTextContext value={reportPending}>
+        <fieldset className="pipeline">
+          <legend className="visually-hidden">{label ?? t("datasources.editor.label")}</legend>
+          <div className="pipeline__head">
+            <div className="field pipeline__collection">
+              <label className="field__label" htmlFor={collectionId}>
+                {t("documents.pipeline.collection")}
               </label>
-            ))}
-          </fieldset>
-        </div>
-        {setAside === null ? null : (
-          <div className="pipeline__set-aside" role="status">
-            <span>{t(`documents.pipeline.switched.${mode}`)}</span>
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onClick={() => {
-                onChange(setAside);
-                setSetAside(null);
-              }}
-            >
-              {t("documents.pipeline.undo")}
-            </button>
+              <input
+                id={collectionId}
+                className="input input--mono"
+                list={listId}
+                value={value.collection}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => onChange({ ...value, collection: event.currentTarget.value })}
+              />
+              <datalist id={listId}>
+                {collections.map((collection) => (
+                  <option key={collection.name} value={collection.name} />
+                ))}
+              </datalist>
+            </div>
+            <fieldset className="pipeline__mode">
+              <legend className="field__label">{t("documents.pipeline.mode")}</legend>
+              {(["aggregate", "find"] as const).map((name) => (
+                <label key={name} className="radio">
+                  <input
+                    type="radio"
+                    name={`${collectionId}-mode`}
+                    value={name}
+                    checked={mode === name}
+                    onChange={() => switchMode(name)}
+                  />
+                  <span>{t(`documents.pipeline.mode.${name}`)}</span>
+                </label>
+              ))}
+            </fieldset>
           </div>
-        )}
-        <p className="field__hint" id={hintId}>
-          {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}{" "}
-          {t("documents.pipeline.macros")}
-          {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
-        </p>
-        {mode === "aggregate" ? (
-          <PipelineEditor
-            orgId={orgId}
-            datasourceId={datasource.id}
-            query={value}
-            fields={fields}
-            hintId={hintId}
-            onChange={onChange}
-            onRun={onRun}
-            onSampled={setSampled}
-          />
-        ) : (
-          <FindEditor
-            query={value}
-            fields={fields}
-            hintId={hintId}
-            onChange={onChange}
-            onRun={onRun}
-          />
-        )}
-      </fieldset>
+          {setAside === null ? null : (
+            <div className="pipeline__set-aside" role="status">
+              <span>{t(`documents.pipeline.switched.${mode}`)}</span>
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={() => {
+                  onChange(setAside);
+                  setSetAside(null);
+                }}
+              >
+                {t("documents.pipeline.undo")}
+              </button>
+            </div>
+          )}
+          <p className="field__hint" id={hintId}>
+            {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}{" "}
+            {t("documents.pipeline.macros")}
+            {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
+          </p>
+          {mode === "aggregate" ? (
+            <PipelineEditor
+              orgId={orgId}
+              datasourceId={datasource.id}
+              query={value}
+              fields={fields}
+              hintId={hintId}
+              onChange={onChange}
+              onRun={onRun}
+              onSampled={setSampled}
+            />
+          ) : (
+            <FindEditor
+              query={value}
+              fields={fields}
+              hintId={hintId}
+              onChange={onChange}
+              onRun={onRun}
+            />
+          )}
+        </fieldset>
+      </PendingTextContext>
     </PreviewContext>
   );
 }

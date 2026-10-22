@@ -4,8 +4,10 @@ import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
   type FrameProjection,
+  hasProjectionProblems,
   projectionFor,
   projectionPaths,
+  storableTransformations,
   withProjection,
 } from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
@@ -54,6 +56,8 @@ export function PanelEditor({
   const permissions = useOrgPermissions();
   const [panel, setPanel] = useState(initial);
   const [filterError, setFilterError] = useState<string | null>(null);
+  // Per query: whether its editor holds text that does not parse yet.
+  const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
@@ -120,12 +124,17 @@ export function PanelEditor({
 
   /** Click-to-filter in the preview: a `$match` stage on that target's query, run at once. */
   function filterBy(refId: string, path: string, value: unknown) {
-    // The filter joins the query that gave the preview, not a draft typed since.
-    const shown = preview.targets.find((target) => target.refId === refId);
-    if (shown === undefined || !isMongoQuery(shown.query)) {
+    // The filter joins the query in the editor, the draft typed since included; text that does
+    // not parse, in the query or still in a field, is never replaced.
+    const draft = panel.targets.find((target) => target.refId === refId);
+    if (draft === undefined || !isMongoQuery(draft.query)) {
       return;
     }
-    const added = addMatch(parseMongoQuery(shown.query), path, value);
+    if (pendingText[refId] === true) {
+      setFilterError(t("documents.filter.refused.draft"));
+      return;
+    }
+    const added = addMatch(parseMongoQuery(draft.query), path, value);
     if ("refused" in added) {
       setFilterError(t(`documents.filter.refused.${added.refused}`));
       return;
@@ -137,6 +146,8 @@ export function PanelEditor({
     setPanel((p) => ({ ...p, targets }));
     setPreview((current) => ({ targets, run: current.run + 1 }));
   }
+  // A projection step the server would refuse is fixed here before the panel is applied.
+  const blocked = hasProjectionProblems(panel.transformations);
   const plugin = choices.find((c) => c.panel.type === panel.type)?.panel;
   const Editor = plugin?.Editor;
 
@@ -150,7 +161,20 @@ export function PanelEditor({
           <button type="button" className="button button--secondary" onClick={onClose}>
             {t("dashboards.dialog.cancel")}
           </button>
-          <button type="button" className="button button--primary" onClick={() => onApply(panel)}>
+          {blocked ? (
+            <p className="field__error" id={`${titleId}-blocked`}>
+              {t("documents.projection.blocked")}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            className="button button--primary"
+            disabled={blocked}
+            aria-describedby={blocked ? `${titleId}-blocked` : undefined}
+            onClick={() =>
+              onApply({ ...panel, transformations: storableTransformations(panel.transformations) })
+            }
+          >
             {t("dashboards.editor.apply")}
           </button>
         </>
@@ -174,6 +198,7 @@ export function PanelEditor({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={results.data ?? []}
+              revision={results.dataUpdatedAt}
               onFilter={
                 preview.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
               }
@@ -250,6 +275,13 @@ export function PanelEditor({
               }
               onRun={run}
               previewRun={() => ({ range, variables })}
+              onPendingText={(pending) =>
+                setPendingText((current) =>
+                  current[target.refId] === pending
+                    ? current
+                    : { ...current, [target.refId]: pending },
+                )
+              }
               projection={projectionFor(panel.transformations, target.refId)}
               fields={documentsOf(results.data ?? [])
                 .filter((d) => d.refId === target.refId)
@@ -291,12 +323,14 @@ function TargetEditor({
   onRemove,
   onRun,
   previewRun,
+  onPendingText,
   projection,
   fields,
   onProjection,
 }: {
   /** The dashboard's time range and variables, for stage previews. */
   previewRun: () => PreviewRun;
+  onPendingText: (pending: boolean) => void;
   orgId: string;
   target: Target;
   /** The projection step of this query, stored with the panel. */
@@ -384,6 +418,7 @@ function TargetEditor({
           onChange={(query) => onChange({ query })}
           onRun={onRun}
           previewRun={previewRun}
+          onPendingText={onPendingText}
           label={t("dashboards.inspect.query", { refId: target.refId })}
         />
       )}

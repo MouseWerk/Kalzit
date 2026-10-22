@@ -17,25 +17,30 @@ const FILTERABLE_TYPES = new Set([
   "timestamp",
 ]);
 
-/** Leaves a filter can match exactly; not hidden binary data, code, or values without a form. */
+/**
+ * Leaves a filter can match exactly; not hidden binary data, code, values without a form, and no
+ * text with a NUL character, which the server cannot take in a query.
+ */
 export function filterable(value: unknown): boolean {
   if (value === undefined || isContainer(value)) {
     return false;
   }
   if (isTyped(value)) {
-    return value.value !== null && FILTERABLE_TYPES.has(value.$type);
+    return value.value !== null && !value.value.includes("\0") && FILTERABLE_TYPES.has(value.$type);
   }
-  return true;
+  return typeof value !== "string" || !value.includes("\0");
 }
 
 /**
  * Whether a value at these path segments can become a filter: a filter path is dotted, so a key
- * with a dot, or one starting with `$` (an operator there), cannot be named in it.
+ * with a dot, or one starting with `$` (an operator there), cannot be named in it, and a key with
+ * `${` would read as a variable.
  */
 export function filterablePath(segments: readonly (string | number)[]): boolean {
   return segments.every(
     (segment) =>
-      typeof segment === "number" || (!segment.startsWith("$") && !segment.includes(".")),
+      typeof segment === "number" ||
+      (!segment.startsWith("$") && !segment.includes(".") && !segment.includes("${")),
   );
 }
 
@@ -56,7 +61,8 @@ function escapeRegex(text: string): string {
 
 export function toExtendedJson(value: unknown): unknown {
   if (typeof value === "string" && looksBound(value)) {
-    return { $regularExpression: { pattern: `^${escapeRegex(value)}$`, options: "" } };
+    // \A and \z anchor the whole text; ^ and $ would also match at line breaks.
+    return { $regularExpression: { pattern: `\\A${escapeRegex(value)}\\z`, options: "" } };
   }
   if (!isTyped(value) || value.value === null) {
     return value;

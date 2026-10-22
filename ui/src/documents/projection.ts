@@ -22,7 +22,17 @@ import { dateMs, documentsMeta, isContainer, isTyped, typeOf } from "./values";
 
 export const PROJECTION_STEP = "toFrame";
 
-export const PROJECTION_TYPES = ["time", "number", "int64", "string", "bool", "json"] as const;
+/**
+ * The column types a step stores. `json` is not one of them: inference may read an object or an
+ * array as JSON for display, but the server refuses it in a stored step.
+ */
+export const PROJECTION_TYPES = ["time", "number", "int64", "string", "bool"] as const;
+export type ProjectionType = (typeof PROJECTION_TYPES)[number];
+
+/** The bounds the server checks for a stored step (docs/api/settings-dashboards.md). */
+export const MAX_PROJECTION_COLUMNS = 200;
+export const MAX_PATH_CHARS = 500;
+export const MAX_COLUMN_NAME_CHARS = 200;
 
 export interface ProjectionColumn {
   /** A dotted MongoDB path, array indexes as numbers (`items.0.price`). */
@@ -30,7 +40,7 @@ export interface ProjectionColumn {
   /** The column name; the path when left out. */
   name?: string;
   /** The column type; taken from the first value when left out. */
-  type?: FieldType;
+  type?: ProjectionType;
 }
 
 export interface FrameProjection {
@@ -53,11 +63,54 @@ export function parseProjection(value: unknown): FrameProjection | undefined {
       column.name = raw.name;
     }
     if ((PROJECTION_TYPES as readonly unknown[]).includes(raw.type)) {
-      column.type = raw.type as FieldType;
+      column.type = raw.type as ProjectionType;
     }
     columns.push(column);
   }
   return value.disabled === true ? { columns, disabled: true } : { columns };
+}
+
+/** The name a column gives its field: its own, or the path. */
+export const outputName = (column: ProjectionColumn) => column.name ?? column.path;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it finds
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+export type ColumnProblem =
+  | { field: "path" | "name"; problem: "control" }
+  | { field: "path" | "name"; problem: "length"; max: number }
+  | { field: "path" | "name"; problem: "duplicate"; name: string };
+
+/**
+ * What the server would refuse in each column of a step (`check_steps` on m1/analysis): control
+ * characters, a path over 500 or a name over 200 characters, and two columns with one output
+ * name. Columns without a path are left out when the step is stored, so they are no problem.
+ */
+export function columnProblems(columns: readonly ProjectionColumn[]): (ColumnProblem | null)[] {
+  const seen = new Set<string>();
+  return columns.map((column) => {
+    if (column.path.trim() === "") {
+      return null;
+    }
+    if (CONTROL.test(column.path)) {
+      return { field: "path", problem: "control" };
+    }
+    if ([...column.path].length > MAX_PATH_CHARS) {
+      return { field: "path", problem: "length", max: MAX_PATH_CHARS };
+    }
+    if (column.name !== undefined && CONTROL.test(column.name)) {
+      return { field: "name", problem: "control" };
+    }
+    if (column.name !== undefined && [...column.name].length > MAX_COLUMN_NAME_CHARS) {
+      return { field: "name", problem: "length", max: MAX_COLUMN_NAME_CHARS };
+    }
+    const name = outputName(column);
+    if (seen.has(name)) {
+      return { field: column.name === undefined ? "path" : "name", problem: "duplicate", name };
+    }
+    seen.add(name);
+    return null;
+  });
 }
 
 /** The frame type a value reads as when the column does not name one. */
@@ -82,6 +135,28 @@ function typeFor(value: unknown): FieldType {
   }
 }
 
+const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+/**
+ * Text as a number the way the analysis engine reads it (ui/src/analysis on m1/analysis, and the
+ * server after it): JavaScript's `Number(text)` limited to decimal and hexadecimal notation.
+ */
+function numberOf(text: string): number | null {
+  const trimmed = text.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+  if (trimmed === "") {
+    return 0;
+  }
+  const number = /^0[xX][0-9a-fA-F]+$/.test(trimmed)
+    ? Number.parseInt(trimmed.slice(2), 16)
+    : PLAIN_NUMBER.test(trimmed)
+      ? Number(trimmed)
+      : null;
+  return number !== null && Number.isFinite(number) ? number : null;
+}
+
+/** A number as text the way the analysis engine writes it: no "-0". */
+const numberText = (x: number) => (x === 0 ? "0" : String(x));
+
 /** One value converted to a column type; null where it does not fit (and nothing is guessed). */
 function convert(value: unknown, type: FieldType): unknown {
   if (value === null || value === undefined) {
@@ -92,14 +167,13 @@ function convert(value: unknown, type: FieldType): unknown {
       if (isTyped(value) && value.$type === "date") {
         return dateMs(value);
       }
-      return typeof value === "number" && Number.isFinite(value) ? value : null;
+      return !isTyped(value) && typeof value === "number" && Number.isFinite(value) ? value : null;
     case "number": {
       if (typeof value === "number") {
         return Number.isFinite(value) ? value : null;
       }
       if (isTyped(value) && (value.$type === "decimal" || value.$type === "int64")) {
-        const number = Number(value.value);
-        return Number.isFinite(number) ? number : null;
+        return numberOf(value.value ?? "");
       }
       return null;
     }
@@ -107,7 +181,7 @@ function convert(value: unknown, type: FieldType): unknown {
       if (isTyped(value) && value.$type === "int64") {
         return value.value;
       }
-      return typeof value === "number" && Number.isInteger(value) ? String(value) : null;
+      return typeof value === "number" && Number.isInteger(value) ? numberText(value) : null;
     case "bool":
       return typeof value === "boolean" ? value : null;
     case "json":
@@ -116,7 +190,10 @@ function convert(value: unknown, type: FieldType): unknown {
       if (isTyped(value)) {
         return value.value;
       }
-      return isContainer(value) ? JSON.stringify(value) : String(value);
+      if (isContainer(value)) {
+        return JSON.stringify(value);
+      }
+      return typeof value === "number" ? numberText(value) : String(value);
   }
 }
 
@@ -128,7 +205,7 @@ export function projectDocuments(set: DocumentSet, projection: FrameProjection):
     const first = raw.find((value) => value !== null && value !== undefined);
     const type = column.type ?? (first === undefined ? "string" : typeFor(first));
     return {
-      name: column.name ?? column.path,
+      name: outputName(column),
       type,
       values: raw.map((value) => convert(value, type)),
     };
@@ -211,4 +288,33 @@ export function withProjection(
   return index === -1
     ? [...transformations, step]
     : transformations.map((t, i) => (i === index ? step : t));
+}
+
+/**
+ * The transformations as they are stored with the panel: projection steps without the columns
+ * still waiting for a path, and without the steps no column is left in. While editing, such
+ * columns stay, so a new column can be filled in.
+ */
+export function storableTransformations(transformations: readonly unknown[]): unknown[] {
+  return transformations.flatMap((t) => {
+    if (!isRecord(t) || t.type !== PROJECTION_STEP || !Array.isArray(t.columns)) {
+      return [t];
+    }
+    const columns = t.columns.filter(
+      (column) => isRecord(column) && typeof column.path === "string" && column.path.trim() !== "",
+    );
+    return columns.length === 0 ? [] : [{ ...t, columns }];
+  });
+}
+
+/** Whether any projection step has a column the server would refuse; saving waits for a fix. */
+export function hasProjectionProblems(transformations: readonly unknown[]): boolean {
+  return transformations.some((t) => {
+    const projection = isRecord(t) && t.type === PROJECTION_STEP ? parseProjection(t) : undefined;
+    return (
+      projection !== undefined &&
+      (projection.columns.length > MAX_PROJECTION_COLUMNS ||
+        columnProblems(projection.columns).some((problem) => problem !== null))
+    );
+  });
 }

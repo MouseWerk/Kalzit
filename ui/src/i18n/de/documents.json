@@ -105,7 +105,6 @@
   "documents.projection.type.int64": "Int64 (exakt)",
   "documents.projection.type.string": "Text",
   "documents.projection.type.bool": "Wahrheitswert",
-  "documents.projection.type.json": "JSON",
   "documents.type.objectId": "ObjectId",
   "documents.type.date": "Date",
   "documents.type.decimal": "Decimal128",
@@ -152,5 +151,11 @@
   "documents.pipeline.switched.find": "Zu Find gewechselt; die Pipeline wurde beiseitegelegt.",
   "documents.pipeline.switched.aggregate": "Zur Pipeline gewechselt; der Find wurde beiseitegelegt.",
   "documents.more.load": "Weitere Dokumente laden",
-  "documents.more.failed": "Die nächsten Dokumente konnten nicht geladen werden."
+  "documents.more.failed": "Die nächsten Dokumente konnten nicht geladen werden.",
+  "documents.projection.error.control": "Entferne Steuerzeichen wie Zeilenumbrüche.",
+  "documents.projection.error.length": "Höchstens {max} Zeichen.",
+  "documents.projection.error.duplicate": "Eine andere Spalte heißt schon „{name}“. Gib dieser einen eigenen Namen.",
+  "documents.projection.full": "Ein Projektionsschritt hat höchstens {max} Spalten.",
+  "documents.projection.blocked": "Korrigiere den Projektionsschritt vor dem Übernehmen; der Server würde ihn ablehnen.",
+  "documents.filter.refused.draft": "Der Filter wurde nicht hinzugefügt: Die Abfrage in Bearbeitung enthält Text, der kein gültiges JSON ist. Korrigiere ihn zuerst; nichts wurde geändert."
 }

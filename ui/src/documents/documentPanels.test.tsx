@@ -389,3 +389,32 @@ describe("review follow-ups", () => {
     expect(screen.getByText("JavaScript with scope 100%")).toBeTruthy();
   });
 });
+
+describe("explorer revisions", () => {
+  it("starts over when the page says a new result arrived, not when only the object changed", async () => {
+    const user = userEvent.setup();
+    const plugin = getPanel("documents") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    const set = orders();
+    const panel = (documents: DocumentSet, revision: string) => (
+      <Panel
+        frames={[]}
+        documents={[documents]}
+        options={{}}
+        timeRange={RANGE}
+        title="Orders"
+        revision={revision}
+      />
+    );
+    const view = render(panel(set, "1:0"));
+    await user.click(treeItems()[0] as HTMLElement);
+    await user.click(treeRow("items"));
+    await user.click(screen.getByRole("button", { name: "Open as list" }));
+    // The same result, rebuilt as a new object (as merging pages does on every render).
+    view.rerender(panel({ ...set }, "1:0"));
+    expect(rowNames()).toEqual(["[0]", "[1]"]);
+    // Another run or page: the drilldown starts over.
+    view.rerender(panel({ ...set }, "1:1"));
+    expect(rowNames()).toEqual(["Document 1", "Document 2", "Document 3"]);
+  });
+});

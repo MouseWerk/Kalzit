@@ -482,6 +482,10 @@
     gap: var(--space-2);
   }
 
+  .pipeline__column-error {
+    grid-column: 1 / -1;
+  }
+
   .json-field {
     display: grid;
     gap: var(--space-1);

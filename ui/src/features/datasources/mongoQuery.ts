@@ -177,9 +177,9 @@ export function addMatch(query: MongoQuery, path: string, value: unknown): Match
     if (filter === null) {
       return { refused: "filter" };
     }
-    const next = Object.hasOwn(filter, path)
-      ? `{"$and": [${old}, {${condition}}]}`
-      : addCondition(old, condition);
+    // The path is named already, also by a time filter on it: both conditions must hold.
+    const named = Object.hasOwn(filter, path) || filter.$__timeFilter === path;
+    const next = named ? `{"$and": [${old}, {${condition}}]}` : addCondition(old, condition);
     return { query: { ...query, filter: next } };
   }
   const pipeline = query.pipeline ?? "[]";

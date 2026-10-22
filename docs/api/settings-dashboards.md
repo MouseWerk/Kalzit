@@ -329,10 +329,17 @@ The projection step turns the documents of one query into a frame (docs/PLAN.md,
   "disabled": false }
 ```
 
-- `columns`: one per frame column. `path` is a dotted field path; inside an array it names the
-  element by index (`items.0.price`), and a path through an array without an index reads nothing.
-  `name` defaults to the path. `type` (`time`, `number`, `int64`, `string`, `bool`, `json`)
-  defaults to the type of the first value; a value that does not fit the type is `null`.
+- `columns`: 1 to 200, one per frame column. `path` is a dotted field path of 1 to 500 characters;
+  inside an array it names the element by index (`items.0.price`), and a path through an array
+  without an index reads nothing. `name` (1 to 200 characters) defaults to the path. Neither holds
+  control characters, and no two columns have the same name (their own, or the path where they
+  have none). `type` is `time`, `number`, `int64`, `string` or `bool`; without it the type is taken
+  from the first value. `json` is not a stored type: an object or array read without a type shows
+  as JSON, but a step naming `json` is refused. A value that does not fit the type is `null`.
+  Numbers in text are read as decimal or hexadecimal numbers, dates as Unix milliseconds or
+  RFC 3339 text.
+- The UI leaves columns without a path out when it stores the step, and leaves out a step with no
+  column left; it does not save a step that breaks these rules, and says so at the field.
 - The UI applies the step to the documents it holds; a result that is already a frame passes
   unchanged. The source's notices go with the frame.
 - Early drafts wrote `{"type": "toFrame", "refId": "A", "columns": [...]}` without `id`; the UI

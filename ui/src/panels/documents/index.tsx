@@ -24,16 +24,18 @@ function lastName(segments: readonly Segment[]): string {
  * The document explorer: every document as an expandable tree with the type of each value. A
  * nested array opens as a list of its own (a drilldown with a way back), never as JSON text.
  */
-function ExplorerPanel({ documents = [], title, onFilter }: PanelProps<ExplorerOptions>) {
+function ExplorerPanel({ documents = [], title, onFilter, revision }: PanelProps<ExplorerOptions>) {
   const { t } = useI18n();
   const [index, setIndex] = useState(0);
   const [trail, setTrail] = useState<Drill[]>([]);
   const position = Math.min(index, documents.length - 1);
   const set = documents[position];
-  // A new result (a run, a filter) starts at its top: the old trail may not exist in it.
-  const [trailOf, setTrailOf] = useState({ set, generation: 0 });
-  if (trailOf.set !== set) {
-    setTrailOf({ set, generation: trailOf.generation + 1 });
+  // A new result (a run, a filter, a page loaded after it) starts at its top: the old trail may
+  // not exist in it. The page says when one arrives; without it, a new set object is one.
+  const marker = revision ?? set;
+  const [trailOf, setTrailOf] = useState({ marker, generation: 0 });
+  if (trailOf.marker !== marker) {
+    setTrailOf({ marker, generation: trailOf.generation + 1 });
     setTrail([]);
   }
   if (set === undefined) {

@@ -17,10 +17,15 @@ import { distribution, histogram } from "./distribution";
 import { filterable, filterablePath, toExtendedJson } from "./filter";
 import { filterPath, mongoPath, schemaPath, valueAt, valuesAt } from "./paths";
 import {
+  columnProblems,
+  hasProjectionProblems,
   newStepId,
+  PROJECTION_TYPES,
+  parseProjection,
   projectDocuments,
   projectionFor,
   projectionPaths,
+  storableTransformations,
   withProjection,
 } from "./projection";
 import { outliersOf, sampleSchema, schemaOf } from "./schema";
@@ -320,21 +325,28 @@ describe("click-to-filter values", () => {
   it("sends text the server would bind as an exact, escaped regular expression", () => {
     // Joined, so it reads as the text a document holds, not as a template.
     const variable = ["$", "{land}"].join("");
+    // \A and \z anchor the whole text: ^ and $ would also match around a line break.
     expect(toExtendedJson(variable)).toEqual({
-      $regularExpression: { pattern: "^\\$\\{land\\}$", options: "" },
+      $regularExpression: { pattern: "\\A\\$\\{land\\}\\z", options: "" },
     });
     expect(toExtendedJson("$__timeFrom (a.b)")).toEqual({
-      $regularExpression: { pattern: "^\\$__timeFrom \\(a\\.b\\)$", options: "" },
+      $regularExpression: { pattern: "\\A\\$__timeFrom \\(a\\.b\\)\\z", options: "" },
     });
-    expect(/^\$\{land\}$/.test(variable)).toBe(true);
     // A dollar elsewhere is plain text.
     expect(toExtendedJson("costs $5")).toBe("costs $5");
+  });
+
+  it("offers no filter on text with a NUL character", () => {
+    expect(filterable("a\u0000b")).toBe(false);
+    expect(filterable({ $type: "decimal", value: "1\u0000" })).toBe(false);
+    expect(filterable("ab")).toBe(true);
   });
 
   it("offers no filter on paths a filter cannot name", () => {
     expect(filterablePath(["items", 0, "price"])).toBe(true);
     expect(filterablePath(["$type"])).toBe(false);
     expect(filterablePath(["a.b"])).toBe(false);
+    expect(filterablePath([["a", "$", "{x}"].join("")])).toBe(false);
   });
 });
 
@@ -497,5 +509,108 @@ describe("JSON highlighting", () => {
     expect(kinds['"status"']).toBe("label");
     expect(kinds['"paid"']).toBe("string");
     expect(kinds.true).toBe("keyword");
+  });
+});
+
+describe("projection steps the server accepts", () => {
+  it("never stores json as a column type, though inference may read JSON", () => {
+    expect(
+      parseProjection({
+        columns: [
+          { path: "a", type: "json" },
+          { path: "b", type: "time" },
+        ],
+      }),
+    ).toEqual({ columns: [{ path: "a" }, { path: "b", type: "time" }] });
+    expect(PROJECTION_TYPES).not.toContain("json");
+    const frame = projectDocuments(
+      { documents: [{ a: { b: 1 } }], schema: [] },
+      {
+        columns: [{ path: "a" }],
+      },
+    );
+    expect(frame.fields[0]?.type).toBe("json");
+  });
+
+  it("finds what check_steps refuses: control characters, lengths and duplicate names", () => {
+    expect(
+      columnProblems([
+        { path: "" },
+        { path: "a\nb" },
+        { path: "x".repeat(501) },
+        { path: "c", name: "n".repeat(201) },
+        { path: "c", name: "tab\there" },
+        { path: "total" },
+        { path: "total" },
+        { path: "price", name: "total" },
+        { path: "ok" },
+      ]),
+    ).toEqual([
+      null,
+      { field: "path", problem: "control" },
+      { field: "path", problem: "length", max: 500 },
+      { field: "name", problem: "length", max: 200 },
+      { field: "name", problem: "control" },
+      null,
+      { field: "path", problem: "duplicate", name: "total" },
+      { field: "name", problem: "duplicate", name: "total" },
+      null,
+    ]);
+    expect(
+      hasProjectionProblems([{ id: "s", type: "toFrame", frame: "A", columns: [{ path: "a\n" }] }]),
+    ).toBe(true);
+    const many = Array.from({ length: 201 }, (_, i) => ({ path: `p${i}` }));
+    expect(hasProjectionProblems([{ id: "s", type: "toFrame", frame: "A", columns: many }])).toBe(
+      true,
+    );
+    expect(
+      hasProjectionProblems([{ id: "s", type: "toFrame", frame: "A", columns: [{ path: "a" }] }]),
+    ).toBe(false);
+  });
+
+  it("stores steps without columns that wait for a path, and drops a step left empty", () => {
+    expect(
+      storableTransformations([
+        { id: "o", type: "other" },
+        { id: "a", type: "toFrame", frame: "A", columns: [{ path: "x" }, { path: " " }] },
+        { id: "b", type: "toFrame", frame: "B", columns: [{ path: "" }] },
+      ]),
+    ).toEqual([
+      { id: "o", type: "other" },
+      { id: "a", type: "toFrame", frame: "A", columns: [{ path: "x" }] },
+    ]);
+  });
+
+  it("reads numbers and dates as the analysis engine does", () => {
+    const frame = projectDocuments(
+      {
+        documents: [
+          {
+            n: { $type: "decimal", value: "0x10" },
+            d: { $type: "date", value: "2026-10-01T08:00:00Z" },
+          },
+          { n: { $type: "decimal", value: "0b101" }, d: { $type: "date", value: "Oct 1 2026" } },
+          { n: -0, d: { $type: "date", value: "1790000000000" } },
+        ],
+        schema: [],
+      },
+      {
+        columns: [
+          { path: "n", type: "number" },
+          { path: "d" },
+          { path: "n", name: "s", type: "string" },
+        ],
+      },
+    );
+    expect(frame.fields[0]?.values).toEqual([16, null, -0]);
+    expect(frame.fields[1]?.values).toEqual([WHEN_MS, null, 1790000000000]);
+    // A number as text has no "-0".
+    expect(frame.fields[2]?.values[2]).toBe("0");
+  });
+
+  it("joins a filter on a field the time filter already names with $and", () => {
+    expect(addMatch({ collection: "c", filter: '{"$__timeFilter": "ts"}' }, "ts", 1)).toEqual({
+      query: { collection: "c", filter: '{"$and": [{"$__timeFilter": "ts"}, {"ts": 1}]}' },
+    });
   });
 });
