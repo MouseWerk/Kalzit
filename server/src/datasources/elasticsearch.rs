@@ -263,20 +263,29 @@ pub fn check_endpoint(base: &Url, method: Method, url: &Url) -> Result<(), Sourc
     let Some(rest) = url.path().strip_prefix(base.path()) else { return Err(refused()) };
     let segments: Vec<&str> = if rest.is_empty() { Vec::new() } else { rest.split('/').collect() };
     let get = method == Method::GET;
-    let ok = match segments.as_slice() {
-        [] | [""] => get,
-        ["_cat", "indices"] => get,
-        ["_cat", "indices", index] => get && check_index(&percent_decode(index)).is_ok(),
+    // The query keys each endpoint may carry, each at most once: no `scroll`, `pipeline`,
+    // `request_cache` or anything else Kalzit does not send itself.
+    let (ok, query_keys): (bool, &[&str]) = match segments.as_slice() {
+        [] | [""] => (get, &[]),
+        ["_cat", "indices"] => (get, &["format", "h"]),
+        ["_cat", "indices", index] => (get && check_index(&percent_decode(index)).is_ok(), &["format", "h"]),
         [index, endpoint] if INDEX_ENDPOINTS.contains(endpoint) => {
             let read_method = match *endpoint {
                 "_search" | "_count" => get || method == Method::POST,
                 _ => get,
             };
-            read_method && check_index(&percent_decode(index)).is_ok()
+            let keys: &[&str] = if *endpoint == "_field_caps" { &["fields"] } else { &[] };
+            (read_method && check_index(&percent_decode(index)).is_ok(), keys)
         }
-        _ => false,
+        _ => (false, &[]),
     };
-    if ok { Ok(()) } else { Err(refused()) }
+    let mut seen = Vec::new();
+    let query_ok = url.query_pairs().all(|(k, _)| {
+        let fresh = !seen.contains(&k);
+        seen.push(k.clone());
+        fresh && query_keys.contains(&k.as_ref())
+    });
+    if ok && query_ok && url.fragment().is_none() { Ok(()) } else { Err(refused()) }
 }
 
 /// Percent-decoding of one path segment; invalid escapes are kept as written.
@@ -354,6 +363,15 @@ pub fn check_dsl(dsl: &Value) -> Result<(), SourceError> {
     walk_dsl(dsl, 0)
 }
 
+/// The query inside a `wrapper` query: `{"query": "<base64 of JSON>"}`.
+fn unwrap_query(wrapper: &Value) -> Result<Value, SourceError> {
+    use base64::Engine as _;
+    let invalid = || reject("elasticsearch.wrapper_invalid", "a wrapper query must hold a base64-encoded JSON query");
+    let encoded = wrapper.get("query").and_then(Value::as_str).ok_or_else(invalid)?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded.trim()).map_err(|_| invalid())?;
+    serde_json::from_slice(&bytes).map_err(|_| invalid())
+}
+
 fn walk_dsl(value: &Value, depth: usize) -> Result<(), SourceError> {
     if depth > MAX_DSL_DEPTH {
         return Err(reject("elasticsearch.dsl_too_deep", "the query is nested too deeply"));
@@ -370,6 +388,10 @@ fn walk_dsl(value: &Value, depth: usize) -> Result<(), SourceError> {
                 }
                 if key == "script" {
                     check_script(v)?;
+                }
+                if key == "wrapper" && v.is_object() {
+                    // `wrapper` carries a whole query in base64; the check reads it too.
+                    walk_dsl(&unwrap_query(v)?, depth + 1)?;
                 }
                 walk_dsl(v, depth + 1)?;
             }
@@ -1006,6 +1028,8 @@ impl Client {
     fn failed(&self, e: HttpError) -> SourceError {
         match e {
             HttpError::Blocked(b) => SourceError::Blocked(b.0),
+            // A redirect to anything but a read endpoint.
+            HttpError::Refused(d) => SourceError::Rejected(d),
             other => SourceError::Failed(other.detail().scrubbed(|t| self.scrub(t))),
         }
     }
@@ -1025,8 +1049,14 @@ impl Client {
             headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             b.to_string().into_bytes()
         });
-        let response =
-            self.http.send_with_body(endpoint.method(), url, headers, body).await.map_err(|e| self.failed(e))?;
+        // Every hop, redirects included, must be a read endpoint below the base URL.
+        let base = &self.base;
+        let hop = |m: &Method, u: &Url| check_endpoint(base, m.clone(), u).map_err(|e| e.detail());
+        let response = self
+            .http
+            .send_checked(endpoint.method(), url, headers, body, Some(&hop))
+            .await
+            .map_err(|e| self.failed(e))?;
         let status = response.status();
         let bytes = match charge {
             Some(charge) => crate::http::read_counted(response, max_bytes, |n| charge.add(n)).await,
@@ -1631,5 +1661,173 @@ mod tests {
         assert!(seen.iter().all(|r| r.ends_with("ApiKey schluessel")), "{seen:?}");
         assert!(seen.iter().any(|r| r.starts_with("POST /logs-*/_search")), "{seen:?}");
         assert!(seen.iter().all(|r| !r.contains("_by_query")), "{seen:?}");
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::frame::ResponseBudget;
+    use crate::datasources::json_documents::test_connection;
+    use crate::datasources::targets::TargetPolicy;
+    use crate::shapes::TimeRange;
+    use axum::Router;
+    use axum::response::IntoResponse;
+    use base64::Engine as _;
+
+    fn req(query: Value) -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query,
+            range: TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 },
+            interval_ms: 30_000,
+            max_data_points: None,
+            variables: BTreeMap::new(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
+        }
+    }
+
+    fn settings() -> Settings {
+        Settings {
+            url: "http://es:9200".into(),
+            basic_auth_user: None,
+            ca_cert: None,
+            index: Some("logs".into()),
+            time_field: None,
+        }
+    }
+
+    fn reason(query: Value) -> &'static str {
+        match build_search(serde_json::from_value(query.clone()).unwrap(), &settings(), &req(query)) {
+            Ok(_) => "accepted",
+            Err(e) => e.detail().reason,
+        }
+    }
+
+    /// A cluster behind a proxy (or a compromised one) answers the search with a 307 to
+    /// `_delete_by_query` on the same origin. The client follows it with method, body and
+    /// Authorization, and the endpoint list is never asked.
+    #[tokio::test]
+    async fn redirects_cannot_reach_write_endpoints() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        let app =
+            Router::new().fallback(move |method: Method, uri: axum::http::Uri, headers: axum::http::HeaderMap| {
+                let log = log.clone();
+                async move {
+                    let auth = headers.get(AUTHORIZATION).map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+                    log.lock().unwrap().push(format!("{method} {} {auth}", uri.path()));
+                    if uri.path().ends_with("/_search") {
+                        return (
+                            axum::http::StatusCode::TEMPORARY_REDIRECT,
+                            [(axum::http::header::LOCATION, "/logs/_delete_by_query?conflicts=proceed")],
+                        )
+                            .into_response();
+                    }
+                    axum::Json(json!({ "deleted": 42, "hits": { "hits": [] } })).into_response()
+                }
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
+        let conn =
+            test_connection(json!({ "url": format!("http://{addr}"), "index": "logs" }), &[("apiKey", "k")], policy)
+                .await;
+        let r = Elasticsearch.query(&conn, req(json!({ "lucene": "*" }))).await;
+        let seen = seen.lock().unwrap().clone();
+        assert!(seen.iter().all(|r| !r.contains("_by_query")), "a write endpoint was reached: {seen:?}");
+        let e = r.expect_err("the redirect is refused");
+        assert_eq!((e.code(), e.detail().reason), ("query_rejected", "elasticsearch.endpoint_not_allowed"));
+    }
+
+    /// `wrapper` carries a base64-encoded query that the DSL check never sees: stored scripts
+    /// and `ctx` pass inside it.
+    #[test]
+    fn wrapper_queries_do_not_hide_scripts() {
+        let inner = json!({ "script": { "script": { "id": "gespeichert" } } }).to_string();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(inner);
+        assert_eq!(
+            reason(json!({ "dsl": { "query": { "wrapper": { "query": b64 } } } })),
+            "elasticsearch.stored_script"
+        );
+    }
+
+    #[test]
+    fn known_script_and_index_bypasses_are_refused() {
+        let cases = [
+            (json!({ "dsl": { "sort": { "_script": { "type": "number", "script": "1" } } } }), "script_not_allowed"),
+            (
+                json!({ "dsl": { "query": { "function_score": { "script_score": { "script": "ctx._source.x = 1" } } } } }),
+                "script_writes",
+            ),
+            (
+                json!({ "dsl": { "query": { "script": { "script": { "source": "ctx /* c */ ._source" } } } } }),
+                "script_writes",
+            ),
+            (json!({ "dsl": { "query": { "script": { "script": { "id": "x" } } } } }), "stored_script"),
+            (
+                json!({ "dsl": { "runtime_mappings": { "f": { "type": "long", "script": { "source": "emit(1)", "lang": "mustache" } } } } }),
+                "script_lang",
+            ),
+            (json!({ "dsl": { "aggs": { "a": { "scripted_metric": {} } } } }), "script_not_allowed"),
+            (
+                json!({ "dsl": { "aggs": { "h": { "date_histogram": { "field": "t" }, "aggs": { "b": { "bucket_script": {} } } } } } }),
+                "script_not_allowed",
+            ),
+            (
+                json!({ "dsl": { "script_fields": { "f": { "script": { "source": "1", "inline": "ctx" } } } } }),
+                "script_invalid",
+            ),
+            (json!({ "dsl": { "pit": { "id": "x" } } }), "dsl_key_not_allowed"),
+            (json!({ "dsl": { "timeout": "1h" } }), "dsl_key_not_allowed"),
+            (json!({ "index": "a/b" }), "index_invalid"),
+            (json!({ "index": ".." }), "index_invalid"),
+            (json!({ "index": "a%2Fb" }), "index_invalid"),
+            (json!({ "index": "_all" }), "index_invalid"),
+            (json!({ "index": "logs,_all" }), "index_invalid"),
+            (json!({ "index": "<logs-{now/d}>" }), "index_invalid"),
+            (json!({ "index": "logs?pipeline=x" }), "index_invalid"),
+            (json!({ "index": "c:_doc" }), "index_invalid"),
+        ];
+        let mut wrong = Vec::new();
+        for (q, want) in cases {
+            let got = reason(q.clone());
+            if got != format!("elasticsearch.{want}") {
+                wrong.push(format!("{q} -> {got} (wanted {want})"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The final URL check looks at the path only; a query string passes it.
+    #[test]
+    fn the_endpoint_check_covers_the_query_string() {
+        let base = Url::parse("http://es:9200/").unwrap();
+        let mut wrong = Vec::new();
+        for (m, p) in [
+            (Method::POST, "logs/_search?scroll=1m"),
+            (Method::POST, "logs/_search?pre_filter_shard_size=1&request_cache=false"),
+            (Method::GET, "logs/_mapping?pipeline=x"),
+            (Method::POST, "_msearch"),
+            (Method::POST, "logs/_search/template"),
+            (Method::POST, "_sql"),
+            (Method::POST, "logs/_eql/search"),
+            (Method::POST, "logs/_update_by_query"),
+            (Method::PUT, "logs/_search"),
+            (Method::DELETE, "logs/_search"),
+            (Method::POST, "logs/_mapping"),
+            (Method::POST, "_cat/indices"),
+            (Method::POST, "logs/_search/../_delete_by_query"),
+            (Method::POST, "%6cogs/_search%2F..%2F_bulk"),
+        ] {
+            let url = base.join(p).unwrap();
+            if check_endpoint(&base, m.clone(), &url).is_ok() {
+                wrong.push(format!("{m} {url}"));
+            }
+        }
+        assert!(wrong.is_empty(), "accepted: {wrong:#?}");
     }
 }

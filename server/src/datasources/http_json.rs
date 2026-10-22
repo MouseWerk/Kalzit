@@ -135,8 +135,8 @@ struct Client {
     base: Url,
     headers: HeaderMap,
     documents_path: Option<String>,
-    /// The base64 of `user:password`, to scrub from errors.
-    basic_token: Option<String>,
+    /// The stored secrets and the base64 of `user:password`, to scrub from errors.
+    secrets: Vec<String>,
 }
 
 async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
@@ -165,7 +165,11 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
                 .map_err(|_| SourceError::failed("settings.stored_invalid", "the stored settings are not valid"))?;
             headers.insert(name, header_value(key, invalid)?);
         }
-        Ok(Client { http, base, headers, documents_path: s.documents_path.filter(|p| !p.is_empty()), basic_token })
+        let mut secrets: Vec<String> = basic_token.into_iter().collect();
+        secrets.extend(
+            ["basicAuthPassword", "bearerToken", "apiKey"].iter().filter_map(|f| conn.secret(f)).map(String::from),
+        );
+        Ok(Client { http, base, headers, documents_path: s.documents_path.filter(|p| !p.is_empty()), secrets })
     })
     .await
 }
@@ -185,8 +189,9 @@ fn join_path(base: &Url, path: &str) -> Result<Url, SourceError> {
         || lower.contains("%2e")
         || lower.contains("%2f")
         || lower.contains("%5c")
+        || lower.contains("%25")
         || path.split('/').next().is_some_and(|first| first.contains(':'))
-        || path.split('/').any(|s| s == "." || s == "..")
+        || path.split('/').any(|s| s == "." || s.starts_with(".."))
         || path.chars().any(char::is_control)
     {
         return Err(refused());
@@ -257,10 +262,23 @@ fn at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
 
 impl Client {
     fn scrub(&self, text: &str) -> String {
-        match &self.basic_token {
-            Some(t) => text.replace(t, "***"),
-            None => text.to_string(),
+        super::scrub(text, self.secrets.iter().map(String::as_str))
+    }
+
+    /// A request (the first or a redirect) must be a GET on the source's origin, at its URL or
+    /// below it.
+    fn check_hop(&self, method: &Method, url: &Url) -> Result<(), Detail> {
+        let path = self.base.path();
+        let dir = if path.ends_with('/') { path.to_string() } else { format!("{path}/") };
+        let below = url.path() == path || url.path().starts_with(&dir);
+        if *method == Method::GET && url.origin() == self.base.origin() && below {
+            return Ok(());
         }
+        Err(Detail::new(
+            "http_json.redirect_refused",
+            format!("the server redirected to {}, which is not below the data source's URL", url.path()),
+        )
+        .with("path", url.path()))
     }
 
     fn failed(&self, e: HttpError) -> SourceError {
@@ -278,7 +296,13 @@ impl Client {
         max_bytes: usize,
         charge: Option<&mut super::frame::Charge>,
     ) -> Result<(u16, Value), SourceError> {
-        let response = self.http.send(Method::GET, url, self.headers.clone()).await.map_err(|e| self.failed(e))?;
+        // Redirects may only stay below the source's URL, like the paths a query may add.
+        let hop = |m: &Method, u: &Url| self.check_hop(m, u);
+        let response = self
+            .http
+            .send_checked(Method::GET, url, self.headers.clone(), None, Some(&hop))
+            .await
+            .map_err(|e| self.failed(e))?;
         let status = response.status();
         let body = match charge {
             Some(charge) => crate::http::read_counted(response, max_bytes, |n| charge.add(n)).await,
@@ -286,8 +310,9 @@ impl Client {
         }
         .map_err(|e| self.failed(e))?;
         if !status.is_success() {
-            let text: String = String::from_utf8_lossy(&body).chars().take(MAX_ERROR_BODY).collect();
-            let text = self.scrub(text.trim());
+            // Scrubbed whole before it is cut, so a secret across the cut is still found.
+            let text = self.scrub(&String::from_utf8_lossy(&body));
+            let text: String = text.trim().chars().take(MAX_ERROR_BODY).collect();
             return Err(SourceError::failed("http_json.status", format!("the server answered {status}: {text}"))
                 .with("status", status.as_u16())
                 .with("detail", text));
@@ -549,5 +574,119 @@ mod tests {
         assert_eq!(field(json!({ "url": "https://api.intern", "apiKeyHeader": "Authorization" })), "apiKeyHeader");
         assert_eq!(field(json!({ "url": "https://api.intern", "apiKeyHeader": "kein header" })), "apiKeyHeader");
         assert_eq!(at_path(&json!({ "a": [{ "b": 1 }] }), "a.0.b"), Some(&json!(1)));
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use crate::datasources::Limits;
+    use crate::datasources::json_documents::test_connection;
+    use crate::datasources::targets::TargetPolicy;
+    use crate::shapes::TimeRange;
+    use axum::Router;
+    use axum::response::IntoResponse;
+    use serde_json::json;
+
+    fn req(query: Value) -> SourceQuery {
+        SourceQuery {
+            ref_id: "A".into(),
+            query,
+            range: TimeRange { from: 0, to: 1 },
+            interval_ms: 1000,
+            max_data_points: None,
+            variables: BTreeMap::new(),
+            identifier_variables: None,
+            limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
+        }
+    }
+
+    #[test]
+    fn paths_stay_below_the_base() {
+        let base = Url::parse("https://api.intern/v1/?tenant=7").unwrap();
+        for p in [
+            "../admin",
+            "a/../../admin",
+            "%2e%2e/admin",
+            "a/%2E./b",
+            ".%2e/x",
+            "//evil/x",
+            r"\\evil\x",
+            "http:x",
+            "a?x=1",
+            "a#f",
+            "a\r\nX-Inject: 1",
+            "a\t/../b",
+            "a/..;/admin",
+            "a/%252e%252e/admin",
+            "..x/admin",
+        ] {
+            let r = join_path(&base, p).map(|u| u.to_string()).map_err(|e| e.detail().reason);
+            assert_eq!(r, Err("http_json.path_invalid"), "{p:?}");
+        }
+        // Full-width dots are no dots to a server: the path stays below the base.
+        let u = join_path(&base, "\u{FF0E}\u{FF0E}/admin").unwrap();
+        assert!(u.path().starts_with("/v1/"), "{u}");
+        assert_eq!(join_path(&base, "orders/open").unwrap().as_str(), "https://api.intern/v1/orders/open?tenant=7");
+    }
+
+    /// A query author adds `params` to a path of the allowed API that redirects (an open
+    /// redirect), and the client follows to any host the target rules allow.
+    #[tokio::test]
+    async fn redirects_leave_the_base_url() {
+        let inner = Router::new().fallback(|| async { axum::Json(json!({ "intern": true })) });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let inner_addr = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, inner).await.unwrap() });
+        let api = Router::new().fallback(|q: axum::extract::Query<BTreeMap<String, String>>| async move {
+            match q.get("next") {
+                Some(n) => (axum::http::StatusCode::FOUND, [(axum::http::header::LOCATION, n.clone())]).into_response(),
+                None => axum::Json(json!([])).into_response(),
+            }
+        });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_addr = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, api).await.unwrap() });
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
+        let conn = test_connection(json!({ "url": format!("http://{api_addr}/v1/") }), &[], policy).await;
+        let r = HttpJson
+            .query(
+                &conn,
+                req(json!({ "path": "login", "params": { "next": format!("http://{inner_addr}/admin/users") } })),
+            )
+            .await;
+        let leaked = matches!(&r, Ok(QueryResult::Documents { documents }) if documents.documents.first().is_some_and(|d| d["intern"] == true));
+        assert!(!leaked, "the query read another host through a redirect");
+        assert_eq!(r.err().map(|e| e.detail().reason), Some("http_json.redirect_refused"));
+        // A redirect on the same host but outside the source's URL is refused as well.
+        let r = HttpJson
+            .query(&conn, req(json!({ "path": "login", "params": { "next": format!("http://{api_addr}/admin") } })))
+            .await;
+        assert_eq!(r.err().map(|e| e.detail().reason), Some("http_json.redirect_refused"));
+        let r = HttpJson
+            .query(&conn, req(json!({ "path": "login", "params": { "next": format!("http://{api_addr}/v1/daten") } })))
+            .await;
+        assert!(r.is_ok(), "a redirect below the URL is followed: {:?}", r.err().map(|e| e.detail()));
+    }
+
+    /// The error body is cut to 300 characters before the secrets are scrubbed, so a secret that
+    /// straddles the cut is not recognized and its first part is shown.
+    #[tokio::test]
+    async fn error_bodies_are_scrubbed_before_they_are_cut() {
+        let token = "TOKEN-0123456789-abcdefghijklmnopqrstuvwxyz";
+        let body = format!("{}{token}", "x".repeat(MAX_ERROR_BODY - 10));
+        let app = Router::new().fallback(move || {
+            let body = body.clone();
+            async move { (axum::http::StatusCode::UNAUTHORIZED, body).into_response() }
+        });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
+        let conn =
+            test_connection(json!({ "url": format!("http://{addr}/") }), &[("bearerToken", token)], policy).await;
+        let Err(e) = HttpJson.query(&conn, req(json!({}))).await else { panic!("expected an error") };
+        let detail = e.detail().scrubbed(|t| conn.scrub(t));
+        assert!(!detail.message.contains("TOKEN-0123"), "{}", detail.message);
     }
 }

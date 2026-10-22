@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -38,14 +39,18 @@ const SETTINGS: &[SettingField] = &[
         .default(DefaultValue::Text("auto")),
     SettingField::new("header", "datasources.settings.header", SettingType::Bool).default(DefaultValue::Bool(true)),
 ];
-/// A JSON file (not NDJSON) is parsed whole, so it may be at most this large.
+/// A JSON file (not NDJSON) may be at most this large.
 const MAX_JSON_FILE_BYTES: u64 = 256 * 1024 * 1024;
 /// Rows or documents the schema is read from, within this many bytes.
 const SCHEMA_SAMPLE: usize = 1_000;
 const SCHEMA_BYTES: usize = 16 * 1024 * 1024;
-/// Records between checks of the time limit.
-const DEADLINE_EVERY: usize = 1_024;
+/// How long reading the schema may take.
+const SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bytes a JSON parser reads between checks of the time limit.
+const DEADLINE_BYTES: usize = 1024 * 1024;
 const READ_BUFFER: usize = 64 * 1024;
+/// Columns a CSV file may have.
+pub const MAX_COLUMNS: usize = 10_000;
 
 pub fn kind() -> Kind {
     Kind { name: "CSV/JSON file", hint_key: "datasources.kinds.file.hint", settings: SETTINGS, plugin: Arc::new(Files) }
@@ -151,28 +156,73 @@ fn open(path: &Path) -> Result<BufReader<File>, SourceError> {
     Ok(BufReader::with_capacity(READ_BUFFER, file))
 }
 
-/// Runs blocking file work off the async threads.
+/// Runs blocking file work off the async threads. The work gets a deadline that also reports
+/// cancellation: when the query's future is dropped (time limit, client gone), the flag is set
+/// and the work stops at its next check instead of reading on in its thread.
 async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, SourceError> + Send + 'static,
+    timeout: Duration,
+    work: impl FnOnce(Deadline) -> Result<T, SourceError> + Send + 'static,
 ) -> Result<T, SourceError> {
-    tokio::task::spawn_blocking(work).await.map_err(|e| SourceError::failed("internal", e.to_string()))?
+    let deadline = Deadline::new(Instant::now() + timeout, timeout);
+    let _cancel_on_drop = CancelOnDrop(deadline.cancel.clone());
+    tokio::task::spawn_blocking(move || work(deadline))
+        .await
+        .map_err(|e| SourceError::failed("internal", e.to_string()))?
 }
 
-/// Stops a read that runs past the query's time limit (the async timeout cannot stop a blocking
-/// thread).
+/// Sets the flag when dropped, also when the future that holds it is dropped unfinished.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Stops a read that runs past the query's time limit or whose query went away (the async
+/// timeout cannot stop a blocking thread). Checked before every record and line.
 struct Deadline {
     at: Instant,
     timeout: Duration,
+    cancel: Arc<AtomicBool>,
 }
 
 impl Deadline {
-    fn check(&self, n: usize) -> Result<(), SourceError> {
-        if n.is_multiple_of(DEADLINE_EVERY) && Instant::now() > self.at {
+    fn new(at: Instant, timeout: Duration) -> Self {
+        Self { at, timeout, cancel: Arc::new(AtomicBool::new(false)) }
+    }
+
+    fn check(&self) -> Result<(), SourceError> {
+        if self.cancel.load(Ordering::SeqCst) || Instant::now() > self.at {
             return Err(SourceError::Timeout(self.timeout.as_secs()));
         }
         Ok(())
     }
 }
+
+/// A reader that checks the deadline every `DEADLINE_BYTES`, for parsers that read on their own
+/// (a whole JSON file).
+struct DeadlineReader<'a, R> {
+    inner: R,
+    deadline: &'a Deadline,
+    since_check: usize,
+}
+
+impl<R: Read> Read for DeadlineReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.since_check >= DEADLINE_BYTES {
+            self.since_check = 0;
+            if self.deadline.check().is_err() {
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, DEADLINE_PASSED));
+            }
+        }
+        let n = self.inner.read(buf)?;
+        self.since_check += n;
+        Ok(n)
+    }
+}
+
+const DEADLINE_PASSED: &str = "the time limit passed";
 
 fn csv_error(e: CsvError) -> SourceError {
     match e {
@@ -183,6 +233,11 @@ fn csv_error(e: CsvError) -> SourceError {
         CsvError::Io(e) => read_failed(e),
         CsvError::TooLarge => SourceError::failed("internal", "a record exceeded the limit"),
     }
+}
+
+fn too_many_columns() -> SourceError {
+    SourceError::failed("csv.too_many_columns", format!("the file has more than {MAX_COLUMNS} columns"))
+        .with("max", MAX_COLUMNS)
 }
 
 /// Bytes of the budget held for records read but not yet converted; each row's share is given
@@ -233,22 +288,33 @@ fn read_csv_rows(
     budget: &ResponseBudget,
     deadline: &Deadline,
 ) -> Result<CsvRows, SourceError> {
+    deadline.check()?;
     let mut input = open(&plan.path)?;
     csv::skip_bom(&mut input).map_err(read_failed)?;
+    let mut reader = csv::Reader::new(input, b',');
     let delimiter = match plan.delimiter {
         Some(d) => d,
-        None => csv::detect_delimiter(input.fill_buf().map_err(read_failed)?),
+        None => csv::detect_delimiter(reader.peek().map_err(read_failed)?),
     };
-    let mut reader = csv::Reader::new(input, delimiter);
+    reader.set_delimiter(delimiter);
     let mut charge = RawCharge { budget: budget.clone(), held: 0 };
+    // The raw records may hold half of what is left, so the frame they become still fits.
+    let raw_limit = budget.remaining() / 2;
     let mut size_cut = false;
     let mut legacy_encoding = false;
     let mut header = None;
     if plan.header {
-        match reader.next_record(budget.remaining()) {
+        match reader.next_record(raw_limit) {
             Ok(Some(rec)) => {
-                legacy_encoding |= rec.windows_1252;
-                header = Some(rec.fields);
+                if rec.fields.len() > MAX_COLUMNS {
+                    return Err(too_many_columns());
+                }
+                if charge.take(rec.bytes) {
+                    legacy_encoding |= rec.windows_1252;
+                    header = Some(rec.fields);
+                } else {
+                    size_cut = true;
+                }
             }
             Ok(None) => header = Some(Vec::new()),
             Err(CsvError::TooLarge) => size_cut = true,
@@ -256,13 +322,14 @@ fn read_csv_rows(
         }
     }
     let mut rows = Vec::new();
-    // The raw records may hold half of what is left, so the frame they become still fits.
-    let raw_limit = budget.remaining() / 2;
     // One row past the limit, so the frame knows it was cut.
     while !size_cut && rows.len() <= max_rows {
-        deadline.check(rows.len() + 1)?;
+        deadline.check()?;
         match reader.next_record(raw_limit.saturating_sub(charge.held)) {
             Ok(Some(rec)) => {
+                if header.is_none() && rec.fields.len() > MAX_COLUMNS {
+                    return Err(too_many_columns());
+                }
                 if !charge.take(rec.bytes) {
                     size_cut = true;
                     break;
@@ -349,42 +416,73 @@ fn json_invalid(line: Option<usize>, e: serde_json::Error) -> SourceError {
     }
 }
 
-fn strip_bom(bytes: &[u8]) -> &[u8] {
-    bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
+fn too_large(limit: u64) -> SourceError {
+    SourceError::failed("file.too_large", format!("the JSON file is larger than {limit} bytes")).with("bytes", limit)
 }
 
-fn read_json(plan: &Plan, max_docs: usize, budget: &ResponseBudget) -> Result<DocumentsBuilder, SourceError> {
-    let mut docs = DocumentsBuilder::new(max_docs, budget.clone());
-    let len = std::fs::metadata(&plan.path).map_err(read_failed)?.len();
-    let limit = MAX_JSON_FILE_BYTES.min(budget.remaining() as u64);
-    if len > limit {
-        return Err(SourceError::failed("file.too_large", format!("the JSON file is larger than {limit} bytes"))
-            .with("bytes", limit));
+/// The elements of a top-level array go into the documents one by one; once the documents are
+/// full, the rest of the array is only checked to be JSON, without being kept.
+struct Elements<'a>(&'a mut DocumentsBuilder);
+
+impl<'de> serde::de::Visitor<'de> for Elements<'_> {
+    type Value = ();
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("an array")
     }
-    let mut charge = budget.charge();
-    if !charge.add(len as usize) {
-        return Err(SourceError::failed("file.too_large", format!("the JSON file is larger than {limit} bytes"))
-            .with("bytes", limit));
-    }
-    let mut bytes = Vec::with_capacity(len as usize);
-    File::open(&plan.path).map_err(read_failed)?.take(limit + 1).read_to_end(&mut bytes).map_err(read_failed)?;
-    if bytes.len() as u64 > limit {
-        return Err(SourceError::failed("file.too_large", format!("the JSON file is larger than {limit} bytes"))
-            .with("bytes", limit));
-    }
-    let value: Value = serde_json::from_slice(strip_bom(&bytes)).map_err(|e| json_invalid(None, e))?;
-    drop(bytes);
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                if !docs.push(item) {
-                    break;
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        while !self.0.is_full() {
+            match seq.next_element::<Value>()? {
+                Some(v) => {
+                    self.0.push(v);
                 }
+                None => return Ok(()),
             }
         }
-        other => {
-            docs.push(other);
+        while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+        Ok(())
+    }
+}
+
+/// A JSON file: the elements of a top-level array, read one by one so only the documents kept
+/// are held (an array file of any size up to `MAX_JSON_FILE_BYTES` can be sampled), or any
+/// other value as one document, which must fit the budget.
+fn read_json(
+    plan: &Plan,
+    max_docs: usize,
+    budget: &ResponseBudget,
+    deadline: &Deadline,
+) -> Result<DocumentsBuilder, SourceError> {
+    deadline.check()?;
+    let mut docs = DocumentsBuilder::new(max_docs, budget.clone());
+    let len = std::fs::metadata(&plan.path).map_err(read_failed)?.len();
+    if len > MAX_JSON_FILE_BYTES {
+        return Err(too_large(MAX_JSON_FILE_BYTES));
+    }
+    let mut input = open(&plan.path)?;
+    csv::skip_bom(&mut input).map_err(read_failed)?;
+    let first = input.fill_buf().map_err(read_failed)?.iter().find(|b| !b.is_ascii_whitespace()).copied();
+    let is_array = first == Some(b'[');
+    // Anything but an array is parsed whole, so it must fit what the answer may hold.
+    let mut charge = budget.charge();
+    if !is_array && !charge.add(len as usize) {
+        return Err(too_large(budget.remaining() as u64));
+    }
+    let reader = DeadlineReader { inner: input, deadline, since_check: 0 };
+    let mut de = serde_json::Deserializer::from_reader(reader);
+    let parsed = if is_array {
+        serde::Deserializer::deserialize_seq(&mut de, Elements(&mut docs))
+    } else {
+        <Value as serde::Deserialize>::deserialize(&mut de).map(|v| {
+            docs.push(v);
+        })
+    };
+    if let Err(e) = parsed.and_then(|()| de.end()) {
+        if e.is_io() && e.to_string().contains(DEADLINE_PASSED) {
+            return Err(SourceError::Timeout(deadline.timeout.as_secs()));
         }
+        return Err(if e.is_io() { read_failed(e) } else { json_invalid(None, e) });
     }
     drop(charge);
     Ok(docs)
@@ -401,11 +499,13 @@ fn read_ndjson(
     csv::skip_bom(&mut input).map_err(read_failed)?;
     let mut line = Vec::new();
     let mut number = 0usize;
+    // Blank lines hold nothing, but reading them still counts against the budget.
+    let mut skipped = 0usize;
     loop {
         number += 1;
-        deadline.check(number)?;
+        deadline.check()?;
         line.clear();
-        let limit = budget.remaining() as u64 + 1;
+        let limit = budget.remaining().saturating_sub(skipped) as u64 + 1;
         let read = (&mut input).take(limit).read_until(b'\n', &mut line).map_err(read_failed)?;
         if read == 0 {
             break;
@@ -416,6 +516,11 @@ fn read_ndjson(
         }
         let text = line.trim_ascii();
         if text.is_empty() {
+            skipped += read;
+            if skipped > budget.remaining() {
+                docs.mark_truncated();
+                break;
+            }
             continue;
         }
         let value: Value = serde_json::from_slice(text).map_err(|e| json_invalid(Some(number), e))?;
@@ -454,7 +559,7 @@ impl DataSourcePlugin for Files {
         let check = async {
             let plan = plan(conn)?;
             let format = plan.format;
-            let bytes = blocking(move || {
+            let bytes = blocking(SCHEMA_TIMEOUT, move |_| {
                 let len = std::fs::metadata(&plan.path).map_err(read_failed)?.len();
                 File::open(&plan.path).map_err(read_failed)?;
                 Ok(len)
@@ -479,8 +584,7 @@ impl DataSourcePlugin for Files {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let plan = plan(conn)?;
-        let deadline = Deadline { at: Instant::now() + Duration::from_secs(30), timeout: Duration::from_secs(30) };
-        blocking(move || {
+        blocking(SCHEMA_TIMEOUT, move |deadline| {
             let budget = ResponseBudget::new(SCHEMA_BYTES);
             match plan.format {
                 Format::Csv => {
@@ -497,7 +601,7 @@ impl DataSourcePlugin for Files {
                 }
                 Format::Json | Format::Ndjson => {
                     let docs = match plan.format {
-                        Format::Json => read_json(&plan, SCHEMA_SAMPLE, &budget)?,
+                        Format::Json => read_json(&plan, SCHEMA_SAMPLE, &budget, &deadline)?,
                         _ => read_ndjson(&plan, SCHEMA_SAMPLE, &budget, &deadline)?,
                     };
                     Ok(SourceSchema::Fields { fields: docs.finish().schema })
@@ -511,15 +615,14 @@ impl DataSourcePlugin for Files {
         let _: FileQuery = req.parse()?;
         let plan = plan(conn)?;
         let limits = req.limits.clone();
-        let deadline = Deadline { at: Instant::now() + limits.timeout, timeout: limits.timeout };
-        blocking(move || match plan.format {
+        blocking(limits.timeout, move |deadline| match plan.format {
             Format::Csv => {
                 let frame = read_csv(&plan, limits.max_rows, &limits.budget, &deadline)?;
                 Ok(QueryResult::Frame { frame: frame.finish() })
             }
-            Format::Json => {
-                Ok(QueryResult::Documents { documents: read_json(&plan, limits.max_rows, &limits.budget)?.finish() })
-            }
+            Format::Json => Ok(QueryResult::Documents {
+                documents: read_json(&plan, limits.max_rows, &limits.budget, &deadline)?.finish(),
+            }),
             Format::Ndjson => Ok(QueryResult::Documents {
                 documents: read_ndjson(&plan, limits.max_rows, &limits.budget, &deadline)?.finish(),
             }),
@@ -660,9 +763,23 @@ mod tests {
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(10, 1 << 20)).await.unwrap_err();
         assert_eq!((e.detail().reason, e.detail().params["line"].as_str()), ("file.ndjson_line_invalid", "2"));
 
-        let path = d.write("gross.json", format!("[\"{}\"]", "x".repeat(10_000)).as_bytes());
+        // A single value is parsed whole, so it must fit the budget.
+        let path = d.write("gross.json", format!("{{\"x\":\"{}\"}}", "x".repeat(10_000)).as_bytes());
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(10, 1000)).await.unwrap_err();
         assert_eq!(e.detail().reason, "file.too_large");
+        // An array is read element by element: what does not fit cuts the answer.
+        let path = d.write("gross-liste.json", format!("[{{\"a\":1}},\"{}\",3]", "x".repeat(10_000)).as_bytes());
+        let QueryResult::Documents { documents } =
+            Files.query(&d.conn(json!({ "path": path })).await, req(10, 1000)).await.unwrap()
+        else {
+            panic!("documents")
+        };
+        assert_eq!(documents.documents, [json!({ "a": 1 })]);
+        assert_eq!(documents.truncated, Some(crate::shapes::Truncated { limit: 1 }));
+        // Invalid JSON after the documents kept is still found.
+        let path = d.write("kaputt.json", b"[1, 2, kaputt]");
+        let e = Files.query(&d.conn(json!({ "path": path })).await, req(1, 1 << 20)).await.unwrap_err();
+        assert_eq!(e.detail().reason, "file.json_invalid");
     }
 
     #[tokio::test]
@@ -704,5 +821,189 @@ mod tests {
         let e = Files.check_settings(&json!({ "path": abs })).unwrap_err();
         assert_eq!((e.field, e.detail.reason), ("format", "settings.file_format_unknown"));
         assert!(Files.check_settings(&json!({ "path": abs, "format": "ndjson" })).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use crate::datasources::targets::TargetPolicy;
+
+    fn setup() -> (tempfile::TempDir, TargetPolicy, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let files = root.path().join("dateien");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::create_dir_all(root.path().join("data")).unwrap();
+        std::fs::write(files.join("a.csv"), b"x\n1\n").unwrap();
+        let p = TargetPolicy::new(&root.path().join("data"), "sqlite::memory:", &[], &[])
+            .with_file_dirs(&[files.to_string_lossy().to_string()]);
+        (root, p, files)
+    }
+
+    fn plan(path: PathBuf, format: Format) -> Plan {
+        Plan { path, format, delimiter: Some(b','), decimal: Decimal::Auto, header: true }
+    }
+
+    fn later() -> Deadline {
+        Deadline::new(Instant::now() + Duration::from_secs(60), Duration::from_secs(60))
+    }
+
+    /// Device paths, network shares and reserved device names are refused; alternate data
+    /// streams and the trailing dots and spaces Windows drops name the allowed file itself, so
+    /// whatever passes lies in the allowed directory.
+    #[cfg(windows)]
+    #[test]
+    fn windows_special_paths() {
+        let (_root, p, files) = setup();
+        let _ = std::fs::write(files.join("a.csv:geheim"), b"stream\n1\n");
+        let canonical = strip(std::fs::canonicalize(&files).unwrap());
+        let f = |s: &str| files.join(s).to_string_lossy().to_string();
+        let refused = [
+            format!("{}{}", "\\\\?\\", f("a.csv")),
+            format!("{}{}", "\\\\.\\", f("a.csv")),
+            format!("{}{}", "\\\\localhost\\", "c$\\x.csv"),
+            format!("{}{}", "\\\\?\\UNC\\localhost\\", "c$\\x.csv"),
+            f("CON"),
+            f("NUL"),
+            f("nul.csv"),
+            f("COM1"),
+            format!(r"\?\{}", f("a.csv")),
+            format!(r"\.\{}", f("a.csv")),
+            r"\?\GLOBALROOT\Device\HarddiskVolume1\x".to_string(),
+            r"\localhost\c$\x.csv".to_string(),
+            format!("{}:geheim", files.to_string_lossy()),
+        ];
+        for raw in refused {
+            assert!(p.check_file_path(&raw).is_err(), "{raw} was allowed");
+        }
+        for raw in [f("a.csv"), f("a.csv:geheim"), f("a.csv::$DATA"), f("a.csv."), f("a.csv ")] {
+            if let Ok(path) = p.check_file_path(&raw) {
+                assert!(path.starts_with(&canonical), "{raw} -> {}", path.display());
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn strip(p: PathBuf) -> PathBuf {
+        let s = p.to_string_lossy().to_string();
+        PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
+    }
+
+    /// The deadline is checked before every record, and blank lines count against the byte
+    /// limit, so a file of blank lines is not read whole past the time limit or the budget.
+    #[test]
+    fn blank_lines_respect_the_deadline() {
+        let (_root, _p, files) = setup();
+        let mut text = b"x\n".to_vec();
+        text.extend(std::iter::repeat_n(b'\n', 32 * 1024 * 1024));
+        text.extend_from_slice(b"1\n");
+        let path = files.join("leer.csv");
+        std::fs::write(&path, &text).unwrap();
+        let deadline = Deadline::new(Instant::now() - Duration::from_secs(1), Duration::from_secs(1));
+        let budget = ResponseBudget::new(64 * 1024);
+        let r = read_csv_rows(&plan(path.clone(), Format::Csv), 100, &budget, &deadline);
+        assert!(matches!(r, Err(SourceError::Timeout(_))), "past the deadline");
+        // Within the time limit the blank lines stop at the budget instead.
+        let started = Instant::now();
+        let rows = read_csv_rows(&plan(path, Format::Csv), 100, &budget, &later()).unwrap();
+        assert!(rows.size_cut && rows.rows.is_empty());
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn cancelled_reads_stop() {
+        let (_root, _p, files) = setup();
+        for (name, format) in [("a.csv", Format::Csv), ("a.ndjson", Format::Ndjson), ("a.json", Format::Json)] {
+            std::fs::write(files.join(name), b"[1]\n").unwrap();
+            let deadline = later();
+            deadline.cancel.store(true, Ordering::SeqCst);
+            let budget = ResponseBudget::new(1 << 20);
+            let p = plan(files.join(name), format);
+            let r = match format {
+                Format::Csv => read_csv_rows(&p, 10, &budget, &deadline).map(|_| ()),
+                Format::Ndjson => read_ndjson(&p, 10, &budget, &deadline).map(|_| ()),
+                Format::Json => read_json(&p, 10, &budget, &deadline).map(|_| ()),
+            };
+            assert!(matches!(r, Err(SourceError::Timeout(_))), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dropped_query_sets_the_cancel_flag() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let work = blocking(Duration::from_secs(60), move |deadline| {
+            tx.send(deadline.cancel.clone()).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(())
+        });
+        // Dropped before the work is done, as the query timeout drops it.
+        let _ = tokio::time::timeout(Duration::from_millis(50), work).await;
+        let flag = rx.recv().unwrap();
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    /// The JSON parser reads through a reader that checks the deadline every megabyte.
+    #[test]
+    fn json_parsing_keeps_to_the_deadline() {
+        let text = vec![b' '; 4 * DEADLINE_BYTES];
+        let deadline = Deadline::new(Instant::now() - Duration::from_secs(1), Duration::from_secs(1));
+        let mut reader = DeadlineReader { inner: &text[..], deadline: &deadline, since_check: 0 };
+        let mut out = Vec::new();
+        let e = std::io::Read::read_to_end(&mut reader, &mut out).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
+        assert!(out.len() <= 2 * DEADLINE_BYTES, "read {} bytes past the deadline", out.len());
+        // The parser's error from that reader is the query's timeout.
+        let mut de = serde_json::Deserializer::from_reader(DeadlineReader {
+            inner: &text[..],
+            deadline: &deadline,
+            since_check: 0,
+        });
+        let e = <Value as serde::Deserialize>::deserialize(&mut de).unwrap_err();
+        assert!(e.is_io() && e.to_string().contains(DEADLINE_PASSED), "{e}");
+    }
+
+    /// The schema of a JSON array larger than the schema's byte limit is sampled from its first
+    /// documents instead of failing.
+    #[test]
+    fn large_json_arrays_have_a_schema() {
+        let (_root, _p, files) = setup();
+        let mut text = String::from("[");
+        let item = format!("{{\"name\":\"{}\",\"n\":1}},", "x".repeat(1000));
+        while text.len() < SCHEMA_BYTES + 1024 * 1024 {
+            text.push_str(&item);
+        }
+        text.push_str("{\"name\":\"z\",\"n\":2}]");
+        std::fs::write(files.join("gross.json"), &text).unwrap();
+        let docs = read_json(
+            &plan(files.join("gross.json"), Format::Json),
+            SCHEMA_SAMPLE,
+            &ResponseBudget::new(SCHEMA_BYTES),
+            &later(),
+        )
+        .unwrap();
+        let schema = docs.finish().schema;
+        assert!(schema.iter().any(|f| f.path == "name"), "{schema:?}");
+    }
+
+    #[test]
+    fn wide_files_and_large_headers_are_bounded() {
+        let (_root, _p, files) = setup();
+        let wide = vec!["a"; MAX_COLUMNS + 1].join(",") + "\n1\n";
+        std::fs::write(files.join("breit.csv"), &wide).unwrap();
+        let budget = ResponseBudget::new(1 << 20);
+        let e = read_csv_rows(&plan(files.join("breit.csv"), Format::Csv), 10, &budget, &later()).err().unwrap();
+        assert_eq!((e.detail().reason, e.detail().params["max"].as_str()), ("csv.too_many_columns", "10000"));
+        // The header is charged: one longer than half the budget cuts the result.
+        let header = "h".repeat(10_000) + "\n1\n";
+        std::fs::write(files.join("kopf.csv"), &header).unwrap();
+        let rows = read_csv_rows(&plan(files.join("kopf.csv"), Format::Csv), 10, &ResponseBudget::new(4096), &later())
+            .unwrap();
+        assert!(rows.size_cut);
+        std::fs::write(files.join("nur-kopf.csv"), b"spalte_a,spalte_b\n").unwrap();
+        let budget = ResponseBudget::new(1 << 20);
+        let rows = read_csv_rows(&plan(files.join("nur-kopf.csv"), Format::Csv), 10, &budget, &later()).unwrap();
+        assert_eq!(budget.remaining(), (1 << 20) - 18, "the header is held");
+        drop(rows);
+        assert_eq!(budget.remaining(), 1 << 20);
     }
 }

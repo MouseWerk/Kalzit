@@ -41,11 +41,116 @@ pub struct Record {
 }
 
 pub struct Reader<R: BufRead> {
-    input: R,
+    input: Source<R>,
     delimiter: u8,
     line: usize,
     /// A `\n` right after a `\r` that ended the previous record belongs to it.
     skip_lf: bool,
+}
+
+/// The bytes the reader parses: the input as it is, or UTF-16 (found by its byte order mark,
+/// what Excel's "Unicode text" export writes) turned into UTF-8.
+enum Source<R: BufRead> {
+    Plain(R),
+    Utf16(Box<Utf16<R>>),
+}
+
+impl<R: BufRead> std::io::Read for Source<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let available = self.fill_buf()?;
+        let n = available.len().min(buf.len());
+        buf[..n].copy_from_slice(&available[..n]);
+        self.consume(n);
+        Ok(n)
+    }
+}
+
+impl<R: BufRead> BufRead for Source<R> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        match self {
+            Source::Plain(r) => r.fill_buf(),
+            Source::Utf16(u) => u.fill_buf(),
+        }
+    }
+
+    fn consume(&mut self, n: usize) {
+        match self {
+            Source::Plain(r) => r.consume(n),
+            Source::Utf16(u) => u.pos += n,
+        }
+    }
+}
+
+/// UTF-16 to UTF-8, chunk by chunk; an unpaired surrogate or a lone last byte becomes U+FFFD.
+struct Utf16<R> {
+    inner: R,
+    little_endian: bool,
+    out: Vec<u8>,
+    pos: usize,
+    /// The first byte of a code unit split across chunks.
+    odd: Option<u8>,
+    /// A high surrogate waiting for its low half.
+    high: Option<u16>,
+    done: bool,
+}
+
+impl<R: BufRead> Utf16<R> {
+    fn push_char(&mut self, c: char) {
+        let mut buf = [0u8; 4];
+        self.out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+
+    fn push_unit(&mut self, unit: u16) {
+        if let Some(high) = self.high.take() {
+            if (0xDC00..0xE000).contains(&unit) {
+                let c = 0x10000 + ((u32::from(high) - 0xD800) << 10) + (u32::from(unit) - 0xDC00);
+                self.push_char(char::from_u32(c).unwrap_or('\u{FFFD}'));
+                return;
+            }
+            self.push_char('\u{FFFD}');
+        }
+        match unit {
+            0xD800..=0xDBFF => self.high = Some(unit),
+            0xDC00..=0xDFFF => self.push_char('\u{FFFD}'),
+            u => self.push_char(char::from_u32(u32::from(u)).unwrap_or('\u{FFFD}')),
+        }
+    }
+
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        while self.pos >= self.out.len() && !self.done {
+            self.out.clear();
+            self.pos = 0;
+            let chunk = self.inner.fill_buf()?.to_vec();
+            self.inner.consume(chunk.len());
+            if chunk.is_empty() {
+                self.done = true;
+                if self.odd.take().is_some() || self.high.take().is_some() {
+                    self.push_char('\u{FFFD}');
+                }
+                break;
+            }
+            let mut bytes = chunk.into_iter();
+            loop {
+                let (a, b) = match (self.odd.take(), bytes.next()) {
+                    (Some(a), Some(b)) => (a, b),
+                    (None, Some(a)) => match bytes.next() {
+                        Some(b) => (a, b),
+                        None => {
+                            self.odd = Some(a);
+                            break;
+                        }
+                    },
+                    (odd, None) => {
+                        self.odd = odd;
+                        break;
+                    }
+                };
+                let unit = if self.little_endian { u16::from_le_bytes([a, b]) } else { u16::from_be_bytes([a, b]) };
+                self.push_unit(unit);
+            }
+        }
+        Ok(&self.out[self.pos..])
+    }
 }
 
 /// Skips a UTF-8 byte order mark at the start.
@@ -85,17 +190,53 @@ pub fn detect_delimiter(start: &[u8]) -> u8 {
 }
 
 impl<R: BufRead> Reader<R> {
-    pub fn new(input: R, delimiter: u8) -> Self {
+    /// A reader of `input`; a UTF-16 byte order mark at its start switches to reading UTF-16.
+    pub fn new(mut input: R, delimiter: u8) -> Self {
+        let bom = input.fill_buf().ok().and_then(|b| match b {
+            [0xFF, 0xFE, ..] => Some(true),
+            [0xFE, 0xFF, ..] => Some(false),
+            _ => None,
+        });
+        let input = match bom {
+            Some(little_endian) => {
+                input.consume(2);
+                Source::Utf16(Box::new(Utf16 {
+                    inner: input,
+                    little_endian,
+                    out: Vec::new(),
+                    pos: 0,
+                    odd: None,
+                    high: None,
+                    done: false,
+                }))
+            }
+            None => Source::Plain(input),
+        };
         Self { input, delimiter, line: 1, skip_lf: false }
     }
 
+    /// The start of what is still to be read, as UTF-8 (to find the delimiter).
+    pub fn peek(&mut self) -> std::io::Result<&[u8]> {
+        self.input.fill_buf()
+    }
+
+    pub fn set_delimiter(&mut self, delimiter: u8) {
+        self.delimiter = delimiter;
+    }
+
     /// The next record that is not an empty line, or `None` at the end. A record longer than
-    /// `max_bytes` is `TooLarge`.
+    /// `max_bytes`, counting the empty lines skipped before it, is `TooLarge`; `bytes` of the
+    /// record includes them.
     pub fn next_record(&mut self, max_bytes: usize) -> Result<Option<Record>, CsvError> {
+        let mut skipped = 0;
         loop {
-            match self.read_record(max_bytes)? {
-                Some(r) if r.fields.len() == 1 && r.fields[0].is_empty() => continue,
-                other => return Ok(other),
+            match self.read_record(max_bytes.saturating_sub(skipped))? {
+                Some(r) if r.fields.len() == 1 && r.fields[0].is_empty() => skipped += r.bytes,
+                Some(mut r) => {
+                    r.bytes += skipped;
+                    return Ok(Some(r));
+                }
+                None => return Ok(None),
             }
         }
     }
@@ -284,6 +425,10 @@ fn has_leading_zero(integer_part: &str) -> bool {
 pub fn parse_number(v: &str, decimal: Decimal) -> Option<f64> {
     let unsigned = v.strip_prefix(['+', '-']).unwrap_or(v);
     let negative = v.starts_with('-');
+    // One sign at most: `--5` and `+-5` are text.
+    if unsigned.starts_with(['+', '-']) {
+        return None;
+    }
     let value = match decimal {
         Decimal::Comma => {
             let (int, frac) = match unsigned.split_once(',') {
@@ -371,6 +516,9 @@ fn in_range(ms: i64) -> Option<i64> {
 /// repeats.
 pub fn column_names(header: &[String], count: usize) -> Vec<String> {
     let mut names: Vec<String> = Vec::with_capacity(count);
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::with_capacity(count);
+    // The next suffix to try per base name, so repeats cost one lookup each, not a search.
+    let mut next: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for i in 0..count {
         let base = header
             .get(i)
@@ -378,11 +526,17 @@ pub fn column_names(header: &[String], count: usize) -> Vec<String> {
             .filter(|h| !h.is_empty())
             .map_or_else(|| format!("column_{}", i + 1), String::from);
         let mut name = base.clone();
-        let mut n = 2;
-        while names.contains(&name) {
-            name = format!("{base}_{n}");
-            n += 1;
+        if taken.contains(&name) {
+            let n = next.entry(base.clone()).or_insert(2);
+            loop {
+                name = format!("{base}_{n}");
+                *n += 1;
+                if !taken.contains(&name) {
+                    break;
+                }
+            }
         }
+        taken.insert(name.clone());
         names.push(name);
     }
     names
@@ -485,5 +639,145 @@ mod tests {
     fn header_names_are_unique() {
         let header = vec!["id".to_string(), " ".to_string(), "id".to_string()];
         assert_eq!(column_names(&header, 4), ["id", "column_2", "id_2", "column_4"]);
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use std::io::BufReader;
+    use std::time::{Duration, Instant};
+
+    /// Small deterministic generator, so the fuzz run is reproducible.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+    }
+
+    fn all_records(text: &[u8], cap: usize, max: usize) -> Vec<Result<Vec<String>, CsvError>> {
+        let mut r = Reader::new(BufReader::with_capacity(cap, text), b',');
+        let mut out = Vec::new();
+        for _ in 0..10_000 {
+            match r.next_record(max) {
+                Ok(Some(rec)) => out.push(Ok(rec.fields)),
+                Ok(None) => break,
+                Err(e) => {
+                    out.push(Err(e));
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// Random bytes from a CSV-ish alphabet: no panic, and the result must not depend on where
+    /// the reader's buffer boundaries fall (a `\r` at the end of one buffer, `\n` at the start of
+    /// the next, `""` split across buffers).
+    #[test]
+    fn fuzz_buffer_boundaries_do_not_change_records() {
+        let alphabet: &[u8] = b"ab,\"\r\n;\xFC\xC3\xA4 ";
+        let mut rng = Lcg(42);
+        for _ in 0..3_000 {
+            let len = (rng.next() % 64) as usize;
+            let text: Vec<u8> = (0..len).map(|_| alphabet[(rng.next() as usize) % alphabet.len()]).collect();
+            let big = all_records(&text, 64 * 1024, 1 << 20);
+            for cap in [1, 2, 3, 7] {
+                assert_eq!(all_records(&text, cap, 1 << 20), big, "cap {cap}, input {text:?}");
+            }
+        }
+    }
+
+    /// Fields written by the RFC 4180 rules come back as written.
+    #[test]
+    fn fuzz_round_trip() {
+        let alphabet: &[u8] = b"ab,\"\r\n; x";
+        let mut rng = Lcg(7);
+        for _ in 0..3_000 {
+            let cols = 1 + (rng.next() % 4) as usize;
+            let rows = 1 + (rng.next() % 4) as usize;
+            let mut expected = Vec::new();
+            let mut text = String::new();
+            for _ in 0..rows {
+                let mut row = Vec::new();
+                for c in 0..cols {
+                    let len = 1 + (rng.next() % 6) as usize;
+                    let f: String =
+                        (0..len).map(|_| alphabet[(rng.next() as usize) % alphabet.len()] as char).collect();
+                    if c > 0 {
+                        text.push(',');
+                    }
+                    text.push('"');
+                    text.push_str(&f.replace('"', "\"\""));
+                    text.push('"');
+                    row.push(f);
+                }
+                text.push_str(if rng.next().is_multiple_of(2) { "\r\n" } else { "\n" });
+                expected.push(Ok(row));
+            }
+            assert_eq!(all_records(text.as_bytes(), 3, 1 << 20), expected, "{text:?}");
+        }
+    }
+
+    /// Empty lines are skipped inside `next_record`, each with a fresh byte count, so a file of
+    /// blank lines is read to its end however small `max_bytes` is.
+    #[test]
+    fn empty_lines_count_against_the_byte_limit() {
+        let mut text = vec![b'\n'; 8 * 1024 * 1024];
+        text.extend_from_slice(b"hinter den Leerzeilen\n");
+        let mut r = Reader::new(BufReader::new(&text[..]), b',');
+        let got = r.next_record(1024);
+        assert!(matches!(got, Err(CsvError::TooLarge)), "8 MiB were read for a 1 KiB limit: {got:?}");
+    }
+
+    /// A header of repeated names: `column_names` searches the names so far for every candidate
+    /// (quadratic per name, cubic overall). 3,000 equal names are a 6 KB header line.
+    #[test]
+    fn repeated_header_names_stay_fast() {
+        let header: Vec<String> = vec!["a".to_string(); 3_000];
+        let started = Instant::now();
+        let names = column_names(&header, header.len());
+        let took = started.elapsed();
+        assert_eq!(names.len(), 3_000);
+        assert!(took < Duration::from_secs(1), "3,000 repeated names took {took:?}");
+    }
+
+    #[test]
+    fn signs_are_read_once() {
+        assert_eq!(parse_number("--5", Decimal::Point), None, "--5 is not a number");
+        assert_eq!(parse_number("+-5", Decimal::Point), None, "+-5 is not a number");
+    }
+
+    /// Excel's "Unicode text" export is UTF-16 LE with a BOM; it reads as Windows-1252 noise.
+    #[test]
+    fn utf16_files_are_not_read_as_windows_1252() {
+        let mut text = vec![0xFF, 0xFE];
+        for u in "a;b\r\n1;2\r\n".encode_utf16() {
+            text.extend_from_slice(&u.to_le_bytes());
+        }
+        let mut input = BufReader::new(&text[..]);
+        skip_bom(&mut input).unwrap();
+        let mut r = Reader::new(input, b';');
+        let rec = r.next_record(1 << 20).unwrap().unwrap();
+        assert_eq!(rec.fields, ["a", "b"], "UTF-16 read as {:?}", rec.fields);
+        assert_eq!(r.next_record(1 << 20).unwrap().unwrap().fields, ["1", "2"]);
+        assert_eq!(r.next_record(1 << 20).unwrap(), None);
+    }
+
+    /// Big-endian UTF-16 too, with characters outside the BMP split across tiny buffers; an
+    /// unpaired surrogate becomes U+FFFD.
+    #[test]
+    fn utf16_big_endian_and_surrogates() {
+        let mut text = vec![0xFE, 0xFF];
+        for u in "Grün;😀\n".encode_utf16() {
+            text.extend_from_slice(&u.to_be_bytes());
+        }
+        text.extend_from_slice(&0xD800u16.to_be_bytes());
+        text.extend_from_slice(&u16::from(b'x').to_be_bytes());
+        let mut r = Reader::new(BufReader::with_capacity(3, &text[..]), b';');
+        assert_eq!(r.next_record(1 << 20).unwrap().unwrap().fields, ["Grün", "😀"]);
+        assert_eq!(r.next_record(1 << 20).unwrap().unwrap().fields, ["\u{FFFD}x"]);
     }
 }

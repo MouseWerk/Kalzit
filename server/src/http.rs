@@ -37,7 +37,14 @@ pub enum HttpError {
     TooLarge(usize),
     #[error("{0}")]
     Other(String),
+    /// The caller's hop check refused a request (the first or a redirect), with its reason.
+    #[error("{0}")]
+    Refused(crate::datasources::Detail),
 }
+
+/// Asked before every hop, the first request and each redirect, with the method and URL that
+/// would be sent; an error stops the request before anything is sent there.
+pub type HopCheck<'a> = &'a (dyn Fn(&Method, &Url) -> Result<(), crate::datasources::Detail> + Send + Sync);
 
 impl HttpError {
     /// The reason code, parameters and text for the API.
@@ -45,6 +52,7 @@ impl HttpError {
         use crate::datasources::Detail;
         match self {
             HttpError::Blocked(b) => b.0.clone(),
+            HttpError::Refused(d) => d.clone(),
             HttpError::Timeout => Detail::new("http.timeout", self.to_string()),
             HttpError::TooLarge(max) => Detail::new("http.too_large", self.to_string()).with("bytes", max),
             HttpError::Other(message) => Detail::new("http.failed", message.clone()).with("detail", message),
@@ -152,12 +160,29 @@ impl HttpClient {
         headers: HeaderMap,
         body: Option<Vec<u8>>,
     ) -> Result<reqwest::Response, HttpError> {
+        self.send_checked(method, url, headers, body, None).await
+    }
+
+    /// `send_with_body` where `hop` is asked before every request, the first and each redirect,
+    /// so a redirect cannot take the request where the caller would never send it (a write
+    /// endpoint, another path).
+    pub async fn send_checked(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+        hop: Option<HopCheck<'_>>,
+    ) -> Result<reqwest::Response, HttpError> {
         let mut url = url;
         let mut method = method;
         let mut headers = headers;
         let mut body = body;
         for _ in 0..=MAX_REDIRECTS {
             self.check_url(&url).await?;
+            if let Some(check) = hop {
+                check(&method, &url).map_err(HttpError::Refused)?;
+            }
             let mut request = self.client.request(method.clone(), url.clone()).headers(headers.clone());
             if let Some(b) = &body {
                 request = request.body(b.clone());
@@ -410,5 +435,22 @@ mod tests {
         let url = Url::parse(&format!("http://{hop}/")).unwrap();
         let r = c.send_with_body(Method::POST, url, headers, Some(b"{}".to_vec())).await.unwrap();
         assert_eq!(r.text().await.unwrap(), "POST  {}");
+    }
+
+    #[tokio::test]
+    async fn the_hop_check_sees_every_redirect() {
+        let addr = echo_key().await;
+        let c = test_client(&[]);
+        let hop = redirector(format!("http://{addr}/key")).await;
+        let seen = std::sync::Mutex::new(Vec::new());
+        let check = |m: &Method, u: &Url| {
+            seen.lock().unwrap().push(format!("{m} {}", u.path()));
+            if u.path() == "/key" { Err(crate::datasources::Detail::new("http.failed", "refused")) } else { Ok(()) }
+        };
+        let url = Url::parse(&format!("http://{hop}/")).unwrap();
+        let e =
+            c.send_checked(Method::POST, url, HeaderMap::new(), Some(b"{}".to_vec()), Some(&check)).await.unwrap_err();
+        assert!(matches!(e, HttpError::Refused(_)), "{e}");
+        assert_eq!(*seen.lock().unwrap(), ["POST /", "POST /key"]);
     }
 }

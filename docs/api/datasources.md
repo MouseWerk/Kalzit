@@ -213,7 +213,8 @@ reported by the query, health and schema routes, not when saving.
   a server holding a valid certificate for the name.
 - Data source HTTP traffic (Prometheus, Elasticsearch/OpenSearch, HTTP JSON) never uses a proxy;
   `HTTP_PROXY` and similar variables are ignored. A proxy would resolve names itself, past the
-  target check. Redirects are followed up to five times, each target checked like the first; a
+  target check. Redirects are followed up to five times, each target checked like the first
+  (Elasticsearch/OpenSearch and HTTP JSON also check each against their own rules, see below); a
   redirect to another origin drops the `Authorization` header and every other credential header
   (the HTTP JSON API key). A 307 or 308 redirect repeats a search with its body; any other
   redirect continues as a GET without body.
@@ -427,11 +428,14 @@ strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex 
   aggregations it is a `frame` (see [Aggregations](#aggregations)) and no hits are fetched
   (`size` is 0).
 
-**Read-only.** Kalzit builds every request itself and checks every URL right before sending it;
-only these are possible: `GET /` (cluster info), `POST /{index}/_search`, `POST /{index}/_count`,
-`GET /{index}/_mapping`, `GET /{index}/_field_caps` and `GET /_cat/indices[/{index}]`. Every other
-endpoint, `_update_by_query`, `_delete_by_query`, `_bulk`, `_doc`, scroll, templates, PIT and
-any method other than these, is refused (`elasticsearch.endpoint_not_allowed`). Index names are
+**Read-only.** Kalzit builds every request itself and checks every URL right before sending it,
+and again for every redirect the server answers with (a 307 to `_delete_by_query` is refused
+before anything is sent there); only these are possible, below the source's URL: `GET /` (cluster
+info), `POST /{index}/_search`, `POST /{index}/_count`, `GET /{index}/_mapping`,
+`GET /{index}/_field_caps?fields=*` and `GET /_cat/indices[/{index}]?format=json&h=index`, with no
+other query parameters (no `scroll`, `pipeline` or `request_cache`). Every other endpoint,
+`_update_by_query`, `_delete_by_query`, `_bulk`, `_doc`, scroll, templates, PIT, SQL, EQL and any
+method other than these, is refused (`elasticsearch.endpoint_not_allowed`). Index names are
 letters, digits and `. _ - * :` per comma-separated part; a part may not start with `_` or be `.`
 or `..` (`elasticsearch.index_invalid`), so an index cannot add a path or name an endpoint; date
 math names (`<logs-{now/d}>`) are not supported. The search body is checked:
@@ -449,7 +453,10 @@ math names (`<logs-{now/d}>`) are not supported. The search body is checked:
   a script that names it is refused whatever it does (`elasticsearch.script_writes`). Stored
   scripts (`"id"`) are refused because their text is not visible to the check
   (`elasticsearch.stored_script`), and so are `scripted_metric` and every `*_script` key
-  (`elasticsearch.script_not_allowed`), whose scripts keep state across shards.
+  (`elasticsearch.script_not_allowed`), whose scripts keep state across shards or that sort or
+  compute buckets by script (`_script` sorts, `bucket_script`, `bucket_selector`).
+- A `wrapper` query (a query in base64) is decoded and checked by the same rules; one that is not
+  base64 of a JSON query is `elasticsearch.wrapper_invalid`.
 - At most 256 KiB and 64 levels of nesting.
 
 **Limits.** `size` (in the query or the body; default 500) is at most the row limit and 10,000.
@@ -486,7 +493,10 @@ at the row limit (`frame.row_limit`). `timed_out` and failed shards add the noti
 
 The source names the file, so the query is `{}` (`query.invalid_form` for anything else). The
 file is read on every query within the row limit, the response size limit and the timeout: a
-huge file costs only what the answer may hold. A UTF-8 byte order mark is skipped.
+huge file costs only what the answer may hold. The time limit is checked before every record and
+line (and every megabyte while a JSON file is parsed), and a read whose query went away (time
+limit, client gone) stops at the next check. Blank lines count against the response size limit.
+A UTF-8 byte order mark is skipped.
 
 - CSV becomes a `frame`. RFC 4180: fields in `"..."` may hold the delimiter, line breaks and `""`
   for a quote; `\n` and `\r\n` end a record; empty lines are skipped; a `"` inside an unquoted
@@ -495,11 +505,16 @@ huge file costs only what the answer may hold. A UTF-8 byte order mark is skippe
   (`,` when none). With `header` the first record names the columns (blank names become
   `column_<n>`, repeats get `_2`, `_3`); without it columns are `column_1` ... A row with fewer
   fields has `null` for the rest; extra fields are left out with the notice `csv.extra_fields`
-  (`count`). A record that is not UTF-8 is read as Windows-1252 (what Excel writes on German
-  Windows) with the notice `csv.legacy_encoding`.
+  (`count`). At most 10,000 columns (`csv.too_many_columns`, `max`); the header counts against the
+  response size limit like the rows. A file with a UTF-16 byte order mark (Excel's "Unicode
+  text") is read as UTF-16. A record that is not UTF-8 is read as Windows-1252 (what Excel writes
+  on German Windows) with the notice `csv.legacy_encoding`.
 - JSON becomes `documents`: the elements of a top-level array, or the value itself as one
-  document. The file is parsed whole, so it may be at most the response size limit and 256 MiB
-  (`file.too_large`, `bytes`). Invalid JSON is `file.json_invalid` (`detail`).
+  document. The file may be at most 256 MiB (`file.too_large`, `bytes`). An array is read element
+  by element, so only the documents kept are held: the first one that does not fit the limits
+  cuts the answer, and the rest is only checked to be valid JSON. Any other value is parsed whole,
+  so it must fit the response size limit (`file.too_large`). Invalid JSON is `file.json_invalid`
+  (`detail`). The schema samples the first 1,000 elements, so it works for large arrays too.
 - NDJSON becomes `documents`, one per non-empty line, read line by line; an invalid line is
   `file.ndjson_line_invalid` (`line`, `detail`).
 
@@ -523,19 +538,23 @@ All fields optional (`{}` requests the source's URL as it is).
 
 - `path` is added below the source's URL (`orders/open` on `https://api.intern/v1/` requests
   `https://api.intern/v1/orders/open`, keeping the URL's own query). It must be relative and
-  stay below the URL: no leading `/` or `\`, no `.` or `..` segments (also percent-encoded), no
-  scheme, query or fragment (`http_json.path_invalid`).
+  stay below the URL: no leading `/` or `\`, no `.` segments, no segments starting with `..`, no
+  percent-encoded dots, slashes, backslashes or percent signs, no scheme, query or fragment
+  (`http_json.path_invalid`).
 - `params` are added as query parameters: texts, numbers and booleans
   (`http_json.param_invalid`). A value that is exactly `$name` or `${name}` takes the variable's
   value; a list repeats the parameter (`land=AT&land=CH`). A missing variable is
   `http_json.variable_missing`.
 - The answer must be JSON (`http_json.not_json`, `status`) with a success status
-  (`http_json.status`: `status` and the first 300 characters of the body as `detail`).
+  (`http_json.status`: `status` and the first 300 characters of the body as `detail`, with the
+  source's secrets removed before it is cut).
 - `documentsPath` (or the source's) is a dotted path into the answer (`data.items`, numbers
   index arrays: `results.0.rows`); nothing there is `http_json.path_missing` (`path`). The array
   there (or the answer itself) gives one document per element; any other value is one document.
 - Only `GET` is sent; the target checks apply to the address and to every redirect (see
-  [Connections and targets](#connections-and-targets)).
+  [Connections and targets](#connections-and-targets)). A redirect is followed only when it stays
+  on the source's origin at or below its URL; any other is refused before it is followed
+  (`http_json.redirect_refused`, `path`), so an open redirect of the API cannot reach other hosts.
 
 ### Documents
 
@@ -760,6 +779,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `elasticsearch.script_invalid` | `key` | a script with another key than `source`, `lang`, `params`, `options`, or without `source` |
 | `elasticsearch.script_lang` | `lang` | a script language other than `painless` or `expression` |
 | `elasticsearch.script_too_large` | | a script over 16 KiB |
+| `elasticsearch.wrapper_invalid` | | a `wrapper` query that is not base64 of a JSON query |
 | `elasticsearch.aggregation_invalid` | `name` (when known) | an aggregation that is not an object or has no type |
 | `elasticsearch.aggregation_not_supported` | `name`, `type` | `top_hits` |
 | `elasticsearch.sibling_buckets` | `names` | more than one bucket aggregation on one level |
@@ -808,9 +828,11 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `file.json_invalid` | `detail` | the JSON file is not valid JSON |
 | `file.ndjson_line_invalid` | `line`, `detail` | a line of an NDJSON file is not valid JSON |
 | `csv.unclosed_quote` | `line` | a quoted field from `line` is never closed |
+| `csv.too_many_columns` | `max` | the CSV file has more than `max` columns |
 | `http_json.status` | `status`, `detail` | the server answered an error status |
 | `http_json.not_json` | `status`, `detail` | the answer is not JSON |
 | `http_json.path_missing` | `path` | the answer has nothing at `documentsPath` |
+| `http_json.redirect_refused` | `path` | the server redirected outside the source's URL |
 | `http_json.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |

@@ -304,5 +304,8 @@
   "datasources.reason.csv.legacy_encoding": "Die Datei ist kein UTF-8 und wurde als Windows-1252 gelesen.",
   "datasources.reason.health.search_answered": "Die Suche funktioniert, aber der Login darf die Version des Clusters nicht lesen.",
   "datasources.reason.health.file_readable": "Die {format}-Datei kann gelesen werden ({bytes} Bytes).",
-  "datasources.reason.health.http_json_answered": "Die URL hat mit JSON geantwortet (HTTP {status})."
+  "datasources.reason.health.http_json_answered": "Die URL hat mit JSON geantwortet (HTTP {status}).",
+  "datasources.reason.elasticsearch.wrapper_invalid": "Eine Wrapper-Abfrage muss eine base64-codierte JSON-Abfrage enthalten.",
+  "datasources.reason.csv.too_many_columns": "Die Datei hat mehr als {max} Spalten.",
+  "datasources.reason.http_json.redirect_refused": "Der Server hat auf {path} umgeleitet, das nicht unterhalb der URL der Datenquelle liegt. Kalzit folgt dem nicht."
 }
