@@ -241,6 +241,7 @@
 
   .panel-editor__preview {
     display: grid;
+    align-content: start;
     gap: var(--space-2);
   }
 

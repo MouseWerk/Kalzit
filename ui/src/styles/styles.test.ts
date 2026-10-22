@@ -176,7 +176,7 @@ describe("no accent frames for states", () => {
     /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
   const FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow)$/;
   const ACCENT =
-    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?)\b/;
+    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?|tone(-[\w-]+)?)\b/;
 
   it("frames no hovered, focused, selected or current element in an accent or status color", () => {
     for (const rule of allRules()) {
@@ -195,7 +195,10 @@ describe("no accent frames for states", () => {
     for (const rule of allRules({ exceptTokens: true })) {
       for (const { property, value } of rule.declarations) {
         if (FRAME.test(property) && property !== "box-shadow") {
-          expect(/--(success|warning|danger|info)/.test(value), where(rule, property)).toBe(false);
+          // Threshold tones (--tone, --tone-ok, ...) are status colors as well.
+          expect(/--(success|warning|danger|info|tone)\b/.test(value), where(rule, property)).toBe(
+            false,
+          );
         }
       }
     }
@@ -497,7 +500,7 @@ describe("contrast in every theme", () => {
     ["--focus-ring", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], UI],
     ["--accent", ["--bg", "--bg-surface", "--bg-raised"], UI],
     // Threshold states are marks on the panel surfaces (gauge arcs, bars, cells, large values).
-    ...["--status-ok", "--status-warn", "--status-critical"].map(
+    ...["--tone-ok", "--tone-warn", "--tone-critical"].map(
       (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
     ),
     // Text sits on the tinted fills of colored stats and table cells.
@@ -506,10 +509,9 @@ describe("contrast in every theme", () => {
         [
           name,
           [
-            "--status-ok-bg",
-            "--status-warn-bg",
-            "--status-critical-bg",
-            "--neutral-bg",
+            "--tone-ok-bg",
+            "--tone-warn-bg",
+            "--tone-critical-bg",
             ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `--chart-${n}-bg`),
           ],
           TEXT,
@@ -555,7 +557,7 @@ describe("contrast in every theme", () => {
   for (const scheme of ["light", "dark"] as const) {
     it(`keeps threshold states distinguishable for every color vision (${scheme})`, () => {
       const states = ["ok", "warn", "critical"].map((name) =>
-        resolveColor(base, scheme, `--status-${name}`),
+        resolveColor(base, scheme, `--tone-${name}`),
       );
       const tooClose: string[] = [];
       for (const vision of VISIONS) {

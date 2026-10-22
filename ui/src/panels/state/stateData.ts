@@ -10,7 +10,9 @@ import {
 import { timeField, toNumber } from "../frame";
 
 /** Time points a state panel works with at most; longer results are thinned to this. */
-export const MAX_STATE_POINTS = 1000;
+export const MAX_STATE_POINTS = 500;
+/** The legend names this many values at most; a number field would otherwise list each one. */
+export const MAX_LEGEND_VALUES = 24;
 
 /** One value of a state row: its text and the class that colors it. */
 export interface StateValue {
@@ -88,7 +90,9 @@ export function stateData(
           colorClass = toneClass(options.color, palette.get(text));
         }
         const value = { text, colorClass };
-        if (!legend.has(`${text}|${colorClass}`)) legend.set(`${text}|${colorClass}`, value);
+        if (legend.size < MAX_LEGEND_VALUES && !legend.has(`${text}|${colorClass}`)) {
+          legend.set(`${text}|${colorClass}`, value);
+        }
         return value;
       });
       return { name: displayNameOf(field, options), values };

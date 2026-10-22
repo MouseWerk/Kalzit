@@ -89,6 +89,8 @@ struct Thresholds {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+// The tones are checked by parsing; nothing reads them afterwards.
+#[allow(dead_code)]
 enum Mapping {
     Value { value: String, text: Option<String>, tone: Option<Tone> },
     Range { from: Option<f64>, to: Option<f64>, text: Option<String>, tone: Option<Tone> },

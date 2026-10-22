@@ -200,7 +200,7 @@ function PiePanel({
     <WithLegend placement={options.legend.placement} legend={legend}>
       <Readout title={title} items={items} tooltip={options.tooltip.mode} className="pie">
         {(active, hover) => (
-          <svg className="pie__svg" viewBox="0 0 240 240" aria-hidden="true">
+          <svg className="pie__svg" viewBox="-40 -16 320 272" aria-hidden="true">
             {slices.map((slice, index) => {
               const arc = arcs[index] as { from: number; to: number };
               // The active slice moves out a little along its middle, a quiet highlight.

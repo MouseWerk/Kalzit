@@ -355,6 +355,21 @@ describe("state timeline and status history", () => {
     expect(api[0]?.value.colorClass).not.toBe(api[1]?.value.colorClass);
   });
 
+  it("thins long results and names at most 24 values in the legend", () => {
+    const n = 5_000;
+    const frame: Frame = {
+      fields: [
+        { name: "time", type: "time", values: Array.from({ length: n }, (_, i) => i) },
+        { name: "v", type: "number", values: Array.from({ length: n }, (_, i) => i) },
+      ],
+    };
+    const data = stateData([frame], NONE, "en");
+    expect(data?.times).toHaveLength(500);
+    // Each stretch keeps its last point, so the end of the data is never lost.
+    expect(data?.times.at(-1)).toBe(n - 1);
+    expect(data?.legend).toHaveLength(24);
+  });
+
   it("draws one cell per time point in the status history, with a legend", () => {
     const { container } = renderPanel("status-history", [states]);
     // 4 values of api (one missing) and 5 of db.

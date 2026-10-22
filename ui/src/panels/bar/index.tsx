@@ -127,10 +127,12 @@ function BarPanel({
   const yMin = config.defaults.min ?? ticks[0] ?? 0;
   const yMax = config.defaults.max ?? ticks.at(-1) ?? 1;
   const plotWidth = Math.max(width - AXIS_LEFT - PAD, 10);
-  const plotHeight = Math.max(height - AXIS_BOTTOM - PAD, 10);
+  // Values above the bars need room under the top edge.
+  const top = options.showValues ? PAD + 14 : PAD;
+  const plotHeight = Math.max(height - AXIS_BOTTOM - top, 10);
   const clampY = (v: number) => Math.min(Math.max(v, yMin), yMax);
   const y = (v: number) =>
-    PAD + plotHeight - ((clampY(v) - yMin) / (yMax - yMin || 1)) * plotHeight;
+    top + plotHeight - ((clampY(v) - yMin) / (yMax - yMin || 1)) * plotHeight;
   const group = plotWidth / data.categories.length;
   const barWidth = Math.max((group * 0.8) / data.series.length, 1);
   const labelEvery = Math.ceil(data.categories.length / Math.max(plotWidth / 80, 1));
@@ -180,7 +182,7 @@ function BarPanel({
                   <rect
                     className="viz-band"
                     x={AXIS_LEFT + active * group}
-                    y={PAD}
+                    y={top}
                     width={group}
                     height={plotHeight}
                   />

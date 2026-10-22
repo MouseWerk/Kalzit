@@ -5,31 +5,31 @@
    * text stays readable on.
    */
   .tone--ok {
-    --tone: var(--status-ok);
-    --tone-bg: var(--status-ok-bg);
-    --series-color: var(--status-ok);
-    --series-bg: var(--status-ok-bg);
+    --tone: var(--tone-ok);
+    --tone-bg: var(--tone-ok-bg);
+    --series-color: var(--tone-ok);
+    --series-bg: var(--tone-ok-bg);
   }
 
   .tone--warn {
-    --tone: var(--status-warn);
-    --tone-bg: var(--status-warn-bg);
-    --series-color: var(--status-warn);
-    --series-bg: var(--status-warn-bg);
+    --tone: var(--tone-warn);
+    --tone-bg: var(--tone-warn-bg);
+    --series-color: var(--tone-warn);
+    --series-bg: var(--tone-warn-bg);
   }
 
   .tone--critical {
-    --tone: var(--status-critical);
-    --tone-bg: var(--status-critical-bg);
-    --series-color: var(--status-critical);
-    --series-bg: var(--status-critical-bg);
+    --tone: var(--tone-critical);
+    --tone-bg: var(--tone-critical-bg);
+    --series-color: var(--tone-critical);
+    --series-bg: var(--tone-critical-bg);
   }
 
   .tone--neutral {
     --tone: var(--border-strong);
-    --tone-bg: var(--neutral-bg);
+    --tone-bg: var(--bg-active);
     --series-color: var(--border-strong);
-    --series-bg: var(--neutral-bg);
+    --series-bg: var(--bg-active);
   }
 
   .tone--chart-1,
@@ -146,6 +146,22 @@
     min-height: 0;
   }
 
+  /* A legend on the right needs room; in a narrow panel (a phone) it goes below. */
+  .viz-layout {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 30rem) {
+    .viz-layout--right {
+      flex-direction: column;
+    }
+
+    .viz-layout--right .viz-legend {
+      max-width: none;
+      max-height: var(--size-legend-max);
+    }
+  }
+
   .viz-layout__main {
     flex: 1;
     min-width: 0;
@@ -235,6 +251,7 @@
     position: relative;
     height: 100%;
     min-height: 0;
+    overflow: hidden;
   }
 
   .readout:focus-visible {
@@ -296,28 +313,30 @@
 
   /* Gauge */
 
+  /* Gauges side by side, each shrinking with the panel, so none falls out of view. */
   .gauge__list {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(var(--size-card-min), 1fr));
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
     gap: var(--space-2);
     height: 100%;
-    align-items: center;
     list-style: none;
   }
 
   .gauge__item {
     display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
     justify-items: center;
     gap: var(--space-1);
     min-width: 0;
-    height: 100%;
-    align-content: center;
+    min-height: 0;
   }
 
   .gauge__svg {
     width: 100%;
     max-width: var(--size-gauge);
-    max-height: 100%;
+    height: 100%;
+    min-height: 0;
   }
 
   .gauge__track {
@@ -375,7 +394,7 @@
 
   .bargauge__item {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) auto;
+    grid-template-columns: minmax(var(--space-12), max-content) minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-px) var(--space-1);
@@ -517,9 +536,10 @@
 
   /* State timeline and status history */
 
+  /* Rows share the height; the time axis below keeps its own. */
   .state__grid {
-    display: grid;
-    grid-auto-rows: minmax(var(--space-6), 1fr);
+    display: flex;
+    flex-direction: column;
     gap: var(--space-1);
     height: 100%;
   }
@@ -533,8 +553,14 @@
     min-height: 0;
   }
 
+  .state__row {
+    flex: 1 1 0;
+    min-height: var(--space-4);
+  }
+
   .state__axis {
-    grid-auto-rows: var(--space-5);
+    flex: none;
+    height: var(--space-5);
   }
 
   .state__name {
@@ -820,7 +846,7 @@
     display: grid;
     align-content: start;
     gap: var(--space-1);
-    padding: var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-raised);
@@ -867,7 +893,7 @@
   .preview {
     display: block;
     width: 100%;
-    height: auto;
+    height: var(--space-10);
     border-radius: var(--radius-sm);
     background: var(--bg-surface);
   }
