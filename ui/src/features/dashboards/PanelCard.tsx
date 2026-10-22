@@ -5,6 +5,7 @@ import { useI18n } from "../../i18n/i18n";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
@@ -313,13 +314,15 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
         )
       ) : (
         <div className="panel-content__viz">
-          <Panel
-            frames={frames}
-            graphs={graphs}
-            options={plugin.options(panel.options)}
-            timeRange={range}
-            title={title}
-          />
+          <PanelErrorBoundary resetKey={outcomes}>
+            <Panel
+              frames={frames}
+              graphs={graphs}
+              options={plugin.options(panel.options)}
+              timeRange={range}
+              title={title}
+            />
+          </PanelErrorBoundary>
         </div>
       )}
       {isTruncated(outcomes) ? (

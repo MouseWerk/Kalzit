@@ -9,8 +9,19 @@ import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
-/** The graph name a new query starts with when the source's settings cannot be read. */
-const GRAPH_PLACEHOLDER = "MyGraph";
+/**
+ * Where the graph's name goes when the source's settings cannot be read (members who may only
+ * query). The server refuses any other graph than the source's, so the gap is left visible for
+ * the user to fill, not filled with a guess.
+ */
+export const GRAPH_GAP = "<graph>";
+
+/** The graph the template names: the source's own, or a visible gap when it is not known. */
+export function templateGraph(setting: unknown): { graph: string; known: boolean } {
+  return typeof setting === "string" && setting !== ""
+    ? { graph: setting, known: true }
+    : { graph: GRAPH_GAP, known: false };
+}
 
 /** A starting point for an interpreted query: the one body TigerGraph allows, for the graph. */
 export function gsqlTemplate(graph: string): string {
@@ -57,8 +68,7 @@ export function GsqlQueryEditor({
   const parsed = parseParams(paramsText);
   const queries = schema.data?.kind === "graph" ? schema.data.queries : [];
   const graphSetting = settings.data?.settings.graph;
-  const graph =
-    typeof graphSetting === "string" && graphSetting !== "" ? graphSetting : GRAPH_PLACEHOLDER;
+  const { graph, known } = templateGraph(graphSetting);
   const withParams = (next: { gsql: string } | { installed: string }) =>
     onChange(parsed.params === undefined ? next : { ...next, params: parsed.params });
 
@@ -122,6 +132,7 @@ export function GsqlQueryEditor({
           />
           <p className="field__hint" id={hintId}>
             {t("datasources.editor.shortcuts")} {t("datasources.editor.gsql.hint", { graph })}
+            {known ? "" : ` ${t("datasources.editor.gsql.graphUnknown", { gap: GRAPH_GAP })}`}
           </p>
           {value.gsql.trim() === "" ? (
             <button

@@ -3,14 +3,16 @@ import type { GraphView } from "./view";
 
 /**
  * Handing a view to the renderer. The renderer processes everything it is given at once, and
- * 20,000 edges take it most of a second; so the nodes (and a first chunk of edges) go over in
- * one step, the remaining edges in chunks of EDGE_CHUNK, one chunk per frame.
+ * 20,000 edges take it most of a second; so it is created with the nodes and a first chunk of
+ * edges, and the remaining edges go into that same graph in chunks of EDGE_CHUNK, one chunk per
+ * frame.
+ *
+ * The renderer has to be created for the graph it draws: Sigma 4 builds its index of parallel
+ * edges for the graph it was constructed with, and `setGraph` does not rebuild it, so edges added
+ * to a graph handed over with `setGraph` fail (NotFoundGraphError). A new view therefore gets a
+ * new renderer, never `setGraph`.
  */
 export const EDGE_CHUNK = 3_000;
-
-export interface HandoverTarget {
-  setGraph(graph: Graph): unknown;
-}
 
 export interface Scheduler {
   schedule(callback: () => void): number;
@@ -22,7 +24,8 @@ export const frames: Scheduler = {
   cancel: (handle) => cancelAnimationFrame(handle),
 };
 
-export interface Handover {
+export interface Handover<R> {
+  renderer: R;
   graph: Graph;
   /** Stops adding edges, for a newer view or an unmount. */
   cancel(): void;
@@ -39,12 +42,14 @@ function addEdges(graph: Graph, view: GraphView, from: number, to: number): void
   }
 }
 
-export function handOver(
-  target: HandoverTarget,
+/** Builds the view's graph with its nodes and first edges, creates the renderer for it, and
+ * adds the remaining edges to the same graph, a chunk per frame. */
+export function handOver<R>(
   view: GraphView,
   positions: Float32Array,
+  create: (graph: Graph) => R,
   scheduler: Scheduler = frames,
-): Handover {
+): Handover<R> {
   const graph = new Graph({ type: "directed", multi: true, allowSelfLoops: true });
   view.nodes.forEach((node, i) => {
     graph.addNode(String(i), {
@@ -56,7 +61,7 @@ export function handOver(
   });
   let added = Math.min(EDGE_CHUNK, view.edges.length);
   addEdges(graph, view, 0, added);
-  target.setGraph(graph);
+  const renderer = create(graph);
   let handle: number | null = null;
   const next = () => {
     handle = null;
@@ -67,6 +72,7 @@ export function handOver(
   };
   if (added < view.edges.length) handle = scheduler.schedule(next);
   return {
+    renderer,
     graph,
     cancel: () => {
       if (handle !== null) scheduler.cancel(handle);

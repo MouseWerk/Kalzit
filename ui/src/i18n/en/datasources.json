@@ -317,5 +317,6 @@
   "datasources.editor.gsql.template": "Start from a template",
   "datasources.editor.gsql.params": "Parameters (optional)",
   "datasources.editor.gsql.paramsHint": "A JSON object, such as {“customer”: “c42”, “limit”: 10}.",
-  "datasources.editor.gsql.paramsInvalid": "Enter a JSON object, or leave the field empty."
+  "datasources.editor.gsql.paramsInvalid": "Enter a JSON object, or leave the field empty.",
+  "datasources.editor.gsql.graphUnknown": "Replace {gap} with the name of the data source's graph: your role cannot read its settings, and other graphs are refused."
 }

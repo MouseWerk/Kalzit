@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GraphSourceSchema, PromSchema, SqlSchema } from "../api";
 import { emptyQuery, parseGsqlQuery, queryText } from "../queryKinds";
 import { cypherCompletions, promqlCompletions, sqlCompletions } from "./completion";
-import { gsqlTemplate, parseParams } from "./GsqlQueryEditor";
+import { GRAPH_GAP, gsqlTemplate, parseParams, templateGraph } from "./GsqlQueryEditor";
 import { tokenizeCypher, tokenizeGsql, tokenizePromql, tokenizeSql } from "./syntax";
 
 // Wire shapes of GET .../schema in docs/api/datasources.md.
@@ -190,6 +190,12 @@ describe("TigerGraph queries", () => {
     });
     expect(parseGsqlQuery({ gsql: "x", params: [1] })).toEqual({ gsql: "x" });
     expect(queryText({ installed: "q" })).toBe("q");
+  });
+
+  it("name the source's graph in the template, or leave a visible gap instead of a guess", () => {
+    expect(templateGraph("social")).toEqual({ graph: "social", known: true });
+    expect(templateGraph(undefined)).toEqual({ graph: GRAPH_GAP, known: false });
+    expect(gsqlTemplate(templateGraph(undefined).graph)).toContain("FOR GRAPH <graph> {");
   });
 
   it("read params as a JSON object only", () => {

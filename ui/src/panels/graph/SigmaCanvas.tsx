@@ -1,11 +1,12 @@
-import Graph from "graphology";
-import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
+import type Graph from "graphology";
+import { type Ref, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import Sigma from "sigma";
 import { extremityArrow, layerPlain, pathLine, pathLoop } from "sigma/rendering";
+import type { CameraState } from "sigma/types";
 import { applyPositionsTo } from "./applyPositions";
 import type { GraphPalette } from "./colors";
 import { type Direction, dimsEdges, edgeColor, nodeDisplay, nodeToward } from "./drawing";
-import { type Handover, handOver } from "./handover";
+import { handOver } from "./handover";
 import { refreshVisibility } from "./refresh";
 import type { GraphView, Visibility } from "./view";
 import "./graph.css";
@@ -46,118 +47,151 @@ export interface SigmaCanvasProps {
 
 const ZOOM_DURATION = 200;
 
+/** What the renderer's reducers and events read: the newest props of the canvas. */
+export interface LiveProps {
+  props: SigmaCanvasProps;
+  ratioBucket: number;
+}
+
+/**
+ * The renderer for one graph, with the panel's styles, reducers and events. `allowInvalidContainer`
+ * lets it start in a stage that has no size yet (a panel still opening); it draws once it has one.
+ */
+export function createRenderer(
+  graph: Graph,
+  host: HTMLElement,
+  live: { current: LiveProps },
+): Sigma {
+  // The reducers run while the renderer is being built (its graph has nodes from the start),
+  // before `renderer` exists; until then the camera is at its starting ratio of 1.
+  let built: Sigma | null = null;
+  const renderer: Sigma = new Sigma(graph, host, {
+    primitives: {
+      edges: {
+        paths: [pathLine(), pathLoop()],
+        extremities: [extremityArrow()],
+        layers: [layerPlain()],
+        defaultHead: "arrow",
+      },
+    },
+    styles: {
+      nodes: {
+        x: { attribute: "x" },
+        y: { attribute: "y" },
+        size: { attribute: "size" },
+        label: { attribute: "label" },
+        // The renderer's hover backdrop is a white card with a shadow; selection here is
+        // shown by dimming instead.
+        backdropVisibility: "hidden" as const,
+      },
+      edges: { size: { attribute: "size" } },
+    },
+    settings: {
+      allowInvalidContainer: true,
+      // Wheel and one-finger touch scroll the page; Ctrl or two fingers zoom and pan the graph.
+      gestureTarget: "shared",
+      hideEdgesOnMove: live.current.props.view.edges.length > 5_000,
+      hideLabelsOnMove: true,
+      // Which labels show is decided by zoom level (labelAllowed), not by node size.
+      labelRenderedSizeThreshold: 0,
+      labelDensity: 0.5,
+      enableNodeDrag: false,
+      // Node sizes are pixels on screen (sigma 4 defaults to graph units, which makes the
+      // size depend on the layout's spread).
+      itemSizesReference: "screen",
+      ...motionSettings(live.current.props.reducedMotion),
+    },
+    nodeReducer: (key, data) =>
+      nodeDisplay(Number(key), data, live.current.props, built?.getCamera().ratio ?? 1),
+    edgeReducer: (key, data) => {
+      const p = live.current.props;
+      const index = Number(key.slice(1));
+      const edge = p.view.edges[index];
+      if (edge === undefined || p.visibility.edges[index] === 0) {
+        return { ...data, visibility: "hidden" };
+      }
+      return { ...data, color: edgeColor(edge, p) };
+    },
+  });
+  built = renderer;
+  // The renderer's own gesture hint brings a style element, which the content security policy
+  // refuses; the panel shows a translated hint of its own instead.
+  renderer._showGestureHint = (gesture) => live.current.props.onGestureHint(gesture);
+  renderer.on("clickNode", ({ node }) => live.current.props.onPick(Number(node)));
+  renderer.on("clickStage", () => live.current.props.onPick(null));
+  // Labels by zoom level: refresh the reducers when the camera crosses into another level.
+  renderer.getCamera().on("updated", ({ ratio }) => {
+    const bucket = Math.round(Math.log2(Math.max(ratio, 1e-3)) * 2);
+    if (bucket !== live.current.ratioBucket) {
+      live.current.ratioBucket = bucket;
+      // Labels belong to nodes; edges need no new pass.
+      renderer.scheduleRefresh({
+        partialGraph: { nodes: renderer.getGraph().nodes() },
+        skipIndexation: true,
+      });
+    }
+  });
+  return renderer;
+}
+
 export function SigmaCanvas(props: SigmaCanvasProps) {
   const { view, positions, palette, visibility, ranks, selected, neighbours, reducedMotion } =
     props;
   const hostRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const graphRef = useRef<Graph | null>(null);
-  const handoverRef = useRef<Handover | null>(null);
+  const cameraRef = useRef<CameraState | null>(null);
   const shownVisibility = useRef<Visibility | null>(null);
   // The reducers read the newest props from here; changing them only needs a refresh.
-  const live = useRef({ props, ratioBucket: 0 });
+  const live = useRef<LiveProps>({ props, ratioBucket: 0 });
   live.current.props = props;
+  // The renderer starts once the stage has a size: a panel that is hidden or still opening
+  // has none, and the renderer cannot measure it.
+  const [sized, setSized] = useState(false);
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (host === null) return;
+    const check = (width: number, height: number) => setSized(width > 0 && height > 0);
+    const rect = host.getBoundingClientRect();
+    check(rect.width, rect.height);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (box !== undefined) check(box.width, box.height);
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
 
-  // One renderer per mount; later props reach it through `live` and the effects below.
+  // One renderer per view, created with its graph (handover.ts says why); the camera stays
+  // where it was, so loading neighbours or opening a group does not jump.
   useEffect(() => {
     const host = hostRef.current;
-    if (host === null) {
+    if (host === null || !sized) {
       return;
     }
-    const graph = new Graph({ type: "directed", multi: true, allowSelfLoops: true });
-    graphRef.current = graph;
-    const renderer: Sigma = new Sigma(graph, host, {
-      primitives: {
-        edges: {
-          paths: [pathLine(), pathLoop()],
-          extremities: [extremityArrow()],
-          layers: [layerPlain()],
-          defaultHead: "arrow",
-        },
-      },
-      styles: {
-        nodes: {
-          x: { attribute: "x" },
-          y: { attribute: "y" },
-          size: { attribute: "size" },
-          label: { attribute: "label" },
-          // The renderer's hover backdrop is a white card with a shadow; selection here is
-          // shown by dimming instead.
-          backdropVisibility: "hidden" as const,
-        },
-        edges: { size: { attribute: "size" } },
-      },
-      settings: {
-        // Wheel and one-finger touch scroll the page; Ctrl or two fingers zoom and pan the graph.
-        gestureTarget: "shared",
-        hideEdgesOnMove: graph.size > 5_000,
-        hideLabelsOnMove: true,
-        // Which labels show is decided by zoom level (labelAllowed), not by node size.
-        labelRenderedSizeThreshold: 0,
-        labelDensity: 0.5,
-        enableNodeDrag: false,
-        // Node sizes are pixels on screen (sigma 4 defaults to graph units, which makes the
-        // size depend on the layout's spread).
-        itemSizesReference: "screen",
-        ...motionSettings(live.current.props.reducedMotion),
-      },
-      nodeReducer: (key, data) =>
-        nodeDisplay(Number(key), data, live.current.props, renderer.getCamera().ratio),
-      edgeReducer: (key, data) => {
-        const p = live.current.props;
-        const index = Number(key.slice(1));
-        const edge = p.view.edges[index];
-        if (edge === undefined || p.visibility.edges[index] === 0) {
-          return { ...data, visibility: "hidden" };
-        }
-        return { ...data, color: edgeColor(edge, p) };
-      },
-    });
-    // The renderer's own gesture hint brings a style element, which the content security policy
-    // refuses; the panel shows a translated hint of its own instead.
-    renderer._showGestureHint = (gesture) => live.current.props.onGestureHint(gesture);
-    renderer.on("clickNode", ({ node }) => live.current.props.onPick(Number(node)));
-    renderer.on("clickStage", () => live.current.props.onPick(null));
-    // Labels by zoom level: refresh the reducers when the camera crosses into another level.
-    renderer.getCamera().on("updated", ({ ratio }) => {
-      const bucket = Math.round(Math.log2(Math.max(ratio, 1e-3)) * 2);
-      if (bucket !== live.current.ratioBucket) {
-        live.current.ratioBucket = bucket;
-        // Labels belong to nodes; edges need no new pass.
-        renderer.scheduleRefresh({
-          partialGraph: { nodes: renderer.getGraph().nodes() },
-          skipIndexation: true,
-        });
-      }
-    });
+    const handover = handOver(view, live.current.props.positions, (graph) =>
+      createRenderer(graph, host, live),
+    );
+    const renderer = handover.renderer;
+    if (cameraRef.current !== null) {
+      renderer.getCamera().setState(cameraRef.current);
+    }
     sigmaRef.current = renderer;
+    graphRef.current = handover.graph;
+    shownVisibility.current = null;
     return () => {
+      handover.cancel();
+      cameraRef.current = renderer.getCamera().getState();
       renderer.kill();
       sigmaRef.current = null;
       graphRef.current = null;
     };
-  }, []);
+  }, [view, sized]);
 
   useEffect(() => {
     sigmaRef.current?.setSettings(motionSettings(reducedMotion));
   }, [reducedMotion]);
-
-  // A new view replaces the graph's nodes and edges; the positions effect below places them.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: positions are applied in their own effect
-  useEffect(() => {
-    const graph = graphRef.current;
-    const renderer = sigmaRef.current;
-    if (graph === null || renderer === null) {
-      return;
-    }
-    // The nodes go over at once, the edges in chunks per frame (handover.ts).
-    renderer.setSetting("hideEdgesOnMove", view.edges.length > 5_000);
-    const handover = handOver(renderer, view, positions);
-    handoverRef.current = handover;
-    graphRef.current = handover.graph;
-    shownVisibility.current = null;
-    return () => handover.cancel();
-  }, [view]);
 
   // New positions from the layout move the nodes; the camera keeps its place.
   useEffect(() => {

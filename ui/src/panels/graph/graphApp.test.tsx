@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { emptyModel, type PanelModel } from "../../features/dashboards/model";
 import { addDashboard } from "../../features/dashboards/test/fakeDashboards";
@@ -11,6 +11,12 @@ import {
 import { ID, NEO4J_ID } from "../../features/datasources/test/fakeGraph";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+
+// The graph panels load with their first use; loading them once here keeps that cost out of
+// each test's own time, as renderApp does for the lazy pages.
+beforeAll(async () => {
+  await Promise.all([import("./GraphPanels"), import("../path/PathPanel")]);
+});
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };

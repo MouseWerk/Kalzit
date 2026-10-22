@@ -355,7 +355,7 @@ describe("drawing", () => {
 });
 
 describe("handover", () => {
-  it("hands the nodes over at once and the edges in chunks, one per frame", () => {
+  it("creates the renderer with the nodes and first edges, then adds a chunk per frame", () => {
     const nodes = Array.from({ length: 10 }, (_, i) => ({
       id: `n${i}`,
       labels: [],
@@ -370,15 +370,14 @@ describe("handover", () => {
     }));
     const v = view(model([{ nodes, edges, schema }]));
     const frames: (() => void)[] = [];
-    const given: number[] = [];
+    const created: number[] = [];
     const handover = handOver(
-      { setGraph: (g) => given.push(g.order, g.size) },
       v,
       seedPositions(10),
+      (graph) => created.push(graph.order, graph.size),
       { schedule: (cb) => frames.push(cb), cancel: () => undefined },
     );
-    expect(given).toEqual([10, EDGE_CHUNK]);
-    expect(frames).toHaveLength(1);
+    expect(created).toEqual([10, EDGE_CHUNK]);
     frames.shift()?.();
     expect(handover.graph.size).toBe(EDGE_CHUNK * 2);
     frames.shift()?.();
@@ -396,15 +395,10 @@ describe("handover", () => {
       properties: {},
     }));
     const cancelled: number[] = [];
-    const handover = handOver(
-      { setGraph: () => undefined },
-      view(model([{ nodes, edges, schema }])),
-      seedPositions(1),
-      {
-        schedule: () => 7,
-        cancel: (handle) => cancelled.push(handle),
-      },
-    );
+    const handover = handOver(view(model([{ nodes, edges, schema }])), seedPositions(1), () => 0, {
+      schedule: () => 7,
+      cancel: (handle) => cancelled.push(handle),
+    });
     handover.cancel();
     expect(cancelled).toEqual([7]);
   });

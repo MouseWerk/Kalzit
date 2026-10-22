@@ -132,14 +132,15 @@ describe("budget: 5,000 nodes and 20,000 edges", () => {
       expect(sent?.transfer).toContain(sent?.request.sources.buffer);
       expect(result.current).toMatchObject({ running: true, worker: true });
 
-      const settled = seedPositions(NODES);
-      const handled = bestOf(1, () =>
+      let settled = seedPositions(NODES);
+      const handled = timed("layout message", () => {
+        settled = seedPositions(NODES);
         act(() => {
           worker.onmessage?.({
             data: { type: "positions", run: 1, positions: settled, done: true },
           } as MessageEvent<LayoutProgress>);
-        }),
-      );
+        });
+      });
       expect(handled).toBeLessThan(LONG_TASK_MS);
       expect(result.current).toMatchObject({ running: false, positions: settled });
     } finally {
