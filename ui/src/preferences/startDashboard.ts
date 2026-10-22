@@ -26,7 +26,7 @@ export async function redirectToStartDashboard(
   entered = true;
   let start: Preferences["startDashboard"];
   try {
-    start = (await queryClient.ensureQueryData(preferencesQuery)).startDashboard;
+    start = (await queryClient.ensureQueryData(preferencesQuery(me.id))).startDashboard;
   } catch {
     // Without preferences the start page is shown, as without a start dashboard.
     return;

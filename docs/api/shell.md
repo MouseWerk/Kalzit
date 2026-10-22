@@ -125,7 +125,9 @@ What the browser merely applied (an earlier user's preferences, the browser's ow
 is never a choice. A choice of step 2 is kept apart from the applied values, belongs to the first
 account that signs in after it (or the one that made it), is saved as that account's preference
 where it has none (one `PATCH`) and is then forgotten; signing out forgets it as well. So on a
-shared browser one user's language or theme never becomes the next user's preference.
+shared browser one user's language or theme never becomes the next user's preference. When a
+session ends, or another account signs in, the UI drops everything it cached for the previous
+account (its preferences are also kept per account id), so nothing of it applies to the next one.
 **Time zone and week start** apply to every time the UI shows or works with: lists, tables,
 tooltips, chart axes, the time range of dashboards and Explore (`now/d`, `now/w` and typed times
 are resolved on the wall clock of the chosen zone, also across a daylight saving change), and the

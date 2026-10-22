@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { getRouteApi } from "@tanstack/react-router";
 import { useId } from "react";
 import { FormAlert } from "../components/FormAlert";
 import { LANGUAGES, type Translate, useI18n } from "../i18n/i18n";
@@ -16,6 +17,8 @@ import {
 } from "./preferences";
 import "../features/admin/admin.css";
 import "../shell/shellUx.css";
+
+const appRoute = getRouteApi("/_app");
 
 /** Dashboards offered as start dashboard; more than this are found through search later. */
 const START_CHOICES = 200;
@@ -70,8 +73,9 @@ function savedText(t: Translate, patch: PreferencesPatch): string {
 export function PreferencesSection() {
   const { t } = useI18n();
   const titleId = useId();
-  const preferences = useQuery(preferencesQuery);
-  const change = usePreferenceChange({
+  const { me } = appRoute.useRouteContext();
+  const preferences = useQuery(preferencesQuery(me.id));
+  const change = usePreferenceChange(me.id, {
     onSaved: (patch, previous) => {
       showToast({
         message: savedText(t, patch),

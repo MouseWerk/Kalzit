@@ -86,9 +86,12 @@ describe("own account", () => {
     expect(within(rows[0] as HTMLElement).getByText(/^Last used .+, expires .+$/)).toBeTruthy();
 
     const end = within(rows[1] as HTMLElement).getByRole("button", {
-      name: /^End the session signed in /,
+      name: /^End this session \(signed in .+\)$/,
     });
     expect(end.textContent).toBe("End this session");
+    // The visible text starts the accessible name (WCAG 2.5.3), so "click End this session"
+    // works for speech input.
+    expect(end.getAttribute("aria-label")?.startsWith(end.textContent ?? "")).toBe(true);
     await user.click(end);
     expect(await screen.findByText("The session was ended.")).toBeTruthy();
     expect(admin.sessions.map((session) => session.id)).toEqual(["s1", "s3"]);

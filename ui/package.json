@@ -14,7 +14,9 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome check --error-on-warnings .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "screenshots": "playwright test -c e2e/screenshots.config.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.4",
@@ -31,8 +33,10 @@
     "uplot": "1.6.32"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@babel/core": "7.29.7",
     "@biomejs/biome": "2.5.15",
+    "@playwright/test": "1.64.1",
     "@rolldown/plugin-babel": "0.2.4",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",

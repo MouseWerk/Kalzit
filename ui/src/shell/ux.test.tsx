@@ -7,7 +7,7 @@ import { Toaster } from "../components/Toaster";
 import { emptyModel } from "../features/dashboards/model";
 import { addDashboard, addFolder } from "../features/dashboards/test/fakeDashboards";
 import { getLanguage, LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
-import { LOCAL_CHOICE_KEY } from "../lib/localChoice";
+import { choiceFor, LOCAL_CHOICE_KEY, recordChoice } from "../lib/localChoice";
 import { setTimeZone } from "../lib/timeSettings";
 import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
@@ -129,11 +129,17 @@ describe("command palette", () => {
   });
 
   it("switches the theme as a saved preference", async () => {
-    const { dialog, user, server } = await openPalette();
+    const { dialog, user, server, app } = await openPalette();
+    // The preferences have arrived, so the change is not raced by their first answer.
+    await waitFor(() =>
+      expect(app.queryClient.getQueryData(["preferences", TEST_USER.id])).toBeDefined(),
+    );
     await user.paste("dark");
+    // Once the pause in typing is over, the list is rebuilt as ranked results; pick from that.
+    await waitFor(() => expect(options(dialog)).not.toContain("New dashboard"));
     const dark = await within(dialog).findByRole("option", { name: /Theme: Dark/ });
     await user.click(dark);
-    expect(getTheme()).toBe("dark");
+    await waitFor(() => expect(getTheme()).toBe("dark"));
     await waitFor(() => expect(server.state.preferences.theme).toBe("dark"));
   });
 });
@@ -529,5 +535,223 @@ describe("shortcuts and editors", () => {
     const notPrevented = fireEvent.keyDown(help, { key: "k", ctrlKey: true });
     expect(notPrevented).toBe(true);
     expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+  });
+});
+
+/** Signs in on the sign-in page as the fake server's current user. */
+async function signInHere(
+  user: ReturnType<typeof renderApp>["user"],
+  email: string,
+  german: boolean,
+) {
+  await user.click(screen.getByLabelText(german ? "E-Mail-Adresse" : "Email address"));
+  await user.paste(email);
+  await user.click(screen.getByLabelText(german ? "Passwort" : "Password"));
+  await user.paste(TEST_PASSWORD);
+  await user.keyboard("{Enter}");
+}
+
+const BOB = { ...TEST_USER, id: "u2", email: "bob@example.com", name: "Bob" };
+
+function noPreferences(language = "en") {
+  return {
+    language: null,
+    theme: null,
+    timeZone: null,
+    weekStart: null,
+    startDashboard: null,
+    defaults: { language, theme: "system" },
+  };
+}
+
+const patches = (server: ReturnType<typeof setup>, from = 0) =>
+  server.calls.slice(from).filter((call) => call.method === "PATCH");
+
+describe("sessions that end and accounts that follow", () => {
+  it("do not carry the previous account's preferences to the next one after the session expired", async () => {
+    const server = setup();
+    server.state.preferences = { ...noPreferences(), language: "de", theme: "dark" };
+    const { user, app } = renderApp("/");
+    const nav = await screen.findByRole("navigation", { name: "Hauptnavigation" });
+    // The session ends on the server; the next page change finds it gone.
+    server.state.signedIn = false;
+    await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
+    await screen.findByLabelText("E-Mail-Adresse");
+
+    // Bob chooses English on the sign-in page; he has no preferences, the default is German.
+    server.state.user = BOB;
+    server.state.preferences = noPreferences("de");
+    await user.selectOptions(screen.getByLabelText("Sprache"), "en");
+    const before = server.calls.length;
+    await signInHere(user, BOB.email, false);
+    await waitFor(() => expect(server.state.preferences.language).toBe("en"));
+    expect(await screen.findByRole("navigation", { name: "Main navigation" })).toBeTruthy();
+    expect(patches(server, before).map((call) => call.body)).toEqual([{ language: "en" }]);
+    // Ada's dark theme did not come along: Bob has the default.
+    await waitFor(() => expect(getTheme()).toBe("system"));
+    expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe("");
+    // Nothing cached for Ada is left to answer for Bob.
+    expect(app.queryClient.getQueryData(["preferences", TEST_USER.id])).toBeUndefined();
+  });
+
+  it("keep a choice whose saving failed with its account, never with the next one", async () => {
+    const server = setup();
+    server.state.signedIn = false;
+    server.state.preferences = noPreferences("en");
+    const { user } = renderApp("/login");
+    await user.selectOptions(await screen.findByLabelText("Language"), "de");
+    server.failNext("/api/me/preferences", 503, "busy", "PATCH");
+    await signInHere(user, TEST_USER.email, true);
+    await screen.findByRole("navigation", { name: "Hauptnavigation" });
+    await waitFor(() => expect(patches(server)).toHaveLength(1));
+    // Not saved, still shown: the choice applies until it is the account's preference.
+    expect(server.state.preferences.language).toBeNull();
+    expect(getLanguage()).toBe("de");
+    expect(JSON.parse(window.localStorage.getItem(LOCAL_CHOICE_KEY) ?? "{}")).toEqual({
+      language: "de",
+      userId: TEST_USER.id,
+    });
+
+    // The session expires; Bob signs in next and takes nothing over.
+    server.state.signedIn = false;
+    const nav = screen.getByRole("navigation", { name: "Hauptnavigation" });
+    await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
+    await screen.findByLabelText("E-Mail-Adresse");
+    server.state.user = BOB;
+    server.state.preferences = noPreferences("en");
+    const before = server.calls.length;
+    await signInHere(user, BOB.email, true);
+    expect(await screen.findByRole("navigation", { name: "Main navigation" })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(patches(server, before)).toEqual([]);
+    expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe("");
+  });
+
+  it("forget the choice on sign-out", async () => {
+    const server = setup();
+    server.state.preferences = noPreferences("en");
+    window.localStorage.setItem(
+      LOCAL_CHOICE_KEY,
+      JSON.stringify({ language: "de", userId: TEST_USER.id }),
+    );
+    server.failNext("/api/me/preferences", 503, "busy", "PATCH");
+    const { user } = renderApp("/");
+    await screen.findByRole("navigation", { name: "Hauptnavigation" });
+    await user.click(screen.getByRole("button", { name: /Konto/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Abmelden" }));
+    await screen.findByLabelText("E-Mail-Adresse");
+    expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe("");
+  });
+
+  it("never apply a choice another account claimed", async () => {
+    const server = setup();
+    server.state.user = BOB;
+    server.state.preferences = noPreferences("en");
+    window.localStorage.setItem(
+      LOCAL_CHOICE_KEY,
+      JSON.stringify({ language: "de", theme: "dark", userId: TEST_USER.id }),
+    );
+    renderApp("/");
+    expect(await screen.findByRole("navigation", { name: "Main navigation" })).toBeTruthy();
+    expect(getTheme()).toBe("system");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(patches(server)).toEqual([]);
+  });
+
+  it("leave no choice behind for an account with preferences of its own", async () => {
+    const server = setup();
+    window.localStorage.setItem(LOCAL_CHOICE_KEY, JSON.stringify({ language: "de" }));
+    renderApp("/");
+    expect(await screen.findByRole("navigation", { name: "Main navigation" })).toBeTruthy();
+    await waitFor(() => expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe(""));
+    expect(patches(server)).toEqual([]);
+  });
+
+  it("keep a change made while the first preferences are still on their way", async () => {
+    const server = setup();
+    server.state.preferences = noPreferences("en");
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/me/preferences" && (init?.method ?? "GET") === "GET") {
+        const answer = await fake(input, init);
+        await gate;
+        return answer;
+      }
+      return fake(input, init);
+    });
+    // Not the start page, which waits for the preferences (a start dashboard may open instead).
+    const { user } = renderApp("/dashboards");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    await user.paste("dark");
+    // Once the pause in typing is over, the list is rebuilt as ranked results; pick from that.
+    await waitFor(() => expect(options(dialog)).not.toContain("New dashboard"));
+    await user.click(await within(dialog).findByRole("option", { name: /Theme: Dark/ }));
+    await waitFor(() => expect(getTheme()).toBe("dark"));
+    // The first answer (theme unset, so the default "system") arrives after the change.
+    release();
+    await waitFor(() => expect(server.state.preferences.theme).toBe("dark"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getTheme()).toBe("dark");
+  });
+});
+
+describe("a preference change on its way", () => {
+  it("is not undone by preferences fetched again meanwhile", async () => {
+    const server = setup();
+    server.state.preferences = noPreferences("en");
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const answer = await fake(input, init);
+      if (String(input) === "/api/me/preferences" && init?.method === "PATCH") {
+        await gate;
+      }
+      return answer;
+    });
+    const { user, app } = renderApp("/dashboards");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    await waitFor(() =>
+      expect(app.queryClient.getQueryData(["preferences", TEST_USER.id])).toBeDefined(),
+    );
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    await user.paste("dark");
+    // Once the pause in typing is over, the list is rebuilt as ranked results; pick from that.
+    await waitFor(() => expect(options(dialog)).not.toContain("New dashboard"));
+    await user.click(await within(dialog).findByRole("option", { name: /Theme: Dark/ }));
+    // While the change is on its way, the preferences are read again (another tab, a refetch).
+    await act(() => app.queryClient.refetchQueries({ queryKey: ["preferences", TEST_USER.id] }));
+    expect(getTheme()).toBe("dark");
+    release();
+    await waitFor(() => expect(server.state.preferences.theme).toBe("dark"));
+    expect(getTheme()).toBe("dark");
+  });
+});
+describe("the choice made before signing in, as stored", () => {
+  it("knows only languages and themes the UI has", () => {
+    window.localStorage.setItem(
+      LOCAL_CHOICE_KEY,
+      JSON.stringify({ language: "fr", theme: "pink" }),
+    );
+    expect(choiceFor("u1")).toEqual({});
+    window.localStorage.setItem(LOCAL_CHOICE_KEY, "not json");
+    expect(choiceFor("u1")).toEqual({});
+  });
+
+  it("starts anew when the stored choice belongs to an account", () => {
+    window.localStorage.setItem(LOCAL_CHOICE_KEY, JSON.stringify({ language: "de", userId: "u1" }));
+    recordChoice({ theme: "dark" });
+    expect(choiceFor("u2")).toEqual({ theme: "dark" });
+    recordChoice({ language: "en" });
+    expect(choiceFor("u2")).toEqual({ theme: "dark", language: "en" });
   });
 });

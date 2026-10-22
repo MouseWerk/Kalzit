@@ -57,7 +57,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const languageLabelId = useId();
 
   // Theme and language are preferences of the account, so they follow the user to other browsers.
-  const change = usePreferenceChange({
+  const change = usePreferenceChange(me.id, {
     onFailed: (error) => showErrorToast(apiErrorText(t, error)),
   });
   const signOut = useMutation({

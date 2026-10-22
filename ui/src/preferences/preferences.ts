@@ -1,4 +1,10 @@
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect } from "react";
 import { expectShape, isRecord, request } from "../api/client";
 import { getLanguage, LANGUAGES, type Language, setLanguage } from "../i18n/i18n";
@@ -82,12 +88,16 @@ export async function updatePreferences(patch: PreferencesPatch): Promise<Prefer
   );
 }
 
-export const preferencesQuery = queryOptions({
-  queryKey: ["preferences"],
-  queryFn: fetchPreferences,
-  staleTime: 60_000,
-});
+export const PREFERENCES_KEY = "preferences";
 
+/** The preferences of one account: keyed by its id, so they never answer for another one. */
+export function preferencesQuery(userId: string) {
+  return queryOptions({
+    queryKey: [PREFERENCES_KEY, userId],
+    queryFn: fetchPreferences,
+    staleTime: 60_000,
+  });
+}
 /**
  * Applies what the preferences decide in the browser. Language and theme: the account's
  * preference; where there is none, an explicit choice made in this browser before signing in
@@ -130,55 +140,65 @@ export function adoptionPatch(
  */
 export function usePreferencesSync(userId: string): void {
   const queryClient = useQueryClient();
-  const query = useQuery(preferencesQuery);
+  const query = useQuery(preferencesQuery(userId));
+  // A change on its way has applied itself already; the answer of a fetch that started before it
+  // must not put the old value back.
+  const changing = useIsMutating({ mutationKey: [PREFERENCES_KEY, userId] }) > 0;
   useEffect(() => {
-    if (query.data === undefined) {
+    if (query.data === undefined || changing) {
       return;
     }
     const choice = choiceFor(userId);
     applyPreferences(query.data, choice);
     const patch = adoptionPatch(query.data, choice);
     if (patch === null) {
-      // Nothing left to adopt: the choice is the account's now, or the account had its own.
+      // Nothing (left) to adopt: the account has its own preferences, the choice was adopted
+      // (the saved answer below comes back through here), or it belongs to another account.
       clearChoice();
       return;
     }
-    // Claimed first, so a re-render while the answer is on its way sends nothing twice and the
-    // choice never passes to another account.
+    // Claimed first, so a re-render while the answer is on its way sends nothing twice, and a
+    // choice whose saving fails never passes to whoever signs in next.
     claimChoice(userId);
     updatePreferences(patch).then(
-      (saved) => {
-        clearChoice();
-        queryClient.setQueryData(preferencesQuery.queryKey, saved);
-      },
+      (saved) => queryClient.setQueryData(preferencesQuery(userId).queryKey, saved),
       // Not saved: the choice stays this user's, and the next page view tries again.
       () => undefined,
     );
-  }, [query.data, queryClient, userId]);
+  }, [query.data, changing, queryClient, userId]);
 }
+
 /**
  * Changes preferences on the server. The change applies in the browser at once (language and
  * theme before the server answers); a refused change is taken back.
  */
-export function usePreferenceChange(options: {
-  onSaved?: (patch: PreferencesPatch, previous: Preferences | undefined) => void;
-  onFailed?: (error: unknown) => void;
-}) {
+export function usePreferenceChange(
+  userId: string,
+  options: {
+    onSaved?: (patch: PreferencesPatch, previous: Preferences | undefined) => void;
+    onFailed?: (error: unknown) => void;
+  },
+) {
   const queryClient = useQueryClient();
+  const key = preferencesQuery(userId).queryKey;
   return useMutation({
+    mutationKey: [PREFERENCES_KEY, userId],
     mutationFn: (patch: PreferencesPatch) => updatePreferences(patch),
-    onMutate: (patch) => {
-      const previous = queryClient.getQueryData(preferencesQuery.queryKey);
+    onMutate: async (patch) => {
+      const previous = queryClient.getQueryData(key);
+      // Applied at once, before anything is awaited.
       if (patch.language !== undefined && patch.language !== null) {
         setLanguage(patch.language);
       }
       if (patch.theme !== undefined && patch.theme !== null) {
         setTheme(patch.theme);
       }
+      // A fetch on its way would answer with the value before this change.
+      await queryClient.cancelQueries({ queryKey: key });
       return { previous };
     },
     onSuccess: (saved, patch, context) => {
-      queryClient.setQueryData(preferencesQuery.queryKey, saved);
+      queryClient.setQueryData(key, saved);
       applyPreferences(saved);
       options.onSaved?.(patch, context?.previous);
     },

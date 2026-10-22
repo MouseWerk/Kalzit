@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../components/Icon";
@@ -15,6 +15,8 @@ import { fuzzyScore } from "./fuzzy";
 import { recentsQuery, type SearchHit, search } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
 import "./shellUx.css";
+
+const appRoute = getRouteApi("/_app");
 
 /** Pause in typing before the server is asked. */
 export const SEARCH_DELAY_MS = 150;
@@ -79,7 +81,8 @@ export function CommandPalette({
   const [text, setText] = useState("");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const change = usePreferenceChange({
+  const { me } = appRoute.useRouteContext();
+  const change = usePreferenceChange(me.id, {
     onFailed: (error) => showErrorToast(apiErrorText(t, error)),
   });
   useEscapeLayer(true, onClose);

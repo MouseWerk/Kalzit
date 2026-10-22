@@ -446,9 +446,16 @@ describe("editing a data source", () => {
     await user.click(await screen.findByRole("button", { name: "Delete…" }));
     const dialog = screen.getByRole("dialog", { name: "Delete data source?" });
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    const before = server.calls.length;
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     await screen.findByText(/The data source moved to the trash/);
     expect(location().pathname).toBe("/data-sources");
+    // The page of the deleted source does not load it again on the way out: that request
+    // could only answer 404 and would flash "not found" before the list appears.
+    const reloads = server.calls
+      .slice(before)
+      .filter((call) => call.method === "GET" && call.path.includes(`/datasources/${PG_ID}`));
+    expect(reloads).toEqual([]);
     expect(screen.queryByRole("link", { name: "Sales DB" })).toBeNull();
 
     await user.click(screen.getByRole("link", { name: "Trash" }));

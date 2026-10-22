@@ -261,7 +261,14 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const remove = useMutation({
     mutationFn: () => deleteDatasource(orgId, datasourceId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
+      // The deleted source's own queries (this page, its schema) would only answer 404 now:
+      // they are dropped after leaving the page instead of being loaded again.
+      const ofThisSource = (query: { queryKey: readonly unknown[] }) =>
+        query.queryKey.includes(datasourceId);
+      await queryClient.invalidateQueries({
+        queryKey: [DATASOURCES_KEY, orgId],
+        predicate: (query) => !ofThisSource(query),
+      });
       showToast({
         message: t("datasources.deleted"),
         undo: () => {
@@ -272,6 +279,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
         },
       });
       await navigate({ to: "/data-sources", search: {} });
+      queryClient.removeQueries({ queryKey: [DATASOURCES_KEY, orgId], predicate: ofThisSource });
     },
   });
 
