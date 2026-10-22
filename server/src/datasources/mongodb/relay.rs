@@ -21,9 +21,11 @@ use crate::datasources::targets::{ResolveError, TargetPolicy};
 
 /// How long the driver has for the SOCKS handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Handshakes in progress at once; further connections wait for a slot, so a flood of idle
-/// connections cannot hold many tasks and buffers.
+/// Handshakes in progress at once; a connection waits at most `SLOT_WAIT` for a slot and is
+/// dropped then, so a flood of idle local connections can neither hold many tasks nor delay the
+/// driver for long.
 const MAX_HANDSHAKES: usize = 64;
+const SLOT_WAIT: Duration = Duration::from_secs(2);
 
 /// Why the relay did not connect: a refused target, or a name that does not resolve or answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,7 +126,10 @@ async fn tunnel(
     connect_timeout: Duration,
 ) -> std::io::Result<()> {
     let target = {
-        let _slot = handshakes.acquire().await.map_err(|_| std::io::Error::other("the relay is closing"))?;
+        let _slot = tokio::time::timeout(SLOT_WAIT, handshakes.acquire())
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no free SOCKS handshake slot"))?
+            .map_err(|_| std::io::Error::other("the relay is closing"))?;
         tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut client, creds))
             .await
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "SOCKS handshake timed out"))??
@@ -338,6 +343,16 @@ mod tests {
         drop(idle.pop());
         tokio::time::timeout(Duration::from_secs(5), waiting.read_exact(&mut m)).await.unwrap().unwrap();
         assert_eq!(m, [5, 2], "a freed slot lets it through");
+
+        // With every slot held, a further connection is dropped after the short wait instead of
+        // waiting for as long as the idle ones stay.
+        idle.push(TcpStream::connect((Ipv4Addr::LOCALHOST, relay.port())).await.unwrap());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut late = TcpStream::connect((Ipv4Addr::LOCALHOST, relay.port())).await.unwrap();
+        late.write_all(&[5, 1, 2]).await.unwrap();
+        let mut buf = [0u8; 2];
+        let closed = tokio::time::timeout(SLOT_WAIT * 3, late.read(&mut buf)).await;
+        assert!(matches!(closed, Ok(Ok(0)) | Ok(Err(_))), "dropped after the wait: {closed:?}");
     }
 
     #[tokio::test]

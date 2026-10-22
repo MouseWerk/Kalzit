@@ -348,4 +348,17 @@ mod tests {
         assert_eq!(text, r#"{"_id":1,"zeit":2,"betrag":{"z":1,"a":2}}"#, "the documents shape keeps the stored order");
         assert_eq!(v.to_json().get(), text);
     }
+
+    #[test]
+    fn nested_documents_keep_their_order_also_in_the_response_types() {
+        let mut c = Converter::default();
+        let v = c.document(&doc! { "_id": 1_i32, "zeit": 2_i32, "betrag": 3_i32, "tricky": { "z": 1_i32, "$type": "x", "a": 2_i32 }, "arr": [{ "y": 1_i32, "b": 2_i32 }] });
+        assert_eq!(
+            v.to_json().get(),
+            r#"{"_id":1,"zeit":2,"betrag":3,"tricky":{"$type":"document","value":{"z":1,"$type":"x","a":2}},"arr":[{"y":1,"b":2}]}"#
+        );
+        let set = crate::shapes::DocumentSet { documents: vec![v.to_json()], ..Default::default() };
+        let text = serde_json::to_string(&crate::shapes::QueryResult::Documents { documents: set }).unwrap();
+        assert!(text.contains(r#"{"_id":1,"zeit":2,"betrag":3"#), "{text}");
+    }
 }

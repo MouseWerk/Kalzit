@@ -75,9 +75,9 @@ const MAX_SAMPLED_COLLECTIONS: usize = 100;
 const SCHEMA_SAMPLE: i64 = 100;
 const SCHEMA_SAMPLE_TIME: Duration = Duration::from_secs(2);
 
-/// Privileges a login may hold: those of the built-in `read` and `readAnyDatabase` roles
-/// (`planCacheRead`, which older servers granted with `read`, is left out on purpose: it reads
-/// other users' query shapes).
+/// Privileges a login may hold: those of the built-in `read` and `readAnyDatabase` roles.
+/// `planCacheRead` (`PLAN_CACHE_READ`) shows the server's cached query plans; the `read` role
+/// grants it on `<db>.system.js` only, so it is accepted there and nowhere else.
 const READ_ACTIONS: &[&str] = &[
     "changeStream",
     "collStats",
@@ -90,6 +90,7 @@ const READ_ACTIONS: &[&str] = &[
     "listIndexes",
     "listSearchIndexes",
 ];
+const PLAN_CACHE_READ: &str = "planCacheRead";
 
 pub fn kind() -> Kind {
     Kind { name: "MongoDB", hint_key: "datasources.kinds.mongodb.hint", settings: SETTINGS, plugin: Arc::new(MongoDb) }
@@ -488,8 +489,10 @@ fn privileges_verdict(status: &Document, has_user: bool) -> Result<(), SourceErr
         let actions = p.get_array("actions").map(|a| a.as_slice()).unwrap_or_default();
         for action in actions {
             let action = action.as_str().unwrap_or("?");
-            if !READ_ACTIONS.contains(&action) {
-                let resource = resource_text(p.get_document("resource").ok());
+            let resource_doc = p.get_document("resource").ok();
+            let on_system_js = resource_doc.and_then(|r| r.get_str("collection").ok()) == Some("system.js");
+            if !READ_ACTIONS.contains(&action) && !(action == PLAN_CACHE_READ && on_system_js) {
+                let resource = resource_text(resource_doc);
                 return Err(SourceError::failed(
                     "mongodb.login_not_read_only",
                     format!("the login may {action} on {resource}; use a login with only the read role"),
@@ -1026,11 +1029,18 @@ mod tests {
         assert_eq!(reason(privileges_verdict(&doc! { "ok": 1 }, true)), "mongodb.privileges_unknown");
         // Without a login, an empty answer is what a server with access control gives.
         assert!(privileges_verdict(&status(vec![], vec![]), false).is_ok());
-        let plan = doc! { "resource": { "db": "shop", "collection": "" }, "actions": ["planCacheRead"] };
-        assert_eq!(
-            reason(privileges_verdict(&status(vec![user], vec![read, plan]), true)),
-            "mongodb.login_not_read_only"
-        );
+        // What MongoDB 8.0's read role grants: planCacheRead on system.js only.
+        let system_js =
+            doc! { "resource": { "db": "shop", "collection": "system.js" }, "actions": ["find", "planCacheRead"] };
+        assert!(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), system_js]), true).is_ok());
+        for collection in ["", "orders", "system.jsx"] {
+            let plan = doc! { "resource": { "db": "shop", "collection": collection }, "actions": ["planCacheRead"] };
+            assert_eq!(
+                reason(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true)),
+                "mongodb.login_not_read_only",
+                "{collection:?}"
+            );
+        }
     }
 
     #[test]

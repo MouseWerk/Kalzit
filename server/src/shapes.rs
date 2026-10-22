@@ -223,8 +223,10 @@ impl PartialEq for OrderedJson {
     }
 }
 
+/// Deserializing goes through `Value`, so it works with any deserializer (a raw value needs
+/// serde_json's own), but the key order is **not** kept there. No response path deserializes it:
+/// the server only builds and serializes document sets; deserializing is for tests and clients.
 impl<'de> Deserialize<'de> for OrderedJson {
-    // Through `Value`, so it works with any deserializer (a raw value needs serde_json's own).
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(Value::deserialize(deserializer)?.into())
     }

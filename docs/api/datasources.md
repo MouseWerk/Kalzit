@@ -444,8 +444,8 @@ Read-only check (on the BSON as sent, after binding; `query_rejected`):
   source is saved. With a login, the server must report it and its privileges (otherwise
   `mongodb.privileges_unknown`). Every privilege must be one of those of the `read` and `readAnyDatabase`
   roles (`changeStream`, `collStats`, `dbHash`, `dbStats`, `find`, `killCursors`,
-  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`; `planCacheRead`, which
-  older servers grant with `read`, is left out on purpose since it shows other users' query shapes);
+  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`, and `planCacheRead` on
+  `<db>.system.js` only, where the `read` role grants it);
   anything more, on any database, is `mongodb.login_not_read_only` (`action`, `resource`). A
   server where `hostInfo` succeeds although no such privilege was granted checks no rights at all
   and is refused with `mongodb.access_control_off`.

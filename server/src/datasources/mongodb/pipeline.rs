@@ -827,4 +827,56 @@ mod tests {
         let inner = p[1].get_document("$facet").unwrap().get_array("a").unwrap()[0].as_document().unwrap().clone();
         assert_eq!(inner.get_document("$sample").unwrap().get("size"), Some(&Bson::Int64(5)));
     }
+
+    #[test]
+    fn unknown_arguments_are_refused_in_nested_pipelines() {
+        let vars = BTreeMap::new();
+        for p in [
+            r#"[{"$facet": {"a": [{"$unionWith": {"coll": "a", "db": "admin"}}]}}]"#,
+            r#"[{"$lookup": {"from": "a", "as": "z", "pipeline": [{"$lookup": {"from": "b", "as": "y", "db": "admin", "pipeline": []}}]}}]"#,
+        ] {
+            let e = binder(&vars).pipeline(p).unwrap_err();
+            assert_eq!(e.detail().reason, "mongodb.stage_invalid", "{p}");
+        }
+    }
+
+    #[test]
+    fn variables_in_field_name_arguments_stay_plain_values() {
+        let vars: BTreeMap<String, Value> = [("f".to_string(), json!("parent")), ("n".to_string(), json!(5))].into();
+        let p = binder(&vars)
+            .pipeline(r#"[{"$graphLookup": {"from": "a", "startWith": "$x", "connectFromField": "${f}", "connectToField": "_id", "as": "z"}},
+                {"$densify": {"field": "t", "range": {"step": "${n}", "bounds": "full"}}}]"#)
+            .unwrap();
+        assert_eq!(
+            p[0].get_document("$graphLookup").unwrap().get("connectFromField"),
+            Some(&Bson::String("parent".into()))
+        );
+        assert_eq!(
+            p[1].get_document("$densify").unwrap().get_document("range").unwrap().get("step"),
+            Some(&Bson::Int64(5))
+        );
+    }
+
+    #[test]
+    fn raw_contexts_still_scan_for_forbidden_operators() {
+        // Arguments read as constants are still scanned.
+        for (p, expected) in [
+            (
+                r#"[{"$densify": {"field": "t", "range": {"step": 1, "bounds": [{"$function": {}}, 2]}}}]"#,
+                "mongodb.operator_not_allowed",
+            ),
+            (
+                r#"[{"$setWindowFields": {"sortBy": {"t": 1}, "output": {"s": {"$sum": 1, "window": {"$where": "1"}}}}}]"#,
+                "mongodb.operator_not_allowed",
+            ),
+            (
+                r#"[{"$bucket": {"groupBy": "$a", "boundaries": [0, 1], "default": {"$code": "x"}}}]"#,
+                "mongodb.javascript",
+            ),
+            (r#"[{"$sample": {"size": 5, "$where": "1"}}]"#, "mongodb.operator_not_allowed"),
+        ] {
+            let vars = BTreeMap::new();
+            assert_eq!(binder(&vars).pipeline(p).unwrap_err().detail().reason, expected, "{p}");
+        }
+    }
 }
