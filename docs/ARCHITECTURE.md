@@ -396,8 +396,9 @@ type QueryResult =
   folds the WAL back into `kalzit.db`. The close gets 5 s, on Windows at most what is left of the
   grace; when a statement still waits for a lock another program holds, the stop goes on without
   it and logs a warning. Nothing committed is lost, and the next start completes the checkpoint.
-  A supervisor must allow for that: give `docker stop` `--stop-timeout 20` (its default of 10 s
-  is shorter than the 10 s grace plus the close); systemd's default of 90 s is enough.
+  A supervisor must allow for that: stop the container with `docker stop -t 20`, or create it
+  with `docker run --stop-timeout 20` (Docker's default of 10 s is shorter than the 10 s grace
+  plus the close); systemd's default of 90 s is enough.
 - Reads never wait on writers: the one write a read request makes, the session's last-seen time,
   runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
   the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
