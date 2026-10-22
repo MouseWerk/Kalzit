@@ -6,8 +6,10 @@ import { useI18n } from "../../i18n/i18n";
 import type { DashboardMark } from "./annotations";
 import {
   ANNOTATIONS_KEY,
+  type Annotation,
   createAnnotation,
   deleteAnnotation,
+  parseAnnotation,
   updateAnnotation,
 } from "./featuresApi";
 import { toLocalInput } from "./timeRange";
@@ -28,6 +30,12 @@ function fromLocalInput(text: string): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+/** Local time with seconds for a datetime-local input with `step="1"`: "2026-10-20T08:00:05". */
+export function toLocalInputSeconds(ms: number): string {
+  const seconds = String(new Date(ms).getSeconds()).padStart(2, "0");
+  return `${toLocalInput(ms)}:${seconds}`;
+}
+
 /**
  * Adds an annotation at a time (from a click, a key or the panel menu), or shows one. A written
  * annotation can be changed and deleted by those who may write; results of annotation queries are
@@ -37,13 +45,20 @@ export function AnnotationDialog(props: Props) {
   const { t, language } = useI18n();
   const formId = useId();
   const queryClient = useQueryClient();
-  const existing = props.mode === "open" ? props.mark.annotation : undefined;
+  // The stored annotation this dialog changes; a version conflict replaces it with the newer one.
+  const [existing, setExisting] = useState<Annotation | undefined>(
+    props.mode === "open" ? props.mark.annotation : undefined,
+  );
   const readOnly = props.mode === "open" && (existing === undefined || !props.canWrite);
-  const startTime = props.mode === "add" ? props.time : props.mark.time;
-  const startEnd = props.mode === "add" ? null : props.mark.timeEnd;
-  const [time, setTime] = useState(toLocalInput(startTime));
-  const [isSpan, setIsSpan] = useState(startEnd !== null);
-  const [end, setEnd] = useState(toLocalInput(startEnd ?? startTime));
+  // The exact times the dialog started from: the inputs show seconds, and a time nobody touched
+  // is sent (or left out of a change) with its full precision.
+  const [base, setBase] = useState(() => ({
+    time: props.mode === "add" ? props.time : props.mark.time,
+    end: props.mode === "add" ? null : props.mark.timeEnd,
+  }));
+  const [time, setTime] = useState(toLocalInputSeconds(base.time));
+  const [isSpan, setIsSpan] = useState(base.end !== null);
+  const [end, setEnd] = useState(toLocalInputSeconds(base.end ?? base.time));
   const [text, setText] = useState(props.mode === "add" ? "" : props.mark.text);
   const [tags, setTags] = useState(props.mode === "add" ? "" : props.mark.tags.join(", "));
   const [problem, setProblem] = useState<string | null>(null);
@@ -56,8 +71,12 @@ export function AnnotationDialog(props: Props) {
   };
   const save = useMutation({
     mutationFn: async () => {
-      const at = fromLocalInput(time);
-      const until = isSpan ? fromLocalInput(end) : null;
+      const timeChanged = time !== toLocalInputSeconds(base.time);
+      const at = timeChanged ? fromLocalInput(time) : base.time;
+      const endChanged =
+        isSpan !== (base.end !== null) ||
+        (isSpan && end !== toLocalInputSeconds(base.end ?? base.time));
+      const until = !isSpan ? null : endChanged ? fromLocalInput(end) : base.end;
       const tagList = tags
         .split(",")
         .map((tag) => tag.trim())
@@ -65,28 +84,47 @@ export function AnnotationDialog(props: Props) {
       if (at === null || (isSpan && (until === null || until < at))) {
         throw new Error("time");
       }
-      const input = { time: at, timeEnd: until, text: text.trim(), tags: [...new Set(tagList)] };
+      const fields = { text: text.trim(), tags: [...new Set(tagList)] };
       if (existing === undefined) {
         await createAnnotation(props.orgId, props.dashboardId, {
-          ...input,
+          ...fields,
+          time: at,
+          timeEnd: until,
           panelId: props.mode === "add" ? props.panelId : null,
         });
       } else {
+        // Times go along only when changed, so a stored time keeps its milliseconds.
         await updateAnnotation(props.orgId, props.dashboardId, existing.id, {
-          ...input,
+          ...fields,
           version: existing.version,
+          ...(timeChanged ? { time: at } : {}),
+          ...(endChanged ? { timeEnd: until } : {}),
         });
       }
     },
     onSuccess: done,
-    onError: (error) =>
+    onError: (error) => {
+      if (isApiError(error, "version_conflict")) {
+        // Show what is stored now; saving again changes that version.
+        const current = parseAnnotation(error.current);
+        if (current !== null) {
+          setExisting(current);
+          setBase({ time: current.time, end: current.timeEnd });
+          setTime(toLocalInputSeconds(current.time));
+          setIsSpan(current.timeEnd !== null);
+          setEnd(toLocalInputSeconds(current.timeEnd ?? current.time));
+          setText(current.text);
+          setTags(current.tags.join(", "));
+        }
+        setProblem(t("annotations.changed"));
+        return;
+      }
       setProblem(
         error instanceof Error && error.message === "time"
           ? t("annotations.timeInvalid")
-          : isApiError(error, "version_conflict")
-            ? t("annotations.changed")
-            : errorMessage(t, error),
-      ),
+          : errorMessage(t, error),
+      );
+    },
   });
   const remove = useMutation({
     mutationFn: () => deleteAnnotation(props.orgId, props.dashboardId, existing?.id ?? ""),
@@ -167,6 +205,7 @@ export function AnnotationDialog(props: Props) {
         <TextField
           label={t("annotations.time")}
           type="datetime-local"
+          step="1"
           value={time}
           onValueChange={setTime}
         />
@@ -182,6 +221,7 @@ export function AnnotationDialog(props: Props) {
           <TextField
             label={t("annotations.end")}
             type="datetime-local"
+            step="1"
             value={end}
             onValueChange={setEnd}
           />

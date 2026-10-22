@@ -138,8 +138,8 @@
     z-index: var(--z-menu);
     display: grid;
     gap: var(--space-1);
-    min-width: var(--size-field);
-    max-width: var(--size-text-max);
+    min-width: min(var(--size-field), 100vw - 2 * var(--space-4));
+    max-width: min(var(--size-text-max), 100vw - 2 * var(--space-4));
     margin-block-start: var(--space-1);
     padding: var(--space-2);
     border: var(--border-width) solid var(--border);
@@ -178,17 +178,19 @@
     visibility: hidden;
   }
 
-  /* Kiosk mode's way out: off screen until it has keyboard focus. */
+  /*
+   * Kiosk mode's way out: shown while the pointer, a touch or a key was used lately, hidden when
+   * idle unless it has keyboard focus.
+   */
   .dashboard__exit {
-    position: absolute;
+    position: fixed;
     inset-block-start: var(--space-2);
     inset-inline-end: var(--space-2);
     z-index: var(--z-menu);
-    transform: translateY(-200%);
   }
 
-  .dashboard__exit:focus-visible {
-    transform: none;
+  .dashboard--idle .dashboard__exit:not(:focus-visible) {
+    visibility: hidden;
   }
 
   .dashboard__alone {

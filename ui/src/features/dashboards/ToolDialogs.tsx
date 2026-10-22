@@ -28,7 +28,7 @@ import {
   type RowModel,
   type VariableModel,
 } from "./model";
-import { Dialog } from "./ui/Dialog";
+import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import "./dashboardTools.css";
 
@@ -362,8 +362,12 @@ export function JsonModelDialog({
 }) {
   const { t } = useI18n();
   const id = useId();
-  const [text, setText] = useState(() => JSON.stringify(model, null, 2));
+  const [original] = useState(() => JSON.stringify(model, null, 2));
+  const [text, setText] = useState(original);
   const [problem, setProblem] = useState<string | null>(null);
+  // Escape, the close button and Cancel ask before typed changes are lost.
+  const [confirming, setConfirming] = useState(false);
+  const close = () => (!readOnly && text !== original ? setConfirming(true) : onClose());
   const check = useMutation({
     mutationFn: async () => {
       let parsed: unknown;
@@ -387,11 +391,11 @@ export function JsonModelDialog({
   return (
     <Dialog
       title={t("dashboardTools.json.title")}
-      onClose={onClose}
+      onClose={close}
       size="large"
       actions={
         <>
-          <button type="button" className="button button--secondary" onClick={onClose}>
+          <button type="button" className="button button--secondary" onClick={close}>
             {readOnly ? t("dashboards.dialog.close") : t("dashboards.dialog.cancel")}
           </button>
           {readOnly ? null : (
@@ -433,6 +437,16 @@ export function JsonModelDialog({
           {problem}
         </p>
       )}
+      {confirming ? (
+        <ConfirmDialog
+          title={t("dashboardTools.json.discardTitle")}
+          confirmLabel={t("dashboards.discard.confirm")}
+          onCancel={() => setConfirming(false)}
+          onConfirm={onClose}
+        >
+          {t("dashboardTools.json.discardText")}
+        </ConfirmDialog>
+      ) : null}
     </Dialog>
   );
 }

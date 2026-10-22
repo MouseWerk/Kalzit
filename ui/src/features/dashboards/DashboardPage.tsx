@@ -238,8 +238,23 @@ function editorValues(panel: PanelModel, rows: readonly RowModel[], values: Vari
 }
 
 /** The panel as the dashboard stores it when it shows a library panel: its place, no queries. */
-function linkedPlace(panel: PanelModel): PanelModel {
-  return { ...panel, targets: [] };
+export function linkedPlace(panel: PanelModel): PanelModel {
+  // Only the place, plus type and title for whoever reads the stored model; the library panel
+  // holds queries, steps, options and links (the server refuses them on a slot).
+  const slot: PanelModel = {
+    id: panel.id,
+    type: panel.type,
+    title: panel.title,
+    grid: panel.grid,
+    targets: [],
+    transformations: [],
+    options: {},
+    fieldConfig: {},
+  };
+  if (panel.rowId !== undefined) slot.rowId = panel.rowId;
+  if (panel.repeat !== undefined) slot.repeat = panel.repeat;
+  if (panel.libraryPanelId !== undefined) slot.libraryPanelId = panel.libraryPanelId;
+  return slot;
 }
 
 /** Whether a library panel's content changed in the editor (place and title aside). */
@@ -360,7 +375,7 @@ function DashboardView({
   // TV mode: the controls hide after a while without input and come back with any.
   const [idle, setIdle] = useState(false);
   useEffect(() => {
-    if (display.mode !== "tv") {
+    if (display.mode === "normal") {
       setIdle(false);
       return;
     }
@@ -371,10 +386,12 @@ function DashboardView({
       timer = window.setTimeout(() => setIdle(true), TV_IDLE_MS);
     };
     window.addEventListener("pointermove", wake);
+    window.addEventListener("pointerdown", wake);
     window.addEventListener("keydown", wake);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("pointermove", wake);
+      window.removeEventListener("pointerdown", wake);
       window.removeEventListener("keydown", wake);
     };
   }, [display.mode]);
@@ -390,7 +407,16 @@ function DashboardView({
   const annotations = useDashboardAnnotations({
     orgId,
     dashboardId: dashboard.id,
-    range: resolved.ok ? resolved.range : { from: 0, to: 0 },
+    // The dashboard's range and every panel's own (time range or shift, from the library panel
+    // when it holds them), so a shifted panel shows the annotations of the period it draws.
+    ranges: resolved.ok
+      ? [
+          resolved.range,
+          ...model.panels.map((p) =>
+            panelRange(resolvePanel(p, library), resolved.range, clock.now),
+          ),
+        ]
+      : [],
     saved: dashboard.model,
     values,
     run: clock.run,
@@ -677,7 +703,8 @@ function DashboardView({
   return (
     <div className={className}>
       {mode === "kiosk" ? (
-        // Kiosk mode shows no controls; this exit appears when it receives keyboard focus.
+        // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
+        // lately (as TV mode shows its bar); keyboard focus always shows it.
         <button
           type="button"
           className="dashboard__exit button button--secondary"

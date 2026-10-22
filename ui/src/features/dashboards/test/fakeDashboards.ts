@@ -260,6 +260,13 @@ export function modelProblem(model: unknown): string | null {
     if (panel.libraryPanelId !== undefined && ((panel.targets ?? []) as unknown[]).length > 0) {
       return `model.panels[${i}].targets must be empty: the library panel holds the queries`;
     }
+    if (
+      panel.libraryPanelId !== undefined &&
+      (((panel.transformations ?? []) as unknown[]).length > 0 ||
+        ((panel.links ?? []) as unknown[]).length > 0)
+    ) {
+      return `model.panels[${i}].transformations and links must be empty on a library panel slot`;
+    }
     for (const [j, link] of ((panel.links ?? []) as { url: string }[]).entries()) {
       if (!/^(https?:\/\/|mailto:|\/(?!\/))/i.test(link.url)) {
         return `model.panels[${i}].links[${j}].url must start with http://, https://, mailto: or /`;

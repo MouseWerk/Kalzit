@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import type { LinkedPanel } from "./api";
 import { layoutSections, type PlacedPanel, panelValues, type Section } from "./layout";
@@ -279,6 +279,7 @@ function RowHeader({
 }) {
   const { t } = useI18n();
   const handleRef = useRef<HTMLButtonElement>(null);
+  const hintId = useId();
   const title = rowLabel(t, row, section.repeat?.value);
   // A keyboard move puts the row elsewhere in the document; its handle takes focus back.
   useEffect(() => {
@@ -345,11 +346,15 @@ function RowHeader({
             className="button button--ghost button--small dash-row__handle"
             aria-label={t("dashboardTools.rows.move", { title })}
             title={t("dashboardTools.rows.moveHint")}
+            aria-describedby={hintId}
             onKeyDown={onKey}
             onPointerDown={startDrag}
           >
             <span aria-hidden="true">⠿</span>
           </button>
+          <span className="visually-hidden" id={hintId}>
+            {t("dashboardTools.rows.moveHint")}
+          </span>
           <button
             type="button"
             className="button button--ghost button--small"

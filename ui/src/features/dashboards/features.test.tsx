@@ -269,6 +269,97 @@ describe("annotations", () => {
     await fill(user, within(dialog).getByRole("textbox", { name: "Text" }), "Spitze");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(1));
+    // The keyboard readout starts in the middle of the plot: the annotation is at the middle
+    // of the panel's range, to the millisecond the chart computed, not rounded to a minute.
+    const range = server.areas.dashboards.panelQueries[0]?.body.timeRange ?? { from: 0, to: 0 };
+    const added = server.areas.dashboardFeatures.annotations[0];
+    expect(Math.abs((added?.time ?? 0) - (range.from + range.to) / 2)).toBeLessThan(1000);
+  });
+
+  it("adds an annotation where Ctrl+click points on the chart", async () => {
+    const { server } = setup("editor", timeModel());
+    renderApp("/dashboards/d-main");
+    const plot = await within(await screen.findByRole("article", { name: "Load" })).findByRole(
+      "group",
+      { name: "Load" },
+    );
+    // At the plot's left edge (the value axis ends there; a click on the axis counts as the edge).
+    fireEvent.click(plot, { ctrlKey: true, clientX: 56 });
+    const dialog = await screen.findByRole("dialog", { name: "Add annotation" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Text" }), {
+      target: { value: "Klick" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(1));
+    const range = server.areas.dashboards.panelQueries[0]?.body.timeRange ?? { from: 0, to: 0 };
+    const added = server.areas.dashboardFeatures.annotations[0];
+    expect(Math.abs((added?.time ?? 0) - range.from)).toBeLessThan(1000);
+    // A plain click only focuses the chart.
+    fireEvent.click(plot, { clientX: 56 });
+    expect(screen.queryByRole("dialog", { name: "Add annotation" })).toBeNull();
+  });
+
+  it("shows a shifted panel's annotations, which lie outside the dashboard's range", async () => {
+    const model = timeModel();
+    const shifted = { ...(model.panels[0] as PanelModel), timeShift: "1d" };
+    model.panels = [shifted];
+    const { server } = setup("editor", model);
+    const { user } = renderApp("/dashboards/d-main");
+    const plot = await within(await screen.findByRole("article", { name: "Load" })).findByRole(
+      "group",
+      { name: "Load" },
+    );
+    plot.focus();
+    await user.keyboard("a");
+    const dialog = await screen.findByRole("dialog", { name: "Add annotation" });
+    await fill(user, within(dialog).getByRole("textbox", { name: "Text" }), "Gestern");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(1));
+    // A day back: before the dashboard's own range starts, and still drawn on the panel.
+    expect(server.areas.dashboardFeatures.annotations[0]?.time ?? 0).toBeLessThan(
+      Date.now() - 20 * 3_600_000,
+    );
+    expect(await screen.findByRole("button", { name: /Annotation at .*: Gestern/ })).toBeTruthy();
+  });
+
+  it("keeps a stored time's precision and retries after someone else changed it", async () => {
+    const { server } = setup("editor", timeModel());
+    const exact = Date.now() - 3_600_000 + 123;
+    server.areas.dashboardFeatures.annotations.push({
+      id: "a1",
+      dashboardId: "d-main",
+      panelId: null,
+      time: exact,
+      timeEnd: null,
+      text: "Release",
+      tags: [],
+      version: 1,
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: /Annotation at .*: Release/ }));
+    let dialog = screen.getByRole("dialog", { name: "Change annotation" });
+    // Someone else changes it meanwhile.
+    const stored = server.areas.dashboardFeatures.annotations[0];
+    if (stored !== undefined) {
+      stored.text = "Release 2";
+      stored.version = 2;
+    }
+    await replace(user, within(dialog).getByRole("textbox", { name: "Text" }), "Release 1.1");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText(/The dialog now shows what is stored/)).toBeTruthy();
+    expect(within(dialog).getByRole("textbox", { name: "Text" })).toHaveProperty(
+      "value",
+      "Release 2",
+    );
+    await replace(user, within(dialog).getByRole("textbox", { name: "Text" }), "Release 2.1");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations[0]?.version).toBe(3));
+    const patch = server.calls.filter((c) => c.method === "PATCH").at(-1);
+    // Only the text changed: no time is sent, so the stored one keeps its milliseconds.
+    expect(patch?.body).toEqual({ version: 2, text: "Release 2.1", tags: [] });
+    expect(server.areas.dashboardFeatures.annotations[0]?.time).toBe(exact);
+    dialog = screen.queryByRole("dialog", { name: "Change annotation" }) as HTMLElement;
+    expect(dialog).toBeNull();
   });
 
   it("shows annotations read-only to viewers, and nothing to add", async () => {
@@ -437,6 +528,25 @@ describe("view modes", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Main" })).toBeTruthy();
   });
 
+  it("offers a visible way out of kiosk mode to mouse and touch, hidden when idle", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setup("viewer", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
+      const { user, location } = renderApp("/dashboards/d-main?kiosk=kiosk");
+      const exit = await screen.findByRole("button", { name: "Leave full screen" });
+      const view = exit.closest(".dashboard") as HTMLElement;
+      expect(view.classList.contains("dashboard--idle")).toBe(false);
+      vi.advanceTimersByTime(5000);
+      await waitFor(() => expect(view.classList.contains("dashboard--idle")).toBe(true));
+      fireEvent.pointerDown(window);
+      await waitFor(() => expect(view.classList.contains("dashboard--idle")).toBe(false));
+      await user.click(exit);
+      await waitFor(() => expect(location().search).not.toHaveProperty("kiosk"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("enters TV mode from the menu and hides the controls after a while", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -555,7 +665,17 @@ describe("library panels", () => {
     await saveDashboard(user);
     await waitFor(() => expect(stored.versions).toHaveLength(2));
     const saved = latest(stored).model.panels[0];
-    expect(saved).toMatchObject({ libraryPanelId: "lib-1", targets: [] });
+    expect(saved).toEqual({
+      id: expect.any(String),
+      type: "table",
+      title: "Revenue",
+      grid: { x: 0, y: 0, w: 12, h: 8 },
+      targets: [],
+      transformations: [],
+      options: {},
+      fieldConfig: {},
+      libraryPanelId: "lib-1",
+    });
     // Viewing runs the library panel's queries through the panel route.
     await waitFor(() =>
       expect(server.areas.dashboards.panelQueries.some((q) => q.panelId === saved?.id)).toBe(true),
@@ -624,7 +744,17 @@ describe("library panels", () => {
     expect(server.areas.dashboardFeatures.libraryPanels[0]?.model).not.toHaveProperty("grid");
     await saveDashboard(user);
     await waitFor(() => expect(stored.versions).toHaveLength(2));
-    expect(latest(stored).model.panels[0]).toMatchObject({ libraryPanelId: "lib-1", targets: [] });
+    expect(latest(stored).model.panels[0]).toEqual({
+      id: "p1",
+      type: "table",
+      title: "Orders",
+      grid: { x: 0, y: 0, w: 12, h: 8 },
+      targets: [],
+      transformations: [],
+      options: {},
+      fieldConfig: {},
+      libraryPanelId: "lib-1",
+    });
   });
 });
 

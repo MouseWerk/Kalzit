@@ -92,6 +92,8 @@
   "dashboardTools.json.readOnlyHint": "Read only. Switch to edit mode to change the model.",
   "dashboardTools.json.apply": "Check and apply",
   "dashboardTools.json.syntax": "This is not valid JSON: {detail}",
+  "dashboardTools.json.discardTitle": "Discard JSON changes?",
+  "dashboardTools.json.discardText": "What you typed in the JSON model is not applied and will be lost.",
   "dashboardTools.import.button": "Import…",
   "dashboardTools.import.title": "Import dashboard",
   "dashboardTools.import.file": "File",

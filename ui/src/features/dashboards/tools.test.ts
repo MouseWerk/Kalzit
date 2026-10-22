@@ -159,6 +159,13 @@ describe("links", () => {
       fillVariables(`https://x/${ref("a")}?b=$b&c=${ref("c")}`, { a: "ä b", b: ["1", "2"] }),
     ).toBe(`https://x/%C3%A4%20b?b=1,2&c=${ref("c")}`);
     expect(linkHref(ref("target"), { target: "javascript:alert(1)" })).toBeNull();
+    // A scheme made of a variable passes only when the filled-in address is allowed: the check
+    // after filling in is what refuses it.
+    const scheme = `${ref("scheme")}://intranet.example/`;
+    expect(linkHref(scheme, { scheme: "https" })).toBe("https://intranet.example/");
+    expect(fillVariables(scheme, { scheme: "javascript" })).toBe("javascript://intranet.example/");
+    expect(linkHref(scheme, { scheme: "javascript" })).toBeNull();
+    expect(linkHref(scheme, { scheme: "data" })).toBeNull();
     expect(linkHref(`/d/${ref("id")}`, { id: "//evil" })).toBe("/d/%2F%2Fevil");
   });
 });

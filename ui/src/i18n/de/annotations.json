@@ -1,6 +1,6 @@
 {
   "annotations.title": "Anmerkung",
-  "annotations.add": "Anmerken",
+  "annotations.add": "Anmerkung hinzufügen",
   "annotations.addNamed": "Anmerkung zu „{title}“ hinzufügen",
   "annotations.addHint": "Drücke A, um an der Markierung eine Anmerkung hinzuzufügen, oder Strg+Klick ins Diagramm.",
   "annotations.addTitle": "Anmerkung hinzufügen",
@@ -16,7 +16,7 @@
   "annotations.delete": "Löschen",
   "annotations.textRequired": "Gib einen Text ein.",
   "annotations.timeInvalid": "Gib einen gültigen Zeitpunkt ein; das Ende darf nicht vor dem Anfang liegen.",
-  "annotations.changed": "Jemand hat diese Anmerkung inzwischen geändert. Schließe den Dialog und öffne sie neu.",
+  "annotations.changed": "Jemand hat diese Anmerkung inzwischen geändert. Der Dialog zeigt jetzt den gespeicherten Stand; speichere erneut, um ihn zu ändern.",
   "annotations.fromQuery": "Diese Anmerkung stammt aus einer Anmerkungsabfrage des Dashboards und wird in ihrer Datenquelle geändert.",
   "annotations.queries.title": "Anmerkungsabfragen",
   "annotations.queries.hint": "Jede Zeile des Ergebnisses wird zu einer Anmerkung auf allen Zeit-Panels: die erste Zeitspalte ist der Zeitpunkt, eine Spalte timeEnd beendet einen Zeitraum, text (sonst die erste Textspalte) ist der Text und tags sind die Schlagwörter.",

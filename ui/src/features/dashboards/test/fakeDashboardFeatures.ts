@@ -135,6 +135,12 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
         const extra = unknownField(body, ["time", "timeEnd", "text", "tags", "panelId"]);
         if (extra !== undefined) return validation(extra);
         if (typeof body.text !== "string" || body.text.trim() === "") return validation("text");
+        if (
+          typeof body.panelId === "string" &&
+          !latest(dashboard).model.panels.some((p) => p.id === body.panelId)
+        ) {
+          return validation("panelId");
+        }
         const annotation: StoredAnnotation = {
           id: `ann-${nextId++}`,
           dashboardId: dashboard.id,

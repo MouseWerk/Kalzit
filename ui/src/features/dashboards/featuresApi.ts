@@ -47,7 +47,7 @@ export interface Annotation {
   version: number;
 }
 
-function parseAnnotation(value: unknown): Annotation | null {
+export function parseAnnotation(value: unknown): Annotation | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.time !== "number") {
     return null;
   }
@@ -116,7 +116,7 @@ export async function updateAnnotation(
   orgId: string,
   dashboardId: string,
   id: string,
-  input: AnnotationInput & { version: number },
+  input: { version: number; text: string; tags: string[]; time?: number; timeEnd?: number | null },
 ): Promise<void> {
   await send("PATCH", orgPath(orgId, "dashboards", dashboardId, "annotations", id), input);
 }
