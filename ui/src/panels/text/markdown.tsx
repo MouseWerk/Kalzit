@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { isSafeHref } from "../fieldConfig/fieldConfig";
 import "../viz.css";
 
 /**
@@ -8,12 +9,13 @@ import "../viz.css";
  * links. Links are kept only for web, mail and same-site addresses.
  */
 
-const SAFE_HREF = /^(https?:\/\/|mailto:|\/(?!\/)|#|\.\/|\?)/i;
-
 export function safeHref(href: string): string | null {
   const trimmed = href.trim();
-  return SAFE_HREF.test(trimmed) ? trimmed : null;
+  return isSafeHref(trimmed) ? trimmed : null;
 }
+
+type Variables = Readonly<Record<string, string>>;
+const NONE: Variables = {};
 
 /** `$name`, `${name}` and `[[name]]` replaced by the variable's value; unknown names stay. */
 export function interpolate(text: string, variables: Readonly<Record<string, string>>): string {
@@ -32,38 +34,39 @@ export function interpolate(text: string, variables: Readonly<Record<string, str
 }
 
 const INLINE =
-  /(`+)([\s\S]*?)\1|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|\[([^\]]+)\]\(([^)\s]+)\)/;
+  /(`+)([\s\S]*?)\1|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/;
 
 /** Inline Markdown: code, strong, emphasis and links; the rest is text. */
-export function inline(text: string, key = "i"): ReactNode[] {
+export function inline(text: string, key = "i", variables: Variables = NONE): ReactNode[] {
+  const fill = (part: string) => interpolate(part, variables);
   const nodes: ReactNode[] = [];
   let rest = text;
   let n = 0;
   while (rest !== "") {
     const match = INLINE.exec(rest);
     if (match === null) {
-      nodes.push(rest);
+      nodes.push(fill(rest));
       break;
     }
     if (match.index > 0) {
-      nodes.push(rest.slice(0, match.index));
+      nodes.push(fill(rest.slice(0, match.index)));
     }
     const id = `${key}-${n++}`;
     const [whole, , code, strong1, strong2, em1, em2, label, href] = match;
     if (code !== undefined) {
-      nodes.push(<code key={id}>{code}</code>);
+      nodes.push(<code key={id}>{fill(code)}</code>);
     } else if (strong1 !== undefined || strong2 !== undefined) {
-      nodes.push(<strong key={id}>{inline(strong1 ?? strong2 ?? "", id)}</strong>);
+      nodes.push(<strong key={id}>{inline(strong1 ?? strong2 ?? "", id, variables)}</strong>);
     } else if (em1 !== undefined || em2 !== undefined) {
-      nodes.push(<em key={id}>{inline(em1 ?? em2 ?? "", id)}</em>);
+      nodes.push(<em key={id}>{inline(em1 ?? em2 ?? "", id, variables)}</em>);
     } else if (label !== undefined && href !== undefined) {
       const safe = safeHref(href);
       nodes.push(
         safe === null ? (
-          label
+          fill(label)
         ) : (
           <a key={id} href={safe} rel="noopener noreferrer">
-            {inline(label, id)}
+            {inline(label, id, variables)}
           </a>
         ),
       );
@@ -84,8 +87,12 @@ function cellsOf(line: string): string[] {
     .map((cell) => cell.trim());
 }
 
-/** Block Markdown to React elements. */
-export function markdown(source: string): ReactNode[] {
+/**
+ * Block Markdown to React elements. Variables are filled in after parsing and only into text,
+ * so a value can never add a link, emphasis or anything else.
+ */
+export function markdown(source: string, variables: Variables = NONE): ReactNode[] {
+  const text = (part: string, key?: string) => inline(part, key, variables);
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -108,7 +115,7 @@ export function markdown(source: string): ReactNode[] {
       i++;
       blocks.push(
         <pre key={key()}>
-          <code>{body.join("\n")}</code>
+          <code>{interpolate(body.join("\n"), variables)}</code>
         </pre>,
       );
       continue;
@@ -118,7 +125,7 @@ export function markdown(source: string): ReactNode[] {
       // Panel text sits below the panel's own title, so its headings start one level lower.
       const level = Math.min(6, (heading[1] as string).length + 2);
       const Tag = `h${level}` as "h3";
-      blocks.push(<Tag key={key()}>{inline(heading[2] as string)}</Tag>);
+      blocks.push(<Tag key={key()}>{text(heading[2] as string)}</Tag>);
       i++;
       continue;
     }
@@ -133,7 +140,7 @@ export function markdown(source: string): ReactNode[] {
         quoted.push((lines[i] as string).replace(/^\s*>\s?/, ""));
         i++;
       }
-      blocks.push(<blockquote key={key()}>{markdown(quoted.join("\n"))}</blockquote>);
+      blocks.push(<blockquote key={key()}>{markdown(quoted.join("\n"), variables)}</blockquote>);
       continue;
     }
     const bullet = /^\s*([-*+]|\d+[.)])\s+/;
@@ -146,7 +153,7 @@ export function markdown(source: string): ReactNode[] {
       }
       const children = entries.map((entry, n) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: list entries keep their order
-        <li key={n}>{inline(entry, `l${n}`)}</li>
+        <li key={n}>{text(entry, `l${n}`)}</li>
       ));
       blocks.push(ordered ? <ol key={key()}>{children}</ol> : <ul key={key()}>{children}</ul>);
       continue;
@@ -167,7 +174,7 @@ export function markdown(source: string): ReactNode[] {
                 {head.map((cell, n) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: columns keep their order
                   <th key={n} scope="col">
-                    {inline(cell, `h${n}`)}
+                    {text(cell, `h${n}`)}
                   </th>
                 ))}
               </tr>
@@ -178,7 +185,7 @@ export function markdown(source: string): ReactNode[] {
                 <tr key={r}>
                   {head.map((_, c) => (
                     // biome-ignore lint/suspicious/noArrayIndexKey: columns keep their order
-                    <td key={c}>{inline(row[c] ?? "", `c${r}-${c}`)}</td>
+                    <td key={c}>{text(row[c] ?? "", `c${r}-${c}`)}</td>
                   ))}
                 </tr>
               ))}
@@ -202,7 +209,7 @@ export function markdown(source: string): ReactNode[] {
       paragraph.push(line.trim());
       i++;
     }
-    blocks.push(<p key={key()}>{inline(paragraph.join(" "))}</p>);
+    blocks.push(<p key={key()}>{text(paragraph.join(" "))}</p>);
   }
   return blocks;
 }

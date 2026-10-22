@@ -46,6 +46,9 @@ export function PanelEditor({
   const permissions = useOrgPermissions();
   // Panels saved before the field options existed move their old options to the new place.
   const [panel, setPanel] = useState(() => upgradePanel(initial));
+  // Options per panel type seen in this editor, so arrowing through the picker and back to a
+  // type keeps what was set for it.
+  const [optionsByType, setOptionsByType] = useState<Record<string, unknown>>({});
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
@@ -164,7 +167,10 @@ export function PanelEditor({
           <PanelPicker
             value={panel.type}
             shapes={shapes}
-            onChange={(type) => setPanel((p) => ({ ...p, type, options: {} }))}
+            onChange={(type) => {
+              setOptionsByType((kept) => ({ ...kept, [panel.type]: panel.options }));
+              setPanel((p) => ({ ...p, type, options: optionsByType[type] ?? {} }));
+            }}
           />
           {plugin === undefined || Editor === undefined ? null : (
             <fieldset className="panel-editor__options">

@@ -216,7 +216,16 @@ export function ChartShell({
           </span>
           {children(cursorX)}
           {cursorTime === null || tooltip === "hidden" ? null : (
-            <div className="ts__tooltip" ref={tooltipRef} aria-hidden="true">
+            <div
+              // Past the middle the tooltip opens to the left, so the edge never cuts it off.
+              className={
+                (cursorX ?? 0) > plot.left + plot.width / 2
+                  ? "ts__tooltip ts__tooltip--flip"
+                  : "ts__tooltip"
+              }
+              ref={tooltipRef}
+              aria-hidden="true"
+            >
               <div className="ts__tooltip-time">
                 {new Date(cursorTime).toLocaleString(language)}
               </div>

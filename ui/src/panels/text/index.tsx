@@ -27,16 +27,15 @@ function parseOptions(stored: unknown): TextOptions {
 /** Text or Markdown with dashboard variables filled in; never raw HTML. */
 function TextPanel({ options, title, variables = {} }: PanelProps<TextOptions>) {
   const { t } = useI18n();
-  const content = interpolate(options.content, variables);
-  if (content.trim() === "") {
+  if (options.content.trim() === "") {
     return <p className="panel-empty">{t("panels.text.empty")}</p>;
   }
   return (
     <section className="text-panel" aria-label={title}>
       {options.mode === "plain" ? (
-        <p className="text-panel__plain">{content}</p>
+        <p className="text-panel__plain">{interpolate(options.content, variables)}</p>
       ) : (
-        markdown(content)
+        markdown(options.content, variables)
       )}
     </section>
   );

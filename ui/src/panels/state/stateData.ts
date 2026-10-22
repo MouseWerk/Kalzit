@@ -138,6 +138,24 @@ export function segments(row: StateRow, times: readonly number[], end: number): 
 }
 
 /**
+ * Runs shorter than `minimum` (a pixel's worth of time) are folded into the run before them, so a
+ * row never draws more rectangles than it has pixels. A narrow first run is kept; the next one
+ * that is wide enough stands on its own again.
+ */
+export function mergeNarrow(runs: readonly Segment[], minimum: number): Segment[] {
+  const merged: Segment[] = [];
+  for (const run of runs) {
+    const previous = merged.at(-1);
+    if (previous !== undefined && run.to - run.from < minimum && run.from <= previous.to) {
+      previous.to = Math.max(previous.to, run.to);
+    } else {
+      merged.push({ ...run });
+    }
+  }
+  return merged;
+}
+
+/**
  * Status history columns: every time point, or with more than `max` points the last value of
  * each of `max` equal stretches, so cells never get thinner than a few pixels.
  */

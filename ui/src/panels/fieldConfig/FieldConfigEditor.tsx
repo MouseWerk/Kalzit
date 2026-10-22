@@ -4,18 +4,20 @@ import { NumberField, SelectField, TextField } from "../shared";
 import type { FieldOptionGroup } from "../types";
 import {
   CELL_DISPLAYS,
-  compilePattern,
   DEFAULT_THRESHOLDS,
   type FieldConfig,
   type FieldOptions,
   type FieldOverride,
   LIMITS,
+  OPTION_KEYS,
+  type OverrideProperties,
   parseFieldConfig,
   type Thresholds,
   TONES,
   type Tone,
   type ValueMapping,
 } from "./fieldConfig";
+import { isInvalidPattern } from "./pattern";
 import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
 
@@ -244,8 +246,7 @@ function MappingEditor({
   onRemove: () => void;
 }) {
   const { t } = useI18n();
-  const invalid =
-    mapping.type === "regex" && mapping.pattern !== "" && compilePattern(mapping.pattern) === null;
+  const invalid = mapping.type === "regex" && isInvalidPattern(mapping.pattern);
   return (
     <li className="viz-editor__row">
       <SelectField
@@ -508,10 +509,9 @@ function OverrideEditor({
   onRemove: () => void;
 }) {
   const { t } = useI18n();
-  const invalid =
-    override.matcher.type === "regex" &&
-    override.matcher.value !== "" &&
-    compilePattern(override.matcher.value) === null;
+  const invalid = override.matcher.type === "regex" && isInvalidPattern(override.matcher.value);
+  const present = OPTION_KEYS.filter((key) => override.properties[key] !== undefined);
+  const cleared = OPTION_KEYS.filter((key) => override.properties[key] === null);
   return (
     <li className="viz-editor__override">
       <SelectField
@@ -536,15 +536,71 @@ function OverrideEditor({
         </p>
       ) : null}
       <OptionsFields
-        options={override.properties}
+        options={setOptions(override.properties)}
         groups={groups.filter((g) => g !== "overrides")}
-        onChange={(properties) => onChange({ ...override, properties })}
+        onChange={(next) => {
+          // Cleared properties stay cleared unless the editor set them again.
+          const properties: OverrideProperties = { ...next };
+          for (const key of cleared) {
+            if (properties[key] === undefined) properties[key] = null;
+          }
+          onChange({ ...override, properties });
+        }}
+      />
+      {present.length === 0 ? null : (
+        <ul className="viz-editor__chips" aria-label={t("panels.overrides.setHere")}>
+          {present.map((key) => (
+            <li key={key} className="viz-editor__chip">
+              <span>
+                {t(`panels.option.${key}`)}
+                {override.properties[key] === null ? ` (${t("panels.overrides.cleared")})` : ""}
+              </span>
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                aria-label={t("panels.overrides.resetNamed", { option: t(`panels.option.${key}`) })}
+                onClick={() => {
+                  const properties = { ...override.properties };
+                  delete properties[key];
+                  onChange({ ...override, properties });
+                }}
+              >
+                {t("panels.overrides.reset")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <SelectField
+        label={t("panels.overrides.clear")}
+        hint={t("panels.overrides.clearHint")}
+        value=""
+        choices={[
+          ["", "–"],
+          ...OPTION_KEYS.filter((key) => !present.includes(key)).map(
+            (key) => [key, t(`panels.option.${key}`)] as const,
+          ),
+        ]}
+        onChange={(key) => {
+          if (key !== "") {
+            onChange({ ...override, properties: { ...override.properties, [key]: null } });
+          }
+        }}
       />
       <button type="button" className="button button--ghost button--small" onClick={onRemove}>
         {t("panels.overrides.remove")}
       </button>
     </li>
   );
+}
+
+/** The properties an override sets to a value, for the option editors. */
+function setOptions(properties: OverrideProperties): FieldOptions {
+  const options: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (value !== null && value !== undefined) options[key] = value;
+  }
+  return options as FieldOptions;
 }
 
 /**

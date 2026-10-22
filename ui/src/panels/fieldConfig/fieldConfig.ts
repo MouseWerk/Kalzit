@@ -11,6 +11,9 @@ import {
   MAX_UNIT_CHARS,
 } from "./units";
 import "../viz.css";
+import { compilePattern } from "./pattern";
+
+export { compilePattern } from "./pattern";
 
 /**
  * The shared field options of frame panels, stored in the panel's `fieldConfig`: defaults for
@@ -82,10 +85,29 @@ export interface FieldMatcher {
   value: string;
 }
 
+/** An override's properties: a value sets it, `null` clears what the defaults set. */
+export type OverrideProperties = { [K in keyof FieldOptions]?: FieldOptions[K] | null };
+
 export interface FieldOverride {
   matcher: FieldMatcher;
-  properties: FieldOptions;
+  properties: OverrideProperties;
 }
+
+/** The option names, for clearing and resetting them one by one. */
+export const OPTION_KEYS = [
+  "unit",
+  "decimals",
+  "min",
+  "max",
+  "thresholds",
+  "mappings",
+  "noValue",
+  "displayName",
+  "color",
+  "cellDisplay",
+  "link",
+  "width",
+] as const satisfies readonly (keyof FieldOptions)[];
 
 export interface FieldConfig {
   defaults: FieldOptions;
@@ -219,6 +241,19 @@ export function parseFieldOptions(value: unknown): FieldOptions {
   return options;
 }
 
+/** Override properties: like field options, and an explicit `null` is kept as "clear". */
+export function parseOverrideProperties(value: unknown): OverrideProperties {
+  const properties: OverrideProperties = parseFieldOptions(value);
+  if (isRecord(value)) {
+    for (const key of OPTION_KEYS) {
+      if (value[key] === null) {
+        properties[key] = null;
+      }
+    }
+  }
+  return properties;
+}
+
 export function parseFieldConfig(value: unknown): FieldConfig {
   if (!isRecord(value)) {
     return EMPTY_FIELD_CONFIG;
@@ -232,31 +267,11 @@ export function parseFieldConfig(value: unknown): FieldConfig {
       const type = raw.matcher.type === "regex" ? "regex" : "name";
       overrides.push({
         matcher: { type, value: text(raw.matcher.value, LIMITS.textChars) ?? "" },
-        properties: parseFieldOptions(raw.properties),
+        properties: parseOverrideProperties(raw.properties),
       });
     }
   }
   return { defaults: parseFieldOptions(value.defaults), overrides };
-}
-
-const patterns = new Map<string, RegExp | null>();
-
-/** A pattern typed by a user, compiled once; null when it is not a valid expression. */
-export function compilePattern(pattern: string): RegExp | null {
-  if (!patterns.has(pattern)) {
-    let compiled: RegExp | null = null;
-    try {
-      compiled = new RegExp(pattern);
-    } catch {
-      compiled = null;
-    }
-    // Patterns come from saved panels; a bounded cache is enough for every one on a page.
-    if (patterns.size > 500) {
-      patterns.clear();
-    }
-    patterns.set(pattern, compiled);
-  }
-  return patterns.get(pattern) ?? null;
 }
 
 /** Whether an override applies to the field: by its name or its name with labels. */
@@ -280,7 +295,15 @@ export function fieldOptionsFor(field: Field, config: FieldConfig): FieldOptions
   options = { ...options, ...config.defaults };
   for (const override of config.overrides) {
     if (matches(override.matcher, field)) {
-      options = { ...options, ...override.properties };
+      const next: Record<string, unknown> = { ...options };
+      for (const [key, value] of Object.entries(override.properties)) {
+        if (value === null) {
+          delete next[key];
+        } else if (value !== undefined) {
+          next[key] = value;
+        }
+      }
+      options = next as FieldOptions;
     }
   }
   return options;
@@ -445,16 +468,30 @@ export function toneClass(tone: Tone | undefined, index = 0): string {
 const SAFE_LINK = /^(https?:\/\/|mailto:|\/(?!\/)|\.\/|\?|#)/i;
 
 /**
- * A cell link with `${__value}` filled in (URL-encoded) and `${__field}` the field name. Only
- * web, mail and same-site links are made; anything else (javascript:, data:) gives null.
+ * Whether an address may become a link: web, mail and same-site addresses only. A backslash is
+ * refused anywhere, since browsers read `/\\host` as `//host`, another site.
+ */
+export function isSafeHref(href: string): boolean {
+  return !href.includes("\\") && SAFE_LINK.test(href);
+}
+
+// biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
+const VALUE = "${__value}";
+// biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
+const FIELD = "${__field}";
+
+/**
+ * A cell link. A template that is `${__value}` alone uses the value itself as the address;
+ * otherwise `${__value}` and `${__field}` are filled in URL-encoded. Either way only safe
+ * addresses become links (javascript:, data: and the like give null).
  */
 export function cellLink(template: string, value: string, fieldName: string): string | null {
-  // The placeholders are written as users type them, not as template literals.
-  const href = template
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
-    .replaceAll("${__value}", encodeURIComponent(value))
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
-    .replaceAll("${__field}", encodeURIComponent(fieldName))
-    .trim();
-  return SAFE_LINK.test(href) ? href : null;
+  const href =
+    template.trim() === VALUE
+      ? value.trim()
+      : template
+          .replaceAll(VALUE, encodeURIComponent(value))
+          .replaceAll(FIELD, encodeURIComponent(fieldName))
+          .trim();
+  return isSafeHref(href) ? href : null;
 }

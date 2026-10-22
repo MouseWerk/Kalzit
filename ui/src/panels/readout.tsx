@@ -9,7 +9,6 @@ import {
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
 import type { TooltipMode } from "./fieldConfig/legendOptions";
-import { useStyleVars } from "./styleVars";
 import "./panels.css";
 import "./viz.css";
 
@@ -47,18 +46,16 @@ interface ReadoutProps {
 export function Readout({ title, items, tooltip, className, children }: ReadoutProps) {
   const { t } = useI18n();
   const hintId = useId();
-  const tooltipRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState<number | null>(null);
   const [row, setRow] = useState<number | undefined>(undefined);
   const [byKeyboard, setByKeyboard] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [pointer, setPointer] = useState({ x: 0, y: 0 });
 
   useEscapeLayer(focused && byKeyboard && active !== null, () => {
     setActive(null);
     setByKeyboard(false);
   });
-  useStyleVars(tooltipRef, { "--hover-x": `${pointer.x}px`, "--hover-y": `${pointer.y}px` });
 
   const current = active === null ? undefined : items[active];
   const spoken =
@@ -91,6 +88,9 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
     const next = keys[event.key];
     if (next !== undefined) {
       event.preventDefault();
+      // The keyboard tooltip sits in the corner; the pointer's side no longer applies.
+      event.currentTarget.dataset.flipX = "false";
+      event.currentTarget.dataset.flipY = "false";
       setByKeyboard(true);
       setRow(undefined);
       setActive(next);
@@ -106,15 +106,25 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
     setRow(hoveredRow);
   };
 
+  // The tooltip follows the pointer through CSS properties on the box, set directly: moving the
+  // pointer re-renders nothing, only a change of the item under it does. Past the middle the
+  // tooltip opens to the other side, so it is not cut off at the edges (or on a phone).
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    setPointer({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    const box = event.currentTarget;
+    const rect = box.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    box.style.setProperty("--hover-x", `${x}px`);
+    box.style.setProperty("--hover-y", `${y}px`);
+    box.dataset.flipX = String(x > rect.width / 2);
+    box.dataset.flipY = String(y > rect.height / 2);
   }
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: a focusable chart, not a set of form fields
     <div
       className={`readout ${className ?? ""}`}
+      ref={boxRef}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: the chart takes focus for the keyboard readout
       tabIndex={0}
       role="group"
@@ -150,7 +160,6 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
       {current === undefined || tooltip === "hidden" || rows.length === 0 ? null : (
         <div
           className={byKeyboard ? "readout__tooltip readout__tooltip--fixed" : "readout__tooltip"}
-          ref={tooltipRef}
           aria-hidden="true"
         >
           {current.label === "" ? null : <div className="ts__tooltip-time">{current.label}</div>}

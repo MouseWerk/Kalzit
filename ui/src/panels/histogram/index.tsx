@@ -103,8 +103,14 @@ export function histogram(
   let size: number;
   if (options.bucketSize !== undefined) {
     size = options.bucketSize;
+    // More than the maximum of buckets: the size grows by whole multiples until they fit, so
+    // every value still lands in its own bucket instead of piling up in the last one.
+    const needed = Math.ceil((high - Math.floor(low / size) * size) / size + 1e-9);
+    if (needed > BUCKETS.max) {
+      size *= Math.ceil(needed / BUCKETS.max);
+    }
     low = Math.floor(low / size) * size;
-    buckets = Math.min(BUCKETS.max, Math.max(1, Math.ceil((high - low) / size + 1e-9)));
+    buckets = Math.max(1, Math.ceil((high - low) / size + 1e-9));
   } else {
     buckets = options.bucketCount ?? Math.min(50, Math.max(5, Math.ceil(Math.sqrt(count))));
     size = (high - low) / buckets;

@@ -85,14 +85,26 @@ export function formatNumber(
 function scaled(steps: readonly [factor: number, symbol: string][]) {
   return (value: number, decimals: number | undefined, language: string): Formatted => {
     const abs = Math.abs(value);
-    let chosen = steps[0] as [number, string];
-    for (const step of steps) {
-      if (abs >= step[0]) {
-        chosen = step;
-      }
+    let index = 0;
+    steps.forEach((step, i) => {
+      if (abs >= step[0]) index = i;
+    });
+    // The step is picked after rounding: 1,048,575 B rounds to 1024 KiB, which reads 1 MiB.
+    while (index + 1 < steps.length) {
+      const [factor] = steps[index] as [number, string];
+      const [next] = steps[index + 1] as [number, string];
+      if (Math.abs(rounded(value / factor, decimals)) < next / factor) break;
+      index++;
     }
-    return { text: formatNumber(value / chosen[0], decimals, language), suffix: chosen[1] };
+    const [factor, symbol] = steps[index] as [number, string];
+    return { text: formatNumber(value / factor, decimals, language), suffix: symbol };
   };
+}
+
+/** The number as it will be written, rounded the way `formatNumber` rounds it. */
+function rounded(value: number, decimals: number | undefined): number {
+  const text = numberFormat("en-US", { useGrouping: false, ...digits(value, decimals) }).format(value);
+  return Number(text);
 }
 
 /** A fixed symbol after the number. */
@@ -168,10 +180,20 @@ function currency(code: string) {
   });
 }
 
+/** The range of JavaScript dates (±8.64e15 ms); outside it a "time" is shown as the number. */
+const MAX_TIME = 8.64e15;
+
+function isTime(value: number): boolean {
+  return Number.isFinite(value) && Math.abs(value) <= MAX_TIME;
+}
+
 const relativeFormats = new Map<string, Intl.RelativeTimeFormat>();
 
 /** "3 hours ago" / "vor 3 Stunden", from a Unix ms time. */
 export function fromNow(time: number, language: string, now = Date.now()): string {
+  if (!isTime(time)) {
+    return formatNumber(time, undefined, language);
+  }
   let format = relativeFormats.get(language);
   if (format === undefined) {
     format = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
@@ -259,14 +281,16 @@ export const UNITS: readonly UnitDef[] = [
   unit("celsius", "temperature", "°C", plain("°C")),
   unit("fahrenheit", "temperature", "°F", plain("°F")),
   unit("kelvin", "temperature", "K", plain("K")),
-  unit("dateTime", "date", "", (value, _decimals, language) => ({
-    text: dateTime(language).format(value),
-    suffix: "",
-  })),
-  unit("dateIso", "date", "", (value) => ({
-    text: Number.isFinite(value) ? new Date(value).toISOString() : "",
-    suffix: "",
-  })),
+  unit("dateTime", "date", "", (value, decimals, language) =>
+    isTime(value)
+      ? { text: dateTime(language).format(value), suffix: "" }
+      : { text: formatNumber(value, decimals, language), suffix: "" },
+  ),
+  unit("dateIso", "date", "", (value, decimals, language) =>
+    isTime(value)
+      ? { text: new Date(value).toISOString(), suffix: "" }
+      : { text: formatNumber(value, decimals, language), suffix: "" },
+  ),
   unit("fromNow", "date", "", (value, _decimals, language) => ({
     text: fromNow(value, language),
     suffix: "",

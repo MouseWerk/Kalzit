@@ -1,6 +1,6 @@
 import { isRecord } from "../../api/client";
 import type { FieldConfig } from "./fieldConfig";
-import { CUSTOM_PREFIX, isCatalogUnit } from "./units";
+import { CUSTOM_PREFIX } from "./units";
 
 /**
  * Panels saved before the field options existed kept a free-text unit in `options.unit`, the
@@ -9,9 +9,12 @@ import { CUSTOM_PREFIX, isCatalogUnit } from "./units";
  * new place when a panel is opened, so the next save stores the current form.
  */
 
-/** A unit as the field options store it: a catalog id stays, free text becomes a suffix. */
+/**
+ * A unit typed before the catalog existed. It was a plain suffix after the number, so it stays
+ * one: "ms" keeps meaning "write ms after the value", not "scale to s and min".
+ */
 export function unitId(text: string): string {
-  return isCatalogUnit(text) || text.startsWith(CUSTOM_PREFIX) ? text : `${CUSTOM_PREFIX}${text}`;
+  return text.startsWith(CUSTOM_PREFIX) ? text : `${CUSTOM_PREFIX}${text}`;
 }
 
 /** The field options with an old options unit as the default unit, unless one is set. */

@@ -278,9 +278,26 @@
     transform: translate(var(--space-3), var(--space-3));
   }
 
-  .readout__tooltip--fixed {
+  .ts__tooltip.ts__tooltip--flip {
+    transform: translateX(calc(-100% - var(--space-2)));
+  }
+
+  .readout[data-flip-x="true"] .readout__tooltip {
+    transform: translate(calc(-100% - var(--space-3)), var(--space-3));
+  }
+
+  .readout[data-flip-y="true"] .readout__tooltip {
+    transform: translate(var(--space-3), calc(-100% - var(--space-3)));
+  }
+
+  .readout[data-flip-x="true"][data-flip-y="true"] .readout__tooltip {
+    transform: translate(calc(-100% - var(--space-3)), calc(-100% - var(--space-3)));
+  }
+
+  .readout .readout__tooltip--fixed {
     inset-block-start: 0;
     inset-inline-start: 0;
+    transform: none;
   }
 
   /* The item under the cursor or keyboard: a quiet neutral band behind it. */

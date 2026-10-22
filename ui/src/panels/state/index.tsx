@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
 import { EMPTY_FIELD_CONFIG } from "../fieldConfig/fieldConfig";
@@ -14,7 +15,8 @@ import { Readout, type ReadoutItem } from "../readout";
 import { EmptyPanel, emptyReason } from "../shared";
 import { timeTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
-import { columns, type StateData, segments, stateData } from "./stateData";
+import { useElementSize } from "../useElementSize";
+import { columns, mergeNarrow, type StateData, segments, stateData } from "./stateData";
 import "../viz.css";
 
 export interface StateOptions {
@@ -78,6 +80,8 @@ function StateTimelinePanel({
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<StateOptions>) {
   const { language } = useI18n();
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { width } = useElementSize(gridRef);
   const data = stateData(frames, fieldConfig, language);
   if (data === null || data.times.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
@@ -85,7 +89,12 @@ function StateTimelinePanel({
   const { from, to } = timeRange;
   const span = to - from || 1;
   const dateTime = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
-  const rows = data.rows.map((row) => ({ row, runs: segments(row, data.times, to) }));
+  // The track takes four fifths of the row; a run narrower than one of its pixels is folded in.
+  const pixel = span / Math.max((width * 4) / 5, 1);
+  const rows = data.rows.map((row) => ({
+    row,
+    runs: mergeNarrow(segments(row, data.times, to), pixel),
+  }));
   const items: ReadoutItem[] = [];
   const offsets: number[] = [];
   for (const { row, runs } of rows) {
@@ -104,7 +113,7 @@ function StateTimelinePanel({
     >
       <Readout title={title} items={items} tooltip={options.tooltip.mode} className="state">
         {(active, hover) => (
-          <div className="state__grid">
+          <div className="state__grid" ref={gridRef}>
             {rows.map(({ row, runs }, r) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: rows keep their order
               <div key={r} className="state__row">

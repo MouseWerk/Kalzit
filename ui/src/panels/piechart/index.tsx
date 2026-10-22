@@ -57,6 +57,8 @@ export const MAX_SLICES = 20;
 
 export interface Slice {
   name: string;
+  /** The slice that sums up the smallest ones; its name comes from the catalog. */
+  other?: boolean;
   value: number;
   options: FieldOptions;
   tone: Tone | undefined;
@@ -115,6 +117,7 @@ export function pieSlices(
     ...kept.slice(0, MAX_SLICES - 1),
     {
       name: "",
+      other: true,
       value: rest.reduce((sum, s) => sum + s.value, 0),
       options: rest[0]?.options ?? {},
       tone: "neutral",
@@ -159,7 +162,7 @@ function PiePanel({
   }
   const total = slices.reduce((sum, s) => sum + s.value, 0);
   const percent = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 });
-  const nameOf = (slice: Slice) => (slice.name === "" ? t("panels.pie.other") : slice.name);
+  const nameOf = (slice: Slice) => (slice.other === true ? t("panels.pie.other") : slice.name);
   const valueText = (slice: Slice) =>
     displayText(displayValue(slice.value, "number", slice.options, language));
   const classOf = (slice: Slice, index: number) => toneClass(slice.tone, index);

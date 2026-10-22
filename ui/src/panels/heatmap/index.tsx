@@ -1,6 +1,6 @@
 import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
-import type { Frame } from "../../api/generated/shapes";
+import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import {
   displayNameOf,
@@ -81,6 +81,88 @@ function upperBound(le: string | undefined): number | null {
   return toNumber(le);
 }
 
+/** Ascending bounds with `+Inf` last, compared explicitly (Infinity minus Infinity is NaN). */
+export function compareBounds(a: number, b: number): number {
+  if (a === b) return 0;
+  if (a === Number.POSITIVE_INFINITY) return 1;
+  if (b === Number.POSITIVE_INFINITY) return -1;
+  return a - b;
+}
+
+function maxOf(cells: Float64Array): number {
+  let max = 0;
+  for (const c of cells) if (c > max) max = c;
+  return max;
+}
+
+interface BucketSeries {
+  time: Field;
+  field: Field;
+  bound: number;
+}
+
+/**
+ * Prometheus histogram buckets: each `le` series counts everything up to its bound, so the
+ * buckets are cumulative. Per series (its labels without `le`) and per time, each bucket's own
+ * count is its value minus the one of the next lower bound, never below zero (a counter reset
+ * between scrapes). Rows are the bounds, lowest first; series with the same bound add up.
+ */
+function promBuckets(
+  series: readonly BucketSeries[],
+  xEdges: number[],
+  range: { from: number; to: number },
+  config: FieldConfig,
+  language: string,
+): HeatmapData {
+  const columns = xEdges.length - 1;
+  const bounds = [...new Set(series.map((s) => s.bound))].sort(compareBounds);
+  const row = new Map(bounds.map((bound, i) => [bound, i]));
+  const cells = new Float64Array(columns * bounds.length);
+  const groups = new Map<string, BucketSeries[]>();
+  for (const s of series) {
+    const labels = Object.entries(s.field.labels ?? {})
+      .filter(([key]) => key !== "le")
+      .sort(([a], [b]) => a.localeCompare(b));
+    const key = JSON.stringify(labels);
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  for (const members of groups.values()) {
+    members.sort((a, b) => compareBounds(a.bound, b.bound));
+    // time -> cumulative value per member, in bound order
+    const byTime = new Map<number, (number | null)[]>();
+    members.forEach((s, m) => {
+      for (let i = 0; i < s.field.values.length; i++) {
+        const t = toNumber(s.time.values[i]);
+        const v = toNumber(s.field.values[i]);
+        if (t === null || v === null || t < range.from || t > range.to) continue;
+        const values = byTime.get(t) ?? new Array<number | null>(members.length).fill(null);
+        values[m] = v;
+        byTime.set(t, values);
+      }
+    });
+    for (const [t, values] of byTime) {
+      const column = columnOf(t, range.from, range.to, columns);
+      let below = 0;
+      values.forEach((value, m) => {
+        if (value === null) return;
+        const own = Math.max(0, value - below);
+        below = value;
+        const y = row.get((members[m] as BucketSeries).bound) ?? 0;
+        const at = column * bounds.length + y;
+        cells[at] = (cells[at] ?? 0) + own;
+      });
+    }
+  }
+  const options = config.defaults;
+  const unit = options.unit === "none" ? undefined : options.unit;
+  const rows = bounds.map((bound) =>
+    bound === Number.POSITIVE_INFINITY
+      ? "+Inf"
+      : `≤ ${joinFormatted(formatUnit(bound, unit, options.decimals, language))}`,
+  );
+  return { xEdges, rows, cells, max: maxOf(cells), options };
+}
+
 /** Buckets the frames for the heatmap; null when there is no time series to bucket. */
 export function heatmapData(
   frames: readonly Frame[],
@@ -102,14 +184,14 @@ export function heatmapData(
     (_, i) => range.from + ((range.to - range.from) * i) / columns,
   );
   if (options.mode === "buckets") {
-    // Rows ordered by their upper bound (`le`) when every field has one, else as they came.
-    const withBound = series.map((s) => ({ ...s, bound: upperBound(s.field.labels?.le) }));
-    if (withBound.every((s) => s.bound !== null)) {
-      withBound.sort((a, b) => (a.bound as number) - (b.bound as number));
+    const bounded = series.map((s) => ({ ...s, bound: upperBound(s.field.labels?.le) }));
+    if (bounded.every((s) => s.bound !== null)) {
+      return promBuckets(bounded as BucketSeries[], xEdges, range, config, language);
     }
-    const rows = withBound.map((s) => displayNameOf(s.field, fieldOptionsFor(s.field, config)));
+    // Plain bucket fields: one row each, as they came.
+    const rows = series.map((s) => displayNameOf(s.field, fieldOptionsFor(s.field, config)));
     const cells = new Float64Array(columns * rows.length);
-    withBound.forEach((s, y) => {
+    series.forEach((s, y) => {
       for (let i = 0; i < s.field.values.length; i++) {
         const t = toNumber(s.time.values[i]);
         const v = toNumber(s.field.values[i]);
@@ -118,9 +200,7 @@ export function heatmapData(
         cells[at] = (cells[at] ?? 0) + v;
       }
     });
-    let max = 0;
-    for (const c of cells) if (c > max) max = c;
-    return { xEdges, rows, cells, max, options: config.defaults };
+    return { xEdges, rows, cells, max: maxOf(cells), options: config.defaults };
   }
   const first = series[0];
   const fieldOptions = first === undefined ? config.defaults : fieldOptionsFor(first.field, config);
