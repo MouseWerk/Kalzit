@@ -12,7 +12,7 @@ import { setTimeZone } from "../lib/timeSettings";
 import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
-import { getTheme, THEME_STORAGE_KEY } from "../theme/theme";
+import { getTheme } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
 
