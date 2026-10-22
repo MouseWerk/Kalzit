@@ -526,7 +526,12 @@ mod tests {
                         for field in want["fields"].as_array().unwrap() {
                             let f = got.fields().iter().find(|f| f.name == field["name"]).unwrap();
                             assert_eq!(serde_json::to_value(f.field_type).unwrap(), field["type"], "{name}");
-                            assert!(same_values(&f.values, &field["values"], false), "{name} {}: {:?}", f.name, f.values);
+                            assert!(
+                                same_values(&f.values, &field["values"], false),
+                                "{name} {}: {:?}",
+                                f.name,
+                                f.values
+                            );
                         }
                     }
                     for gone in case.get("gone").and_then(Value::as_array).into_iter().flatten() {

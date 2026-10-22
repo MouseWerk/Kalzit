@@ -381,9 +381,10 @@ impl Expr {
     /// The height of the tree: 1 for a leaf. Known from building it, without walking it.
     pub fn height(&self) -> usize {
         match self {
-            Expr::Neg { height, .. } | Expr::Not { height, .. } | Expr::Bin { height, .. } | Expr::Call { height, .. } => {
-                *height
-            }
+            Expr::Neg { height, .. }
+            | Expr::Not { height, .. }
+            | Expr::Bin { height, .. }
+            | Expr::Call { height, .. } => *height,
             _ => 1,
         }
     }

@@ -109,7 +109,8 @@ async fn export_query(
     Extension(info): Extension<RequestInfo>,
     JsonBody(req): JsonBody<ExportRequest>,
 ) -> ApiResult<Response> {
-    let wanted = Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
+    let wanted =
+        Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
     let sources: BTreeSet<String> = req.queries.iter().map(|q| q.datasource_id.clone()).collect();
     let mut where_ = wanted.summary();
     where_.insert("datasourceIds".into(), json!(sources));
@@ -128,8 +129,7 @@ async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: 
     // The file holds what running the queries would show, so the same right decides: each data
     // source must be one the caller may query. Unlike a run, one refusal refuses the file.
     for item in &req.queries {
-        check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id))
-            .await?;
+        check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id)).await?;
     }
     let permit = EXPORTS.try_acquire().map_err(|_| too_busy())?;
     let order: Vec<String> = req.queries.iter().map(|q| q.ref_id.clone()).collect();
@@ -151,7 +151,8 @@ async fn export_panel(
     Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
     JsonBody(req): JsonBody<PanelExportRequest>,
 ) -> ApiResult<Response> {
-    let wanted = Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
+    let wanted =
+        Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
     let mut where_ = wanted.summary();
     where_.insert("panelId".into(), json!(panel_id));
     let made = make_panel(&state, &ctx, &dashboard_id, &panel_id, req, &wanted).await;
@@ -240,7 +241,8 @@ async fn finish(
                 where_.insert("reason".into(), json!(reason.code));
             }
             // The refusal is what the caller needs to hear; a failed audit write is logged.
-            if let Err(audit) = record(state, ctx, info, "data.export_refused", dashboard_id, Value::Object(where_)).await
+            if let Err(audit) =
+                record(state, ctx, info, "data.export_refused", dashboard_id, Value::Object(where_)).await
             {
                 tracing::warn!("audit entry of a refused export: {}", audit.message);
             }

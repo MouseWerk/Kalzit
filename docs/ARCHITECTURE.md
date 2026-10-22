@@ -292,7 +292,11 @@ type QueryResult =
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, both
   `Access::Org(Permission::DataExport)` plus the rights of running the queries (free:
   `datasources:query` per source; panel: `dashboards:read`). CSV, Excel (`rust_xlsxwriter`) and
-  JSON; written to the audit log as `data.exported`.
+  JSON; written to the audit log as `data.exported` (refused ones as `data.export_refused`). At
+  most 3 exports make files at once per server; their steps and encoder run in `spawn_blocking`
+  and stop on a cancel flag (a drop guard in the handler) and the query timeout. Both engines
+  share the bounds: expression trees at most 128 high, text at most 32,767 UTF-16 units per cell
+  and 64 Mi units per run, at most 5,000,000 cells per step.
 
 ## Settings and audit
 

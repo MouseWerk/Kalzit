@@ -118,7 +118,7 @@ describe("bounds shared with the server", () => {
 
   it("refuses text the server could not read: a lone surrogate", () => {
     expect(outcome("'a\ud800'")).toBe("expression.syntax");
-    expect(outcome("'a😀'")).toBe("ok");
+    expect(outcome("'a\u{1F600}'")).toBe("ok");
   });
 
   it("refuses trees taller than the server takes", () => {
@@ -143,7 +143,7 @@ describe("bounds shared with the server", () => {
     const long = frameOf([{ name: "a", type: "string", values: ["x".repeat(20_000)] }]);
     const nested = runSteps([calc("1", "b", "concat(a, a)")], [long]);
     expect(nested.failed?.error.reason).toBe("expression.text_too_long");
-    const emoji = frameOf([{ name: "a", type: "string", values: ["😀".repeat(16_384)] }]);
+    const emoji = frameOf([{ name: "a", type: "string", values: ["\u{1F600}".repeat(16_384)] }]);
     expect(runSteps([calc("1", "b", "concat(a)")], [emoji]).failed?.error.reason).toBe(
       "expression.text_too_long",
     );

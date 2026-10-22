@@ -1,5 +1,16 @@
 //! The export routes through the real router, with SQLite files as data sources.
 
+/// A request that goes away (the client closed the connection) sets the flag its work watches.
+#[test]
+fn dropping_the_request_cancels_its_work() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let flag = std::sync::Arc::new(AtomicBool::new(false));
+    let guard = super::CancelOnDrop(flag.clone());
+    assert!(!flag.load(Ordering::Relaxed));
+    drop(guard);
+    assert!(flag.load(Ordering::Relaxed));
+}
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,6 +35,8 @@ struct T {
     org: String,
     owner: String,
     dir: tempfile::TempDir,
+    /// Export tests run one at a time: they share the server-wide export permits.
+    _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
 struct Reply {
@@ -56,6 +69,8 @@ impl Reply {
 
 impl T {
     async fn new() -> T {
+        static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let serial = SERIAL.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().join("data");
@@ -73,7 +88,7 @@ impl T {
             .insert("datasources.sqlite_dirs".into(), json!([allowed.to_string_lossy()]));
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let app = router(state.clone()).layer(MockConnectInfo(peer));
-        let mut t = T { app, state, org: String::new(), owner: String::new(), dir };
+        let mut t = T { app, state, org: String::new(), owner: String::new(), dir, _serial: serial };
         let r = t
             .send(
                 "/api/setup",
@@ -354,8 +369,7 @@ async fn panels_in_hidden_folders_are_not_found() {
         "panels": [{ "id": "p1", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
             "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT land FROM verkauf" } }] }]
     });
-    let created =
-        t.post("/dashboards", json!({ "model": model, "folderId": folder.json()["id"] }), &t.owner).await;
+    let created = t.post("/dashboards", json!({ "model": model, "folderId": folder.json()["id"] }), &t.owner).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
     let id = created.json()["id"].as_str().unwrap().to_string();
     let editor = t.member("editor", "editor").await;
@@ -447,4 +461,21 @@ async fn failures_name_the_step_or_the_query() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+}
+
+/// More exports than the server makes at once are answered busy, before any query runs.
+#[tokio::test]
+async fn too_many_exports_at_once_are_busy() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let held = super::EXPORTS.acquire_many(super::MAX_EXPORTS as u32).await.unwrap();
+    let r = t.post("/export", free(&ds, "csv", "en", json!([])), &t.owner).await;
+    drop(held);
+    assert_eq!(
+        (r.status, r.code(), r.reason()),
+        (StatusCode::SERVICE_UNAVAILABLE, "busy".into(), "export.busy".into()),
+        "{}",
+        r.text()
+    );
+    assert_eq!(t.post("/export", free(&ds, "csv", "en", json!([])), &t.owner).await.status, StatusCode::OK);
 }

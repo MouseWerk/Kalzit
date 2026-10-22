@@ -128,7 +128,7 @@ pub fn moving_average(values: &[Option<f64>], window: usize) -> Vec<Option<f64>>
         }
         // Adding and taking away leaves rounding behind; the window's sum is taken afresh now and
         // then, so it cannot drift over long series (after a huge value left, for example).
-        if (i + 1) % RESUM_EVERY == 0 {
+        if (i + 1).is_multiple_of(RESUM_EVERY) {
             total = values[(i + 1).saturating_sub(window)..=i].iter().flatten().fold(0.0, |acc, x| acc + x);
         }
         out.push(if i + 1 < window || count == 0 { None } else { Some(total / count as f64) });

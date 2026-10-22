@@ -377,5 +377,36 @@ mod tests {
         assert_eq!(file_name("\"\r\n", "csv"), "kalzit-export.csv");
         assert_eq!(sheet_name("[]:*?/\\"), "Kalzit");
         assert_eq!(sheet_name(&"x".repeat(40)).len(), 31);
+        assert_eq!(sheet_name("History"), "Kalzit", "Excel reserves it");
+        assert_eq!(sheet_name(" history "), "Kalzit");
+    }
+
+    #[test]
+    fn excel_text_is_cut_by_utf16_units_never_inside_a_character() {
+        let text = format!("{}{}", "a".repeat(XLSX_MAX_TEXT - 1), "😀😀");
+        let cut = truncate(&text);
+        assert_eq!(cut.chars().map(char::len_utf16).sum::<usize>(), XLSX_MAX_TEXT - 1);
+        assert!(cut.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn odd_int64_text_and_fractional_times_in_csv() {
+        let frame = Frame::new(vec![
+            field("i", FieldType::Int64, vec![json!("=1+1"), json!("-12"), json!(" 7")]),
+            field("t", FieldType::Time, vec![json!(1_767_225_600_000.9), json!(-0.5), Value::Null]),
+        ])
+        .unwrap();
+        let text = String::from_utf8(csv(&frame, ExportLanguage::En)).unwrap();
+        let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+        assert_eq!(lines[1], "'=1+1,2026-01-01T00:00:00.000Z");
+        assert_eq!(lines[2], "-12,1969-12-31T23:59:59.999Z");
+        assert_eq!(lines[3], "\" 7\",");
+    }
+
+    #[test]
+    fn a_control_stops_the_encoder() {
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let err = encode(&sample(), "A", ExportFormat::Csv, ExportLanguage::En, &Control::new(flag, 30)).unwrap_err();
+        assert_eq!(err.reason, "steps.cancelled");
     }
 }

@@ -211,7 +211,11 @@ fn js_number(text: &str) -> Option<f64> {
 
 /// Unix ms as a cell: whole numbers as integers, as times are everywhere else.
 fn ms_cell(ms: f64) -> Value {
-    if ms.fract() == 0.0 && ms.abs() < 9.2e18 { Value::from(ms as i64) } else { super::expr::to_json(super::expr::V::Num(ms)) }
+    if ms.fract() == 0.0 && ms.abs() < 9.2e18 {
+        Value::from(ms as i64)
+    } else {
+        super::expr::to_json(super::expr::V::Num(ms))
+    }
 }
 
 /// RFC 3339 (`2026-01-02T03:04:05.678Z`, `t` or a space between, `Z` or `±hh:mm`) as Unix ms;
@@ -222,13 +226,23 @@ pub fn rfc3339_ms(text: &str) -> Option<f64> {
         let part = text.get(r)?;
         if part.bytes().all(|c| c.is_ascii_digit()) { part.parse().ok() } else { None }
     };
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' || b[16] != b':'
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || !matches!(b[10], b'T' | b't' | b' ')
+        || b[13] != b':'
+        || b[16] != b':'
     {
         return None;
     }
     let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
     let (hour, minute, second) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) || hour > 23 || minute > 59 || second > 59
+    if !(1..=12).contains(&month)
+        || day < 1
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 59
     {
         return None;
     }

@@ -50,7 +50,11 @@ impl Control {
     /// Stops when `cancelled` is set or `timeout_secs` have passed.
     pub fn new(cancelled: Arc<AtomicBool>, timeout_secs: u64) -> Self {
         let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
-        Self { cancelled: Some(cancelled), deadline: Some((deadline, timeout_secs)), text_left: Cell::new(MAX_RUN_TEXT_UNITS) }
+        Self {
+            cancelled: Some(cancelled),
+            deadline: Some((deadline, timeout_secs)),
+            text_left: Cell::new(MAX_RUN_TEXT_UNITS),
+        }
     }
 
     /// Fails when the run should stop.
@@ -68,7 +72,7 @@ impl Control {
 
     /// `check`, every `CHECK_EVERY` rows.
     pub fn every(&self, row: usize) -> Result<(), Detail> {
-        if row % CHECK_EVERY == 0 { self.check() } else { Ok(()) }
+        if row.is_multiple_of(CHECK_EVERY) { self.check() } else { Ok(()) }
     }
 
     fn spend_text(&self, units: usize) -> Result<(), Detail> {
@@ -753,7 +757,7 @@ fn join(
                 for &j in hits {
                     matched[j] = true;
                     pairs.push((Some(row), Some(j)));
-                    if pairs.len() % CHECK_EVERY == 0 {
+                    if pairs.len().is_multiple_of(CHECK_EVERY) {
                         fits(pairs.len())?;
                         control.check()?;
                     }
@@ -1146,7 +1150,9 @@ mod tests {
                 field("c", FieldType::Number, (0..n).map(|i| json!(i % 500)).collect()),
             ],
         );
-        let p = steps(json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "r", "column": "c", "value": "c", "op": "sum" }]));
+        let p = steps(
+            json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "r", "column": "c", "value": "c", "op": "sum" }]),
+        );
         assert_eq!(run(&p, vec![tall]).unwrap_err().detail.reason, "steps.too_many_cells");
         let wide = |name: &str| {
             named(
@@ -1189,7 +1195,11 @@ mod tests {
         let m = steps(json!([{ "id": "3", "type": "group", "frame": "A", "by": ["i"],
             "aggregations": [{ "field": "i", "op": "max", "name": "top" }] }]));
         let out = run(&m, vec![f]).unwrap();
-        assert_eq!(values(&out[0], "top"), [json!(" 5"), json!("+7"), Value::Null, json!("-3")], "unreadable int64 is no value");
+        assert_eq!(
+            values(&out[0], "top"),
+            [json!(" 5"), json!("+7"), Value::Null, json!("-3")],
+            "unreadable int64 is no value"
+        );
         assert_eq!(int_of(&json!(" 5")), Some(5));
         assert_eq!(int_of(&json!("5.0")), None);
         assert_eq!(key_of(&json!(" +5 "), FieldType::Int64), Some("5".into()));
