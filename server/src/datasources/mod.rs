@@ -405,6 +405,13 @@ impl Connection {
             .map_err(|_| SourceError::failed("internal", "internal: connection state of another kind"))
     }
 
+    /// Closes the SQLite pool this connection keeps, if any: the other kinds hold no files.
+    async fn close(&self) {
+        if let Some(pool) = self.shared.get().and_then(|s| s.downcast_ref::<sqlx::sqlite::SqlitePool>()) {
+            pool.close().await;
+        }
+    }
+
     /// The text without this source's secrets.
     pub fn scrub(&self, text: &str) -> String {
         scrub(text, self.secrets.values().map(|s| s.as_str()))
@@ -883,6 +890,15 @@ impl DataSources {
 
     pub fn keyring(&self) -> &Keyring {
         &self.keyring
+    }
+
+    /// Closes and drops every cached connection (see `AppState::close`).
+    pub async fn close(&self) {
+        let cached: Vec<Arc<Connection>> =
+            self.connections.lock().expect("connection cache lock").drain().map(|(_, c)| c.conn).collect();
+        for conn in cached {
+            conn.close().await;
+        }
     }
 
     /// Drops the cached connection after the source changed or went to the trash.

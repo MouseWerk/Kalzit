@@ -15,6 +15,8 @@ use kalzit::config::Config;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod common;
+
 const SETUP_CODE: &str = "test-setup-code-0123456789";
 const PASSWORD: &str = "Grün und sicher 2026";
 const HOUR_MS: i64 = 3_600_000;
@@ -23,7 +25,21 @@ struct TestApp {
     app: Router,
     clock: Arc<ManualClock>,
     state: AppState,
-    dir: tempfile::TempDir,
+    dir: Arc<tempfile::TempDir>,
+}
+
+impl TestApp {
+    /// Stops the app and deletes its data directory (`common::Finish`).
+    async fn finish(self) {
+        let finish = self.finisher();
+        drop(self);
+        finish.finish().await;
+    }
+
+    /// What `finish` does, for a test that hands the app on by value.
+    fn finisher(&self) -> common::Finish {
+        common::Finish::new(self.state.clone(), self.dir.clone())
+    }
 }
 
 struct Reply {
@@ -67,7 +83,7 @@ async fn build(
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let state = AppState::new(config, pool, clock.clone(), setup_code).await.unwrap();
     let peer: SocketAddr = peer.parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir: Arc::new(dir) }
 }
 
 impl TestApp {
@@ -129,6 +145,7 @@ async fn setup_is_refused_once_another_server_claimed_it() {
         assert_eq!(n, 0, "{table}");
     }
     assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": false }));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -150,6 +167,7 @@ async fn setup_creates_owner_once() {
     assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": false }));
     let again = t.setup().await;
     assert_eq!((again.status, again.code()), (StatusCode::CONFLICT, "setup_done"));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -188,6 +206,7 @@ async fn setup_rejects_wrong_code_and_weak_password() {
         assert_eq!(t.post("/api/setup", body).await.body["error"]["field"], field);
     }
     assert_eq!(t.get("/api/setup", None).await.body, json!({ "needed": true }));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -197,6 +216,7 @@ async fn malformed_and_unknown_fields_use_the_error_format() {
     assert_eq!(r.code(), "validation", "{}", r.body);
     let r = t.send(Method::POST, "/api/auth/login", None, &[("content-type", "application/json")]).await;
     assert_eq!(r.code(), "validation");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -224,6 +244,7 @@ async fn login_logout_and_me() {
     assert!(out.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap().contains("Max-Age=0"));
     let after = t.get("/api/me", Some(&cookie)).await;
     assert_eq!((after.status, after.code()), (StatusCode::UNAUTHORIZED, "unauthenticated"));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -249,6 +270,7 @@ async fn sessions_expire_after_lifetime_and_idle_time() {
     let idle = t.login("joerg@example.de", PASSWORD).await.session_cookie();
     t.clock.advance_ms(3 * HOUR_MS);
     assert_eq!(t.get("/api/me", Some(&idle)).await.status, StatusCode::UNAUTHORIZED);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -267,6 +289,7 @@ async fn repeated_failures_are_rate_limited_even_with_the_right_password() {
 
     t.clock.advance_ms(600_000);
     assert_eq!(t.login("joerg@example.de", PASSWORD).await.status, StatusCode::OK);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -278,6 +301,7 @@ async fn cross_origin_writes_are_rejected() {
     assert_eq!((evil.status, evil.code()), (StatusCode::FORBIDDEN, "cross_origin"));
     let same = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "http://kalzit.test")]).await;
     assert_eq!(same.status, StatusCode::OK);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -290,6 +314,7 @@ async fn public_url_decides_the_allowed_origin() {
     assert_eq!(host_only.status, StatusCode::FORBIDDEN);
     let public = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "https://kalzit.example.com")]).await;
     assert_eq!(public.status, StatusCode::OK);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -303,6 +328,7 @@ async fn security_headers_and_hsts_only_over_https() {
 
     let via_proxy = t.send(Method::GET, "/healthz", None, &[("x-forwarded-proto", "https")]).await;
     assert!(via_proxy.headers.get("strict-transport-security").is_some());
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -310,6 +336,7 @@ async fn untrusted_clients_cannot_claim_https() {
     let t = test_app("203.0.113.5:50000", |c| c.security.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()]).await;
     let r = t.send(Method::GET, "/healthz", None, &[("x-forwarded-proto", "https")]).await;
     assert!(r.headers.get("strict-transport-security").is_none());
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -319,6 +346,7 @@ async fn health_ready_and_unknown_api_routes() {
     assert_eq!(t.get("/readyz", None).await.status, StatusCode::OK);
     let missing = t.get("/api/does-not-exist", None).await;
     assert_eq!((missing.status, missing.code()), (StatusCode::NOT_FOUND, "not_found"));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -347,6 +375,7 @@ async fn generated_setup_code_lives_in_a_private_file_until_setup() {
     let pool = t.state.db.clone();
     AppState::new((*t.state.config).clone(), pool, t.clock.clone(), None).await.unwrap();
     assert!(!file.exists());
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -386,6 +415,7 @@ async fn parallel_wrong_passwords_cannot_exceed_the_limit() {
     let unauthorized = statuses.iter().filter(|s| **s == StatusCode::UNAUTHORIZED).count();
     let limited = statuses.iter().filter(|s| **s == StatusCode::TOO_MANY_REQUESTS).count();
     assert_eq!((unauthorized, limited), (3, 17));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -415,6 +445,7 @@ async fn behind_a_trusted_proxy_the_real_client_is_limited() {
         .send(Method::POST, "/api/auth/login", Some(other_email), &[("x-forwarded-for", "9.9.9.9, 203.0.113.5")])
         .await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "the client address 203.0.113.5 is used up");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -442,6 +473,7 @@ async fn huge_emails_are_refused_without_tracking() {
     for _ in 0..3 {
         assert_eq!(t.login(&huge, "x").await.code(), "invalid_credentials");
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -453,6 +485,7 @@ async fn signing_in_again_ends_the_previous_session_of_this_browser() {
     assert_eq!(second.status, StatusCode::OK);
     assert_eq!(t.get("/api/me", Some(&first)).await.status, StatusCode::UNAUTHORIZED);
     assert_eq!(t.get("/api/me", Some(&second.session_cookie())).await.status, StatusCode::OK);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -464,6 +497,7 @@ async fn ended_sessions_are_cleaned_up() {
     assert_eq!(kalzit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 0);
     t.clock.advance_ms(HOUR_MS);
     assert_eq!(kalzit::auth::session::delete_ended(&t.state.db, cfg, t.clock.now_ms()).await.unwrap(), 2);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -475,6 +509,7 @@ async fn public_url_origin_ignores_default_port_but_not_scheme() {
     assert_eq!(ok.status, StatusCode::OK);
     let http = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "http://kalzit.example")]).await;
     assert_eq!(http.status, StatusCode::FORBIDDEN);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -509,6 +544,7 @@ async fn org_routes_check_membership_and_report_permissions() {
     assert_eq!(viewer.body["role"], "viewer");
     let perms = viewer.body["permissions"].as_array().unwrap();
     assert!(perms.iter().all(|p| p != "dashboards:write" && p != "users:write"), "{perms:?}");
+    t.finish().await;
 }
 
 /// Every declared route except the public ones refuses strangers before its handler runs: no
@@ -548,6 +584,7 @@ async fn every_declared_route_enforces_its_access() {
         checked += 1;
     }
     assert!(checked > 0);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -570,6 +607,7 @@ async fn setup_and_sign_ins_are_audited_without_personal_data() {
     assert!(rows[1].2.contains("userId"), "a failed sign-in of a known account names the account id");
     assert_eq!(rows[2].2, "{}", "an unknown email leaves no trace of what was typed");
     assert!(rows[3].1.is_some());
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -577,6 +615,7 @@ async fn unsupported_methods_answer_in_the_error_format() {
     let t = test_app("127.0.0.1:50000", |_| {}).await;
     let r = t.send(Method::DELETE, "/api/me", None, &[]).await;
     assert_eq!((r.status, r.code()), (StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -620,7 +659,7 @@ async fn postgres_setup_and_login() {
     let ended = kalzit::auth::session::delete_ended(&t.state.db, &t.state.config.sessions, t.clock.now_ms());
     assert!(ended.await.unwrap() >= 1);
     assert_eq!(t.get("/api/me", Some(&idle)).await.status, StatusCode::UNAUTHORIZED);
-    drop(t);
+    t.finish().await;
 
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
 }

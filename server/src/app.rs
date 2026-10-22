@@ -52,6 +52,29 @@ impl AppState {
             touches,
         })
     }
+
+    /// Stops the background writes and closes every database pool this state opened: the
+    /// server's, the background writes' own and the data sources' SQLite files. Until then the
+    /// files in the data directory stay open, and Windows cannot delete them (tests delete their
+    /// temporary data directory right after).
+    pub async fn close(&self) {
+        self.touches.abort_all().await;
+        self.datasources.close().await;
+        self.db.close().await;
+    }
+}
+
+/// Ends an app a unit test built on the temporary directory `dir`: closes it, then deletes the
+/// directory. A dropped `TempDir` ignores files Windows cannot delete because they are still open,
+/// which left every test's databases behind; this fails the test instead.
+#[cfg(test)]
+pub(crate) async fn finish_test_app(state: AppState, dir: tempfile::TempDir) {
+    state.close().await;
+    drop(state);
+    let path = dir.path().to_path_buf();
+    if let Err(e) = dir.close() {
+        panic!("the test directory {} was not deleted: {e}", path.display());
+    }
 }
 
 #[expect(clippy::disallowed_methods, reason = "assembles the route tables with the unversioned health endpoints")]
