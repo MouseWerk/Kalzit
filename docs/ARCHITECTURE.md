@@ -519,6 +519,6 @@ through `settings::get`; new registry entries are requested from the orchestrato
   through the same global setup, seeds a demo organization through the API (members, teams,
   the SQLite sales fixture, a dashboard with a variable and four panels) and writes PNGs at
   1440x900 to `docs/screenshots/`. The fixture data lies around a fixed moment and the pages run
-  on a clock fixed to it, so reruns give near-identical files; dates the server records (member
-  since, sessions) still show the day of the run. **Every pull request that visibly changes the
+  on a clock fixed to it; times the server records (sessions, member since, last saved) are
+  moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
   UI reruns `npm run screenshots` and commits the changed images.**

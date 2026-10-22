@@ -1,12 +1,13 @@
 # Kalzit
 
-Kalzit is a self-hosted platform for visualizing and analyzing data: dashboards, data sources,
-organizations, teams, roles and plugins. Document databases (MongoDB) and graph databases (Neo4j,
-Memgraph, TigerGraph) are planned as native data shapes with their own views, not tables in
-disguise. All common sources (PostgreSQL, MySQL/MariaDB, SQL Server, SQLite, Prometheus,
-Elasticsearch and more) are supported as well. The server runs on Windows and Linux.
+Kalzit is a self-hosted platform for visualizing and analyzing data: dashboards, Explore, data
+sources, organizations, teams and roles. The server runs on Windows and Linux, as one binary with
+the web interface built in.
 
-Status: early development. The plan is in [docs/PLAN.md](docs/PLAN.md).
+Status: early development. Planned next, among others: views for documents (MongoDB) and graphs
+(Neo4j, Memgraph, TigerGraph) that keep their native shape instead of turning them into tables,
+more sources such as Elasticsearch, plugins and alerting. The plan is in
+[docs/PLAN.md](docs/PLAN.md).
 
 ![A dashboard with a region variable, a time series, a stat, a bar chart and a table](docs/screenshots/dashboard-light.png)
 
@@ -17,8 +18,9 @@ Status: early development. The plan is in [docs/PLAN.md](docs/PLAN.md).
   a query) reach the database as parameters, never as text in the query.
 - **Explore**: write a query, see the result in a matching visualization, inspect it and add it
   to a dashboard.
-- **Data sources**: PostgreSQL, MySQL/MariaDB, SQL Server, SQLite and Prometheus. Read-only by
-  default (queries that change data are refused on the server), secrets stored encrypted, and
+- **Data sources**: PostgreSQL, MySQL/MariaDB, SQL Server, SQLite and Prometheus, and MongoDB on
+  the server side (its results keep their document shape; the query editor and document views
+  in the interface follow). Read-only by default (queries that change data are refused on the server), secrets stored encrypted, and
   addresses that must not be reached (Kalzit's own database, cloud metadata) are refused.
 - **Organizations, teams and roles**: owner, admin, editor, viewer and own roles from fine-grained
   permissions, plus access to single folders, dashboards and data sources. Every request is
@@ -32,8 +34,10 @@ Status: early development. The plan is in [docs/PLAN.md](docs/PLAN.md).
 | Dashboard, dark theme | Explore |
 | ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
 | Data source form | Members and roles |
-| ![Sign-in page](docs/screenshots/sign-in.png) | ![Account page with profile, password and sessions](docs/screenshots/account.png) |
-| Sign in | Your account |
+| ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
+| Dashboards | Your account: sessions |
+| ![Sign-in page](docs/screenshots/sign-in.png) | |
+| Sign in | |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
 
