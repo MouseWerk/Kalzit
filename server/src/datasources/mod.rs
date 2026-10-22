@@ -9,6 +9,7 @@
 mod api_tests;
 pub mod detail;
 pub mod frame;
+pub mod mongodb;
 pub mod mssql;
 pub mod mysql;
 pub mod postgres;
@@ -52,6 +53,16 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn health(&self, conn: &Connection) -> Health;
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
+    /// Whether `check_on_save` needs the source (and its stored secrets) when it is saved.
+    fn checks_on_save(&self) -> bool {
+        false
+    }
+    /// Checks that need the source itself, run when its settings or secrets are saved (MongoDB:
+    /// the login may only read). A refusal names the settings field at fault; a source that
+    /// cannot be reached is not refused.
+    async fn check_on_save(&self, _conn: &Connection) -> Result<(), (&'static str, SourceError)> {
+        Ok(())
+    }
 }
 
 /// A settings field that is not valid. `field` is the field's name in the kind's settings form.
@@ -123,6 +134,7 @@ pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -
 pub enum SourceSchema {
     Tables { tables: Vec<Table> },
     Metrics { metrics: Vec<String>, labels: Vec<String> },
+    Collections { database: String, collections: Vec<mongodb::CollectionSchema> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -263,6 +275,8 @@ pub struct SourceQuery {
     /// Variables that may be used as identifiers; `None` allows all (see `sql::Context`).
     pub identifier_variables: Option<std::collections::BTreeSet<String>>,
     pub limits: Limits,
+    /// Continues a `DocumentSet` from its `nextCursor`; frame sources ignore it.
+    pub cursor: Option<String>,
 }
 
 impl SourceQuery {
@@ -837,7 +851,14 @@ impl DataSources {
     pub fn new(config: &Config, db: AnyPool, keyring: Arc<Keyring>) -> Self {
         let database_url = config.database_url();
         Self {
-            kinds: vec![postgres::kind(), mysql::kind(), sqlite::kind(), mssql::kind(), prometheus::kind()],
+            kinds: vec![
+                postgres::kind(),
+                mysql::kind(),
+                sqlite::kind(),
+                mssql::kind(),
+                prometheus::kind(),
+                mongodb::kind(),
+            ],
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),
@@ -1190,6 +1211,7 @@ async fn run_one(
             variables: variables.clone(),
             identifier_variables: identifier_variables.cloned(),
             limits,
+            cursor: item.cursor,
         };
         let result = kind.plugin.query(&conn, req).await;
         Ok::<_, SourceError>((conn, result))
@@ -1249,6 +1271,9 @@ pub fn precheck_targets(
     if let Some(host) = settings.get("host").and_then(Value::as_str) {
         policy.precheck_host(host).map_err(|b| (b, "host"))?;
     }
+    for host in settings.get("hosts").and_then(Value::as_str).map(mongodb::host_names).unwrap_or_default() {
+        policy.precheck_host(&host).map_err(|b| (b, "hosts"))?;
+    }
     let url_host = settings
         .get("url")
         .and_then(Value::as_str)
@@ -1258,6 +1283,50 @@ pub fn precheck_targets(
         policy.precheck_host(&host).map_err(|b| (b, "url"))?;
     }
     Ok(())
+}
+
+/// The kind's checks on the source itself before settings or secrets are saved
+/// (`DataSourcePlugin::check_on_save`): `settings` as they will be stored, the stored secrets of
+/// `datasource_id` (when it exists) with `patch` applied. A refused target answers
+/// `datasource_target_blocked`, any other refusal `validation`, both naming the field.
+pub async fn check_on_save(
+    state: &AppState,
+    kind: &Kind,
+    datasource_id: Option<&str>,
+    settings: &Value,
+    patch: &crate::secrets::SecretPatch,
+) -> ApiResult<()> {
+    if !kind.plugin.checks_on_save() {
+        return Ok(());
+    }
+    let registry = &state.datasources;
+    let mut secrets = match datasource_id {
+        // Unreadable secrets are reported when connecting; the save itself may replace them.
+        Some(id) => crate::secrets::load_all(&state.db, &registry.keyring, id).await.unwrap_or_default(),
+        None => BTreeMap::new(),
+    };
+    for (field, value) in patch {
+        match value {
+            Some(v) => secrets.insert(field.clone(), v.clone()),
+            None => secrets.remove(field),
+        };
+    }
+    let policy = registry.policy(state).await?;
+    let id = datasource_id.unwrap_or("new");
+    let conn = Connection::new(id, plugin_settings(settings), secrets, policy, registry.own.clone());
+    let check = tokio::time::timeout(MAX_HEALTH_TIMEOUT, kind.plugin.check_on_save(&conn)).await;
+    match check {
+        Ok(Err((field, e))) => {
+            let detail = e.detail().scrubbed(|t| conn.scrub(t));
+            Err(match e {
+                SourceError::Blocked(_) => ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, e.code(), detail.message),
+                _ => ApiError::validation(detail.message),
+            }
+            .with_field(field)
+            .with_reason(detail.reason, detail.params))
+        }
+        Ok(Ok(())) | Err(_) => Ok(()),
+    }
 }
 
 /// "Test connection" with the cached connection, counted against the caller's query slots.

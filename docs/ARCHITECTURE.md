@@ -150,8 +150,9 @@ type QueryResult =
   `bool`, `json`; a missing value is `null`. Frames are built through `Frame::new`, which checks
   equal lengths.
 - Documents keep database types JSON lacks as `{"$type": "objectId" | "date" | "decimal" |
-  "binary" | "int64", "value": string}`. The schema sample gives every path with coverage and
-  type shares (finite numbers 0 to 1).
+  "binary" | "int64" | "uuid" | ..., "value": string}` (all of them, and binary values hidden as
+  `null`, in docs/api/datasources.md, "The documents shape"). The schema sample gives every path
+  with coverage and type shares (finite numbers 0 to 1).
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
 - Projections (documents or graph to a frame) are explicit query steps stored in the query,
   never applied by the backend on its own.
@@ -392,7 +393,17 @@ type QueryResult =
   StateDirectory=kalzit
   StateDirectoryMode=0700
   ConfigurationDirectory=kalzit
+  PrivateTmp=yes
+  RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
   ```
+
+  Kalzit opens no Unix sockets itself: logs go to standard output, which systemd hands over
+  already open (the restriction only stops new sockets), and data sources reach only network
+  hosts. So `RestrictAddressFamilies` also stops a driver from being steered to a local socket
+  (a MongoDB replica set member can announce a socket path). Add `AF_UNIX` only when
+  `database.url` reaches PostgreSQL through a socket directory (`?host=/run/postgresql`). Name
+  lookups through `nss-resolve` fall back to DNS without it, as with the usual
+  `resolve [!UNAVAIL=return] dns`.
 
   `StateDirectory=kalzit` creates `/var/lib/kalzit` owned by `User`. Without systemd, create it
   with `sudo install -d -o kalzit -m 0700 /var/lib/kalzit`. `/etc/kalzit/kalzit.toml` should be

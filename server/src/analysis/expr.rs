@@ -1567,6 +1567,9 @@ mod tests {
     #[test]
     fn numbers_are_written_as_javascript_writes_them() {
         for (x, text) in [
+            // Two shortest forms read back the same; ECMAScript takes the one closer to the value.
+            (1_658_206_780_088_562.2, "1658206780088562.2"),
+            (-1_052_730_259_603_333.2, "-1052730259603333.2"),
             (0.0, "0"),
             (-0.0, "0"),
             (1.0, "1"),
@@ -1664,6 +1667,58 @@ mod tests {
         assert_eq!(c.cell(&fields, 0).unwrap(), json!(3.0));
         let fields = vec![field("größe_2", FieldType::Number, vec![json!(4)])];
         assert_eq!(compile(&parse("größe_2 * 2").unwrap(), &fields).unwrap().cell(&fields, 0).unwrap(), json!(8.0));
+    }
+
+    #[test]
+    fn deep_trees_from_chains_inside_parentheses_are_refused() {
+        // At each level of parentheses a chain adds height without nesting the parser deeper.
+        let mut text = String::from("x");
+        let mut k = 63usize;
+        loop {
+            let mut next = format!("({text}");
+            for _ in 0..(64 - k).saturating_sub(1) {
+                next.push_str("*x");
+            }
+            next.push(')');
+            if next.chars().count() > 1990 || k == 1 {
+                break;
+            }
+            text = next;
+            k -= 1;
+        }
+        let e = parse(&text).unwrap_err();
+        assert_eq!((e.reason, e.params.get("max").map(String::as_str)), ("expression.too_deep", Some("128")));
+        // A tree of exactly the limit is fine and runs on a small stack.
+        let chain = vec!["1"; MAX_HEIGHT].join("+");
+        let expr = parse(&format!("({chain})")).err().map(|e| e.reason);
+        assert_eq!(expr, Some("expression.too_deep"), "the flat chain is within the parser's own limit first");
+        let ok = (0..MAX_HEIGHT - 1).fold("1".to_string(), |acc, _| format!("abs({acc})"));
+        assert!(parse(&ok).is_err(), "nesting calls this deep is refused by the parser already");
+        let fields = vec![field("x", FieldType::Number, vec![json!(1.0)])];
+        let tall = (0..6).fold("x".to_string(), |acc, _| format!("({acc}{})", "*x".repeat(20)));
+        let tall = parse(&tall).unwrap_or_else(|e| panic!("{e}"));
+        assert!(tall.height() <= MAX_HEIGHT && tall.height() > MAX_DEPTH, "{}", tall.height());
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || compile(&tall, &fields).unwrap().cell(&fields, 0).unwrap())
+            .unwrap()
+            .join()
+            .expect("evaluates on a small stack");
+    }
+
+    #[test]
+    fn text_results_are_capped() {
+        let fields = vec![field("a", FieldType::String, vec![json!("x".repeat(20_000))])];
+        let c = compile(&parse("concat(a, a)").unwrap(), &fields).unwrap();
+        assert_eq!(c.cell(&fields, 0).unwrap_err().reason, "expression.text_too_long");
+        let c = compile(&parse("length(a + a) + 1").unwrap(), &fields).unwrap();
+        assert_eq!(c.cell(&fields, 0).unwrap_err().reason, "expression.text_too_long", "also inside");
+        let c = compile(&parse("concat(a, 'y')").unwrap(), &fields).unwrap();
+        assert!(c.cell(&fields, 0).is_ok());
+        // UTF-16 units, as Excel counts: an emoji takes two.
+        let emoji = vec![field("a", FieldType::String, vec![json!("😀".repeat(16_384))])];
+        let c = compile(&parse("concat(a)").unwrap(), &emoji).unwrap();
+        assert_eq!(c.cell(&emoji, 0).unwrap_err().reason, "expression.text_too_long");
     }
 
     #[test]

@@ -62,6 +62,8 @@ mod tests {
         "steps",
         "expression",
         "export",
+        "mongodb",
+        "documents",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
