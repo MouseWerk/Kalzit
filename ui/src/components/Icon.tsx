@@ -3,7 +3,8 @@
  * next to an icon carries the meaning, so screen readers skip it.
  */
 const PATHS = {
-  logo: "M12 2.5 20.5 7.25v9.5L12 21.5l-8.5-4.75v-9.5zM12 2.5v19M3.5 7.25 12 12l8.5-4.75",
+  // The Kalzit mark from the website: a calcite rhombohedron, three visible faces.
+  logo: "M3.5 8.5 8 4.2l11.5-2 1.8 13.6-4 4.4L6 22.3ZM3.5 8.5 15 6.6l2.3 13.6M15 6.6l4.5-4.4",
   home: "M3.5 10.5 12 3.5l8.5 7M5.5 9v11h13V9M10 20v-6h4v6",
   dashboards: "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z",
   explore: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20",
