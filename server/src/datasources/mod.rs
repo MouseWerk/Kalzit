@@ -1301,11 +1301,8 @@ pub async fn check_on_save(
     }
     let registry = &state.datasources;
     let mut secrets = match datasource_id {
-        Some(id) => match crate::secrets::load_all(&state.db, &registry.keyring, id).await {
-            Ok(s) => s,
-            // Unreadable secrets are reported when connecting; the save itself may replace them.
-            Err(_) => BTreeMap::new(),
-        },
+        // Unreadable secrets are reported when connecting; the save itself may replace them.
+        Some(id) => crate::secrets::load_all(&state.db, &registry.keyring, id).await.unwrap_or_default(),
         None => BTreeMap::new(),
     };
     for (field, value) in patch {

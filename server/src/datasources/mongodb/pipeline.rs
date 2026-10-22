@@ -613,7 +613,7 @@ mod tests {
             "$where\u{0000}",      // NUL
             "$wh\u{202E}ere",      // right-to-left override
             "$wh\u{E0041}ere",     // tag character
-            "$wherе",              // Cyrillic e
+            "$wher\u{0435}",       // Cyrillic e
             "$\u{0391}ccumulator", // Greek capital alpha
         ];
         for key in keys {
@@ -625,7 +625,7 @@ mod tests {
             }
         }
         // The same characters in plain field names are data, not operators.
-        ok(r#"[{"$match": {"Straße​name": 1, "full name": 2, "naïve": 3}}]"#);
+        ok("[{\"$match\": {\"Straße\u{200B}name\": 1, \"full name\": 2, \"naïve\": 3}}]");
         // A stage name written that way is refused too.
         assert_eq!(reason(r#"[{"＄out": "x"}]"#), "mongodb.key_obfuscated");
         assert_eq!(reason(r#"[{"$OUT": "x"}]"#), "mongodb.operator_not_allowed");

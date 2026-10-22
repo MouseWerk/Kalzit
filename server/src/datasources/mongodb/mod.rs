@@ -431,7 +431,15 @@ struct Query {
 
 enum Plan {
     Aggregate(Vec<Document>),
-    Find { filter: Document, projection: Option<Document>, sort: Option<Document>, limit: Option<u64>, skip: u64 },
+    Find(Box<FindPlan>),
+}
+
+struct FindPlan {
+    filter: Document,
+    projection: Option<Document>,
+    sort: Option<Document>,
+    limit: Option<u64>,
+    skip: u64,
 }
 
 /// Ordered Extended JSON (relaxed) for the executed query.
@@ -706,13 +714,13 @@ impl DataSourcePlugin for MongoDb {
                 let filter = pipeline::parse_document("filter", q.filter.as_deref())?.unwrap_or_default();
                 let projection = pipeline::parse_document("projection", q.projection.as_deref())?;
                 let sort = pipeline::parse_document("sort", q.sort.as_deref())?;
-                Plan::Find {
+                Plan::Find(Box::new(FindPlan {
                     filter: binder.query_document(filter)?,
                     projection: projection.map(|p| binder.projection(p)).transpose()?,
                     sort: sort.map(|s| binder.query_document(s)).transpose()?,
                     limit: q.limit,
                     skip: q.skip.unwrap_or(0),
-                }
+                }))
             }
         };
         // Everything is checked before Kalzit connects.
@@ -742,7 +750,8 @@ impl DataSourcePlugin for MongoDb {
                     .map_err(fail)?;
                 (executed, cursor)
             }
-            Plan::Find { filter, projection, sort, limit, skip } => {
+            Plan::Find(find_plan) => {
+                let FindPlan { filter, projection, sort, limit, skip } = *find_plan;
                 if limit.is_some_and(|l| offset >= l) {
                     // Past the query's own limit: an empty page.
                     let set = DocumentSet { documents: Vec::new(), schema: Vec::new(), ..Default::default() };
