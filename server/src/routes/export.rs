@@ -6,10 +6,18 @@
 //! - `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: a panel's stored
 //!   queries and steps, for whoever may read the dashboard.
 //!
-//! Every export is written to the audit log. The format is chosen per result shape: frames today;
-//! documents (NDJSON) and graphs (GraphML) add their encoders here with M2 and M3.
+//! Every export is written to the audit log, a refused one too. The format is chosen per result
+//! shape: frames today; documents (NDJSON) and graphs (GraphML) add their encoders here with M2
+//! and M3.
+//!
+//! Resources: at most `MAX_EXPORTS` exports make files at once on a server (more answer `busy`);
+//! steps and encoding run off the request threads, stop when the client goes away (a drop guard
+//! sets the cancel flag) and when the query timeout (`datasources.query_timeout_secs`) has passed,
+//! and the run's cell and text budget bounds what they build.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Extension;
 use axum::body::Body;
@@ -20,7 +28,7 @@ use serde_json::{Value, json};
 
 use super::query::{api_error, check_variables, readable_model, resolve_variables};
 use super::table::{RouteDef, route};
-use crate::analysis::steps::{self, Input};
+use crate::analysis::steps::{self, Control, Input};
 use crate::analysis::{Step, check_steps, export};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
@@ -31,9 +39,25 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::shapes::{
-    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
-    QueryResult, Shape,
+    ExportFormat, ExportLanguage, ExportRequest, Frame, FrameMeta, PanelExportRequest, QueryItem, QueryOutcome,
+    QueryResponse, QueryResult, Shape, TimeRange,
 };
+
+/// Exports that make their file at the same time, per server.
+pub const MAX_EXPORTS: usize = 3;
+static EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_EXPORTS);
+/// The steps' and the encoder's time limit when the setting cannot be read.
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Sets the cancel flag when the request goes away (the client closed the connection), so the
+/// blocking work stops at its next check instead of running to the end for nobody.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -58,6 +82,25 @@ struct Wanted {
     format: ExportFormat,
     language: ExportLanguage,
     frame: Option<String>,
+    time_range: TimeRange,
+}
+
+impl Wanted {
+    /// The audit summary's common part: never the data, never what a user typed into a query.
+    fn summary(&self) -> serde_json::Map<String, Value> {
+        let mut m = serde_json::Map::new();
+        m.insert("format".into(), json!(self.format));
+        m.insert("timeRange".into(), json!(self.time_range));
+        m.insert("frame".into(), json!(self.frame));
+        m
+    }
+}
+
+/// A made file and where its audit entry points.
+struct Made {
+    file: export::File,
+    title: String,
+    summary: serde_json::Map<String, Value>,
 }
 
 async fn export_query(
@@ -66,6 +109,15 @@ async fn export_query(
     Extension(info): Extension<RequestInfo>,
     JsonBody(req): JsonBody<ExportRequest>,
 ) -> ApiResult<Response> {
+    let wanted = Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
+    let sources: BTreeSet<String> = req.queries.iter().map(|q| q.datasource_id.clone()).collect();
+    let mut where_ = wanted.summary();
+    where_.insert("datasourceIds".into(), json!(sources));
+    let made = make_query(&state, &ctx, req, &wanted).await;
+    finish(&state, &ctx, &info, None, where_, made).await
+}
+
+async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: &Wanted) -> ApiResult<Made> {
     check_items(&req.queries)?;
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
@@ -76,20 +128,20 @@ async fn export_query(
     // The file holds what running the queries would show, so the same right decides: each data
     // source must be one the caller may query. Unlike a run, one refusal refuses the file.
     for item in &req.queries {
-        check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id))
+        check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id))
             .await?;
     }
+    let permit = EXPORTS.try_acquire().map_err(|_| too_busy())?;
     let order: Vec<String> = req.queries.iter().map(|q| q.ref_id.clone()).collect();
-    let sources: BTreeSet<String> = req.queries.iter().map(|q| q.datasource_id.clone()).collect();
     let response =
-        run_queries(&state, &ctx, req.queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables)
+        run_queries(state, ctx, req.queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables)
             .await;
-    let title = req.title.as_deref().unwrap_or("kalzit-export");
-    let wanted = Wanted { format: req.format, language: req.language, frame: req.frame };
-    let (file, rows) = produce(response, &order, steps, &wanted).await?;
-    let summary = json!({ "format": req.format, "rows": rows, "datasourceIds": sources });
-    record(&state, &ctx, &info, None, summary).await?;
-    Ok(attachment(file, title))
+    let title = req.title.unwrap_or_else(|| "kalzit-export".into());
+    let (file, rows) = produce(state, response, &order, steps, wanted).await?;
+    drop(permit);
+    let mut summary = wanted.summary();
+    summary.insert("rows".into(), json!(rows));
+    Ok(Made { file, title, summary })
 }
 
 async fn export_panel(
@@ -99,7 +151,24 @@ async fn export_panel(
     Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
     JsonBody(req): JsonBody<PanelExportRequest>,
 ) -> ApiResult<Response> {
-    let model = readable_model(&state, &ctx, &dashboard_id).await?;
+    let wanted = Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
+    let mut where_ = wanted.summary();
+    where_.insert("panelId".into(), json!(panel_id));
+    let made = make_panel(&state, &ctx, &dashboard_id, &panel_id, req, &wanted).await;
+    // A dashboard the caller may not see is not named in their refused entry.
+    let seen = !matches!(&made, Err(e) if e.code == "not_found");
+    finish(&state, &ctx, &info, seen.then_some(dashboard_id.as_str()), where_, made).await
+}
+
+async fn make_panel(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboard_id: &str,
+    panel_id: &str,
+    req: PanelExportRequest,
+    wanted: &Wanted,
+) -> ApiResult<Made> {
+    let model = readable_model(state, ctx, dashboard_id).await?;
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
@@ -124,10 +193,11 @@ async fn export_panel(
         })
         .collect();
     check_items(&items)?;
+    let permit = EXPORTS.try_acquire().map_err(|_| too_busy())?;
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
     let response = run_queries_with(
-        &state,
-        &ctx,
+        state,
+        ctx,
         items,
         req.time_range,
         req.interval_ms,
@@ -136,22 +206,63 @@ async fn export_panel(
         Some(&identifiers),
     )
     .await;
-    let title = if panel.title.trim().is_empty() { model.title.as_str() } else { panel.title.as_str() };
-    let wanted = Wanted { format: req.format, language: req.language, frame: req.frame };
-    let (file, rows) = produce(response, &order, steps, &wanted).await?;
-    let summary = json!({ "format": req.format, "rows": rows, "panelId": panel_id });
-    record(&state, &ctx, &info, Some(&dashboard_id), summary).await?;
-    Ok(attachment(file, title))
+    let title = if panel.title.trim().is_empty() { model.title.clone() } else { panel.title.clone() };
+    let (file, rows) = produce(state, response, &order, steps, wanted).await?;
+    drop(permit);
+    let mut summary = wanted.summary();
+    summary.insert("panelId".into(), json!(panel_id));
+    summary.insert("rows".into(), json!(rows));
+    Ok(Made { file, title, summary })
+}
+
+fn too_busy() -> ApiError {
+    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "busy", "too many exports run at the moment; try again shortly")
+        .because("export.busy")
+}
+
+/// Writes the audit entry, of the export or of its refusal, and answers the file or the error.
+async fn finish(
+    state: &AppState,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    dashboard_id: Option<&str>,
+    mut where_: serde_json::Map<String, Value>,
+    made: ApiResult<Made>,
+) -> ApiResult<Response> {
+    match made {
+        Ok(made) => {
+            record(state, ctx, info, "data.exported", dashboard_id, Value::Object(made.summary)).await?;
+            Ok(attachment(made.file, &made.title))
+        }
+        Err(e) => {
+            where_.insert("code".into(), json!(e.code));
+            if let Some(reason) = &e.reason {
+                where_.insert("reason".into(), json!(reason.code));
+            }
+            // The refusal is what the caller needs to hear; a failed audit write is logged.
+            if let Err(audit) = record(state, ctx, info, "data.export_refused", dashboard_id, Value::Object(where_)).await
+            {
+                tracing::warn!("audit entry of a refused export: {}", audit.message);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// The file from the queries' outcomes: every query must have answered (a file never holds less
 /// than asked for without saying so), then the steps run and the chosen frame is encoded.
 async fn produce(
+    state: &AppState,
     mut response: QueryResponse,
     order: &[String],
     steps: Vec<Step>,
     wanted: &Wanted,
 ) -> ApiResult<(export::File, usize)> {
+    let timeout = crate::settings::get(state, "datasources.query_timeout_secs")
+        .await
+        .ok()
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_TIMEOUT_SECS);
     let mut inputs = Vec::new();
     // Results that are no frame: exported only after a projection made one of them.
     let mut other_shapes = Vec::new();
@@ -170,11 +281,14 @@ async fn produce(
         }
     }
     let (format, language, frame) = (wanted.format, wanted.language, wanted.frame.clone());
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _guard = CancelOnDrop(cancelled.clone());
+    let control = Control::new(cancelled, timeout);
     // Steps and encoding take CPU time; they run off the request threads.
     let work = tokio::task::spawn_blocking(move || -> Result<(export::File, usize), ApiError> {
-        let frames = steps::run_inputs(&steps, inputs).map_err(|f| {
+        let frames = steps::run_inputs(&steps, inputs, &control).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
-            ApiError::validation(message).with_field("steps").with_reason(f.detail.reason, f.detail.params)
+            step_error(message, f.detail)
         })?;
         let chosen = match &frame {
             Some(name) => frames.iter().find(|f| &f.name == name),
@@ -201,16 +315,41 @@ async fn produce(
                 }
             });
         };
-        let file = export::encode(&chosen.frame, &chosen.name, format, language).map_err(refused)?;
-        Ok((file, chosen.frame.rows()))
+        let frame = without_statement(&chosen.frame);
+        let file = export::encode(&frame, &chosen.name, format, language, &control)
+            .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
+        Ok((file, frame.rows()))
     });
     work.await.map_err(|e| ApiError::internal("export", e))?
+}
+
+/// A step's failure as an answer: the time limit as `query_timeout`, anything else as a
+/// `validation` of the steps.
+fn step_error(message: String, detail: Detail) -> ApiError {
+    let e = if detail.reason == "steps.timeout" {
+        ApiError::new(StatusCode::GATEWAY_TIMEOUT, "query_timeout", message)
+    } else {
+        ApiError::validation(message).with_field("steps")
+    };
+    e.with_reason(detail.reason, detail.params)
+}
+
+/// The frame without the statement as sent to the database: a file goes elsewhere, the query
+/// text stays in Kalzit.
+fn without_statement(frame: &Frame) -> Frame {
+    match frame.meta() {
+        Some(meta) if meta.executed_query.is_some() => {
+            frame.clone().with_meta(FrameMeta { executed_query: None, ..meta.clone() })
+        }
+        _ => frame.clone(),
+    }
 }
 
 async fn record(
     state: &AppState,
     ctx: &OrgCtx,
     info: &RequestInfo,
+    action: &str,
     dashboard_id: Option<&str>,
     summary: Value,
 ) -> ApiResult<()> {
@@ -219,7 +358,7 @@ async fn record(
         org_id: Some(&ctx.org_id),
         actor_user_id: Some(&ctx.user.id),
         actor_address: Some(info.client_ip.to_string()),
-        action: "data.exported",
+        action,
         resource_type: dashboard_id.map(|_| "dashboard"),
         resource_id: dashboard_id,
         summary,

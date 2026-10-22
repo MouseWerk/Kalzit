@@ -448,18 +448,20 @@ mod tests {
         check_steps(steps.as_array().unwrap(), &frames(), "steps")
     }
 
-    fn close(a: &Value, b: &Value) -> bool {
+    /// Numbers agree exactly; a case marked `"ulp": true` (exp, ln, log10, pow, whose platform
+    /// libraries may round the last bit differently) within one unit in the last place.
+    fn close(a: &Value, b: &Value, ulp: bool) -> bool {
         match (a.as_f64(), b.as_f64()) {
             (Some(x), Some(y)) if a.is_number() && b.is_number() => {
-                (x - y).abs() <= 1e-9 * x.abs().max(y.abs()).max(1e-3)
+                x == y || (ulp && x.signum() == y.signum() && x.to_bits().abs_diff(y.to_bits()) <= 1)
             }
             _ => a == b,
         }
     }
 
-    fn same_values(got: &[Value], want: &Value) -> bool {
+    fn same_values(got: &[Value], want: &Value, ulp: bool) -> bool {
         let want = want.as_array().unwrap();
-        got.len() == want.len() && got.iter().zip(want).all(|(g, w)| close(g, w))
+        got.len() == want.len() && got.iter().zip(want).all(|(g, w)| close(g, w, ulp))
     }
 
     /// The cases both engines share (`conformance.json`); the UI runs them in
@@ -475,12 +477,15 @@ mod tests {
         for case in cases["expressions"].as_array().unwrap() {
             let text = case["expression"].as_str().unwrap();
             let f = frame(case["frame"].as_str().unwrap());
-            let outcome = expr::parse(text).and_then(|e| expr::compile(&e, f.fields()));
+            let ulp = case.get("ulp").and_then(Value::as_bool).unwrap_or(false);
+            let outcome = expr::parse(text).and_then(|e| expr::compile(&e, f.fields())).and_then(|c| {
+                let cells: Result<Vec<Value>, _> = (0..f.rows()).map(|row| c.cell(f.fields(), row)).collect();
+                Ok((c.result, cells?))
+            });
             match (outcome, case.get("error")) {
-                (Ok(c), None) => {
-                    let got: Vec<Value> = (0..f.rows()).map(|row| c.cell(f.fields(), row)).collect();
-                    assert!(same_values(&got, &case["values"]), "{text}: {got:?}");
-                    let t = serde_json::to_value(c.result.field_type()).unwrap();
+                (Ok((result, got)), None) => {
+                    assert!(same_values(&got, &case["values"], ulp), "{text}: {got:?}");
+                    let t = serde_json::to_value(result.field_type()).unwrap();
                     assert_eq!(t, case["type"], "{text}");
                 }
                 (Err(e), Some(want)) => {
@@ -506,7 +511,7 @@ mod tests {
                 })
                 .collect();
             let list: Vec<Step> = case["steps"].as_array().unwrap().iter().map(|s| parse_step(s).unwrap()).collect();
-            match (steps::run_inputs(&list, inputs), case.get("error")) {
+            match (steps::run_inputs(&list, inputs, &steps::Control::unbounded()), case.get("error")) {
                 (Ok(out), None) => {
                     if let Some(order) = case.get("outputOrder") {
                         let got: Vec<&str> = out.iter().map(|f| f.name.as_str()).collect();
@@ -521,7 +526,7 @@ mod tests {
                         for field in want["fields"].as_array().unwrap() {
                             let f = got.fields().iter().find(|f| f.name == field["name"]).unwrap();
                             assert_eq!(serde_json::to_value(f.field_type).unwrap(), field["type"], "{name}");
-                            assert!(same_values(&f.values, &field["values"]), "{name} {}: {:?}", f.name, f.values);
+                            assert!(same_values(&f.values, &field["values"], false), "{name} {}: {:?}", f.name, f.values);
                         }
                     }
                     for gone in case.get("gone").and_then(Value::as_array).into_iter().flatten() {

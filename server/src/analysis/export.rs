@@ -11,6 +11,7 @@ use rust_xlsxwriter::{Format, Workbook};
 use serde_json::Value;
 
 use super::expr::{iso_time, number_text};
+use super::steps::{Control, int_of};
 use crate::datasources::detail::Detail;
 use crate::shapes::{ExportFormat, ExportLanguage, FieldType, Frame, QueryResult};
 
@@ -26,12 +27,27 @@ pub struct File {
 pub const XLSX_MAX_ROWS: usize = 1_048_576;
 pub const XLSX_MAX_COLUMNS: usize = 16_384;
 const XLSX_MAX_TEXT: usize = 32_767;
+/// The largest file an export writes; it is built in memory.
+pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
 
-pub fn encode(frame: &Frame, name: &str, format: ExportFormat, language: ExportLanguage) -> Result<File, Detail> {
+fn too_large() -> Detail {
+    Detail::new("export.too_large", format!("the file would be larger than {MAX_FILE_BYTES} bytes"))
+        .with("max", MAX_FILE_BYTES)
+}
+
+pub fn encode(
+    frame: &Frame,
+    name: &str,
+    format: ExportFormat,
+    language: ExportLanguage,
+    control: &Control,
+) -> Result<File, Detail> {
     match format {
-        ExportFormat::Csv => {
-            Ok(File { bytes: csv(frame, language), content_type: "text/csv; charset=utf-8", extension: "csv" })
-        }
+        ExportFormat::Csv => Ok(File {
+            bytes: csv_within(frame, language, control)?,
+            content_type: "text/csv; charset=utf-8",
+            extension: "csv",
+        }),
         ExportFormat::Json => Ok(File {
             bytes: serde_json::to_vec(&QueryResult::Frame { frame: frame.clone() }).map_err(|e| {
                 Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e)
@@ -40,26 +56,40 @@ pub fn encode(frame: &Frame, name: &str, format: ExportFormat, language: ExportL
             extension: "json",
         }),
         ExportFormat::Xlsx => Ok(File {
-            bytes: xlsx(frame, name)?,
+            bytes: xlsx_within(frame, name, control)?,
             content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             extension: "xlsx",
         }),
     }
 }
 
-/// Text cells Excel would read as a formula (`=`, `+`, `-`, `@`, tab, carriage return at the
-/// start) get a leading `'`, so a value from the data can never run as one.
+/// Text cells a spreadsheet would read as a formula get a leading `'`, so a value from the data
+/// can never run as one: `=`, `+`, `-`, `@` (also their full-width forms) after any leading
+/// spaces, line breaks or invisible characters, and a leading tab or carriage return (DDE such as
+/// `=cmd|...` starts with `=`).
 fn defuse(text: &str) -> String {
-    if text.starts_with(['=', '+', '-', '@', '\t', '\r']) { format!("'{text}") } else { text.to_string() }
+    let lead = text.trim_start_matches([' ', '\n', '\u{00A0}', '\u{200B}', '\u{FEFF}', '\u{3000}']);
+    let risky = text.starts_with(['\t', '\r'])
+        || lead.starts_with(['=', '+', '-', '@', '\t', '\r', '\u{FF1D}', '\u{FF0B}', '\u{FF0D}', '\u{FF20}']);
+    if risky { format!("'{text}") } else { text.to_string() }
+}
+
+/// A time cell's ms: fractions of a millisecond are cut (floor), never dropped.
+fn time_ms(n: &serde_json::Number) -> Option<i64> {
+    n.as_i64().or_else(|| n.as_f64().filter(|x| x.is_finite() && x.abs() < 9.2e18).map(|x| x.floor() as i64))
 }
 
 fn csv_cell(value: &Value, field_type: FieldType, language: ExportLanguage) -> String {
     let decimal = |s: String| if language == ExportLanguage::De { s.replace('.', ",") } else { s };
     match (field_type, value) {
         (_, Value::Null) => String::new(),
-        (FieldType::Time, Value::Number(n)) => n.as_i64().map(iso_time).unwrap_or_default(),
+        (FieldType::Time, Value::Number(n)) => time_ms(n).map(iso_time).unwrap_or_default(),
         (FieldType::Number, Value::Number(n)) => n.as_f64().map(|x| decimal(number_text(x))).unwrap_or_default(),
-        (FieldType::Int64, Value::String(s)) => s.clone(),
+        // Digits as they are; anything else in an int64 field is text and defused.
+        (FieldType::Int64, Value::String(s)) => match int_of(value) {
+            Some(_) if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') => s.clone(),
+            _ => defuse(s),
+        },
         (FieldType::Json, v) => v.to_string(),
         (_, Value::String(s)) => defuse(s),
         (_, Value::Bool(b)) => b.to_string(),
@@ -76,6 +106,11 @@ fn quote(cell: &str, separator: char) -> String {
 /// RFC 4180 CSV with a byte order mark, so Excel opens it as UTF-8, and CRLF line ends. Times
 /// are ISO 8601 in UTC; numbers keep every digit and use the language's decimal mark.
 pub fn csv(frame: &Frame, language: ExportLanguage) -> Vec<u8> {
+    csv_within(frame, language, &Control::unbounded()).expect("no limit without a control")
+}
+
+/// `csv` within the file size limit, stopping when the control says so.
+fn csv_within(frame: &Frame, language: ExportLanguage, control: &Control) -> Result<Vec<u8>, Detail> {
     let separator = if language == ExportLanguage::De { ';' } else { ',' };
     let sep = separator.to_string();
     let mut out = String::from("\u{FEFF}");
@@ -83,6 +118,10 @@ pub fn csv(frame: &Frame, language: ExportLanguage) -> Vec<u8> {
     out.push_str(&header.join(&sep));
     out.push_str("\r\n");
     for row in 0..frame.rows() {
+        control.every(row)?;
+        if out.len() > MAX_FILE_BYTES {
+            return Err(too_large());
+        }
         let cells: Vec<String> = frame
             .fields()
             .iter()
@@ -91,21 +130,30 @@ pub fn csv(frame: &Frame, language: ExportLanguage) -> Vec<u8> {
         out.push_str(&cells.join(&sep));
         out.push_str("\r\n");
     }
-    out.into_bytes()
+    if out.len() > MAX_FILE_BYTES {
+        return Err(too_large());
+    }
+    Ok(out.into_bytes())
 }
 
-/// A sheet name Excel accepts: at most 31 characters, none of `[]:*?/\`.
+/// A sheet name Excel accepts: at most 31 characters, none of `[]:*?/\`, not the reserved
+/// "History".
 fn sheet_name(name: &str) -> String {
     let clean: String = name.chars().filter(|c| !"[]:*?/\\".contains(*c) && !c.is_control()).take(31).collect();
     let clean = clean.trim_matches('\'').to_string();
-    if clean.trim().is_empty() { "Kalzit".into() } else { clean }
+    if clean.trim().is_empty() || clean.trim().eq_ignore_ascii_case("history") { "Kalzit".into() } else { clean }
 }
 
+/// Text cut at Excel's 32,767 UTF-16 units, never inside a character.
 fn truncate(text: &str) -> &str {
-    match text.char_indices().nth(XLSX_MAX_TEXT) {
-        Some((i, _)) => &text[..i],
-        None => text,
+    let mut units = 0;
+    for (i, c) in text.char_indices() {
+        units += c.len_utf16();
+        if units > XLSX_MAX_TEXT {
+            return &text[..i];
+        }
     }
+    text
 }
 
 /// Days since 1899-12-30, Excel's date numbers; Excel shows dates from 1900-03-01 on.
@@ -122,6 +170,10 @@ fn xlsx_error(e: rust_xlsxwriter::XlsxError) -> Detail {
 /// their type (times in UTC); int64 beyond 2^53 and times before 1900-03-01 are text, so no digit
 /// is lost; text longer than Excel's 32,767 characters is cut there.
 pub fn xlsx(frame: &Frame, name: &str) -> Result<Vec<u8>, Detail> {
+    xlsx_within(frame, name, &Control::unbounded())
+}
+
+fn xlsx_within(frame: &Frame, name: &str, control: &Control) -> Result<Vec<u8>, Detail> {
     if frame.rows() + 1 > XLSX_MAX_ROWS {
         return Err(Detail::new("export.too_many_rows", format!("Excel takes at most {} rows", XLSX_MAX_ROWS - 1))
             .with("max", XLSX_MAX_ROWS - 1));
@@ -142,19 +194,20 @@ pub fn xlsx(frame: &Frame, name: &str) -> Result<Vec<u8>, Detail> {
             sheet.set_column_width(col, 22).map_err(xlsx_error)?;
         }
         for (r, value) in field.values.iter().enumerate() {
+            control.every(r)?;
             let row = r as u32 + 1;
             let result = match (field.field_type, value) {
                 (_, Value::Null) => continue,
-                (FieldType::Time, Value::Number(n)) => match n.as_i64() {
+                (FieldType::Time, Value::Number(n)) => match time_ms(n) {
                     Some(ms) => match excel_date(ms) {
                         Some(d) => sheet.write_number_with_format(row, col, d, &date),
                         None => sheet.write_string(row, col, iso_time(ms)),
                     },
                     None => continue,
                 },
-                (FieldType::Int64, Value::String(s)) => match s.parse::<i64>() {
-                    Ok(n) if n.unsigned_abs() <= 1 << 53 => sheet.write_number(row, col, n as f64),
-                    _ => sheet.write_string(row, col, s),
+                (FieldType::Int64, Value::String(s)) => match int_of(value) {
+                    Some(n) if n.unsigned_abs() <= 1 << 53 => sheet.write_number(row, col, n as f64),
+                    _ => sheet.write_string(row, col, truncate(s)),
                 },
                 (_, Value::Number(n)) => match n.as_f64() {
                     Some(x) => sheet.write_number(row, col, x),
@@ -168,7 +221,12 @@ pub fn xlsx(frame: &Frame, name: &str) -> Result<Vec<u8>, Detail> {
         }
     }
     sheet.set_freeze_panes(1, 0).map_err(xlsx_error)?;
-    book.save_to_buffer().map_err(xlsx_error)
+    control.check()?;
+    let bytes = book.save_to_buffer().map_err(xlsx_error)?;
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(too_large());
+    }
+    Ok(bytes)
 }
 
 /// A file name of letters, digits, `-` and `_` only, for `Content-Disposition`.
@@ -262,7 +320,7 @@ mod tests {
 
     #[test]
     fn json_is_the_result_envelope() {
-        let file = encode(&sample(), "A", ExportFormat::Json, ExportLanguage::De).unwrap();
+        let file = encode(&sample(), "A", ExportFormat::Json, ExportLanguage::De, &Control::unbounded()).unwrap();
         let back: QueryResult = serde_json::from_slice(&file.bytes).unwrap();
         assert_eq!(back, QueryResult::Frame { frame: sample() });
         assert_eq!(file.content_type, "application/json");
@@ -281,7 +339,8 @@ mod tests {
 
     #[test]
     fn excel_files_hold_typed_cells() {
-        let file = encode(&sample(), "Umsatz: A/B", ExportFormat::Xlsx, ExportLanguage::De).unwrap();
+        let file =
+            encode(&sample(), "Umsatz: A/B", ExportFormat::Xlsx, ExportLanguage::De, &Control::unbounded()).unwrap();
         assert_eq!(&file.bytes[..2], b"PK", "a zip archive");
         let (sheet, strings) = sheet_xml(&file.bytes);
         // 2026-01-01 is Excel day 46023; numbers stay numbers, the big int64 stays text.

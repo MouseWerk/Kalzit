@@ -305,7 +305,8 @@ async fn export_needs_the_permission_and_the_same_rights_as_running() {
     let reporter = t.member("reporter", role.json()["id"].as_str().unwrap()).await;
     assert_eq!(t.post(&panel, panel_body.clone(), &reporter).await.status, StatusCode::OK);
     let r = t.post("/export", free(&ds, "csv", "en", json!([])), &reporter).await;
-    assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{} {}", r.status, r.text());
+    // The data source is not visible to the role at all.
+    assert_eq!((r.status, r.code()), (StatusCode::NOT_FOUND, "not_found".into()), "{}", r.text());
 
     // Without a session, and for unknown panels.
     let r = t.send(&format!("/api/orgs/{}{panel}", t.org), panel_body.clone(), None).await;
@@ -323,7 +324,91 @@ async fn export_needs_the_permission_and_the_same_rights_as_running() {
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert_eq!(rows[0].1.as_deref(), Some(id.as_str()));
     let summary: Value = serde_json::from_str(&rows[0].2).unwrap();
-    assert_eq!(summary, json!({ "format": "csv", "rows": 3, "panelId": "p1" }));
+    assert_eq!(
+        summary,
+        json!({ "format": "csv", "rows": 3, "panelId": "p1", "frame": null,
+                "timeRange": { "from": 1_700_000_000_000_i64, "to": 1_800_000_000_000_i64 } })
+    );
+    // Refusals inside the route are there too: the reporter's free export and the unknown panel.
+    let refused: Vec<(Option<String>, String)> = sqlx::query_as(
+        "SELECT resource_id, summary FROM audit_events WHERE action = 'data.export_refused' ORDER BY created_at, id",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(refused.len(), 2, "{refused:?}");
+    let first: Value = serde_json::from_str(&refused[0].1).unwrap();
+    assert_eq!((first["code"].as_str(), first["datasourceIds"][0].as_str()), (Some("not_found"), Some(ds.as_str())));
+    assert_eq!(refused[1].0, None, "a panel that does not exist names no dashboard");
+}
+
+/// A restricted folder hides its dashboards: their panels cannot be exported either.
+#[tokio::test]
+async fn panels_in_hidden_folders_are_not_found() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let folder = t.post("/folders", json!({ "name": "Geheim", "restricted": true }), &t.owner).await;
+    assert_eq!(folder.status, StatusCode::CREATED, "{}", folder.text());
+    let model = json!({
+        "schemaVersion": 2, "title": "Geheim", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "p1", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT land FROM verkauf" } }] }]
+    });
+    let created =
+        t.post("/dashboards", json!({ "model": model, "folderId": folder.json()["id"] }), &t.owner).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    let id = created.json()["id"].as_str().unwrap().to_string();
+    let editor = t.member("editor", "editor").await;
+    let body = json!({ "timeRange": range(), "format": "csv", "language": "en" });
+    let r = t.post(&format!("/dashboards/{id}/panels/p1/export"), body.clone(), &editor).await;
+    assert_eq!((r.status, r.code()), (StatusCode::NOT_FOUND, "not_found".into()), "{}", r.text());
+    assert_eq!(t.post(&format!("/dashboards/{id}/panels/p1/export"), body, &t.owner).await.status, StatusCode::OK);
+}
+
+/// A query grant on one data source is enough for a free export of it, as for running it.
+#[tokio::test]
+async fn a_datasource_grant_allows_its_free_export() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let role = t.post("/roles", json!({ "name": "Export", "permissions": ["data:export"] }), &t.owner).await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text());
+    let role_id = role.json()["id"].as_str().unwrap().to_string();
+    let member = t.member("analyst", &role_id).await;
+    let r = t.post("/export", free(&ds, "csv", "en", json!([])), &member).await;
+    assert_eq!((r.status, r.code()), (StatusCode::NOT_FOUND, "not_found".into()), "{}", r.text());
+    let grant = t
+        .post(
+            "/grants",
+            json!({ "subjectType": "role", "subjectId": role_id, "resourceType": "datasource",
+                    "resourceId": ds, "level": "query" }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(grant.status, StatusCode::CREATED, "{}", grant.text());
+    let r = t.post("/export", free(&ds, "csv", "en", json!([])), &member).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().starts_with("\u{FEFF}tag,land,betrag\r\n"), "{}", r.text());
+}
+
+/// Text from the data never runs as a formula in a spreadsheet, whatever it starts with.
+#[tokio::test]
+async fn csv_cells_that_look_like_formulas_are_defused() {
+    let t = T::new().await;
+    let sql = "CREATE TABLE t (n INTEGER, s TEXT); INSERT INTO t VALUES \
+        (1, '+1'), (2, '-1'), (3, '@SUM(A1)'), (4, char(9) || '=1'), (5, char(13) || '=1'), \
+        (6, '=cmd|'' /C calc''!A0'), (7, ' =1'), (8, '＝1');";
+    let ds = t.sqlite_source("formeln", sql).await;
+    let body = json!({ "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT s FROM t ORDER BY n" } }],
+                       "timeRange": range(), "format": "csv", "language": "en" });
+    let r = t.post("/export", body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let text = r.text();
+    let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
+    assert_eq!(
+        &lines[1..9],
+        ["'+1", "'-1", "'@SUM(A1)", "'\t=1", "\"'\r=1\"", "'=cmd|' /C calc'!A0", "' =1", "'＝1"],
+        "{text:?}"
+    );
 }
 
 #[tokio::test]

@@ -108,6 +108,9 @@ pub fn correlation(points: &[(f64, f64)]) -> Option<f64> {
 
 /// The trailing moving average over `window` rows: empty until the window is full, then the mean
 /// of the values in it that are not empty (empty if none is).
+/// Rows between two fresh sums of the moving window.
+const RESUM_EVERY: usize = 1024;
+
 pub fn moving_average(values: &[Option<f64>], window: usize) -> Vec<Option<f64>> {
     let window = window.max(1);
     let mut out = Vec::with_capacity(values.len());
@@ -122,6 +125,11 @@ pub fn moving_average(values: &[Option<f64>], window: usize) -> Vec<Option<f64>>
         {
             total -= old;
             count -= 1;
+        }
+        // Adding and taking away leaves rounding behind; the window's sum is taken afresh now and
+        // then, so it cannot drift over long series (after a huge value left, for example).
+        if (i + 1) % RESUM_EVERY == 0 {
+            total = values[(i + 1).saturating_sub(window)..=i].iter().flatten().fold(0.0, |acc, x| acc + x);
         }
         out.push(if i + 1 < window || count == 0 { None } else { Some(total / count as f64) });
     }
@@ -190,5 +198,10 @@ mod tests {
         assert_eq!(moving_average(&v, 3), [None, None, Some(2.0), Some(2.5), Some(4.0), Some(5.0), Some(5.0)]);
         assert_eq!(moving_average(&v, 1), [Some(1.0), Some(2.0), Some(3.0), None, Some(5.0), None, None]);
         assert_eq!(moving_average(&[], 3), Vec::<Option<f64>>::new());
+        // A huge value passing through the window leaves no rounding behind for long.
+        let mut v = vec![Some(1e17)];
+        v.extend(std::iter::repeat_n(Some(0.1), 3000));
+        let out = moving_average(&v, 2);
+        assert_eq!(out[2047], Some(0.1), "{:?}", out[2047]);
     }
 }

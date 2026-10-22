@@ -2,7 +2,11 @@
 //! id of their query and writes its result back under that id; a disabled step is passed over.
 //! The UI runs the same steps in `ui/src/analysis/steps.ts`.
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use serde_json::Value;
 
@@ -16,6 +20,87 @@ use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta};
 pub const MAX_ROWS: usize = 500_000;
 /// Fields a pivot may produce.
 pub const MAX_COLUMNS: usize = 500;
+/// Cells (rows times fields) one step may produce, checked before it builds them.
+pub const MAX_CELLS: usize = 5_000_000;
+/// Text (UTF-16 units) the steps of one run may make: calculated text and the copies a join makes.
+pub const MAX_RUN_TEXT_UNITS: usize = 64 * 1024 * 1024;
+/// Rows between two looks at the cancel flag and the deadline.
+const CHECK_EVERY: usize = 4096;
+
+/// The bounds and stop signals of one run. The UI's engine has the same budget; the server adds a
+/// cancel flag (the client went away) and a deadline (the query timeout).
+pub struct Control {
+    cancelled: Option<Arc<AtomicBool>>,
+    deadline: Option<(Instant, u64)>,
+    text_left: Cell<usize>,
+}
+
+impl Default for Control {
+    fn default() -> Self {
+        Self::unbounded()
+    }
+}
+
+impl Control {
+    /// No cancel flag and no deadline, only the budget.
+    pub fn unbounded() -> Self {
+        Self { cancelled: None, deadline: None, text_left: Cell::new(MAX_RUN_TEXT_UNITS) }
+    }
+
+    /// Stops when `cancelled` is set or `timeout_secs` have passed.
+    pub fn new(cancelled: Arc<AtomicBool>, timeout_secs: u64) -> Self {
+        let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        Self { cancelled: Some(cancelled), deadline: Some((deadline, timeout_secs)), text_left: Cell::new(MAX_RUN_TEXT_UNITS) }
+    }
+
+    /// Fails when the run should stop.
+    pub fn check(&self) -> Result<(), Detail> {
+        if self.cancelled.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(detail("steps.cancelled", "the request was cancelled".into()));
+        }
+        if let Some((deadline, secs)) = self.deadline
+            && Instant::now() >= deadline
+        {
+            return Err(detail("steps.timeout", format!("the steps took longer than {secs} s")).with("seconds", secs));
+        }
+        Ok(())
+    }
+
+    /// `check`, every `CHECK_EVERY` rows.
+    pub fn every(&self, row: usize) -> Result<(), Detail> {
+        if row % CHECK_EVERY == 0 { self.check() } else { Ok(()) }
+    }
+
+    fn spend_text(&self, units: usize) -> Result<(), Detail> {
+        let left = self.text_left.get();
+        if units > left {
+            return Err(detail(
+                "steps.too_much_text",
+                format!("the steps would make more than {MAX_RUN_TEXT_UNITS} characters of text"),
+            )
+            .with("max", MAX_RUN_TEXT_UNITS));
+        }
+        self.text_left.set(left - units);
+        Ok(())
+    }
+}
+
+/// Refuses a result of `rows` times `fields` cells above `MAX_CELLS`, before it is built.
+fn check_cells(rows: usize, fields: usize) -> Result<(), Detail> {
+    if rows.saturating_mul(fields) > MAX_CELLS {
+        return Err(detail("steps.too_many_cells", format!("the step would make more than {MAX_CELLS} cells"))
+            .with("max", MAX_CELLS));
+    }
+    Ok(())
+}
+
+/// The text (UTF-16 units) of one cell, for the budget.
+fn text_units(v: &Value) -> usize {
+    match v {
+        Value::String(s) => expr::utf16_len(s),
+        _ => 0,
+    }
+}
 
 /// A frame with the reference id of the query it came from.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,13 +125,18 @@ pub enum Input {
 
 /// Runs the enabled steps in order; the first failure stops the run.
 pub fn run(steps: &[Step], frames: Vec<NamedFrame>) -> Result<Vec<NamedFrame>, StepFailure> {
-    run_inputs(steps, frames.into_iter().map(|f| (f.name, Input::Frame(f.frame))).collect())
+    let inputs = frames.into_iter().map(|f| (f.name, Input::Frame(f.frame))).collect();
+    run_inputs(steps, inputs, &Control::unbounded())
 }
 
 /// `run` over results of any shape the steps read. Steps run in order; a projection (`toFrame`)
 /// turns the documents of its query into a frame at the place of that query, and the steps after
 /// it work on that frame. Documents are no frame for any other step.
-pub fn run_inputs(steps: &[Step], inputs: Vec<(String, Input)>) -> Result<Vec<NamedFrame>, StepFailure> {
+pub fn run_inputs(
+    steps: &[Step],
+    inputs: Vec<(String, Input)>,
+    control: &Control,
+) -> Result<Vec<NamedFrame>, StepFailure> {
     let order: Vec<String> = inputs.iter().map(|(name, _)| name.clone()).collect();
     let mut documents: Vec<(String, DocumentSet)> = Vec::new();
     let mut frames: Vec<NamedFrame> = Vec::new();
@@ -60,8 +150,9 @@ pub fn run_inputs(steps: &[Step], inputs: Vec<(String, Input)>) -> Result<Vec<Na
         if step.disabled {
             continue;
         }
+        control.check().map_err(|detail| StepFailure { index, detail })?;
         let StepKind::ToFrame { frame: name, columns } = &step.kind else {
-            apply(&step.kind, &mut frames).map_err(|detail| StepFailure { index, detail })?;
+            apply(&step.kind, &mut frames, control).map_err(|detail| StepFailure { index, detail })?;
             continue;
         };
         if let Some(at) = documents.iter().position(|(n, _)| n == name) {
@@ -148,11 +239,29 @@ fn check_free(frame: &Frame, name: &str) -> Result<(), Detail> {
     Ok(())
 }
 
-/// A cell as a number: numbers, int64 text and times; anything else is empty.
+/// A cell as a number: numbers, int64 text (by the shared number grammar, `expr::parse_number`)
+/// and times; anything else is empty.
 pub fn number_at(value: &Value) -> Option<f64> {
     match value {
         Value::Number(n) => n.as_f64().filter(|x| x.is_finite()),
-        Value::String(s) => s.parse::<f64>().ok().filter(|x| x.is_finite()),
+        Value::String(s) => expr::parse_number(s),
+        _ => None,
+    }
+}
+
+/// An int64 cell as an exact integer: an optional sign and digits, spaces around allowed, within
+/// the range of i128. Both engines read int64 text this way.
+pub fn int_of(value: &Value) -> Option<i128> {
+    match value {
+        Value::String(s) => {
+            let t = s.trim_matches(|c: char| c.is_ascii_whitespace());
+            let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            t.parse::<i128>().ok()
+        }
+        Value::Number(n) => n.as_i64().map(i128::from),
         _ => None,
     }
 }
@@ -189,7 +298,7 @@ fn with_field(frame: &Frame, field: Field) -> Result<Frame, Detail> {
 fn key_of(value: &Value, t: FieldType) -> Option<String> {
     match (t, value) {
         (_, Value::Null) => None,
-        (FieldType::Int64, Value::String(s)) => Some(s.parse::<i128>().map_or_else(|_| s.clone(), |n| n.to_string())),
+        (FieldType::Int64, Value::String(s)) => Some(int_of(value).map_or_else(|| s.clone(), |n| n.to_string())),
         (_, Value::Number(n)) => n.as_f64().map(number_text),
         (_, Value::String(s)) => Some(s.clone()),
         (_, Value::Bool(b)) => Some(b.to_string()),
@@ -201,9 +310,9 @@ fn keyable(field: &Field) -> Result<(), Detail> {
     if field.field_type == FieldType::Json { Err(wrong_type(field)) } else { Ok(()) }
 }
 
-fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>) -> Result<(), Detail> {
+fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Result<(), Detail> {
     if let StepKind::Join { left, right, on, mode } = kind {
-        return join(frames, left, right, on, *mode);
+        return join(frames, left, right, on, *mode, control);
     }
     let index = position(frames, kind.frames()[0])?;
     let nf = &frames[index];
@@ -213,7 +322,14 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>) -> Result<(), Detail> {
             check_free(frame, name)?;
             let parsed = expr::parse(expression)?;
             let compiled = expr::compile(&parsed, frame.fields())?;
-            let values = (0..frame.rows()).map(|row| compiled.cell(frame.fields(), row)).collect();
+            check_cells(frame.rows(), frame.fields().len() + 1)?;
+            let mut values = Vec::with_capacity(frame.rows());
+            for row in 0..frame.rows() {
+                control.every(row)?;
+                let cell = compiled.cell(frame.fields(), row)?;
+                control.spend_text(text_units(&cell))?;
+                values.push(cell);
+            }
             with_field(frame, new_field(name, compiled.result.field_type(), values))?
         }
         StepKind::Reduce { fields, stats, percentiles, .. } => reduce(frame, fields, stats, percentiles)?,
@@ -242,8 +358,8 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>) -> Result<(), Detail> {
         StepKind::Compare { field, time, period, output, name, .. } => {
             compare(nf, field, time.as_deref(), *period, *output, name)?
         }
-        StepKind::Group { by, aggregations, .. } => group(frame, by, aggregations)?,
-        StepKind::Pivot { row, column, value, op, .. } => pivot(frame, row, column, value, *op)?,
+        StepKind::Group { by, aggregations, .. } => group(frame, by, aggregations, control)?,
+        StepKind::Pivot { row, column, value, op, .. } => pivot(frame, row, column, value, *op, control)?,
         StepKind::Join { .. } | StepKind::ToFrame { .. } => unreachable!("joins above, projections in run_inputs"),
     };
     frames[index].frame = result;
@@ -399,10 +515,11 @@ fn compare(
 }
 
 /// Rows grouped by a key, in the order each key first appears.
-fn groups(keys: impl Iterator<Item = Vec<Option<String>>>) -> Vec<Vec<usize>> {
+fn groups(keys: impl Iterator<Item = Vec<Option<String>>>, control: &Control) -> Result<Vec<Vec<usize>>, Detail> {
     let mut index: HashMap<Vec<Option<String>>, usize> = HashMap::new();
     let mut out: Vec<Vec<usize>> = Vec::new();
     for (row, key) in keys.enumerate() {
+        control.every(row)?;
         let next = out.len();
         let g = *index.entry(key).or_insert(next);
         if g == next {
@@ -410,7 +527,7 @@ fn groups(keys: impl Iterator<Item = Vec<Option<String>>>) -> Vec<Vec<usize>> {
         }
         out[g].push(row);
     }
-    out
+    Ok(out)
 }
 
 /// Checks that `op` can aggregate `field` and gives the result's type.
@@ -443,10 +560,10 @@ fn aggregate(field: &Field, op: Agg, rows: &[usize]) -> Value {
         Agg::Min | Agg::Max => {
             let less = |a: &Value, b: &Value| -> bool {
                 match field.field_type {
-                    FieldType::Int64 => {
-                        let n = |v: &Value| v.as_str().and_then(|s| s.parse::<i128>().ok());
-                        n(a) < n(b)
-                    }
+                    FieldType::Int64 => match (int_of(a), int_of(b)) {
+                        (Some(x), Some(y)) => x < y,
+                        _ => number_at(a) < number_at(b),
+                    },
                     FieldType::String => {
                         a.as_str().unwrap_or_default().chars().lt(b.as_str().unwrap_or_default().chars())
                     }
@@ -469,7 +586,7 @@ fn aggregate(field: &Field, op: Agg, rows: &[usize]) -> Value {
     }
 }
 
-fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation]) -> Result<Frame, Detail> {
+fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation], control: &Control) -> Result<Frame, Detail> {
     let by_fields: Vec<&Field> =
         by.iter().map(|n| field_index(frame, n).map(|i| &frame.fields()[i])).collect::<Result<_, _>>()?;
     for f in &by_fields {
@@ -487,8 +604,11 @@ fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation]) -> Result<F
         out_names.push(name.clone());
         plan.push((f, a.op, t, name));
     }
-    let rows =
-        groups((0..frame.rows()).map(|r| by_fields.iter().map(|f| key_of(&f.values[r], f.field_type)).collect()));
+    let rows = groups(
+        (0..frame.rows()).map(|r| by_fields.iter().map(|f| key_of(&f.values[r], f.field_type)).collect()),
+        control,
+    )?;
+    check_cells(rows.len(), by.len() + plan.len())?;
     let mut fields: Vec<Field> = by_fields
         .iter()
         .map(|f| Field {
@@ -509,19 +629,20 @@ fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation]) -> Result<F
     frame_of(fields, frame.meta())
 }
 
-fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg) -> Result<Frame, Detail> {
+fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg, control: &Control) -> Result<Frame, Detail> {
     let rf = &frame.fields()[field_index(frame, row)?];
     let cf = &frame.fields()[field_index(frame, column)?];
     let vf = &frame.fields()[field_index(frame, value)?];
     keyable(rf)?;
     keyable(cf)?;
     let t = agg_type(vf, op)?;
-    let row_groups = groups((0..frame.rows()).map(|r| vec![key_of(&rf.values[r], rf.field_type)]));
-    let col_groups = groups((0..frame.rows()).map(|r| vec![key_of(&cf.values[r], cf.field_type)]));
+    let row_groups = groups((0..frame.rows()).map(|r| vec![key_of(&rf.values[r], rf.field_type)]), control)?;
+    let col_groups = groups((0..frame.rows()).map(|r| vec![key_of(&cf.values[r], cf.field_type)]), control)?;
     if col_groups.len() > MAX_COLUMNS {
         return Err(detail("steps.too_many_columns", format!("the pivot would make more than {MAX_COLUMNS} fields"))
             .with("max", MAX_COLUMNS));
     }
+    check_cells(row_groups.len(), col_groups.len() + 1)?;
     // The rows of each cell (row group, column group).
     let mut column_of = vec![0; frame.rows()];
     for (c, g) in col_groups.iter().enumerate() {
@@ -543,6 +664,7 @@ fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg) -> Result
         values: row_groups.iter().map(|g| rf.values[g[0]].clone()).collect(),
     }];
     for (c, g) in col_groups.iter().enumerate() {
+        control.check()?;
         let first = &cf.values[g[0]];
         let name = match (cf.field_type, number_at(first)) {
             (FieldType::Time, Some(ms)) => expr::iso_time(ms as i64),
@@ -569,7 +691,14 @@ fn same_family(a: FieldType, b: FieldType) -> bool {
     matches!((a, b), (Number | Int64, Number | Int64)) || (a == b && a != Json)
 }
 
-fn join(frames: &mut Vec<NamedFrame>, left: &str, right: &str, on: &JoinOn, mode: JoinMode) -> Result<(), Detail> {
+fn join(
+    frames: &mut Vec<NamedFrame>,
+    left: &str,
+    right: &str,
+    on: &JoinOn,
+    mode: JoinMode,
+    control: &Control,
+) -> Result<(), Detail> {
     let li = position(frames, left)?;
     let ri = position(frames, right)?;
     let (l, r) = (&frames[li], &frames[ri]);
@@ -605,30 +734,47 @@ fn join(frames: &mut Vec<NamedFrame>, left: &str, right: &str, on: &JoinOn, mode
     let too_many = || {
         detail("steps.too_many_rows", format!("the join would make more than {MAX_ROWS} rows")).with("max", MAX_ROWS)
     };
+    // The result has the key and every other field of both sides; checked as pairs grow, before
+    // a single cell is copied.
+    let width = l.frame.fields().len() + r.frame.fields().len() - 1;
+    let fits = |pairs: usize| -> Result<(), Detail> {
+        if pairs > MAX_ROWS {
+            return Err(too_many());
+        }
+        check_cells(pairs, width)
+    };
     let mut pairs: Vec<(Option<usize>, Option<usize>)> = Vec::new();
     let mut matched = vec![false; r.frame.rows()];
     for (row, v) in lkf.values.iter().enumerate() {
+        control.every(row)?;
         let hits = key_of(v, lkf.field_type).and_then(|k| by_key.get(&k));
         match hits {
             Some(hits) => {
                 for &j in hits {
                     matched[j] = true;
                     pairs.push((Some(row), Some(j)));
+                    if pairs.len() % CHECK_EVERY == 0 {
+                        fits(pairs.len())?;
+                        control.check()?;
+                    }
                 }
             }
             None if mode != JoinMode::Inner => pairs.push((Some(row), None)),
             None => {}
         }
-        if pairs.len() > MAX_ROWS {
-            return Err(too_many());
-        }
+        fits(pairs.len())?;
     }
     if mode == JoinMode::Outer {
         pairs.extend(matched.iter().enumerate().filter(|(_, m)| !**m).map(|(j, _)| (None, Some(j))));
-        if pairs.len() > MAX_ROWS {
-            return Err(too_many());
-        }
+        fits(pairs.len())?;
     }
+    // The text the copies take, against the run's budget.
+    let row_text = |f: &Frame| -> Vec<usize> {
+        (0..f.rows()).map(|i| f.fields().iter().map(|x| text_units(&x.values[i])).sum()).collect()
+    };
+    let (lt, rt) = (row_text(&l.frame), row_text(&r.frame));
+    let copied: usize = pairs.iter().map(|(i, j)| i.map_or(0, |i| lt[i]) + j.map_or(0, |j| rt[j])).sum();
+    control.spend_text(copied)?;
     let key_cell = |p: &(Option<usize>, Option<usize>)| -> Value {
         match p {
             (Some(i), _) => lkf.values[*i].clone(),
@@ -957,6 +1103,96 @@ mod tests {
             json!([{ "id": "g", "type": "group", "frame": "A", "by": ["land"], "aggregations": [{ "field": "land", "op": "sum" }] }]),
         );
         assert_eq!(run(&bad, vec![wide]).unwrap_err().detail.reason, "steps.field_type");
+    }
+
+    /// Nested `concat` grows a cell about a thousandfold per step; the cap stops it at the first.
+    #[test]
+    fn text_cannot_grow_without_bound() {
+        let refs = |f: &str| format!("concat({})", vec![f; 99].join(","));
+        let nested = |f: &str| format!("concat({})", vec![refs(f); 9].join(","));
+        let s = steps(json!([
+            { "id": "1", "type": "calculate", "frame": "A", "name": "b", "expression": nested("a") },
+            { "id": "2", "type": "calculate", "frame": "A", "name": "c", "expression": nested("b") },
+        ]));
+        let a = named("A", vec![field("a", FieldType::String, vec![json!("0123456789")])]);
+        let err = run(&s, vec![a]).unwrap_err();
+        assert_eq!((err.index, err.detail.reason), (1, "expression.text_too_long"));
+        assert_eq!(err.detail.params.get("max").map(String::as_str), Some("32767"));
+    }
+
+    /// Every cell of text a run makes counts against one budget.
+    #[test]
+    fn the_run_has_a_text_budget() {
+        let frame = named("A", vec![field("a", FieldType::String, vec![json!("x".repeat(1000)); 100])]);
+        let s = steps(json!([
+            { "id": "1", "type": "calculate", "frame": "A", "name": "b", "expression": "concat(a, a)" },
+            { "id": "2", "type": "calculate", "frame": "A", "name": "c", "expression": "concat(b, b)" },
+        ]));
+        let control = Control { text_left: Cell::new(300_000), ..Control::unbounded() };
+        let inputs = vec![("A".to_string(), Input::Frame(frame.frame))];
+        let err = run_inputs(&s, inputs, &control).unwrap_err();
+        // 200,000 units for b fit; c's 400,000 do not.
+        assert_eq!((err.index, err.detail.reason), (1, "steps.too_much_text"));
+    }
+
+    /// Joins and pivots are measured before they are built.
+    #[test]
+    fn joins_and_pivots_are_bounded_in_cells() {
+        let n = 100_000;
+        let tall = named(
+            "A",
+            vec![
+                field("r", FieldType::Number, (0..n).map(|i| json!(i)).collect()),
+                field("c", FieldType::Number, (0..n).map(|i| json!(i % 500)).collect()),
+            ],
+        );
+        let p = steps(json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "r", "column": "c", "value": "c", "op": "sum" }]));
+        assert_eq!(run(&p, vec![tall]).unwrap_err().detail.reason, "steps.too_many_cells");
+        let wide = |name: &str| {
+            named(
+                name,
+                std::iter::once(field("k", FieldType::Number, vec![json!(1); 700]))
+                    .chain((0..60).map(|c| field(&format!("f{c}"), FieldType::Number, vec![json!(0); 700])))
+                    .collect(),
+            )
+        };
+        let j = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B",
+            "on": { "by": "key", "leftField": "k", "rightField": "k" }, "mode": "inner" }]));
+        let err = run(&j, vec![wide("A"), wide("B")]).unwrap_err();
+        assert_eq!(err.detail.reason, "steps.too_many_cells", "490,000 rows of 121 fields");
+    }
+
+    /// The server's runs stop when the client is gone or the time is up.
+    #[test]
+    fn runs_stop_when_cancelled_or_late() {
+        let s = steps(json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }]));
+        let input = || vec![("A".to_string(), Input::Frame(sales().frame))];
+        let flag = Arc::new(AtomicBool::new(true));
+        let err = run_inputs(&s, input(), &Control::new(flag, 30)).unwrap_err();
+        assert_eq!(err.detail.reason, "steps.cancelled");
+        let err = run_inputs(&s, input(), &Control::new(Arc::new(AtomicBool::new(false)), 0)).unwrap_err();
+        assert_eq!(err.detail.reason, "steps.timeout");
+        assert!(run_inputs(&s, input(), &Control::new(Arc::new(AtomicBool::new(false)), 30)).is_ok());
+    }
+
+    /// int64 text follows the shared number grammar: spaces around and a sign are fine.
+    #[test]
+    fn int64_text_reads_as_both_engines_read_it() {
+        let f = named("A", vec![field("i", FieldType::Int64, vec![json!(" 5"), json!("+7"), json!("x"), json!("-3")])]);
+        let s = steps(json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "n", "expression": "i + 0" }]));
+        let out = run(&s, vec![f.clone()]).unwrap();
+        assert_eq!(values(&out[0], "n"), [json!(5.0), json!(7.0), Value::Null, json!(-3.0)]);
+        let g = steps(json!([{ "id": "2", "type": "reduce", "frame": "A", "fields": ["i"], "stats": ["min", "max"] }]));
+        let out = run(&g, vec![f.clone()]).unwrap();
+        assert_eq!((values(&out[0], "min")[0].clone(), values(&out[0], "max")[0].clone()), (json!(-3.0), json!(7.0)));
+        // Group keys and min and max of int64 read the same text the same way.
+        let m = steps(json!([{ "id": "3", "type": "group", "frame": "A", "by": ["i"],
+            "aggregations": [{ "field": "i", "op": "max", "name": "top" }] }]));
+        let out = run(&m, vec![f]).unwrap();
+        assert_eq!(values(&out[0], "top"), [json!(" 5"), json!("+7"), Value::Null, json!("-3")], "unreadable int64 is no value");
+        assert_eq!(int_of(&json!(" 5")), Some(5));
+        assert_eq!(int_of(&json!("5.0")), None);
+        assert_eq!(key_of(&json!(" +5 "), FieldType::Int64), Some("5".into()));
     }
 
     /// The budget: 100,000 rows through three steps.

@@ -10,8 +10,12 @@ use serde_json::Value;
 /// The version this server writes. A model with a higher version comes from a newer Kalzit and is
 /// refused rather than guessed at.
 ///
-/// - 1: first version; `transformations` had no defined content.
-/// - 2: `transformations` holds analysis steps (`crate::analysis`).
+/// - 1: first version; `transformations` had no defined content (the documents UI stored its
+///   projections there).
+/// - 2: one combined version. `transformations` holds analysis steps (`crate::analysis`); the
+///   dashboard features of `ux/dashboards` (rows, repeat, links, annotations, library panels) add
+///   their fields under the same version 2 and keep `STEPS = [v1_to_v2]`. A library panel
+///   (`libraryPanelId`) has no steps of its own (`check_library_panels`).
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.
@@ -33,7 +37,24 @@ fn v1_to_v2(mut model: Value) -> Result<Value, String> {
                 }
                 continue;
             };
-            let steps: Vec<Value> = old.iter().filter_map(v1_projection).collect();
+            let targets: BTreeSet<String> = p
+                .get("targets")
+                .and_then(Value::as_array)
+                .map(|t| t.iter().filter_map(|t| t.get("refId")?.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            // A projection of a query the panel does not have would refuse the model; of several
+            // for one query, the last one stored is the one the documents UI applied.
+            let mut seen = BTreeSet::new();
+            let mut steps: Vec<Value> = old
+                .iter()
+                .rev()
+                .filter_map(v1_projection)
+                .filter(|s| {
+                    let frame = s["frame"].as_str().unwrap_or_default().to_string();
+                    targets.contains(&frame) && seen.insert(frame)
+                })
+                .collect();
+            steps.reverse();
             p.insert("transformations".into(), Value::Array(steps));
         }
     }
@@ -212,6 +233,7 @@ impl DashboardModel {
 /// Migrates a stored or submitted model to `SCHEMA_VERSION` and parses and validates it.
 pub fn parse(raw: Value) -> Result<DashboardModel, String> {
     let current = migrate(raw)?;
+    check_library_panels(&current)?;
     let model: DashboardModel = serde_json::from_value(current).map_err(|e| format!("model: {e}"))?;
     validate(&model)?;
     // Measured as stored (defaults filled in), so what is kept is what is limited.
@@ -220,6 +242,20 @@ pub fn parse(raw: Value) -> Result<DashboardModel, String> {
         return Err(format!("model takes {bytes} bytes; at most {MAX_MODEL_BYTES} are allowed"));
     }
     Ok(model)
+}
+
+/// A library panel (`libraryPanelId`) shows the library's panel as it is, so it has no steps of
+/// its own. Checked on the JSON, so the rule holds before the field is part of `Panel`.
+fn check_library_panels(model: &Value) -> Result<(), String> {
+    let panels = model.get("panels").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    for (i, p) in panels.iter().enumerate() {
+        let library = p.get("libraryPanelId").is_some_and(|v| !v.is_null());
+        let steps = p.get("transformations").and_then(Value::as_array).is_some_and(|t| !t.is_empty());
+        if library && steps {
+            return Err(format!("model.panels[{i}].transformations must be empty for a library panel"));
+        }
+    }
+    Ok(())
 }
 
 pub fn migrate(raw: Value) -> Result<Value, String> {
@@ -641,6 +677,44 @@ mod tests {
         assert_eq!(v1_to_v2(v1.clone()).unwrap(), v2, "the same on every read");
         let model = parse(v1).expect("a stored version 1 model still reads");
         assert_eq!(model.panels[0].transformations.len(), 1);
+    }
+
+    /// Projections of a query the panel lacks would make the stored model unreadable; of two for
+    /// one query, the last is the one the documents UI applied.
+    #[test]
+    fn version_1_projections_of_missing_queries_go_and_the_last_per_query_stays() {
+        let mut v1 = with(sample(), &["schemaVersion"], json!(1));
+        v1 = with(
+            v1,
+            &["panels", "0", "transformations"],
+            json!([
+                { "type": "toFrame", "refId": "Z", "columns": [{ "path": "a" }] },
+                { "type": "toFrame", "refId": "A", "columns": [{ "path": "erste" }] },
+                { "type": "toFrame", "refId": "B", "columns": [{ "path": "b" }] },
+                { "type": "toFrame", "refId": "A", "columns": [{ "path": "zweite" }] }
+            ]),
+        );
+        let v2 = v1_to_v2(v1.clone()).unwrap();
+        assert_eq!(
+            v2["panels"][0]["transformations"],
+            json!([
+                { "id": "projection-B", "type": "toFrame", "frame": "B", "columns": [{ "path": "b" }] },
+                { "id": "projection-A", "type": "toFrame", "frame": "A", "columns": [{ "path": "zweite" }] }
+            ])
+        );
+        assert!(parse(v1).is_ok(), "the stored model reads");
+    }
+
+    #[test]
+    fn library_panels_have_no_steps() {
+        let step = json!([{ "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }]);
+        let mut model = with(sample(), &["panels", "0", "transformations"], step);
+        model = with(model, &["panels", "0", "libraryPanelId"], json!("lib-1"));
+        let err = parse(model).unwrap_err();
+        assert!(err.contains("model.panels[0].transformations must be empty for a library panel"), "{err}");
+        // The rule is on the JSON; until `ux/dashboards` adds the field, it is otherwise unknown.
+        let model = with(sample(), &["panels", "0", "libraryPanelId"], json!("lib-1"));
+        assert!(parse(model).unwrap_err().contains("unknown field"));
     }
 
     #[test]

@@ -19,8 +19,10 @@ use crate::shapes::{Field, FieldType};
 
 /// Longest expression, in characters.
 pub const MAX_CHARS: usize = 2000;
-/// Deepest nesting of parentheses, operators and calls.
+/// Deepest nesting of parentheses, operators and calls while parsing.
 pub const MAX_DEPTH: usize = 64;
+/// Highest tree an expression may build (chains inside parentheses grow it past `MAX_DEPTH`).
+pub const MAX_HEIGHT: usize = 128;
 /// Most arguments of one call.
 const MAX_ARGS: usize = 100;
 
@@ -369,10 +371,39 @@ pub enum Expr {
     Bool(bool),
     Null,
     Field { name: String, at: usize },
-    Neg(Box<Expr>, usize),
-    Not(Box<Expr>, usize),
-    Bin { op: BinOp, left: Box<Expr>, right: Box<Expr>, at: usize },
-    Call { func: Func, name: &'static str, args: Vec<Expr>, unit: Option<Unit>, at: usize },
+    Neg { inner: Box<Expr>, height: usize },
+    Not { inner: Box<Expr>, height: usize },
+    Bin { op: BinOp, left: Box<Expr>, right: Box<Expr>, height: usize },
+    Call { func: Func, name: &'static str, args: Vec<Expr>, unit: Option<Unit>, height: usize },
+}
+
+impl Expr {
+    /// The height of the tree: 1 for a leaf. Known from building it, without walking it.
+    pub fn height(&self) -> usize {
+        match self {
+            Expr::Neg { height, .. } | Expr::Not { height, .. } | Expr::Bin { height, .. } | Expr::Call { height, .. } => {
+                *height
+            }
+            _ => 1,
+        }
+    }
+}
+
+/// A node's height from its children's, refused above `MAX_HEIGHT`: nested parentheses around
+/// operator chains can build a tree far deeper than the parser's own nesting, and every later
+/// pass (type check, evaluation, dropping the tree) walks it recursively.
+fn grown(children: impl Iterator<Item = usize>) -> Result<usize, Detail> {
+    let height = 1 + children.max().unwrap_or(0);
+    if height > MAX_HEIGHT {
+        return Err(error("expression.too_deep", format!("the expression nests deeper than {MAX_HEIGHT} levels"))
+            .with("max", MAX_HEIGHT));
+    }
+    Ok(height)
+}
+
+fn binary_node(op: BinOp, left: Expr, right: Expr) -> Result<Expr, Detail> {
+    let height = grown([left.height(), right.height()].into_iter())?;
+    Ok(Expr::Bin { op, left: Box::new(left), right: Box::new(right), height })
 }
 
 struct Parser {
@@ -427,11 +458,11 @@ impl Parser {
         let mut left = self.and()?;
         let mark = self.depth;
         while self.is_word("or") || self.is_op("||") {
-            let at = self.next().at;
+            self.next();
             // Each operand of a chain is one level deeper in the tree it builds.
             self.enter()?;
             let right = self.and()?;
-            left = Expr::Bin { op: BinOp::Or, left: Box::new(left), right: Box::new(right), at };
+            left = binary_node(BinOp::Or, left, right)?;
         }
         self.depth = mark;
         Ok(left)
@@ -441,10 +472,10 @@ impl Parser {
         let mut left = self.not()?;
         let mark = self.depth;
         while self.is_word("and") || self.is_op("&&") {
-            let at = self.next().at;
+            self.next();
             self.enter()?;
             let right = self.not()?;
-            left = Expr::Bin { op: BinOp::And, left: Box::new(left), right: Box::new(right), at };
+            left = binary_node(BinOp::And, left, right)?;
         }
         self.depth = mark;
         Ok(left)
@@ -460,9 +491,10 @@ impl Parser {
 
     fn not(&mut self) -> Result<Expr, Detail> {
         if self.is_word("not") || self.is_op("!") {
-            let at = self.next().at;
+            self.next();
             let inner = self.nested(Self::not)?;
-            return Ok(Expr::Not(Box::new(inner), at));
+            let height = grown(std::iter::once(inner.height()))?;
+            return Ok(Expr::Not { inner: Box::new(inner), height });
         }
         self.comparison()
     }
@@ -478,13 +510,13 @@ impl Parser {
             Tok::Op(">=") => BinOp::Ge,
             _ => return Ok(left),
         };
-        let at = self.next().at;
+        self.next();
         let right = self.nested(Self::additive)?;
         // `a < b < c` reads like a range but would compare a boolean with c.
         if matches!(&self.peek().tok, Tok::Op("=" | "==" | "!=" | "<>" | "<" | "<=" | ">" | ">=")) {
             return Err(syntax(self.peek().at));
         }
-        Ok(Expr::Bin { op, left: Box::new(left), right: Box::new(right), at })
+        binary_node(op, left, right)
     }
 
     fn additive(&mut self) -> Result<Expr, Detail> {
@@ -496,10 +528,10 @@ impl Parser {
                 Tok::Op("-") => BinOp::Sub,
                 _ => break,
             };
-            let at = self.next().at;
+            self.next();
             self.enter()?;
             let right = self.multiplicative()?;
-            left = Expr::Bin { op, left: Box::new(left), right: Box::new(right), at };
+            left = binary_node(op, left, right)?;
         }
         self.depth = mark;
         Ok(left)
@@ -515,10 +547,10 @@ impl Parser {
                 Tok::Op("%") => BinOp::Rem,
                 _ => break,
             };
-            let at = self.next().at;
+            self.next();
             self.enter()?;
             let right = self.unary()?;
-            left = Expr::Bin { op, left: Box::new(left), right: Box::new(right), at };
+            left = binary_node(op, left, right)?;
         }
         self.depth = mark;
         Ok(left)
@@ -526,9 +558,10 @@ impl Parser {
 
     fn unary(&mut self) -> Result<Expr, Detail> {
         if self.is_op("-") {
-            let at = self.next().at;
+            self.next();
             let inner = self.nested(Self::unary)?;
-            return Ok(Expr::Neg(Box::new(inner), at));
+            let height = grown(std::iter::once(inner.height()))?;
+            return Ok(Expr::Neg { inner: Box::new(inner), height });
         }
         self.power()
     }
@@ -536,9 +569,9 @@ impl Parser {
     fn power(&mut self) -> Result<Expr, Detail> {
         let base = self.primary()?;
         if self.is_op("^") {
-            let at = self.next().at;
+            self.next();
             let exponent = self.nested(Self::unary)?;
-            return Ok(Expr::Bin { op: BinOp::Pow, left: Box::new(base), right: Box::new(exponent), at });
+            return binary_node(BinOp::Pow, base, exponent);
         }
         Ok(base)
     }
@@ -563,7 +596,7 @@ impl Parser {
             }
             Tok::Ident(word) => {
                 if self.is_op("(") {
-                    return self.call(word, token.at);
+                    return self.call(word);
                 }
                 match word.to_ascii_lowercase().as_str() {
                     "true" => Ok(Expr::Bool(true)),
@@ -582,7 +615,7 @@ impl Parser {
         }
     }
 
-    fn call(&mut self, word: String, at: usize) -> Result<Expr, Detail> {
+    fn call(&mut self, word: String) -> Result<Expr, Detail> {
         let lower = word.to_lowercase();
         let Some(&(name, func, min, max)) = FUNCTIONS.iter().find(|f| f.0 == lower) else {
             return Err(
@@ -626,7 +659,8 @@ impl Parser {
         } else {
             None
         };
-        Ok(Expr::Call { func, name, args, unit, at })
+        let height = grown(args.iter().map(Expr::height))?;
+        Ok(Expr::Call { func, name, args, unit, height })
     }
 }
 
@@ -773,7 +807,7 @@ fn check(expr: &Expr, fields: &[Field]) -> Result<(Node, Type), Detail> {
             };
             (Node::Field(index, read), t)
         }
-        Expr::Neg(inner, _) => {
+        Expr::Neg { inner, .. } => {
             let (node, t) = check(inner, fields)?;
             if !matches!(t, Type::Number | Type::Null) {
                 return Err(error("expression.operand_types", format!("- cannot negate {}", t.name()))
@@ -783,7 +817,7 @@ fn check(expr: &Expr, fields: &[Field]) -> Result<(Node, Type), Detail> {
             }
             (Node::Neg(Box::new(node)), Type::Number)
         }
-        Expr::Not(inner, _) => {
+        Expr::Not { inner, .. } => {
             let (node, t) = check(inner, fields)?;
             if !matches!(t, Type::Bool | Type::Null) {
                 return Err(error("expression.operand_types", format!("not cannot negate {}", t.name()))
@@ -979,7 +1013,7 @@ fn read(value: &Value, how: Read) -> V {
     match (how, value) {
         (_, Value::Null) => V::Null,
         (Read::Number, Value::Number(n)) => n.as_f64().map_or(V::Null, num),
-        (Read::Int64, Value::String(s)) => s.parse::<f64>().map_or(V::Null, num),
+        (Read::Int64, Value::String(s)) => parse_number(s).map_or(V::Null, num),
         (Read::Int64, Value::Number(n)) => n.as_f64().map_or(V::Null, num),
         (Read::Time, Value::Number(n)) => n.as_f64().map_or(V::Null, time),
         (Read::Text, Value::String(s)) => V::Text(s.clone()),
@@ -988,15 +1022,50 @@ fn read(value: &Value, how: Read) -> V {
     }
 }
 
+/// Longest text an expression may make, in UTF-16 units (Excel's limit for a cell): nested
+/// `concat` would otherwise grow a cell about a thousandfold per step.
+pub const MAX_TEXT_UNITS: usize = 32_767;
+
+thread_local! {
+    /// Set when a text result went past `MAX_TEXT_UNITS` during one evaluation.
+    static TOO_LONG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn utf16_len(s: &str) -> usize {
+    s.chars().map(char::len_utf16).sum()
+}
+
+/// Text within the limit, else empty and the evaluation is marked as failed.
+fn capped(s: String) -> V {
+    if utf16_len(&s) > MAX_TEXT_UNITS {
+        TOO_LONG.with(|f| f.set(true));
+        return V::Null;
+    }
+    V::Text(s)
+}
+
+pub fn text_too_long() -> Detail {
+    error("expression.text_too_long", format!("the expression makes text longer than {MAX_TEXT_UNITS} characters"))
+        .with("max", MAX_TEXT_UNITS)
+}
+
 impl Compiled {
-    /// The value of the expression for one row of `fields`.
-    pub fn eval(&self, fields: &[Field], row: usize) -> V {
-        eval(&self.node, fields, row)
+    /// The value of the expression for one row of `fields`; text longer than `MAX_TEXT_UNITS`
+    /// fails the row.
+    pub fn eval(&self, fields: &[Field], row: usize) -> Result<V, Detail> {
+        TOO_LONG.with(|f| f.set(false));
+        let v = eval(&self.node, fields, row);
+        let too_long = TOO_LONG.with(|f| f.replace(false));
+        match v {
+            V::Text(s) if utf16_len(&s) > MAX_TEXT_UNITS => Err(text_too_long()),
+            _ if too_long => Err(text_too_long()),
+            v => Ok(v),
+        }
     }
 
     /// The value as a JSON cell of the result field.
-    pub fn cell(&self, fields: &[Field], row: usize) -> Value {
-        to_json(self.eval(fields, row))
+    pub fn cell(&self, fields: &[Field], row: usize) -> Result<Value, Detail> {
+        self.eval(fields, row).map(to_json)
     }
 }
 
@@ -1069,7 +1138,13 @@ fn bin(op: BinOp, kind: Kind, l: &Node, r: &Node, fields: &[Field], row: usize) 
             })
         }
         _ => match (kind, a, b) {
-            (Kind::Text, V::Text(x), V::Text(y)) => V::Text(x + &y),
+            (Kind::Text, V::Text(x), V::Text(y)) => {
+                if utf16_len(&x) + utf16_len(&y) > MAX_TEXT_UNITS {
+                    TOO_LONG.with(|f| f.set(true));
+                    return V::Null;
+                }
+                V::Text(x + &y)
+            }
             (Kind::TimeDiff, V::Time(x), V::Time(y)) => num(x - y),
             (Kind::TimeShift, V::Time(t), V::Num(n)) | (Kind::TimeShift, V::Num(n), V::Time(t)) => {
                 time(if op == BinOp::Sub { t - n } else { t + n })
@@ -1163,9 +1238,15 @@ fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: us
         Func::Weekday => at(0).map_or(V::Null, |t| num(weekday((t / DAY_MS).floor() as i64) as f64)),
         Func::StartOf => at(0).map_or(V::Null, |t| time(start_of(t, unit.unwrap_or(Unit::Day)))),
         Func::Concat => {
-            let mut out = String::new();
+            let (mut out, mut units) = (String::new(), 0);
             for a in args {
                 if let Some(s) = text_of(&eval(a, fields, row)) {
+                    units += utf16_len(&s);
+                    if units > MAX_TEXT_UNITS {
+                        // Stops before building anything longer.
+                        TOO_LONG.with(|f| f.set(true));
+                        return V::Null;
+                    }
                     out.push_str(&s);
                 }
             }
@@ -1180,11 +1261,11 @@ fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: us
             V::Null => V::Null,
         },
         Func::Lower => match arg(0) {
-            V::Text(s) => V::Text(s.to_lowercase()),
+            V::Text(s) => capped(s.to_lowercase()),
             _ => V::Null,
         },
         Func::Upper => match arg(0) {
-            V::Text(s) => V::Text(s.to_uppercase()),
+            V::Text(s) => capped(s.to_uppercase()),
             _ => V::Null,
         },
         Func::Length => match arg(0) {
@@ -1251,8 +1332,8 @@ pub fn iso_time(ms: i64) -> String {
     )
 }
 
-/// A number the way JavaScript's `String(x)` writes it (shortest digits that read back the same,
-/// exponent from 1e21 and below 1e-6), so both engines produce the same text.
+/// A number the way JavaScript's `String(x)` writes it (ECMAScript `Number::toString`, through
+/// `ryu-js`), so both engines produce the same text.
 pub fn number_text(x: f64) -> String {
     if !x.is_finite() {
         return String::new();
@@ -1260,25 +1341,7 @@ pub fn number_text(x: f64) -> String {
     if x == 0.0 {
         return "0".into();
     }
-    let sign = if x < 0.0 { "-" } else { "" };
-    // `{:e}` gives the shortest round-trip digits: "1.2345e3", "5e-7".
-    let sci = format!("{:e}", x.abs());
-    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i64;
-    let n = exp.parse::<i64>().unwrap_or(0) + 1;
-    let body = if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
-    } else {
-        let e = n - 1;
-        let e = if e < 0 { format!("-{}", -e) } else { format!("+{e}") };
-        if k == 1 { format!("{digits}e{e}") } else { format!("{}.{}e{e}", &digits[..1], &digits[1..]) }
-    };
-    format!("{sign}{body}")
+    ryu_js::Buffer::new().format_finite(x).to_string()
 }
 
 // ---- calendar (UTC, proleptic Gregorian) ----
@@ -1399,7 +1462,7 @@ mod tests {
         let fields = sample();
         let c = compile(&parse(text).unwrap_or_else(|e| panic!("{text}: {e}")), &fields)
             .unwrap_or_else(|e| panic!("{text}: {e}"));
-        (0..3).map(|row| c.cell(&fields, row)).collect()
+        (0..3).map(|row| c.cell(&fields, row).unwrap()).collect()
     }
 
     fn fails(text: &str) -> Detail {
@@ -1598,9 +1661,9 @@ mod tests {
         let fields =
             vec![field("a]b", FieldType::Number, vec![json!(1)]), field("A.wert", FieldType::Number, vec![json!(2)])];
         let c = compile(&parse("[a]]b] + A.wert").unwrap(), &fields).unwrap();
-        assert_eq!(c.cell(&fields, 0), json!(3.0));
+        assert_eq!(c.cell(&fields, 0).unwrap(), json!(3.0));
         let fields = vec![field("größe_2", FieldType::Number, vec![json!(4)])];
-        assert_eq!(compile(&parse("größe_2 * 2").unwrap(), &fields).unwrap().cell(&fields, 0), json!(8.0));
+        assert_eq!(compile(&parse("größe_2 * 2").unwrap(), &fields).unwrap().cell(&fields, 0).unwrap(), json!(8.0));
     }
 
     #[test]
@@ -1629,7 +1692,7 @@ mod tests {
                     && let Ok(c) = compile(&expr, &fields)
                 {
                     for row in 0..4 {
-                        c.cell(&fields, row);
+                        let _ = c.cell(&fields, row);
                     }
                 }
             }
@@ -1649,7 +1712,7 @@ mod tests {
             if let Ok(expr) = parse(&text)
                 && let Ok(c) = compile(&expr, &fields)
             {
-                c.cell(&fields, 0);
+                let _ = c.cell(&fields, 0);
             }
         }
     }
