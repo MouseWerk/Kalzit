@@ -214,11 +214,16 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
 /// Deletes events older than `audit.retention_days` and records how many went. Answers the
 /// number deleted.
 pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
+    purge_expired_in(state, &state.db).await
+}
+
+/// `purge_expired` through `db`: the hourly job uses the background pool.
+async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
     let days = settings::get(state, "audit.retention_days").await?;
     let days = days.as_i64().ok_or_else(|| ApiError::internal("audit", "audit.retention_days is not a number"))?;
     let now = state.clock.now_ms();
     let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
-    let mut tx = crate::db::begin(&state.db).await?;
+    let mut tx = crate::db::begin(db).await?;
     let deleted = sqlx::query("DELETE FROM audit_events WHERE created_at < $1")
         .bind(cutoff)
         .execute(&mut *tx)
@@ -241,17 +246,27 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
     Ok(deleted)
 }
 
-/// Runs `purge_expired` every hour, like the session cleanup.
+/// Runs `purge_expired` every hour, like the session cleanup. The retention is a privacy rule,
+/// so a run that finds the database busy is tried again within minutes.
 pub fn spawn_retention(state: AppState) {
-    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(INTERVAL);
-        loop {
-            tick.tick().await;
-            match purge_expired(&state).await {
-                Ok(0) => {}
-                Ok(n) => tracing::info!("deleted {n} audit events past their retention"),
-                Err(e) => tracing::warn!("deleting old audit events failed, will retry in an hour: {}", e.message),
+    spawn_retention_on(state, crate::db::Schedule::hourly());
+}
+
+/// `spawn_retention` on another schedule (tests).
+pub fn spawn_retention_on(state: AppState, schedule: crate::db::Schedule) {
+    use crate::db::JobError;
+    let background = state.background.clone();
+    crate::db::spawn_job(&background, "deleting old audit events", schedule, move || {
+        let state = state.clone();
+        async move {
+            match purge_expired_in(&state, state.background.db()).await {
+                Ok(0) => Ok(()),
+                Ok(n) => {
+                    tracing::info!("deleted {n} audit events past their retention");
+                    Ok(())
+                }
+                Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
+                Err(e) => Err(JobError::Failed(e.message)),
             }
         }
     });

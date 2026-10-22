@@ -2,16 +2,16 @@ import { useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { useElementSize } from "../useElementSize";
 import { ChartShell, seriesClass, type TimeSeriesChartProps } from "./ChartShell";
+import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
 import { niceTicks, type Scale, seriesPath, timeTicks, valueExtent } from "./series";
 import "../panels.css";
 
 const AXIS_LEFT = 56;
 const AXIS_BOTTOM = 22;
 const PAD_TOP = 8;
-const PAD_RIGHT = 12;
+const PAD_RIGHT = TIME_LABEL_OVERHANG;
 /** Roughly one value label per 40 px and one time label per 110 px, so labels never collide. */
 const PX_PER_VALUE_TICK = 40;
-const PX_PER_TIME_TICK = 110;
 
 const DAY = 24 * 60 * 60 * 1000;
 
