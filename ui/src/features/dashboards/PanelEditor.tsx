@@ -7,8 +7,16 @@ import { panelsForShapes } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
-import { nextRefId, type PanelModel, type Target, type VariableModel } from "./model";
+import {
+  nextRefId,
+  type PanelModel,
+  type RowModel,
+  type Target,
+  type VariableModel,
+  type VariableValues,
+} from "./model";
 import { PanelBody } from "./PanelCard";
+import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { Dialog } from "./ui/Dialog";
 import { usePanelResults } from "./usePanelResults";
 
@@ -17,13 +25,20 @@ interface PanelEditorProps {
   dashboardId: string;
   panel: PanelModel;
   range: TimeRange;
-  variables: Record<string, string>;
+  variables: VariableValues;
   /** The panel as saved, absent for a new one; unchanged targets preview through its route. */
   stored?: PanelModel | undefined;
   /** The saved dashboard's variables, for the panel route. */
   savedVariables?: readonly VariableModel[];
   onApply: (panel: PanelModel) => void;
   onClose: () => void;
+  /** The dashboard's rows and variables, for the panel's place and repeat. */
+  rows?: readonly RowModel[];
+  dashboardVariables?: readonly VariableModel[];
+  /** The library panel this one shows, by name. */
+  libraryName?: string | undefined;
+  /** Turns the edited panel into a library panel. */
+  onMakeLibrary?: ((panel: PanelModel) => void) | undefined;
 }
 
 /** Edits one panel: its queries, the visualization and its options, with a live preview. */
@@ -37,6 +52,10 @@ export function PanelEditor({
   savedVariables = [],
   onApply,
   onClose,
+  rows = [],
+  dashboardVariables = [],
+  libraryName,
+  onMakeLibrary,
 }: PanelEditorProps) {
   const { t } = useI18n();
   const titleId = useId();
@@ -114,7 +133,12 @@ export function PanelEditor({
           <button type="button" className="button button--secondary" onClick={onClose}>
             {t("dashboards.dialog.cancel")}
           </button>
-          <button type="button" className="button button--primary" onClick={() => onApply(panel)}>
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => onApply(panel)}
+            disabled={panelExtrasProblem(panel) !== null}
+          >
             {t("dashboards.editor.apply")}
           </button>
         </>
@@ -179,6 +203,14 @@ export function PanelEditor({
               />
             </fieldset>
           )}
+          <PanelExtras
+            panel={panel}
+            onChange={setPanel}
+            rows={rows}
+            variables={dashboardVariables}
+            libraryName={panel.libraryPanelId === undefined ? undefined : libraryName}
+            onMakeLibrary={onMakeLibrary === undefined ? undefined : () => onMakeLibrary(panel)}
+          />
         </div>
         <section className="panel-editor__queries" aria-labelledby={`${titleId}-queries`}>
           <div className="panel-editor__queries-header">

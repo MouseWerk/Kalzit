@@ -6,15 +6,33 @@ import { BUSY_RETRY } from "../../api/retry";
 import { useI18n } from "../../i18n/i18n";
 import { runQuery } from "../datasources/api";
 import { fetchVariableOptions, type VariableOption } from "./api";
-import { currentValue, optionChoices, storedQueryVariables, type VariableModel } from "./model";
+import {
+  currentValue,
+  currentValues,
+  optionChoices,
+  storedQueryVariables,
+  type VariableModel,
+  type VariableValue,
+  type VariableValues,
+  valueList,
+  valueText,
+} from "./model";
 import type { TextRange } from "./timeRange";
 import { errorMessage } from "./ui/errors";
 import "./dashboards.css";
+import "./dashboardTools.css";
 
 /** The value each variable starts with: its stored current value, else the first fixed value. */
-export function initialVariables(variables: readonly VariableModel[]): Record<string, string> {
+export function initialVariables(variables: readonly VariableModel[]): VariableValues {
   return Object.fromEntries(
-    variables.map((v) => [v.name, currentValue(v) ?? optionChoices(v)[0]?.value ?? ""]),
+    variables.map((v) => {
+      const first = optionChoices(v)[0]?.value;
+      if (v.multi === true) {
+        const stored = currentValues(v);
+        return [v.name, stored.length > 0 ? stored : first === undefined ? [] : [first]];
+      }
+      return [v.name, currentValue(v) ?? first ?? ""];
+    }),
   );
 }
 
@@ -22,7 +40,7 @@ interface VariablesBarProps {
   orgId: string;
   dashboardId: string;
   variables: readonly VariableModel[];
-  values: Record<string, string>;
+  values: VariableValues;
   /** The range as stored text; options are read again only when it changes, not as time moves. */
   textRange: TextRange;
   /** The resolved range of the last run, sent with the request. */
@@ -34,7 +52,7 @@ interface VariablesBarProps {
    * query route; the options route only knows the saved dashboard.
    */
   stored?: readonly VariableModel[] | undefined;
-  onChange: (name: string, value: string) => void;
+  onChange: (name: string, value: VariableValue) => void;
 }
 
 /** Names a query mentions as $name, ${name} or ${name:format}. */
@@ -133,18 +151,18 @@ function VariableControl({
   orgId: string;
   dashboardId: string;
   variable: VariableModel;
-  value: string;
-  values: Record<string, string>;
+  value: VariableValue;
+  values: VariableValues;
   textRange: TextRange;
   range: TimeRange;
   run: number;
   draft: boolean;
   saved: readonly VariableModel[];
-  onChange: (value: string) => void;
+  onChange: (value: VariableValue) => void;
 }) {
   const { t } = useI18n();
   const id = useId();
-  const [text, setText] = useState(value);
+  const [text, setText] = useState(valueText(value));
   // Only the variables this query mentions feed it; changing any other one asks nothing.
   const mentioned = referencedNames(variable.query);
   const mentionedValues = Object.fromEntries(
@@ -203,11 +221,13 @@ function VariableControl({
   // custom one opens with its first fixed value.
   const first = options.data?.options[0]?.value;
   const opensEmpty = variable.type === "query" && currentValue(variable) === undefined;
+  const multi = variable.multi === true;
+  const empty = valueList(value).length === 0;
   useEffect(() => {
-    if (opensEmpty && value === "" && first !== undefined) {
-      onChange(first);
+    if (opensEmpty && empty && first !== undefined) {
+      onChange(multi ? [first] : first);
     }
-  }, [opensEmpty, value, first, onChange]);
+  }, [opensEmpty, empty, first, onChange, multi]);
 
   let control: ReactNode;
   if (variable.type === "textbox") {
@@ -217,7 +237,7 @@ function VariableControl({
         className="input variables__input"
         value={text}
         onChange={(event) => setText(event.currentTarget.value)}
-        onBlur={() => text !== value && onChange(text)}
+        onBlur={() => text !== valueText(value) && onChange(text)}
         onKeyDown={(event) => {
           // An Enter that confirms an input method composition is not a submit.
           if (event.key === "Enter" && !event.nativeEvent.isComposing) {
@@ -231,17 +251,43 @@ function VariableControl({
       variable.type === "custom" || variable.type === "interval"
         ? optionChoices(variable)
         : (options.data?.options ?? []);
-    const known = list.some((option) => option.value === value);
-    control = (
+    const picked = valueList(value);
+    const unknown = picked.filter((v) => !list.some((option) => option.value === v));
+    control = multi ? (
+      // Several values: a list box; Ctrl or Shift with a click, or Space on an entry, picks more.
+      <select
+        id={id}
+        className="select variables__multi"
+        multiple
+        value={picked}
+        onChange={(event) =>
+          onChange(Array.from(event.currentTarget.selectedOptions, (option) => option.value))
+        }
+        aria-describedby={optionsError === null ? undefined : `${id}-error`}
+      >
+        {unknown.map((v) => (
+          <option key={`unknown-${v}`} value={v}>
+            {v}
+          </option>
+        ))}
+        {list.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    ) : (
       <select
         id={id}
         className="select"
-        value={value}
+        value={valueText(value)}
         onChange={(event) => onChange(event.currentTarget.value)}
         aria-describedby={optionsError === null ? undefined : `${id}-error`}
       >
-        {known ? null : (
-          <option value={value}>{value === "" ? t("dashboards.variables.none") : value}</option>
+        {unknown.length === 0 && picked.length > 0 ? null : (
+          <option value={valueText(value)}>
+            {picked.length === 0 ? t("dashboards.variables.none") : valueText(value)}
+          </option>
         )}
         {list.map((option) => (
           <option key={option.value} value={option.value}>

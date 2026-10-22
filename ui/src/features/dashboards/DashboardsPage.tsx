@@ -30,6 +30,7 @@ import {
 } from "./api";
 import "./dashboards.css";
 import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
+import { ImportDialog } from "./ImportDialog";
 import { emptyModel } from "./model";
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
@@ -63,7 +64,7 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   const navigate = listRoute.useNavigate();
   const searchId = useId();
   const folders = useQuery(foldersQuery(orgId));
-  const [creating, setCreating] = useState<"dashboard" | "folder" | null>(null);
+  const [creating, setCreating] = useState<"dashboard" | "folder" | "import" | null>(null);
   const [deletedFolder, setDeletedFolder] = useState<Folder | null>(null);
   const queryClient = useQueryClient();
   const restore = useMutation({
@@ -118,6 +119,12 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             {t("dashboards.trash.link")}
           </Link>
         ) : null}
+        <Link to="/dashboards/playlists" className="browser__trash">
+          {t("playlists.title")}
+        </Link>
+        <Link to="/dashboards/library" className="browser__trash">
+          {t("libraryPanels.title")}
+        </Link>
       </aside>
       <section className="browser__main" aria-labelledby={`${searchId}-title`}>
         <div className="browser__header">
@@ -131,13 +138,22 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             ) : null}
           </h2>
           {canWrite ? (
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={() => setCreating("dashboard")}
-            >
-              {t("dashboards.new")}
-            </button>
+            <div className="dashboard__tools">
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setCreating("import")}
+              >
+                {t("dashboardTools.import.button")}
+              </button>
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => setCreating("dashboard")}
+              >
+                {t("dashboards.new")}
+              </button>
+            </div>
           ) : null}
         </div>
         {deletedFolder === null ? null : (
@@ -191,6 +207,13 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
           orgId={orgId}
           folders={folders.data ?? []}
           folderId={search.folder}
+          onClose={() => setCreating(null)}
+        />
+      ) : null}
+      {creating === "import" ? (
+        <ImportDialog
+          orgId={orgId}
+          folderId={search.folder ?? null}
           onClose={() => setCreating(null)}
         />
       ) : null}

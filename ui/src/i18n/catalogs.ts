@@ -12,5 +12,42 @@ import enDashboards from "./en/dashboards.json";
 import enDatasources from "./en/datasources.json";
 import enExplore from "./en/explore.json";
 
-export const en = { ...enCore, ...enAdmin, ...enDatasources, ...enDashboards, ...enExplore };
-export const de = { ...deCore, ...deAdmin, ...deDatasources, ...deDashboards, ...deExplore };
+// ux/dashboards: annotations, playlists, library panels and the dashboard tools.
+import deAnnotations from "./de/annotations.json";
+import deDashboardTools from "./de/dashboardTools.json";
+import deLibraryPanels from "./de/libraryPanels.json";
+import dePlaylists from "./de/playlists.json";
+import enAnnotations from "./en/annotations.json";
+import enDashboardTools from "./en/dashboardTools.json";
+import enLibraryPanels from "./en/libraryPanels.json";
+import enPlaylists from "./en/playlists.json";
+
+const enDashboardFeatures = {
+  ...enAnnotations,
+  ...enDashboardTools,
+  ...enLibraryPanels,
+  ...enPlaylists,
+};
+const deDashboardFeatures = {
+  ...deAnnotations,
+  ...deDashboardTools,
+  ...deLibraryPanels,
+  ...dePlaylists,
+};
+
+export const en = {
+  ...enCore,
+  ...enAdmin,
+  ...enDatasources,
+  ...enDashboards,
+  ...enExplore,
+  ...enDashboardFeatures,
+};
+export const de = {
+  ...deCore,
+  ...deAdmin,
+  ...deDatasources,
+  ...deDashboards,
+  ...deExplore,
+  ...deDashboardFeatures,
+};

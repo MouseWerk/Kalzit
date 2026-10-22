@@ -12,6 +12,10 @@ export interface DashboardSearch {
   to?: string | undefined;
   /** Opens in edit mode, as after creating a dashboard. */
   edit?: boolean | undefined;
+  /** Kiosk mode (no controls) or TV mode (controls that hide themselves). */
+  kiosk?: "kiosk" | "tv" | undefined;
+  /** A panel shown alone, full screen. */
+  viewPanel?: string | undefined;
 }
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
@@ -41,8 +45,33 @@ const dashboardRoute = createRoute({
     from: text(search.from),
     to: text(search.to),
     edit: search.edit === true || search.edit === "true" ? true : undefined,
+    kiosk:
+      search.kiosk === "tv"
+        ? "tv"
+        : search.kiosk === "kiosk" || search.kiosk === true
+          ? "kiosk"
+          : undefined,
+    viewPanel: text(search.viewPanel),
   }),
   component: lazyRouteComponent(() => import("./DashboardPage"), "DashboardPage"),
+});
+
+const playlistsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dashboards/playlists",
+  component: lazyRouteComponent(() => import("./PlaylistsPage"), "PlaylistsPage"),
+});
+
+const playlistPlayRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dashboards/playlists/$playlistId/play",
+  component: lazyRouteComponent(() => import("./PlaylistPlayer"), "PlaylistPlayer"),
+});
+
+const libraryRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dashboards/library",
+  component: lazyRouteComponent(() => import("./LibraryPanelsPage"), "LibraryPanelsPage"),
 });
 
 const versionsRoute = createRoute({
@@ -56,4 +85,7 @@ export const dashboardsRoutes = [
   trashRoute,
   dashboardRoute,
   versionsRoute,
+  playlistsRoute,
+  playlistPlayRoute,
+  libraryRoute,
 ] as const;

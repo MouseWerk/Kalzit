@@ -139,11 +139,27 @@ function summary(d: StoredDashboard) {
     updatedAt: current.createdAt,
     updatedBy: current.authorId,
     deletedAt: d.deletedAt,
+    tags: current.model.tags ?? [],
   };
 }
 
-function detail(d: StoredDashboard) {
-  return { ...summary(d), model: latest(d).model, createdBy: d.createdBy };
+function detail(d: StoredDashboard, areas?: FakeAreaStates) {
+  // The library panels the model references, as the server answers them.
+  const libraryPanels: Record<string, unknown> = {};
+  for (const panel of latest(d).model.panels) {
+    const linked = areas?.dashboardFeatures.libraryPanels.find(
+      (l) => l.id === panel.libraryPanelId,
+    );
+    if (linked !== undefined) {
+      libraryPanels[linked.id] = {
+        id: linked.id,
+        name: linked.name,
+        version: linked.version,
+        model: linked.model,
+      };
+    }
+  }
+  return { ...summary(d), model: latest(d).model, createdBy: d.createdBy, libraryPanels };
 }
 
 function folderView(f: StoredFolder) {
@@ -167,6 +183,10 @@ const MODEL_FIELDS = [
   "refreshSeconds",
   "variables",
   "panels",
+  "tags",
+  "rows",
+  "annotations",
+  "links",
 ];
 const PANEL_FIELDS = [
   "id",
@@ -177,19 +197,34 @@ const PANEL_FIELDS = [
   "transformations",
   "options",
   "fieldConfig",
+  "rowId",
+  "repeat",
+  "timeFrom",
+  "timeShift",
+  "links",
+  "libraryPanelId",
 ];
-const VARIABLE_FIELDS = ["name", "type", "label", "datasourceId", "query", "options", "current"];
+const VARIABLE_FIELDS = [
+  "name",
+  "type",
+  "label",
+  "datasourceId",
+  "query",
+  "options",
+  "current",
+  "multi",
+];
 const VARIABLE_TYPES = ["query", "custom", "constant", "textbox", "interval"];
 
 /** The documented model checks that matter to the UI; a message names the place like the server. */
-function modelProblem(model: unknown): string | null {
+export function modelProblem(model: unknown): string | null {
   if (typeof model !== "object" || model === null || Array.isArray(model)) {
     return "model: not an object";
   }
   const m = model as Record<string, unknown>;
   const extra = unknownField(m, MODEL_FIELDS);
   if (extra !== undefined) return `model.${extra}: unknown field`;
-  if (m.schemaVersion !== 1) return "model.schemaVersion: must be 1";
+  if (m.schemaVersion !== 1 && m.schemaVersion !== 2) return "model.schemaVersion: must be 1 or 2";
   if (typeof m.title !== "string" || m.title.length < 1 || m.title.length > 200) {
     return "model.title: 1 to 200 characters";
   }
@@ -222,6 +257,19 @@ function modelProblem(model: unknown): string | null {
     }
     if (ids.has(String(panel.id))) return `model.panels[${i}].id: not unique`;
     ids.add(String(panel.id));
+    if (panel.libraryPanelId !== undefined && ((panel.targets ?? []) as unknown[]).length > 0) {
+      return `model.panels[${i}].targets must be empty: the library panel holds the queries`;
+    }
+    for (const [j, link] of ((panel.links ?? []) as { url: string }[]).entries()) {
+      if (!/^(https?:\/\/|mailto:|\/(?!\/))/i.test(link.url)) {
+        return `model.panels[${i}].links[${j}].url must start with http://, https://, mailto: or /`;
+      }
+    }
+  }
+  for (const [i, link] of ((m.links ?? []) as { type: string; url?: string }[]).entries()) {
+    if (link.type === "url" && !/^(https?:\/\/|mailto:|\/(?!\/))/i.test(link.url ?? "")) {
+      return `model.links[${i}].url must start with http://, https://, mailto: or /`;
+    }
   }
   return null;
 }
@@ -363,7 +411,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       }
       return null;
     };
-    const dashboardAnswer = (d: StoredDashboard) => ({ ...detail(d), access: accessOf(d) });
+    const dashboardAnswer = (d: StoredDashboard) => ({ ...detail(d, areas), access: accessOf(d) });
     const folderAnswer = (f: StoredFolder) => ({
       ...folderView(f),
       access: {
@@ -482,7 +530,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     }
     if (parts.length === 1 && method === "GET") {
       if (!can("dashboards:read")) return error(403, "forbidden");
-      const extra = unknownParam(search, ["folderId", "q", "trashed", "limit", "cursor"]);
+      const extra = unknownParam(search, ["folderId", "q", "trashed", "tag", "limit", "cursor"]);
       if (extra !== undefined) return validation(extra);
       const folderId = search.get("folderId");
       if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
@@ -495,6 +543,13 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         .filter((d) => visible(d.folderId) && (trashed || !trashedChain(d.folderId)))
         .filter((d) => folderId === null || d.folderId === folderId)
         .filter((d) => latest(d).model.title.toLowerCase().includes(q))
+        .filter((d) => {
+          const tag = search.get("tag");
+          return (
+            tag === null ||
+            (latest(d).model.tags ?? []).some((t) => t.toLowerCase() === tag.toLowerCase())
+          );
+        })
         .map((d) => ({ ...summary(d), access: accessOf(d) }))
         .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
       return json(200, { items, nextCursor: null });
@@ -660,7 +715,11 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       await new Promise<void>((resolve) => waiting.push(resolve));
     }
     const results: Record<string, QueryOutcome> = {};
-    for (const target of panel.targets) {
+    // A library panel's queries are its own (docs/api/dashboard-features.md).
+    const linked = areas.dashboardFeatures.libraryPanels.find((l) => l.id === panel.libraryPanelId);
+    const targets =
+      linked === undefined ? panel.targets : ((linked.model.targets ?? []) as typeof panel.targets);
+    for (const target of targets) {
       results[target.refId] = await answerQuery(
         areas.datasources,
         { refId: target.refId, datasourceId: target.datasourceId, query: target.query },
