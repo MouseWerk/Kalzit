@@ -3,6 +3,7 @@ import { EmptyState } from "../../../components/EmptyState";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { errorText } from "../errors";
+import "../admin.css";
 
 /**
  * One administration section: its heading, a lead line, actions on the right, then the content.

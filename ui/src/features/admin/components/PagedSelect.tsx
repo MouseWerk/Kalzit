@@ -1,5 +1,6 @@
 import { useI18n } from "../../../i18n/i18n";
 import { LoadState } from "./Section";
+import "../admin.css";
 
 export interface PickerOption {
   id: string;

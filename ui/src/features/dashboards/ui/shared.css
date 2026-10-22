@@ -1,0 +1,166 @@
+@layer components {
+  /*
+   * Pieces the data areas share (dialogs, small buttons, tables, check boxes). Every module that
+   * renders them imports this sheet, so they are styled on any page that loads first; they move
+   * to styles/components.css unchanged once that file takes them.
+   */
+
+  .button--ghost {
+    background: transparent;
+    color: var(--text);
+  }
+
+  .button--ghost:hover:not(:disabled, [aria-disabled="true"]) {
+    background: var(--bg-hover);
+  }
+
+  .button--ghost:disabled {
+    color: var(--text-muted);
+  }
+
+  .button--small {
+    min-height: calc(var(--control-height) - var(--space-2));
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .button--danger {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+  }
+
+  /* Hover keeps the danger tint; the underline shows the button reacts. */
+  .button--danger:hover:not(:disabled, [aria-disabled="true"]) {
+    text-decoration: underline;
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .section-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .checkbox,
+  .radio {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .radio-group {
+    display: grid;
+    gap: var(--space-2);
+    padding: 0;
+    border: 0;
+  }
+
+  .icon--success {
+    color: var(--success-text);
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: middle;
+    overflow-wrap: anywhere;
+  }
+
+  .data-table th {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .data-table__muted {
+    color: var(--text-muted);
+  }
+
+  .data-table__actions {
+    white-space: nowrap;
+    text-align: end;
+  }
+
+  .data-table a {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* Dialogs */
+
+  .dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-dialog);
+    display: grid;
+    place-items: center;
+    padding: var(--space-4);
+    background: var(--shadow-color);
+  }
+
+  .dialog {
+    display: flex;
+    flex-direction: column;
+    width: min(var(--size-dialog-sm), 100%);
+    max-height: calc(100dvh - var(--space-8));
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .dialog--large {
+    width: min(var(--size-dialog-lg), 100%);
+  }
+
+  .dialog__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5) var(--space-2);
+  }
+
+  .dialog__title {
+    font-size: var(--font-size-lg);
+  }
+
+  .dialog__body {
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-5) var(--space-4);
+    overflow: auto;
+  }
+
+  .dialog__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5) var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  /* A quiet back or secondary link next to a heading or toolbar. */
+  .versions__back {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+}

@@ -37,6 +37,7 @@ import { errorText, ROLE_ERRORS } from "../errors";
 import { type AdminAccess, allowedWhen, useAdminAccess } from "../sections";
 import { nameMessage } from "../validation";
 import { useRoles } from "./shared";
+import "../admin.css";
 
 const roleRoute = getRouteApi("/_app/admin/roles/$roleId");
 

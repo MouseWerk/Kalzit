@@ -132,9 +132,12 @@ describe("server users", () => {
     await usersList();
     await user.click(screen.getByRole("button", { name: "New user…" }));
     const dialog = screen.getByRole("dialog", { name: "New user" });
-    await user.type(within(dialog).getByLabelText("Name"), "Katherine Johnson");
-    await user.type(within(dialog).getByLabelText("Email address"), "katherine");
-    await user.type(within(dialog).getByLabelText("Password"), "short");
+    await user.click(within(dialog).getByLabelText("Name"));
+    await user.paste("Katherine Johnson");
+    await user.click(within(dialog).getByLabelText("Email address"));
+    await user.paste("katherine");
+    await user.click(within(dialog).getByLabelText("Password"));
+    await user.paste("short");
     await user.click(within(dialog).getByRole("button", { name: "Create user" }));
     expect(within(dialog).getByText("Enter an email address like name@example.com.")).toBeTruthy();
     expect(within(dialog).getByText("The password needs at least 12 characters.")).toBeTruthy();
@@ -142,7 +145,8 @@ describe("server users", () => {
 
     // An address another account has: 409 conflict with field email, shown at the field.
     await user.clear(within(dialog).getByLabelText("Email address"));
-    await user.type(within(dialog).getByLabelText("Email address"), "grace@example.com");
+    await user.click(within(dialog).getByLabelText("Email address"));
+    await user.paste("grace@example.com");
     await user.type(within(dialog).getByLabelText("Password"), " and longer");
     await user.click(within(dialog).getByRole("button", { name: "Create user" }));
     const email = within(dialog).getByLabelText("Email address");
@@ -153,7 +157,8 @@ describe("server users", () => {
     expect(document.activeElement).toBe(email);
 
     await user.clear(email);
-    await user.type(email, "katherine@example.com");
+    await user.click(email);
+    await user.paste("katherine@example.com");
     await user.click(within(dialog).getByRole("button", { name: "Create user" }));
     expect(await screen.findByText("Katherine Johnson was created.")).toBeTruthy();
     expect(admin.users.map((candidate) => candidate.email)).toContain("katherine@example.com");
@@ -165,7 +170,8 @@ describe("server users", () => {
     await user.click(screen.getByRole("button", { name: "Set password of Grace Hopper…" }));
     const dialog = screen.getByRole("dialog", { name: "New password for Grace Hopper" });
     expect(within(dialog).getByText(/signed out everywhere/)).toBeTruthy();
-    await user.type(within(dialog).getByLabelText("New password"), "a long new password");
+    await user.click(within(dialog).getByLabelText("New password"));
+    await user.paste("a long new password");
     await user.click(within(dialog).getByRole("button", { name: "Set password" }));
     expect(await screen.findByText("The password of Grace Hopper was changed.")).toBeTruthy();
     expect(server.calls.filter((call) => call.method === "PATCH")).toEqual([
@@ -190,7 +196,8 @@ describe("server organizations", () => {
 
     await user.click(screen.getByRole("button", { name: "New organization…" }));
     const dialog = screen.getByRole("dialog", { name: "New organization" });
-    await user.type(within(dialog).getByLabelText("Organization name"), "Difference Engines");
+    await user.click(within(dialog).getByLabelText("Organization name"));
+    await user.paste("Difference Engines");
     await user.selectOptions(await within(dialog).findByLabelText("Owner"), "u2");
     await user.click(within(dialog).getByRole("button", { name: "Create organization" }));
     expect(await screen.findByText("Organization “Difference Engines” was created.")).toBeTruthy();

@@ -15,7 +15,8 @@ describe("organization settings", () => {
     const field = await fieldOf(RANGE_LABEL);
     expect(field.value).toBe('{"from":"now-6h","to":"now"}');
     await user.clear(field);
-    await user.type(field, '{{"from":"now-24h","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-24h","to":"now"}');
     await user.tab();
     expect(await screen.findByText("“Default time range” was saved.")).toBeTruthy();
     expect(admin.orgSettings[0]).toMatchObject({
@@ -43,7 +44,8 @@ describe("organization settings", () => {
     const { user, admin } = await openAdmin("/admin/settings");
     const field = await fieldOf(RANGE_LABEL);
     await user.clear(field);
-    await user.type(field, '{{"from":"now-1h","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-1h","to":"now"}');
     await user.tab();
     await screen.findByText("“Default time range” was saved.");
     // Someone else saves after this change and before the undo.
@@ -62,7 +64,8 @@ describe("organization settings", () => {
       version: 2,
     });
     await user.clear(field);
-    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-2d","to":"now"}');
     await user.tab();
 
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
@@ -85,7 +88,8 @@ describe("organization settings", () => {
       version: 2,
     });
     await user.clear(field);
-    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-2d","to":"now"}');
     await user.tab();
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
     await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
@@ -107,7 +111,8 @@ describe("organization settings", () => {
     // The list would answer something else; the dialog must show the conflict's `current`.
     server.failNext("/api/orgs/o1/settings", 500, "internal", "GET");
     await user.clear(field);
-    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-2d","to":"now"}');
     await user.tab();
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
     expect(within(dialog).getByText('{"from":"now-90d","to":"now"}')).toBeTruthy();
@@ -120,7 +125,8 @@ describe("organization settings", () => {
     const field = await fieldOf(RANGE_LABEL);
     server.failNext(`/api/orgs/o1/settings/${RANGE}`, 409, "version_conflict", "PATCH");
     await user.clear(field);
-    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-2d","to":"now"}');
     await user.tab();
     expect(await screen.findByText(/The server sent an unexpected response/)).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -169,7 +175,8 @@ describe("organization settings", () => {
       version: 2,
     });
     await user.clear(field);
-    await user.type(field, '{{"from":"now-2d","to":"now"}');
+    await user.click(field);
+    await user.paste('{"from":"now-2d","to":"now"}');
     await user.tab();
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
     expect(within(dialog).getByText(/Someone else saved “Default time range”/)).toBeTruthy();
