@@ -67,6 +67,7 @@ test("a viewer reads a dashboard and changes its variable, but cannot edit or ex
     data: { model: regionDashboard("Changed by a viewer", source), version: 1 },
   });
   expect(save.status()).toBe(403);
+  expect(((await save.json()) as { error: { code: string } }).error.code).toBe("forbidden");
 
   // Explore is not reachable by address either.
   await page.goto("/explore");

@@ -1,8 +1,18 @@
 import { type ChildProcess, execFileSync, execSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeSalesDatabase } from "./support/fixture-db";
 
@@ -38,17 +48,84 @@ function locateBinary(): string {
   return join(resolve(REPO_DIR, target), "release", EXE);
 }
 
+const PID_FILE = "kalzit.pid";
+const RUN_FOLDER = /^run-\d+-(\d+)$/;
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: it exists but belongs to someone else.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The executable of a running process, or undefined when it cannot be told. */
+function executableOf(pid: number): string | undefined {
+  try {
+    if (process.platform === "win32") {
+      const path = execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).Path`],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      ).trim();
+      return path === "" ? undefined : path;
+    }
+    return readlinkSync(`/proc/${pid}/exe`);
+  } catch {
+    return undefined;
+  }
+}
+
+function isInside(path: string, folder: string): boolean {
+  const rel = relative(resolve(folder), resolve(path));
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * Removes what earlier runs left behind when they crashed before their teardown. A folder is
+ * only touched when the test runner that made it (its PID is in the folder name) is gone, so a
+ * run in progress elsewhere is left alone. Its server is stopped only when the recorded PID
+ * still runs the binary copied into that folder, never another process that reuses the PID.
+ */
+function sweepOldRuns(base: string): void {
+  for (const name of readdirSync(base)) {
+    const runner = RUN_FOLDER.exec(name)?.[1];
+    if (runner === undefined || isAlive(Number(runner))) {
+      continue;
+    }
+    const folder = join(base, name);
+    const pidFile = join(folder, PID_FILE);
+    if (existsSync(pidFile)) {
+      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      const exe = Number.isSafeInteger(pid) && pid > 0 ? executableOf(pid) : undefined;
+      if (exe !== undefined && isInside(exe, folder)) {
+        process.kill(pid, "SIGKILL");
+      }
+    }
+    rmSync(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+}
+
 /**
  * Every run gets a folder of its own below `KALZIT_E2E_RUN_DIR` (default: the system temp
- * folder): the copied binary, the fixture folder and the server log. The data directory inside
+ * folder): the copied binary, the fixture folder and the server's PID. The data directory inside
  * it does not exist yet, so the server creates it private, as on a real first start.
  */
 function prepareRunDir(): string {
   const base = resolve(process.env.KALZIT_E2E_RUN_DIR ?? join(tmpdir(), "kalzit-e2e"));
   mkdirSync(base, { recursive: true, mode: 0o700 });
+  sweepOldRuns(base);
   const run = join(base, `run-${Date.now()}-${process.pid}`);
   mkdirSync(run, { mode: 0o700 });
   return run;
+}
+
+function removeRunDir(run: string): void {
+  if (process.env.KALZIT_E2E_KEEP !== "1") {
+    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
 }
 
 /** The server environment: only what the run sets, never a `KALZIT_*` of the caller's shell. */
@@ -86,12 +163,17 @@ function waitForAddress(child: ChildProcess, log: (line: string) => void): Promi
       clearTimeout(timer);
       reject(new Error(`kalzit exited with code ${code} before listening; see the server log`));
     });
+    // The binary could not be started at all (missing, not executable).
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
 }
 
 /** Stops the server this setup started, by its PID only, and waits until it is gone. */
 async function stop(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
   const exited = new Promise<void>((done) => child.once("exit", () => done()));
@@ -109,46 +191,55 @@ async function stop(child: ChildProcess): Promise<void> {
 export default async function globalSetup(): Promise<() => Promise<void>> {
   const binary = locateBinary();
   const run = prepareRunDir();
-  const exe = join(run, EXE);
-  copyFileSync(binary, exe);
-
-  const fixtures = join(run, "fixtures");
-  mkdirSync(fixtures, { mode: 0o700 });
-  writeSalesDatabase(join(fixtures, "sales.db"));
-
-  const setupToken = randomBytes(12).toString("hex");
   mkdirSync(OUTPUT_DIR, { recursive: true });
   const logPath = join(OUTPUT_DIR, "server.log");
   const logFile = createWriteStream(logPath);
-  const child = spawn(exe, ["serve"], {
-    cwd: run,
-    env: serverEnv({
-      KALZIT_SERVER_HTTP_ADDR: "127.0.0.1:0",
-      KALZIT_PATHS_DATA_DIR: join(run, "data"),
-      KALZIT_SETUP_TOKEN: setupToken,
-      KALZIT_SECRETS_KEY: randomBytes(32).toString("base64"),
-      KALZIT_SETTING_DATASOURCES_SQLITE_DIRS: JSON.stringify([fixtures]),
-      KALZIT_LOG_LEVEL: "info",
-    }),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const url = await waitForAddress(child, (text) => logFile.write(text)).catch(async (error) => {
-    await stop(child);
-    logFile.end();
-    throw new Error(`${error.message} (${logPath})`);
-  });
-
-  process.env.KALZIT_E2E_URL = url;
-  process.env.KALZIT_E2E_SETUP_TOKEN = setupToken;
-  process.env.KALZIT_E2E_FIXTURES = fixtures;
-  process.env.KALZIT_E2E_DATA_DIR = join(run, "data");
-  process.stdout.write(`kalzit e2e server on ${url}, run folder ${run}\n`);
-
-  return async () => {
-    await stop(child);
-    logFile.end();
-    if (process.env.KALZIT_E2E_KEEP !== "1") {
-      rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  let child: ChildProcess | undefined;
+  const cleanUp = async () => {
+    if (child !== undefined) {
+      await stop(child);
     }
+    logFile.end();
+    removeRunDir(run);
   };
+
+  try {
+    const exe = join(run, EXE);
+    copyFileSync(binary, exe);
+    const fixtures = join(run, "fixtures");
+    mkdirSync(fixtures, { mode: 0o700 });
+    writeSalesDatabase(join(fixtures, "sales.db"));
+
+    const setupToken = randomBytes(12).toString("hex");
+    child = spawn(exe, ["serve"], {
+      cwd: run,
+      env: serverEnv({
+        KALZIT_SERVER_HTTP_ADDR: "127.0.0.1:0",
+        KALZIT_PATHS_DATA_DIR: join(run, "data"),
+        KALZIT_SETUP_TOKEN: setupToken,
+        KALZIT_SECRETS_KEY: randomBytes(32).toString("base64"),
+        KALZIT_SETTING_DATASOURCES_SQLITE_DIRS: JSON.stringify([fixtures]),
+        KALZIT_LOG_LEVEL: "info",
+      }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const address = waitForAddress(child, (text) => logFile.write(text));
+    if (child.pid !== undefined) {
+      // For the next setup, should this run crash before its teardown.
+      writeFileSync(join(run, PID_FILE), `${child.pid}\n`);
+    }
+    const url = await address.catch((error: Error) => {
+      throw new Error(`${error.message} (${logPath})`);
+    });
+
+    process.env.KALZIT_E2E_URL = url;
+    process.env.KALZIT_E2E_SETUP_TOKEN = setupToken;
+    process.env.KALZIT_E2E_FIXTURES = fixtures;
+    process.env.KALZIT_E2E_DATA_DIR = join(run, "data");
+    process.stdout.write(`kalzit e2e server on ${url}, run folder ${run}\n`);
+  } catch (error) {
+    await cleanUp();
+    throw error;
+  }
+  return cleanUp;
 }

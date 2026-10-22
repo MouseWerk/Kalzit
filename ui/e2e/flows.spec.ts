@@ -53,6 +53,9 @@ test("a data source is renamed, moved to the trash and restored", async ({ page 
   const owner = await Api.owner();
   const name = unique("Papierkorb");
   const id = await owner.createSqliteSource(name, join(fixturesDir(), "sales.db"));
+  // Created last, so it is on the first page of the list: proof that the list has loaded.
+  const stays = unique("Bleibt");
+  await owner.createSqliteSource(stays, join(fixturesDir(), "sales.db"));
   await owner.dispose();
   await signInOwner(page);
   await page.goto(`/data-sources/${id}`);
@@ -66,14 +69,18 @@ test("a data source is renamed, moved to the trash and restored", async ({ page 
   await confirm.getByRole("button", { name: t("datasources.delete.confirm") }).click();
   await expect(page).toHaveURL(/\/data-sources/);
   await expect(page.getByText(t("datasources.deleted"))).toBeVisible();
-  await expect(page.getByRole("cell", { name: renamed })).toHaveCount(0);
+  // The list has loaded, and the deleted source is not in it.
+  const rows = page.getByRole("row");
+  await expect(rows.filter({ hasText: stays })).toBeVisible();
+  await expect(rows.filter({ hasText: renamed })).toHaveCount(0);
 
   await page.getByRole("link", { name: t("datasources.trash.link") }).click();
   await page
     .getByRole("button", { name: t("datasources.restoreNamed", { name: renamed }) })
     .click();
   await page.getByRole("link", { name: t("datasources.trash.back") }).click();
-  await expect(page.getByRole("link", { name: renamed })).toBeVisible();
+  await expect(rows.filter({ hasText: stays })).toBeVisible();
+  await expect(rows.filter({ hasText: renamed })).toHaveCount(1);
 });
 
 test("Escape closes a dialog and focus returns to the button that opened it", async ({ page }) => {

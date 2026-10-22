@@ -105,23 +105,39 @@ describe("catalogs", () => {
   // users say what they see, so the name has to contain the visible words in order (WCAG 2.5.3
   // "Label in Name"); axe flags a mismatch as serious.
   it("keep the visible text inside the accessible name of a named control", () => {
+    // Named controls whose visible text is a shared key rather than the key without "Named".
+    const visibleKey: Record<string, string> = {
+      "admin.members.removeNamed": "admin.common.removeAsk",
+      "admin.teams.deleteNamed": "admin.common.deleteAsk",
+      "admin.teams.removeMemberNamed": "admin.common.removeAsk",
+      "admin.roles.deleteNamed": "admin.common.deleteAsk",
+      "admin.access.removeNamed": "admin.common.remove",
+      "admin.users.renameNamed": "admin.common.rename",
+      "admin.orgs.renameNamed": "admin.common.rename",
+    };
     const words = (message: string) =>
       message
         .toLowerCase()
         .replace(/\{\w+\}/g, " ")
         .replace(/[^\p{L}\p{N}]+/gu, " ")
         .trim();
+    let checked = 0;
     for (const language of ["en", "de"] as const) {
       const catalog: Record<string, string> = language === "en" ? en : de;
       for (const [key, named] of entries(language)) {
-        const visible = key.endsWith("Named") ? catalog[key.slice(0, -"Named".length)] : undefined;
-        if (visible !== undefined) {
-          expect(` ${words(named)} `, `${language}:${key}: ${named}`).toContain(
-            ` ${words(visible)} `,
-          );
+        if (!key.endsWith("Named")) {
+          continue;
         }
+        const visible = catalog[visibleKey[key] ?? key.slice(0, -"Named".length)];
+        expect(visible, `${key} has no visible text key; add it to visibleKey`).toBeDefined();
+        expect(` ${words(named)} `, `${language}:${key}: ${named}`).toContain(
+          ` ${words(visible ?? "")} `,
+        );
+        checked += 1;
       }
     }
+    // Every named key in both languages; a new one without a visible key fails above.
+    expect(checked).toBe(2 * Object.keys(en).filter((key) => key.endsWith("Named")).length);
   });
 });
 

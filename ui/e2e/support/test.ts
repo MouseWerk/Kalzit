@@ -16,16 +16,73 @@ interface Observed {
 }
 
 /**
- * Console output every page may show:
- * - Signed out, the sign-in page asks `GET /api/me`, which answers 401; browsers log that as a
- *   failed resource however the app handles it (ui/README.md, "Expected browser console entry").
- * - CodeMirror's style element is refused by `style-src 'self'` and mirrored into a constructed
- *   style sheet (editorStyles.ts); the browser still reports the refused element once.
+ * Console output every page may show: signed out, the sign-in page asks `GET /api/me`, which
+ * answers 401; browsers log that as a failed resource however the app handles it (ui/README.md,
+ * "Expected browser console entry").
  */
 const ALWAYS_ALLOWED: readonly ((message: Observed) => boolean)[] = [
   (m) => /status of 401/.test(m.text) && m.url.endsWith("/api/me"),
-  (m) => /inline style|style-src|Refused to apply a stylesheet/i.test(m.text),
 ];
+
+/**
+ * The CSP notice for a refused inline style. CodeMirror writes its styles into a `<style>`
+ * element, which `style-src 'self'` refuses; the UI mirrors it into a constructed style sheet
+ * (editorStyles.ts), and the browser reports the refused element (again whenever CodeMirror
+ * adds rules to it). WebKit's inspector, through which Playwright drives WebKit, adds a
+ * `body {}` style of its own and reports refused sheets of its own when a page loads, also with
+ * the app's scripts blocked. A notice passes only while no other `<style>` was ever added to the
+ * document, and only up to a budget (per permitted style write, plus WebKit's own at load), so
+ * an inline style the policy hides fails the test however the browser words its report.
+ */
+const STYLE_NOTICE = /inline style|style-src|Refused to apply a stylesheet/i;
+/** WebKit reports one refused sheet up to three times as the page's style sheets load. */
+const NOTICES_PER_STYLE_WRITE = 3;
+/** Notices WebKit's inspector causes in every loaded document, seen as up to three. */
+const WEBKIT_NOTICES_PER_DOCUMENT = 3;
+
+/**
+ * Runs in every document before its scripts: counts the `<style>` writes that may cause a
+ * notice (CodeMirror's element, the WebKit inspector's `body {}`) and records any other.
+ */
+function recordStyleWrites(): void {
+  const log = { doc: Math.random().toString(36).slice(2), permitted: 0, foreign: [] as string[] };
+  (window as unknown as { __kalzitStyles: typeof log }).__kalzitStyles = log;
+  const classify = (style: HTMLStyleElement) => {
+    const text = (style.textContent ?? "").trim();
+    if (text.includes(".cm-") || text === "body {}") {
+      log.permitted += 1;
+    } else if (text !== "") {
+      log.foreign.push(text.slice(0, 80));
+    }
+  };
+  new MutationObserver((records) => {
+    for (const record of records) {
+      // New text in a style element: the element itself, or a text node inside it.
+      const owner = record.target instanceof Text ? record.target.parentElement : record.target;
+      if (owner instanceof HTMLStyleElement) {
+        classify(owner);
+        continue;
+      }
+      for (const node of record.addedNodes) {
+        if (node instanceof HTMLStyleElement) {
+          classify(node);
+        }
+      }
+    }
+  }).observe(document, { childList: true, characterData: true, subtree: true });
+}
+
+interface StyleLog {
+  doc: string;
+  permitted: number;
+  foreign: string[];
+}
+
+function styleLog(page: Page): Promise<StyleLog | null> {
+  return page
+    .evaluate(() => (window as unknown as { __kalzitStyles?: StyleLog }).__kalzitStyles ?? null)
+    .catch(() => null);
+}
 
 export interface ConsoleGuard {
   /**
@@ -37,14 +94,6 @@ export interface ConsoleGuard {
   readonly allowed: readonly RegExp[];
 }
 
-function report(seen: readonly Observed[]): void {
-  if (seen.length > 0) {
-    throw new Error(
-      `Unexpected browser console output:\n${seen.map((m) => `${m.text} (${m.url})`).join("\n")}`,
-    );
-  }
-}
-
 function observe(message: ConsoleMessage): Observed {
   return { text: `${message.type()}: ${message.text()}`, url: message.location().url };
 }
@@ -53,23 +102,72 @@ function observe(message: ConsoleMessage): Observed {
  * Watches every page of a context for console warnings and errors and for uncaught exceptions.
  * Anything not allowed fails the test at its end, so a broken page cannot pass by looking right.
  */
-function guard(context: BrowserContext, allowed: readonly RegExp[], seen: Observed[]): void {
-  const record = (observed: Observed) => {
+class Guard {
+  private readonly seen: Observed[] = [];
+  private readonly checks: Promise<void>[] = [];
+  /** Style notices so far, per document. */
+  private readonly notices = new Map<string, number>();
+  private baseline = 0;
+
+  constructor(private readonly allowed: readonly RegExp[]) {}
+
+  async watch(context: BrowserContext): Promise<void> {
+    await context.addInitScript(recordStyleWrites);
+    if (context.browser()?.browserType().name() === "webkit") {
+      this.baseline = WEBKIT_NOTICES_PER_DOCUMENT;
+    }
+    context.on("console", (message) => {
+      if (message.type() === "error" || message.type() === "warning") {
+        this.consider(observe(message), message.page());
+      }
+    });
+    context.on("weberror", (error) => {
+      const url = error.page()?.url() ?? "";
+      this.consider({ text: `uncaught: ${error.error().message}`, url }, null);
+    });
+  }
+
+  private consider(observed: Observed, page: Page | null): void {
     if (
-      !ALWAYS_ALLOWED.some((ok) => ok(observed)) &&
-      !allowed.some((p) => p.test(`${observed.text} ${observed.url}`))
+      ALWAYS_ALLOWED.some((ok) => ok(observed)) ||
+      this.allowed.some((p) => p.test(`${observed.text} ${observed.url}`))
     ) {
-      seen.push(observed);
+      return;
     }
-  };
-  context.on("console", (message) => {
-    if (message.type() === "error" || message.type() === "warning") {
-      record(observe(message));
+    if (page === null || !STYLE_NOTICE.test(observed.text)) {
+      this.seen.push(observed);
+      return;
     }
-  });
-  context.on("weberror", (error) => {
-    record({ text: `uncaught: ${error.error().message}`, url: error.page()?.url() ?? "" });
-  });
+    this.checks.push(
+      styleLog(page).then((log) => {
+        const problem = this.styleProblem(log);
+        if (problem !== null) {
+          this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
+        }
+      }),
+    );
+  }
+
+  private styleProblem(log: StyleLog | null): string | null {
+    if (log === null) {
+      return "the page's style writes could not be read";
+    }
+    if (log.foreign.length > 0) {
+      return `inline style that is not CodeMirror's: ${log.foreign.join(" | ")}`;
+    }
+    const count = (this.notices.get(log.doc) ?? 0) + 1;
+    this.notices.set(log.doc, count);
+    const budget = this.baseline + NOTICES_PER_STYLE_WRITE * log.permitted;
+    return count > budget ? `style notice ${count}, expected at most ${budget}` : null;
+  }
+
+  async finish(): Promise<void> {
+    await Promise.all(this.checks);
+    if (this.seen.length > 0) {
+      const lines = this.seen.map((m) => `${m.text} (${m.url})`);
+      throw new Error(`Unexpected browser console output:\n${lines.join("\n")}`);
+    }
+  }
 }
 
 /** What the page checks look at: a data source and a dashboard with a variable and a panel. */
@@ -112,28 +210,32 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   consoleGuard: [
     async ({ context }, use) => {
       const allowed: RegExp[] = [];
-      const seen: Observed[] = [];
-      guard(context, allowed, seen);
+      const guard = new Guard(allowed);
+      await guard.watch(context);
       await use({ allow: (pattern) => allowed.push(pattern), allowed });
-      report(seen);
+      await guard.finish();
     },
     { auto: true },
   ],
   pageAs: async ({ browser, consoleGuard }, use) => {
     const contexts: BrowserContext[] = [];
-    const seen: Observed[] = [];
+    const guard = new Guard(consoleGuard.allowed);
     await use(async (email, password, options = {}) => {
       const context = await browser.newContext({ baseURL: baseUrl(), locale: "en-US", ...options });
       contexts.push(context);
-      guard(context, consoleGuard.allowed, seen);
+      await guard.watch(context);
       const page = await context.newPage();
       await signIn(page, email, password, options.locale?.startsWith("de") ? "de" : "en");
       return page;
     });
-    for (const context of contexts) {
-      await context.close();
+    // Checked while the pages are open, so pending style checks can still look at them.
+    try {
+      await guard.finish();
+    } finally {
+      for (const context of contexts) {
+        await context.close();
+      }
     }
-    report(seen);
   },
 });
 
