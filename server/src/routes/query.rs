@@ -261,7 +261,8 @@ async fn panel_query(
     let linked;
     let panel = match &panel.library_panel_id {
         Some(id) => {
-            let row = crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
+            let row =
+                crate::dashboards::library::fetch(&state.db, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
             let content = crate::dashboards::library::stored_content(&row.model)?;
             linked = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
             &linked

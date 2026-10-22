@@ -256,8 +256,9 @@ async fn create(
     if let Some(panel) = &body.panel_id
         && (panel.is_empty() || panel.chars().count() > MAX_PANEL_ID_CHARS || panel.chars().any(char::is_control))
     {
-        return Err(ApiError::validation(format!("panelId needs 1 to {MAX_PANEL_ID_CHARS} characters"))
-            .with_field("panelId"));
+        return Err(
+            ApiError::validation(format!("panelId needs 1 to {MAX_PANEL_ID_CHARS} characters")).with_field("panelId")
+        );
     }
     writable(&state, &ctx, &dashboard_id).await?;
     let id = new_id();
@@ -265,11 +266,12 @@ async fn create(
     let mut tx = crate::db::begin(&state.db).await?;
     // Ordered against a purge of the dashboard, which locks the organization too.
     authz::lock_org(&mut tx, &ctx.org_id).await?;
-    let live: Option<(Option<i64>,)> = sqlx::query_as("SELECT deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
-        .bind(&ctx.org_id)
-        .bind(&dashboard_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let live: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
+            .bind(&ctx.org_id)
+            .bind(&dashboard_id)
+            .fetch_optional(&mut *tx)
+            .await?;
     match live {
         None => return Err(ApiError::not_found()),
         Some((Some(_),)) => return Err(conflict("the dashboard is in the trash; restore it first")),

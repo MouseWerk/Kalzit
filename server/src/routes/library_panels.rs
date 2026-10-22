@@ -308,8 +308,12 @@ async fn save(
                 authz::check_resource(&state.db, &ctx, Permission::FoldersPermissions, Resource::Folder(place))
                     .await
                     .map_err(|e| {
-                        if e.code == "not_found" { ApiError::forbidden("missing permission folders:permissions") } else { e }
-                    })?;
+                    if e.code == "not_found" {
+                        ApiError::forbidden("missing permission folders:permissions")
+                    } else {
+                        e
+                    }
+                })?;
             }
         }
     }

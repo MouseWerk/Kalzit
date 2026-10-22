@@ -66,8 +66,7 @@ struct DashboardRow {
     tags: String,
 }
 
-const COLUMNS: &str =
-    "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at, tags";
+const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at, tags";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,12 +221,8 @@ async fn view(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: DashboardRow) -
     })?;
     let index = AccessIndex::load(conn, ctx).await?;
     let model = stored_model(&raw)?;
-    let ids: std::collections::BTreeSet<&str> = model["panels"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|p| p["libraryPanelId"].as_str())
-        .collect();
+    let ids: std::collections::BTreeSet<&str> =
+        model["panels"].as_array().into_iter().flatten().filter_map(|p| p["libraryPanelId"].as_str()).collect();
     let library_panels = library::linked_panels(conn, &ctx.org_id, &ids).await?;
     Ok(Dashboard { summary: DashboardSummary::new(&row, &index), model, created_by: row.created_by, library_panels })
 }

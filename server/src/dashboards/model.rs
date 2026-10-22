@@ -967,7 +967,7 @@ mod tests {
         let model = parse(sample_v2()).unwrap();
         assert_eq!(model.rows.len(), 2);
         assert!(model.rows[0].collapsed && !model.rows[1].collapsed);
-        assert_eq!(model.annotations[0].enabled, true, "annotation queries are on by default");
+        assert!(model.annotations[0].enabled, "annotation queries are on by default");
         assert_eq!(model.library_panel_ids().into_iter().collect::<Vec<_>>(), ["lib-1"]);
         assert!(model.datasource_ids().contains("ds-3"), "annotation queries are stored queries");
         let back = serde_json::to_value(&model).unwrap();
@@ -1006,7 +1006,11 @@ mod tests {
             (vec!["annotations", "0", "name"], json!(""), "annotations[0].name"),
             (vec!["variables", "0", "multi"], json!(true), "ok"),
             (vec!["variables", "1", "type"], json!("textbox"), "multi is only"),
-            (vec!["panels", "1", "targets"], json!([{ "refId": "A", "datasourceId": "ds", "query": {} }]), "library panel holds"),
+            (
+                vec!["panels", "1", "targets"],
+                json!([{ "refId": "A", "datasourceId": "ds", "query": {} }]),
+                "library panel holds",
+            ),
         ] {
             let result = parse(with(sample_v2(), &path, value.clone()));
             if expect == "ok" {

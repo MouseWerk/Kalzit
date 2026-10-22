@@ -31,8 +31,7 @@ pub struct LibraryRow {
     pub updated_at: i64,
 }
 
-pub const LIBRARY_COLUMNS: &str =
-    "id, folder_id, name, model, version, created_by, created_at, updated_by, updated_at";
+pub const LIBRARY_COLUMNS: &str = "id, folder_id, name, model, version, created_by, created_at, updated_by, updated_at";
 
 pub async fn fetch<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
     db: E,
@@ -122,7 +121,10 @@ pub async fn sync_references(
     dashboard_id: &str,
     model: &DashboardModel,
 ) -> ApiResult<()> {
-    sqlx::query("DELETE FROM library_panel_uses WHERE dashboard_id = $1").bind(dashboard_id).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM library_panel_uses WHERE dashboard_id = $1")
+        .bind(dashboard_id)
+        .execute(&mut *conn)
+        .await?;
     for id in model.library_panel_ids() {
         sqlx::query("INSERT INTO library_panel_uses (org_id, library_panel_id, dashboard_id) VALUES ($1, $2, $3)")
             .bind(org_id)

@@ -15,10 +15,10 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::clean_name;
 use super::new_id;
 use super::support::{Actor, PageQuery, QueryParams, audit, decode_cursor, encode_cursor, page_limit};
 use super::table::{RouteDef, route};
-use super::clean_name;
 use crate::app::AppState;
 use crate::authz::{Access, AccessIndex, OrgCtx, Permission};
 use crate::dashboards::model;
@@ -388,4 +388,3 @@ async fn play(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
-
