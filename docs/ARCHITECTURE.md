@@ -265,6 +265,10 @@ type QueryResult =
     }[];
   }
   ```
+- Model version 2 adds tags, rows, repeats, annotation queries, dashboard and panel links, panel
+  time options, multi-value variables and library panel references; annotations, playlists and
+  library panels are their own resources (docs/api/dashboard-features.md). Library panels follow
+  their folder's rights; a dashboard that shows one authorizes its queries for its readers.
 - Panels declare the shapes they accept; the panel picker offers matching panels first.
 
 ## Settings and audit
@@ -436,6 +440,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
+| 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
 
 ## M1 work streams
 

@@ -280,7 +280,8 @@ folder is not in the trash (also when it was restored while the purge waited).
 
 ## Dashboards
 
-The model (`schemaVersion` 1):
+The model (`schemaVersion` 1; version 2 adds rows, repeats, links, tags, annotation queries,
+panel time options and library panels, see docs/api/dashboard-features.md):
 
 ```ts
 interface DashboardModel {
