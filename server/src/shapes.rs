@@ -173,9 +173,10 @@ pub struct Field {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentSet {
-    /// Documents with typed values (see `typed`) where JSON has no type for them.
+    /// Documents with typed values (see `typed`) where JSON has no type for them, each in the
+    /// field order the database stored.
     #[cfg_attr(test, ts(type = "unknown[]"))]
-    pub documents: Vec<Value>,
+    pub documents: Vec<OrderedJson>,
     /// Sampled from the result: every field path with its types and how many documents have it.
     pub schema: Vec<FieldSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,6 +192,42 @@ pub struct DocumentSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub executed_query: Option<String>,
+}
+
+/// One JSON value kept as its text, so the key order survives (`serde_json::Map` sorts keys).
+/// Serializes as the JSON itself.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub struct OrderedJson(Box<serde_json::value::RawValue>);
+
+impl OrderedJson {
+    pub fn new(value: &impl Serialize) -> Result<Self, serde_json::Error> {
+        serde_json::value::to_raw_value(value).map(Self)
+    }
+
+    /// The JSON text.
+    pub fn get(&self) -> &str {
+        self.0.get()
+    }
+}
+
+impl From<Value> for OrderedJson {
+    fn from(value: Value) -> Self {
+        Self::new(&value).expect("a JSON value always serializes")
+    }
+}
+
+impl PartialEq for OrderedJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl<'de> Deserialize<'de> for OrderedJson {
+    // Through `Value`, so it works with any deserializer (a raw value needs serde_json's own).
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Value::deserialize(deserializer)?.into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

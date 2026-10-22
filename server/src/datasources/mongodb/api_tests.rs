@@ -439,3 +439,71 @@ async fn an_unreachable_server_does_not_stop_the_save() {
     assert_eq!(h["ok"], false, "{h}");
     assert_eq!(h["code"], "datasource_error", "{h}");
 }
+
+/// "Test connection" checks the login again, also with a client built before its rights grew.
+#[tokio::test]
+async fn test_connection_checks_the_privileges_again() {
+    let fake = fake(Behaviour::default()).await;
+    let t = T::new().await;
+    let id = t.create_ok(settings(&fake)).await;
+    let (_, h) = t.send(Method::POST, &format!("/datasources/{id}/health"), Some(json!({}))).await;
+    assert_eq!(h["ok"], true, "{h}");
+    fake.behaviour
+        .lock()
+        .unwrap()
+        .privileges
+        .push(doc! { "resource": { "db": "shop", "collection": "" }, "actions": ["remove"] });
+    let (_, h) = t.send(Method::POST, &format!("/datasources/{id}/health"), Some(json!({}))).await;
+    assert_eq!(h["ok"], false, "{h}");
+    assert_eq!(h["reason"], "mongodb.login_not_read_only");
+    assert_eq!(h["params"]["action"], "remove");
+}
+
+#[tokio::test]
+async fn a_find_limit_of_zero_is_no_limit_and_documents_keep_their_order() {
+    let fake = fake(Behaviour::default()).await;
+    let t = T::new().await;
+    let id = t.create_ok(settings(&fake)).await;
+    let r = t.query(&id, json!({ "collection": "orders", "limit": 0 })).await;
+    assert_eq!(r["result"]["documents"]["documents"].as_array().unwrap().len(), 5, "{r}");
+    let sent = fake.last("find").unwrap();
+    assert_ne!(sent.get("limit"), Some(&Bson::Int64(0)));
+
+    // The answer's text keeps the stored field order (_id, n, gross, ...), not sorted keys.
+    let body = json!({
+        "queries": [{ "refId": "A", "datasourceId": id, "query": { "collection": "orders", "pipeline": "[]" } }],
+        "timeRange": { "from": 0, "to": 1 }
+    });
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/orgs/{}/query", t.org))
+        .header(header::HOST, "kalzit.test")
+        .header(header::COOKIE, &t.cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let res = t.app.clone().oneshot(req).await.unwrap();
+    let text = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    let at = |k: &str| text.find(&format!("\"{k}\":")).unwrap_or_else(|| panic!("{k}: {text}"));
+    assert!(
+        at("_id") < at("n") && at("n") < at("gross") && at("gross") < at("betrag") && at("ts") < at("bild"),
+        "{text}"
+    );
+}
+
+/// A replica set member announced as a Unix socket path refuses the whole source, also for the
+/// commands Kalzit sends itself. (Only Unix systems read such an address as a socket.)
+#[cfg(unix)]
+#[tokio::test]
+async fn a_member_named_as_a_unix_socket_refuses_the_source() {
+    let fake = fake(Behaviour::default()).await;
+    let me = format!("127.0.0.1:{}", fake.port);
+    fake.behaviour.lock().unwrap().hello_extra = doc! { "setName": "rs0", "hosts": [me.as_str(), "/tmp/kalzit-test-member.sock"], "primary": me.as_str(), "me": me.as_str() };
+    let t = T::new().await;
+    let mut s = settings(&fake);
+    s["replicaSet"] = json!("rs0");
+    let (status, body) = t.create("Socket", s).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "datasource_target_blocked");
+    assert_eq!(body["error"]["reason"], "mongodb.socket_member");
+}

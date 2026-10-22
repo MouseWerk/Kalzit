@@ -216,7 +216,12 @@ on every connect.
   the loopback interface (random credentials per source, so no other local process can use it),
   which resolves and checks every name and connects to the checked address; TLS runs end to end
   with the real host name. Queries only go to the primary, a `mongos` or the one server of a
-  direct connection, never to a Unix socket path a member might name. Kalzit's own database is
+  direct connection, and so do the commands Kalzit sends itself (`connectionStatus`, `hostInfo`,
+  `buildInfo`, `listCollections`, `listIndexes`). A deployment whose topology names a Unix socket
+  path as a member (only Unix systems read such an address as a socket) is refused as a whole with
+  `mongodb.socket_member`; the driver's monitor may still have sent its handshake (`hello`) there
+  once, which the systemd setting `RestrictAddressFamilies` (docs/ARCHITECTURE.md) prevents.
+  Kalzit's own database is
   never MongoDB, so for MongoDB the address rules are what applies.
 - The block list holds the link-local range (which contains the usual cloud metadata address
   `169.254.169.254`) and AWS's IPv6 metadata address. Alibaba Cloud's metadata service
@@ -240,7 +245,8 @@ Body: none or `{}`. Always `200`, also when the source fails:
   `health.connected_read_only` (SQLite: the file is opened read-only), `health.prometheus_answered`
   (`engine`) or `health.connected_admin_login` (`engine`, `version`: the login has administrator
   rights, PostgreSQL superuser or SQL Server sysadmin; the text should advise a read-only login).
-  MongoDB answers `health.connected` (`engine` `MongoDB`) after the privilege check and a read of
+  MongoDB answers `health.connected` (`engine` `MongoDB`) after the privilege check (run again on
+  every test, also with a client built earlier) and a read of
   the database's collections; a login that may do more than read answers `ok: false` with
   `mongodb.login_not_read_only` or `mongodb.access_control_off`.
 - `code` (only when `ok` is false) is `datasource_error`, `datasource_target_blocked` or
@@ -426,13 +432,20 @@ Read-only check (on the BSON as sent, after binding; `query_rejected`):
   direction marks, tags), a full-width or small dollar sign, full-width letters or any non-ASCII
   letter is `mongodb.key_obfuscated`. Field names without a leading dollar are data and may hold
   any character.
+- `$lookup` takes only `from`, `localField`, `foreignField`, `as`, `let` and `pipeline`;
+  `$unionWith` only `coll` and `pipeline` (or a collection name); `$graphLookup` only `from`,
+  `startWith`, `connectFromField`, `connectToField`, `as`, `maxDepth`, `depthField` and
+  `restrictSearchWithMatch`. Any other argument (`db`, say) is `mongodb.stage_invalid`.
+- The source's `database` may not be `admin`, `local` or `config` (`mongodb.database_reserved`).
 - `$lookup.from`, `$graphLookup.from` and `$unionWith` name collections of the same database as
   text; another database (`{"db": ..., "coll": ...}`) or `system.*` is refused.
 - The real boundary is the login: Kalzit checks it with `connectionStatus` (`showPrivileges`)
   whenever it builds a client (every 10 minutes at the latest), on "Test connection" and when the
-  source is saved. Every privilege must be one of those of the `read` and `readAnyDatabase`
+  source is saved. With a login, the server must report it and its privileges (otherwise
+  `mongodb.privileges_unknown`). Every privilege must be one of those of the `read` and `readAnyDatabase`
   roles (`changeStream`, `collStats`, `dbHash`, `dbStats`, `find`, `killCursors`,
-  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`, `planCacheRead`);
+  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`; `planCacheRead`, which
+  older servers grant with `read`, is left out on purpose since it shows other users' query shapes);
   anything more, on any database, is `mongodb.login_not_read_only` (`action`, `resource`). A
   server where `hostInfo` succeeds although no such privilege was granted checks no rights at all
   and is refused with `mongodb.access_control_off`.
@@ -446,6 +459,11 @@ Macros and variables become typed BSON values, never text spliced into JSON:
 | `"$__interval_ms"` | the interval in milliseconds (64-bit integer) |
 | `"${name}"` (a whole string) | the variable's value: text, a number (64-bit integer or double), a boolean, or a list of them (an array) |
 
+Arguments that must be constants stay plain values: `$graphLookup` `connectFromField`,
+`connectToField`, `as`, `maxDepth`, `depthField`; `$bucket` `boundaries` and `default`;
+`$bucketAuto` `buckets` and `granularity`; all of `$densify`; `sortBy` and `partitionByFields`
+of `$setWindowFields` and `$fill`, and their output `window` and `method`.
+
 In aggregation expressions (`$project`, `$group`, `$expr`, `$lookup.let`, ...) a variable's value
 is wrapped in `{"$literal": ...}`, so a text such as `"$preis"` stays text instead of reading a
 field; in `$match`, filters, `$sort`, `$limit` and the like it is the plain value. Objects as
@@ -458,7 +476,9 @@ and `$limit` (the document limit plus one) to a pipeline and sets `skip`/`limit`
 At the document limit (`datasources.max_rows`, `maxRows`, the query's `limit`) or the response
 size limit (`datasources.max_response_bytes`, the source's `maxResponseBytes`) the set is cut:
 `truncated` is `{"limit": <documents returned>}`, a notice says why, and `nextCursor` continues it.
-A cursor belongs to its query, time range and variables; with any other it is
+A `$sample` size above the document limit is lowered to it. In `find`, `limit: 0` means no
+limit, as in MongoDB (the document limit still holds). Documents keep the field order the
+database stored. A cursor belongs to its query, time range and variables; with any other it is
 `mongodb.cursor_invalid`. A `limit` in a `find` query is the query's own: reaching it is no cut.
 
 ### The documents shape
@@ -633,6 +653,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `mongodb.too_many_hosts` | `max` | more than `max` hosts |
 | `mongodb.srv_host` | | with SRV, `hosts` is not exactly one host name without a port |
 | `mongodb.database_invalid` | | not a MongoDB database name (with `/`, `\`, `.`, `"`, `$` or a space, or longer than 63) |
+| `mongodb.database_reserved` | | `admin`, `local` or `config`, the server's own databases |
 | `mongodb.ca_without_tls` | | `caCert` is set but TLS is off |
 | `secrets.unknown` | `name` | not a secret of this kind |
 | `secrets.too_long` | | the secret is too long |
@@ -652,6 +673,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `target.unresolvable` | `host`, `detail` | `datasource_error`: the host name does not resolve |
 | `target.unreachable` | `host`, `detail` | `datasource_error`: no address of the host accepts a connection |
 | `mongodb.srv_target` | | an SRV record names a target that is not a host |
+| `mongodb.socket_member` | | the deployment names a Unix socket as a member |
 
 ### Queries (`query_rejected` unless noted)
 
@@ -747,6 +769,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
 | `mssql.login_timeout` | | SQL Server did not complete the login in time |
 | `mongodb.login_not_read_only` | `action`, `resource` | the login may do more than read (also `422 validation` with `field: user` when saving) |
+| `mongodb.privileges_unknown` | | a login is set, but the server reports no login or no privileges for it (also `422 validation` with `field: user` when saving) |
 | `mongodb.access_control_off` | | the server checks no access rights (also `422 validation` when saving) |
 | `mongodb.no_server` | `detail` | no suitable MongoDB server answered in time |
 | `mongodb.srv_lookup` | `detail` | the SRV or TXT lookup failed |

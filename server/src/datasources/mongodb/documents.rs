@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use bson::spec::BinarySubtype;
 use bson::{Bson, Document};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::shapes::{FieldSchema, TypeShare, typed};
 
@@ -14,6 +14,54 @@ use crate::shapes::{FieldSchema, TypeShare, typed};
 const MAX_SCHEMA_PATHS: usize = 2_000;
 /// Nesting levels the schema sample descends.
 const MAX_SCHEMA_DEPTH: usize = 32;
+
+/// A converted value that keeps the field order of the stored document (`serde_json::Map` sorts
+/// its keys). Serializes as plain JSON.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ordered {
+    Leaf(Value),
+    Array(Vec<Ordered>),
+    Object(Vec<(String, Ordered)>),
+}
+
+impl serde::Serialize for Ordered {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self {
+            Ordered::Leaf(v) => v.serialize(serializer),
+            Ordered::Array(items) => {
+                let mut seq = serializer.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            }
+            Ordered::Object(fields) => {
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for (k, v) in fields {
+                    map.serialize_entry(k, v)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+impl Ordered {
+    /// As a `serde_json::Value` (which sorts object keys).
+    pub fn to_value(&self) -> Value {
+        match self {
+            Ordered::Leaf(v) => v.clone(),
+            Ordered::Array(items) => Value::Array(items.iter().map(Ordered::to_value).collect()),
+            Ordered::Object(fields) => Value::Object(fields.iter().map(|(k, v)| (k.clone(), v.to_value())).collect()),
+        }
+    }
+
+    /// As JSON text in the stored order, for the documents shape.
+    pub fn to_json(&self) -> crate::shapes::OrderedJson {
+        crate::shapes::OrderedJson::new(self).expect("converted values always serialize")
+    }
+}
 
 /// Converts documents, noting the paths whose binary values are hidden.
 #[derive(Default)]
@@ -23,25 +71,36 @@ pub struct Converter {
 }
 
 impl Converter {
-    pub fn document(&mut self, doc: &Document) -> Value {
+    pub fn document(&mut self, doc: &Document) -> Ordered {
         self.doc_at(doc, "")
     }
 
-    fn doc_at(&mut self, doc: &Document, path: &str) -> Value {
-        let mut map = Map::new();
-        for (key, value) in doc {
-            let child = join(path, key);
-            map.insert(key.clone(), self.value_at(value, &child));
-        }
+    fn doc_at(&mut self, doc: &Document, path: &str) -> Ordered {
+        let fields: Vec<(String, Ordered)> =
+            doc.iter().map(|(key, value)| (key.clone(), self.value_at(value, &join(path, key)))).collect();
         // A stored document that itself has a `$type` key would read as a typed value; it is
         // wrapped so the two cannot be confused.
-        if map.contains_key("$type") {
-            return json!({ "$type": "document", "value": Value::Object(map) });
+        if fields.iter().any(|(k, _)| k == "$type") {
+            return Ordered::Object(vec![
+                ("$type".into(), Ordered::Leaf(json!("document"))),
+                ("value".into(), Ordered::Object(fields)),
+            ]);
         }
-        Value::Object(map)
+        Ordered::Object(fields)
     }
 
-    pub fn value_at(&mut self, value: &Bson, path: &str) -> Value {
+    pub fn value_at(&mut self, value: &Bson, path: &str) -> Ordered {
+        match value {
+            Bson::Array(items) => {
+                let child = format!("{path}[]");
+                Ordered::Array(items.iter().map(|v| self.value_at(v, &child)).collect())
+            }
+            Bson::Document(doc) => self.doc_at(doc, path),
+            other => Ordered::Leaf(self.scalar(other, path)),
+        }
+    }
+
+    fn scalar(&mut self, value: &Bson, path: &str) -> Value {
         match value {
             Bson::Double(f) => match serde_json::Number::from_f64(*f) {
                 Some(n) => Value::Number(n),
@@ -50,11 +109,7 @@ impl Converter {
                 None => typed("double", "-Infinity"),
             },
             Bson::String(s) => Value::String(s.clone()),
-            Bson::Array(items) => {
-                let child = format!("{path}[]");
-                Value::Array(items.iter().map(|v| self.value_at(v, &child)).collect())
-            }
-            Bson::Document(doc) => self.doc_at(doc, path),
+            Bson::Array(_) | Bson::Document(_) => unreachable!("value_at handles containers"),
             Bson::Boolean(b) => Value::Bool(*b),
             Bson::Null => Value::Null,
             Bson::RegularExpression(r) => typed("regex", format!("/{}/{}", r.pattern.as_str(), r.options.as_str())),
@@ -240,7 +295,7 @@ mod tests {
             "tricky": { "$type": "objectId", "value": "x" },
         };
         let mut c = Converter::default();
-        let v = c.document(&doc);
+        let v = c.document(&doc).to_value();
         assert_eq!(v["_id"], json!({ "$type": "objectId", "value": "65f0c1a2b3c4d5e6f7a8b9c0" }));
         assert_eq!(v["n32"], 7);
         assert_eq!(v["n64"], json!({ "$type": "int64", "value": "9007199254740993" }));
@@ -283,5 +338,14 @@ mod tests {
         assert_eq!(get("b").types[0].name, "object");
         assert_eq!(schema[0].path, "a", "paths keep the order they first appear in");
         assert!(SchemaSampler::default().finish().is_empty());
+    }
+
+    #[test]
+    fn documents_keep_their_field_order() {
+        let mut c = Converter::default();
+        let v = c.document(&doc! { "_id": 1_i32, "zeit": 2_i32, "betrag": { "z": 1_i32, "a": 2_i32 } });
+        let text = serde_json::to_string(&v).unwrap();
+        assert_eq!(text, r#"{"_id":1,"zeit":2,"betrag":{"z":1,"a":2}}"#, "the documents shape keeps the stored order");
+        assert_eq!(v.to_json().get(), text);
     }
 }

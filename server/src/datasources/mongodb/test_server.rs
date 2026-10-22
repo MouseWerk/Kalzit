@@ -18,6 +18,8 @@ pub struct Behaviour {
     /// The documents every `aggregate` and `find` answers (before `$skip`/`$limit`).
     pub documents: Vec<Document>,
     pub collections: Vec<Document>,
+    /// Added to the handshake answer (a replica set name and members, say).
+    pub hello_extra: Document,
 }
 
 pub struct FakeMongo {
@@ -123,12 +125,16 @@ fn cursor(ns: &str, docs: Vec<Document>) -> Document {
 fn answer(c: &Document, b: &Behaviour) -> Document {
     let name = c.keys().next().cloned().unwrap_or_default();
     match name.as_str() {
-        "hello" | "isMaster" | "ismaster" => doc! {
-            "ismaster": true, "isWritablePrimary": true, "helloOk": true, "maxBsonObjectSize": 16_777_216,
-            "maxMessageSizeBytes": 48_000_000, "maxWriteBatchSize": 100_000, "localTime": bson::DateTime::now(),
-            "logicalSessionTimeoutMinutes": 30, "connectionId": 1, "minWireVersion": 0, "maxWireVersion": 21,
-            "readOnly": false, "ok": 1.0
-        },
+        "hello" | "isMaster" | "ismaster" => {
+            let mut hello = doc! {
+                "ismaster": true, "isWritablePrimary": true, "helloOk": true, "maxBsonObjectSize": 16_777_216,
+                "maxMessageSizeBytes": 48_000_000, "maxWriteBatchSize": 100_000, "localTime": bson::DateTime::now(),
+                "logicalSessionTimeoutMinutes": 30, "connectionId": 1, "minWireVersion": 0, "maxWireVersion": 21,
+                "readOnly": false, "ok": 1.0
+            };
+            hello.extend(b.hello_extra.clone());
+            hello
+        }
         "connectionStatus" => doc! {
             "authInfo": {
                 "authenticatedUsers": [], "authenticatedUserRoles": [],

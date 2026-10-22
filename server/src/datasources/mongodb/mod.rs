@@ -17,17 +17,19 @@ pub mod relay;
 mod test_server;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bson::{Bson, Document, RawDocumentBuf, doc};
 use futures_util::TryStreamExt;
+use mongodb::event::EventHandler;
+use mongodb::event::sdam::SdamEvent;
 use mongodb::options::{ClientOptions, Credential, SelectionCriteria, ServerAddress, Socks5Proxy, Tls, TlsOptions};
 use mongodb::{Client, ServerInfo, ServerType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 
-use super::frame::json_size;
 use super::{
     Connection, DataSourcePlugin, DefaultValue, Detail, FieldError, Health, Kind, SettingField, SettingType,
     SourceError, SourceQuery, SourceSchema,
@@ -73,7 +75,9 @@ const MAX_SAMPLED_COLLECTIONS: usize = 100;
 const SCHEMA_SAMPLE: i64 = 100;
 const SCHEMA_SAMPLE_TIME: Duration = Duration::from_secs(2);
 
-/// Privileges a login may hold: those of the built-in `read` and `readAnyDatabase` roles.
+/// Privileges a login may hold: those of the built-in `read` and `readAnyDatabase` roles
+/// (`planCacheRead`, which older servers granted with `read`, is left out on purpose: it reads
+/// other users' query shapes).
 const READ_ACTIONS: &[&str] = &[
     "changeStream",
     "collStats",
@@ -85,7 +89,6 @@ const READ_ACTIONS: &[&str] = &[
     "listDatabases",
     "listIndexes",
     "listSearchIndexes",
-    "planCacheRead",
 ];
 
 pub fn kind() -> Kind {
@@ -182,6 +185,14 @@ fn check_database(name: &str) -> Result<(), FieldError> {
             format!("{name:?} is not a database name"),
         ));
     }
+    // Server-internal databases: users, the oplog, sharding metadata.
+    if matches!(name, "admin" | "local" | "config") {
+        return Err(FieldError::new(
+            "database",
+            "mongodb.database_reserved",
+            format!("{name} is a database of the server itself"),
+        ));
+    }
     Ok(())
 }
 
@@ -192,6 +203,73 @@ struct Shared {
     client: Client,
     relay: Relay,
     database: String,
+    /// Where every operation may go (`selection`); passed to commands explicitly, since the
+    /// driver applies the client's default only to reads such as `find` and `aggregate`.
+    selection: SelectionCriteria,
+    /// Set when the topology names a server that is not a TCP host (a Unix socket path a replica
+    /// set member announced); the source is then refused.
+    socket_member: Arc<AtomicBool>,
+    /// Whether the source has a login (then its privileges must be readable).
+    has_user: bool,
+}
+
+impl Shared {
+    /// Refuses the source once a member named a Unix socket.
+    fn guard(&self) -> Result<(), SourceError> {
+        if self.socket_member.load(Ordering::SeqCst) {
+            return Err(SourceError::Blocked(Detail::new(
+                "mongodb.socket_member",
+                "a server names a Unix socket as a member of the deployment; only network hosts may be reached",
+            )));
+        }
+        Ok(())
+    }
+
+    /// The driver error of an operation that began at `mark`, as a source error.
+    fn fail(&self, e: &mongodb::error::Error, mark: u64, timeout: Duration) -> SourceError {
+        if let Err(blocked) = self.guard() {
+            return blocked;
+        }
+        failed(e, self.relay.refusal_since(mark), timeout)
+    }
+
+    /// A command on `db`, sent only to a server the selection allows.
+    async fn command(&self, db: &str, command: Document, timeout: Duration) -> Result<Document, SourceError> {
+        self.guard()?;
+        let mark = self.relay.mark();
+        self.client
+            .database(db)
+            .run_command(command)
+            .selection_criteria(self.selection.clone())
+            .await
+            .map_err(|e| self.fail(&e, mark, timeout))
+    }
+
+    /// A cursor command on the source's database (`listCollections`, `listIndexes`), at most
+    /// `max` documents, sent only to a server the selection allows.
+    async fn cursor_command(
+        &self,
+        command: Document,
+        max: usize,
+        timeout: Duration,
+    ) -> Result<Vec<Document>, SourceError> {
+        self.guard()?;
+        let mark = self.relay.mark();
+        let mut cursor = self
+            .client
+            .database(&self.database)
+            .run_cursor_command(command)
+            .selection_criteria(self.selection.clone())
+            .await
+            .map_err(|e| self.fail(&e, mark, timeout))?;
+        let mut out = Vec::new();
+        while out.len() < max
+            && let Some(d) = cursor.try_next().await.map_err(|e| self.fail(&e, mark, timeout))?
+        {
+            out.push(d);
+        }
+        Ok(out)
+    }
 }
 
 /// The CA certificate as a file the driver reads once while the client is built; removed after.
@@ -218,8 +296,9 @@ fn write_ca(dir: &std::path::Path, pem: &str) -> Result<CaFile, SourceError> {
     Ok(guard)
 }
 
-/// Maps a driver error; connection failures caused by a refused target answer that refusal.
-fn failed(e: &mongodb::error::Error, relay: Option<&Relay>, timeout: Duration) -> SourceError {
+/// Maps a driver error; connection failures caused by a target the relay refused during the same
+/// operation answer that refusal.
+fn failed(e: &mongodb::error::Error, refusal: Option<Refusal>, timeout: Duration) -> SourceError {
     use mongodb::error::ErrorKind;
     let connecting = matches!(
         *e.kind,
@@ -228,7 +307,7 @@ fn failed(e: &mongodb::error::Error, relay: Option<&Relay>, timeout: Duration) -
             | ErrorKind::ProxyConnect { .. }
             | ErrorKind::ConnectionPoolCleared { .. }
     );
-    if connecting && let Some(refusal) = relay.and_then(Relay::refusal) {
+    if connecting && let Some(refusal) = refusal {
         return match refusal {
             Refusal::Blocked(d) => SourceError::Blocked(d),
             Refusal::Failed(d) => SourceError::Failed(d),
@@ -271,13 +350,14 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
         SourceError::failed("internal", "internal: the connection relay cannot start")
     })?;
     let hosts = parse_hosts(&s).map_err(|e| SourceError::Failed(e.detail))?;
+    let mark = relay.mark();
     let mut options = if s.srv() {
         let (host, _) = &hosts[0];
         // The driver reads the SRV and TXT records; every host they name passes the relay. The
         // check here only answers a refused host early and clearly.
         let options = ClientOptions::parse(format!("mongodb+srv://{host}/"))
             .await
-            .map_err(|e| failed(&e, Some(&relay), selection_timeout))?;
+            .map_err(|e| failed(&e, relay.refusal_since(mark), selection_timeout))?;
         for address in &options.hosts {
             match address {
                 ServerAddress::Tcp { host, port } => {
@@ -311,7 +391,20 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
     options.min_pool_size = Some(0);
     options.max_idle_time = Some(Duration::from_secs(300));
     options.retry_writes = Some(false);
-    options.selection_criteria = Some(selection(direct));
+    let selection = selection(direct);
+    options.selection_criteria = Some(selection.clone());
+    // The selection keeps queries away from a Unix socket a member names, but the driver still
+    // monitors every member it learns of; such a member refuses the whole source.
+    let socket_member = Arc::new(AtomicBool::new(false));
+    let flag = socket_member.clone();
+    options.sdam_event_handler = Some(EventHandler::callback(move |event: SdamEvent| {
+        if let SdamEvent::ServerOpening(e) = event
+            && !matches!(e.address, ServerAddress::Tcp { .. })
+        {
+            tracing::warn!("a MongoDB deployment names a Unix socket as a member; the source is refused");
+            flag.store(true, Ordering::SeqCst);
+        }
+    }));
     if let Some(user) = Settings::non_empty(&s.user) {
         let mut credential = Credential::default();
         credential.username = Some(user.to_string());
@@ -346,11 +439,13 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
             .authentication((user, password))
             .build(),
     );
-    let client = Client::with_options(options).map_err(|e| failed(&e, Some(&relay), selection_timeout))?;
+    let client = Client::with_options(options).map_err(|e| failed(&e, relay.refusal_since(mark), selection_timeout))?;
     // The driver has read the certificate into its TLS configuration.
     drop(ca);
-    let shared = Shared { client, relay, database: s.database.clone() };
+    let has_user = Settings::non_empty(&s.user).is_some();
+    let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user };
     check_read_only(&shared, selection_timeout).await?;
+    shared.guard()?;
     Ok(shared)
 }
 
@@ -374,20 +469,20 @@ fn resource_text(resource: Option<&Document>) -> String {
     format!("{db}.{coll}")
 }
 
-/// Refuses a login that may do more than read, and a server without access control (where any
-/// login may write).
-async fn check_read_only(shared: &Shared, timeout: Duration) -> Result<(), SourceError> {
-    let admin = shared.client.database("admin");
-    let status = admin
-        .run_command(doc! { "connectionStatus": 1, "showPrivileges": true })
-        .await
-        .map_err(|e| failed(&e, Some(&shared.relay), timeout))?;
-    let privileges = status
-        .get_document("authInfo")
-        .ok()
-        .and_then(|a| a.get_array("authenticatedUserPrivileges").ok())
-        .cloned()
-        .unwrap_or_default();
+/// The `connectionStatus` answer judged: only reading privileges, and with a login, the login and
+/// its privileges must be reported.
+fn privileges_verdict(status: &Document, has_user: bool) -> Result<(), SourceError> {
+    let auth = status.get_document("authInfo").ok();
+    let users = auth.and_then(|a| a.get_array("authenticatedUsers").ok()).map_or(0, |u| u.len());
+    let privileges = auth.and_then(|a| a.get_array("authenticatedUserPrivileges").ok()).cloned().unwrap_or_default();
+    // With a login, the server must name it and its privileges; an answer without them proves
+    // nothing about what the login may do.
+    if has_user && (users == 0 || privileges.is_empty()) {
+        return Err(SourceError::failed(
+            "mongodb.privileges_unknown",
+            "the server does not report the login's privileges, so Kalzit cannot verify that it may only read",
+        ));
+    }
     for p in &privileges {
         let Bson::Document(p) = p else { continue };
         let actions = p.get_array("actions").map(|a| a.as_slice()).unwrap_or_default();
@@ -404,15 +499,32 @@ async fn check_read_only(shared: &Shared, timeout: Duration) -> Result<(), Sourc
             }
         }
     }
+    Ok(())
+}
+
+/// Refuses a login that may do more than read, a login whose privileges cannot be read, and a
+/// server without access control (where any login may write).
+async fn check_read_only(shared: &Shared, timeout: Duration) -> Result<(), SourceError> {
+    let status = shared.command("admin", doc! { "connectionStatus": 1, "showPrivileges": true }, timeout).await?;
+    privileges_verdict(&status, shared.has_user)?;
     // hostInfo needs a privilege no reading role holds; a server that runs it anyway does not
     // check privileges at all.
-    match admin.run_command(doc! { "hostInfo": 1 }).await {
+    shared.guard()?;
+    let mark = shared.relay.mark();
+    let host_info = shared
+        .client
+        .database("admin")
+        .run_command(doc! { "hostInfo": 1 })
+        .selection_criteria(shared.selection.clone())
+        .await;
+    match host_info {
         Ok(_) => Err(SourceError::failed(
             "mongodb.access_control_off",
             "the server does not check access rights, so any login may write; enable access control and use a login with only the read role",
         )),
+        // Refused by the server (not authorized): access control is on.
         Err(e) if matches!(*e.kind, mongodb::error::ErrorKind::Command(_)) => Ok(()),
-        Err(e) => Err(failed(&e, Some(&shared.relay), timeout)),
+        Err(e) => Err(shared.fail(&e, mark, timeout)),
     }
 }
 
@@ -517,34 +629,40 @@ pub struct IndexKey {
 }
 
 async fn collection_schema(
-    db: &mongodb::Database,
+    shared: &Shared,
     name: String,
     collection_type: &'static str,
     sample: bool,
 ) -> CollectionSchema {
     let mut schema = CollectionSchema { name, collection_type, indexes: Vec::new(), fields: Vec::new(), sampled: 0 };
-    if !sample {
+    if !sample || shared.guard().is_err() {
         return schema;
     }
-    let coll = db.collection::<Document>(&schema.name);
     if collection_type != "view"
-        && let Ok(mut cursor) = coll.list_indexes().await
+        && let Ok(indexes) =
+            shared.cursor_command(doc! { "listIndexes": &schema.name }, 1_000, SERVER_SELECTION_TIMEOUT).await
     {
-        while let Ok(Some(index)) = cursor.try_next().await {
+        for index in indexes {
             let mut converter = Converter::default();
             let keys = index
-                .keys
-                .iter()
-                .map(|(field, kind)| IndexKey { field: field.clone(), kind: converter.value_at(kind, field) })
-                .collect();
-            let options = index.options.as_ref();
+                .get_document("key")
+                .map(|k| {
+                    k.iter()
+                        .map(|(field, kind)| IndexKey {
+                            field: field.clone(),
+                            kind: converter.value_at(kind, field).to_value(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             schema.indexes.push(IndexSchema {
-                name: options.and_then(|o| o.name.clone()).unwrap_or_default(),
+                name: index.get_str("name").unwrap_or_default().to_string(),
                 keys,
-                unique: options.and_then(|o| o.unique).unwrap_or(false),
+                unique: index.get_bool("unique").unwrap_or(false),
             });
         }
     }
+    let coll = shared.client.database(&shared.database).collection::<Document>(&schema.name);
     let sampled = async {
         let mut cursor =
             coll.aggregate([doc! { "$sample": { "size": SCHEMA_SAMPLE } }]).max_time(SCHEMA_SAMPLE_TIME).await?;
@@ -617,7 +735,12 @@ impl DataSourcePlugin for MongoDb {
         match build(conn, SAVE_SELECTION_TIMEOUT).await {
             Ok(_) => Ok(()),
             Err(e @ SourceError::Blocked(_)) => Err(("hosts", e)),
-            Err(e) if matches!(e.detail().reason, "mongodb.login_not_read_only" | "mongodb.access_control_off") => {
+            Err(e)
+                if matches!(
+                    e.detail().reason,
+                    "mongodb.login_not_read_only" | "mongodb.access_control_off" | "mongodb.privileges_unknown"
+                ) =>
+            {
                 Err(("user", e))
             }
             Err(e) => {
@@ -632,20 +755,12 @@ impl DataSourcePlugin for MongoDb {
     async fn health(&self, conn: &Connection) -> Health {
         let check = async {
             let shared = shared(conn).await?;
-            let info = shared
-                .client
-                .database("admin")
-                .run_command(doc! { "buildInfo": 1 })
-                .await
-                .map_err(|e| failed(&e, Some(&shared.relay), SERVER_SELECTION_TIMEOUT))?;
+            // The client may be older than a change of the login's rights: check them again.
+            check_read_only(&shared, SERVER_SELECTION_TIMEOUT).await?;
+            let info = shared.command("admin", doc! { "buildInfo": 1 }, SERVER_SELECTION_TIMEOUT).await?;
             let version = info.get_str("version").unwrap_or("").to_string();
             // The login must be able to read the database, not only to connect.
-            shared
-                .client
-                .database(&shared.database)
-                .list_collection_names()
-                .await
-                .map_err(|e| failed(&e, Some(&shared.relay), SERVER_SELECTION_TIMEOUT))?;
+            shared.cursor_command(doc! { "listCollections": 1, "nameOnly": true }, 1, SERVER_SELECTION_TIMEOUT).await?;
             Ok::<_, SourceError>(version)
         };
         match check.await {
@@ -656,22 +771,21 @@ impl DataSourcePlugin for MongoDb {
 
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError> {
         let shared = shared(conn).await?;
-        let db = shared.client.database(&shared.database);
-        let mut specs =
-            db.list_collections().await.map_err(|e| failed(&e, Some(&shared.relay), SERVER_SELECTION_TIMEOUT))?;
+        let specs = shared
+            .cursor_command(doc! { "listCollections": 1 }, MAX_COLLECTIONS + 100, SERVER_SELECTION_TIMEOUT)
+            .await?;
         let mut list: Vec<(String, &'static str)> = Vec::new();
-        while let Some(spec) =
-            specs.try_next().await.map_err(|e| failed(&e, Some(&shared.relay), SERVER_SELECTION_TIMEOUT))?
-        {
-            if spec.name.starts_with("system.") {
+        for spec in specs {
+            let Ok(name) = spec.get_str("name") else { continue };
+            if name.starts_with("system.") {
                 continue;
             }
-            let t = match spec.collection_type {
-                mongodb::results::CollectionType::View => "view",
-                mongodb::results::CollectionType::Timeseries => "timeseries",
+            let t = match spec.get_str("type").unwrap_or("collection") {
+                "view" => "view",
+                "timeseries" => "timeseries",
                 _ => "collection",
             };
-            list.push((spec.name, t));
+            list.push((name.to_string(), t));
             if list.len() >= MAX_COLLECTIONS {
                 break;
             }
@@ -681,20 +795,22 @@ impl DataSourcePlugin for MongoDb {
         let mut collections = Vec::with_capacity(list.len());
         for (chunk_index, chunk) in list.chunks(4).enumerate() {
             let runs = chunk.iter().enumerate().map(|(i, (name, t))| {
-                collection_schema(&db, name.clone(), t, chunk_index * 4 + i < MAX_SAMPLED_COLLECTIONS)
+                collection_schema(&shared, name.clone(), t, chunk_index * 4 + i < MAX_SAMPLED_COLLECTIONS)
             });
             collections.extend(futures_util::future::join_all(runs).await);
         }
+        shared.guard()?;
         Ok(SourceSchema::Collections { database: shared.database.clone(), collections })
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let q: Query = req.parse()?;
         pipeline::check_collection(&q.collection)?;
-        let binder = Binder { range: req.range, interval_ms: req.interval_ms, variables: &req.variables };
+        let max = req.limits.max_rows.max(1) as u64;
+        let binder =
+            Binder { range: req.range, interval_ms: req.interval_ms, variables: &req.variables, max_documents: max };
         let fp = fingerprint(&req);
         let offset = cursor_offset(req.cursor.as_deref(), &fp)?;
-        let max = req.limits.max_rows.max(1) as u64;
         let plan = match &q.pipeline {
             Some(text) => {
                 if q.filter.is_some()
@@ -718,7 +834,8 @@ impl DataSourcePlugin for MongoDb {
                     filter: binder.query_document(filter)?,
                     projection: projection.map(|p| binder.projection(p)).transpose()?,
                     sort: sort.map(|s| binder.query_document(s)).transpose()?,
-                    limit: q.limit,
+                    // As in MongoDB, a limit of 0 is no limit (the document limit still holds).
+                    limit: q.limit.filter(|l| *l > 0),
                     skip: q.skip.unwrap_or(0),
                 }))
             }
@@ -728,7 +845,9 @@ impl DataSourcePlugin for MongoDb {
         let shared = shared(conn).await?;
         let timeout = req.limits.timeout;
         let coll = shared.client.database(&shared.database).collection::<RawDocumentBuf>(&q.collection);
-        let fail = |e: mongodb::error::Error| failed(&e, Some(&shared.relay), timeout);
+        shared.guard()?;
+        let mark = shared.relay.mark();
+        let fail = |e: mongodb::error::Error| shared.fail(&e, mark, timeout);
         let batch = (max + 1).min(1_000) as u32;
         let (executed, mut cursor) = match plan {
             Plan::Aggregate(mut stages) => {
@@ -795,8 +914,8 @@ impl DataSourcePlugin for MongoDb {
             }
             let doc = Document::try_from(raw.as_ref())
                 .map_err(|e| SourceError::from_source(format!("a document cannot be read: {e}")))?;
-            let value = converter.document(&doc);
-            let size = json_size(&value) + 1;
+            let value = converter.document(&doc).to_json();
+            let size = value.get().len() + 1;
             if own_limit.is_some_and(|l| bytes + size > l) || !req.limits.budget.take(size) {
                 cut = true;
                 let detail = Detail::new("documents.size_limit", "the result was cut off at the response size limit");
@@ -890,6 +1009,37 @@ mod tests {
         assert_eq!(bad(json!({ "password": "x" })).detail.reason, "settings.secret_in_settings");
         let targets: Vec<&str> = kind.all_settings().filter(|f| f.target).map(|f| f.name).collect();
         assert_eq!(targets, ["hosts", "port", "srv", "replicaSet", "database", "user", "authSource", "tls", "caCert"]);
+    }
+
+    #[test]
+    fn privileges_must_be_reported_and_only_reading() {
+        let read = doc! { "resource": { "db": "shop", "collection": "" }, "actions": ["find", "listCollections"] };
+        let status = |users: Vec<Document>, privileges: Vec<Document>| {
+            doc! { "authInfo": { "authenticatedUsers": users, "authenticatedUserRoles": [], "authenticatedUserPrivileges": privileges }, "ok": 1 }
+        };
+        let user = doc! { "user": "leser", "db": "shop" };
+        assert!(privileges_verdict(&status(vec![user.clone()], vec![read.clone()]), true).is_ok());
+        let reason = |r: Result<(), SourceError>| r.unwrap_err().detail().reason;
+        // A login the server does not name, or names without privileges, proves nothing.
+        assert_eq!(reason(privileges_verdict(&status(vec![], vec![read.clone()]), true)), "mongodb.privileges_unknown");
+        assert_eq!(reason(privileges_verdict(&status(vec![user.clone()], vec![]), true)), "mongodb.privileges_unknown");
+        assert_eq!(reason(privileges_verdict(&doc! { "ok": 1 }, true)), "mongodb.privileges_unknown");
+        // Without a login, an empty answer is what a server with access control gives.
+        assert!(privileges_verdict(&status(vec![], vec![]), false).is_ok());
+        let plan = doc! { "resource": { "db": "shop", "collection": "" }, "actions": ["planCacheRead"] };
+        assert_eq!(
+            reason(privileges_verdict(&status(vec![user], vec![read, plan]), true)),
+            "mongodb.login_not_read_only"
+        );
+    }
+
+    #[test]
+    fn server_databases_are_refused() {
+        let kind = kind();
+        for db in ["admin", "local", "config"] {
+            let e = kind.validate_settings(&json!({ "hosts": "h", "database": db })).unwrap_err();
+            assert_eq!((e.field, e.detail.reason), ("database", "mongodb.database_reserved"), "{db}");
+        }
     }
 
     #[test]

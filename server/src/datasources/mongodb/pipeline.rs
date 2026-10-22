@@ -68,6 +68,16 @@ enum Ctx {
     Expr,
 }
 
+/// How a named stage argument is read.
+#[derive(Clone, Copy, Debug)]
+enum Arg {
+    Collection,
+    Pipeline,
+    Raw,
+    Expr,
+    Output,
+}
+
 fn reject(reason: &'static str, message: impl Into<String>) -> SourceError {
     SourceError::rejected(reason, message)
 }
@@ -77,6 +87,8 @@ pub struct Binder<'a> {
     pub range: TimeRange,
     pub interval_ms: u64,
     pub variables: &'a BTreeMap<String, Value>,
+    /// The document limit; `$sample` sizes above it are lowered to it.
+    pub max_documents: u64,
 }
 
 /// Extended JSON text (canonical or relaxed) as BSON, with the key order as written.
@@ -160,12 +172,48 @@ impl Binder<'_> {
             );
         }
         let body = match name.as_str() {
-            "$match" | "$limit" | "$skip" | "$sort" | "$count" | "$sample" | "$unwind" | "$unset" | "$search"
-            | "$searchMeta" | "$vectorSearch" | "$geoNear" => self.value(body, Ctx::Raw)?,
-            "$lookup" => self.lookup(body)?,
-            "$unionWith" => self.union_with(body)?,
+            "$match" | "$limit" | "$skip" | "$sort" | "$count" | "$unwind" | "$unset" | "$search" | "$searchMeta"
+            | "$vectorSearch" | "$geoNear" | "$densify" => self.value(body, Ctx::Raw)?,
+            "$sample" => self.sample(body)?,
+            "$lookup" => self.fields("$lookup", body, |k| match k {
+                "from" => Some(Arg::Collection),
+                "pipeline" => Some(Arg::Pipeline),
+                "let" => Some(Arg::Expr),
+                "localField" | "foreignField" | "as" => Some(Arg::Raw),
+                _ => None,
+            })?,
+            "$unionWith" => match body {
+                Bson::String(_) => {
+                    foreign_collection(&body)?;
+                    body
+                }
+                other => self.fields("$unionWith", other, |k| match k {
+                    "coll" => Some(Arg::Collection),
+                    "pipeline" => Some(Arg::Pipeline),
+                    _ => None,
+                })?,
+            },
             "$facet" => self.facet(body)?,
-            "$graphLookup" => self.graph_lookup(body)?,
+            "$graphLookup" => self.fields("$graphLookup", body, |k| match k {
+                "from" => Some(Arg::Collection),
+                "startWith" => Some(Arg::Expr),
+                "connectFromField" | "connectToField" | "as" | "maxDepth" | "depthField" => Some(Arg::Raw),
+                "restrictSearchWithMatch" => Some(Arg::Raw),
+                _ => None,
+            })?,
+            "$bucket" => self.fields("$bucket", body, |k| match k {
+                "boundaries" | "default" => Some(Arg::Raw),
+                _ => Some(Arg::Expr),
+            })?,
+            "$bucketAuto" => self.fields("$bucketAuto", body, |k| match k {
+                "buckets" | "granularity" => Some(Arg::Raw),
+                _ => Some(Arg::Expr),
+            })?,
+            "$setWindowFields" | "$fill" => self.fields(&name, body, |k| match k {
+                "sortBy" | "partitionByFields" => Some(Arg::Raw),
+                "output" => Some(Arg::Output),
+                _ => Some(Arg::Expr),
+            })?,
             _ => self.value(body, Ctx::Expr)?,
         };
         let mut out = Document::new();
@@ -173,47 +221,78 @@ impl Binder<'_> {
         Ok(out)
     }
 
-    fn lookup(&self, body: Bson) -> Result<Bson, SourceError> {
+    /// A stage whose arguments are read per name (`arg` says how; `None` refuses the name). Names
+    /// a stage does not have are refused rather than passed on unchecked.
+    fn fields(&self, stage: &str, body: Bson, arg: impl Fn(&str) -> Option<Arg>) -> Result<Bson, SourceError> {
         let Bson::Document(doc) = body else { return self.value(body, Ctx::Raw) };
         let mut out = Document::new();
         for (k, v) in doc {
-            let v = match k.as_str() {
-                "from" => {
+            let Some(how) = arg(&k) else {
+                return Err(reject("mongodb.stage_invalid", format!("{stage} has no argument {k}")));
+            };
+            let v = match how {
+                Arg::Collection => {
                     foreign_collection(&v)?;
                     v
                 }
-                "pipeline" => self.nested_pipeline(v)?,
-                "let" => self.value(v, Ctx::Expr)?,
-                _ => self.value(v, Ctx::Raw)?,
+                Arg::Pipeline => self.nested_pipeline(v)?,
+                Arg::Raw => self.value(v, Ctx::Raw)?,
+                Arg::Expr => self.value(v, Ctx::Expr)?,
+                // `$setWindowFields`/`$fill` outputs: an expression per field, but the window
+                // bounds and the fill method are constants.
+                Arg::Output => match v {
+                    Bson::Document(fields) => {
+                        let mut bound = Document::new();
+                        for (field, spec) in fields {
+                            let spec = match spec {
+                                Bson::Document(spec) => {
+                                    let mut s = Document::new();
+                                    for (sk, sv) in spec {
+                                        let ctx = if matches!(sk.as_str(), "window" | "method") {
+                                            Ctx::Raw
+                                        } else {
+                                            Ctx::Expr
+                                        };
+                                        s.insert(sk, self.value(sv, ctx)?);
+                                    }
+                                    Bson::Document(s)
+                                }
+                                other => self.value(other, Ctx::Expr)?,
+                            };
+                            bound.insert(field, spec);
+                        }
+                        Bson::Document(bound)
+                    }
+                    other => self.value(other, Ctx::Expr)?,
+                },
             };
             out.insert(k, v);
         }
         Ok(Bson::Document(out))
     }
 
-    fn union_with(&self, body: Bson) -> Result<Bson, SourceError> {
-        match body {
-            Bson::String(_) => {
-                foreign_collection(&body)?;
-                Ok(body)
-            }
-            Bson::Document(doc) => {
-                let mut out = Document::new();
-                for (k, v) in doc {
-                    let v = match k.as_str() {
-                        "coll" => {
-                            foreign_collection(&v)?;
-                            v
-                        }
-                        "pipeline" => self.nested_pipeline(v)?,
-                        _ => self.value(v, Ctx::Raw)?,
+    /// `$sample` with its size held to the document limit: a larger sample would only be cut.
+    fn sample(&self, body: Bson) -> Result<Bson, SourceError> {
+        let Bson::Document(doc) = self.value(body, Ctx::Raw)? else {
+            return Err(reject("mongodb.stage_invalid", "$sample takes {\"size\": n}"));
+        };
+        let mut out = Document::new();
+        for (k, v) in doc {
+            let v = match (k.as_str(), &v) {
+                ("size", Bson::Int32(_) | Bson::Int64(_) | Bson::Double(_)) => {
+                    let n = match v {
+                        Bson::Int32(n) => i64::from(n),
+                        Bson::Int64(n) => n,
+                        Bson::Double(f) => f as i64,
+                        _ => unreachable!("matched above"),
                     };
-                    out.insert(k, v);
+                    Bson::Int64(n.min(self.max_documents.min(i64::MAX as u64) as i64))
                 }
-                Ok(Bson::Document(out))
-            }
-            other => self.value(other, Ctx::Raw),
+                _ => v,
+            };
+            out.insert(k, v);
         }
+        Ok(Bson::Document(out))
     }
 
     fn facet(&self, body: Bson) -> Result<Bson, SourceError> {
@@ -222,23 +301,6 @@ impl Binder<'_> {
         for (k, v) in doc {
             check_key(&k)?;
             out.insert(k, self.nested_pipeline(v)?);
-        }
-        Ok(Bson::Document(out))
-    }
-
-    fn graph_lookup(&self, body: Bson) -> Result<Bson, SourceError> {
-        let Bson::Document(doc) = body else { return self.value(body, Ctx::Raw) };
-        let mut out = Document::new();
-        for (k, v) in doc {
-            let v = match k.as_str() {
-                "from" => {
-                    foreign_collection(&v)?;
-                    v
-                }
-                "restrictSearchWithMatch" => self.value(v, Ctx::Raw)?,
-                _ => self.value(v, Ctx::Expr)?,
-            };
-            out.insert(k, v);
         }
         Ok(Bson::Document(out))
     }
@@ -483,6 +545,7 @@ mod tests {
             range: TimeRange { from: 1_700_000_000_000, to: 1_800_000_000_000 },
             interval_ms: 30_000,
             variables: vars,
+            max_documents: 1_000,
         }
     }
 
@@ -698,5 +761,70 @@ mod tests {
         let vars: BTreeMap<String, Value> = [("o".to_string(), json!({ "$where": "1" }))].into();
         let e = binder(&vars).pipeline(r#"[{"$match": {"a": "${o}"}}]"#).unwrap_err();
         assert_eq!(e.detail().reason, "mongodb.variable_type", "objects could carry operators");
+    }
+
+    #[test]
+    fn unknown_arguments_of_cross_collection_stages_are_refused() {
+        // Arguments the checker does not know would pass unchecked; a database argument must not.
+        let vars = BTreeMap::new();
+        for p in [
+            r#"[{"$unionWith": {"coll": "a", "db": "admin"}}]"#,
+            r#"[{"$lookup": {"from": "a", "db": "admin", "localField": "x", "foreignField": "y", "as": "z"}}]"#,
+            r#"[{"$graphLookup": {"from": "a", "db": "admin", "startWith": "$x", "connectFromField": "x", "connectToField": "y", "as": "z"}}]"#,
+        ] {
+            let e = binder(&vars).pipeline(p).unwrap_err();
+            assert_eq!(e.detail().reason, "mongodb.stage_invalid", "{p}");
+        }
+        ok(
+            r#"[{"$lookup": {"from": "a", "localField": "x", "foreignField": "y", "as": "z", "let": {"v": "$x"}, "pipeline": []}},
+               {"$unionWith": {"coll": "b", "pipeline": []}},
+               {"$graphLookup": {"from": "a", "startWith": "$x", "connectFromField": "x", "connectToField": "y", "as": "z",
+                                 "maxDepth": 2, "depthField": "d", "restrictSearchWithMatch": {}}}]"#,
+        );
+    }
+
+    #[test]
+    fn variables_in_constant_arguments_stay_plain_values() {
+        // connectFromField, $bucket.boundaries, $densify.range.step and the like must be constants;
+        // $literal wrapping makes the server refuse them.
+        let vars: BTreeMap<String, Value> =
+            [("f".to_string(), json!("parent")), ("n".to_string(), json!(5)), ("b".to_string(), json!([0, 10]))].into();
+        let p = binder(&vars)
+            .pipeline(
+                r#"[{"$graphLookup": {"from": "a", "startWith": "${f}", "connectFromField": "${f}", "connectToField": "_id", "as": "z", "maxDepth": "${n}"}},
+                {"$densify": {"field": "t", "range": {"step": "${n}", "bounds": "full"}}},
+                {"$bucket": {"groupBy": "${f}", "boundaries": "${b}", "default": "${f}"}},
+                {"$setWindowFields": {"sortBy": {"t": 1}, "output": {"s": {"$sum": "${n}", "window": {"documents": ["${n}", 0]}}}}},
+                {"$fill": {"sortBy": {"t": 1}, "output": {"x": {"method": "${f}"}, "y": {"value": "${f}"}}}}]"#,
+            )
+            .unwrap();
+        let lit = |v: Bson| Bson::Document(bson::doc! { "$literal": v });
+        let g = p[0].get_document("$graphLookup").unwrap();
+        assert_eq!(g.get("connectFromField"), Some(&Bson::String("parent".into())));
+        assert_eq!(g.get("maxDepth"), Some(&Bson::Int64(5)));
+        assert_eq!(g.get("startWith"), Some(&lit(Bson::String("parent".into()))), "startWith is an expression");
+        assert_eq!(
+            p[1].get_document("$densify").unwrap().get_document("range").unwrap().get("step"),
+            Some(&Bson::Int64(5))
+        );
+        let b = p[2].get_document("$bucket").unwrap();
+        assert_eq!(b.get("boundaries"), Some(&Bson::Array(vec![Bson::Int64(0), Bson::Int64(10)])));
+        assert_eq!(b.get("default"), Some(&Bson::String("parent".into())));
+        assert_eq!(b.get("groupBy"), Some(&lit(Bson::String("parent".into()))));
+        let s =
+            p[3].get_document("$setWindowFields").unwrap().get_document("output").unwrap().get_document("s").unwrap();
+        assert_eq!(s.get("$sum"), Some(&lit(Bson::Int64(5))));
+        assert_eq!(s.get_document("window").unwrap().get_array("documents").unwrap()[0], Bson::Int64(5));
+        let f = p[4].get_document("$fill").unwrap().get_document("output").unwrap();
+        assert_eq!(f.get_document("x").unwrap().get("method"), Some(&Bson::String("parent".into())));
+        assert_eq!(f.get_document("y").unwrap().get("value"), Some(&lit(Bson::String("parent".into()))));
+    }
+
+    #[test]
+    fn sample_sizes_are_held_to_the_document_limit() {
+        let p = ok(r#"[{"$sample": {"size": 1000000000}}, {"$facet": {"a": [{"$sample": {"size": 5}}]}}]"#);
+        assert_eq!(p[0].get_document("$sample").unwrap().get("size"), Some(&Bson::Int64(1_000)));
+        let inner = p[1].get_document("$facet").unwrap().get_array("a").unwrap()[0].as_document().unwrap().clone();
+        assert_eq!(inner.get_document("$sample").unwrap().get("size"), Some(&Bson::Int64(5)));
     }
 }

@@ -48,7 +48,8 @@ labels?: { [key in string]: string }, };
 
 export type DocumentSet = { 
 /**
- * Documents with typed values (see `typed`) where JSON has no type for them.
+ * Documents with typed values (see `typed`) where JSON has no type for them, each in the
+ * field order the database stored.
  */
 documents: unknown[], 
 /**

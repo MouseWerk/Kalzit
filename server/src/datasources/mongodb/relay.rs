@@ -14,12 +14,16 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 
 use crate::datasources::Detail;
 use crate::datasources::targets::{ResolveError, TargetPolicy};
 
 /// How long the driver has for the SOCKS handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Handshakes in progress at once; further connections wait for a slot, so a flood of idle
+/// connections cannot hold many tasks and buffers.
+const MAX_HANDSHAKES: usize = 64;
 
 /// Why the relay did not connect: a refused target, or a name that does not resolve or answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,11 +32,19 @@ pub enum Refusal {
     Failed(Detail),
 }
 
+/// Refusals in order: each gets the next number, so an operation reads only those that happened
+/// after it started (`mark`, `refusal_since`).
+#[derive(Default)]
+struct Refusals {
+    count: u64,
+    last: Option<Refusal>,
+}
+
 pub struct Relay {
     port: u16,
     username: String,
     password: String,
-    refusal: Arc<Mutex<Option<Refusal>>>,
+    refusals: Arc<Mutex<Refusals>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -50,18 +62,20 @@ impl Relay {
         let port = listener.local_addr()?.port();
         let username = hex::encode(rand::random::<[u8; 8]>());
         let password = hex::encode(rand::random::<[u8; 24]>());
-        let refusal = Arc::new(Mutex::new(None));
+        let refusals = Arc::new(Mutex::new(Refusals::default()));
         let creds = Arc::new((username.clone(), password.clone()));
-        let shared = refusal.clone();
+        let shared = refusals.clone();
+        let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
         let task = tokio::spawn(async move {
             let mut tunnels = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream, _)) = accepted else { continue };
-                        let (creds, policy, refusal) = (creds.clone(), policy.clone(), shared.clone());
+                        let (creds, policy, refusals) = (creds.clone(), policy.clone(), shared.clone());
+                        let handshakes = handshakes.clone();
                         tunnels.spawn(async move {
-                            if let Err(e) = tunnel(stream, &creds, &policy, &refusal, connect_timeout).await {
+                            if let Err(e) = tunnel(stream, &creds, &policy, &refusals, &handshakes, connect_timeout).await {
                                 tracing::debug!("MongoDB relay: {e}");
                             }
                         });
@@ -70,7 +84,7 @@ impl Relay {
                 }
             }
         });
-        Ok(Self { port, username, password, refusal, task })
+        Ok(Self { port, username, password, refusals, task })
     }
 
     pub fn port(&self) -> u16 {
@@ -82,9 +96,16 @@ impl Relay {
         (self.username.clone(), self.password.clone())
     }
 
-    /// The last target the relay refused or could not reach, if any.
-    pub fn refusal(&self) -> Option<Refusal> {
-        self.refusal.lock().expect("relay refusal lock").clone()
+    /// A mark to take before an operation; `refusal_since` then reports only what happened during
+    /// it, not an older refusal of another operation or replica set member.
+    pub fn mark(&self) -> u64 {
+        self.refusals.lock().expect("relay refusal lock").count
+    }
+
+    /// The last target the relay refused or could not reach after `mark`, if any.
+    pub fn refusal_since(&self, mark: u64) -> Option<Refusal> {
+        let r = self.refusals.lock().expect("relay refusal lock");
+        if r.count > mark { r.last.clone() } else { None }
     }
 }
 
@@ -98,12 +119,16 @@ async fn tunnel(
     mut client: TcpStream,
     creds: &(String, String),
     policy: &TargetPolicy,
-    refusal: &Mutex<Option<Refusal>>,
+    refusals: &Mutex<Refusals>,
+    handshakes: &Semaphore,
     connect_timeout: Duration,
 ) -> std::io::Result<()> {
-    let target = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut client, creds))
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "SOCKS handshake timed out"))??;
+    let target = {
+        let _slot = handshakes.acquire().await.map_err(|_| std::io::Error::other("the relay is closing"))?;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut client, creds))
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "SOCKS handshake timed out"))??
+    };
     let Some((host, port)) = target else { return Ok(()) };
     match policy.connect(&host, port, connect_timeout).await {
         Ok((_, mut upstream)) => {
@@ -117,7 +142,11 @@ async fn tunnel(
                 ResolveError::Blocked(b) => (2, Refusal::Blocked(b.0)),
                 other => (4, Refusal::Failed(other.detail())),
             };
-            *refusal.lock().expect("relay refusal lock") = Some(kept);
+            {
+                let mut r = refusals.lock().expect("relay refusal lock");
+                r.count += 1;
+                r.last = Some(kept);
+            }
             client.write_all(&reply(code)).await?;
             Ok(())
         }
@@ -254,12 +283,12 @@ mod tests {
         let mut back = [0u8; 5];
         s.read_exact(&mut back).await.unwrap();
         assert_eq!(&back, b"hallo");
-        assert_eq!(relay.refusal(), None);
+        assert_eq!(relay.refusal_since(0), None);
 
         // The metadata address is refused, by address and by a name that resolves to it.
         let (_, answer) = socks_connect(&relay, &user, &pass, "169.254.169.254", 80).await;
         assert_eq!(answer[1], 2, "{answer:?}");
-        match relay.refusal() {
+        match relay.refusal_since(0) {
             Some(Refusal::Blocked(d)) => assert_eq!(d.reason, "target.metadata_address"),
             other => panic!("{other:?}"),
         }
@@ -273,10 +302,42 @@ mod tests {
         let (user, pass) = relay.credentials();
         let (_, answer) = socks_connect(&relay, &user, &pass, "127.0.0.1", 27017).await;
         assert_eq!(answer[1], 2);
-        match relay.refusal() {
+        match relay.refusal_since(0) {
             Some(Refusal::Blocked(d)) => assert_eq!(d.reason, "target.not_allowed"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_refusal_belongs_to_the_operation_it_happened_in() {
+        let relay = Relay::start(policy(), Duration::from_secs(2)).await.unwrap();
+        let (user, pass) = relay.credentials();
+        let before = relay.mark();
+        let (_, answer) = socks_connect(&relay, &user, &pass, "169.254.169.254", 80).await;
+        assert_eq!(answer[1], 2);
+        assert!(matches!(relay.refusal_since(before), Some(Refusal::Blocked(_))));
+        // A later operation does not inherit it.
+        let later = relay.mark();
+        assert_eq!(relay.refusal_since(later), None);
+    }
+
+    #[tokio::test]
+    async fn handshakes_in_progress_are_capped() {
+        let relay = Relay::start(policy(), Duration::from_secs(2)).await.unwrap();
+        // Idle connections that never finish their greeting hold every handshake slot.
+        let mut idle = Vec::new();
+        for _ in 0..MAX_HANDSHAKES {
+            idle.push(TcpStream::connect((Ipv4Addr::LOCALHOST, relay.port())).await.unwrap());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut waiting = TcpStream::connect((Ipv4Addr::LOCALHOST, relay.port())).await.unwrap();
+        waiting.write_all(&[5, 1, 2]).await.unwrap();
+        let mut m = [0u8; 2];
+        let early = tokio::time::timeout(Duration::from_millis(300), waiting.read_exact(&mut m)).await;
+        assert!(early.is_err(), "the connection past the cap waits for a slot");
+        drop(idle.pop());
+        tokio::time::timeout(Duration::from_secs(5), waiting.read_exact(&mut m)).await.unwrap().unwrap();
+        assert_eq!(m, [5, 2], "a freed slot lets it through");
     }
 
     #[tokio::test]

@@ -367,7 +367,17 @@ type QueryResult =
   StateDirectory=kalzit
   StateDirectoryMode=0700
   ConfigurationDirectory=kalzit
+  PrivateTmp=yes
+  RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
   ```
+
+  Kalzit opens no Unix sockets itself: logs go to standard output, which systemd hands over
+  already open (the restriction only stops new sockets), and data sources reach only network
+  hosts. So `RestrictAddressFamilies` also stops a driver from being steered to a local socket
+  (a MongoDB replica set member can announce a socket path). Add `AF_UNIX` only when
+  `database.url` reaches PostgreSQL through a socket directory (`?host=/run/postgresql`). Name
+  lookups through `nss-resolve` fall back to DNS without it, as with the usual
+  `resolve [!UNAVAIL=return] dns`.
 
   `StateDirectory=kalzit` creates `/var/lib/kalzit` owned by `User`. Without systemd, create it
   with `sudo install -d -o kalzit -m 0700 /var/lib/kalzit`. `/etc/kalzit/kalzit.toml` should be
