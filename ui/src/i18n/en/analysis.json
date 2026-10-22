@@ -33,6 +33,8 @@
   "analysis.kind.compare": "Compare with previous period",
   "analysis.kind.group": "Group",
   "analysis.kind.pivot": "Pivot",
+  "analysis.kind.toFrame": "Documents as a table",
+  "analysis.toFrame.columns": "Columns from the documents of query {frame}: {columns}. You choose them in the query's editor.",
   "analysis.default.calculate": "Calculated",
   "analysis.default.trend": "Trend",
   "analysis.default.movingAverage": "Moving average",

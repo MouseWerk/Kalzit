@@ -1,4 +1,4 @@
-import type { Field, FieldType, Frame, FrameMeta } from "../api/generated/shapes";
+import type { DocumentSet, Field, FieldType, Frame, FrameMeta } from "../api/generated/shapes";
 import {
   addMonths,
   compareText,
@@ -13,6 +13,7 @@ import {
   parse,
   toCell,
 } from "./expr";
+import { type ProjectionColumn, projectDocuments } from "./projection";
 import * as stats from "./stats";
 
 /**
@@ -84,10 +85,20 @@ export type StepKind =
       name: string;
     }
   | { type: "group"; frame: string; by: string[]; aggregations: Aggregation[] }
-  | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg };
+  | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
+  /**
+   * The projection of the `documents` result of `frame` into a frame (docs/PLAN.md, section 1);
+   * the documents UI edits it, the steps after it work on the frame it makes.
+   */
+  | { type: "toFrame"; frame: string; columns: ProjectionColumn[] };
 
 export type StepType = StepKind["type"];
 export type Step = StepKind & { id: string; disabled?: boolean };
+/** Kept for readers of this module; every step has the same form. */
+export type AnalysisStep = Step;
+export type ProjectionStep = Extract<Step, { type: "toFrame" }>;
+
+export const isProjection = (step: Step): step is ProjectionStep => step.type === "toFrame";
 
 export const STEP_TYPES: readonly StepType[] = [
   "calculate",
@@ -112,6 +123,9 @@ export interface NamedFrame {
   frame: Frame;
 }
 
+/** A query's result as the steps read it: a frame, or documents a projection may turn into one. */
+export type NamedInput = NamedFrame | { name: string; documents: DocumentSet };
+
 /** The frames each step reads. */
 export function stepFrames(step: StepKind): string[] {
   return step.type === "join" ? [step.left, step.right] : [step.frame];
@@ -121,7 +135,8 @@ export function stepFrames(step: StepKind): string[] {
 export function asStep(value: unknown): Step | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (typeof v.id !== "string" || !STEP_TYPES.includes(v.type as StepType)) return null;
+  const known = STEP_TYPES.includes(v.type as StepType) || v.type === "toFrame";
+  if (typeof v.id !== "string" || !known) return null;
   return value as Step;
 }
 
@@ -144,9 +159,15 @@ export interface StepsRun {
   failed?: { index: number; error: Detail };
 }
 
-/** Runs the enabled steps in order; the first failure stops the run. */
-export function runSteps(steps: readonly Step[], frames: readonly NamedFrame[]): StepsRun {
-  let current = [...frames];
+/**
+ * Runs the enabled steps in order; the first failure stops the run. A projection turns the
+ * documents of its query into a frame at that query's place; documents are no frame for any
+ * other step (as the server runs them).
+ */
+export function runSteps(steps: readonly Step[], inputs: readonly NamedInput[]): StepsRun {
+  const order = inputs.map((i) => i.name);
+  const documents = inputs.flatMap((i) => ("documents" in i ? [i] : []));
+  let current: NamedFrame[] = inputs.flatMap((i) => ("frame" in i ? [i] : []));
   const outcomes: StepOutcome[] = [];
   let failed: StepsRun["failed"];
   steps.forEach((step, index) => {
@@ -155,7 +176,9 @@ export function runSteps(steps: readonly Step[], frames: readonly NamedFrame[]):
       return;
     }
     try {
-      current = apply(step, current);
+      current = isProjection(step)
+        ? project(step, current, documents, order)
+        : apply(step, current);
       outcomes.push({ frames: current, skipped: false });
     } catch (e) {
       const error =
@@ -169,6 +192,35 @@ export function runSteps(steps: readonly Step[], frames: readonly NamedFrame[]):
   return failed === undefined
     ? { frames: current, steps: outcomes }
     : { frames: current, steps: outcomes, failed };
+}
+
+function project(
+  step: ProjectionStep,
+  frames: NamedFrame[],
+  documents: { name: string; documents: DocumentSet }[],
+  order: readonly string[],
+): NamedFrame[] {
+  const at = documents.findIndex((d) => d.name === step.frame);
+  const set = documents[at];
+  if (set === undefined) {
+    // A result that already is a frame passes unchanged.
+    if (frames.some((f) => f.name === step.frame)) return frames;
+    throw detail("steps.frame_missing", `there is no result ${step.frame} to project`, {
+      frame: step.frame,
+    });
+  }
+  documents.splice(at, 1);
+  const rank = (name: string) => {
+    const i = order.indexOf(name);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  let place = 0;
+  while (place < frames.length && rank((frames[place] as NamedFrame).name) < rank(set.name)) {
+    place++;
+  }
+  const next = [...frames];
+  next.splice(place, 0, { name: set.name, frame: projectDocuments(set.documents, step.columns) });
+  return next;
 }
 
 // ---- helpers ----
@@ -281,7 +333,7 @@ function keyable(field: Field): void {
 
 // ---- steps ----
 
-function apply(step: StepKind, frames: NamedFrame[]): NamedFrame[] {
+function apply(step: AnalysisStep, frames: NamedFrame[]): NamedFrame[] {
   if (step.type === "join") return join(frames, step);
   const index = position(frames, step.frame);
   const nf = frames[index] as NamedFrame;
@@ -338,6 +390,10 @@ function apply(step: StepKind, frames: NamedFrame[]): NamedFrame[] {
       break;
     case "pivot":
       result = pivot(frame, step.row, step.column, step.value, step.op);
+      break;
+    case "toFrame":
+      // Projections run in runSteps; an existing frame passes unchanged.
+      result = frame;
       break;
   }
   const next = [...frames];

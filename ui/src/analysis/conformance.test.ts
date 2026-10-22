@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Field, Frame } from "../api/generated/shapes";
+import type { DocumentSet, Field, Frame } from "../api/generated/shapes";
 import { compile, DetailError, FIELD_TYPE_OF, parse, toCell } from "./expr";
-import { asSteps, type NamedFrame, runSteps } from "./steps";
+import { asSteps, type NamedInput, runSteps } from "./steps";
 
 /**
  * The cases the server's engine passes too (`server/src/analysis/conformance.json`), so a panel
@@ -11,6 +11,7 @@ import { asSteps, type NamedFrame, runSteps } from "./steps";
  */
 interface Cases {
   frames: Record<string, Field[]>;
+  documents: Record<string, DocumentSet>;
   expressions: {
     frame: string;
     expression: string;
@@ -27,6 +28,7 @@ interface Cases {
       { names?: string[]; fields: { name: string; type: string; values: unknown[] }[] }
     >;
     gone?: string[];
+    outputOrder?: string[];
     error?: { index: number; reason: string; params: Record<string, string> };
   }[];
 }
@@ -81,11 +83,16 @@ describe("conformance with the server's engine", () => {
   });
 
   it.each(cases.steps.map((c) => [c.name, c] as const))("steps: %s", (_, c) => {
-    const frames: NamedFrame[] = Object.entries(c.frames).map(([name, source]) => ({
-      name,
-      frame: frame(source),
-    }));
-    const run = runSteps(asSteps(c.steps), frames);
+    // Inputs in the order of their refIds sorted, as the server's JSON objects give them.
+    const inputs: NamedInput[] = Object.entries(c.frames)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, source]) => {
+        const set = cases.documents[source];
+        return set === undefined
+          ? { name, frame: frame(source) }
+          : { name, documents: structuredClone(set) };
+      });
+    const run = runSteps(asSteps(c.steps), inputs);
     if (c.error !== undefined) {
       expect(run.failed?.index).toBe(c.error.index);
       expect(run.failed?.error.reason).toBe(c.error.reason);
@@ -93,6 +100,9 @@ describe("conformance with the server's engine", () => {
       return;
     }
     expect(run.failed).toBeUndefined();
+    if (c.outputOrder !== undefined) {
+      expect(run.frames.map((f) => f.name)).toEqual(c.outputOrder);
+    }
     for (const [name, want] of Object.entries(c.expect ?? {})) {
       const got = run.frames.find((f) => f.name === name)?.frame;
       expect(got, name).toBeDefined();

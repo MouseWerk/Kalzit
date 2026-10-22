@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 
 use super::query::{api_error, check_variables, readable_model, resolve_variables};
 use super::table::{RouteDef, route};
-use crate::analysis::steps::{self, NamedFrame};
+use crate::analysis::steps::{self, Input};
 use crate::analysis::{Step, check_steps, export};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
@@ -30,7 +30,7 @@ use crate::datasources::{check_interval, check_items, check_range, run_queries, 
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
-use crate::shapes::{ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse, QueryResult};
+use crate::shapes::{ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse, QueryResult, Shape};
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -150,12 +150,17 @@ async fn produce(
     steps: Vec<Step>,
     wanted: &Wanted,
 ) -> ApiResult<(export::File, usize)> {
-    let mut frames = Vec::new();
+    let mut inputs = Vec::new();
+    // Results that are no frame: exported only after a projection made one of them.
     let mut other_shapes = Vec::new();
     for ref_id in order {
         match response.results.remove(ref_id) {
             Some(QueryOutcome::Ok { result: QueryResult::Frame { frame } }) => {
-                frames.push(NamedFrame { name: ref_id.clone(), frame })
+                inputs.push((ref_id.clone(), Input::Frame(frame)))
+            }
+            Some(QueryOutcome::Ok { result: QueryResult::Documents { documents } }) => {
+                other_shapes.push((ref_id.clone(), Shape::Documents));
+                inputs.push((ref_id.clone(), Input::Documents(documents)));
             }
             Some(QueryOutcome::Ok { result }) => other_shapes.push((ref_id.clone(), result.shape())),
             Some(QueryOutcome::Err { error }) => return Err(api_error(error)),
@@ -165,7 +170,7 @@ async fn produce(
     let (format, language, frame) = (wanted.format, wanted.language, wanted.frame.clone());
     // Steps and encoding take CPU time; they run off the request threads.
     let work = tokio::task::spawn_blocking(move || -> Result<(export::File, usize), ApiError> {
-        let frames = steps::run(&steps, frames).map_err(|f| {
+        let frames = steps::run_inputs(&steps, inputs).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
             ApiError::validation(message).with_field("steps").with_reason(f.detail.reason, f.detail.params)
         })?;

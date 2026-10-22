@@ -19,20 +19,66 @@ pub const SCHEMA_VERSION: u64 = 2;
 type Step = fn(Value) -> Result<Value, String>;
 const STEPS: &[Step] = &[v1_to_v2];
 
-/// Version 1 defined no content for a panel's `transformations` and nothing interpreted them, so
-/// they are emptied: version 2 reads them as analysis steps and would refuse anything else.
+/// Version 2 reads a panel's `transformations` as analysis steps. In version 1 the documents UI
+/// stored its projections there as `{"type": "toFrame", "refId", "columns"}`; they become steps
+/// (`id`, `frame`), keeping only what version 2 accepts: columns with a path, a known type and a
+/// name not used before. Everything else had no defined meaning in version 1 and is dropped.
 fn v1_to_v2(mut model: Value) -> Result<Value, String> {
     if let Some(panels) = model.get_mut("panels").and_then(Value::as_array_mut) {
         for panel in panels {
-            if let Some(p) = panel.as_object_mut()
-                && p.contains_key("transformations")
-            {
-                p.insert("transformations".into(), Value::Array(Vec::new()));
-            }
+            let Some(p) = panel.as_object_mut() else { continue };
+            let Some(old) = p.get("transformations").and_then(Value::as_array) else {
+                if p.contains_key("transformations") {
+                    p.insert("transformations".into(), Value::Array(Vec::new()));
+                }
+                continue;
+            };
+            let steps: Vec<Value> = old.iter().filter_map(v1_projection).collect();
+            p.insert("transformations".into(), Value::Array(steps));
         }
     }
     model["schemaVersion"] = Value::from(2);
     Ok(model)
+}
+
+/// A version 1 projection as a version 2 step; `None` for anything else or nothing left.
+fn v1_projection(step: &Value) -> Option<Value> {
+    use crate::analysis::{MAX_PATH_CHARS, MAX_PROJECTION_COLUMNS};
+    const TYPES: &[&str] = &["string", "number", "int64", "bool", "time"];
+    if step.get("type")?.as_str()? != "toFrame" {
+        return None;
+    }
+    let ref_id = step.get("refId")?.as_str()?;
+    if ref_id.is_empty() || ref_id.chars().count() > MAX_ID_CHARS {
+        return None;
+    }
+    let mut names = BTreeSet::new();
+    let mut columns = Vec::new();
+    for c in step.get("columns")?.as_array()? {
+        let Some(path) = c.get("path").and_then(Value::as_str) else { continue };
+        let ok = |s: &str, max: usize| !s.is_empty() && s.chars().count() <= max && !s.chars().any(char::is_control);
+        if !ok(path, MAX_PATH_CHARS) {
+            continue;
+        }
+        let mut column = serde_json::Map::new();
+        column.insert("path".into(), Value::from(path));
+        let name = c.get("name").and_then(Value::as_str).filter(|n| ok(n, MAX_TITLE_CHARS));
+        if let Some(n) = name {
+            column.insert("name".into(), Value::from(n));
+        }
+        if let Some(t) = c.get("type").and_then(Value::as_str).filter(|t| TYPES.contains(t)) {
+            column.insert("type".into(), Value::from(t));
+        }
+        if columns.len() == MAX_PROJECTION_COLUMNS || !names.insert(name.unwrap_or(path).to_string()) {
+            continue;
+        }
+        columns.push(Value::Object(column));
+    }
+    if columns.is_empty() {
+        return None;
+    }
+    // Stable, since stored version 1 models are migrated on every read.
+    Some(serde_json::json!({ "id": format!("projection-{ref_id}"), "type": "toFrame", "frame": ref_id, "columns": columns }))
 }
 
 /// The grid has 24 columns; rows are unbounded but a dashboard this tall is a mistake.
@@ -562,15 +608,36 @@ mod tests {
     }
 
     #[test]
-    fn version_1_transformations_are_emptied() {
+    fn version_1_projections_become_steps_and_the_rest_is_dropped() {
         let mut v1 = with(sample(), &["schemaVersion"], json!(1));
-        v1 = with(v1, &["panels", "0", "transformations"], json!([{ "id": "x", "anything": true }, 7]));
+        v1 = with(
+            v1,
+            &["panels", "0", "transformations"],
+            json!([
+                { "id": "x", "anything": true },
+                7,
+                { "type": "toFrame", "refId": "A", "columns": [
+                    { "path": "at" }, { "path": "" }, { "path": "items.0.price", "name": "Preis", "type": "number" },
+                    { "path": "raw", "type": "json" }, { "path": "n", "name": "" }, { "path": "at" }, { "path": "b", "name": "Preis" }
+                ] },
+                { "type": "toFrame", "refId": "B", "columns": [{ "path": "" }] }
+            ]),
+        );
         let v2 = v1_to_v2(v1.clone()).unwrap();
         assert_eq!(v2["schemaVersion"], 2);
-        assert_eq!(v2["panels"][0]["transformations"], json!([]));
+        assert_eq!(
+            v2["panels"][0]["transformations"],
+            json!([{ "id": "projection-A", "type": "toFrame", "frame": "A", "columns": [
+                { "path": "at" }, { "path": "items.0.price", "name": "Preis", "type": "number" },
+                { "path": "raw" }, { "path": "n" }
+            ] }]),
+            "the projection keeps what version 2 accepts; one without columns goes"
+        );
         assert!(v2["panels"][1].get("transformations").is_none(), "absent stays absent");
         assert_eq!(v2["panels"][0]["targets"], v1["panels"][0]["targets"], "nothing else changes");
-        assert!(parse(v1).is_ok(), "a stored version 1 model still reads");
+        assert_eq!(v1_to_v2(v1.clone()).unwrap(), v2, "the same on every read");
+        let model = parse(v1).expect("a stored version 1 model still reads");
+        assert_eq!(model.panels[0].transformations.len(), 1);
     }
 
     #[test]

@@ -13,6 +13,7 @@
 //! for sources that can do it, and run here only what the source cannot.
 
 pub mod expr;
+pub mod projection;
 pub mod export;
 pub mod stats;
 pub mod steps;
@@ -81,7 +82,34 @@ pub enum StepKind {
     },
     Group { frame: String, by: Vec<String>, aggregations: Vec<Aggregation> },
     Pivot { frame: String, row: String, column: String, value: String, op: Agg },
+    /// The projection (docs/PLAN.md, section 1): the `documents` result of query `frame` as a
+    /// frame, one column per field path. The steps after it work on that frame; a result that
+    /// already is a frame passes unchanged.
+    ToFrame { frame: String, columns: Vec<ProjectionColumn> },
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectionColumn {
+    /// A dotted MongoDB path, array indexes as numbers (`items.0.price`).
+    pub path: String,
+    /// The column's name; the path when absent.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The column's type (not `json`); taken from the first value when absent.
+    #[serde(default, rename = "type")]
+    pub field_type: Option<crate::shapes::FieldType>,
+}
+
+impl ProjectionColumn {
+    pub fn output_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.path)
+    }
+}
+
+/// Columns of one projection, and the longest field path.
+pub const MAX_PROJECTION_COLUMNS: usize = 200;
+pub const MAX_PATH_CHARS: usize = 500;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "by", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
@@ -196,6 +224,7 @@ impl StepKind {
             | StepKind::Compare { frame, .. }
             | StepKind::Group { frame, .. }
             | StepKind::Pivot { frame, .. } => vec![frame],
+            StepKind::ToFrame { frame, .. } => vec![frame],
         }
     }
 }
@@ -347,6 +376,25 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
             field("column", column)?;
             field("value", value)?;
         }
+        StepKind::ToFrame { columns, .. } => {
+            if columns.is_empty() || columns.len() > MAX_PROJECTION_COLUMNS {
+                return Err(format!("{at}.columns takes 1 to {MAX_PROJECTION_COLUMNS} entries"));
+            }
+            let mut names = BTreeSet::new();
+            for (i, c) in columns.iter().enumerate() {
+                let at = format!("{at}.columns[{i}]");
+                check_text(&format!("{at}.path"), &c.path, MAX_PATH_CHARS)?;
+                if let Some(n) = &c.name {
+                    check_text(&format!("{at}.name"), n, MAX_NAME_CHARS)?;
+                }
+                if c.field_type == Some(crate::shapes::FieldType::Json) {
+                    return Err(format!("{at}.type must be string, number, int64, bool or time"));
+                }
+                if !names.insert(c.output_name()) {
+                    return Err(format!("{at}: a column is already named {}", c.output_name()));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -408,15 +456,26 @@ mod tests {
         }
         for case in cases["steps"].as_array().unwrap() {
             let name = case["name"].as_str().unwrap();
-            let frames: Vec<steps::NamedFrame> = case["frames"]
+            let inputs: Vec<(String, steps::Input)> = case["frames"]
                 .as_object()
                 .unwrap()
                 .iter()
-                .map(|(n, source)| steps::NamedFrame { name: n.clone(), frame: frame(source.as_str().unwrap()) })
+                .map(|(n, source)| {
+                    let source = source.as_str().unwrap();
+                    let input = match cases["documents"].get(source) {
+                        Some(set) => steps::Input::Documents(serde_json::from_value(set.clone()).unwrap()),
+                        None => steps::Input::Frame(frame(source)),
+                    };
+                    (n.clone(), input)
+                })
                 .collect();
             let list: Vec<Step> = case["steps"].as_array().unwrap().iter().map(|s| parse_step(s).unwrap()).collect();
-            match (steps::run(&list, frames), case.get("error")) {
+            match (steps::run_inputs(&list, inputs), case.get("error")) {
                 (Ok(out), None) => {
+                    if let Some(order) = case.get("outputOrder") {
+                        let got: Vec<&str> = out.iter().map(|f| f.name.as_str()).collect();
+                        assert_eq!(json!(got), *order, "{name}");
+                    }
                     for (frame_name, want) in case["expect"].as_object().unwrap() {
                         let got = &out.iter().find(|f| &f.name == frame_name).unwrap().frame;
                         if let Some(names) = want.get("names") {
@@ -440,6 +499,40 @@ mod tests {
                 }
                 (got, _) => panic!("{name}: {got:?}"),
             }
+        }
+    }
+
+    /// The projection step: `{"id", "type": "toFrame", "frame", "columns": [{path, name?, type?}]}`.
+    #[test]
+    fn projections_are_bounded() {
+        let steps = check(json!([
+            { "id": "p", "type": "toFrame", "frame": "A", "columns": [
+                { "path": "at" }, { "path": "items.0.price", "name": "Preis", "type": "number" }
+            ] },
+            { "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "Preis * 2" }
+        ]))
+        .unwrap();
+        let StepKind::ToFrame { frame, columns } = &steps[0].kind else { panic!() };
+        assert_eq!((frame.as_str(), columns.len()), ("A", 2));
+        assert_eq!(columns[1].field_type, Some(crate::shapes::FieldType::Number));
+        let one = |columns: Value| json!([{ "id": "p", "type": "toFrame", "frame": "A", "columns": columns }]);
+        for (bad, expect) in [
+            (json!([{ "id": "p", "type": "toFrame", "frame": "C", "columns": [{ "path": "a" }] }]), "there is no query C"),
+            (json!([{ "type": "toFrame", "frame": "A", "columns": [{ "path": "a" }] }]), "id must be text"),
+            (json!([{ "id": "p", "type": "toFrame", "refId": "A", "columns": [{ "path": "a" }] }]), "unknown field"),
+            (one(json!([])), "columns takes 1 to 200"),
+            (one(json!(vec![json!({ "path": "a" }); 201])), "columns takes 1 to 200"),
+            (one(json!([{ "path": "" }])), "columns[0].path needs 1 to 500"),
+            (one(json!([{ "path": "x".repeat(501) }])), "columns[0].path needs 1 to 500"),
+            (one(json!([{ "path": "a", "colour": 1 }])), "unknown field"),
+            (one(json!([{ "path": "a", "type": "decimal" }])), "unknown variant"),
+            (one(json!([{ "path": "a", "type": "json" }])), "columns[0].type must be"),
+            (one(json!([{ "path": "a", "name": "" }])), "columns[0].name"),
+            (one(json!([{ "path": "a", "name": "a\nb" }])), "columns[0].name"),
+            (one(json!([{ "path": "a" }, { "path": "b", "name": "a" }])), "columns[1]: a column is already named a"),
+        ] {
+            let err = check(bad.clone()).unwrap_err();
+            assert!(err.contains(expect), "{bad}: {err}");
         }
     }
 

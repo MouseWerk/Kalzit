@@ -10,7 +10,7 @@ use super::expr::{self, DAY_MS, number_text};
 use super::stats;
 use super::{Agg, Aggregation, CompareOutput, JoinMode, JoinOn, Period, Stat, Step, StepKind, TrendOutput};
 use crate::datasources::detail::Detail;
-use crate::shapes::{Field, FieldType, Frame, FrameMeta};
+use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta};
 
 /// Rows a join may produce; many-to-many keys could otherwise multiply the result.
 pub const MAX_ROWS: usize = 500_000;
@@ -31,13 +31,51 @@ pub struct StepFailure {
     pub detail: Detail,
 }
 
+/// A query's result as steps see it: a frame, or documents a projection may turn into one.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Input {
+    Frame(Frame),
+    Documents(DocumentSet),
+}
+
 /// Runs the enabled steps in order; the first failure stops the run.
-pub fn run(steps: &[Step], mut frames: Vec<NamedFrame>) -> Result<Vec<NamedFrame>, StepFailure> {
+pub fn run(steps: &[Step], frames: Vec<NamedFrame>) -> Result<Vec<NamedFrame>, StepFailure> {
+    run_inputs(steps, frames.into_iter().map(|f| (f.name, Input::Frame(f.frame))).collect())
+}
+
+/// `run` over results of any shape the steps read. Steps run in order; a projection (`toFrame`)
+/// turns the documents of its query into a frame at the place of that query, and the steps after
+/// it work on that frame. Documents are no frame for any other step.
+pub fn run_inputs(steps: &[Step], inputs: Vec<(String, Input)>) -> Result<Vec<NamedFrame>, StepFailure> {
+    let order: Vec<String> = inputs.iter().map(|(name, _)| name.clone()).collect();
+    let mut documents: Vec<(String, DocumentSet)> = Vec::new();
+    let mut frames: Vec<NamedFrame> = Vec::new();
+    for (name, input) in inputs {
+        match input {
+            Input::Frame(frame) => frames.push(NamedFrame { name, frame }),
+            Input::Documents(set) => documents.push((name, set)),
+        }
+    }
     for (index, step) in steps.iter().enumerate() {
         if step.disabled {
             continue;
         }
-        apply(&step.kind, &mut frames).map_err(|detail| StepFailure { index, detail })?;
+        let StepKind::ToFrame { frame: name, columns } = &step.kind else {
+            apply(&step.kind, &mut frames).map_err(|detail| StepFailure { index, detail })?;
+            continue;
+        };
+        if let Some(at) = documents.iter().position(|(n, _)| n == name) {
+            let (name, set) = documents.remove(at);
+            let frame = super::projection::project(&set, columns);
+            // In the place of its query among the frames, so the order stays the queries' order.
+            let rank = |n: &str| order.iter().position(|o| o == n).unwrap_or(usize::MAX);
+            let place = frames.iter().take_while(|f| rank(&f.name) < rank(&name)).count();
+            frames.insert(place, NamedFrame { name, frame });
+        } else if !frames.iter().any(|f| &f.name == name) {
+            let detail =
+                detail("steps.frame_missing", format!("there is no result {name} to project")).with("frame", name);
+            return Err(StepFailure { index, detail });
+        }
     }
     Ok(frames)
 }
@@ -209,7 +247,7 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>) -> Result<(), Detail> {
         }
         StepKind::Group { by, aggregations, .. } => group(frame, by, aggregations)?,
         StepKind::Pivot { row, column, value, op, .. } => pivot(frame, row, column, value, *op)?,
-        StepKind::Join { .. } => unreachable!("handled above"),
+        StepKind::Join { .. } | StepKind::ToFrame { .. } => unreachable!("joins above, projections in run_inputs"),
     };
     frames[index].frame = result;
     Ok(())

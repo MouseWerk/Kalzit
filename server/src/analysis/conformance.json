@@ -1,5 +1,5 @@
 {
-  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case lists the fields to check per frame and, with names, the full field order.",
+  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case gives its inputs by refId (in the order of the refIds sorted), lists the fields to check per frame and, with names, the full field order; outputOrder is the order of the frames after the steps.",
   "frames": {
     "sales": [
       { "name": "zeit", "type": "time", "values": [1767225600000, 1767312000000, 1767398400000, 1767484800000] },
@@ -27,6 +27,16 @@
       { "name": "jahr", "type": "int64", "values": ["2025", "2026", "2026", "2026"] },
       { "name": "betrag", "type": "number", "values": [1, 2, 3, 4] }
     ]
+  },
+  "documents": {
+    "orders": {
+      "documents": [
+        { "at": { "$type": "date", "value": "1767225600000" }, "customer": { "city": "Wien" }, "items": [{ "price": 10 }, { "price": 5 }], "n": { "$type": "int64", "value": "9007199254740993" }, "total": { "$type": "decimal", "value": "15.50" } },
+        { "at": { "$type": "date", "value": "1767312000000" }, "customer": { "city": "Graz" }, "items": [{ "price": 7 }], "n": 3, "total": 20 },
+        { "customer": null, "items": [], "total": "x" }
+      ],
+      "schema": []
+    }
   },
   "expressions": [
     { "frame": "sales", "expression": "betrag * 2", "type": "number", "values": [20, 40, 61, null] },
@@ -212,6 +222,48 @@
         { "name": "2025", "type": "number", "values": [1, null] },
         { "name": "2026", "type": "number", "values": [6, 3] }
       ] } }
+    },
+    {
+      "name": "a projection makes a frame of documents for the steps after it",
+      "frames": { "B": "visits", "A": "orders" },
+      "steps": [
+        { "id": "p", "type": "toFrame", "frame": "A", "columns": [
+          { "path": "at" }, { "path": "customer.city", "name": "Stadt" }, { "path": "items.0.price", "name": "erster" },
+          { "path": "n" }, { "path": "total", "type": "number" }, { "path": "items" }, { "path": "customer", "name": "kunde", "type": "string" }
+        ] },
+        { "id": "c", "type": "calculate", "frame": "A", "name": "doppelt", "expression": "erster * 2" }
+      ],
+      "outputOrder": ["A", "B"],
+      "expect": { "A": { "names": ["at", "Stadt", "erster", "n", "total", "items", "kunde", "doppelt"], "fields": [
+        { "name": "at", "type": "time", "values": [1767225600000, 1767312000000, null] },
+        { "name": "Stadt", "type": "string", "values": ["Wien", "Graz", null] },
+        { "name": "erster", "type": "number", "values": [10, 7, null] },
+        { "name": "n", "type": "int64", "values": ["9007199254740993", "3", null] },
+        { "name": "total", "type": "number", "values": [15.5, 20, null] },
+        { "name": "kunde", "type": "string", "values": ["{\"city\":\"Wien\"}", "{\"city\":\"Graz\"}", null] },
+        { "name": "doppelt", "type": "number", "values": [20, 14, null] }
+      ] } }
+    },
+    {
+      "name": "a projection of a frame changes nothing",
+      "frames": { "A": "visits" },
+      "steps": [{ "id": "p", "type": "toFrame", "frame": "A", "columns": [{ "path": "x" }] }],
+      "expect": { "A": { "names": ["time", "sitzungen"], "fields": [{ "name": "sitzungen", "type": "number", "values": [4, 5, 1] }] } }
+    },
+    {
+      "name": "documents are no frame before their projection",
+      "frames": { "A": "orders" },
+      "steps": [
+        { "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "1" },
+        { "id": "p", "type": "toFrame", "frame": "A", "columns": [{ "path": "n" }] }
+      ],
+      "error": { "index": 0, "reason": "steps.frame_missing", "params": { "frame": "A" } }
+    },
+    {
+      "name": "a projection of a query that does not exist",
+      "frames": { "A": "visits" },
+      "steps": [{ "id": "p", "type": "toFrame", "frame": "Z", "columns": [{ "path": "x" }] }],
+      "error": { "index": 0, "reason": "steps.frame_missing", "params": { "frame": "Z" } }
     },
     {
       "name": "a taken name stops the run at its step",

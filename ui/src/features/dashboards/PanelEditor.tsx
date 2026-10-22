@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { namedFrames } from "../../analysis/panel";
+import { namedInputs } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
@@ -228,7 +228,7 @@ export function PanelEditor({
           steps={asSteps(panel.transformations)}
           onChange={(steps) => setPanel((p) => ({ ...p, transformations: steps }))}
           refIds={panel.targets.map((target) => target.refId)}
-          frames={namedFrames(results.data ?? [])}
+          inputs={namedInputs(results.data ?? [])}
         />
       </div>
     </Dialog>

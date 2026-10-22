@@ -1,11 +1,17 @@
 import type { TargetOutcome } from "../features/dashboards/results";
-import { asSteps, type NamedFrame, runSteps, type StepsRun } from "./steps";
+import { asSteps, type NamedInput, runSteps, type StepsRun } from "./steps";
 
-/** The frames of the targets that answered with one, by reference id, in target order. */
-export function namedFrames(outcomes: readonly TargetOutcome[]): NamedFrame[] {
-  return outcomes.flatMap((o) =>
-    "result" in o && o.result.shape === "frame" ? [{ name: o.refId, frame: o.result.frame }] : [],
-  );
+/**
+ * The results steps read, by reference id, in target order: frames, and documents a projection
+ * may turn into one. Graphs and failed queries are not inputs.
+ */
+export function namedInputs(outcomes: readonly TargetOutcome[]): NamedInput[] {
+  return outcomes.flatMap((o): NamedInput[] => {
+    if (!("result" in o)) return [];
+    if (o.result.shape === "frame") return [{ name: o.refId, frame: o.result.frame }];
+    if (o.result.shape === "documents") return [{ name: o.refId, documents: o.result.documents }];
+    return [];
+  });
 }
 
 /** A panel's frames after its stored steps (`transformations`); without steps, as answered. */
@@ -13,7 +19,5 @@ export function runPanelSteps(
   transformations: readonly unknown[],
   outcomes: readonly TargetOutcome[],
 ): StepsRun {
-  const frames = namedFrames(outcomes);
-  const steps = asSteps(transformations);
-  return steps.length === 0 ? { frames, steps: [] } : runSteps(steps, frames);
+  return runSteps(asSteps(transformations), namedInputs(outcomes));
 }

@@ -28,7 +28,7 @@ function Harness({ initial, seen }: { initial: Step[]; seen: { steps: Step[] } }
         setSteps(next);
       }}
       refIds={["A"]}
-      frames={FRAMES}
+      inputs={FRAMES}
     />
   );
 }
@@ -137,6 +137,48 @@ describe("steps editor", () => {
     await user.click(within(step).getByRole("button", { name: "Add summary" }));
     await user.click(within(step).getByRole("button", { name: "Remove summary 1" }));
     expect(seen.steps[0]).toMatchObject({ aggregations: [{ field: "betrag", op: "sum" }] });
+  });
+
+  it("shows a projection of documents, and the steps after it work on its frame", () => {
+    const steps: Step[] = [
+      {
+        id: "p",
+        type: "toFrame",
+        frame: "A",
+        columns: [{ path: "kunde.stadt", name: "Stadt" }, { path: "summe" }],
+      },
+      calc("c", "doppelt", "summe * 2"),
+    ];
+    render(
+      <StepsEditor
+        steps={steps}
+        onChange={() => {}}
+        refIds={["A"]}
+        inputs={[
+          {
+            name: "A",
+            documents: {
+              documents: [
+                { kunde: { stadt: "Wien" }, summe: 3 },
+                { kunde: { stadt: "Graz" }, summe: 4 },
+              ],
+              schema: [],
+            },
+          },
+        ]}
+      />,
+    );
+    const projection = screen.getByRole("listitem", { name: "Step 1" });
+    expect(within(projection).getByText("Documents as a table")).toBeTruthy();
+    expect(within(projection).getByText(/query A: Stadt, summe\./)).toBeTruthy();
+    expect(within(projection).getByText("2 rows, 2 fields")).toBeTruthy();
+    const calculated = screen.getByRole("listitem", { name: "Step 2" });
+    expect(within(calculated).getByText("2 rows, 3 fields")).toBeTruthy();
+    // Not offered to add here: the query's editor makes projections.
+    const kinds = within(screen.getByLabelText("Kind of step"))
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(kinds).not.toContain("Documents as a table");
   });
 
   it("offers joins only when there is a second query", () => {

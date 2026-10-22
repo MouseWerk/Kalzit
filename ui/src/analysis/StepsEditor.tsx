@@ -11,6 +11,7 @@ import {
   MAX_STEPS,
   MAX_WINDOW,
   type NamedFrame,
+  type NamedInput,
   runSteps,
   STATS,
   STEP_TYPES,
@@ -25,12 +26,13 @@ import "./analysis.css";
 const PREVIEW_ROWS = 20;
 
 interface StepsEditorProps {
+  /** The stored steps; a projection (`toFrame`) is shown here, its columns are edited with the query. */
   steps: readonly Step[];
   onChange: (steps: Step[]) => void;
   /** The queries' reference ids, which steps work on. */
   refIds: readonly string[];
-  /** The queries' frames as answered; empty until they ran. */
-  frames: readonly NamedFrame[];
+  /** The queries' results as answered; empty until they ran. */
+  inputs: readonly NamedInput[];
 }
 
 const numeric = (f: Field) => f.type === "number" || f.type === "int64";
@@ -39,15 +41,16 @@ const numeric = (f: Field) => f.type === "number" || f.type === "int64";
  * Edits a list of analysis steps: add, reorder, turn off, remove, and a preview of the frames
  * after any step. The steps run here as they will in the panel (docs/api/analysis.md).
  */
-export function StepsEditor({ steps, onChange, refIds, frames }: StepsEditorProps) {
+export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProps) {
   const { t } = useI18n();
   const headingId = useId();
   const addId = useId();
   const [adding, setAdding] = useState<StepType>("calculate");
   // The step whose result the preview shows; -1 shows the queries' results.
   const [previewAt, setPreviewAt] = useState(-1);
-  const run = runSteps(steps, frames);
-  const hasData = frames.length > 0;
+  const frames = inputs.flatMap((i) => ("frame" in i ? [i] : []));
+  const run = runSteps(steps, inputs);
+  const hasData = inputs.length > 0;
 
   const update = (index: number, step: Step) =>
     onChange(steps.map((s, i) => (i === index ? step : s)));
@@ -240,6 +243,9 @@ export function newStep(
   const firstNumber = fields.find(numeric)?.name ?? "";
   const firstOther = fields.find((f) => !numeric(f) && f.type !== "time")?.name ?? "";
   switch (type) {
+    case "toFrame":
+      // Not offered here: the query's editor picks the columns of a projection.
+      return { id, type, frame, columns: [] };
     case "calculate":
       return { id, type, frame, name: t("analysis.default.calculate"), expression: firstNumber };
     case "join":
@@ -341,6 +347,17 @@ function StepForm({ step, onChange, refIds, input }: FormProps) {
       />
     );
   switch (step.type) {
+    case "toFrame":
+      return (
+        <div className="step__form">
+          <p className="field__hint step__wide">
+            {t("analysis.toFrame.columns", {
+              frame: step.frame,
+              columns: step.columns.map((c) => c.name ?? c.path).join(", "),
+            })}
+          </p>
+        </div>
+      );
     case "calculate":
       return (
         <div className="step__form">

@@ -33,6 +33,8 @@
   "analysis.kind.compare": "Vergleich mit Vorperiode",
   "analysis.kind.group": "Gruppieren",
   "analysis.kind.pivot": "Pivotieren",
+  "analysis.kind.toFrame": "Dokumente als Tabelle",
+  "analysis.toFrame.columns": "Spalten aus den Dokumenten von Abfrage {frame}: {columns}. Du wählst sie im Editor der Abfrage.",
   "analysis.default.calculate": "Berechnet",
   "analysis.default.trend": "Trend",
   "analysis.default.movingAverage": "Gleitender Durchschnitt",

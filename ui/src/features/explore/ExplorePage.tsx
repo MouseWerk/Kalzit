@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
-import { namedFrames, runPanelSteps } from "../../analysis/panel";
+import { namedInputs, runPanelSteps } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import type { Step } from "../../analysis/steps";
 import { BUSY_RETRY } from "../../api/retry";
@@ -310,7 +310,7 @@ function Explore({ orgId }: { orgId: string }) {
           steps={steps}
           onChange={setSteps}
           refIds={[REF_ID]}
-          frames={namedFrames(outcomes)}
+          inputs={namedInputs(outcomes)}
         />
       )}
       {exporting && submitted !== null ? (
