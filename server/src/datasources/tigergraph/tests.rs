@@ -257,6 +257,7 @@ fn req(query: Value, variables: Value) -> SourceQuery {
             max_rows: 1000,
             budget: crate::datasources::frame::ResponseBudget::new(1 << 20),
         },
+        cursor: None,
     }
 }
 

@@ -1098,6 +1098,7 @@ mod tests {
                 .unwrap(),
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
         }
     }
 

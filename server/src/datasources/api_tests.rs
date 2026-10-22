@@ -190,7 +190,10 @@ async fn kinds_describe_their_settings_forms() {
     let r = t.get("/datasource-kinds").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let kinds: Vec<&str> = r.body["items"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus", "neo4j", "memgraph", "tigergraph"]);
+    assert_eq!(
+        kinds,
+        ["postgres", "mysql", "sqlite", "mssql", "prometheus", "mongodb", "neo4j", "memgraph", "tigergraph"]
+    );
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");

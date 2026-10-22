@@ -48,13 +48,22 @@ labels?: { [key in string]: string }, };
 
 export type DocumentSet = { 
 /**
- * Documents with typed values (see `typed`) where JSON has no type for them.
+ * Documents with typed values (see `typed`) where JSON has no type for them, each in the
+ * field order the database stored.
  */
 documents: unknown[], 
 /**
  * Sampled from the result: every field path with its types and how many documents have it.
  */
-schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, };
+schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, 
+/**
+ * Why the set was cut, values that are not shown, ... (codes as for frames).
+ */
+notices: Array<Notice>, 
+/**
+ * The query as sent, after macros and variables were bound (shown in the inspector).
+ */
+executedQuery?: string, };
 
 export type FieldSchema = { 
 /**
