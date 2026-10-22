@@ -16,7 +16,7 @@
   "graph.notice.cut": "Gezeigt werden die {shown} am stärksten vernetzten von {count} Knoten, das Limit dieses Panels. Grenze die Abfrage ein oder erhöhe das Limit in den Panel-Optionen.",
   "graph.notice.truncated": "Die Datenquelle hat das Ergebnis an ihrem Limit abgeschnitten, der Graph ist womöglich unvollständig.",
   "graph.notice.dangling": "{count} Kanten führen zu Knoten außerhalb des Ergebnisses und werden nicht gezeichnet.",
-  "graph.notice.clustered": "Mehr als {count} Knoten: Die Knoten sind nach Label gruppiert. Öffne eine Gruppe, um ihre Knoten zu sehen.",
+  "graph.notice.clustered": "Mehr als {nodes} Knoten oder {edges} Kanten: Die Knoten sind nach Label gruppiert. Öffne eine Gruppe, um ihre Knoten zu sehen.",
   "graph.notice.noWebgl": "Dieser Browser kann keine Graphen zeichnen (WebGL 2 fehlt), deshalb erscheint der Graph als Tabelle.",
   "graph.notice.cycles": "{count} Kanten schließen einen Kreis und zeigen nach oben.",
   "graph.cluster.caption": "{label} ({count})",

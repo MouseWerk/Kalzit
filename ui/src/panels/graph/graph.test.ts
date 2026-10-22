@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
+import { graphOutcome, ID } from "../../features/datasources/test/fakeGraph";
+import { type Translate, translate } from "../../i18n/i18n";
 import { expandQuery, nodeCaption, readTime, typedId } from "./adapter";
 import { type GraphPalette, hex, mix } from "./colors";
 import { DIM_EDGES_UP_TO, edgeColor, nodeDisplay, nodeToward } from "./drawing";
+import { EDGE_CHUNK, handOver } from "./handover";
 import { ForceLayout, hierarchyLayout, seedPositions } from "./layoutEngine";
 import { communities, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, nodeSizes } from "./model";
-import { parseGraphOptions } from "./options";
+import {
+  AUTO_CLUSTER_EDGES,
+  AUTO_CLUSTER_NODES,
+  DEFAULT_NODE_LIMIT,
+  parseGraphOptions,
+} from "./options";
+import { countText } from "./plural";
+import { type RefreshRequest, refreshVisibility } from "./refresh";
 import { layoutRequest } from "./useGraphLayout";
 import {
   allVisible,
@@ -188,9 +198,14 @@ describe("view", () => {
     expect(grouped.edges[0]?.count).toBe(2);
     const opened = view(m, true, new Set([0]));
     expect(opened.nodes.map((n) => n.caption)).toEqual(["Ada", "Bob", "City (1)", "none (1)"]);
-    expect(shouldCluster("auto", 5_001, 5_000)).toBe(true);
-    expect(shouldCluster("auto", 5_000, 5_000)).toBe(false);
-    expect(shouldCluster("off", 50_000, 5_000)).toBe(false);
+    const limits = { nodes: AUTO_CLUSTER_NODES, edges: AUTO_CLUSTER_EDGES };
+    // A graph at the default node limit is grouped: the threshold lies below it.
+    expect(shouldCluster("auto", { nodes: DEFAULT_NODE_LIMIT, edges: 0 }, limits)).toBe(true);
+    // Few nodes but many edges are grouped too, whichever comes first.
+    expect(shouldCluster("auto", { nodes: 1_500, edges: 9_000 }, limits)).toBe(true);
+    expect(shouldCluster("auto", { nodes: 2_000, edges: 8_000 }, limits)).toBe(false);
+    expect(shouldCluster("off", { nodes: 50_000, edges: 0 }, limits)).toBe(false);
+    expect(shouldCluster("label", { nodes: 3, edges: 0 }, limits)).toBe(true);
   });
 
   it("shows the graph at a time: later edges and nodes reached only by them are hidden", () => {
@@ -336,5 +351,124 @@ describe("drawing", () => {
 
   it("mixes dimmed colors toward the background", () => {
     expect(hex(mix([0, 0, 0], [255, 255, 255], 0.5))).toBe("#808080");
+  });
+});
+
+describe("handover", () => {
+  it("hands the nodes over at once and the edges in chunks, one per frame", () => {
+    const nodes = Array.from({ length: 10 }, (_, i) => ({
+      id: `n${i}`,
+      labels: [],
+      properties: {},
+    }));
+    const edges = Array.from({ length: EDGE_CHUNK * 2 + 5 }, (_, i) => ({
+      id: `e${i}`,
+      type: "T",
+      from: `n${i % 10}`,
+      to: `n${(i + 1) % 10}`,
+      properties: {},
+    }));
+    const v = view(model([{ nodes, edges, schema }]));
+    const frames: (() => void)[] = [];
+    const given: number[] = [];
+    const handover = handOver(
+      { setGraph: (g) => given.push(g.order, g.size) },
+      v,
+      seedPositions(10),
+      { schedule: (cb) => frames.push(cb), cancel: () => undefined },
+    );
+    expect(given).toEqual([10, EDGE_CHUNK]);
+    expect(frames).toHaveLength(1);
+    frames.shift()?.();
+    expect(handover.graph.size).toBe(EDGE_CHUNK * 2);
+    frames.shift()?.();
+    expect(handover.graph.size).toBe(EDGE_CHUNK * 2 + 5);
+    expect(frames).toHaveLength(0);
+  });
+
+  it("stops adding edges when cancelled", () => {
+    const nodes = [{ id: "a", labels: [], properties: {} }];
+    const edges = Array.from({ length: EDGE_CHUNK + 1 }, (_, i) => ({
+      id: `e${i}`,
+      type: "T",
+      from: "a",
+      to: "a",
+      properties: {},
+    }));
+    const cancelled: number[] = [];
+    const handover = handOver(
+      { setGraph: () => undefined },
+      view(model([{ nodes, edges, schema }])),
+      seedPositions(1),
+      {
+        schedule: () => 7,
+        cancel: (handle) => cancelled.push(handle),
+      },
+    );
+    handover.cancel();
+    expect(cancelled).toEqual([7]);
+  });
+});
+
+describe("refreshing visibility", () => {
+  function bigView(edges: number) {
+    const v = view();
+    return { ...v, edges: Array.from({ length: edges }, () => v.edges[0]) } as GraphView;
+  }
+
+  it("draws only the nodes and edges whose visibility changed in large graphs", () => {
+    const v = bigView(DIM_EDGES_UP_TO + 1);
+    const before = allVisible(v);
+    const after = { nodes: before.nodes.slice(), edges: before.edges.slice() };
+    after.nodes[2] = 0;
+    after.edges[5] = 0;
+    const requests: RefreshRequest[] = [];
+    refreshVisibility({ refresh: (r) => requests.push(r) }, v, before, after);
+    expect(requests).toEqual([
+      { skipIndexation: true, partialGraph: { nodes: ["2"], edges: ["e5"] } },
+    ]);
+    // Nothing changed, nothing drawn.
+    refreshVisibility({ refresh: (r) => requests.push(r) }, v, after, after);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("draws everything the first time and in graphs that dim edges", () => {
+    const requests: RefreshRequest[] = [];
+    const small = view();
+    refreshVisibility(
+      { refresh: (r) => requests.push(r) },
+      small,
+      allVisible(small),
+      allVisible(small),
+    );
+    const big = bigView(DIM_EDGES_UP_TO + 1);
+    refreshVisibility({ refresh: (r) => requests.push(r) }, big, null, allVisible(big));
+    expect(requests).toEqual([{ skipIndexation: true }, { skipIndexation: true }]);
+  });
+});
+
+describe("the fake graph source", () => {
+  it("answers both forms of the expand query", () => {
+    const byElement = expandQuery("neo4j", ID.desk, 10);
+    const byNumber = expandQuery("memgraph", "12", 10);
+    for (const request of [byElement, byNumber]) {
+      const cypher = String((request?.query as { cypher?: string } | undefined)?.cypher);
+      const outcome = graphOutcome(cypher, request?.variables ?? {});
+      const graph =
+        "result" in outcome && outcome.result.shape === "graph" ? outcome.result.graph : null;
+      expect(graph?.nodes.map((n) => n.id)).toEqual([ID.desk, ID.oak]);
+    }
+  });
+});
+
+describe("counts", () => {
+  it("use the singular for one and the plural otherwise, in both languages", () => {
+    const en: Translate = (key, params) => translate("en", key, params);
+    const de: Translate = (key, params) => translate("de", key, params);
+    expect(countText(en, "en", "component", 1)).toBe("1 component");
+    expect(countText(en, "en", "component", 3)).toBe("3 components");
+    expect(countText(en, "en", "edge", 1_200)).toBe("1,200 edges");
+    expect(countText(de, "de", "edge", 1)).toBe("1 Kante");
+    expect(countText(de, "de", "community", 2)).toBe("2 Communities");
   });
 });

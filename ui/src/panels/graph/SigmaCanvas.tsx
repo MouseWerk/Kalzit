@@ -5,6 +5,8 @@ import { extremityArrow, layerPlain, pathLine, pathLoop } from "sigma/rendering"
 import { applyPositionsTo } from "./applyPositions";
 import type { GraphPalette } from "./colors";
 import { type Direction, dimsEdges, edgeColor, nodeDisplay, nodeToward } from "./drawing";
+import { type Handover, handOver } from "./handover";
+import { refreshVisibility } from "./refresh";
 import type { GraphView, Visibility } from "./view";
 import "./graph.css";
 
@@ -42,8 +44,6 @@ export interface SigmaCanvasProps {
   ref?: Ref<CanvasHandle>;
 }
 
-type NodeAttributes = { x: number; y: number; size: number; label: string };
-
 const ZOOM_DURATION = 200;
 
 export function SigmaCanvas(props: SigmaCanvasProps) {
@@ -52,6 +52,8 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const graphRef = useRef<Graph | null>(null);
+  const handoverRef = useRef<Handover | null>(null);
+  const shownVisibility = useRef<Visibility | null>(null);
   // The reducers read the newest props from here; changing them only needs a refresh.
   const live = useRef({ props, ratioBucket: 0 });
   live.current.props = props;
@@ -148,25 +150,13 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     if (graph === null || renderer === null) {
       return;
     }
-    // Filled while detached and handed over whole: the renderer reacts to every single addition
-    // of an attached graph, which for 20,000 edges takes about a second.
-    const next = new Graph({ type: "directed", multi: true, allowSelfLoops: true });
-    view.nodes.forEach((node, i) => {
-      next.addNode(String(i), {
-        x: positions[2 * i] ?? 0,
-        y: positions[2 * i + 1] ?? 0,
-        size: node.size,
-        label: node.caption,
-      } satisfies NodeAttributes);
-    });
-    view.edges.forEach((edge, i) => {
-      next.addEdgeWithKey(`e${i}`, String(edge.source), String(edge.target), {
-        size: edge.width,
-      });
-    });
-    graphRef.current = next;
+    // The nodes go over at once, the edges in chunks per frame (handover.ts).
     renderer.setSetting("hideEdgesOnMove", view.edges.length > 5_000);
-    renderer.setGraph(next);
+    const handover = handOver(renderer, view, positions);
+    handoverRef.current = handover;
+    graphRef.current = handover.graph;
+    shownVisibility.current = null;
+    return () => handover.cancel();
   }, [view]);
 
   // New positions from the layout move the nodes; the camera keeps its place.
@@ -178,11 +168,35 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     applyPositionsTo(graph, positions);
   }, [positions]);
 
-  // Visibility and theme: only the reducers' output changes.
+  // The time slider: only what changed is drawn again in large graphs (refresh.ts).
+  useEffect(() => {
+    const renderer = sigmaRef.current;
+    if (renderer === null) return;
+    const graph = renderer.getGraph();
+    // Edges still on their way from the handover are drawn when they arrive.
+    const target = {
+      refresh: (request: Parameters<typeof renderer.refresh>[0] & object) =>
+        renderer.refresh(
+          request.partialGraph === undefined
+            ? request
+            : {
+                ...request,
+                partialGraph: {
+                  nodes: request.partialGraph.nodes ?? [],
+                  edges: (request.partialGraph.edges ?? []).filter((e) => graph.hasEdge(e)),
+                },
+              },
+        ),
+    };
+    refreshVisibility(target, live.current.props.view, shownVisibility.current, visibility);
+    shownVisibility.current = visibility;
+  }, [visibility]);
+
+  // Theme and label levels change every node's and edge's colors or labels.
   // biome-ignore lint/correctness/useExhaustiveDependencies: each listed prop changes what the reducers draw
   useEffect(() => {
     sigmaRef.current?.refresh({ skipIndexation: true });
-  }, [visibility, palette, ranks]);
+  }, [palette, ranks]);
 
   // Selection: a large graph keeps its edges as they are, so only the nodes are drawn again.
   // biome-ignore lint/correctness/useExhaustiveDependencies: each listed prop changes what the reducers draw

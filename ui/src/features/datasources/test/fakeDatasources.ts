@@ -6,7 +6,7 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
-import { FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID } from "./fakeGraph";
+import { FAKE_GRAPH, FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID, TIGERGRAPH_ID } from "./fakeGraph";
 
 /**
  * Fake routes for data sources and the free query route, written from docs/api/datasources.md
@@ -242,6 +242,9 @@ export function defaultOutcome(
   if (typeof query.cypher === "string") {
     return graphOutcome(query.cypher, variables);
   }
+  if (typeof query.gsql === "string" || typeof query.installed === "string") {
+    return { result: { shape: "graph", graph: FAKE_GRAPH } };
+  }
   const meta = { executedQuery: text, rowsTruncated: false, notices: [] };
   if (typeof query.sql === "string" && !/\btime\b/i.test(query.sql)) {
     return {
@@ -354,6 +357,21 @@ export async function answerQuery(
     return { error: { code: "query_rejected", message: problem } };
   }
   return state.respond(item, range, variables);
+}
+
+/** Adds the TigerGraph source "Tiger" (graph `social`) with an installed query, for the tests. */
+export function addTigerGraphSource(state: FakeDatasourcesState): void {
+  const created = Date.UTC(2026, 0, 9);
+  state.datasources.push({
+    id: TIGERGRAPH_ID,
+    name: "Tiger",
+    kind: "tigergraph",
+    settings: { url: "https://tg.internal:14240", graph: "social", user: "reader" },
+    secrets: { password: "s3cret" },
+    createdAt: created,
+    updatedAt: created,
+  });
+  state.schemas[TIGERGRAPH_ID] = { ...FAKE_GRAPH_SCHEMA, queries: ["neighbours", "top_customers"] };
 }
 
 /** Adds the Neo4j source "Graph DB" (NEO4J_ID) with its schema, for the graph tests. */

@@ -31,7 +31,8 @@ async function renderGraph(
       />
     </PanelHostContext>,
   );
-  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+  // The first render of a file loads the panel's module, which takes a moment on a busy machine.
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull(), { timeout: 4_000 });
   return view;
 }
 
@@ -99,11 +100,32 @@ describe("network panel", () => {
     await renderGraph("network", FAKE_GRAPH, { timeProperty: "at" });
     const slider = screen.getByRole("slider", { name: "Graph at" });
     expect(screen.getByRole("table", { name: "Edges of Shop: 3" })).toBeTruthy();
+    // Dragging: the slider follows each step, the graph only once it rests.
+    fireEvent.change(slider, { target: { value: "1" } });
     fireEvent.change(slider, { target: { value: "0" } });
-    // Only the first purchase: Grace and the desk come later.
-    expect(screen.getByRole("table", { name: "Edges of Shop: 1" })).toBeTruthy();
-    expect(screen.getByRole("table", { name: "Nodes of Shop: 2" })).toBeTruthy();
     expect(slider.getAttribute("aria-valuetext")).toMatch(/2026/);
+    expect(screen.getByRole("table", { name: "Edges of Shop: 3" })).toBeTruthy();
+    // Only the first purchase: Grace and the desk come later.
+    expect(await screen.findByRole("table", { name: "Edges of Shop: 1" })).toBeTruthy();
+    expect(screen.getByRole("table", { name: "Nodes of Shop: 2" })).toBeTruthy();
+  });
+
+  it("refuses a value a custom variable does not offer, and says so", async () => {
+    const user = userEvent.setup();
+    const set = vi.fn();
+    await renderGraph(
+      "network",
+      FAKE_GRAPH,
+      { variable: "region", variableProperty: "customerId" },
+      { variables: { names: ["region"], accepts: (_, value) => value === "42", set } },
+    );
+    await user.click(screen.getByRole("button", { name: "Grace" }));
+    expect(set).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toBe(
+      "$region has no value 43, so it stays as it is.",
+    );
+    await user.click(screen.getByRole("button", { name: "Ada" }));
+    expect(set).toHaveBeenCalledWith("region", "42");
   });
 });
 
@@ -161,6 +183,8 @@ describe("path panel", () => {
     );
     await user.click(screen.getAllByRole("button", { name: "Ada" })[0] as HTMLElement);
     expect(set).toHaveBeenCalledWith("customerId", ID.ada);
+    // Announced, as the network panel does.
+    expect(screen.getByRole("status").textContent).toBe(`$customerId is now ${ID.ada}`);
   });
 });
 

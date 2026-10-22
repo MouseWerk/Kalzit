@@ -263,5 +263,15 @@
   "datasources.editor.macro.timeFromDateTime": "Beginn des Zeitraums als Datum und Uhrzeit in UTC.",
   "datasources.editor.macro.timeToDateTime": "Ende des Zeitraums als Datum und Uhrzeit in UTC.",
   "datasources.editor.macro.timeFromMs": "Beginn des Zeitraums in Unix-Millisekunden.",
-  "datasources.editor.macro.timeToMs": "Ende des Zeitraums in Unix-Millisekunden."
+  "datasources.editor.macro.timeToMs": "Ende des Zeitraums in Unix-Millisekunden.",
+  "datasources.editor.gsql.mode": "Abfrage",
+  "datasources.editor.gsql.interpreted": "GSQL schreiben",
+  "datasources.editor.gsql.installed": "Installierte Abfrage ausführen",
+  "datasources.editor.gsql.query": "Installierte Abfrage",
+  "datasources.editor.gsql.noQueries": "Die Datenquelle nennt keine installierten oder freigegebenen Abfragen.",
+  "datasources.editor.gsql.hint": "Eine Abfrage der Form INTERPRET QUERY (Parameter) FOR GRAPH {graph}, mit ihrem Rumpf in geschweiften Klammern. Parameter ohne Wert unten nehmen die Dashboard-Variable gleichen Namens.",
+  "datasources.editor.gsql.template": "Mit einer Vorlage beginnen",
+  "datasources.editor.gsql.params": "Parameter (optional)",
+  "datasources.editor.gsql.paramsHint": "Ein JSON-Objekt, etwa {„customer“: „c42“, „limit“: 10}.",
+  "datasources.editor.gsql.paramsInvalid": "Gib ein JSON-Objekt ein oder lass das Feld leer."
 }

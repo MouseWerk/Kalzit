@@ -163,9 +163,16 @@ export function buildView(model: GraphModel, input: ViewInput): GraphView {
   return { nodes, edges, nodeOf, edgeOf, clustered: clusterMembers.length > 0 };
 }
 
-/** Whether the network groups nodes: always, never, or above the automatic threshold. */
-export function shouldCluster(mode: "auto" | "label" | "off", nodes: number, threshold: number) {
-  return mode === "label" || (mode === "auto" && nodes > threshold);
+/** Whether the network groups nodes: always, never, or above either automatic threshold. */
+export function shouldCluster(
+  mode: "auto" | "label" | "off",
+  size: { nodes: number; edges: number },
+  limits: { nodes: number; edges: number },
+) {
+  return (
+    mode === "label" ||
+    (mode === "auto" && (size.nodes > limits.nodes || size.edges > limits.edges))
+  );
 }
 
 export interface Visibility {

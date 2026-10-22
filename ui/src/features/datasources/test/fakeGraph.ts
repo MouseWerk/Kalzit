@@ -10,6 +10,7 @@ import { EXPAND_NODE_VARIABLE } from "../../../panels/graph/adapter";
  */
 
 export const NEO4J_ID = "ds-neo4j";
+export const TIGERGRAPH_ID = "ds-tiger";
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 0, 1);

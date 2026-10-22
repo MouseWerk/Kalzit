@@ -10,7 +10,7 @@ import { isRecord } from "../../api/client";
 export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite"] as const;
 /** Graph sources queried in Cypher; their query form is `{cypher}` (panels/graph/adapter.ts). */
 export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
-export type EditorFamily = "sql" | "promql" | "cypher";
+export type EditorFamily = "sql" | "promql" | "cypher" | "gsql";
 
 export interface SqlQuery {
   sql: string;
@@ -27,12 +27,23 @@ export interface CypherQuery {
   cypher: string;
 }
 
+/**
+ * TigerGraph: an interpreted GSQL query, or an installed query by name, each with typed
+ * parameters; a declared parameter without one takes the dashboard variable of its name.
+ */
+export type GsqlQuery =
+  | { gsql: string; params?: Record<string, unknown> }
+  | { installed: string; params?: Record<string, unknown> };
+
 export function familyOf(kind: string): EditorFamily | undefined {
   if ((SQL_KINDS as readonly string[]).includes(kind)) {
     return "sql";
   }
   if ((CYPHER_KINDS as readonly string[]).includes(kind)) {
     return "cypher";
+  }
+  if (kind === "tigergraph") {
+    return "gsql";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -63,10 +74,27 @@ export function parseCypherQuery(query: unknown): CypherQuery {
   return { cypher: typeof value.cypher === "string" ? value.cypher : "" };
 }
 
+export function parseGsqlQuery(query: unknown): GsqlQuery {
+  const value = isRecord(query) ? query : {};
+  const params = isRecord(value.params) ? { params: value.params } : {};
+  if (typeof value.installed === "string") {
+    return { installed: value.installed, ...params };
+  }
+  return { gsql: typeof value.gsql === "string" ? value.gsql : "", ...params };
+}
+
 /** A new, empty query in the form the kind expects. */
 export function emptyQuery(kind: string): unknown {
-  const family = familyOf(kind);
-  return family === "promql" ? { expr: "" } : family === "cypher" ? { cypher: "" } : { sql: "" };
+  switch (familyOf(kind)) {
+    case "promql":
+      return { expr: "" };
+    case "cypher":
+      return { cypher: "" };
+    case "gsql":
+      return { gsql: "" };
+    default:
+      return { sql: "" };
+  }
 }
 
 /** The query text alone, for summaries and for deciding whether there is anything to run. */

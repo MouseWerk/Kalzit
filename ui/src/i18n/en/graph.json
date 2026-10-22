@@ -16,7 +16,7 @@
   "graph.notice.cut": "Showing the {shown} best connected of {count} nodes, the limit of this panel. Narrow the query or raise the limit in the panel options.",
   "graph.notice.truncated": "The data source cut the result at its limit, so the graph may be incomplete.",
   "graph.notice.dangling": "{count} edges lead to nodes outside the result and are not drawn.",
-  "graph.notice.clustered": "More than {count} nodes: nodes are grouped by label. Open a group to see its nodes.",
+  "graph.notice.clustered": "More than {nodes} nodes or {edges} edges: nodes are grouped by label. Open a group to see its nodes.",
   "graph.notice.noWebgl": "This browser cannot draw graphs (WebGL 2 is missing), so the graph is shown as a table.",
   "graph.notice.cycles": "{count} edges close a cycle and point upwards.",
   "graph.cluster.caption": "{label} ({count})",

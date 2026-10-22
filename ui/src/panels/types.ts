@@ -34,7 +34,7 @@ export interface PanelProps<Options> {
   /** Accessible name of the visualization: the panel title. */
   title: string;
   /** Graphs of every target that answered with one, in target order (graph panels). */
-  graphs?: readonly PanelGraph[];
+  graphs?: readonly PanelGraph[] | undefined;
 }
 
 /** One target's graph, with the source it came from (explorer mode queries it again). */

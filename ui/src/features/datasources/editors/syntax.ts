@@ -347,3 +347,69 @@ export function tokenizeCypher(text: string): Token[] {
     return CYPHER_KEYWORD_SET.has(lower) ? "keyword" : "plain";
   });
 }
+
+/** GSQL clauses (TigerGraph), compared without case. */
+export const GSQL_KEYWORDS = [
+  "interpret",
+  "create",
+  "query",
+  "for",
+  "graph",
+  "select",
+  "from",
+  "where",
+  "accum",
+  "post-accum",
+  "having",
+  "order",
+  "by",
+  "limit",
+  "print",
+  "if",
+  "then",
+  "else",
+  "end",
+  "while",
+  "foreach",
+  "in",
+  "do",
+  "case",
+  "when",
+  "return",
+  "and",
+  "or",
+  "not",
+  "true",
+  "false",
+  "int",
+  "uint",
+  "float",
+  "double",
+  "bool",
+  "string",
+  "datetime",
+  "vertex",
+  "edge",
+  "set",
+  "bag",
+  "list",
+] as const;
+
+const GSQL_KEYWORD_SET = new Set<string>(GSQL_KEYWORDS);
+
+const GSQL_RULES: Rule[] = [
+  { kind: "comment", pattern: /\/\/[^\n]*|#[^\n]*/y },
+  { kind: "comment", pattern: /\/\*[\s\S]*?(\*\/|$)/y },
+  { kind: "string", pattern: /"(?:[^"\\]|\\.)*"?/y },
+  { kind: "macro", pattern: /@@?\w+/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_][\w-]*/y },
+  { kind: "operator", pattern: /[<>=!]=?|[-+*/%,;().:{}[\]]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+export function tokenizeGsql(text: string): Token[] {
+  return tokenize(text, GSQL_RULES, (word) =>
+    GSQL_KEYWORD_SET.has(word.toLowerCase()) ? "keyword" : "plain",
+  );
+}

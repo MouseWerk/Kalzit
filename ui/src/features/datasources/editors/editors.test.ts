@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { GraphSourceSchema, PromSchema, SqlSchema } from "../api";
+import { emptyQuery, parseGsqlQuery, queryText } from "../queryKinds";
 import { cypherCompletions, promqlCompletions, sqlCompletions } from "./completion";
-import { tokenizeCypher, tokenizePromql, tokenizeSql } from "./syntax";
+import { gsqlTemplate, parseParams } from "./GsqlQueryEditor";
+import { tokenizeCypher, tokenizeGsql, tokenizePromql, tokenizeSql } from "./syntax";
 
 // Wire shapes of GET .../schema in docs/api/datasources.md.
 const SQL: SqlSchema = {
@@ -176,5 +178,38 @@ describe("highlighting", () => {
     expect(prom.find((t) => t.text === "rate")?.kind).toBe("function");
     expect(prom.find((t) => t.text === "job")?.kind).toBe("label");
     expect(prom.find((t) => t.text === "5m")?.kind).toBe("duration");
+  });
+});
+
+describe("TigerGraph queries", () => {
+  it("start as interpreted GSQL and keep the installed form with its params", () => {
+    expect(emptyQuery("tigergraph")).toEqual({ gsql: "" });
+    expect(parseGsqlQuery({ installed: "q", params: { a: 1 } })).toEqual({
+      installed: "q",
+      params: { a: 1 },
+    });
+    expect(parseGsqlQuery({ gsql: "x", params: [1] })).toEqual({ gsql: "x" });
+    expect(queryText({ installed: "q" })).toBe("q");
+  });
+
+  it("read params as a JSON object only", () => {
+    expect(parseParams("")).toEqual({});
+    expect(parseParams('{"a": 1}')).toEqual({ params: { a: 1 } });
+    expect(parseParams("[1]")).toEqual({ error: true });
+    expect(parseParams("{")).toEqual({ error: true });
+  });
+
+  it("highlight GSQL and start from one query body for the graph", () => {
+    const text = gsqlTemplate("social");
+    expect(text).toMatch(/^INTERPRET QUERY \(\) FOR GRAPH social \{/);
+    const tokens = tokenizeGsql(`${text} // c\nSELECT s FROM Start:s ACCUM @@n += 1`);
+    expect(tokens.map((t) => t.text).join("")).toBe(
+      `${text} // c\nSELECT s FROM Start:s ACCUM @@n += 1`,
+    );
+    const kind = (word: string) => tokens.find((t) => t.text === word)?.kind;
+    expect(kind("INTERPRET")).toBe("keyword");
+    expect(kind("ACCUM")).toBe("keyword");
+    expect(kind("@@n")).toBe("macro");
+    expect(kind("// c")).toBe("comment");
   });
 });

@@ -24,7 +24,7 @@ import { GraphTable } from "./GraphTable";
 import type { LayoutMode } from "./layoutProtocol";
 import { COMMUNITY_LIMIT, type Communities, communities, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, GRAPH_COLORS, nodeSizes } from "./model";
-import { AUTO_CLUSTER_NODES, type GraphPanelOptions } from "./options";
+import { AUTO_CLUSTER_EDGES, AUTO_CLUSTER_NODES, type GraphPanelOptions } from "./options";
 import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
@@ -135,7 +135,11 @@ function useGraph(
   const cluster =
     mode === "force" &&
     !unclustered &&
-    shouldCluster(options.cluster, model.nodes.length, AUTO_CLUSTER_NODES);
+    shouldCluster(
+      options.cluster,
+      { nodes: model.nodes.length, edges: model.edges.length },
+      { nodes: AUTO_CLUSTER_NODES, edges: AUTO_CLUSTER_EDGES },
+    );
   const { cluster: clusterText, unlabelled } = texts;
   const view = useMemo(
     () =>
@@ -390,17 +394,20 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             {display === "graph" ? t("graph.showTable") : t("graph.showDrawing")}
           </button>
         ) : null}
-        {explorer !== null && explorer.steps.length > 0 ? (
+        {explorer !== null && (explorer.steps.length > 0 || explorer.pending !== null) ? (
           <button
             type="button"
             className="button button--ghost button--small"
             onClick={() => {
-              const last = explorer.steps.at(-1);
+              // The newest step is the one still loading, if any.
+              const name = explorer.pendingCaption ?? explorer.steps.at(-1)?.caption ?? "";
               explorer.undo();
-              setAnnouncement(t("graph.announce.undone", { name: last?.caption ?? "" }));
+              setAnnouncement(t("graph.announce.undone", { name }));
             }}
           >
-            {t("graph.explorer.undo", { name: explorer.steps.at(-1)?.caption ?? "" })}
+            {t("graph.explorer.undo", {
+              name: explorer.pendingCaption ?? explorer.steps.at(-1)?.caption ?? "",
+            })}
           </button>
         ) : null}
         {open.size > 0 ? (
@@ -436,7 +443,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           ))}
           {view.clustered ? (
             <li>
-              {t("graph.notice.clustered", { count: number.format(AUTO_CLUSTER_NODES) })}{" "}
+              {t("graph.notice.clustered", {
+                nodes: number.format(AUTO_CLUSTER_NODES),
+                edges: number.format(AUTO_CLUSTER_EDGES),
+              })}{" "}
               <button
                 type="button"
                 className="button button--ghost button--small"
@@ -702,6 +712,9 @@ function CycleNote({ count }: { count: number }) {
   );
 }
 
+/** How long the slider rests before the graph follows it; dragging redraws once, not per step. */
+export const SLIDER_DEBOUNCE_MS = 150;
+
 /** The graph at a point in time: edges with a later timestamp are hidden. */
 function TimeSlider({
   steps,
@@ -715,7 +728,17 @@ function TimeSlider({
   const { t, language } = useI18n();
   const id = useId();
   const last = steps.length - 1;
-  const at = index ?? last;
+  // The slider and its text follow at once; the graph after SLIDER_DEBOUNCE_MS.
+  const [moving, setMoving] = useState<number | null>(null);
+  useEffect(() => {
+    if (moving === null) return;
+    const timer = setTimeout(() => {
+      onChange(moving >= last ? null : moving);
+      setMoving(null);
+    }, SLIDER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [moving, last, onChange]);
+  const at = moving ?? index ?? last;
   const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
   const text = format.format(steps[at] ?? 0);
   return (
@@ -732,10 +755,7 @@ function TimeSlider({
         step={1}
         value={at}
         aria-valuetext={text}
-        onChange={(event) => {
-          const next = Number(event.currentTarget.value);
-          onChange(next >= last ? null : next);
-        }}
+        onChange={(event) => setMoving(Number(event.currentTarget.value))}
       />
       <output className="graph__time-value" htmlFor={id}>
         {text}

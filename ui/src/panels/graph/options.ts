@@ -4,8 +4,13 @@ import { MAX_EXPAND_LIMIT } from "./adapter";
 /** The hard cap on drawn nodes per panel; the panel's own limit may only be lower. */
 export const MAX_NODE_LIMIT = 20_000;
 export const DEFAULT_NODE_LIMIT = 5_000;
-/** Above this many nodes the network groups them by label until a group is opened. */
-export const AUTO_CLUSTER_NODES = 5_000;
+/**
+ * Above this many nodes or edges, whichever comes first, the network groups nodes by label until
+ * a group is opened: the renderer takes its graph in one piece, and beyond these sizes that is a
+ * noticeable pause.
+ */
+export const AUTO_CLUSTER_NODES = 2_000;
+export const AUTO_CLUSTER_EDGES = 8_000;
 export const DEFAULT_EXPAND_LIMIT = 25;
 
 export const COLOR_BY = ["label", "community", "component"] as const;

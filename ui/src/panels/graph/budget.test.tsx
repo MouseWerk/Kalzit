@@ -6,9 +6,10 @@ import { ForceLayout, seedPositions } from "./layoutEngine";
 import type { LayoutProgress, LayoutRequest } from "./layoutProtocol";
 import { components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, nodeSizes } from "./model";
+import { type RefreshRequest, refreshVisibility } from "./refresh";
 import { bestOf, generateGraph } from "./test/generate";
 import { layoutRequest, setLayoutWorkerFactory, useGraphLayout } from "./useGraphLayout";
-import { buildView, labelRanks, visibleAt } from "./view";
+import { buildView, labelRanks, timeSteps, visibleAt } from "./view";
 
 /**
  * Performance budgets of the network panel (docs/PLAN.md, section 11) for 5,000 nodes and
@@ -86,6 +87,28 @@ describe("budget: 5,000 nodes and 20,000 edges", () => {
       FRAME_MS,
     );
     expect(graph.getNodeAttribute("7", "x")).toBe(positions[14]);
+  });
+
+  it("moves the time slider within one frame, asking the renderer for the changed items only", () => {
+    // What a slider step costs the page before the renderer draws: the visibility at the new
+    // time and the request for what changed (SigmaCanvas runs exactly this on each step).
+    const times = edgeTimes(model, "since");
+    const steps = timeSteps(times);
+    const before = visibleAt(model, view, times, steps[100] as number);
+    const requests: RefreshRequest[] = [];
+    const target = { refresh: (request: RefreshRequest) => requests.push(request) };
+    let after = before;
+    const ms = timed("time slider step", () => {
+      after = visibleAt(model, view, times, steps[101] as number);
+      refreshVisibility(target, view, before, after);
+    });
+    expect(ms).toBeLessThan(FRAME_MS);
+    const last = requests.at(-1);
+    // A graph this large keeps its edges undimmed, so only the step's own changes are drawn.
+    expect(last?.partialGraph).toBeDefined();
+    const changed = [...after.edges].filter((v, i) => v !== before.edges[i]).length;
+    expect(last?.partialGraph?.edges).toHaveLength(changed);
+    expect(changed).toBeLessThan(view.edges.length / 10);
   });
 
   it("runs the force layout in a worker and only takes its positions on the main thread", () => {

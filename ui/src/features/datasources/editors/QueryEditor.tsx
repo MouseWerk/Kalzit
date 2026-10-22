@@ -18,6 +18,7 @@ import {
   SQL_MACROS,
   sqlCompletions,
 } from "./completion";
+import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -41,6 +42,8 @@ export function QueryEditor(props: QueryEditorProps) {
       return <PromqlQueryEditor {...props} />;
     case "cypher":
       return <CypherQueryEditor {...props} />;
+    case "gsql":
+      return <GsqlQueryEditor {...props} />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }
