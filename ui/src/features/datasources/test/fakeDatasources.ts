@@ -124,22 +124,50 @@ export const FAKE_KINDS: WireKind[] = [
       ...COMMON,
     ],
   },
-  graphKind("neo4j", "Neo4j"),
-  graphKind("memgraph", "Memgraph"),
+  boltKind("neo4j", "Neo4j", []),
+  boltKind("memgraph", "Memgraph", [
+    setting("allowWriteCapableUser", "bool", { default: false, target: true }),
+  ]),
+  {
+    kind: "tigergraph",
+    name: "TigerGraph",
+    shapes: ["graph", "frame"],
+    hintKey: "datasources.kinds.tigergraph.hint",
+    settings: [
+      setting("url", "string", { required: true, labelKey: "datasources.settings.gsqlUrl" }),
+      setting("restppUrl", "string", { target: true }),
+      setting("graph", "string", { required: true, target: true }),
+      setting("user", "string", { required: true }),
+      setting("password", "string", { secret: true }),
+      setting("secret", "string", { secret: true, labelKey: "datasources.settings.restppSecret" }),
+      setting("caCert", "text"),
+      setting("approvedQueries", "text", { target: true }),
+      setting("maxNodes", "number"),
+      setting("maxEdges", "number"),
+      ...COMMON,
+    ],
+  },
 ];
 
-/** Graph sources (M3): a Bolt URL, a database and a reading user; Cypher queries, graph results. */
-function graphKind(kind: string, name: string): WireKind {
+/** Neo4j and Memgraph over Bolt (docs/api/datasources.md, the fields per kind). */
+function boltKind(kind: string, name: string, extra: WireSetting[]): WireKind {
   return {
     kind,
     name,
-    shapes: ["graph"],
+    shapes: ["graph", "frame"],
     hintKey: `datasources.kinds.${kind}.hint`,
     settings: [
-      setting("url", "string", { required: true }),
+      setting("host", "string", { required: true }),
+      setting("port", "number", { default: 7687 }),
       setting("database", "string"),
-      setting("user", "string", { required: true }),
+      setting("user", "string"),
       setting("password", "string", { secret: true }),
+      setting("encrypt", "bool", { default: false }),
+      setting("trustServerCertificate", "bool", { default: false }),
+      setting("caCert", "text"),
+      setting("maxNodes", "number"),
+      setting("maxEdges", "number"),
+      ...extra,
       ...COMMON,
     ],
   };
@@ -283,6 +311,12 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     if (typeof q.cypher !== "string") return "cypher is required";
     return q.cypher.trim() === "" ? "the query is empty" : null;
   }
+  if (kind === "tigergraph") {
+    const extra = unknownKey(q, ["gsql", "installed", "params"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    const forms = [typeof q.gsql === "string", typeof q.installed === "string"].filter(Boolean);
+    return forms.length === 1 ? null : "gsql or installed is required";
+  }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
     if (extra !== undefined) return `unknown query field ${extra}`;
@@ -325,7 +359,7 @@ export function addNeo4jSource(state: FakeDatasourcesState): void {
     id: NEO4J_ID,
     name: "Graph DB",
     kind: "neo4j",
-    settings: { url: "bolt://graph.internal:7687", user: "reader" },
+    settings: { host: "graph.internal", port: 7687, user: "reader" },
     secrets: { password: "s3cret" },
     createdAt: created,
     updatedAt: created,

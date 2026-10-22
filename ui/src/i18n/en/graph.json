@@ -9,7 +9,7 @@
   "graph.showTable": "Show as table",
   "graph.showDrawing": "Show drawing",
   "graph.roleDescription": "graph",
-  "graph.keyboardHint": "Arrow keys move the selection to the nearest node in that direction, Enter opens a group or acts on the node, Escape clears the selection, plus and minus zoom, 0 shows everything.",
+  "graph.keyboardHint": "Arrow keys move the selection to the nearest node in that direction. Enter opens a group, or loads the node's neighbours and sets the variable where the panel does that. Escape clears the selection, plus and minus zoom, 0 shows everything.",
   "graph.summary": "{nodes} nodes, {edges} edges, {components} components.",
   "graph.communities.count": "{count} communities.",
   "graph.communities.tooLarge": "Communities are computed for graphs up to {limit} nodes.",

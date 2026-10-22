@@ -1,4 +1,4 @@
-import type { GraphPath, GraphSet } from "../../api/generated/shapes";
+import type { GraphPath, GraphSet, Notice } from "../../api/generated/shapes";
 import { nodeCaption, normalizeGraph, readNumber, readTime } from "./adapter";
 
 /** Node colors cycle through this many palette entries (`--chart-1` ... `--chart-8`). */
@@ -45,6 +45,8 @@ export interface GraphModel {
   dangling: number;
   /** The server cut the result at its own limit. */
   truncated: boolean;
+  /** What the sources said about their results, each code once. */
+  notices: Notice[];
 }
 
 export interface ModelOptions {
@@ -66,10 +68,24 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
   const edgeTypes: string[] = [];
   const seenTypes = new Set<string>();
   let truncated = false;
+  const notices: Notice[] = [];
 
   for (const raw of sets) {
     const set = normalizeGraph(raw);
     truncated ||= set.truncated !== undefined;
+    for (const notice of set.notices ?? []) {
+      if (!notices.some((n) => n.code === notice.code)) notices.push(notice);
+    }
+    // A cut without its own notice still says so, by the reason it names.
+    const reason = set.truncated?.reason;
+    if (reason !== undefined && !notices.some((n) => n.code === reason)) {
+      notices.push({
+        severity: "warning",
+        code: reason,
+        params: { limit: String(set.truncated?.limit ?? "") },
+        text: `The graph was cut at a limit of ${set.truncated?.limit ?? ""}.`,
+      });
+    }
     for (const label of set.schema.labels) {
       if (!seenLabels.has(label)) {
         seenLabels.add(label);
@@ -172,6 +188,7 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
     cut: kept.length < ids.length,
     dangling,
     truncated,
+    notices,
   };
 }
 

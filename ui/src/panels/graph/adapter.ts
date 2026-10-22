@@ -6,16 +6,20 @@ import type { GraphSet, Node } from "../../api/generated/shapes";
  * generated `GraphSet` type, in one place. The server side (Neo4j, Memgraph, TigerGraph) is built
  * in parallel; when its contract settles, this is the module to adjust.
  *
- * Assumptions:
+ * The contract (docs/api/datasources.md, "Graph results", on m3/graph-sources):
  * - Node and edge ids are unique strings within one result and stable across queries of the same
- *   source, so an expanded neighbourhood merges into the graph by id.
- * - Property values arrive as JSON. Values JSON has no type for use the documents' typed form
- *   `{"$type": "date" | "int64" | ..., "value": string}`; temporal values are either that, an ISO
- *   8601 string, or a number of Unix milliseconds (seconds when below 10^11, as SQLite times).
- * - Cypher sources take the query form `{"cypher": "..."}`; dashboard variables reach Cypher as
- *   parameters (`$name`), never as text.
- * - The schema route answers `{"kind": "graph", "labels", "edgeTypes", "propertyKeys"}` for graph
- *   sources, the same fields as `GraphSchema`.
+ *   source, so an expanded neighbourhood merges into the graph by id. Neo4j and Memgraph send the
+ *   element id (Bolt 4.4: the internal number as text); TigerGraph `Type:id`, split at the first
+ *   colon, and edges `Type:<from>-><to>`.
+ * - Property values arrive as JSON; values JSON has no type for come as
+ *   `{"$type": "int64" | "date" | "dateTime" | "localDateTime" | ..., "value": string}`.
+ *   Numbers that are times are read as Unix milliseconds (seconds when below 10^11).
+ * - Query forms: Cypher `{"cypher": "..."}`; TigerGraph `{"gsql": "..."}` or
+ *   `{"installed": "name", "params"?: {...}}`. Dashboard variables reach the source as parameters
+ *   (`$name`), never as text.
+ * - The schema route answers `{"kind": "graph", "labels", "edgeTypes", "propertyKeys", "queries"?}`
+ *   with property keys as one list for the whole source.
+ * - `truncated.reason` and `notices` say which limit cut a graph (`graph.node_limit`, ...).
  */
 
 /** Data source kinds whose results are graphs. */
@@ -52,6 +56,7 @@ export function propertyText(value: unknown): string {
  * properties, else its first label and id.
  */
 export function nodeCaption(node: Node, property: string): string {
+  const fallback = typedId(node);
   if (property !== "") {
     const text = propertyText(node.properties[property]);
     if (text !== "") {
@@ -64,11 +69,26 @@ export function nodeCaption(node: Node, property: string): string {
       return text;
     }
   }
+  return fallback;
+}
+
+/**
+ * A node's id as people read it: TigerGraph ids are `Type:id`, where the type is already the
+ * node's label, so the part after the first colon is enough.
+ */
+export function typedId(node: Node): string {
+  const colon = node.id.indexOf(":");
+  if (colon > 0 && node.labels.includes(node.id.slice(0, colon))) {
+    return node.id.slice(colon + 1);
+  }
   return node.id;
 }
 
 /** Above this a number is milliseconds, below it seconds (10^11 s is the year 5138). */
 const MS_THRESHOLD = 1e11;
+
+/** Typed values that are points in time (`localDateTime` is read as UTC). */
+const TEMPORAL_TYPES = new Set(["date", "dateTime", "localDateTime"]);
 
 /** A temporal property as Unix milliseconds, or null when it is not one. */
 export function readTime(value: unknown): number | null {
@@ -86,7 +106,12 @@ export function readTime(value: unknown): number | null {
     const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
   }
-  if (isRecord(value) && value.$type === "date" && typeof value.value === "string") {
+  if (
+    isRecord(value) &&
+    typeof value.$type === "string" &&
+    TEMPORAL_TYPES.has(value.$type) &&
+    typeof value.value === "string"
+  ) {
     return readTime(value.value);
   }
   return null;
@@ -118,6 +143,7 @@ export function normalizeGraph(value: GraphSet): GraphSet {
       propertyKeys: value.schema?.propertyKeys ?? {},
     },
     ...(value.truncated === undefined ? {} : { truncated: value.truncated }),
+    ...(Array.isArray(value.notices) ? { notices: value.notices } : {}),
   };
 }
 
@@ -136,10 +162,12 @@ export interface ExpandQuery {
  * them, at most `limit` of them. The node id goes in as a parameter; the limit is a number this
  * module produces, so it is safe as text.
  *
- * - Neo4j identifies nodes by `elementId(n)` (a string).
+ * - Neo4j 5 identifies nodes by `elementId(n)`; Bolt 4.4 sends the internal number, which
+ *   `id(n)` matches.
  * - Memgraph by `id(n)`, an integer, sent as text and converted in the query.
- * - TigerGraph has no generic expand yet: a GSQL query for it needs the vertex type, and the
- *   server's result mapping for it is still being built. Explorer mode is off there.
+ * - TigerGraph has no generic expand: a GSQL query needs the vertex and edge types spelled out
+ *   (`Type:id` gives the vertex type, but not the edge types to follow), and interpreted queries
+ *   need rights a `queryreader` user may lack. Explorer mode is off there for now.
  */
 export function expandQuery(kind: string, nodeId: string, limit: number): ExpandQuery | null {
   const n = Math.max(1, Math.min(MAX_EXPAND_LIMIT, Math.floor(limit)));
@@ -148,7 +176,9 @@ export function expandQuery(kind: string, nodeId: string, limit: number): Expand
     case "neo4j":
       return {
         query: {
-          cypher: `MATCH (n)-[r]-(m) WHERE elementId(n) = $${EXPAND_NODE_VARIABLE} RETURN n, r, m LIMIT ${n}`,
+          cypher: /^\d+$/.test(nodeId)
+            ? `MATCH (n)-[r]-(m) WHERE id(n) = toInteger($${EXPAND_NODE_VARIABLE}) RETURN n, r, m LIMIT ${n}`
+            : `MATCH (n)-[r]-(m) WHERE elementId(n) = $${EXPAND_NODE_VARIABLE} RETURN n, r, m LIMIT ${n}`,
         },
         variables,
       };

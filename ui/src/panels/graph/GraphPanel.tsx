@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import type { GraphSet } from "../../api/generated/shapes";
+import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { usePanelHost } from "../host";
@@ -18,12 +19,13 @@ import { EmptyPanel } from "../shared";
 import type { PanelGraph, PanelProps } from "../types";
 import { propertyText } from "./adapter";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
+import type { Direction } from "./drawing";
 import { GraphTable } from "./GraphTable";
 import type { LayoutMode } from "./layoutProtocol";
 import { COMMUNITY_LIMIT, type Communities, communities, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, GRAPH_COLORS, nodeSizes } from "./model";
 import { AUTO_CLUSTER_NODES, type GraphPanelOptions } from "./options";
-import type { CanvasHandle, Direction } from "./SigmaCanvas";
+import type { CanvasHandle } from "./SigmaCanvas";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
 import { useGraphLayout } from "./useGraphLayout";
 import {
@@ -337,7 +339,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       }),
     );
   }
-  if (model.truncated) notices.push(t("graph.notice.truncated"));
+  for (const notice of model.notices) notices.push(noticeText(t, notice));
+  if (model.truncated && model.notices.length === 0) notices.push(t("graph.notice.truncated"));
   if (model.dangling > 0)
     notices.push(t("graph.notice.dangling", { count: number.format(model.dangling) }));
 

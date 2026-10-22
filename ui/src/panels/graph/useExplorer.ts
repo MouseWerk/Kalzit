@@ -15,7 +15,11 @@ export interface ExplorerStep {
   graph: GraphSet;
 }
 
-export type ExplorerUnavailable = "kind" | "right" | "source";
+/**
+ * Why nodes cannot be expanded: the source kind has no expand query, the caller may not query
+ * the source (or cannot see it at all), or the list of sources is still loading.
+ */
+export type ExplorerUnavailable = "kind" | "right" | "loading";
 
 export interface Explorer {
   steps: readonly ExplorerStep[];
@@ -50,9 +54,10 @@ export function useExplorer(
 
   const datasourceId = graphs[0]?.datasourceId ?? "";
   const source = sources.data?.find((s) => s.id === datasourceId);
-  const unavailable: ExplorerUnavailable | null =
-    source === undefined
-      ? "source"
+  const unavailable: ExplorerUnavailable | null = sources.isPending
+    ? "loading"
+    : source === undefined
+      ? "right"
       : !sourceAccess(source.access, permissions).query
         ? "right"
         : expandQuery(source.kind, "", 1) === null

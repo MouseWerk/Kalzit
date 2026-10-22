@@ -11,6 +11,7 @@ import {
 } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
 import {
+  CYPHER_MACROS,
   cypherCompletions,
   PROMQL_MACROS,
   promqlCompletions,
@@ -131,6 +132,7 @@ function CypherQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         {t("datasources.editor.shortcuts")} {t("datasources.editor.cypherHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
+      <MacroHelp macros={CYPHER_MACROS} lead="datasources.editor.cypherMacrosLead" />
     </div>
   );
 }

@@ -160,14 +160,15 @@ export interface PromSchema {
 }
 
 /**
- * Graph sources (Neo4j, Memgraph): labels, edge types and property keys per label, the fields of
- * `GraphSchema` (an assumption of the graph UI, see panels/graph/adapter.ts).
+ * Graph sources (Neo4j, Memgraph, TigerGraph): labels, edge types and the property keys of the
+ * whole source; TigerGraph also its installed and approved queries.
  */
 export interface GraphSourceSchema {
   kind: "graph";
   labels: string[];
   edgeTypes: string[];
-  propertyKeys: Record<string, string[]>;
+  propertyKeys: string[];
+  queries: string[];
 }
 
 export type SourceSchema = SqlSchema | PromSchema | GraphSourceSchema;
@@ -404,12 +405,12 @@ export async function fetchSchema(
     return { kind: "metrics", metrics: strings(value.metrics), labels: strings(value.labels) };
   }
   if (isRecord(value) && value.kind === "graph") {
-    const keys = isRecord(value.propertyKeys) ? value.propertyKeys : {};
     return {
       kind: "graph",
       labels: strings(value.labels),
       edgeTypes: strings(value.edgeTypes),
-      propertyKeys: Object.fromEntries(Object.entries(keys).map(([k, v]) => [k, strings(v)])),
+      propertyKeys: strings(value.propertyKeys),
+      queries: strings(value.queries),
     };
   }
   if (isRecord(value) && value.kind === "tables" && Array.isArray(value.tables)) {

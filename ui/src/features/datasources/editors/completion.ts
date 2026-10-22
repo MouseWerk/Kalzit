@@ -224,22 +224,18 @@ export function promqlCompletions(
   return found.length === 0 ? null : { from, to: cursor, options: found };
 }
 
-/** Labels bound to variables in node patterns, so `c.` completes the keys of `(c:Customer)`. */
-function boundLabels(text: string): Map<string, string[]> {
-  const bound = new Map<string, string[]>();
-  for (const match of text.matchAll(/\(\s*(\w+)\s*((?::\s*\w+\s*)+)/g)) {
-    const labels = [...(match[2] ?? "").matchAll(/:\s*(\w+)/g)].map((m) => m[1] ?? "");
-    bound.set(match[1] ?? "", [...(bound.get(match[1] ?? "") ?? []), ...labels]);
-  }
-  return bound;
-}
+/** The Cypher macros of docs/api/datasources.md; the server binds them as parameters. */
+export const CYPHER_MACROS: { name: string; help: MessageKey }[] = [
+  { name: "$__timeFrom", help: "datasources.editor.macro.timeFromDateTime" },
+  { name: "$__timeTo", help: "datasources.editor.macro.timeToDateTime" },
+  { name: "$__timeFromMs", help: "datasources.editor.macro.timeFromMs" },
+  { name: "$__timeToMs", help: "datasources.editor.macro.timeToMs" },
+  { name: "$__interval_ms", help: "datasources.editor.macro.intervalMs" },
+];
 
-function propertyKeys(schema: GraphSourceSchema | undefined, labels?: string[]): Completion[] {
-  const lists =
-    labels === undefined || labels.length === 0
-      ? Object.values(schema?.propertyKeys ?? {})
-      : labels.map((label) => schema?.propertyKeys[label] ?? []);
-  return [...new Set(lists.flat())]
+/** The source's property keys; the schema lists them for the whole source, not per label. */
+function propertyKeys(schema: GraphSourceSchema | undefined): Completion[] {
+  return [...new Set(schema?.propertyKeys ?? [])]
     .sort()
     .map((key) => ({ label: key, kind: "property" as const }));
 }
@@ -247,8 +243,8 @@ function propertyKeys(schema: GraphSourceSchema | undefined, labels?: string[]):
 /**
  * Completions for Cypher from the graph schema: labels after a colon in a node pattern
  * (`(c:Cu`), edge types after a colon or a bar in an edge pattern (`[:BO`, `[:A|B`), property
- * keys after a variable and a dot (only the bound label's keys when the query names one) and
- * inside a pattern's braces, else keywords and functions.
+ * keys after a variable and a dot and inside a pattern's braces, macros after `$`, else keywords
+ * and functions.
  */
 export function cypherCompletions(
   text: string,
@@ -257,7 +253,7 @@ export function cypherCompletions(
   explicit = false,
 ): CompletionResult | null {
   const before = text.slice(0, cursor);
-  const word = /\w*$/.exec(before)?.[0] ?? "";
+  const word = /\$?\w*$/.exec(before)?.[0] ?? "";
   const from = cursor - word.length;
   const head = before.slice(0, from);
   let options: Completion[];
@@ -275,9 +271,10 @@ export function cypherCompletions(
     if (closed(openBrace, "}") && openBrace > Math.max(openParen, openBracket)) {
       return null;
     }
-  } else if (/\b(\w+)\.$/.test(head)) {
-    const variable = /\b(\w+)\.$/.exec(head)?.[1] ?? "";
-    options = propertyKeys(schema, boundLabels(text).get(variable));
+  } else if (word.startsWith("$")) {
+    options = CYPHER_MACROS.map((m) => ({ label: m.name, kind: "macro" as const }));
+  } else if (/\b\w+\.$/.test(head)) {
+    options = propertyKeys(schema);
   } else if (closed(openBrace, "}") && /[{,]\s*$/.test(head)) {
     options = propertyKeys(schema);
   } else {

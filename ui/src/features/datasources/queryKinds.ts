@@ -81,6 +81,13 @@ export function queryText(query: unknown): string {
     if (typeof query.cypher === "string") {
       return query.cypher;
     }
+    // TigerGraph: interpreted GSQL, or the name of an installed query.
+    if (typeof query.gsql === "string") {
+      return query.gsql;
+    }
+    if (typeof query.installed === "string") {
+      return query.installed;
+    }
   }
   return "";
 }
