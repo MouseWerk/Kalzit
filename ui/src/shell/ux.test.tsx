@@ -7,10 +7,10 @@ import { Toaster } from "../components/Toaster";
 import { emptyModel } from "../features/dashboards/model";
 import { addDashboard, addFolder } from "../features/dashboards/test/fakeDashboards";
 import { getLanguage, LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
+import { LOCAL_CHOICE_KEY } from "../lib/localChoice";
 import { setTimeZone } from "../lib/timeSettings";
 import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
-import { adoptedKey } from "../preferences/preferences";
-import { installFakeServer, TEST_USER } from "../test/fakeServer";
+import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { getTheme, THEME_STORAGE_KEY } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
@@ -337,53 +337,78 @@ describe("preferences", () => {
   });
 });
 
-describe("language and theme the browser already has", () => {
-  it("are kept and adopted once into the server's empty preferences", async () => {
+describe("language and theme chosen before signing in", () => {
+  it("become the account's preferences where it has none, once", async () => {
     const server = setup();
+    server.state.signedIn = false;
     server.state.preferences.language = null;
     server.state.preferences.defaults.language = "en";
-    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, "de");
-    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
-    renderApp("/");
+    const { user } = renderApp("/login");
+    await user.selectOptions(await screen.findByLabelText("Language"), "de");
+    await user.selectOptions(screen.getByLabelText("Darstellung"), "dark");
+    await user.click(screen.getByLabelText("E-Mail-Adresse"));
+    await user.paste(TEST_USER.email);
+    await user.click(screen.getByLabelText("Passwort"));
+    await user.paste(TEST_PASSWORD);
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(server.state.preferences.language).toBe("de"));
     expect(server.state.preferences.theme).toBe("dark");
     expect(getLanguage()).toBe("de");
-    expect(getTheme()).toBe("dark");
     const adoptions = server.calls.filter(
       (call) => call.method === "PATCH" && call.path === "/api/me/preferences",
     );
     expect(adoptions).toHaveLength(1);
+    expect(window.localStorage.getItem(LOCAL_CHOICE_KEY)).toBe("");
   });
 
-  it("are not adopted again once a preference was reset to the default", async () => {
+  it("are not what the browser applied for someone: the server's default applies", async () => {
     const server = setup();
     server.state.preferences.language = null;
-    server.state.preferences.defaults.language = "en";
-    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, "de");
-    window.localStorage.setItem(adoptedKey(TEST_USER.id), "true");
+    server.state.preferences.defaults.language = "de";
+    // Left by an earlier session, and the browser's own language list: neither is a choice.
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, "en");
     renderApp("/");
-    await screen.findByRole("navigation", { name: "Main navigation" });
-    await waitFor(() => expect(getLanguage()).toBe("en"));
+    expect(await screen.findByRole("navigation", { name: "Hauptnavigation" })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(server.calls.some((call) => call.method === "PATCH")).toBe(false);
+    expect(server.state.preferences.language).toBeNull();
   });
 
-  it("leave the server's default when the browser has none", async () => {
-    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
-    try {
-      const server = setup();
-      server.state.preferences.language = null;
-      server.state.preferences.defaults.language = "de";
-      renderApp("/");
-      expect(await screen.findByRole("navigation", { name: "Hauptnavigation" })).toBeTruthy();
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(server.calls.some((call) => call.method === "PATCH")).toBe(false);
-      expect(server.state.preferences.language).toBeNull();
-    } finally {
-      languages.mockRestore();
-    }
+  it("never pass from one user of a shared browser to the next", async () => {
+    const server = setup();
+    // A has German and the dark theme as preferences.
+    server.state.preferences.language = "de";
+    server.state.preferences.theme = "dark";
+    const { user } = renderApp("/");
+    await screen.findByRole("navigation", { name: "Hauptnavigation" });
+    expect(getTheme()).toBe("dark");
+    await user.click(screen.getByRole("button", { name: /Konto/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Abmelden" }));
+    await screen.findByLabelText("E-Mail-Adresse");
+
+    // B has no preferences of their own; the server's default is English and system.
+    server.state.user = { ...TEST_USER, id: "u2", email: "bob@example.com", name: "Bob" };
+    server.state.preferences = {
+      language: null,
+      theme: null,
+      timeZone: null,
+      weekStart: null,
+      startDashboard: null,
+      defaults: { language: "en", theme: "system" },
+    };
+    const before = server.calls.length;
+    await user.click(screen.getByLabelText("E-Mail-Adresse"));
+    await user.paste("bob@example.com");
+    await user.click(screen.getByLabelText("Passwort"));
+    await user.paste(TEST_PASSWORD);
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("navigation", { name: "Main navigation" })).toBeTruthy();
+    await waitFor(() => expect(getTheme()).toBe("system"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.calls.slice(before).some((call) => call.method === "PATCH")).toBe(false);
+    expect(server.state.preferences.language).toBeNull();
   });
 });
-
 describe("time zone", () => {
   it("re-renders the times already on screen when it changes", async () => {
     const server = setup();

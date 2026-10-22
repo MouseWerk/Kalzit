@@ -1,8 +1,8 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 import { setLanguage } from "./src/i18n/i18n";
-import { dismissToast } from "./src/lib/toasts";
 import { setTimeZone, setWeekStart } from "./src/lib/timeSettings";
+import { dismissToast } from "./src/lib/toasts";
 import { resetInputModality } from "./src/shell/inputModality";
 import { finishConsoleGuard, startConsoleGuard } from "./src/test/console";
 import { setTheme } from "./src/theme/theme";

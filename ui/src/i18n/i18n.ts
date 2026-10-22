@@ -31,25 +31,6 @@ export function detectLanguage(preferred: readonly string[]): Language {
   return FALLBACK_LANGUAGE;
 }
 
-/**
- * The language the browser already has: a choice stored in it, else the first supported one of
- * its own language list; null when it names none Kalzit has.
- */
-export function browserLanguage(): Language | null {
-  const stored = readPreference(LANGUAGE_STORAGE_KEY);
-  if (isLanguage(stored)) {
-    return stored;
-  }
-  const preferred = navigator.languages.length > 0 ? navigator.languages : [navigator.language];
-  for (const tag of preferred) {
-    const base = tag.toLowerCase().split("-")[0];
-    if (isLanguage(base)) {
-      return base;
-    }
-  }
-  return null;
-}
-
 function initialLanguage(): Language {
   const stored = readPreference(LANGUAGE_STORAGE_KEY);
   if (isLanguage(stored)) {

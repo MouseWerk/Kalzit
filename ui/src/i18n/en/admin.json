@@ -20,6 +20,8 @@
   "admin.common.deleteAsk": "Delete…",
   "admin.common.rename": "Rename…",
   "admin.common.showMore": "Show more",
+  "admin.common.undo": "Undo",
+  "admin.common.dismiss": "Dismiss",
   "admin.common.nameRequired": "Enter a name.",
   "admin.common.nameAndEmail": "{name} ({email})",
   "admin.role.owner": "Owner",

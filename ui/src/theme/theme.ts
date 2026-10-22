@@ -12,12 +12,6 @@ function isTheme(value: unknown): value is Theme {
   return (THEMES as readonly unknown[]).includes(value);
 }
 
-/** The theme stored in this browser, or null when it holds no choice. */
-export function storedTheme(): Theme | null {
-  const stored = readPreference(THEME_STORAGE_KEY);
-  return isTheme(stored) ? stored : null;
-}
-
 function readStoredTheme(): Theme {
   const stored = readPreference(THEME_STORAGE_KEY);
   return isTheme(stored) ? stored : "system";

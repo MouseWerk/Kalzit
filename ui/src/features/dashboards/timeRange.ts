@@ -67,11 +67,14 @@ function startOf(ms: number, unit: Unit, settings: TimeSettings): number {
     case "M":
       return fromWall({ ...w, ...midnight, day: 1 }, zone);
     case "w":
-      return fromWall({
-        ...w,
-        ...midnight,
-        day: w.day - ((weekdayOf(w) - firstDay + 7) % 7),
-      });
+      return fromWall(
+        {
+          ...w,
+          ...midnight,
+          day: w.day - ((weekdayOf(w) - firstDay + 7) % 7),
+        },
+        zone,
+      );
     case "d":
       return fromWall({ ...w, ...midnight }, zone);
     case "h":

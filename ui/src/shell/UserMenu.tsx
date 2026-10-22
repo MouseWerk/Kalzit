@@ -15,6 +15,7 @@ import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
 import { LANGUAGES, useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
+import { clearChoice } from "../lib/localChoice";
 import { showErrorToast } from "../lib/toasts";
 import { usePreferenceChange } from "../preferences/preferences";
 import { THEMES, useTheme } from "../theme/theme";
@@ -62,6 +63,8 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const signOut = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
+      // Nothing chosen in this session passes to whoever signs in next in this browser.
+      clearChoice();
       queryClient.clear();
       queryClient.setQueryData(meQuery.queryKey, null);
       await navigate({ to: "/login" });

@@ -1,15 +1,15 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { expectShape, isRecord, request } from "../api/client";
-import { browserLanguage, getLanguage, LANGUAGES, type Language, setLanguage } from "../i18n/i18n";
-import { readPreference, writePreference } from "../lib/storage";
+import { getLanguage, LANGUAGES, type Language, setLanguage } from "../i18n/i18n";
+import { choiceFor, claimChoice, clearChoice, type LocalChoice } from "../lib/localChoice";
 import { setTimeZone, setWeekStart, WEEK_STARTS, type WeekStart } from "../lib/timeSettings";
-import { getTheme, setTheme, storedTheme, THEMES, type Theme } from "../theme/theme";
+import { getTheme, setTheme, THEMES, type Theme } from "../theme/theme";
 
 /**
  * The signed-in user's preferences, stored on the server per user (`/api/me/preferences`,
- * docs/api/shell.md). Language and theme left unset follow what the browser already has, else the
- * server's default; time zone left unset is the browser's, week start Monday. Language and theme
+ * docs/api/shell.md). Language and theme left unset follow an explicit choice made on the sign-in
+ * page, else the server's default; time zone left unset is the browser's, week start Monday. Language and theme
  * also stay in the browser, so the next visit paints in them before the server answers.
  */
 
@@ -89,34 +89,17 @@ export const preferencesQuery = queryOptions({
 });
 
 /**
- * Language and theme the browser already has: a choice stored in it, or (language only) one its
- * own language list names. Null when it has neither; then the server's default applies.
+ * Applies what the preferences decide in the browser. Language and theme: the account's
+ * preference; where there is none, an explicit choice made in this browser before signing in
+ * (`choice`, until it is adopted), else the server's default (docs/api/shell.md).
  */
-function localLanguage(): Language | null {
-  return browserLanguage();
-}
-
-function localTheme(): Theme | null {
-  return storedTheme();
-}
-
-/**
- * Applies what the preferences decide in the browser. Language and theme: the stored preference;
- * where there is none, what the browser already has while it has not been adopted yet (see
- * `usePreferencesSync`), else the server's default (docs/api/shell.md).
- */
-export function applyPreferences(preferences: Preferences, keepLocal = false): void {
+export function applyPreferences(preferences: Preferences, choice: LocalChoice = {}): void {
   const language =
-    preferences.language ??
-    (keepLocal ? localLanguage() : null) ??
-    oneOf(LANGUAGES, preferences.defaults.language);
+    preferences.language ?? choice.language ?? oneOf(LANGUAGES, preferences.defaults.language);
   if (language !== null && language !== getLanguage()) {
     setLanguage(language);
   }
-  const theme =
-    preferences.theme ??
-    (keepLocal ? localTheme() : null) ??
-    oneOf(THEMES, preferences.defaults.theme);
+  const theme = preferences.theme ?? choice.theme ?? oneOf(THEMES, preferences.defaults.theme);
   if (theme !== null && theme !== getTheme()) {
     setTheme(theme);
   }
@@ -124,32 +107,26 @@ export function applyPreferences(preferences: Preferences, keepLocal = false): v
   setWeekStart(preferences.weekStart);
 }
 
-/** What the browser has that the server does not keep yet, as the patch that adopts it. */
-export function adoptionPatch(preferences: Preferences): PreferencesPatch | null {
+/** The explicit choice the server does not keep yet, as the patch that adopts it. */
+export function adoptionPatch(
+  preferences: Preferences,
+  choice: LocalChoice,
+): PreferencesPatch | null {
   const patch: PreferencesPatch = {};
-  const language = localLanguage();
-  if (preferences.language === null && language !== null) {
-    patch.language = language;
+  if (preferences.language === null && choice.language !== undefined) {
+    patch.language = choice.language;
   }
-  const theme = localTheme();
-  if (preferences.theme === null && theme !== null) {
-    patch.theme = theme;
+  if (preferences.theme === null && choice.theme !== undefined) {
+    patch.theme = choice.theme;
   }
   return Object.keys(patch).length === 0 ? null : patch;
 }
 
 /**
- * Remembers per browser and user that the browser's choices were adopted, so a preference the
- * user later resets to the default stays reset instead of being adopted again.
- */
-export function adoptedKey(userId: string): string {
-  return `kalzit.preferencesAdopted.${userId}`;
-}
-
-/**
- * Loads the signed-in user's preferences and applies them whenever they change. The first time a
- * user signs in in this browser, the language and theme it already has are saved as the user's
- * preferences where the server holds none, so they are not lost to the server's default.
+ * Loads the signed-in user's preferences and applies them whenever they change. A language or
+ * theme chosen on the sign-in page becomes the user's preference where the server holds none
+ * (one PATCH), so it is not lost to the server's default; values another user left in a shared
+ * browser are never taken over (`lib/localChoice.ts`).
  */
 export function usePreferencesSync(userId: string): void {
   const queryClient = useQueryClient();
@@ -158,23 +135,25 @@ export function usePreferencesSync(userId: string): void {
     if (query.data === undefined) {
       return;
     }
-    const adopted = readPreference(adoptedKey(userId)) === "true";
-    // Read before applying: applying stores the server's default in the browser, which is not a
-    // choice of the browser's own.
-    const patch = adopted ? null : adoptionPatch(query.data);
-    applyPreferences(query.data, !adopted);
-    if (adopted) {
+    const choice = choiceFor(userId);
+    applyPreferences(query.data, choice);
+    const patch = adoptionPatch(query.data, choice);
+    if (patch === null) {
+      // Nothing left to adopt: the choice is the account's now, or the account had its own.
+      clearChoice();
       return;
     }
-    // Marked first, so one adoption is sent even when the answer re-renders before it arrives.
-    writePreference(adoptedKey(userId), "true");
-    if (patch !== null) {
-      updatePreferences(patch).then(
-        (saved) => queryClient.setQueryData(preferencesQuery.queryKey, saved),
-        // Not saved: the browser keeps its choice, and the next page view tries again.
-        () => writePreference(adoptedKey(userId), "false"),
-      );
-    }
+    // Claimed first, so a re-render while the answer is on its way sends nothing twice and the
+    // choice never passes to another account.
+    claimChoice(userId);
+    updatePreferences(patch).then(
+      (saved) => {
+        clearChoice();
+        queryClient.setQueryData(preferencesQuery.queryKey, saved);
+      },
+      // Not saved: the choice stays this user's, and the next page view tries again.
+      () => undefined,
+    );
   }, [query.data, queryClient, userId]);
 }
 /**

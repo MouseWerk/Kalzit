@@ -116,15 +116,16 @@ browser knows the zones. Errors: `validation` with `field` `language`, `theme`, 
 **Language and theme in the browser.** The UI decides in this order:
 
 1. the user's preference, when the server holds one;
-2. otherwise what the browser already has: a choice stored in it, or (language only) the first
-   language of the browser's own list that Kalzit has;
-3. otherwise the server's default (`defaults`).
+2. otherwise an explicit choice made in this browser on the sign-in or setup page, before
+   signing in;
+3. otherwise the server's default (`defaults`), so `appearance.default_language` and
+   `appearance.default_theme` apply to everyone who has chosen nothing.
 
-The first time a user signs in in a browser, language and theme of step 2 are saved as the user's
-preferences where the server holds none (one `PATCH`), so they follow the user to other browsers
-and are not lost to the server's default. The browser remembers that it did this per user, so a
-preference the user later resets to the default stays reset there.
-
+What the browser merely applied (an earlier user's preferences, the browser's own language list)
+is never a choice. A choice of step 2 is kept apart from the applied values, belongs to the first
+account that signs in after it (or the one that made it), is saved as that account's preference
+where it has none (one `PATCH`) and is then forgotten; signing out forgets it as well. So on a
+shared browser one user's language or theme never becomes the next user's preference.
 **Time zone and week start** apply to every time the UI shows or works with: lists, tables,
 tooltips, chart axes, the time range of dashboards and Explore (`now/d`, `now/w` and typed times
 are resolved on the wall clock of the chosen zone, also across a daylight saving change), and the

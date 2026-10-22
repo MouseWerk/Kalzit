@@ -134,6 +134,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A fixed zone, so tests about time zones cannot pass by the runner's accident.
+    env:
+      TZ: UTC
     defaults:
       run:
         working-directory: ui
@@ -161,6 +164,11 @@ jobs:
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run typecheck
       - if: steps.has_ui.outputs.present == 'true'
+        run: npm test
+      - name: Tests in a zone with daylight saving time
+        if: steps.has_ui.outputs.present == 'true' && runner.os == 'Linux'
+        env:
+          TZ: America/New_York
         run: npm test
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run build
