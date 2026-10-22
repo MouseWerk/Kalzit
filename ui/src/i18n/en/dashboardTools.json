@@ -5,7 +5,7 @@
   "dashboardTools.rows.defaultTitle": "Row {n}",
   "dashboardTools.rows.untitled": "Untitled row",
   "dashboardTools.rows.empty": "No panels in this row yet. Pick the row in a panel’s editor to move the panel here.",
-  "dashboardTools.rows.panelCount": "{count} panels",
+  "dashboardTools.rows.panelCount": "Panels: {count}",
   "dashboardTools.rows.move": "Move row “{title}”",
   "dashboardTools.rows.moveHint": "Drag, or use the up and down arrow keys, to move the row with its panels.",
   "dashboardTools.rows.moved": "Row “{title}” is now at position {position} of {count}.",

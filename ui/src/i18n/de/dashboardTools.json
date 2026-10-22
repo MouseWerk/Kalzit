@@ -5,7 +5,7 @@
   "dashboardTools.rows.defaultTitle": "Zeile {n}",
   "dashboardTools.rows.untitled": "Zeile ohne Titel",
   "dashboardTools.rows.empty": "Noch keine Panels in dieser Zeile. Wähle die Zeile im Editor eines Panels, um es hierher zu verschieben.",
-  "dashboardTools.rows.panelCount": "{count} Panels",
+  "dashboardTools.rows.panelCount": "Panels: {count}",
   "dashboardTools.rows.move": "Zeile „{title}“ verschieben",
   "dashboardTools.rows.moveHint": "Ziehen oder mit den Pfeiltasten nach oben und unten die Zeile samt Panels verschieben.",
   "dashboardTools.rows.moved": "Zeile „{title}“ steht jetzt an Stelle {position} von {count}.",

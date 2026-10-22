@@ -222,7 +222,7 @@ export function PanelExtras({
         <p className="field__label">{t("dashboardTools.dataLinks.title")}</p>
         <p className="field__hint">{t("dashboardTools.dataLinks.hint")}</p>
         {links.map((link, index) => (
-          <div key={linkKeys[index]} className="panel-extras__pair">
+          <div key={linkKeys[index]} className="settings__item">
             <TextField
               label={t("dashboardTools.links.linkTitle")}
               value={link.title}

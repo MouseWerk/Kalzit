@@ -109,6 +109,7 @@
   /* Dashboard links */
 
   .dash-links__list {
+    padding: 0;
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1);
@@ -245,6 +246,7 @@
   }
 
   .tool-list {
+    padding: 0;
     display: grid;
     gap: var(--space-1);
     list-style: none;
@@ -267,6 +269,7 @@
   }
 
   .tool-cards {
+    padding: 0;
     display: grid;
     gap: var(--space-2);
     list-style: none;
@@ -341,7 +344,7 @@
   .panel-extras__pair {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(var(--size-label), 1fr));
-    align-items: end;
+    align-items: start;
     gap: var(--space-2);
   }
 
