@@ -9,6 +9,7 @@ import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
+import { PreferencesSection } from "../../../preferences/PreferencesSection";
 import { WhyCanI } from "../access/WhyCanI";
 import "../admin.css";
 import {
@@ -39,6 +40,7 @@ export function AccountPage() {
   return (
     <Page title={t("admin.account.title")} lead={t("admin.account.lead")}>
       <ProfileSection />
+      <PreferencesSection />
       <PasswordSection />
       <SessionsSection />
       <PermissionsSection />

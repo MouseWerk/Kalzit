@@ -285,7 +285,10 @@ async fn search_names_only_what_the_caller_may_open(t: TestApp) {
     // An editor reads data sources as well.
     let r = t.search("q=umsatz", &editor).await;
     let ds = hit(&r, "Umsatzdaten").expect("the editor finds the data source");
-    assert_eq!((&ds["kind"], &ds["datasourceKind"], &ds["id"]), (&json!("datasource"), &json!("sqlite"), &json!(source)));
+    assert_eq!(
+        (&ds["kind"], &ds["datasourceKind"], &ds["id"]),
+        (&json!("datasource"), &json!("sqlite"), &json!(source))
+    );
     assert!(hit(&r, "Umsatz Geheim").is_none(), "editors need a grant inside restricted folders too");
 
     // Owners and admins see restricted content, with the whole path.
@@ -358,7 +361,9 @@ async fn search_ranks_fuzzy_matches_and_pages(t: TestApp) {
     }
     assert_eq!(paged, all);
 
-    for (query, field) in [("kind=widget", "kind"), (&format!("q={}", "x".repeat(101)) as &str, "q"), ("cursor=zz", "cursor")] {
+    for (query, field) in
+        [("kind=widget", "kind"), (&format!("q={}", "x".repeat(101)) as &str, "q"), ("cursor=zz", "cursor")]
+    {
         let r = t.get(&format!("~/search?{query}"), &t.owner).await;
         assert_eq!((r.status, r.code(), r.field()), (StatusCode::UNPROCESSABLE_ENTITY, "validation", field), "{query}");
     }
@@ -544,7 +549,9 @@ async fn start_dashboards_must_be_readable(t: TestApp) {
 
     // Hidden, unknown and foreign dashboards are refused alike.
     let foreign_org = uuid::Uuid::now_v7().to_string();
-    for (org, id) in [(t.org.as_str(), locked.as_str()), (t.org.as_str(), "no-such"), (foreign_org.as_str(), open.as_str())] {
+    for (org, id) in
+        [(t.org.as_str(), locked.as_str()), (t.org.as_str(), "no-such"), (foreign_org.as_str(), open.as_str())]
+    {
         let r = t.patch("/me/preferences", start(org, id), &viewer).await;
         assert_eq!((r.status, r.field()), (StatusCode::UNPROCESSABLE_ENTITY, "startDashboard"), "{org} {id}");
         assert_eq!(r.body["error"]["message"], "startDashboard is not a dashboard you can open");

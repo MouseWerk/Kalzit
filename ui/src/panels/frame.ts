@@ -1,4 +1,5 @@
 import type { Field, FieldType, Frame } from "../api/generated/shapes";
+import { zoned, zoneKey } from "../preferences/preferences";
 
 /**
  * Reading frames (docs/ARCHITECTURE.md, result envelope): `time` is Unix ms, `int64` arrives as a
@@ -65,10 +66,15 @@ function numberFormat(language: string): Intl.NumberFormat {
 }
 
 export function dateTimeFormat(language: string): Intl.DateTimeFormat {
-  let format = dateFormats.get(language);
+  const key = `${language}|${zoneKey()}`;
+  let format = dateFormats.get(key);
   if (format === undefined) {
-    format = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
-    dateFormats.set(language, format);
+    format = new Intl.DateTimeFormat(language, {
+      dateStyle: "short",
+      timeStyle: "medium",
+      ...zoned(),
+    });
+    dateFormats.set(key, format);
   }
   return format;
 }

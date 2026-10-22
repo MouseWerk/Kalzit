@@ -13,9 +13,12 @@ import { logout, type Me, meQuery } from "../api/auth";
 import { isApiError } from "../api/client";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
-import { LANGUAGES, setLanguage, useI18n } from "../i18n/i18n";
+import { LANGUAGES, useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
-import { setTheme, THEMES, useTheme } from "../theme/theme";
+import { showErrorToast } from "../lib/toasts";
+import { usePreferenceChange } from "../preferences/preferences";
+import { THEMES, useTheme } from "../theme/theme";
+import { apiErrorText } from "./shellErrors";
 
 type FocusTarget = "first" | "last";
 
@@ -52,6 +55,10 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const themeLabelId = useId();
   const languageLabelId = useId();
 
+  // Theme and language are preferences of the account, so they follow the user to other browsers.
+  const change = usePreferenceChange({
+    onFailed: (error) => showErrorToast(apiErrorText(t, error)),
+  });
   const signOut = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
@@ -190,7 +197,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
                 <RadioItem
                   key={option}
                   checked={theme === option}
-                  onSelect={() => choose(() => setTheme(option))}
+                  onSelect={() => choose(() => change.mutate({ theme: option }))}
                 >
                   {t(`theme.${option}`)}
                 </RadioItem>
@@ -203,7 +210,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
                   key={option}
                   checked={language === option}
                   lang={option}
-                  onSelect={() => choose(() => setLanguage(option))}
+                  onSelect={() => choose(() => change.mutate({ language: option }))}
                 >
                   {t(`language.${option}`)}
                 </RadioItem>

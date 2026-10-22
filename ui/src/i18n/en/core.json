@@ -76,7 +76,5 @@
   "notFound.home": "Go to home",
   "home.title": "Home",
   "home.welcome": "Welcome, {name}",
-  "home.lead": "Your recent and favorite dashboards will appear here.",
-  "home.empty.title": "Nothing here yet",
-  "home.empty.text": "Data sources and dashboards are not available yet. Once they are, you connect a data source here and build your first dashboard on it."
+  "home.lead": "Your starred and recently opened dashboards, and what to do next."
 }

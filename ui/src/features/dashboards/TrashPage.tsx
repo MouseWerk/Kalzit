@@ -19,6 +19,7 @@ import {
   restoreFolder,
 } from "./api";
 import "./dashboards.css";
+import { zoned } from "../../preferences/preferences";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
@@ -88,7 +89,11 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
       await refresh();
     },
   });
-  const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
+  const format = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoned(),
+  });
 
   if (dashboards.isPending || (canFolders && (folders.isPending || liveFolders.isPending))) {
     return <p className="loading">{t("common.loading")}</p>;

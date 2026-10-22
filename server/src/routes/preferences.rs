@@ -1,6 +1,6 @@
 //! The signed-in user's personal preferences: language, theme, time zone, week start and start
 //! dashboard (docs/api/shell.md). A preference that is not set follows the server default
-//! (`appearance.*`) or, for time zone and week start, the browser and language.
+//! (`appearance.*`), the browser's time zone, or Monday as the first day of the week.
 
 use axum::extract::State;
 use axum::http::Method;
@@ -65,7 +65,7 @@ pub struct Preferences {
     theme: Option<String>,
     /// An IANA time zone (`Europe/Berlin`); `null`: the browser's.
     time_zone: Option<String>,
-    /// `monday`, `sunday` or `saturday`; `null`: as usual for the language.
+    /// `monday`, `sunday` or `saturday`; `null`: Monday (ISO 8601).
     week_start: Option<String>,
     /// Opens when the user enters Kalzit; `null` when unset, or when the dashboard is gone or no
     /// longer readable for them.
@@ -215,8 +215,9 @@ async fn update_preferences(
     if let Some(Some(zone)) = &patch.time_zone
         && !is_time_zone_name(zone)
     {
-        return Err(ApiError::validation("timeZone must be a time zone name such as Europe/Berlin")
-            .with_field("timeZone"));
+        return Err(
+            ApiError::validation("timeZone must be a time zone name such as Europe/Berlin").with_field("timeZone")
+        );
     }
     // Everything the answer needs besides the row is read before the transaction, so it never
     // waits for a second connection while holding the database. A dashboard the user cannot open

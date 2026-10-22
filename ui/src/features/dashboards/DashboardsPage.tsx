@@ -7,12 +7,14 @@ import {
 } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
+import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AccessButton } from "./accessIntegration";
@@ -29,6 +31,7 @@ import {
   updateFolder,
 } from "./api";
 import "./dashboards.css";
+import { zoned } from "../../preferences/preferences";
 import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
 import { emptyModel } from "./model";
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
@@ -64,12 +67,17 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   const searchId = useId();
   const folders = useQuery(foldersQuery(orgId));
   const [creating, setCreating] = useState<"dashboard" | "folder" | null>(null);
-  const [deletedFolder, setDeletedFolder] = useState<Folder | null>(null);
+  // A link with `create=dashboard` opens the dialog once; the parameter is dropped right away.
+  useEffect(() => {
+    if (search.create === "dashboard") {
+      setCreating("dashboard");
+      void navigate({ search: (prev) => ({ ...prev, create: undefined }), replace: true });
+    }
+  }, [search.create, navigate]);
   const queryClient = useQueryClient();
   const restore = useMutation({
     mutationFn: (id: string) => restoreFolder(orgId, id),
     onSuccess: async () => {
-      setDeletedFolder(null);
       // Restoring a folder brings its dashboards back too.
       await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
@@ -120,6 +128,20 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
         ) : null}
       </aside>
       <section className="browser__main" aria-labelledby={`${searchId}-title`}>
+        {folder === undefined ? null : (
+          <Breadcrumbs
+            crumbs={[
+              {
+                label: t("dashboards.folders.all"),
+                link: { to: "/dashboards", search: {} },
+              },
+              ...folderTrail(folders.data ?? [], folder.id).map((step) => ({
+                label: step.name,
+                link: { to: "/dashboards" as const, search: { folder: step.id } },
+              })),
+            ]}
+          />
+        )}
         <div className="browser__header">
           <h2 className="section-title" id={`${searchId}-title`}>
             {folder?.name ?? t("dashboards.folders.all")}
@@ -140,20 +162,6 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             </button>
           ) : null}
         </div>
-        {deletedFolder === null ? null : (
-          <div className="notice" role="status">
-            <Icon name="check" />
-            <span>{t("dashboards.folders.deleted", { name: deletedFolder.name })}</span>
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => restore.mutate(deletedFolder.id)}
-              disabled={restore.isPending}
-            >
-              {t("dashboards.trash.restore")}
-            </button>
-          </div>
-        )}
         <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
         {folder === undefined ? null : (
           <FolderActions
@@ -161,7 +169,10 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             folder={folder}
             folders={folders.data ?? []}
             onDeleted={(deleted) => {
-              setDeletedFolder(deleted);
+              showToast({
+                message: t("dashboards.folders.deleted", { name: deleted.name }),
+                undo: () => restore.mutate(deleted.id),
+              });
               void select(undefined);
             }}
           />
@@ -227,7 +238,11 @@ function DashboardList({
     // A new search keeps showing the previous results until its own arrive, without "Loading".
     placeholderData: keepPreviousData,
   });
-  const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
+  const dateFormat = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoned(),
+  });
 
   if (list.isPending) {
     return <p className="loading">{t("common.loading")}</p>;

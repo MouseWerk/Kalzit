@@ -436,6 +436,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
+| 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 
 ## M1 work streams
 

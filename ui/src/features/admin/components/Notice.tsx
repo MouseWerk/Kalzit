@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
+import { dismissToast, showToast } from "../../../lib/toasts";
 import "../admin.css";
 
 export interface NoticeContent {
@@ -11,49 +12,69 @@ export interface NoticeContent {
   error?: boolean;
 }
 
-// A notice for the next page, when a change ends with a navigation (a created role opens).
-let flash: NoticeContent | null = null;
-
-/** Shows `content` on the next page that uses `useNotice`. */
+/**
+ * Shows `content` after a change that ends with a navigation (a created role opens). Pages show
+ * their notices in the app's notification region (`Toaster`), which outlives the page.
+ */
 export function setFlash(content: NoticeContent): void {
-  flash = content;
-}
-
-// Read during the first render and cleared after it, so a render that runs twice (strict mode)
-// still sees it.
-function peekFlash(): NoticeContent | null {
-  return flash;
+  showToast(content);
 }
 
 /**
- * Changes apply at once; the page confirms each with a notice that offers to undo it, and reports
- * a failed change in the same place. The next change replaces the notice.
+ * Changes apply at once; each confirms itself with a notice that offers to undo it, and a failed
+ * change is reported the same way. The next change replaces the notice.
+ *
+ * Pages use the app's notification region. A dialog passes `inline`: it keeps the focus inside,
+ * so its notices are shown in the dialog itself, with `<Notice>`.
  */
-export function useNotice() {
-  const [notice, setNotice] = useState<NoticeContent | null>(peekFlash);
-  useEffect(() => {
-    flash = null;
-  }, []);
+export function useNotice(options: { inline?: boolean } = {}) {
+  const inline = options.inline === true;
+  const [notice, setNotice] = useState<NoticeContent | null>(null);
+  const shown = useRef<number | undefined>(undefined);
   return {
-    notice,
-    show: (content: NoticeContent) => setNotice(content),
-    showError: (message: string) => setNotice({ message, error: true }),
-    clear: () => setNotice(null),
+    notice: inline ? notice : null,
+    show: (content: NoticeContent) => {
+      if (inline) {
+        setNotice(content);
+      } else {
+        shown.current = showToast(content);
+      }
+    },
+    showError: (message: string) => {
+      if (inline) {
+        setNotice({ message, error: true });
+      } else {
+        shown.current = showToast({ message, error: true });
+      }
+    },
+    clear: () => {
+      if (inline) {
+        setNotice(null);
+      } else if (shown.current !== undefined) {
+        dismissToast(shown.current);
+      }
+    },
   };
 }
 
 /**
- * The live regions stay mounted while the page is shown, because screen readers only announce
- * changes inside a region that already existed.
+ * The inline notice of a dialog. The live regions stay mounted while the dialog is shown, because
+ * screen readers only announce changes inside a region that already existed. Pages pass the
+ * `notice` of a page-level `useNotice`, which is always null: their notices are toasts.
  */
 export function Notice({
   notice,
   onDismiss,
+  inline = false,
 }: {
   notice: NoticeContent | null;
   onDismiss: () => void;
+  inline?: boolean;
 }) {
   const { t } = useI18n();
+  if (!inline) {
+    return null;
+  }
   const body =
     notice === null ? null : (
       <div className={notice.error === true ? "notice notice--danger" : "notice"}>

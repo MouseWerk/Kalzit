@@ -223,12 +223,13 @@ async fn search(
     if needle.chars().any(char::is_control) {
         return Err(ApiError::validation("q contains control characters").with_field("q"));
     }
-    let only = match q.kind.as_deref() {
-        None => None,
-        Some(raw) => Some(HitKind::parse(raw).ok_or_else(|| {
-            ApiError::validation("kind must be dashboard, folder or datasource").with_field("kind")
-        })?),
-    };
+    let only =
+        match q.kind.as_deref() {
+            None => None,
+            Some(raw) => Some(HitKind::parse(raw).ok_or_else(|| {
+                ApiError::validation("kind must be dashboard, folder or datasource").with_field("kind")
+            })?),
+        };
     let after: Option<(i64, HitKind, String, String)> = decode_cursor(q.cursor.as_deref())?;
     let wants = |kind: HitKind| only.is_none_or(|k| k == kind);
 
@@ -392,13 +393,14 @@ async fn get_star(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<Json<StarState>> {
     readable(&state, &ctx, &id).await?;
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT created_at FROM dashboard_stars WHERE user_id = $1 AND org_id = $2 AND dashboard_id = $3")
-            .bind(&ctx.user.id)
-            .bind(&ctx.org_id)
-            .bind(&id)
-            .fetch_optional(&state.db)
-            .await?;
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT created_at FROM dashboard_stars WHERE user_id = $1 AND org_id = $2 AND dashboard_id = $3",
+    )
+    .bind(&ctx.user.id)
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?;
     Ok(Json(StarState { starred: row.is_some() }))
 }
 

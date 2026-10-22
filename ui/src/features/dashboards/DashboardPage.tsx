@@ -2,11 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { StarButton, useRecordView } from "../../shell/StarButton";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AccessButton } from "./accessIntegration";
 import {
@@ -16,6 +18,7 @@ import {
   dashboardQuery,
   deleteDashboard,
   fetchDashboard,
+  foldersQuery,
   restoreDashboard,
   saveDashboard,
 } from "./api";
@@ -79,6 +82,7 @@ function DashboardLoader({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const { dashboardId } = dashboardRoute.useParams();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
+  useRecordView(orgId, dashboardId);
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
   const picked = useRef(new Map<string, Record<string, string>>());
@@ -137,6 +141,11 @@ function DashboardView({
 }) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
+  // For the breadcrumbs; without folders:read the trail starts at the list.
+  const folders = useQuery({
+    ...foldersQuery(orgId),
+    enabled: permissions.has("folders:read"),
+  });
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const search = dashboardRoute.useSearch();
@@ -337,6 +346,16 @@ function DashboardView({
 
   return (
     <div className="dashboard">
+      <Breadcrumbs
+        crumbs={[
+          { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+          ...folderTrail(folders.data ?? [], dashboard.folderId).map((step) => ({
+            label: step.name,
+            link: { to: "/dashboards" as const, search: { folder: step.id } },
+          })),
+          { label: model.title === "" ? t("dashboards.untitled") : model.title },
+        ]}
+      />
       <div className="dashboard__bar">
         <h1 className="dashboard__title truncate" id={headingId}>
           {model.title === "" ? t("dashboards.untitled") : model.title}
@@ -367,6 +386,7 @@ function DashboardView({
           </select>
           {draft === null ? (
             <>
+              <StarButton orgId={orgId} dashboardId={dashboard.id} />
               {canEdit ? (
                 <button
                   type="button"

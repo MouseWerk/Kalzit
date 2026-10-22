@@ -3,7 +3,6 @@ import { getRouteApi, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
-import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
@@ -21,6 +20,7 @@ import {
 } from "./api";
 import { HealthResult } from "./DataSourceForm";
 import "./datasources.css";
+import { zoned } from "../../preferences/preferences";
 
 const listRoute = getRouteApi("/_app/data-sources");
 
@@ -72,8 +72,6 @@ function DataSourceList({
   const { t, language } = useI18n();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
-  const navigate = listRoute.useNavigate();
-  const { deleted } = listRoute.useSearch();
   const list = useInfiniteQuery({
     queryKey: [DATASOURCES_KEY, orgId, trash ? "trash" : "list"],
     queryFn: ({ pageParam, signal }) =>
@@ -86,9 +84,6 @@ function DataSourceList({
     mutationFn: (id: string) => restoreDatasource(orgId, id),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
-      if (deleted !== undefined) {
-        await navigate({ search: (prev) => ({ ...prev, deleted: undefined }), replace: true });
-      }
     },
   });
   const kindName = (kind: string) => kinds.data?.find((k) => k.kind === kind)?.name ?? kind;
@@ -96,7 +91,7 @@ function DataSourceList({
   const accessOf = (source: DatasourceSummary) => sourceAccess(source.access, permissions);
   // The trash lists what the caller may restore: offer it to those who may change a source.
   const canSeeTrash = canCreate || items.some((source) => accessOf(source).write);
-  const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
+  const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium", ...zoned() });
 
   const toolbar = trash ? (
     <div className="toolbar">
@@ -117,22 +112,6 @@ function DataSourceList({
     </div>
   ) : null;
 
-  const trashNotice =
-    deleted === undefined || trash ? null : (
-      <div className="notice ds-trash-notice" role="status">
-        <Icon name="check" />
-        <span>{t("datasources.deleted")}</span>
-        <button
-          type="button"
-          className="button button--secondary"
-          onClick={() => restore.mutate(deleted)}
-          disabled={restore.isPending}
-        >
-          {t("datasources.restore")}
-        </button>
-      </div>
-    );
-
   if (list.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
   }
@@ -142,7 +121,6 @@ function DataSourceList({
   if (items.length === 0) {
     return (
       <>
-        {trashNotice}
         {toolbar}
         {trash ? (
           <EmptyState icon="dataSources" title={t("datasources.trash.empty")}>
@@ -158,7 +136,6 @@ function DataSourceList({
   }
   return (
     <div className="ds-list">
-      {trashNotice}
       <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
       {toolbar}
       <table className="data-table">

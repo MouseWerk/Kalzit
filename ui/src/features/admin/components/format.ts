@@ -1,10 +1,13 @@
 import type { Language } from "../../../i18n/i18n";
+import { zoned } from "../../../preferences/preferences";
 
 /** A point in time (Unix milliseconds) as date and time in the user's language. */
 export function formatDateTime(ms: number, language: Language): string {
-  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(ms),
-  );
+  return new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoned(),
+  }).format(new Date(ms));
 }
 
 /** A setting value or audit summary as compact text. */

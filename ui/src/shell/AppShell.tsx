@@ -1,13 +1,19 @@
 import { getRouteApi, Link, Outlet } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
+import { Toaster } from "../components/Toaster";
 import { NAV_ITEMS } from "../features/nav";
 import { useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
+import { usePreferencesSync } from "../preferences/preferences";
+import { markEntered } from "../preferences/startDashboard";
+import { CommandPalette } from "./CommandPalette";
 import { trackInputModality } from "./inputModality";
 import { NavEntry } from "./NavEntry";
+import { setOverlay, useOverlay } from "./overlay";
 import { RailTooltip } from "./RailTooltip";
+import { isHelpShortcut, isPaletteShortcut, paletteShortcut, ShortcutsHelp } from "./ShortcutsHelp";
 import {
   isToggleShortcut,
   isTypingTarget,
@@ -17,6 +23,7 @@ import {
   writeCollapsed,
 } from "./sidebarState";
 import { UserMenu } from "./UserMenu";
+import "./shellUx.css";
 
 const appRoute = getRouteApi("/_app");
 
@@ -46,6 +53,17 @@ export function AppShell() {
   // A flyout opened from the keyboard is a layer for Escape, but not a dialog: F6 and Ctrl+B
   // still work while it is open.
   const openFlyouts = useRef(0);
+  const overlay = useOverlay();
+  // Signing out leaves the shell; nothing of it stays open for the next session.
+  useEffect(() => {
+    markEntered(true);
+    return () => {
+      setOverlay(null);
+      markEntered(false);
+    };
+  }, []);
+  const palette = paletteShortcut();
+  usePreferencesSync();
 
   function onFlyoutLayerChange(open: boolean) {
     openFlyouts.current += open ? 1 : -1;
@@ -62,6 +80,24 @@ export function AppShell() {
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    // The palette opens from anywhere, also from a text field; a second Ctrl+K closes it. It does
+    // not open over a dialog, which keeps the focus to itself.
+    if (isPaletteShortcut(event)) {
+      if (event.defaultPrevented || (overlay === null && blockingLayers())) {
+        return;
+      }
+      event.preventDefault();
+      setOverlay(overlay === "palette" ? null : "palette");
+      return;
+    }
+    if (isHelpShortcut(event)) {
+      if (event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
+        return;
+      }
+      event.preventDefault();
+      setOverlay("shortcuts");
+      return;
+    }
     if (isToggleShortcut(event)) {
       if (!wide || event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
         return;
@@ -136,6 +172,19 @@ export function AppShell() {
             <Icon name="sidebar" />
           </button>
         </div>
+        <button
+          type="button"
+          className="shell__search"
+          aria-keyshortcuts={palette.aria}
+          title={rail ? t("shell.palette.open", { shortcut: palette.label }) : undefined}
+          onClick={() => setOverlay("palette")}
+        >
+          <Icon name="explore" />
+          <span className="shell__search-label">{t("shell.palette.button")}</span>
+          <span className="shell__search-key" aria-hidden="true">
+            <kbd className="kbd">{palette.label}</kbd>
+          </span>
+        </button>
         <nav ref={navRef} className="shell__nav" aria-label={t("nav.label")}>
           <ul className="shell__nav-list">
             {items.map((item) =>
@@ -170,6 +219,14 @@ export function AppShell() {
           <Outlet />
         </div>
       </main>
+      <Toaster />
+      {overlay === "palette" ? (
+        <CommandPalette
+          onClose={() => setOverlay(null)}
+          onShowShortcuts={() => setOverlay("shortcuts")}
+        />
+      ) : null}
+      {overlay === "shortcuts" ? <ShortcutsHelp onClose={() => setOverlay(null)} /> : null}
     </div>
   );
 }

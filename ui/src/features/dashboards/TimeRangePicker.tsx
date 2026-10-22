@@ -11,6 +11,7 @@ import {
   toStoredAbsolute,
 } from "./timeRange";
 import "./dashboards.css";
+import { zoned } from "../../preferences/preferences";
 import { Dialog } from "./ui/Dialog";
 
 const PRESET_LABELS: Record<string, MessageKey> = {
@@ -44,7 +45,11 @@ function endLabel(text: string, language: string): string {
   const time = resolveTime(text, Date.now());
   return time === null
     ? text
-    : new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" }).format(time);
+    : new Intl.DateTimeFormat(language, {
+        dateStyle: "short",
+        timeStyle: "short",
+        ...zoned(),
+      }).format(time);
 }
 
 export function rangeLabel(t: Translate, language: string, range: TextRange): string {
@@ -122,7 +127,11 @@ function RangeDialog({
   const [submitted, setSubmitted] = useState(false);
   const current = presetOf(value);
   const resolved = resolveRange({ from: normalize(from), to: normalize(to) }, Date.now());
-  const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "medium" });
+  const format = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    ...zoned(),
+  });
   const problem = resolved.ok ? undefined : t(`dashboards.time.error.${resolved.error}`);
 
   return (

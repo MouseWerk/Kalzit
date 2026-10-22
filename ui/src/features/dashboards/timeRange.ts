@@ -1,4 +1,5 @@
 import type { TimeRange } from "../../api/generated/shapes";
+import { weekStartDay } from "../../preferences/preferences";
 
 /**
  * Time ranges as dashboards store them: text such as "now-6h", "now-1d/d" or an ISO time, so a
@@ -50,7 +51,7 @@ function add(date: Date, amount: number, unit: Unit): void {
   }
 }
 
-/** Start of the unit in local time; weeks start on Monday (ISO 8601). */
+/** Start of the unit in local time; weeks start on the user's first day (Monday unless chosen). */
 function startOf(date: Date, unit: Unit): void {
   switch (unit) {
     case "y":
@@ -62,7 +63,7 @@ function startOf(date: Date, unit: Unit): void {
       date.setHours(0, 0, 0, 0);
       break;
     case "w":
-      date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+      date.setDate(date.getDate() - ((date.getDay() - weekStartDay() + 7) % 7));
       date.setHours(0, 0, 0, 0);
       break;
     case "d":

@@ -76,7 +76,5 @@
   "notFound.home": "Zur Startseite",
   "home.title": "Start",
   "home.welcome": "Willkommen, {name}",
-  "home.lead": "Hier erscheinen deine zuletzt genutzten und favorisierten Dashboards.",
-  "home.empty.title": "Noch nichts da",
-  "home.empty.text": "Datenquellen und Dashboards sind noch nicht verfügbar. Sobald es so weit ist, verbindest du hier eine Datenquelle und baust darauf dein erstes Dashboard."
+  "home.lead": "Deine markierten und zuletzt geöffneten Dashboards und was du als Nächstes tun kannst."
 }

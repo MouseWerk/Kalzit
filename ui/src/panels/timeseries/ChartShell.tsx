@@ -12,6 +12,7 @@ import { useEscapeLayer } from "../../lib/layers";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
 import "../panels.css";
+import { zoned } from "../../preferences/preferences";
 
 export interface TimeSeriesChartProps {
   series: readonly Series[];
@@ -90,7 +91,7 @@ export function ChartShell({
     cursorTime === null || !byKeyboard
       ? ""
       : [
-          new Date(cursorTime).toLocaleString(language),
+          new Date(cursorTime).toLocaleString(language, zoned()),
           ...readout.map(
             (row) =>
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : valueText(row.value)}`,
@@ -165,7 +166,9 @@ export function ChartShell({
         {children(cursorX)}
         {cursorTime === null ? null : (
           <div className="ts__tooltip" ref={tooltipRef} aria-hidden="true">
-            <div className="ts__tooltip-time">{new Date(cursorTime).toLocaleString(language)}</div>
+            <div className="ts__tooltip-time">
+              {new Date(cursorTime).toLocaleString(language, zoned())}
+            </div>
             {readout.map((row) => (
               <div key={row.index} className="ts__tooltip-row">
                 <span className={`ts__swatch series-${(row.index % SERIES_COLORS) + 1}`} />

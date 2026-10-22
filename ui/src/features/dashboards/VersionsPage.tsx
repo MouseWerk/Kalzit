@@ -16,6 +16,7 @@ import {
   restoreVersion,
 } from "./api";
 import "./dashboards.css";
+import { zoned } from "../../preferences/preferences";
 import { type Change, diffModels } from "./diff";
 import type { DashboardModel } from "./model";
 import { changeText } from "./SaveDialogs";
@@ -58,7 +59,11 @@ function VersionList({ orgId }: { orgId: string }) {
       await navigate({ to: "/dashboards/$dashboardId", params: { dashboardId }, search: {} });
     },
   });
-  const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" });
+  const format = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoned(),
+  });
   const canRestore =
     (dashboard.data?.access?.write ?? permissions.has("dashboards:write")) &&
     dashboard.data?.deletedAt === null;
