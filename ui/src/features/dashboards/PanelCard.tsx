@@ -314,7 +314,9 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
         )
       ) : (
         <div className="panel-content__viz">
-          <PanelErrorBoundary resetKey={outcomes}>
+          <PanelErrorBoundary
+            resetKeys={[outcomes, panel.type, JSON.stringify(panel.options ?? null)]}
+          >
             <Panel
               frames={frames}
               graphs={graphs}

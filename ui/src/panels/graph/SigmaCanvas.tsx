@@ -38,6 +38,11 @@ export interface SigmaCanvasProps {
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
   reducedMotion: boolean;
+  /**
+   * Where the camera is kept between renderers. It belongs to the panel, not to the canvas: a
+   * view with other nodes mounts a new canvas, and the zoom and centre must survive that.
+   */
+  camera: { current: CameraState | null };
   /** A node was clicked (or the background, with null). */
   onPick: (node: number | null) => void;
   /** Shown instead of the renderer's own hint when a gesture needs a modifier key. */
@@ -140,7 +145,6 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const graphRef = useRef<Graph | null>(null);
-  const cameraRef = useRef<CameraState | null>(null);
   const shownVisibility = useRef<Visibility | null>(null);
   // The reducers read the newest props from here; changing them only needs a refresh.
   const live = useRef<LiveProps>({ props, ratioBucket: 0 });
@@ -165,6 +169,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
 
   // One renderer per view, created with its graph (handover.ts says why); the camera stays
   // where it was, so loading neighbours or opening a group does not jump.
+  const camera = props.camera;
   useEffect(() => {
     const host = hostRef.current;
     if (host === null || !sized) {
@@ -174,20 +179,20 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       createRenderer(graph, host, live),
     );
     const renderer = handover.renderer;
-    if (cameraRef.current !== null) {
-      renderer.getCamera().setState(cameraRef.current);
+    if (camera.current !== null) {
+      renderer.getCamera().setState(camera.current);
     }
     sigmaRef.current = renderer;
     graphRef.current = handover.graph;
     shownVisibility.current = null;
     return () => {
       handover.cancel();
-      cameraRef.current = renderer.getCamera().getState();
+      camera.current = renderer.getCamera().getState();
       renderer.kill();
       sigmaRef.current = null;
       graphRef.current = null;
     };
-  }, [view, sized]);
+  }, [view, sized, camera]);
 
   useEffect(() => {
     sigmaRef.current?.setSettings(motionSettings(reducedMotion));

@@ -17,7 +17,7 @@ describe("a panel that fails while drawing", () => {
     const view = render(
       <div>
         <p>other panel</p>
-        <PanelErrorBoundary resetKey={1}>
+        <PanelErrorBoundary resetKeys={[1]}>
           <Failing fail />
         </PanelErrorBoundary>
       </div>,
@@ -29,7 +29,7 @@ describe("a panel that fails while drawing", () => {
     view.rerender(
       <div>
         <p>other panel</p>
-        <PanelErrorBoundary resetKey={2}>
+        <PanelErrorBoundary resetKeys={[2]}>
           <Failing fail={false} />
         </PanelErrorBoundary>
       </div>,

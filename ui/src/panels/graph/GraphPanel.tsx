@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { CameraState } from "sigma/types";
 import type { GraphSet } from "../../api/generated/shapes";
 import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
@@ -169,6 +170,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const hintId = useId();
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<CanvasHandle>(null);
+  // The camera outlives the canvas: a view with other nodes (a loaded neighbourhood, an opened
+  // group) draws in a new one, and the zoom and centre stay where the user left them.
+  const camera = useRef<CameraState | null>(null);
   const number = new Intl.NumberFormat(language);
   const [display, setDisplay] = useState<"graph" | "table">(DRAWABLE ? "graph" : "table");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -500,6 +504,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   neighbours={neighbours}
                   onPick={pick}
                   onGestureHint={setGestureHint}
+                  camera={camera}
                 />
               </Suspense>
             )}
@@ -660,6 +665,7 @@ interface DrawnGraphProps {
   neighbours: ReadonlySet<number>;
   onPick: (node: number | null) => void;
   onGestureHint: (gesture: "wheel" | "touch") => void;
+  camera: { current: CameraState | null };
   ref: Ref<CanvasHandle>;
 }
 

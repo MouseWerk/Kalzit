@@ -14,29 +14,35 @@ function PanelFailed() {
 }
 
 interface Props {
-  /** A new value (other data, another panel type) tries drawing again. */
-  resetKey: unknown;
+  /**
+   * Drawing is tried again when any of these changes (compared one by one): the data, the
+   * panel type, its options.
+   */
+  resetKeys: readonly unknown[];
   children: ReactNode;
 }
 
 interface State {
   failed: boolean;
-  key: unknown;
+  keys: readonly unknown[];
 }
+
+const sameKeys = (a: readonly unknown[], b: readonly unknown[]) =>
+  a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
 
 /**
  * Keeps a panel that fails while drawing (a renderer that cannot start, odd data) inside its own
  * card: the panel says so, and the rest of the dashboard or Explore stays as it is.
  */
 export class PanelErrorBoundary extends Component<Props, State> {
-  override state: State = { failed: false, key: this.props.resetKey };
+  override state: State = { failed: false, keys: this.props.resetKeys };
 
   static getDerivedStateFromError(): Partial<State> {
     return { failed: true };
   }
 
   static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
-    return props.resetKey === state.key ? null : { failed: false, key: props.resetKey };
+    return sameKeys(props.resetKeys, state.keys) ? null : { failed: false, keys: props.resetKeys };
   }
 
   override render(): ReactNode {

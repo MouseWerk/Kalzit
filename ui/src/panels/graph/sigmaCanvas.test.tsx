@@ -1,11 +1,15 @@
+import { act, render } from "@testing-library/react";
 import Graph from "graphology";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createRef } from "react";
+import type { CameraState } from "sigma/types";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { installWebGLStub } from "../../test/webglStub";
 import { EDGE_CHUNK, handOver } from "./handover";
 import { seedPositions } from "./layoutEngine";
 import { buildGraphModel, edgeWidths, nodeSizes } from "./model";
-import { allVisible, buildView, labelRanks } from "./view";
+import type { CanvasHandle } from "./SigmaCanvas";
+import { allVisible, buildView, type GraphView, labelRanks } from "./view";
 
 /**
  * The real renderer (Sigma 4 with graphology) under a WebGL stand-in: what it does with edges
@@ -16,12 +20,13 @@ import { allVisible, buildView, labelRanks } from "./view";
 let restore: () => void;
 let SigmaClass: typeof import("sigma").default;
 let createRenderer: typeof import("./SigmaCanvas").createRenderer;
+let SigmaCanvas: typeof import("./SigmaCanvas").SigmaCanvas;
 
 beforeAll(async () => {
   restore = installWebGLStub();
   // Sigma reads WebGL constants while its module loads, so it loads after the stand-in.
   SigmaClass = (await import("sigma")).default;
-  createRenderer = (await import("./SigmaCanvas")).createRenderer;
+  ({ createRenderer, SigmaCanvas } = await import("./SigmaCanvas"));
 });
 
 afterAll(() => restore());
@@ -58,6 +63,33 @@ function bigView(edgeCount: number) {
   });
 }
 
+function canvasProps(view: GraphView, camera: { current: CameraState | null }) {
+  return {
+    view,
+    positions: seedPositions(view.nodes.length),
+    palette: {
+      series: ["#111111"],
+      dimmed: ["#eeeeee"],
+      neutral: "#333333",
+      neutralDimmed: "#cccccc",
+      edge: "#444444",
+      edgeDimmed: "#bbbbbb",
+      text: "#000000",
+      background: "#ffffff",
+      font: "sans-serif",
+      boldWeight: "600",
+    },
+    visibility: allVisible(view),
+    ranks: labelRanks(view),
+    selected: null,
+    neighbours: new Set<number>(),
+    reducedMotion: true,
+    camera,
+    onPick: () => undefined,
+    onGestureHint: () => undefined,
+  };
+}
+
 function host(): HTMLElement {
   const element = document.createElement("div");
   document.body.append(element);
@@ -79,34 +111,7 @@ describe("handing a graph to the renderer", () => {
   it("draws every edge of a view larger than one chunk, added to the renderer's own graph", () => {
     const view = bigView(EDGE_CHUNK * 2 + 10);
     const frames: (() => void)[] = [];
-    const live = {
-      current: {
-        ratioBucket: 0,
-        props: {
-          view,
-          positions: seedPositions(view.nodes.length),
-          palette: {
-            series: ["#111111"],
-            dimmed: ["#eeeeee"],
-            neutral: "#333333",
-            neutralDimmed: "#cccccc",
-            edge: "#444444",
-            edgeDimmed: "#bbbbbb",
-            text: "#000000",
-            background: "#ffffff",
-            font: "sans-serif",
-            boldWeight: "600",
-          },
-          visibility: allVisible(view),
-          ranks: labelRanks(view),
-          selected: null,
-          neighbours: new Set<number>(),
-          reducedMotion: true,
-          onPick: () => undefined,
-          onGestureHint: () => undefined,
-        },
-      },
-    };
+    const live = { current: { ratioBucket: 0, props: canvasProps(view, { current: null }) } };
     const handover = handOver(
       view,
       live.current.props.positions,
@@ -121,5 +126,38 @@ describe("handing a graph to the renderer", () => {
     const last = `e${view.edges.length - 1}`;
     expect(handover.renderer.getEdgeState(last).parallelCount).toBeGreaterThan(0);
     handover.renderer.kill();
+  });
+});
+
+describe("the camera between views", () => {
+  it("keeps zoom and centre when a view with other nodes draws in a new canvas", async () => {
+    // jsdom has no layout; the stage reports a size so the renderer starts.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 400,
+      bottom: 300,
+      width: 400,
+      height: 300,
+      toJSON: () => ({}),
+    });
+    const camera: { current: CameraState | null } = { current: null };
+    const handle = createRef<CanvasHandle>();
+    const first = render(<SigmaCanvas {...canvasProps(bigView(10), camera)} ref={handle} />);
+    await act(async () => {
+      handle.current?.zoom(2);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    first.unmount();
+    const zoomed = camera.current;
+    expect(zoomed?.ratio).toBeCloseTo(0.5, 2);
+
+    // A loaded neighbourhood: more nodes, so the panel mounts a new canvas.
+    const second = render(<SigmaCanvas {...canvasProps(bigView(20), camera)} />);
+    second.unmount();
+    expect(camera.current?.ratio).toBeCloseTo(0.5, 2);
+    expect(camera.current?.x).toBeCloseTo(zoomed?.x ?? Number.NaN, 5);
   });
 });
