@@ -21,7 +21,7 @@ export function findOverflow(page: Page): Promise<Overflow> {
     const dialogs = [...document.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"]')];
     const describe = (element: Element) =>
       `${element.tagName.toLowerCase()}${[...element.classList].map((c) => `.${c}`).join("")}`;
-    const found: { text: string; by: number }[] = [];
+    const found: { element: Element; text: string; by: number }[] = [];
 
     for (const element of document.querySelectorAll("body *")) {
       const rect = element.getBoundingClientRect();
@@ -50,12 +50,16 @@ export function findOverflow(page: Page): Promise<Overflow> {
       }
       if (!exempt && rect.right > limit + 0.5) {
         found.push({
+          element,
           text: `${describe(element)} reaches ${Math.round(rect.right)} px, allowed ${Math.round(limit)} px`,
           by: rect.right - limit,
         });
       }
     }
-    found.sort((a, b) => b.by - a.by);
+    // Innermost first: the element that is too wide, not every container it widens.
+    const innermost = (f: (typeof found)[number]) =>
+      !found.some((other) => other !== f && f.element.contains(other.element));
+    found.sort((a, b) => Number(innermost(b)) - Number(innermost(a)) || b.by - a.by);
     return {
       scrollWidth: document.documentElement.scrollWidth,
       width,

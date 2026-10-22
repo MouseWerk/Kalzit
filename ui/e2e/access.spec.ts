@@ -20,7 +20,7 @@ test("the owner creates accounts, adds them as members with roles and builds a t
     await dialog.getByLabel(t("admin.users.password"), { exact: true }).fill(person.password);
     await dialog.getByRole("button", { name: t("admin.users.createSubmit") }).click();
     await expect(dialog).toBeHidden();
-    await expect(page.getByRole("status")).toContainText(
+    await expect(page.getByRole("main").getByRole("status")).toContainText(
       t("admin.users.created", { name: person.name }),
     );
   }
@@ -45,7 +45,7 @@ test("the owner creates accounts, adds them as members with roles and builds a t
   // Changing a role applies at once and can be undone.
   const viewerRole = page.getByLabel(t("admin.members.roleOf", { name: viewer.name }));
   await viewerRole.selectOption({ label: t("admin.role.editor") });
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
     t("admin.members.roleChanged", { name: viewer.name, role: t("admin.role.editor") }),
   );
   await page.getByRole("button", { name: t("admin.common.undo") }).click();
@@ -58,7 +58,9 @@ test("the owner creates accounts, adds them as members with roles and builds a t
   const create = page.getByRole("dialog", { name: t("admin.teams.createTitle") });
   await create.getByLabel(t("admin.teams.name")).fill(team);
   await create.getByRole("button", { name: t("admin.teams.createSubmit") }).click();
-  await expect(page.getByRole("status")).toContainText(t("admin.teams.created", { name: team }));
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
+    t("admin.teams.created", { name: team }),
+  );
 
   await page.getByRole("link", { name: team }).click();
   await page.getByRole("button", { name: t("admin.teams.addMember") }).click();

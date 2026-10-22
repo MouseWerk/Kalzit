@@ -193,7 +193,8 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     // biome-ignore lint/correctness/noEmptyPattern: Playwright reads the fixtures a function takes from this pattern
     async ({}, use) => {
       const owner = await Api.owner();
-      const sourceName = unique("Seiten");
+      // A long name, as people give them: selects and lists have to fit it at 360 px.
+      const sourceName = unique("Umsatzdaten der Regionen Nord, Ost, Süd und West");
       const sourceId = await owner.createSqliteSource(sourceName, join(fixturesDir(), "sales.db"));
       const dashboardTitle = unique("Übersicht");
       const dashboardId = await owner.createDashboard(regionDashboard(dashboardTitle, sourceId));

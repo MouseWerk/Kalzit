@@ -266,6 +266,8 @@
   .settings__variables {
     display: grid;
     gap: var(--space-2);
+    /* A fieldset is at least as wide as its content by default; a long name must not widen the dialog. */
+    min-inline-size: 0;
     padding: 0;
     border: 0;
   }
