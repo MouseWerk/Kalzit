@@ -1,7 +1,7 @@
 //! The expression language of calculated fields: a small, safe language over the fields of one
 //! frame. It is parsed into a tree and type-checked against the frame's fields before a single
 //! row is computed; nothing is ever evaluated as code. The UI has the same language in
-//! `ui/src/analysis/expr.ts`; both run the cases of `conformance.json` (docs/api/analysis.md).
+//! `ui/src/analysis/expr.ts`; both run the cases of `conformance.json` (docs/api/settings-dashboards.md, "Analysis steps").
 //!
 //! - Values: numbers, text, booleans, times (Unix ms) and the empty value `null`.
 //! - Fields: a bare name (`betrag`, `A.umsatz`) or any name in brackets (`[Umsatz (€)]`, `]]` for

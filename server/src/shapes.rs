@@ -356,7 +356,7 @@ pub struct VariableOptionsResponse {
     pub truncated: bool,
 }
 
-/// Export file formats (docs/api/analysis.md). Frames export as CSV, JSON or Excel; documents
+/// Export file formats (docs/api/datasources.md, "Export"). Frames export as CSV, JSON or Excel; documents
 /// (NDJSON) and graphs (GraphML) follow with their milestones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

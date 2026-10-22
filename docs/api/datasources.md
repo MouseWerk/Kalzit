@@ -427,6 +427,47 @@ that is not of type `query` is `422 validation`.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
 
+## Export
+
+A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
+file. The server runs the queries and the steps itself, so the file is made only after the same
+checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
+browser-side export would need the data in the browser first and could not be refused.
+
+- `POST /orgs/{orgId}/export`, body `ExportRequest`: the fields of `QueryRequest` (`queries`,
+  `timeRange`, `intervalMs`, `maxDataPoints`, `variables`), plus `steps` (default none),
+  `format`, `language`, `frame` (the `refId` to export after the steps; the first frame when
+  absent) and `title` (the file name's base). Every data source needs `datasources:query` (role
+  or grant); one the caller may not query refuses the whole export (`403` or `404`).
+- `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, body
+  `PanelExportRequest` (`timeRange`, `intervalMs`, `maxDataPoints`, `variables`, `format`,
+  `language`, `frame`): the panel's stored queries and stored steps, with the rules of the panel
+  query route (`dashboards:read` on the dashboard, variables checked against it). Named after the
+  panel's title, or the dashboard's.
+
+The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
+`-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
+the format, the number of rows and the panel or the data sources, never the data.
+
+- `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
+  `language` `de` separates with `;` and writes a decimal comma, `en` uses `,` and a decimal
+  point. Numbers keep every digit (`1e+21` from 10^21 on), `int64` its digits, times ISO 8601 in
+  UTC, booleans `true`/`false`, `json` compact JSON. Text that starts with `=`, `+`, `-`, `@`, tab
+  or carriage return gets a leading `'` (field names too), so a spreadsheet never runs it as a
+  formula.
+- `xlsx`: one sheet, bold frozen header row, typed cells: numbers, booleans and times (UTC, shown
+  as `yyyy-mm-dd hh:mm:ss.000`). `int64` beyond 2^53 and times before 1900-03-01 are text; text is
+  cut at Excel's 32,767 characters; at most 1,048,575 rows and 16,384 columns. Written with
+  `rust_xlsxwriter` (maintained, no default features, writes cells and never formulas).
+- `json`: the result envelope of the frame, `{"shape": "frame", "frame": {...}}`.
+
+Documents become exportable through a projection step (`toFrame`); their own formats (JSON,
+NDJSON) and graphs (GraphML, JSON) follow with M2 and M3, until then such a result answers
+`export.shape_unsupported`. Steps that are not valid answer `422 validation` with reason
+`steps.invalid` and `field: steps`; a step that fails answers its own reason with `field: steps`
+and a message naming the step. A failing query answers its error as the variable options route
+does: a file never holds less than was asked for.
+
 ## Reasons
 
 Errors carry `error.reason` and `error.params` next to `error.code` and `error.message`; health
@@ -564,7 +605,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 ### Analysis steps and expressions
 
 The browser shows these at the step; the export routes answer them as `422 validation` with
-`field: steps` (docs/api/analysis.md). `type` params are field types (`time`, `number`, `int64`,
+`field: steps` (docs/api/settings-dashboards.md, "Analysis steps"). `type` params are field types (`time`, `number`, `int64`,
 `string`, `bool`, `json`), `left`, `right`, `expected`, `found`, `first` and `second` in
 `expression.*` are expression types (`number`, `text`, `bool`, `time`, `null`).
 

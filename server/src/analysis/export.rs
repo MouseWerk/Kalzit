@@ -1,4 +1,4 @@
-//! Export files from a frame: CSV, JSON and Excel (docs/api/analysis.md, "Export"). Documents
+//! Export files from a frame: CSV, JSON and Excel (docs/api/datasources.md, "Export"). Documents
 //! (JSON, NDJSON) and graphs (GraphML, JSON) get their own encoders with M2 and M3; the route
 //! already picks the encoder by the shape of the result.
 //!

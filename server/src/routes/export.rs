@@ -1,4 +1,4 @@
-//! Export (docs/api/analysis.md, "Export"): a query result after its analysis steps, as a CSV,
+//! Export (docs/api/datasources.md, "Export"): a query result after its analysis steps, as a CSV,
 //! JSON or Excel file. The server runs the queries and the steps itself, so the file is made only
 //! after the same checks as running the query, plus `data:export`:
 //!

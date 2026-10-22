@@ -3,7 +3,7 @@ import type { ExportRequest, PanelExportRequest } from "../api/generated/shapes"
 import { orgPath } from "../features/datasources/api";
 
 /**
- * Exports (docs/api/analysis.md, "Export"). The server runs the queries and steps itself and
+ * Exports (docs/api/datasources.md, "Export"). The server runs the queries and steps itself and
  * checks `data:export` with the same rights as running them; the UI only offers the action.
  */
 

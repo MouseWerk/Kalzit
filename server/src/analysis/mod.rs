@@ -1,5 +1,5 @@
 //! Analysis steps on `frame` results: calculated fields, joins of two queries, statistics, group
-//! and pivot (docs/api/analysis.md). Steps are explicit, ordered and visible: they are stored with
+//! and pivot (docs/api/settings-dashboards.md, "Analysis steps"). Steps are explicit, ordered and visible: they are stored with
 //! the panel (`transformations`) or sent with an Explore export, each can be disabled, and the
 //! query's own result stays as it was. Nothing here runs unless a step asks for it.
 //!

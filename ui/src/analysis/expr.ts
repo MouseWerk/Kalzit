@@ -1,7 +1,7 @@
 import type { Field } from "../api/generated/shapes";
 
 /**
- * The expression language of calculated fields (docs/api/analysis.md), the same as the server's
+ * The expression language of calculated fields (docs/api/settings-dashboards.md, "Analysis steps"), the same as the server's
  * `server/src/analysis/expr.rs`: parsed into a tree and type-checked against the frame's fields,
  * never evaluated as code. Both engines pass the cases of `server/src/analysis/conformance.json`.
  *

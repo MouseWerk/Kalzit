@@ -67,7 +67,7 @@ export interface FakeDashboardsState {
   variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
   panelQueries: { dashboardId: string; panelId: string; body: PanelQueryRequest }[];
-  /** Every panel export request (docs/api/analysis.md). */
+  /** Every panel export request (docs/api/datasources.md, "Export"). */
   panelExports: { dashboardId: string; panelId: string; body: Record<string, unknown> }[];
   /** Holds every panel query until the test calls `release`, to observe loading and limits. */
   holdPanelQueries: boolean;

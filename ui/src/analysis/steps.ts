@@ -17,7 +17,7 @@ import { type ProjectionColumn, projectDocuments } from "./projection";
 import * as stats from "./stats";
 
 /**
- * Analysis steps on frames (docs/api/analysis.md): explicit, ordered and stored with the panel
+ * Analysis steps on frames (docs/api/settings-dashboards.md, "Analysis steps"): explicit, ordered and stored with the panel
  * (`transformations`) or the Explore query. The browser runs them for what it shows; the server
  * runs the same steps (`server/src/analysis/steps.rs`) for exports. Both pass the cases of
  * `server/src/analysis/conformance.json`.

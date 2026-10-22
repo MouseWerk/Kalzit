@@ -39,7 +39,7 @@ const numeric = (f: Field) => f.type === "number" || f.type === "int64";
 
 /**
  * Edits a list of analysis steps: add, reorder, turn off, remove, and a preview of the frames
- * after any step. The steps run here as they will in the panel (docs/api/analysis.md).
+ * after any step. The steps run here as they will in the panel (docs/api/settings-dashboards.md, "Analysis steps").
  */
 export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProps) {
   const { t } = useI18n();

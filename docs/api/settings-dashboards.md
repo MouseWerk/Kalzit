@@ -280,11 +280,11 @@ folder is not in the trash (also when it was restored while the purge waited).
 
 ## Dashboards
 
-The model (`schemaVersion` 1):
+The model (`schemaVersion` 2):
 
 ```ts
 interface DashboardModel {
-  schemaVersion: 1;
+  schemaVersion: 2;
   title: string;                                // 1 to 200 characters
   timeRange: { from: string; to: string };      // "now", "now-6h", "now-1d/d", "now+15m", or ISO
                                                 // 8601: "2026-10-20" or "2026-10-20T08:15:00Z"
@@ -308,7 +308,7 @@ interface Panel {
   title?: string;                               // up to 200 characters, default ""
   grid: { x: number; y: number; w: number; h: number };  // w 1 to 24, x + w <= 24, h 1 to 200, y <= 10000
   targets?: { refId: string; datasourceId: string; query: unknown }[];  // up to 50; refId unique per panel
-  transformations?: unknown[];                  // up to 50, default []
+  transformations?: Step[];                     // analysis steps, up to 50, default []; see "Analysis steps"
   options?: unknown;                            // default {}
   fieldConfig?: unknown;                        // default {}
 }
@@ -319,6 +319,12 @@ stored that way it may take at most 1 MiB (1048576 bytes), else `422 validation`
 A model with a lower `schemaVersion` is migrated on save and on read; a higher one ("comes from a
 newer Kalzit") is refused. Invalid models answer `422 validation` with field `model` and a message
 naming the place (`model.panels[0].grid: w must be 1 to 24`).
+
+Migration from version 1 to 2: version 1 gave `transformations` no defined content, except the
+projections the documents UI stored there as `{"type": "toFrame", "refId", "columns"}`. Those
+become version 2 steps (`id` `projection-<refId>`, `refId` renamed to `frame`), keeping the
+columns version 2 accepts (a path, a known type, a name not used before); a projection with no
+column left and every other entry are dropped.
 
 Saving (create, save, restoring a version) checks `datasources:query` on every `datasourceId` of the
 panels and query variables: a data source the caller cannot see is `422 validation` field `model`
@@ -425,3 +431,106 @@ Any member; needs `dashboards:write` on the dashboard. No body. Saves that versi
 new version (with `restoredFrom` set, `message` empty) and answers the `Dashboard`. The old model
 must pass today's validation (`422 validation` field `model` otherwise) and the data source check.
 `409 conflict` while the dashboard is in the trash; `404 not_found` for an unknown version.
+
+## Analysis steps
+
+A panel's `transformations` (and the steps of an Explore query or a free export) are analysis
+steps: explicit, ordered steps on the results of the panel's queries, each of which can be turned
+off; the queries' own results stay as they are. Nothing is converted unless a step asks for it.
+The browser runs them for what it shows (`ui/src/analysis/`); the server runs the same steps for
+exports (`server/src/analysis/`), and both engines pass `server/src/analysis/conformance.json`.
+Steps work on results in memory, bounded by the queries' row limit; moving heavy grouping into
+the database (pushdown) comes later.
+
+Every step is `{ "id": string, "type": ..., "disabled"?: boolean, ... }`: `id` 1 to 64
+characters, unique in the list; at most 50 steps. A step reads results by the `refId` of their
+query and writes its result back under that `refId`; `frame`, `left` and `right` must name a query
+of the panel. Names are 1 to 200 characters without control characters. Unknown fields are
+refused.
+
+```ts
+type Step = { id: string; disabled?: boolean } & (
+  | { type: "toFrame"; frame: string;                                       // documents to a frame
+      columns: { path: string; name?: string; type?: "string" | "number" | "int64" | "bool" | "time" }[] }
+  | { type: "calculate"; frame: string; name: string; expression: string }  // expression up to 2000 characters
+  | { type: "join"; left: string; right: string;                           // left and right differ
+      on: { by: "time" } | { by: "key"; leftField: string; rightField: string };
+      mode: "inner" | "left" | "outer" }
+  | { type: "reduce"; frame: string; fields: string[];                     // 1 to 50 fields
+      stats: ("count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "percentile")[];  // each once
+      percentiles?: number[] }                                              // 1 to 10, 0 to 100, with "percentile" only
+  | { type: "trend"; frame: string; field: string; x?: string;
+      output: "fitted" | "summary"; name?: string }                         // name for "fitted" only, required there
+  | { type: "movingAverage"; frame: string; field: string; window: number; name: string }  // window 1 to 10000
+  | { type: "correlate"; frame: string; x: string; y: string }
+  | { type: "compare"; frame: string; field: string; time?: string;
+      period: "week" | "month" | "year"; output: "previous" | "difference" | "percent"; name: string }
+  | { type: "group"; frame: string; by: string[];                           // 1 to 10 fields
+      aggregations: { field: string; op: Agg; name?: string }[] }           // up to 50
+  | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
+);
+type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "first" | "last";
+```
+
+- **toFrame** (the projection) turns the `documents` result of `frame` into a frame, one column
+  per field path (dotted, array indexes as numbers: `items.0.price`), named `name` or the path,
+  typed `type` or by the first value; values that do not fit the type are empty. 1 to 200 columns,
+  paths 1 to 500 characters, column names unique. The steps after it work on that frame; a
+  result that already is a frame passes unchanged. Documents are no frame for any other step.
+  The documents UI edits the projection; it lives in the panel's `transformations`, not in the
+  query (a decision recorded in docs/PLAN.md, section 13).
+- **calculate** adds the field `name`, typed by its expression.
+- **join** matches the rows of `right` to those of `left`, by the first `time` field of each or by
+  key fields (`number` and `int64` keys match each other, other types only their own; empty keys
+  never match). `inner` keeps matched rows, `left` all rows of `left`, `outer` all rows of both.
+  The result takes the place of `left`, `right` is used up. Its first field is the key; the other
+  fields are named `<refId>.<field>` (`A.revenue`, `B.sessions`), so a later formula can span both
+  queries. A join by time is sorted by time; at most 500,000 rows.
+- **reduce** answers one row per field: `field`, then each measure (`count`, `sum`, `mean`,
+  `median`, `min`, `max`, `stddev`, `p90`, ...). `stddev` is the sample standard deviation;
+  percentiles interpolate between the closest ranks (Excel's PERCENTILE.INC).
+- **trend** is the least-squares line of `field` over `x` (the first time field when `x` is
+  absent, else the row number): `fitted` adds the line's value per row, `summary` answers `field`,
+  `slope` (per day over time), `intercept`, `r2`, `n`.
+- **movingAverage** adds the trailing mean over `window` rows, empty until the window is full.
+- **correlate** answers `x`, `y`, Pearson's `r` and `n`.
+- **compare** adds the value exactly one week, calendar month or year earlier (UTC; 31 March
+  compares with the last day of February), the difference, or the change in percent. The query's
+  time range has to cover both periods.
+- **group** answers one row per distinct combination of `by`, in the order they first appear,
+  one field per aggregation (`op(field)` unless named). `sum`, `mean`, `median`, `stddev` need
+  numbers; `min` and `max` also take `int64`, `time` and `string`; `count`, `first`, `last` any
+  field. **pivot** answers one row per value of `row` and one field per value of `column` (at most
+  500).
+- Empty values are left out of every statistic and aggregation.
+
+Saving checks each step's form and bounds and parses every expression (syntax errors name the
+place: `model.panels[0].transformations[1].expression: unexpected input at 4`). Field names and
+types are checked when a step runs, since only then the fields are known; the browser shows the
+reason at the step and the export routes answer it (docs/api/datasources.md, "Reasons").
+
+### Expressions
+
+A small language over the fields of one frame, parsed and type-checked, never evaluated as code.
+Positions count characters from 1.
+
+- Values: numbers (`1.5`, `2e3`), text (`'...'` or `"..."` with `\'`, `\"`, `\\`, `\n`, `\t`),
+  `true`, `false`, `null`; fields by a bare name (`betrag`, `A.umsatz`: letters, digits, `_`, `.`)
+  or any name in brackets (`[Umsatz (€)]`, `]]` for a `]`).
+- Operators by precedence: `or` `||`, `and` `&&`, `not` `!`, comparisons `=` `==` `!=` `<>` `<`
+  `<=` `>` `>=` (not chained), `+` `-`, `*` `/` `%`, unary `-`, `^` (right to left; `-2^2` is
+  -4). Keywords and function names ignore case.
+- Types: `number` (also `int64` fields, as the nearest double: digits beyond 2^53 are lost),
+  `text`, `bool`, `time` (Unix ms). `time - time` is a number of ms, `time ± number` a time,
+  `text + text` joins; `json` fields cannot be used.
+- Empty values: arithmetic and comparisons with an empty value are empty; `and`/`or` use
+  three-valued logic; division by zero and results that are not finite are empty; comparing with
+  the literal `null` is refused (use `isnull`).
+- Functions: `if`, `coalesce`, `isnull`, `round(x, digits?)` (half away from zero, 0 to 15
+  digits), `floor`, `ceil`, `abs`, `sqrt`, `exp`, `ln`, `log10`, `pow`, `min`, `max` (numbers,
+  text or times; empty values left out), `year`, `month`, `day`, `hour`, `minute`, `second`,
+  `weekday` (1 Monday to 7 Sunday), `startOf(t, 'minute' | 'hour' | 'day' | 'week' | 'month' |
+  'quarter' | 'year')`, `concat`, `text` (numbers as JavaScript writes them, times as ISO 8601),
+  `number`, `lower`, `upper`, `length`, `contains`. Calendar functions use UTC; a time outside the
+  years 1 to 9999 is empty.
+- Limits: 2000 characters, nesting 64 levels, 100 values per call.
