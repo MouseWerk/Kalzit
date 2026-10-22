@@ -23,6 +23,12 @@ impl Detail {
         self
     }
 
+    /// The detail as a notice on a result.
+    pub fn notice(self, severity: crate::shapes::NoticeSeverity) -> crate::shapes::Notice {
+        let params = (!self.params.is_empty()).then_some(self.params);
+        crate::shapes::Notice { severity, code: self.reason.to_string(), params, text: self.message }
+    }
+
     /// The same detail with `scrub` applied to the message and every parameter, so no secret
     /// leaves the server through either.
     pub fn scrubbed(&self, scrub: impl Fn(&str) -> String) -> Self {
@@ -63,6 +69,8 @@ mod tests {
         "server",
         "health",
         "frame",
+        "mongodb",
+        "documents",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.

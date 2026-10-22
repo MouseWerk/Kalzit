@@ -996,6 +996,24 @@ fn metric_values(name: &str, v: &Value) -> Vec<(String, Value)> {
     out
 }
 
+/// Notices for a search answer that may be incomplete: timed out on the server, failed shards.
+fn incomplete(answer: &Value) -> Vec<Detail> {
+    let mut out = Vec::new();
+    if answer["timed_out"] == true {
+        out.push(Detail::new("elasticsearch.timed_out", "the search timed out; the result may be incomplete"));
+    }
+    if let Some(failed) = answer["_shards"]["failed"].as_u64().filter(|f| *f > 0) {
+        out.push(
+            Detail::new(
+                "elasticsearch.shard_failures",
+                format!("{failed} shards failed; the result may be incomplete"),
+            )
+            .with("count", failed),
+        );
+    }
+    out
+}
+
 /// The rows as a frame: key columns typed by their values, cut at the limits.
 fn rows_to_frame(rows: Rows, max_rows: usize, budget: ResponseBudget) -> FrameBuilder {
     let Rows { columns, rows, skipped, .. } = rows;
@@ -1299,25 +1317,13 @@ impl DataSourcePlugin for Elasticsearch {
                 let rows = aggs_to_rows(req_aggs, resp, req.limits.max_rows);
                 let mut frame = rows_to_frame(rows, req.limits.max_rows, budget.clone());
                 frame.executed_query(search.body.to_string());
-                if answer["timed_out"] == true {
-                    frame.notice(
-                        NoticeSeverity::Warning,
-                        Detail::new("elasticsearch.timed_out", "the search timed out; the result may be incomplete"),
-                    );
-                }
-                if let Some(failed) = answer["_shards"]["failed"].as_u64().filter(|f| *f > 0) {
-                    frame.notice(
-                        NoticeSeverity::Warning,
-                        Detail::new(
-                            "elasticsearch.shard_failures",
-                            format!("{failed} shards failed; the result may be incomplete"),
-                        )
-                        .with("count", failed),
-                    );
+                for detail in incomplete(&answer) {
+                    frame.notice(NoticeSeverity::Warning, detail);
                 }
                 QueryResult::Frame { frame: frame.finish() }
             }
             None => {
+                let notices = incomplete(&answer);
                 // The hits move into the documents, so the raw answer's charge is given back
                 // first and the documents are charged as they are added.
                 let hits = match answer.pointer_mut("/hits/hits").map(Value::take) {
@@ -1327,10 +1333,14 @@ impl DataSourcePlugin for Elasticsearch {
                 drop(answer);
                 drop(charge);
                 let mut docs = DocumentsBuilder::new(req.limits.max_rows, budget.clone());
+                docs.executed_query(search.body.to_string());
                 for hit in hits {
                     if !docs.push(hit) {
                         break;
                     }
+                }
+                for detail in notices {
+                    docs.notice(NoticeSeverity::Warning, detail);
                 }
                 QueryResult::Documents { documents: docs.finish() }
             }
@@ -1358,6 +1368,7 @@ mod tests {
             max_data_points: None,
             variables: serde_json::from_value(variables).unwrap(),
             identifier_variables: None,
+            cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
         }
     }
@@ -1709,7 +1720,7 @@ mod tests {
         let r = Elasticsearch.query(&conn, req(json!({ "lucene": "land:AT" }), json!({}))).await.unwrap();
         let QueryResult::Documents { documents } = r else { panic!("documents") };
         assert_eq!(documents.documents.len(), 2);
-        assert_eq!(documents.documents[0]["_source"]["land"], "AT");
+        assert_eq!(documents.documents[0].value()["_source"]["land"], "AT");
         assert!(documents.schema.iter().any(|f| f.path == "_source.land"));
 
         let r = Elasticsearch
@@ -1752,6 +1763,7 @@ mod hardening_tests {
             max_data_points: None,
             variables: BTreeMap::new(),
             identifier_variables: None,
+            cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
         }
     }

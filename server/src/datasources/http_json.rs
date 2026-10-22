@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use super::Detail;
 use super::frame::ResponseBudget;
-use super::json_documents::{DocumentsBuilder, sample_schema};
+use super::json_documents::DocumentsBuilder;
 use super::{
     Connection, DataSourcePlugin, FieldError, Health, Kind, SettingField, SettingType, SourceError, SourceQuery,
     SourceSchema,
@@ -406,7 +406,7 @@ impl DataSourcePlugin for HttpJson {
         let (_, answer) = c.get(c.base.clone(), MAX_SMALL_RESPONSE, None).await?;
         let budget = ResponseBudget::new(MAX_SMALL_RESPONSE);
         let docs = documents(answer, c.documents_path.as_deref(), 1_000, &budget)?;
-        Ok(SourceSchema::Fields { fields: sample_schema(&docs.finish().documents) })
+        Ok(SourceSchema::Fields { fields: docs.finish().schema })
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
@@ -458,6 +458,7 @@ mod tests {
             max_data_points: None,
             variables: serde_json::from_value(variables).unwrap(),
             identifier_variables: None,
+            cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(1 << 20) },
         }
     }
@@ -507,7 +508,7 @@ mod tests {
             .unwrap();
         let QueryResult::Documents { documents } = r else { panic!("documents") };
         assert_eq!(documents.documents.len(), 2);
-        let first = &documents.documents[0];
+        let first = &documents.documents[0].value();
         assert_eq!(first["auth"], "Bearer tok");
         assert_eq!(first["key"], "k3y");
         assert_eq!(first["query"], "fix=1&land=AT&land=CH&n=2");
@@ -603,6 +604,7 @@ mod hardening_tests {
             max_data_points: None,
             variables: BTreeMap::new(),
             identifier_variables: None,
+            cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
         }
     }
@@ -661,7 +663,7 @@ mod hardening_tests {
                 req(json!({ "path": "login", "params": { "next": format!("http://{inner_addr}/admin/users") } })),
             )
             .await;
-        let leaked = matches!(&r, Ok(QueryResult::Documents { documents }) if documents.documents.first().is_some_and(|d| d["intern"] == true));
+        let leaked = matches!(&r, Ok(QueryResult::Documents { documents }) if documents.documents.first().is_some_and(|d| d.value()["intern"] == true));
         assert!(!leaked, "the query read another host through a redirect");
         assert_eq!(r.err().map(|e| e.detail().reason), Some("http_json.redirect_refused"));
         // A redirect on the same host but outside the source's URL is refused as well.

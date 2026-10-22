@@ -736,6 +736,7 @@ mod tests {
             max_data_points: None,
             variables: BTreeMap::new(),
             identifier_variables: None,
+            cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(bytes) },
         }
     }

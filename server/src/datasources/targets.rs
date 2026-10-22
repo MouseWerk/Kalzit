@@ -153,6 +153,12 @@ impl TargetPolicy {
         self
     }
 
+    /// Kalzit's data directory (canonical): private to the server, for short-lived files such as
+    /// a CA certificate a driver reads from a path.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// The canonical file a SQLite source may open, or why not.
     ///
     /// The path is first checked as written, without touching the file system, so a path

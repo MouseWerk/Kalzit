@@ -144,6 +144,7 @@
   "dashboards.inspect.empty": "Es gibt noch nichts zu untersuchen. Führe zuerst die Abfrage aus.",
   "dashboards.inspect.query": "Abfrage {refId}",
   "dashboards.inspect.size": "{rows} Zeilen, {fields} Felder",
+  "dashboards.inspect.documents": "{count} Dokumente, {paths} Feldpfade",
   "dashboards.inspect.truncated": "Am Zeilenlimit der Datenquelle abgeschnitten. Grenze die Abfrage ein, um alles zu sehen.",
   "dashboards.inspect.info": "Hinweis:",
   "dashboards.inspect.warning": "Warnung:",

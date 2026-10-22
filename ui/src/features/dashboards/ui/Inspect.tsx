@@ -1,3 +1,4 @@
+import type { Notice } from "../../../api/generated/shapes";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
 import { rowCount } from "../../../panels/frame";
@@ -53,27 +54,19 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
                   <span>{t("dashboards.inspect.truncated")}</span>
                 </p>
               ) : null}
-              {(outcome.result.frame.meta?.notices ?? []).map((notice, index) => (
-                <p
-                  // biome-ignore lint/suspicious/noArrayIndexKey: notices have no id and keep their order
-                  key={index}
-                  className="notice"
-                >
-                  <Icon name="alert" />
-                  <span>
-                    {notice.severity === "warning"
-                      ? t("dashboards.inspect.warning")
-                      : t("dashboards.inspect.info")}{" "}
-                    {noticeText(t, notice)}
-                  </span>
-                </p>
-              ))}
-              {outcome.result.frame.meta?.executedQuery === undefined ? null : (
-                <>
-                  <h4 className="inspect__label">{t("dashboards.inspect.executed")}</h4>
-                  <pre className="inspect__code">{outcome.result.frame.meta.executedQuery}</pre>
-                </>
-              )}
+              <Notices notices={outcome.result.frame.meta?.notices ?? []} />
+              <Executed query={outcome.result.frame.meta?.executedQuery} />
+            </>
+          ) : outcome.result.shape === "documents" ? (
+            <>
+              <p className="inspect__meta">
+                {t("dashboards.inspect.documents", {
+                  count: number.format(outcome.result.documents.documents.length),
+                  paths: number.format(outcome.result.documents.schema.length),
+                })}
+              </p>
+              <Notices notices={outcome.result.documents.notices} />
+              <Executed query={outcome.result.documents.executedQuery} />
             </>
           ) : (
             <p className="inspect__meta">
@@ -83,5 +76,35 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
         </section>
       ))}
     </div>
+  );
+}
+
+function Notices({ notices }: { notices: readonly Notice[] }) {
+  const { t } = useI18n();
+  return notices.map((notice, index) => (
+    <p
+      // biome-ignore lint/suspicious/noArrayIndexKey: notices have no id and keep their order
+      key={index}
+      className="notice"
+    >
+      <Icon name="alert" />
+      <span>
+        {notice.severity === "warning"
+          ? t("dashboards.inspect.warning")
+          : t("dashboards.inspect.info")}{" "}
+        {noticeText(t, notice)}
+      </span>
+    </p>
+  ));
+}
+
+function Executed({ query }: { query: string | undefined }) {
+  const { t } = useI18n();
+  if (query === undefined) return null;
+  return (
+    <>
+      <h4 className="inspect__label">{t("dashboards.inspect.executed")}</h4>
+      <pre className="inspect__code">{query}</pre>
+    </>
   );
 }

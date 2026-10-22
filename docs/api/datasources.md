@@ -34,7 +34,7 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
-`sqlite`, `mssql`, `prometheus`, `elasticsearch`, `file`, `http_json`.
+`sqlite`, `mssql`, `prometheus`, `elasticsearch`, `file`, `http_json`, `mongodb`.
 
 ```json
 {
@@ -74,6 +74,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
     mapping reads, but only the cluster's permissions are a real boundary."
   - `file`: "The file is only read. It must lie in a directory a server administrator allowed."
   - `http_json`: "Kalzit sends only GET requests. Use a token that can only read."
+  - `mongodb`: "Use a login with only the read role on this database. Kalzit refuses logins that
+    may do more, and servers without access control."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
   limits for this source; the server-wide limits are the maximum.
 
@@ -89,6 +91,7 @@ Fields per kind (common fields omitted):
 | `elasticsearch` | `url`* (`http(s)://host[:port][/path]`, no query), `basicAuthUser`, `basicAuthPassword` S, `apiKey` S (sent as `ApiKey <key>`), `bearerToken` S, `caCert`, `index` (default index or pattern), `timeField` (default `@timestamp`; empty: no time filter) |
 | `file` | `path`* (absolute path of a CSV, JSON or NDJSON file), `format` (`auto` default, `csv`, `json`, `ndjson`), `delimiter` (`auto` default, `comma`, `semicolon`, `tab`, `pipe`), `decimal` (`auto` default, `point`, `comma`), `header` (bool, default true) |
 | `http_json` | `url`* (`http(s)://host[:port][/path][?query]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `apiKeyHeader` (a header name such as `X-Api-Key`), `apiKey` S (sent in that header), `caCert`, `documentsPath` (where the documents are in the answer, see below) |
+| `mongodb` | `hosts`* (`host`, `host:port` or `[v6]:port`, comma-separated, at most 50), `port` (27017, for hosts without one), `srv` (bool, default false: `mongodb+srv`, `hosts` is one name without port), `replicaSet`, `database`*, `user`, `password` S, `authSource` (default: `database`; with SRV the TXT record's, else `admin`), `tls` (bool; default false, true with SRV), `caCert` (needs TLS), `maxResponseBytes` (at least 1, within the server's limit) |
 
 `elasticsearch` covers OpenSearch too; "Test connection" tells which one answered. With several
 credentials set, `basicAuthUser` wins, then `apiKey`, then `bearerToken` (`http_json`: basic, then
@@ -99,7 +102,8 @@ any other name needs a format (`settings.file_format_unknown`). `apiKeyHeader` m
 `Transfer-Encoding` (`settings.header_name_invalid`).
 
 i18n keys the UI needs: `datasources.settings.<name>` for every field name above plus
-`queryTimeoutSecs` and `maxRows`, and `datasources.kinds.<kind>.hint` for each kind.
+`queryTimeoutSecs` and `maxRows`, and `datasources.kinds.<kind>.hint` for each kind. For
+`mongodb`, `maxRows` limits documents.
 
 ## List: `GET /orgs/{orgId}/datasources`
 
@@ -199,9 +203,15 @@ Each row's `reason` is in [Reasons](#reasons) (`settings.*`, `secrets.*`, `targe
 | `422 validation` | name empty or longer than 100 characters, unknown kind, unknown setting, wrong type, missing required field, secret sent in `settings`, unknown secret, port outside 1..65535, host with credentials, SQLite path not absolute, URL with credentials, query or fragment, `caCert` without a PEM certificate | the field name: `name`, `kind`, a settings field name such as `host`, `settings` (unknown setting), `secrets` (unknown secret) |
 | `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or metadata address (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
 | `409 conflict` | another data source in use has this name (also when restoring) | `name` |
+| `422 validation` | MongoDB: the login may do more than read, or the server has no access control (see [MongoDB](#mongodb-a-pipeline-or-find)) | `user` |
+| `422 datasource_target_blocked` | MongoDB: a host the SRV records or the driver name is refused | `hosts` |
 
 Name resolution happens when connecting, so a host name that resolves to a refused address is
-reported by the query, health and schema routes, not when saving.
+reported by the query, health and schema routes, not when saving. MongoDB is the exception: when
+its settings or secrets are saved, Kalzit connects (waiting at most 4 seconds for a server) and
+checks the login's privileges; a refused target or a login that may write refuses the save. A
+server that cannot be reached, or a wrong password, does not stop the save; the check runs again
+on every connect.
 
 ### Connections and targets
 
@@ -228,6 +238,18 @@ reported by the query, health and schema routes, not when saving.
   sure it is not Kalzit's own database (`pg_control_system()` and `current_database()`). Servers
   that speak the PostgreSQL protocol but lack `pg_control_system()` (several compatible engines)
   are then refused.
+- MongoDB: the driver resolves names and connects on its own, also to the replica set members and
+  SRV targets a server names. All of its connections go through a SOCKS5 relay inside Kalzit on
+  the loopback interface (random credentials per source, so no other local process can use it),
+  which resolves and checks every name and connects to the checked address; TLS runs end to end
+  with the real host name. Queries only go to the primary, a `mongos` or the one server of a
+  direct connection, and so do the commands Kalzit sends itself (`connectionStatus`, `hostInfo`,
+  `buildInfo`, `listCollections`, `listIndexes`). A deployment whose topology names a Unix socket
+  path as a member (only Unix systems read such an address as a socket) is refused as a whole with
+  `mongodb.socket_member`; the driver's monitor may still have sent its handshake (`hello`) there
+  once, which the systemd setting `RestrictAddressFamilies` (docs/ARCHITECTURE.md) prevents.
+  Kalzit's own database is
+  never MongoDB, so for MongoDB the address rules are what applies.
 - The block list holds the link-local range (which contains the usual cloud metadata address
   `169.254.169.254`) and AWS's IPv6 metadata address. Alibaba Cloud's metadata service
   (`100.100.100.200`) lies in the carrier-grade NAT range used by private networks and is not
@@ -255,6 +277,10 @@ Body: none or `{}`. Always `200`, also when the source fails:
   but may count the default index answers `health.search_answered`. Files answer
   `health.file_readable` (`format`: `CSV`, `JSON` or `NDJSON`, `bytes`), HTTP JSON
   `health.http_json_answered` (`status`) after a GET of the source's URL that answered JSON.
+  MongoDB answers `health.connected` (`engine` `MongoDB`) after the privilege check (run again on
+  every test, also with a client built earlier) and a read of
+  the database's collections; a login that may do more than read answers `ok: false` with
+  `mongodb.login_not_read_only` or `mongodb.access_control_off`.
 - `code` (only when `ok` is false) is `datasource_error`, `datasource_target_blocked` or
   `query_timeout`, with the failure's reason.
 - Messages and params never contain secrets.
@@ -284,11 +310,25 @@ fields as dotted paths, multi-fields as `name.sub`, at most 5,000 per index) and
 CSV files answer `tables` with one table named like the file and the column types inferred from
 the first 1,000 rows (`int64`, `number`, `time`, `bool`, `string`). JSON and NDJSON files and
 HTTP JSON answer the sampled document schema of the first 1,000 documents (see
-[Documents](#documents)):
+[The documents shape](#the-documents-shape)):
 
 ```json
 { "kind": "fields", "fields": [{ "path": "kunde.name", "coverage": 1.0, "types": [{ "name": "string", "share": 1.0 }] }] }
 ```
+MongoDB lists the database's collections (up to 1,000, by name, without `system.*`). The first
+100 also get their indexes (keys in index order) and the field paths of a random sample of up to
+100 documents (`$sample`, 2 seconds each; `sampled` is 0 where the sample did not run or failed).
+`fields` has the form of the result schema (see [The documents shape](#the-documents-shape)).
+
+```json
+{ "kind": "collections", "database": "shop", "collections": [{
+  "name": "bestellungen", "type": "collection",
+  "indexes": [{ "name": "ts_land", "keys": [{ "field": "ts", "kind": -1 }, { "field": "land", "kind": 1 }], "unique": true }],
+  "fields": [{ "path": "land", "coverage": 1, "types": [{ "name": "string", "share": 1 }] }],
+  "sampled": 100 }] }
+```
+
+`type` is `collection`, `view` (no indexes) or `timeseries`.
 
 Errors: `502 datasource_error`, `422 datasource_target_blocked`, `504 query_timeout`.
 
@@ -317,14 +357,16 @@ Body `QueryRequest`, answer `QueryResponse` (types generated in `ui/src/api/gene
   others. `not_found` and `forbidden` carry no `reason`: the code says it all.
 
 Per-query error codes: `not_found` (no such data source in this organization), `forbidden`,
-`query_rejected` (not a single read-only `SELECT`/`WITH`, a forbidden function, a variable without
-a value, wrong query form), `datasource_target_blocked`, `datasource_error`, `query_timeout`.
+`query_rejected` (not a single read-only `SELECT`/`WITH`, a forbidden function, a writing stage,
+a variable without a value, wrong query form), `datasource_target_blocked`, `datasource_error`,
+`query_timeout`.
 
 Queries run in parallel, at most 8 at a time per user and 64 on the whole server (more wait,
 within their timeout); "Test connection" and schema reads count against the same limits. Results
 of all running requests together are held to 1 GiB. Queries are cancelled when the client goes away
 (SQL Server receives a cancel; PostgreSQL and MySQL/MariaDB also stop by their server-side time
-limit). Results are frames:
+limit). SQL and Prometheus results are frames, MongoDB results are documents (see
+[MongoDB](#mongodb-a-pipeline-or-find)). Frames:
 
 - Field types: `time` (Unix ms), `number`, `int64` (decimal strings, e.g. `COUNT(*)` and `BIGINT`),
   `string`, `bool`, `json`; missing values are `null`. `NUMERIC`/`DECIMAL` are `number`.
@@ -424,9 +466,10 @@ strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex 
   the same way. Values are placed as JSON, never spliced into text, and must be texts, numbers,
   booleans or lists of them, so a variable cannot bring in a script.
 - Without aggregations the answer is `documents`: each hit as the server sends it (`_index`,
-  `_id`, `_score`, `_source`, and `fields`, `highlight` or `sort` when asked for). With
-  aggregations it is a `frame` (see [Aggregations](#aggregations)) and no hits are fetched
-  (`size` is 0).
+  `_id`, `_score`, `_source`, and `fields`, `highlight` or `sort` when asked for), with the
+  search body as `executedQuery` and the notices `elasticsearch.timed_out` and
+  `elasticsearch.shard_failures` as for aggregations. With aggregations it is a `frame` (see
+  [Aggregations](#aggregations)) and no hits are fetched (`size` is 0).
 
 **Read-only.** Kalzit builds every request itself and checks every URL right before sending it,
 and again for every redirect the server answers with (a 307 to `_delete_by_query` is refused
@@ -567,20 +610,143 @@ All fields optional (`{}` requests the source's URL as it is).
   percent signs); any other is refused before it is followed (`http_json.redirect_refused`,
   `path`), so an open redirect of the API cannot reach other hosts or paths.
 
-### Documents
+### MongoDB: a pipeline or `find`
 
-`documents` answers (`DocumentSet`) hold the documents in the order the source answered and
-their schema, sampled from the first 1,000 documents: every path (object keys joined by `.`,
-array elements as `[]`, `items[].preis`; a document that is not an object as `$`), with
-`coverage` (the share of documents that have it; a path counts once per document however often
-it occurs in its arrays) and `types` (`string`, `number`, `bool`, `null`, `object`, `array`, with
-the share among the documents that have the path, largest first). Up to 1,000 paths, 32 levels
-and 100 elements per array are looked at. The row limit counts documents and the response size
-limit their size: the first document that does not fit ends the answer, and `truncated.limit` is
-the number of documents kept.
+```json
+{ "collection": "bestellungen",
+  "pipeline": "[{\"$match\": {\"land\": \"${land}\", \"$__timeFilter\": \"ts\"}}, {\"$sort\": {\"ts\": -1}}]" }
+{ "collection": "bestellungen", "filter": "{\"status\": \"bezahlt\"}", "projection": "{\"betrag\": 1}",
+  "sort": "{\"ts\": -1}", "skip": 0, "limit": 100 }
+```
 
-`cursor` on a query (and `cursors` on the panel route) is meant to continue document results; no
-kind continues them yet, and every kind ignores it.
+- `collection` is a collection (or view) of the source's `database`, not `system.*`.
+- `pipeline`, `filter`, `projection` and `sort` are **text** holding MongoDB Extended JSON
+  (canonical or relaxed: `{"$oid": "..."}`, `{"$date": "2025-01-01T00:00:00Z"}`,
+  `{"$numberDecimal": "1.5"}`, ...). Text keeps the key order, which `$sort` and exact
+  sub-document matches depend on; a JSON object instead of text is `query.invalid_form`.
+- A query is either `pipeline` (an array of stages) or the `find` fields; both together is
+  `mongodb.pipeline_and_find`. Empty `filter` text means all documents. Other fields are refused.
+- Only `aggregate` and `find` are ever sent for a query; there is no form for other commands.
+
+Read-only check (on the BSON as sent, after binding; `query_rejected`):
+
+- Every stage, also inside `$lookup` and `$unionWith` pipelines and `$facet`, must be one of
+  `$addFields`, `$bucket`, `$bucketAuto`, `$count`, `$densify`, `$facet`, `$fill`, `$geoNear`,
+  `$graphLookup`, `$group`, `$limit`, `$lookup`, `$match`, `$project`, `$redact`, `$replaceRoot`,
+  `$replaceWith`, `$sample`, `$search`, `$searchMeta`, `$set`, `$setWindowFields`, `$skip`,
+  `$sort`, `$sortByCount`, `$unionWith`, `$unset`, `$unwind`, `$vectorSearch` (names as written,
+  case-sensitive). `$out` and `$merge` are `mongodb.write_stage`; anything else (`$currentOp`,
+  `$collStats`, `$documents`, stages of future versions) is `mongodb.stage_not_allowed`.
+- `$where`, `$function`, `$accumulator`, `$out` and `$merge` are refused as keys at any depth, in
+  any letter case (`$expr` with `$function` included); JavaScript code values (`{"$code": ...}`)
+  are refused.
+- An operator key with invisible characters (zero-width, soft hyphen, controls, spaces,
+  direction marks, tags), a full-width or small dollar sign, full-width letters or any non-ASCII
+  letter is `mongodb.key_obfuscated`. Field names without a leading dollar are data and may hold
+  any character.
+- `$lookup` takes only `from`, `localField`, `foreignField`, `as`, `let` and `pipeline`;
+  `$unionWith` only `coll` and `pipeline` (or a collection name); `$graphLookup` only `from`,
+  `startWith`, `connectFromField`, `connectToField`, `as`, `maxDepth`, `depthField` and
+  `restrictSearchWithMatch`. Any other argument (`db`, say) is `mongodb.stage_invalid`.
+- The source's `database` may not be `admin`, `local` or `config` (`mongodb.database_reserved`).
+- `$lookup.from`, `$graphLookup.from` and `$unionWith` name collections of the same database as
+  text; another database (`{"db": ..., "coll": ...}`) or `system.*` is refused.
+- The real boundary is the login: Kalzit checks it with `connectionStatus` (`showPrivileges`)
+  whenever it builds a client (every 10 minutes at the latest), on "Test connection" and when the
+  source is saved. With a login, the server must report it and its privileges (otherwise
+  `mongodb.privileges_unknown`). Every privilege must be one of those of the `read` and `readAnyDatabase`
+  roles (`changeStream`, `collStats`, `dbHash`, `dbStats`, `find`, `killCursors`,
+  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`, and `planCacheRead` and
+  `performRawDataOperations` (MongoDB 8.2) on the source's own database (any collection), as the
+  `read` role grants them there; on other databases or cluster-wide they are refused);
+  anything more, on any database, is `mongodb.login_not_read_only` (`action`, `resource`). A
+  server where `hostInfo` succeeds although no such privilege was granted checks no rights at all
+  and is refused with `mongodb.access_control_off`.
+
+Macros and variables become typed BSON values, never text spliced into JSON:
+
+| Write | Becomes |
+|---|---|
+| `{"$__timeFilter": "ts"}` (a key, in `$match` and filters) | `"ts": {"$gte": <from>, "$lte": <to>}` as dates |
+| `"$__timeFrom"`, `"$__timeTo"` (a whole string) | the range's ends as dates |
+| `"$__interval_ms"` | the interval in milliseconds (64-bit integer) |
+| `"${name}"` (a whole string) | the variable's value: text, a number (64-bit integer or double), a boolean, or a list of them (an array) |
+
+Arguments that must be constants stay plain values: `$graphLookup` `connectFromField`,
+`connectToField`, `as`, `maxDepth`, `depthField`; `$bucket` `boundaries` and `default`;
+`$bucketAuto` `buckets` and `granularity`; all of `$densify`; `sortBy` and `partitionByFields`
+of `$setWindowFields` and `$fill`, and their output `window` and `method`.
+
+In aggregation expressions (`$project`, `$group`, `$expr`, `$lookup.let`, ...) a variable's value
+is wrapped in `{"$literal": ...}`, so a text such as `"$preis"` stays text instead of reading a
+field; in `$match`, filters, `$sort`, `$limit` and the like it is the plain value. Objects as
+values, variables in keys or inside longer text, unknown `$__` macros and `$__timeFilter` in an
+expression are refused.
+
+Limits: `maxTimeMS` is set to the query's time limit, so the server stops the query itself;
+leaving the request also ends the cursor (`killCursors`). Kalzit appends `$skip` (when continuing)
+and `$limit` (the document limit plus one) to a pipeline and sets `skip`/`limit` on a `find`.
+At the document limit (`datasources.max_rows`, `maxRows`, the query's `limit`) or the response
+size limit (`datasources.max_response_bytes`, the source's `maxResponseBytes`) the set is cut:
+`truncated` is `{"limit": <documents returned>}`, a notice says why, and `nextCursor` continues it.
+A `$sample` size above the document limit is lowered to it. In `find`, `limit: 0` means no
+limit, as in MongoDB (the document limit still holds). Documents keep the field order the
+database stored. A cursor belongs to its query, time range and variables; with any other it is
+`mongodb.cursor_invalid`. A `limit` in a `find` query is the query's own: reaching it is no cut.
+
+### The documents shape
+
+```json
+{ "shape": "documents", "documents": {
+  "documents": [{ "_id": { "$type": "objectId", "value": "65f0c1a2b3c4d5e6f7a8b9c0" }, "menge": 3,
+                  "betrag": { "$type": "decimal", "value": "12.50" }, "ts": { "$type": "date", "value": "1800000000000" } }],
+  "schema": [{ "path": "menge", "coverage": 1, "types": [{ "name": "int", "share": 1 }] }],
+  "nextCursor": "MjAwOmFiY2Q", "truncated": { "limit": 200 },
+  "notices": [{ "severity": "warning", "code": "documents.limit", "params": { "limit": "200" }, "text": "..." }],
+  "executedQuery": "bestellungen.aggregate([...])" } }
+```
+
+Values JSON has no type for keep their BSON type as `{"$type", "value"}`:
+
+| BSON | JSON |
+|---|---|
+| string, boolean, null, Int32, finite double | as is |
+| array, embedded document | array, object (nested values follow the same rules) |
+| Int64 | `{"$type": "int64", "value": "9007199254740993"}` |
+| Decimal128 | `{"$type": "decimal", "value": "12.50"}` |
+| ObjectId | `{"$type": "objectId", "value": "<24 hex digits>"}` |
+| Date | `{"$type": "date", "value": "<Unix milliseconds>"}` (text, so dates outside JavaScript's range stay exact) |
+| NaN, Infinity | `{"$type": "double", "value": "NaN"}`, `"Infinity"`, `"-Infinity"` |
+| Binary, UUID subtype (4) | `{"$type": "uuid", "value": "0199f0a0-..."}` |
+| Binary, other subtypes | `{"$type": "binary", "value": null}`, with one `documents.binary_hidden` notice per path (at most 20) |
+| Timestamp | `{"$type": "timestamp", "value": "<seconds>:<increment>"}` |
+| regular expression | `{"$type": "regex", "value": "/pattern/options"}` |
+| JavaScript (with or without scope), symbol | `{"$type": "javascript", "value": "..."}`, `{"$type": "symbol", ...}` |
+| MinKey, MaxKey, undefined | `{"$type": "minKey", "value": ""}`, `maxKey`, `undefined` |
+| DBPointer | `{"$type": "dbPointer", "value": null}` |
+
+A stored document with its own `$type` key is wrapped as `{"$type": "document", "value": {...}}`,
+so it cannot be mistaken for a typed value.
+
+Every document source (MongoDB, Elasticsearch and OpenSearch hits, JSON and NDJSON files, HTTP
+JSON) answers this shape. Documents come in the order the source answered. The row limit counts
+documents and the response size limit their size: the first document that does not fit ends the
+set, `truncated.limit` is the number of documents kept, and a notice says which limit cut it
+(`documents.limit` with `limit`, or `documents.size_limit`). `executedQuery` is the query as sent
+(MongoDB, Elasticsearch). `nextCursor` is set where the source can continue the set (MongoDB);
+`cursor` on a query (and `cursors` on the panel route) continues it. Other kinds ignore it.
+
+`schema` is sampled from the first 1,000 documents of the result, the same way for every source:
+every field path (`a.b`, array elements as `items[]`, fields of documents in arrays as
+`items[].preis`; a document that is not an object as `$`; at most 2,000 paths, 32 levels and the
+first 100 elements of each array) in the order it first appears, `coverage` (share of documents
+with the path, 0 to 1; a path counts once per document however often it occurs in its arrays)
+and `types` (the share of the documents with the path where it has that type, most common first;
+a path with several types in one document counts for each, so shares may add up to more than 1).
+MongoDB names types by their alias, as `$type` queries do (`double`, `string`, `object`, `array`,
+`binData`, `objectId`, `bool`, `date`, `null`, `regex`, `javascript`, `int`, `long`, `decimal`,
+`timestamp`, ...); the JSON sources by the JSON type (`string`, `number`, `bool`, `null`,
+`object`, `array`).
 
 ## A dashboard's stored queries
 
@@ -710,6 +876,11 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.header_name_invalid` | | `http_json`: `apiKeyHeader` is not a header name or is a reserved one |
 | `settings.url_no_host` | | the URL has no host |
 | `settings.invalid` | `detail` | the settings do not fit the kind (other cases) |
+| `mongodb.too_many_hosts` | `max` | more than `max` hosts |
+| `mongodb.srv_host` | | with SRV, `hosts` is not exactly one host name without a port |
+| `mongodb.database_invalid` | | not a MongoDB database name (with `/`, `\`, `.`, `"`, `$` or a space, or longer than 63) |
+| `mongodb.database_reserved` | | `admin`, `local` or `config`, the server's own databases |
+| `mongodb.ca_without_tls` | | `caCert` is set but TLS is off |
 | `secrets.unknown` | `name` | not a secret of this kind |
 | `secrets.too_long` | | the secret is too long |
 | `secrets.resend_on_target_change` | `field`, `secret` | a target changed; send `secret` again or remove it |
@@ -729,6 +900,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `target.own_database_unverifiable` | | `datasource_error`: a PostgreSQL-compatible server where Kalzit cannot verify that it is not its own database |
 | `target.unresolvable` | `host`, `detail` | `datasource_error`: the host name does not resolve |
 | `target.unreachable` | `host`, `detail` | `datasource_error`: no address of the host accepts a connection |
+| `mongodb.srv_target` | | an SRV record names a target that is not a host |
+| `mongodb.socket_member` | | the deployment names a Unix socket as a member |
 
 ### Queries (`query_rejected` unless noted)
 
@@ -802,6 +975,28 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `http_json.path_invalid` | | a `path` that would leave the source's URL |
 | `http_json.param_invalid` | `name` | a parameter that is not a text, number or boolean |
 | `http_json.variable_missing` | `name` | a variable without a value |
+| `mongodb.json_invalid` | `field`, `detail` | `pipeline`, `filter`, `projection` or `sort` is not valid Extended JSON |
+| `mongodb.not_a_document` | `field` | `filter`, `projection` or `sort` is not a JSON object |
+| `mongodb.pipeline_not_array` | | the pipeline (or a nested one) is not an array |
+| `mongodb.pipeline_and_find` | | `pipeline` together with `find` fields |
+| `mongodb.stage_invalid` | | a stage that is not an object with exactly one stage name |
+| `mongodb.write_stage` | `stage` | `$out` or `$merge` |
+| `mongodb.stage_not_allowed` | `stage` | a stage that is not on the reading list |
+| `mongodb.operator_not_allowed` | `operator` | `$where`, `$function`, `$accumulator`, `$out` or `$merge` as a key, in any case |
+| `mongodb.javascript` | | a JavaScript code value |
+| `mongodb.key_obfuscated` | `key` | an operator key with hidden or look-alike characters |
+| `mongodb.collection_invalid` | `name` | not a collection name, or a collection of another database |
+| `mongodb.system_collection` | `name` | a `system.*` collection |
+| `mongodb.macro_unknown` | `name` | an unknown `$__` macro |
+| `mongodb.time_filter_field` | | `$__timeFilter` without a field name |
+| `mongodb.time_filter_context` | | `$__timeFilter` inside an expression |
+| `mongodb.time_filter_conflict` | `field` | the field is filtered twice |
+| `mongodb.variable_name_invalid` | `name` | an invalid name in `${...}` |
+| `mongodb.variable_missing` | `name` | a variable without a value |
+| `mongodb.variable_type` | `name` | a variable that is not text, a number, a boolean or a list of them |
+| `mongodb.variable_in_text` | | `${...}` inside longer text |
+| `mongodb.variable_in_key` | | `${...}` in a key |
+| `mongodb.cursor_invalid` | | the cursor does not belong to this query |
 
 ### Dashboard variables (`422 validation`, `field: variables`, unless noted)
 
@@ -827,6 +1022,11 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |
 | `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
 | `mssql.login_timeout` | | SQL Server did not complete the login in time |
+| `mongodb.login_not_read_only` | `action`, `resource` | the login may do more than read (also `422 validation` with `field: user` when saving) |
+| `mongodb.privileges_unknown` | | a login is set, but the server reports no login or no privileges for it (also `422 validation` with `field: user` when saving) |
+| `mongodb.access_control_off` | | the server checks no access rights (also `422 validation` when saving) |
+| `mongodb.no_server` | `detail` | no suitable MongoDB server answered in time |
+| `mongodb.srv_lookup` | `detail` | the SRV or TXT lookup failed |
 | `prometheus.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
@@ -876,6 +1076,9 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `elasticsearch.shard_failures` | `count` | notice: `count` shards failed; the result may be incomplete |
 | `csv.extra_fields` | `count` | notice: `count` rows have more fields than the header |
 | `csv.legacy_encoding` | | notice: the file is not UTF-8 and was read as Windows-1252 |
+| `documents.limit` | `limit` | notice: the set was cut at `limit` documents |
+| `documents.size_limit` | | notice: the set was cut at the response size limit |
+| `documents.binary_hidden` | `path` | notice: binary values at `path` are not shown |
 
 ## Not here yet
 

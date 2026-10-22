@@ -120,6 +120,15 @@ jobs:
           cluster.routing.allocation.disk.threshold_enabled: "false"
           OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
         ports: ["9201:9200"]
+      mongodb:
+        image: mongo:8.2
+        env:
+          MONGO_INITDB_ROOT_USERNAME: kalzit
+          MONGO_INITDB_ROOT_PASSWORD: kalzit-ci-mongo
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     env:
       KALZIT_TEST_REQUIRE_DATABASES: "1"
       KALZIT_TEST_POSTGRES_URL: postgres://kalzit:kalzit-ci-pg@localhost:5432/kalzit
@@ -129,6 +138,7 @@ jobs:
       KALZIT_TEST_PROMETHEUS_URL: http://127.0.0.1:9090
       KALZIT_TEST_ELASTICSEARCH_URL: http://elastic:kalzit-ci-es@127.0.0.1:9200
       KALZIT_TEST_OPENSEARCH_URL: http://127.0.0.1:9201
+      KALZIT_TEST_MONGODB_URL: mongodb://kalzit:kalzit-ci-mongo@127.0.0.1:27017/?authSource=admin
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -158,6 +168,7 @@ jobs:
           echo "SQL Server, Prometheus, Elasticsearch or OpenSearch did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
+      - run: cargo test --locked --test mongodb -- --nocapture
 
   ui:
     name: ui (${{ matrix.os }})
