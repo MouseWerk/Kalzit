@@ -67,8 +67,11 @@ export interface FakeDashboardsState {
   variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
   panelQueries: { dashboardId: string; panelId: string; body: PanelQueryRequest }[];
+<<<<<<< HEAD
   /** Every panel export request (docs/api/datasources.md, "Export"). */
   panelExports: { dashboardId: string; panelId: string; body: Record<string, unknown> }[];
+=======
+>>>>>>> origin/main
   /** Holds every panel query until the test calls `release`, to observe loading and limits. */
   holdPanelQueries: boolean;
   release: () => void;
@@ -191,7 +194,11 @@ function modelProblem(model: unknown): string | null {
   const m = model as Record<string, unknown>;
   const extra = unknownField(m, MODEL_FIELDS);
   if (extra !== undefined) return `model.${extra}: unknown field`;
+<<<<<<< HEAD
   if (m.schemaVersion !== 1 && m.schemaVersion !== 2) return "model.schemaVersion: 1 or 2";
+=======
+  if (m.schemaVersion !== 1) return "model.schemaVersion: must be 1";
+>>>>>>> origin/main
   if (typeof m.title !== "string" || m.title.length < 1 || m.title.length > 200) {
     return "model.title: 1 to 200 characters";
   }
@@ -269,7 +276,10 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     createdWithoutRange: [],
     variableRequests: [],
     panelQueries: [],
+<<<<<<< HEAD
     panelExports: [],
+=======
+>>>>>>> origin/main
     holdPanelQueries: false,
     release: () => {
       state.holdPanelQueries = false;
@@ -545,6 +555,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         needs("dashboards:read") ?? panelQuery(dashboard, decodeURIComponent(parts[3] ?? ""), body)
       );
     }
+<<<<<<< HEAD
     if (parts[2] === "panels" && parts[4] === "export" && method === "POST") {
       // data:export on the route, then dashboards:read on the dashboard, as on the server.
       const denied = needs("data:export") ?? needs("dashboards:read");
@@ -572,6 +583,8 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         },
       });
     }
+=======
+>>>>>>> origin/main
     if (parts[2] === "variables" && parts[4] === "options" && method === "POST") {
       // The decided contract: VariableOptionsRequest {timeRange, variables} without the
       // variable's own name; the answer {options, truncated}; a variable the saved dashboard

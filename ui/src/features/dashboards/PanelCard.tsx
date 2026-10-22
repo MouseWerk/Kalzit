@@ -1,4 +1,5 @@
 import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from "react";
+<<<<<<< HEAD
 import { exportPanel, exportQuery } from "../../analysis/api";
 import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
 import { runPanelSteps } from "../../analysis/panel";
@@ -6,6 +7,11 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
+=======
+import type { TimeRange } from "../../api/generated/shapes";
+import { Icon } from "../../components/Icon";
+import { useI18n } from "../../i18n/i18n";
+>>>>>>> origin/main
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
@@ -13,10 +19,15 @@ import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
 import "./dashboards.css";
+<<<<<<< HEAD
 import { reasonText } from "../datasources/reasons";
 import { type GridPos, type PanelModel, storedQueryVariables } from "./model";
 import { errorsOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
 import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
+=======
+import type { GridPos, PanelModel } from "./model";
+import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+>>>>>>> origin/main
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -49,9 +60,12 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
   const titleId = useId();
   const hintId = useId();
   const [inspecting, setInspecting] = useState(false);
+<<<<<<< HEAD
   const [exporting, setExporting] = useState(false);
   // The server checks data:export on the export routes; without it the action is not offered.
   const mayExport = useOrgPermissions().has("data:export");
+=======
+>>>>>>> origin/main
   const handleRef = useRef<HTMLButtonElement>(null);
   const keepHandleFocus = useRef(false);
 
@@ -178,6 +192,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           >
             {t("dashboards.panel.inspect")}
           </button>
+<<<<<<< HEAD
           {mayExport ? (
             <button
               type="button"
@@ -190,6 +205,8 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
               {t("analysis.export.button")}
             </button>
           ) : null}
+=======
+>>>>>>> origin/main
           {edit === undefined ? null : (
             <>
               <button
@@ -249,6 +266,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           <Inspect outcomes={outcomes} />
         </Dialog>
       ) : null}
+<<<<<<< HEAD
       {exporting ? (
         <ExportDialog
           frames={runPanelSteps(panel.transformations, outcomes).frames.map((f) => f.name)}
@@ -261,10 +279,13 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           onClose={() => setExporting(false)}
         />
       ) : null}
+=======
+>>>>>>> origin/main
     </article>
   );
 }
 
+<<<<<<< HEAD
 /**
  * The file of one panel: the saved panel through its export route, as viewers see it, or the
  * panel being edited through the free export route, as editors run it.
@@ -307,6 +328,8 @@ function exportPanelData(
   );
 }
 
+=======
+>>>>>>> origin/main
 interface PanelBodyProps {
   panel: PanelModel;
   title: string;
@@ -341,10 +364,14 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
+<<<<<<< HEAD
   // The panel's steps run here, on what the queries answered; a failing step shows its reason
   // and the panel draws what the steps before it made.
   const stepsRun = runPanelSteps(panel.transformations, outcomes);
   const frames = stepsRun.frames.map((f) => f.frame);
+=======
+  const frames = framesOf(outcomes);
+>>>>>>> origin/main
   const errors = errorsOf(outcomes);
   const shapes = otherShapes(outcomes);
   const failedAll = frames.length === 0 && errors.length > 0;
@@ -368,6 +395,7 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
     return errorList;
   }
   const { Panel } = plugin;
+<<<<<<< HEAD
   const failed = stepsRun.failed;
   return (
     <div className="panel-content">
@@ -388,6 +416,11 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
           </span>
         </p>
       )}
+=======
+  return (
+    <div className="panel-content">
+      {errorList}
+>>>>>>> origin/main
       {frames.length === 0 ? (
         shapes.length > 0 ? (
           <p className="panel-empty">

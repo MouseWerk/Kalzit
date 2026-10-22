@@ -91,6 +91,7 @@ describe("reason texts", () => {
     );
   });
 
+<<<<<<< HEAD
   it("names the types of analysis reasons in the UI's words", () => {
     const params = { operator: "*", left: "text", right: "number" };
     expect(reasonText(de, { reason: "expression.operand_types", params })).toBe(
@@ -109,6 +110,8 @@ describe("reason texts", () => {
     ).toBe("Fields of type whole number and text cannot be matched.");
   });
 
+=======
+>>>>>>> origin/main
   it("says “at least” for a range without an upper bound", () => {
     expect(reasonText(t, { reason: "settings.out_of_range", params: { min: "1" } })).toBe(
       "Enter a value of at least 1.",

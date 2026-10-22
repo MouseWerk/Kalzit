@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+=======
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+>>>>>>> origin/main
 import { describe, expect, it, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -428,6 +432,7 @@ describe("dashboard view", () => {
     expect(within(two).getByText("Ada")).toBeTruthy();
   });
 
+<<<<<<< HEAD
   it("draws a panel after its stored steps and names a failing step", async () => {
     setup("viewer", [
       {
@@ -499,6 +504,8 @@ describe("dashboard view", () => {
     vi.unstubAllGlobals();
   });
 
+=======
+>>>>>>> origin/main
   it("gives viewers view mode only", async () => {
     setup("viewer");
     renderApp("/dashboards/d-sales");

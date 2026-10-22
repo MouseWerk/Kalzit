@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
+<<<<<<< HEAD
 import { namedInputs } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps } from "../../analysis/steps";
+=======
+>>>>>>> origin/main
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
@@ -224,12 +227,15 @@ export function PanelEditor({
           ) : null}
           {mayQuery ? null : <p className="field__hint">{t("dashboards.editor.noQueryRight")}</p>}
         </section>
+<<<<<<< HEAD
         <StepsEditor
           steps={asSteps(panel.transformations)}
           onChange={(steps) => setPanel((p) => ({ ...p, transformations: steps }))}
           refIds={panel.targets.map((target) => target.refId)}
           inputs={namedInputs(results.data ?? [])}
         />
+=======
+>>>>>>> origin/main
       </div>
     </Dialog>
   );
