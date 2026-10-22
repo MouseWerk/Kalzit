@@ -93,5 +93,6 @@
   "graph.options.variableNone": "The dashboard has no variables yet. Add one in the dashboard settings.",
   "graph.options.variableOff": "No variable",
   "graph.options.variableProperty": "Node property for the variable (optional)",
-  "graph.options.variablePropertyHint": "Empty uses the node id."
+  "graph.options.variablePropertyHint": "Empty uses the node id.",
+  "graph.layout.settling": "Arranging the graph…"
 }

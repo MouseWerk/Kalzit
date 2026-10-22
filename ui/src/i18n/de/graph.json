@@ -93,5 +93,6 @@
   "graph.options.variableNone": "Das Dashboard hat noch keine Variablen. Lege eine in den Dashboard-Einstellungen an.",
   "graph.options.variableOff": "Keine Variable",
   "graph.options.variableProperty": "Knoten-Property für die Variable (optional)",
-  "graph.options.variablePropertyHint": "Leer nimmt die Knoten-ID."
+  "graph.options.variablePropertyHint": "Leer nimmt die Knoten-ID.",
+  "graph.layout.settling": "Der Graph wird angeordnet…"
 }

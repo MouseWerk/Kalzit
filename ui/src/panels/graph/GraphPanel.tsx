@@ -650,14 +650,16 @@ function DrawnGraph({ view, mode, ref, ...rest }: DrawnGraphProps) {
   const reduced = prefersReducedMotion();
   const [shown, setShown] = useState<Float32Array | null>(null);
   const positions = layout.positions;
-  // With reduced motion only the start and the settled layout are drawn.
+  // The layout settles visibly for small graphs. With reduced motion, and for large graphs (where
+  // each redraw of every node is a noticeable pause), only the start and the end are drawn.
+  const progressive = !reduced && view.nodes.length <= PROGRESSIVE_NODES;
   useEffect(() => {
-    if (positions !== null && (!reduced || !layout.running)) {
+    if (positions !== null && (progressive || !layout.running)) {
       setShown(positions);
     } else if (positions !== null) {
       setShown((current) => current ?? positions);
     }
-  }, [positions, layout.running, reduced]);
+  }, [positions, layout.running, progressive]);
   if (shown === null || shown.length !== view.nodes.length * 2) {
     return null;
   }
@@ -665,7 +667,20 @@ function DrawnGraph({ view, mode, ref, ...rest }: DrawnGraphProps) {
     <>
       <LazySigmaCanvas ref={ref} view={view} positions={shown} reducedMotion={reduced} {...rest} />
       {mode === "hierarchy" && layout.reversed > 0 ? <CycleNote count={layout.reversed} /> : null}
+      {layout.running && !progressive ? <SettlingNote /> : null}
     </>
+  );
+}
+
+/** Graphs above this many nodes are drawn when their layout has settled, not while it moves. */
+export const PROGRESSIVE_NODES = 2_000;
+
+function SettlingNote() {
+  const { t } = useI18n();
+  return (
+    <p className="graph__overlay-note" role="status">
+      {t("graph.layout.settling")}
+    </p>
   );
 }
 

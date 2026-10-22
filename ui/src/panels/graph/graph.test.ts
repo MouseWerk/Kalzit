@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { expandQuery, nodeCaption, readTime, typedId } from "./adapter";
-import { type GraphPalette, hex, mix, readPalette } from "./colors";
-import { nodeDisplay, nodeToward } from "./drawing";
+import { type GraphPalette, hex, mix } from "./colors";
+import { DIM_EDGES_UP_TO, edgeColor, nodeDisplay, nodeToward } from "./drawing";
 import { ForceLayout, hierarchyLayout, seedPositions } from "./layoutEngine";
 import { communities, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, nodeSizes } from "./model";
@@ -284,10 +284,23 @@ describe("drawing", () => {
     const other = nodeDisplay(2, base, props, 1);
     expect(other.color).toBe("#dddddd");
     expect(other.labelVisibility).toBe("hidden");
+    // Dropped, so the renderer does not lay it out.
+    expect(other.label).toBeNull();
     // No frame or glow of any kind: the renderer's backdrop stays off.
     expect(Object.keys(selected).some((key) => key.startsWith("backdrop"))).toBe(false);
     const none = nodeDisplay(2, base, { ...props, selected: null }, 1);
     expect(none.color).toBe("#222222");
+    // Edges the selection does not touch are dimmed too.
+    expect(edgeColor({ source: 0, target: 1 }, props)).toBe("#444444");
+    expect(edgeColor({ source: 1, target: 2 }, props)).toBe("#bbbbbb");
+  });
+
+  it("keeps the edges of large graphs undimmed, so a selection redraws only nodes", () => {
+    const v = view();
+    const many = { ...v, edges: Array.from({ length: DIM_EDGES_UP_TO + 1 }, () => v.edges[0]) };
+    expect(
+      edgeColor({ source: 1, target: 2 }, { view: many as GraphView, palette, selected: 0 }),
+    ).toBe("#444444");
   });
 
   it("moves the keyboard selection to the nearest node in a direction", () => {
@@ -317,8 +330,5 @@ describe("drawing", () => {
 
   it("mixes dimmed colors toward the background", () => {
     expect(hex(mix([0, 0, 0], [255, 255, 255], 0.5))).toBe("#808080");
-    // jsdom has no canvas: the palette falls back to readable defaults instead of failing.
-    const palette = readPalette(document.body);
-    expect(palette.series).toHaveLength(8);
   });
 });

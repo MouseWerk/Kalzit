@@ -40,21 +40,49 @@ export function nodeDisplay(
         : p.palette.neutralDimmed
       : ((lit ? p.palette.series : p.palette.dimmed)[group % p.palette.series.length] ?? "#666");
   const allowed = labelAllowed(p.ranks[index] ?? 0, ratio, node.cluster >= 0);
+  const labelVisibility = isSelected
+    ? "visible"
+    : p.selected !== null && !lit
+      ? "hidden"
+      : allowed
+        ? "auto"
+        : "hidden";
   return {
     ...data,
     color,
     labelColor: p.palette.text,
     size: isSelected ? data.size * 1.4 : data.size,
-    labelVisibility: isSelected
-      ? "visible"
-      : p.selected !== null && !lit
-        ? "hidden"
-        : allowed
-          ? "auto"
-          : "hidden",
+    labelVisibility,
+    // A hidden label is dropped, not only hidden: the renderer lays out the glyphs of every
+    // label it has, which for thousands of nodes takes seconds.
+    label: labelVisibility === "hidden" ? null : data.label,
     zIndex: isSelected ? 1 : 0,
     labelFont: isSelected ? `${p.palette.boldWeight} ${p.palette.font}` : p.palette.font,
   };
+}
+
+/**
+ * Up to this many edges, selecting a node dims the edges it does not touch. Beyond it, edges keep
+ * their color and only the nodes are dimmed: drawing every edge again on each selection would
+ * stall the page for a noticeable moment.
+ */
+export const DIM_EDGES_UP_TO = 5_000;
+
+export function dimsEdges(view: GraphView): boolean {
+  return view.edges.length <= DIM_EDGES_UP_TO;
+}
+
+/** An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). */
+export function edgeColor(
+  edge: { source: number; target: number },
+  p: Pick<DrawState, "view" | "palette" | "selected">,
+): string {
+  const lit =
+    p.selected === null ||
+    edge.source === p.selected ||
+    edge.target === p.selected ||
+    !dimsEdges(p.view);
+  return lit ? p.palette.edge : p.palette.edgeDimmed;
 }
 
 /**

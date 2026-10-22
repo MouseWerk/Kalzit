@@ -15,12 +15,22 @@ import { buildView, labelRanks, visibleAt } from "./view";
  * 20,000 edges. The layout runs in a worker; what stays on the main thread is bounded: work done
  * once per result within one long task (LONG_TASK_MS), work done per frame or interaction (a
  * layout update, the time slider, zoom levels) within one frame (FRAME_MS). Each step is timed as
- * the best of a few runs, the cost of the work rather than of whatever else the machine does.
+ * the best of a few runs, the cost of the work rather than of whatever else the machine does;
+ * CI runners get twice the time, as the other budgets do (quality/performance.md).
  */
 const NODES = 5_000;
 const EDGES = 20_000;
-const LONG_TASK_MS = 50;
-const FRAME_MS = 16;
+const CI = process.env.CI !== undefined;
+const LONG_TASK_MS = CI ? 100 : 50;
+const FRAME_MS = CI ? 32 : 16;
+const RUNS = 5;
+
+/** The best of RUNS timings, written to the output so a budget's margin stays visible. */
+function timed(name: string, work: () => void): number {
+  const ms = bestOf(RUNS, work);
+  process.stdout.write(`graph budget: ${name} ${ms.toFixed(1)} ms (best of ${RUNS})\n`);
+  return ms;
+}
 
 const set = generateGraph(NODES, EDGES);
 const model = buildGraphModel([set], { nodeLimit: NODES, caption: "" });
@@ -41,12 +51,12 @@ describe("budget: 5,000 nodes and 20,000 edges", () => {
   });
 
   it("prepares a result within one long task", () => {
-    expect(bestOf(3, () => buildGraphModel([set], { nodeLimit: NODES, caption: "" }))).toBeLessThan(
-      LONG_TASK_MS,
-    );
-    expect(bestOf(3, () => components(model))).toBeLessThan(LONG_TASK_MS);
     expect(
-      bestOf(3, () =>
+      timed("model", () => buildGraphModel([set], { nodeLimit: NODES, caption: "" })),
+    ).toBeLessThan(LONG_TASK_MS);
+    expect(timed("components", () => components(model))).toBeLessThan(LONG_TASK_MS);
+    expect(
+      timed("clustered view", () =>
         buildView(model, {
           sizes: nodeSizes(model, "degree"),
           widths: edgeWidths(model, ""),
@@ -58,19 +68,23 @@ describe("budget: 5,000 nodes and 20,000 edges", () => {
         }),
       ),
     ).toBeLessThan(LONG_TASK_MS);
-    expect(bestOf(3, () => layoutRequest(view, "force", 1, new Map()))).toBeLessThan(LONG_TASK_MS);
+    expect(timed("layout request", () => layoutRequest(view, "force", 1, new Map()))).toBeLessThan(
+      LONG_TASK_MS,
+    );
   });
 
   it("does per-frame work within one frame", () => {
     const times = edgeTimes(model, "since");
-    expect(bestOf(3, () => visibleAt(model, view, times, Date.UTC(2026, 5, 1)))).toBeLessThan(
-      FRAME_MS,
-    );
-    expect(bestOf(3, () => labelRanks(view))).toBeLessThan(FRAME_MS);
+    expect(
+      timed("time slider", () => visibleAt(model, view, times, Date.UTC(2026, 5, 1))),
+    ).toBeLessThan(FRAME_MS);
+    expect(timed("label ranks", () => labelRanks(view))).toBeLessThan(FRAME_MS);
     const graph = new Graph({ type: "directed", multi: true });
     for (let i = 0; i < NODES; i++) graph.addNode(String(i), { x: 0, y: 0 });
     const positions = seedPositions(NODES);
-    expect(bestOf(3, () => applyPositionsTo(graph, positions))).toBeLessThan(FRAME_MS);
+    expect(timed("apply positions", () => applyPositionsTo(graph, positions))).toBeLessThan(
+      FRAME_MS,
+    );
     expect(graph.getNodeAttribute("7", "x")).toBe(positions[14]);
   });
 

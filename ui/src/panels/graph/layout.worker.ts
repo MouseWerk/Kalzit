@@ -4,6 +4,7 @@ import {
   type LayoutProgress,
   type LayoutRequest,
   type LayoutStop,
+  UPDATE_INTERVAL_MS,
 } from "./layoutProtocol";
 
 /**
@@ -45,13 +46,19 @@ scope.onmessage = (event) => {
   }
   const layout = new ForceLayout(message, message.start);
   const total = forceIterations(message.count);
+  let posted = 0;
   const tick = () => {
     if (current !== run) {
       return;
     }
     layout.step(Math.min(ITERATIONS_PER_UPDATE, total - layout.done));
     const done = layout.done >= total;
-    post({ type: "positions", run, positions: layout.positions(), done });
+    // Each update costs the page a redraw of every node; a few per second look smooth enough.
+    const now = performance.now();
+    if (done || now - posted >= UPDATE_INTERVAL_MS) {
+      posted = now;
+      post({ type: "positions", run, positions: layout.positions(), done });
+    }
     if (!done) {
       setTimeout(tick, 0);
     }

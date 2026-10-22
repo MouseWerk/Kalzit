@@ -30,5 +30,7 @@ export interface LayoutProgress {
   reversed?: number;
 }
 
-/** Iterations between two position updates: about one frame of work for a mid-sized graph. */
+/** Iterations per step of the worker; between steps it reads new messages. */
 export const ITERATIONS_PER_UPDATE = 5;
+/** The worker posts positions at most this often while the layout settles, and once at the end. */
+export const UPDATE_INTERVAL_MS = 200;

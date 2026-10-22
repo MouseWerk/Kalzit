@@ -209,7 +209,7 @@ export function edgePropertyKeys(model: GraphModel): string[] {
   return [...keys].sort();
 }
 
-export const MIN_NODE_SIZE = 3;
+export const MIN_NODE_SIZE = 4;
 export const MAX_NODE_SIZE = 14;
 export const MIN_EDGE_WIDTH = 0.5;
 export const MAX_EDGE_WIDTH = 4;

@@ -4,7 +4,7 @@ import Sigma from "sigma";
 import { extremityArrow, layerPlain, pathLine, pathLoop } from "sigma/rendering";
 import { applyPositionsTo } from "./applyPositions";
 import type { GraphPalette } from "./colors";
-import { type Direction, nodeDisplay, nodeToward } from "./drawing";
+import { type Direction, dimsEdges, edgeColor, nodeDisplay, nodeToward } from "./drawing";
 import type { GraphView, Visibility } from "./view";
 import "./graph.css";
 
@@ -90,9 +90,13 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
         gestureTarget: "shared",
         hideEdgesOnMove: graph.size > 5_000,
         hideLabelsOnMove: true,
-        labelRenderedSizeThreshold: 4,
+        // Which labels show is decided by zoom level (labelAllowed), not by node size.
+        labelRenderedSizeThreshold: 0,
         labelDensity: 0.5,
         enableNodeDrag: false,
+        // Node sizes are pixels on screen (sigma 4 defaults to graph units, which makes the
+        // size depend on the layout's spread).
+        itemSizesReference: "screen",
         ...motionSettings(live.current.props.reducedMotion),
       },
       nodeReducer: (key, data) =>
@@ -104,8 +108,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
         if (edge === undefined || p.visibility.edges[index] === 0) {
           return { ...data, visibility: "hidden" };
         }
-        const lit = p.selected === null || edge.source === p.selected || edge.target === p.selected;
-        return { ...data, color: lit ? p.palette.edge : p.palette.edgeDimmed };
+        return { ...data, color: edgeColor(edge, p) };
       },
     });
     // The renderer's own gesture hint brings a style element, which the content security policy
@@ -118,7 +121,11 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       const bucket = Math.round(Math.log2(Math.max(ratio, 1e-3)) * 2);
       if (bucket !== live.current.ratioBucket) {
         live.current.ratioBucket = bucket;
-        renderer.scheduleRefresh({ skipIndexation: true });
+        // Labels belong to nodes; edges need no new pass.
+        renderer.scheduleRefresh({
+          partialGraph: { nodes: renderer.getGraph().nodes() },
+          skipIndexation: true,
+        });
       }
     });
     sigmaRef.current = renderer;
@@ -141,9 +148,11 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     if (graph === null || renderer === null) {
       return;
     }
-    graph.clear();
+    // Filled while detached and handed over whole: the renderer reacts to every single addition
+    // of an attached graph, which for 20,000 edges takes about a second.
+    const next = new Graph({ type: "directed", multi: true, allowSelfLoops: true });
     view.nodes.forEach((node, i) => {
-      graph.addNode(String(i), {
+      next.addNode(String(i), {
         x: positions[2 * i] ?? 0,
         y: positions[2 * i + 1] ?? 0,
         size: node.size,
@@ -151,11 +160,13 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       } satisfies NodeAttributes);
     });
     view.edges.forEach((edge, i) => {
-      graph.addEdgeWithKey(`e${i}`, String(edge.source), String(edge.target), {
+      next.addEdgeWithKey(`e${i}`, String(edge.source), String(edge.target), {
         size: edge.width,
       });
     });
+    graphRef.current = next;
     renderer.setSetting("hideEdgesOnMove", view.edges.length > 5_000);
+    renderer.setGraph(next);
   }, [view]);
 
   // New positions from the layout move the nodes; the camera keeps its place.
@@ -167,11 +178,24 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     applyPositionsTo(graph, positions);
   }, [positions]);
 
-  // Selection, visibility, theme: only the reducers' output changes.
+  // Visibility and theme: only the reducers' output changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: each listed prop changes what the reducers draw
   useEffect(() => {
     sigmaRef.current?.refresh({ skipIndexation: true });
-  }, [selected, neighbours, visibility, palette, ranks]);
+  }, [visibility, palette, ranks]);
+
+  // Selection: a large graph keeps its edges as they are, so only the nodes are drawn again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each listed prop changes what the reducers draw
+  useEffect(() => {
+    const renderer = sigmaRef.current;
+    const graph = graphRef.current;
+    if (renderer === null || graph === null) return;
+    if (dimsEdges(live.current.props.view)) {
+      renderer.refresh({ skipIndexation: true });
+    } else {
+      renderer.refresh({ partialGraph: { nodes: graph.nodes() }, skipIndexation: true });
+    }
+  }, [selected, neighbours]);
 
   useImperativeHandle(props.ref, () => ({
     zoom(factor) {
