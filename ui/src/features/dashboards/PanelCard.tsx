@@ -288,8 +288,8 @@ export function PanelBody({
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
-  // The projection step of a query is part of it: its documents arrive here as a frame.
-  const outcomes = projectOutcomes(received, panel.targets);
+  // A projection step of the panel turns that query's documents into a frame here.
+  const outcomes = projectOutcomes(received, panel.transformations);
   const frames = framesOf(outcomes);
   const documents = documentsOf(outcomes);
   const errors = errorsOf(outcomes);

@@ -1,4 +1,4 @@
-import { isContainer } from "./values";
+import { isContainer, isTyped, unwrap } from "./values";
 
 /**
  * Field paths in three spellings, one per use:
@@ -52,12 +52,13 @@ export function valuesAt(document: unknown, path: string): unknown[] {
   let current: unknown[] = [document];
   for (const step of steps(path)) {
     const next: unknown[] = [];
-    for (const value of current) {
+    for (const outer of current) {
+      const value = unwrap(outer);
       if (step === "[]") {
         if (Array.isArray(value)) {
           next.push(...value);
         }
-      } else if (isContainer(value) && !Array.isArray(value) && Object.hasOwn(value, step)) {
+      } else if (isObject(value) && Object.hasOwn(value, step)) {
         next.push(value[step]);
       }
     }
@@ -73,10 +74,11 @@ export function valuesAt(document: unknown, path: string): unknown[] {
 export function valueAt(document: unknown, path: string): unknown {
   let current: unknown = document;
   for (const part of path.split(".")) {
-    if (Array.isArray(current) && /^\d+$/.test(part)) {
-      current = current[Number(part)];
-    } else if (isContainer(current) && !Array.isArray(current) && Object.hasOwn(current, part)) {
-      current = current[part];
+    const value = unwrap(current);
+    if (Array.isArray(value) && /^\d+$/.test(part)) {
+      current = value[Number(part)];
+    } else if (isObject(value) && Object.hasOwn(value, part)) {
+      current = value[part];
     } else {
       return undefined;
     }
@@ -88,11 +90,17 @@ export function valueAt(document: unknown, path: string): unknown {
 export function valueAtSegments(document: unknown, segments: readonly Segment[]): unknown {
   let current: unknown = document;
   for (const segment of segments) {
-    if (typeof segment === "number" ? Array.isArray(current) : isContainer(current)) {
-      current = (current as Record<string | number, unknown>)[segment];
+    const value = unwrap(current);
+    if (typeof segment === "number" ? Array.isArray(value) : isObject(value)) {
+      current = (value as Record<string | number, unknown>)[segment];
     } else {
       return undefined;
     }
   }
   return current;
+}
+
+/** A document or embedded document: an object that is not a typed value. */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return isContainer(value) && !Array.isArray(value) && !isTyped(value);
 }

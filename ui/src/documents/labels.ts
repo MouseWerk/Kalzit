@@ -1,6 +1,6 @@
 import { en } from "../i18n/catalogs";
 import type { MessageKey, Translate } from "../i18n/i18n";
-import { base64Bytes, formatLeaf, isTyped } from "./values";
+import { entriesOf, formatLeaf, isTyped } from "./values";
 
 /** The name of a value type: BSON's names where Kalzit knows them, the server's own otherwise. */
 export function typeLabel(t: Translate, type: string): string {
@@ -14,10 +14,11 @@ export function valueSummary(t: Translate, value: unknown, language: string): st
     return t("documents.tree.items", { count: value.length });
   }
   if (value !== null && typeof value === "object" && !isTyped(value)) {
-    return t("documents.tree.fields", { count: Object.keys(value).length });
+    return t("documents.tree.fields", { count: entriesOf(value).length });
   }
-  if (isTyped(value) && value.$type === "binary") {
-    return t("documents.tree.bytes", { count: base64Bytes(value.value) });
+  if (isTyped(value) && value.value === null) {
+    // The server leaves binary data out of the answer and says so in a notice.
+    return t("documents.tree.hidden");
   }
   return formatLeaf(value, language);
 }

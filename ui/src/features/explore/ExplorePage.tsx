@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
-import { isRecord } from "../../api/client";
 import type { Shape } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
+import { ProjectionEditor } from "../../documents/ProjectionEditor";
+import { type FrameProjection, withProjection } from "../../documents/projection";
+import { filterPaths, schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
@@ -13,7 +15,7 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
-import { outcomesOf, projectOutcomes } from "../dashboards/results";
+import { documentsOf, outcomesOf, projectOutcomes } from "../dashboards/results";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
@@ -85,6 +87,8 @@ function Explore({ orgId }: { orgId: string }) {
   const kinds = useQuery(kindsQuery(orgId));
   const [chosen, setChosen] = useState<string | null>(() => readPreference(LAST_DATASOURCE_KEY));
   const [queries, setQueries] = useState<Record<string, unknown>>({});
+  // The projection step per data source; it belongs to the panel, not to the query.
+  const [projections, setProjections] = useState<Record<string, FrameProjection | undefined>>({});
   const [range, setRange] = useState<TextRange>({ from: "now-1h", to: "now" });
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
   const [rangeError, setRangeError] = useState<string | null>(null);
@@ -158,15 +162,21 @@ function Explore({ orgId }: { orgId: string }) {
   }
 
   const outcomes = result.data ?? [];
+  const projection = projections[datasource.id];
+  const transformations =
+    submitted === null ? [] : withProjection([], REF_ID, projections[submitted.datasourceId]);
   // The suggestion follows what the panel will get: documents, or the frame of a projection step.
-  const shown =
-    submitted === null
-      ? outcomes
-      : projectOutcomes(outcomes, [{ refId: REF_ID, query: submitted.query }]);
-  const results = shown.flatMap((o) => ("result" in o ? [o.result] : []));
+  const results = projectOutcomes(outcomes, transformations).flatMap((o) =>
+    "result" in o ? [o.result] : [],
+  );
   const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
-  const projects = isRecord(query) && query.toFrame !== undefined;
-  const shapes: Shape[] = projects ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
+  const takesDocuments = kindShapes.includes("documents");
+  const shapes: Shape[] =
+    projection === undefined ? kindShapes : [...new Set<Shape>([...kindShapes, "frame"])];
+  // Paths to suggest for the projection: those of the last result's documents.
+  const resultFields = documentsOf(outcomes).flatMap(({ documents }) =>
+    filterPaths(schemaOf(documents)),
+  );
   const choices = panelsForShapes(shapes);
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
   const panel: PanelModel = {
@@ -178,7 +188,7 @@ function Explore({ orgId }: { orgId: string }) {
       submitted === null
         ? []
         : [{ refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query }],
-    transformations: [],
+    transformations,
     options: {},
     fieldConfig: {},
   };
@@ -231,6 +241,13 @@ function Explore({ orgId }: { orgId: string }) {
         onChange={(next) => setQueries((current) => ({ ...current, [datasource.id]: next }))}
         onRun={() => run()}
       />
+      {takesDocuments ? (
+        <ProjectionEditor
+          projection={projection}
+          fields={[...new Set(resultFields)]}
+          onChange={(next) => setProjections((current) => ({ ...current, [datasource.id]: next }))}
+        />
+      ) : null}
       {submitted === null ? (
         <p className="explore__hint">{t("explore.hint")}</p>
       ) : (

@@ -4,27 +4,32 @@ import { jsonContext, mongoCompletions } from "../features/datasources/editors/m
 import { tokenizeJson } from "../features/datasources/editors/syntax";
 import {
   addMatch,
-  allStages,
-  fromStages,
-  type MongoAggregateQuery,
+  joinPipeline,
+  modeOf,
+  mongoQueryText,
   parseMongoQuery,
   previewQuery,
+  splitPipeline,
 } from "../features/datasources/mongoQuery";
 import { distribution, histogram } from "./distribution";
 import { filterable, toExtendedJson } from "./filter";
 import { filterPath, mongoPath, schemaPath, valueAt, valuesAt } from "./paths";
-import { projectDocuments } from "./projection";
+import { projectDocuments, projectionFor, withProjection } from "./projection";
 import { outliersOf, sampleSchema, schemaOf } from "./schema";
-import { base64Bytes, formatLeaf, typeOf } from "./values";
+import { entriesOf, formatLeaf, isTyped, typeOf, unwrap } from "./values";
 
 const oid = { $type: "objectId", value: "665f1c2e9b1e4a0001a1b001" };
-const when = { $type: "date", value: "2026-10-01T08:00:00.000Z" };
+/** Dates arrive as Unix milliseconds in text. */
+const WHEN_MS = Date.parse("2026-10-01T08:00:00.000Z");
+const when = { $type: "date", value: String(WHEN_MS) };
+/** An emoji as a field name, built at run time: the sources themselves stay free of emoji. */
+const SMILE = String.fromCodePoint(0x1f642);
 const big = { $type: "int64", value: "9007199254740993" };
 const price = { $type: "decimal", value: "129.90" };
 
 const docs = [
   { _id: oid, at: when, n: big, total: price, items: [{ p: 1 }, { p: 2 }], tags: ["a"], größe: 1 },
-  { _id: oid, at: when, items: [{ p: 3 }], tags: [], größe: "groß", "🙂": true },
+  { _id: oid, at: when, items: [{ p: 3 }], tags: [], größe: "groß", [SMILE]: true },
 ];
 
 describe("values", () => {
@@ -37,8 +42,24 @@ describe("values", () => {
     expect(formatLeaf(big, "en")).toBe("9,007,199,254,740,993");
     expect(formatLeaf(price, "de")).toBe("129.90");
     expect(formatLeaf(when, "en")).toContain("10/1/26");
-    expect(base64Bytes("TWFu")).toBe(3);
-    expect(base64Bytes("TQ==")).toBe(1);
+    // Hidden binary data has no value; a NaN double keeps its text.
+    expect(isTyped({ $type: "binary", value: null })).toBe(true);
+    expect(formatLeaf({ $type: "double", value: "NaN" }, "en")).toBe("NaN");
+  });
+
+  it("opens a stored document with its own $type key as the document it is", () => {
+    const wrapped = { $type: "document", value: { $type: "rule", value: "x", level: 2 } };
+    expect(isTyped(wrapped)).toBe(false);
+    expect(typeOf(wrapped)).toBe("object");
+    expect(unwrap(wrapped)).toEqual({ $type: "rule", value: "x", level: 2 });
+    expect(entriesOf(wrapped).map(([key]) => key)).toEqual(["$type", "value", "level"]);
+    expect(valueAt({ meta: wrapped }, "meta.level")).toBe(2);
+    expect(sampleSchema([{ meta: wrapped }]).map((field) => field.path)).toEqual([
+      "meta",
+      "meta.$type",
+      "meta.value",
+      "meta.level",
+    ]);
   });
 });
 
@@ -91,7 +112,7 @@ describe("schema sampling", () => {
       partial: false,
       mixed: true,
     });
-    expect(outliersOf(field("🙂") ?? { path: "", coverage: 0, types: [] })).toEqual({
+    expect(outliersOf(field(SMILE) ?? { path: "", coverage: 0, types: [] })).toEqual({
       partial: true,
       mixed: false,
     });
@@ -132,11 +153,11 @@ describe("distribution", () => {
 
   it("uses dates as a time scale and strings for min and max", () => {
     const dated = distribution(
-      [{ at: when }, { at: { $type: "date", value: "2026-10-03T00:00:00.000Z" } }],
+      [{ at: when }, { at: { $type: "date", value: String(WHEN_MS + 86_400_000) } }],
       "at",
     );
     expect(dated.scale).toBe("date");
-    expect(dated.min).toBe(Date.parse("2026-10-01T08:00:00.000Z"));
+    expect(dated.min).toBe(WHEN_MS);
     const words = distribution([{ w: "pear" }, { w: "apple" }], "w");
     expect([words.scale, words.min, words.max]).toEqual([null, "apple", "pear"]);
     expect(histogram([5, 5], 10)).toEqual([{ from: 5, to: 5, count: 2 }]);
@@ -165,101 +186,113 @@ describe("projection step", () => {
       ["items.0.p", "number"],
       ["_id", "string"],
     ]);
-    expect(frame.fields[0]?.values).toEqual([Date.parse(when.value), Date.parse(when.value)]);
+    expect(frame.fields[0]?.values).toEqual([WHEN_MS, WHEN_MS]);
     expect(frame.fields[1]?.values).toEqual([129.9, null]);
     // int64 stays exact as text; a missing value is null.
     expect(frame.fields[2]?.values).toEqual(["9007199254740993", null]);
     expect(frame.fields[4]?.values).toEqual([oid.value, oid.value]);
   });
 
-  it("applies only where the query has the step", () => {
+  it("is a transformation of the panel for one query, applied only where it is", () => {
     const outcome = {
       refId: "A",
       result: { shape: "documents" as const, documents: { documents: docs, schema: [] } },
     };
-    const plain = projectOutcomes([outcome], [{ refId: "A", query: { collection: "c" } }]);
-    expect(plain[0]).toBe(outcome);
-    const projected = projectOutcomes(
-      [outcome],
-      [{ refId: "A", query: { collection: "c", toFrame: { columns: [{ path: "at" }] } } }],
-    );
-    expect(projected[0]).toMatchObject({ result: { shape: "frame" } });
+    expect(projectOutcomes([outcome], [])[0]).toBe(outcome);
+    const steps = withProjection([{ type: "other" }], "A", { columns: [{ path: "at" }] });
+    expect(steps).toEqual([
+      { type: "other" },
+      { type: "toFrame", refId: "A", columns: [{ path: "at" }] },
+    ]);
+    expect(projectionFor(steps, "B")).toBeUndefined();
+    expect(projectOutcomes([outcome], steps)[0]).toMatchObject({ result: { shape: "frame" } });
+    expect(withProjection(steps, "A", undefined)).toEqual([{ type: "other" }]);
   });
 });
 
 describe("click-to-filter values", () => {
   it("go back as Extended JSON, typed", () => {
     expect(toExtendedJson(oid)).toEqual({ $oid: oid.value });
-    expect(toExtendedJson(when)).toEqual({ $date: "2026-10-01T08:00:00.000Z" });
-    expect(toExtendedJson({ $type: "date", value: "1790000000000" })).toEqual({
-      $date: new Date(1790000000000).toISOString(),
+    // Milliseconds stay exact as canonical Extended JSON, also beyond JavaScript's date range.
+    expect(toExtendedJson(when)).toEqual({ $date: { $numberLong: String(WHEN_MS) } });
+    expect(toExtendedJson({ $type: "date", value: "99999999999999999" })).toEqual({
+      $date: { $numberLong: "99999999999999999" },
     });
     expect(toExtendedJson(price)).toEqual({ $numberDecimal: "129.90" });
     expect(toExtendedJson(big)).toEqual({ $numberLong: "9007199254740993" });
+    expect(
+      toExtendedJson({ $type: "uuid", value: "0199f0a0-0000-7000-8000-000000000000" }),
+    ).toEqual({ $uuid: "0199f0a0-0000-7000-8000-000000000000" });
+    expect(toExtendedJson({ $type: "timestamp", value: "1700000000:3" })).toEqual({
+      $timestamp: { t: 1700000000, i: 3 },
+    });
     expect(toExtendedJson("x")).toBe("x");
-    expect(filterable({ $type: "binary", value: "AAAA" })).toBe(false);
+    expect(filterable({ $type: "binary", value: null })).toBe(false);
+    expect(filterable({ $type: "javascript", value: "f()" })).toBe(false);
     expect(filterable({ a: 1 })).toBe(false);
     expect(filterable(null)).toBe(true);
   });
 });
 
 describe("MongoDB query form", () => {
-  const query: MongoAggregateQuery = {
-    collection: "orders",
-    mode: "aggregate",
-    pipeline: [{ $match: { a: 1 } }, { $limit: 5 }],
-    disabledStages: [{ index: 1, stage: { $sort: { a: 1 } } }],
-  };
-
-  it("keeps disabled stages in their place and out of what runs", () => {
-    expect(allStages(query).map((e) => [Object.keys(e.stage)[0], e.enabled])).toEqual([
-      ["$match", true],
-      ["$sort", false],
-      ["$limit", true],
+  it("splits a pipeline into its stage texts, keeping each as written", () => {
+    const text = '[{"$sort": {"b": 1, "a": -1}}, {"$match": {"s": "x, y]"}}]';
+    expect(splitPipeline(text)).toEqual([
+      '{"$sort": {"b": 1, "a": -1}}',
+      '{"$match": {"s": "x, y]"}}',
     ]);
-    expect(fromStages(query, allStages(query))).toEqual(query);
-    const enabled = allStages(query).map((e) => ({ ...e, enabled: true }));
-    expect(fromStages(query, enabled)).toEqual({
+    expect(splitPipeline("[]")).toEqual([]);
+    expect(splitPipeline('[{"a": "\\"}"}]')).toEqual(['{"a": "\\"}"}']);
+    expect(splitPipeline('{"$match": {}}')).toBeNull();
+    expect(splitPipeline("[{]")).toBeNull();
+    expect(joinPipeline(['{"$sort": {"b": 1, "a": -1}}'])).toBe(
+      '[\n{"$sort": {"b": 1, "a": -1}}\n]',
+    );
+    expect(joinPipeline([])).toBe("[]");
+  });
+
+  it("previews up to a stage with only the stages given", () => {
+    expect(previewQuery({ collection: "orders", pipeline: "[]" }, ['{"$limit": 1}'])).toEqual({
       collection: "orders",
-      mode: "aggregate",
-      pipeline: [{ $match: { a: 1 } }, { $sort: { a: 1 } }, { $limit: 5 }],
+      pipeline: '[\n{"$limit": 1}\n]',
     });
   });
 
-  it("previews up to a stage, without disabled stages and the projection", () => {
-    expect(previewQuery({ ...query, toFrame: { columns: [] } }, 1)).toEqual({
-      collection: "orders",
-      mode: "aggregate",
-      pipeline: [{ $match: { a: 1 } }],
-    });
-  });
-
-  it("adds a filter as a $match stage, or to find's filter", () => {
-    const next = addMatch(query, "items.sku", oid) as MongoAggregateQuery;
-    expect(next.pipeline.at(-1)).toEqual({ $match: { "items.sku": { $oid: oid.value } } });
-    expect(next.disabledStages).toEqual(query.disabledStages);
-    expect(addMatch({ collection: "c", mode: "find", filter: { a: 1 } }, "b", 2)).toEqual({
+  it("adds a filter as a $match stage, or to find's filter text, keeping the order there", () => {
+    const next = addMatch(
+      { collection: "c", pipeline: '[{"$sort": {"b": 1, "a": -1}}]' },
+      "items.sku",
+      oid,
+    );
+    expect(splitPipeline(next.pipeline ?? "")).toEqual([
+      '{"$sort": {"b": 1, "a": -1}}',
+      `{"$match": {"items.sku": {"$oid":"${oid.value}"}}}`,
+    ]);
+    expect(addMatch({ collection: "c", filter: '{"z": 1, "a": 2}' }, "b", 3)).toEqual({
       collection: "c",
-      mode: "find",
-      filter: { a: 1, b: 2 },
+      filter: '{"z": 1, "a": 2, "b": 3}',
+    });
+    expect(addMatch({ collection: "c", filter: "{ }" }, "b", "x").filter).toBe('{"b": "x"}');
+    expect(addMatch({ collection: "c" }, "b", true)).toEqual({
+      collection: "c",
+      filter: '{"b": true}',
     });
   });
 
-  it("reads stored queries defensively", () => {
-    expect(parseMongoQuery(null)).toEqual({ collection: "", mode: "aggregate", pipeline: [] });
+  it("reads stored queries in the server's form only", () => {
+    expect(parseMongoQuery(null)).toEqual({ collection: "" });
     expect(
-      parseMongoQuery({
-        collection: "c",
-        mode: "aggregate",
-        pipeline: [{ $match: {} }, { notAStage: 1 }, { $a: 1, $b: 2 }],
-        disabledStages: [{ index: -1, stage: { $limit: 1 } }],
-      }),
-    ).toEqual({ collection: "c", mode: "aggregate", pipeline: [{ $match: {} }] });
-    expect(parseMongoQuery({ collection: "c", mode: "find", limit: 0 })).toEqual({
-      collection: "c",
-      mode: "find",
-      filter: {},
-    });
+      parseMongoQuery({ collection: "c", pipeline: "[]", filter: "{}", mode: "aggregate" }),
+    ).toEqual({ collection: "c", pipeline: "[]" });
+    expect(
+      parseMongoQuery({ collection: "c", filter: { a: 1 }, sort: "{}", skip: -1, limit: 0 }),
+    ).toEqual({ collection: "c", sort: "{}" });
+    expect(modeOf({ collection: "c" })).toBe("find");
+    expect(modeOf({ collection: "c", pipeline: "[]" })).toBe("aggregate");
+    expect(mongoQueryText({ collection: "orders", filter: '{"a": 1}' })).toBe(
+      'orders.find({"a": 1})',
+    );
+    expect(mongoQueryText({ collection: "", pipeline: "[]" })).toBe("");
   });
 });
 

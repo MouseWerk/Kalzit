@@ -1,6 +1,5 @@
-import { isRecord } from "../../api/client";
 import type { DocumentSet, Frame, QueryResponse, QueryResult } from "../../api/generated/shapes";
-import { parseProjection, projectDocuments } from "../../documents/projection";
+import { projectDocuments, projectionFor } from "../../documents/projection";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
 export type TargetOutcome =
@@ -45,20 +44,19 @@ export function documentsOf(
 }
 
 /**
- * Applies the projection step a target's query holds (`toFrame`, documents/projection.ts): its
- * documents become a frame, visibly, because the query says so. A result that already arrived
- * as a frame, and every target without the step, passes unchanged.
+ * Applies the projection steps among a panel's transformations (documents/projection.ts): the
+ * documents of that query become a frame, visibly, because the panel says so. A result that
+ * already arrived as a frame, and every query without a step, passes unchanged.
  */
 export function projectOutcomes(
   outcomes: readonly TargetOutcome[],
-  targets: readonly { refId: string; query: unknown }[],
+  transformations: readonly unknown[],
 ): TargetOutcome[] {
   return outcomes.map((outcome) => {
     if (!("result" in outcome) || outcome.result.shape !== "documents") {
       return outcome;
     }
-    const query = targets.find((target) => target.refId === outcome.refId)?.query;
-    const projection = isRecord(query) ? parseProjection(query.toFrame) : undefined;
+    const projection = projectionFor(transformations, outcome.refId);
     if (projection === undefined || projection.columns.length === 0) {
       return outcome;
     }

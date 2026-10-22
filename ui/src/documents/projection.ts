@@ -5,11 +5,15 @@ import { dateMs, isContainer, isTyped, typeOf } from "./values";
 
 /**
  * The projection step (docs/PLAN.md, section 1): documents become a frame only through this
- * explicit step stored in the query, `toFrame: { columns: [{ path, name?, type? }] }`. Each column
- * reads one field path per document; the type is chosen or taken from the first value. Removing
- * the step brings the documents back. Applied in `applyProjections`, never implicitly: a result
- * the server already answered as a frame passes unchanged.
+ * explicit step, stored with the panel as a transformation of one query:
+ * `{ "type": "toFrame", "refId": "A", "columns": [{ path, name?, type? }] }`. The query itself
+ * stays in the server's form, which takes no other fields. Each column reads one field path per
+ * document; the type is chosen or taken from the first value. Removing the step brings the
+ * documents back. Applied in `projectOutcomes` (dashboards/results.ts), never implicitly: a
+ * result the server already answered as a frame passes unchanged.
  */
+
+export const PROJECTION_STEP = "toFrame";
 
 export const PROJECTION_TYPES = ["time", "number", "int64", "string", "bool", "json"] as const;
 
@@ -125,4 +129,29 @@ export function projectDocuments(set: DocumentSet, projection: FrameProjection):
     fields,
     meta: { rowsTruncated: set.truncated !== undefined, notices: [] },
   };
+}
+
+/** The projection step of the query `refId` among a panel's transformations. */
+export function projectionFor(
+  transformations: readonly unknown[],
+  refId: string,
+): FrameProjection | undefined {
+  const step = transformations.find(
+    (t) => isRecord(t) && t.type === PROJECTION_STEP && t.refId === refId,
+  );
+  return parseProjection(step);
+}
+
+/** The transformations with the step of `refId` set, replaced or (undefined) removed. */
+export function withProjection(
+  transformations: readonly unknown[],
+  refId: string,
+  projection: FrameProjection | undefined,
+): unknown[] {
+  const others = transformations.filter(
+    (t) => !(isRecord(t) && t.type === PROJECTION_STEP && t.refId === refId),
+  );
+  return projection === undefined
+    ? others
+    : [...others, { type: PROJECTION_STEP, refId, columns: projection.columns }];
 }

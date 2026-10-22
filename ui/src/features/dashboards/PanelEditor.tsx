@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { isRecord } from "../../api/client";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
+import { ProjectionEditor } from "../../documents/ProjectionEditor";
+import { type FrameProjection, projectionFor, withProjection } from "../../documents/projection";
+import { filterPaths, schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes } from "../../panels/registry";
@@ -11,6 +13,7 @@ import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQue
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import { nextRefId, type PanelModel, type Target, type VariableModel } from "./model";
 import { PanelBody } from "./PanelCard";
+import { documentsOf } from "./results";
 import { Dialog } from "./ui/Dialog";
 import { usePanelResults } from "./usePanelResults";
 
@@ -75,7 +78,9 @@ export function PanelEditor({
       panel.targets.flatMap((target): Shape[] => [
         ...(kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? []),
         // A projection step turns the target's documents into a frame.
-        ...(isRecord(target.query) && target.query.toFrame !== undefined ? ["frame" as const] : []),
+        ...(projectionFor(panel.transformations, target.refId) === undefined
+          ? []
+          : ["frame" as const]),
       ]),
     ),
   ];
@@ -219,9 +224,20 @@ export function PanelEditor({
                 setPanel((p) => ({
                   ...p,
                   targets: p.targets.filter((x) => x.refId !== target.refId),
+                  transformations: withProjection(p.transformations, target.refId, undefined),
                 }))
               }
               onRun={run}
+              projection={projectionFor(panel.transformations, target.refId)}
+              fields={documentsOf(results.data ?? [])
+                .filter((d) => d.refId === target.refId)
+                .flatMap((d) => filterPaths(schemaOf(d.documents)))}
+              onProjection={(projection) =>
+                setPanel((p) => ({
+                  ...p,
+                  transformations: withProjection(p.transformations, target.refId, projection),
+                }))
+              }
             />
           ))}
           {mayQuery ? (
@@ -252,9 +268,17 @@ function TargetEditor({
   onChange,
   onRemove,
   onRun,
+  projection,
+  fields,
+  onProjection,
 }: {
   orgId: string;
   target: Target;
+  /** The projection step of this query, stored with the panel. */
+  projection: FrameProjection | undefined;
+  /** Field paths of the last preview, to suggest for the projection. */
+  fields: readonly string[];
+  onProjection: (projection: FrameProjection | undefined) => void;
   /** The sources the caller may query, to pick from. */
   datasources: readonly { id: string; name: string; kind: string }[];
   /** The target's source is not one of them: the query shows as stored and stays as it is. */
@@ -337,6 +361,13 @@ function TargetEditor({
           label={t("dashboards.inspect.query", { refId: target.refId })}
         />
       )}
+      {datasource !== undefined && isMongoQuery(target.query) ? (
+        <ProjectionEditor
+          projection={projection}
+          fields={[...new Set(fields)]}
+          onChange={onProjection}
+        />
+      ) : null}
     </section>
   );
 }

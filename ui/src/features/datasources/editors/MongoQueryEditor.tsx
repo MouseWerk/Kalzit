@@ -1,29 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
 import { isRecord } from "../../../api/client";
-import type { FieldType } from "../../../api/generated/shapes";
 import { DocumentTree } from "../../../documents/DocumentTree";
-import {
-  type FrameProjection,
-  PROJECTION_TYPES,
-  type ProjectionColumn,
-} from "../../../documents/projection";
 import { filterPaths, schemaOf } from "../../../documents/schema";
 import { SetSummary } from "../../../documents/shared";
-import { useI18n } from "../../../i18n/i18n";
+import { type Translate, useI18n } from "../../../i18n/i18n";
 import { errorBodyMessage } from "../../dashboards/ui/errors";
 import { runQuery, schemaQuery } from "../api";
 import {
-  allStages,
-  fromStages,
-  isStage,
-  type MongoAggregateQuery,
-  type MongoFindQuery,
+  joinPipeline,
   type MongoQuery,
+  modeOf,
   parseMongoQuery,
   previewQuery,
-  type Stage,
-  stageName,
+  splitPipeline,
+  stageNameOf,
   WRITE_STAGES,
 } from "../mongoQuery";
 import { JsonField } from "./JsonField";
@@ -39,40 +30,47 @@ export const PREVIEW_LIMIT = 20;
 const PREVIEW_RANGE_MS = 60 * 60 * 1000;
 
 /** What a new stage starts with, so it is valid JSON from the first moment. */
-const TEMPLATES: Record<string, unknown> = {
-  $match: {},
-  $project: {},
-  $group: { _id: null, count: { $sum: 1 } },
-  $sort: {},
-  $limit: 20,
-  $skip: 0,
-  $unwind: "$",
-  $lookup: { from: "", localField: "", foreignField: "", as: "" },
-  $count: "count",
-  $sample: { size: 20 },
-  $unset: "",
-  $sortByCount: "$",
-  $replaceRoot: { newRoot: "$" },
+const TEMPLATES: Record<string, string> = {
+  $match: '{"$match": {}}',
+  $group: '{"$group": {"_id": null, "count": {"$sum": 1}}}',
+  $limit: '{"$limit": 20}',
+  $skip: '{"$skip": 0}',
+  $unwind: '{"$unwind": "$"}',
+  $lookup: '{"$lookup": {"from": "", "localField": "", "foreignField": "", "as": ""}}',
+  $count: '{"$count": "count"}',
+  $sample: '{"$sample": {"size": 20}}',
+  $unset: '{"$unset": ""}',
+  $sortByCount: '{"$sortByCount": "$"}',
+  $replaceRoot: '{"$replaceRoot": {"newRoot": "$"}}',
 };
 
-function template(name: string): Stage {
-  return { [name]: TEMPLATES[name] ?? {} };
+const template = (name: string) => TEMPLATES[name] ?? `{${JSON.stringify(name)}: {}}`;
+
+/** The stage name of a stage text, or "" while it does not parse. */
+function nameOf(text: string): string {
+  try {
+    return stageNameOf(JSON.parse(text)) ?? "";
+  } catch {
+    return "";
+  }
 }
 
-/** Collections of the source as its schema route answers them (adapter in api.ts). */
-function useCollections(orgId: string, datasourceId: string) {
-  const schema = useQuery(schemaQuery(orgId, datasourceId));
-  return {
-    collections: schema.data?.kind === "collections" ? schema.data.collections : [],
-    failed: schema.isError,
-  };
+function stageProblem(t: Translate, value: unknown): string | null {
+  const name = stageNameOf(value);
+  if (name === null) {
+    return t("documents.pipeline.notStage");
+  }
+  if ((WRITE_STAGES as readonly string[]).includes(name)) {
+    return t("documents.pipeline.writeStage", { stage: name });
+  }
+  return null;
 }
 
 /**
  * The MongoDB editor: a collection, then either an aggregation pipeline (stages as a list, each
- * edited as JSON with stage-specific completion, a preview after each stage on demand, and a
- * raw view of the whole pipeline) or a `find` with filter, projection, sort and limit. Below
- * both, the visible projection step to a table.
+ * edited as Extended JSON with stage-specific completion, a preview after each stage on demand,
+ * and a raw view of the whole pipeline) or a `find` with filter, projection, sort, skip and
+ * limit. The query keeps the texts as written (mongoQuery.ts).
  */
 export function MongoQueryEditor({
   orgId,
@@ -87,27 +85,14 @@ export function MongoQueryEditor({
   const listId = useId();
   const hintId = useId();
   const value = parseMongoQuery(query);
-  const { collections, failed } = useCollections(orgId, datasource.id);
+  const mode = modeOf(value);
+  const schema = useQuery(schemaQuery(orgId, datasource.id));
+  const collections = schema.data?.kind === "collections" ? schema.data.collections : [];
   const [sampled, setSampled] = useState<string[]>([]);
   const known = collections.find((c) => c.name === value.collection);
   const fields = [
     ...new Set([...filterPaths(known?.fields ?? []), ...sampled].filter((f) => f !== "")),
   ];
-
-  const update = (next: MongoQuery) => onChange(next);
-
-  function switchMode(mode: "aggregate" | "find") {
-    if (mode === value.mode) {
-      return;
-    }
-    const base = { collection: value.collection };
-    const toFrame = value.toFrame === undefined ? {} : { toFrame: value.toFrame };
-    update(
-      mode === "find"
-        ? { ...base, mode: "find", filter: {}, ...toFrame }
-        : { ...base, mode: "aggregate", pipeline: [], ...toFrame },
-    );
-  }
 
   return (
     <fieldset className="pipeline">
@@ -124,7 +109,7 @@ export function MongoQueryEditor({
             value={value.collection}
             autoComplete="off"
             spellCheck={false}
-            onChange={(event) => update({ ...value, collection: event.currentTarget.value })}
+            onChange={(event) => onChange({ ...value, collection: event.currentTarget.value })}
           />
           <datalist id={listId}>
             {collections.map((collection) => (
@@ -134,73 +119,106 @@ export function MongoQueryEditor({
         </div>
         <fieldset className="pipeline__mode">
           <legend className="field__label">{t("documents.pipeline.mode")}</legend>
-          {(["aggregate", "find"] as const).map((mode) => (
-            <label key={mode} className="radio">
+          {(["aggregate", "find"] as const).map((name) => (
+            <label key={name} className="radio">
               <input
                 type="radio"
                 name={`${collectionId}-mode`}
-                value={mode}
-                checked={value.mode === mode}
-                onChange={() => switchMode(mode)}
+                value={name}
+                checked={mode === name}
+                onChange={() =>
+                  onChange(
+                    name === "find"
+                      ? { collection: value.collection }
+                      : { collection: value.collection, pipeline: "[]" },
+                  )
+                }
               />
-              <span>{t(`documents.pipeline.mode.${mode}`)}</span>
+              <span>{t(`documents.pipeline.mode.${name}`)}</span>
             </label>
           ))}
         </fieldset>
       </div>
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}
-        {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
+        {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}{" "}
+        {t("documents.pipeline.macros")}
+        {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
-      {value.mode === "aggregate" ? (
+      {mode === "aggregate" ? (
         <PipelineEditor
           orgId={orgId}
           datasourceId={datasource.id}
           query={value}
           fields={fields}
           hintId={hintId}
-          onChange={update}
+          onChange={onChange}
           onRun={onRun}
           onSampled={setSampled}
         />
       ) : (
-        <FindEditor query={value} fields={fields} hintId={hintId} onChange={update} onRun={onRun} />
+        <FindEditor
+          query={value}
+          fields={fields}
+          hintId={hintId}
+          onChange={onChange}
+          onRun={onRun}
+        />
       )}
-      <ProjectionEditor
-        projection={value.toFrame}
-        fields={fields}
-        onChange={(toFrame) => {
-          const next: MongoQuery = { ...value };
-          if (toFrame === undefined) {
-            delete next.toFrame;
-          } else {
-            next.toFrame = toFrame;
-          }
-          update(next);
-        }}
-      />
     </fieldset>
   );
 }
 
-function stageProblem(t: ReturnType<typeof useI18n>["t"], value: unknown): string | null {
-  if (!isStage(value)) {
-    return t("documents.pipeline.notStage");
+interface Entry {
+  id: number;
+  text: string;
+  enabled: boolean;
+}
+
+interface Stages {
+  entries: Entry[];
+  next: number;
+  /** The pipeline text these entries stand for, to tell a change from outside. */
+  synced: string;
+}
+
+function initialStages(pipeline: string): Stages {
+  const texts = splitPipeline(pipeline) ?? [];
+  return {
+    entries: texts.map((text, id) => ({ id, text, enabled: true })),
+    next: texts.length,
+    synced: pipeline,
+  };
+}
+
+/**
+ * The entries after the pipeline changed from outside: its stages replace the enabled ones in
+ * order, disabled stages keep their places, and new stages are added at the end.
+ */
+function mergeStages(current: Stages, pipeline: string): Stages {
+  const texts = splitPipeline(pipeline) ?? [];
+  const entries: Entry[] = [];
+  let k = 0;
+  let next = current.next;
+  for (const entry of current.entries) {
+    if (!entry.enabled) {
+      entries.push(entry);
+    } else if (k < texts.length) {
+      entries.push({ ...entry, text: texts[k++] as string });
+    }
   }
-  const name = stageName(value);
-  if ((WRITE_STAGES as readonly string[]).includes(name)) {
-    return t("documents.pipeline.writeStage", { stage: name });
+  while (k < texts.length) {
+    entries.push({ id: next++, text: texts[k++] as string, enabled: true });
   }
-  return null;
+  return { entries, next, synced: pipeline };
 }
 
 interface PipelineEditorProps {
   orgId: string;
   datasourceId: string;
-  query: MongoAggregateQuery;
+  query: MongoQuery;
   fields: readonly string[];
   hintId: string;
-  onChange: (query: MongoAggregateQuery) => void;
+  onChange: (query: MongoQuery) => void;
   onRun?: (() => void) | undefined;
   onSampled: (fields: string[]) => void;
 }
@@ -218,24 +236,19 @@ function PipelineEditor({
   const { t } = useI18n();
   const baseId = useId();
   const addId = useId();
-  const [view, setView] = useState<"stages" | "raw">("stages");
+  const pipeline = query.pipeline ?? "[]";
+  // A stored pipeline that is not an array of stages opens in the raw view, where it can be fixed.
+  const [view, setView] = useState<"stages" | "raw">(() =>
+    splitPipeline(pipeline) === null ? "raw" : "stages",
+  );
   const [toAdd, setToAdd] = useState<string>("$match");
-  // Stable keys for the stages, so moving one keeps its editor and preview.
-  const [keys, setKeys] = useState<{ ids: number[]; next: number }>(() => ({
-    ids: allStages(query).map((_, i) => i),
-    next: allStages(query).length,
-  }));
+  // Disabled stages are the editor's own: the server's query form has no place for them.
+  const [stages, setStages] = useState<Stages>(() => initialStages(pipeline));
   const [focus, setFocus] = useState<string | null>(null);
-  const entries = allStages(query);
-  if (keys.ids.length !== entries.length) {
-    // Stages added or removed from outside (a filter by click): new ones get new keys.
-    const ids = keys.ids.slice(0, entries.length);
-    let next = keys.next;
-    while (ids.length < entries.length) {
-      ids.push(next++);
-    }
-    setKeys({ ids, next });
+  if (pipeline !== stages.synced) {
+    setStages(mergeStages(stages, pipeline));
   }
+  const { entries } = stages;
 
   useEffect(() => {
     if (focus === null) {
@@ -252,41 +265,24 @@ function PipelineEditor({
     }
   }, [focus]);
 
-  function commit(nextEntries: typeof entries, ids: number[], next = keys.next) {
-    setKeys({ ids, next });
-    onChange(fromStages(query, nextEntries));
+  function commit(nextEntries: Entry[], next = stages.next) {
+    const text = joinPipeline(nextEntries.filter((e) => e.enabled).map((e) => e.text));
+    setStages({ entries: nextEntries, next, synced: text });
+    onChange({ ...query, pipeline: text });
   }
 
   function move(index: number, by: -1 | 1) {
     const target = index + by;
-    if (target < 0 || target >= entries.length) {
+    const moved = entries[index];
+    const other = entries[target];
+    if (moved === undefined || other === undefined) {
       return;
     }
     const nextEntries = [...entries];
-    const ids = [...keys.ids];
-    [nextEntries[index], nextEntries[target]] = [
-      nextEntries[target] as (typeof entries)[number],
-      nextEntries[index] as (typeof entries)[number],
-    ];
-    [ids[index], ids[target]] = [ids[target] as number, ids[index] as number];
-    commit(nextEntries, ids);
-    setFocus(`${baseId}-${keys.ids[index]}-${by === -1 ? "up" : "down"}`);
-  }
-
-  function remove(index: number) {
-    commit(
-      entries.filter((_, i) => i !== index),
-      keys.ids.filter((_, i) => i !== index),
-    );
-    setFocus(addId);
-  }
-
-  function add() {
-    commit(
-      [...entries, { stage: template(toAdd), enabled: true }],
-      [...keys.ids, keys.next],
-      keys.next + 1,
-    );
+    nextEntries[index] = other;
+    nextEntries[target] = moved;
+    commit(nextEntries);
+    setFocus(`${baseId}-${moved.id}-${by === -1 ? "up" : "down"}`);
   }
 
   const disabledCount = entries.filter((e) => !e.enabled).length;
@@ -308,87 +304,89 @@ function PipelineEditor({
           </label>
         ))}
       </fieldset>
+      {disabledCount > 0 ? (
+        <p className="field__hint">
+          {t("documents.pipeline.disabledNotSaved", { count: disabledCount })}
+        </p>
+      ) : null}
       {view === "raw" ? (
-        <div className="pipeline__raw">
-          {disabledCount > 0 ? (
-            <p className="field__hint">
-              {t("documents.pipeline.rawDisabled", { count: disabledCount })}
-            </p>
-          ) : null}
-          <JsonField
-            label={t("documents.pipeline.raw")}
-            value={query.pipeline}
-            rows={10}
-            describedBy={hintId}
-            validate={(value) => {
-              if (!Array.isArray(value)) {
-                return t("documents.pipeline.notArray");
-              }
-              for (const stage of value) {
-                const problem = stageProblem(t, stage);
-                if (problem !== null) {
-                  return problem;
-                }
-              }
-              return null;
-            }}
-            complete={(text, cursor, explicit) =>
-              mongoCompletions(text, cursor, "stage", fields, explicit)
+        <JsonField
+          label={t("documents.pipeline.raw")}
+          value={pipeline}
+          rows={10}
+          describedBy={hintId}
+          validate={(value) => {
+            if (!Array.isArray(value)) {
+              return t("documents.pipeline.notArray");
             }
-            onChange={(value) => {
-              const stages = (value as Stage[]).map((stage) => ({ stage, enabled: true }));
-              commit(
-                stages,
-                stages.map((_, i) => keys.next + i),
-                keys.next + stages.length,
-              );
-            }}
-            onRun={onRun}
-          />
-        </div>
+            for (const stage of value) {
+              const problem = stageProblem(t, stage);
+              if (problem !== null) {
+                return problem;
+              }
+            }
+            return null;
+          }}
+          complete={(text, cursor, explicit) =>
+            mongoCompletions(text, cursor, "stage", fields, explicit)
+          }
+          onChange={(text) => {
+            // The raw text runs as typed; disabled stages are not part of it and are dropped.
+            const texts = splitPipeline(text) ?? [];
+            setStages({
+              entries: texts.map((stage, i) => ({
+                id: stages.next + i,
+                text: stage,
+                enabled: true,
+              })),
+              next: stages.next + texts.length,
+              synced: text,
+            });
+            onChange({ ...query, pipeline: text });
+          }}
+          onRun={onRun}
+        />
       ) : (
         <>
           {entries.length === 0 ? (
             <p className="field__hint">{t("documents.pipeline.noStages")}</p>
           ) : (
             <ol className="pipeline__stages">
-              {entries.map((entry, index) => {
-                const id = keys.ids[index] ?? index;
-                return (
-                  <StageItem
-                    key={id}
-                    domId={`${baseId}-${id}`}
-                    index={index}
-                    count={entries.length}
-                    entry={entry}
-                    fields={fields}
-                    hintId={hintId}
-                    orgId={orgId}
-                    datasourceId={datasourceId}
-                    preview={() => previewQuery(query, index)}
-                    onStage={(stage) =>
-                      onChange(
-                        fromStages(
-                          query,
-                          entries.map((e, i) => (i === index ? { ...e, stage } : e)),
-                        ),
-                      )
-                    }
-                    onEnabled={(enabled) =>
-                      onChange(
-                        fromStages(
-                          query,
-                          entries.map((e, i) => (i === index ? { ...e, enabled } : e)),
-                        ),
-                      )
-                    }
-                    onMove={(by) => move(index, by)}
-                    onRemove={() => remove(index)}
-                    onRun={onRun}
-                    onSampled={onSampled}
-                  />
-                );
-              })}
+              {entries.map((entry, index) => (
+                <StageItem
+                  key={entry.id}
+                  domId={`${baseId}-${entry.id}`}
+                  index={index}
+                  count={entries.length}
+                  entry={entry}
+                  fields={fields}
+                  hintId={hintId}
+                  orgId={orgId}
+                  datasourceId={datasourceId}
+                  preview={() =>
+                    previewQuery(
+                      query,
+                      entries
+                        .slice(0, index + 1)
+                        .filter((e) => e.enabled)
+                        .map((e) => e.text),
+                    )
+                  }
+                  onText={(text) =>
+                    commit(entries.map((e, i) => (i === index ? { ...e, text } : e)))
+                  }
+                  onEnabled={(enabled) =>
+                    commit(entries.map((e, i) => (i === index ? { ...e, enabled } : e)))
+                  }
+                  onMove={(by) => move(index, by)}
+                  onRemove={() => {
+                    commit(entries.filter((_, i) => i !== index));
+                    setFocus(addId);
+                  }}
+                  onRun={onRun}
+                  onSampled={onSampled}
+                />
+              ))}
             </ol>
           )}
           <div className="pipeline__add">
@@ -407,7 +405,17 @@ function PipelineEditor({
                 </option>
               ))}
             </select>
-            <button type="button" id={addId} className="button button--secondary" onClick={add}>
+            <button
+              type="button"
+              id={addId}
+              className="button button--secondary"
+              onClick={() =>
+                commit(
+                  [...entries, { id: stages.next, text: template(toAdd), enabled: true }],
+                  stages.next + 1,
+                )
+              }
+            >
               {t("documents.pipeline.add")}
             </button>
           </div>
@@ -421,13 +429,13 @@ interface StageItemProps {
   domId: string;
   index: number;
   count: number;
-  entry: { stage: Stage; enabled: boolean };
+  entry: Entry;
   fields: readonly string[];
   hintId: string;
   orgId: string;
   datasourceId: string;
-  preview: () => MongoAggregateQuery;
-  onStage: (stage: Stage) => void;
+  preview: () => MongoQuery;
+  onText: (text: string) => void;
   onEnabled: (enabled: boolean) => void;
   onMove: (by: -1 | 1) => void;
   onRemove: () => void;
@@ -445,7 +453,7 @@ function StageItem({
   orgId,
   datasourceId,
   preview,
-  onStage,
+  onText,
   onEnabled,
   onMove,
   onRemove,
@@ -454,10 +462,7 @@ function StageItem({
 }: StageItemProps) {
   const { t } = useI18n();
   const number = index + 1;
-  const name = stageName(entry.stage);
-  const [requested, setRequested] = useState<{ query: MongoAggregateQuery; at: number } | null>(
-    null,
-  );
+  const [requested, setRequested] = useState<{ query: MongoQuery; at: number } | null>(null);
   return (
     <li
       className={entry.enabled ? "pipeline__stage" : "pipeline__stage pipeline__stage--off"}
@@ -465,7 +470,7 @@ function StageItem({
     >
       <div className="pipeline__stage-head">
         <h4 className="pipeline__stage-title" id={`${domId}-title`}>
-          {t("documents.pipeline.stage", { number, name })}
+          {t("documents.pipeline.stage", { number, name: nameOf(entry.text) })}
           {entry.enabled ? "" : ` (${t("documents.pipeline.off")})`}
         </h4>
         <div className="pipeline__stage-actions">
@@ -518,13 +523,13 @@ function StageItem({
       </div>
       <JsonField
         label={t("documents.pipeline.stageLabel", { number })}
-        value={entry.stage}
+        value={entry.text}
         describedBy={hintId}
         validate={(value) => stageProblem(t, value)}
         complete={(text, cursor, explicit) =>
           mongoCompletions(text, cursor, "stage", fields, explicit)
         }
-        onChange={(value) => onStage(value as Stage)}
+        onChange={onText}
         onRun={onRun}
       />
       {requested === null ? null : (
@@ -553,7 +558,7 @@ function StagePreview({
   orgId: string;
   datasourceId: string;
   number: number;
-  query: MongoAggregateQuery;
+  query: MongoQuery;
   at: number;
   onSampled: (fields: string[]) => void;
 }) {
@@ -621,6 +626,8 @@ function StagePreview({
   );
 }
 
+const WHOLE = /^(0|[1-9]\d*)$/;
+
 function FindEditor({
   query,
   fields,
@@ -628,47 +635,37 @@ function FindEditor({
   onChange,
   onRun,
 }: {
-  query: MongoFindQuery;
+  query: MongoQuery;
   fields: readonly string[];
   hintId: string;
-  onChange: (query: MongoFindQuery) => void;
+  onChange: (query: MongoQuery) => void;
   onRun?: (() => void) | undefined;
 }) {
   const { t } = useI18n();
-  const limitId = useId();
-  const [limit, setLimit] = useState(query.limit === undefined ? "" : String(query.limit));
-  const limitValid = limit.trim() === "" || /^[1-9]\d*$/.test(limit.trim());
+  const baseId = useId();
   const objectOnly = (value: unknown) =>
     isRecord(value) ? null : t("documents.pipeline.notObject");
-  const part = (
-    name: "filter" | "projection" | "sort",
-    target: MongoEditorTarget,
-    optional: boolean,
-  ) => (
+  const part = (name: "filter" | "projection" | "sort", target: MongoEditorTarget) => (
     <div className="field">
       <span className="field__label" aria-hidden="true">
         {t(`documents.find.${name}`)}
       </span>
       <JsonField
         label={t(`documents.find.${name}`)}
-        value={query[name]}
-        optional={optional}
+        value={query[name] ?? ""}
+        optional
         rows={3}
         describedBy={hintId}
         validate={objectOnly}
         complete={(text, cursor, explicit) =>
           mongoCompletions(text, cursor, target, fields, explicit)
         }
-        onChange={(value) => {
-          const next: MongoFindQuery = { ...query };
-          if (value === undefined) {
-            if (name === "filter") {
-              next.filter = {};
-            } else {
-              delete next[name];
-            }
+        onChange={(text) => {
+          const next: MongoQuery = { ...query };
+          if (text === "") {
+            delete next[name];
           } else {
-            next[name] = value as Record<string, unknown>;
+            next[name] = text;
           }
           onChange(next);
         }}
@@ -676,190 +673,81 @@ function FindEditor({
       />
     </div>
   );
+  const number = (name: "skip" | "limit", min: number) => (
+    <NumberField
+      id={`${baseId}-${name}`}
+      label={t(`documents.find.${name}`)}
+      error={t(min === 0 ? "documents.find.skipInvalid" : "documents.find.limitInvalid")}
+      value={query[name]}
+      min={min}
+      onChange={(value) => {
+        const next: MongoQuery = { ...query };
+        if (value === undefined) {
+          delete next[name];
+        } else {
+          next[name] = value;
+        }
+        onChange(next);
+      }}
+    />
+  );
   return (
     <div className="pipeline__body">
-      {part("filter", "filter", false)}
-      {part("projection", "projection", true)}
-      {part("sort", "sort", true)}
-      <div className="field pipeline__limit">
-        <label className="field__label" htmlFor={limitId}>
-          {t("documents.find.limit")}
-        </label>
-        <input
-          id={limitId}
-          className="input"
-          inputMode="numeric"
-          value={limit}
-          aria-invalid={limitValid ? undefined : true}
-          aria-describedby={limitValid ? undefined : `${limitId}-error`}
-          onChange={(event) => {
-            const text = event.currentTarget.value;
-            setLimit(text);
-            const next: MongoFindQuery = { ...query };
-            if (text.trim() === "") {
-              delete next.limit;
-              onChange(next);
-            } else if (/^[1-9]\d*$/.test(text.trim())) {
-              next.limit = Number(text.trim());
-              onChange(next);
-            }
-          }}
-        />
-        {limitValid ? null : (
-          <p className="field__error" id={`${limitId}-error`}>
-            {t("documents.find.limitInvalid")}
-          </p>
-        )}
+      {part("filter", "filter")}
+      {part("projection", "projection")}
+      {part("sort", "sort")}
+      <div className="pipeline__add">
+        {number("skip", 0)}
+        {number("limit", 1)}
       </div>
     </div>
   );
 }
 
-const TYPE_CHOICES: readonly ("" | FieldType)[] = ["", ...PROJECTION_TYPES];
-
-/**
- * The projection step: which field paths become which columns of a table. Without it, panels
- * for tables say they need one; with it, the query's documents arrive as that table.
- */
-function ProjectionEditor({
-  projection,
-  fields,
+function NumberField({
+  id,
+  label,
+  error,
+  value,
+  min,
   onChange,
 }: {
-  projection: FrameProjection | undefined;
-  fields: readonly string[];
-  onChange: (projection: FrameProjection | undefined) => void;
+  id: string;
+  label: string;
+  error: string;
+  value: number | undefined;
+  min: number;
+  onChange: (value: number | undefined) => void;
 }) {
-  const { t } = useI18n();
-  const baseId = useId();
-  const listId = `${baseId}-fields`;
-  const columns = projection?.columns ?? [];
-  const setColumn = (index: number, patch: Partial<ProjectionColumn>) =>
-    onChange({
-      columns: columns.map((column, i) => {
-        if (i !== index) {
-          return column;
-        }
-        const next: ProjectionColumn = { ...column, ...patch };
-        if (next.name === "") {
-          delete next.name;
-        }
-        return next;
-      }),
-    });
+  const [text, setText] = useState(value === undefined ? "" : String(value));
+  const valid = text.trim() === "" || (WHOLE.test(text.trim()) && Number(text) >= min);
   return (
-    <fieldset className="pipeline__projection">
-      <legend className="field__label">{t("documents.projection.title")}</legend>
-      <p className="field__hint">
-        {projection === undefined
-          ? t("documents.projection.none")
-          : t("documents.projection.active")}
-      </p>
-      <datalist id={listId}>
-        {fields.map((field) => (
-          <option key={field} value={field} />
-        ))}
-      </datalist>
-      {projection === undefined ? (
-        <div>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={() => onChange({ columns: [{ path: "" }] })}
-          >
-            {t("documents.projection.add")}
-          </button>
-        </div>
-      ) : (
-        <>
-          <ol className="pipeline__columns">
-            {columns.map((column, index) => {
-              const number = index + 1;
-              return (
-                // biome-ignore lint/suspicious/noArrayIndexKey: columns are positions; paths can repeat while typing
-                <li key={index} className="pipeline__column">
-                  <div className="field">
-                    <label className="field__label" htmlFor={`${baseId}-${index}-path`}>
-                      {t("documents.projection.path", { number })}
-                    </label>
-                    <input
-                      id={`${baseId}-${index}-path`}
-                      className="input input--mono"
-                      list={listId}
-                      value={column.path}
-                      autoComplete="off"
-                      spellCheck={false}
-                      onChange={(event) => setColumn(index, { path: event.currentTarget.value })}
-                    />
-                  </div>
-                  <div className="field">
-                    <label className="field__label" htmlFor={`${baseId}-${index}-name`}>
-                      {t("documents.projection.name", { number })}
-                    </label>
-                    <input
-                      id={`${baseId}-${index}-name`}
-                      className="input"
-                      value={column.name ?? ""}
-                      placeholder={column.path}
-                      onChange={(event) => setColumn(index, { name: event.currentTarget.value })}
-                    />
-                  </div>
-                  <div className="field">
-                    <label className="field__label" htmlFor={`${baseId}-${index}-type`}>
-                      {t("documents.projection.type", { number })}
-                    </label>
-                    <select
-                      id={`${baseId}-${index}-type`}
-                      className="select"
-                      value={column.type ?? ""}
-                      onChange={(event) => {
-                        const type = event.currentTarget.value as "" | FieldType;
-                        const next: ProjectionColumn = { ...column };
-                        if (type === "") {
-                          delete next.type;
-                        } else {
-                          next.type = type;
-                        }
-                        onChange({ columns: columns.map((c, i) => (i === index ? next : c)) });
-                      }}
-                    >
-                      {TYPE_CHOICES.map((type) => (
-                        <option key={type} value={type}>
-                          {t(`documents.projection.type.${type === "" ? "auto" : type}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    aria-label={t("documents.projection.removeColumn", { number })}
-                    onClick={() => onChange({ columns: columns.filter((_, i) => i !== index) })}
-                  >
-                    {t("documents.pipeline.removeShort")}
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-          <div className="pipeline__add">
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => onChange({ columns: [...columns, { path: "" }] })}
-            >
-              {t("documents.projection.addColumn")}
-            </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={() => onChange(undefined)}
-            >
-              {t("documents.projection.remove")}
-            </button>
-          </div>
-        </>
+    <div className="field pipeline__limit">
+      <label className="field__label" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        className="input"
+        inputMode="numeric"
+        value={text}
+        aria-invalid={valid ? undefined : true}
+        aria-describedby={valid ? undefined : `${id}-error`}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          setText(next);
+          if (next.trim() === "") {
+            onChange(undefined);
+          } else if (WHOLE.test(next.trim()) && Number(next) >= min) {
+            onChange(Number(next.trim()));
+          }
+        }}
+      />
+      {valid ? null : (
+        <p className="field__error" id={`${id}-error`}>
+          {error}
+        </p>
       )}
-    </fieldset>
+    </div>
   );
 }

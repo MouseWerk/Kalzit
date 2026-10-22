@@ -6,7 +6,7 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
-import { FAKE_MONGO_COLLECTIONS, mongoOutcome, mongoQueryProblem } from "./fakeMongo";
+import { FAKE_MONGO_COLLECTIONS, mongoOutcome, parseMongo } from "./fakeMongo";
 
 /**
  * Fake routes for data sources and the free query route, written from docs/api/datasources.md
@@ -40,6 +40,8 @@ const TARGET_FIELDS = new Set([
   "path",
   "url",
   "basicAuthUser",
+  "hosts",
+  "srv",
   "authSource",
   "tls",
   "replicaSet",
@@ -127,22 +129,23 @@ export const FAKE_KINDS: WireKind[] = [
       ...COMMON,
     ],
   },
-  // MongoDB (branch m2/mongodb): the UI's assumption until the server documents the kind.
   {
     kind: "mongodb",
     name: "MongoDB",
     shapes: ["documents"],
     hintKey: "datasources.kinds.mongodb.hint",
     settings: [
-      setting("host", "string", { required: true }),
+      setting("hosts", "string", { required: true }),
       setting("port", "number", { default: 27017 }),
+      setting("srv", "bool", { default: false }),
+      setting("replicaSet", "string"),
       setting("database", "string", { required: true }),
       setting("user", "string"),
       setting("password", "string", { secret: true }),
       setting("authSource", "string"),
-      setting("replicaSet", "string"),
-      setting("tls", "bool", { default: true }),
+      setting("tls", "bool", { default: false }),
       setting("caCert", "text"),
+      setting("maxResponseBytes", "number"),
       ...COMMON,
     ],
   },
@@ -197,19 +200,23 @@ export function addMongoSource(state: FakeDatasourcesState): void {
     id: MONGO_ID,
     name: "Shop documents",
     kind: "mongodb",
-    settings: { host: "mongo.internal", port: 27017, database: "shop", user: "reader" },
+    settings: { hosts: "mongo.internal", database: "shop", user: "reader" },
     secrets: { password: "s3cret" },
     createdAt: created,
     updatedAt: created,
   });
   state.schemas[MONGO_ID] = {
     kind: "collections",
+    database: "shop",
     collections: [
       {
         name: "orders",
+        type: "collection",
+        indexes: [{ name: "_id_", keys: [{ field: "_id", kind: 1 }], unique: true }],
         fields: [{ path: "status", coverage: 1, types: [{ name: "string", share: 1 }] }],
+        sampled: 3,
       },
-      { name: "customers" },
+      { name: "customers", type: "collection", indexes: [], fields: [], sampled: 0 },
     ],
   };
 }
@@ -296,8 +303,8 @@ function queryFormProblem(kind: string, query: unknown): string | null {
   }
   const q = query as Record<string, unknown>;
   if (kind === "mongodb") {
-    const problem = mongoQueryProblem(query);
-    return problem !== null && "error" in problem ? problem.error.message : null;
+    // Checked whole, with its reasons, in `answerQuery`.
+    return null;
   }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
@@ -328,9 +335,9 @@ export async function answerQuery(
   }
   if (source.kind === "mongodb") {
     // The MongoDB rejections carry their reasons (a write stage), so they answer whole.
-    const refused = mongoQueryProblem(item.query);
-    if (refused !== null) {
-      return refused;
+    const parsed = parseMongo(item.query);
+    if ("error" in parsed) {
+      return parsed;
     }
   }
   const problem = queryFormProblem(source.kind, item.query);

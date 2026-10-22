@@ -5,7 +5,7 @@
   "documents.panels.schemaHint": "Listet jeden Feldpfad mit seinen Typen und seiner Abdeckung und markiert Felder, die in manchen Dokumenten fehlen oder gemischte Typen haben.",
   "documents.panels.distribution": "Feldverteilung",
   "documents.panels.card": "Dokumentkarte",
-  "documents.panel.needsProjection": "Diese Visualisierung zeigt Tabellen. Füge der Abfrage einen Projektionsschritt hinzu, der die Dokumente in Spalten umwandelt, oder wähle ein Panel für Dokumente.",
+  "documents.panel.needsProjection": "Diese Visualisierung zeigt Tabellen. Füge unter der Abfrage einen Projektionsschritt hinzu, der die Dokumente in Spalten umwandelt, oder wähle ein Panel für Dokumente.",
   "documents.panel.needsDocuments": "Diese Visualisierung zeigt Dokumente, die Abfrage hat aber eine Tabelle geliefert.",
   "documents.summary.count": "{count} Dokumente.",
   "documents.summary.truncated": "Bei {limit} Dokumenten abgeschnitten.",
@@ -14,7 +14,7 @@
   "documents.tree.document": "Dokument {number}",
   "documents.tree.fields": "{count} Felder",
   "documents.tree.items": "{count} Elemente",
-  "documents.tree.bytes": "{count} Bytes",
+  "documents.tree.hidden": "nicht angezeigt",
   "documents.tree.hint": "Wähle einen Wert, um seinen Pfad zu kopieren oder danach zu filtern.",
   "documents.tree.keys": "Mit den Pfeiltasten bewegst du dich durch die Dokumente. Rechts öffnet ein Feld, Links schließt es, Eingabe öffnet oder schließt.",
   "documents.tree.copyPath": "Pfad kopieren",
@@ -62,7 +62,6 @@
   "documents.pipeline.view.stages": "Stufen",
   "documents.pipeline.view.raw": "Rohe Pipeline",
   "documents.pipeline.raw": "Rohe Pipeline",
-  "documents.pipeline.rawDisabled": "{count} ausgeschaltete Stufen laufen nicht mit und stehen deshalb nicht hier. Wenn du die rohe Pipeline bearbeitest, fallen sie weg.",
   "documents.pipeline.noStages": "Noch keine Stufen: Die Abfrage liefert die Dokumente der Collection.",
   "documents.pipeline.stage": "Stufe {number}: {name}",
   "documents.pipeline.stageLabel": "Stufe {number}",
@@ -122,5 +121,9 @@
   "documents.type.null": "Null",
   "documents.type.object": "Object",
   "documents.type.array": "Array",
-  "documents.type.binary": "Binary"
+  "documents.type.binary": "Binary",
+  "documents.pipeline.macros": "In einem $match hält {„$__timeFilter“: „ts“} den Zeitraum des Dashboards ein, und „${name}“ steht für eine Variable.",
+  "documents.pipeline.disabledNotSaved": "{count} ausgeschaltete Stufen laufen nicht und werden nicht mit der Abfrage gespeichert; sie bleiben nur, solange du bearbeitest.",
+  "documents.find.skip": "Überspringen",
+  "documents.find.skipInvalid": "Gib eine ganze Zahl ab 0 ein oder lass das Feld leer."
 }

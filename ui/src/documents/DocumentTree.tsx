@@ -5,7 +5,7 @@ import { useElementSize } from "../panels/useElementSize";
 import { filterable } from "./filter";
 import { typeLabel, valueSummary } from "./labels";
 import { filterPath, mongoPath, type Segment } from "./paths";
-import { isContainer, typeOf } from "./values";
+import { entriesOf, typeOf } from "./values";
 import "./documents.css";
 import "../features/dashboards/ui/shared.css";
 
@@ -57,14 +57,13 @@ export function flattenTree(
     level: number,
   ) => {
     const parentId = rowId(item, segments);
-    const entries: [Segment, unknown][] = Array.isArray(value)
-      ? value.map((child, index) => [index, child])
-      : Object.entries(value as Record<string, unknown>);
+    const entries = entriesOf(value);
+
     const limit = shown.get(parentId) ?? PAGE;
     for (const [position, [key, child]] of entries.slice(0, limit).entries()) {
       const childSegments = [...segments, key];
       const id = rowId(item, childSegments);
-      const expandable = isContainer(child) && Object.keys(child).length > 0;
+      const expandable = entriesOf(child).length > 0;
       const isOpen = expandable && expanded.has(id);
       rows.push({
         id,
@@ -102,7 +101,7 @@ export function flattenTree(
   };
   items.forEach((value, item) => {
     const id = rowId(item, []);
-    const expandable = isContainer(value) && Object.keys(value).length > 0;
+    const expandable = entriesOf(value).length > 0;
     const isOpen = expandable && expanded.has(id);
     rows.push({
       id,

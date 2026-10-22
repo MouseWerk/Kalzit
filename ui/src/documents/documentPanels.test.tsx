@@ -247,13 +247,13 @@ describe("document card", () => {
 });
 
 describe("panels and shapes", () => {
-  const panel = (type: string, query: unknown) => ({
+  const panel = (type: string, transformations: unknown[] = []) => ({
     id: "p",
     type,
     title: "",
     grid: { x: 0, y: 0, w: 12, h: 8 },
-    targets: [{ refId: "A", datasourceId: "ds", query }],
-    transformations: [],
+    targets: [{ refId: "A", datasourceId: "ds", query: { collection: "orders", pipeline: "[]" } }],
+    transformations,
     options: {},
     fieldConfig: {},
   });
@@ -262,7 +262,7 @@ describe("panels and shapes", () => {
   it("asks for a projection step before drawing documents as a table, never converting on its own", () => {
     render(
       <PanelBody
-        panel={panel("table", { collection: "orders", mode: "aggregate", pipeline: [] })}
+        panel={panel("table")}
         title="T"
         range={RANGE}
         pending={false}
@@ -270,19 +270,20 @@ describe("panels and shapes", () => {
         outcomes={[outcome]}
       />,
     );
-    expect(screen.getByText(/Add a projection step to the query/)).toBeTruthy();
+    expect(screen.getByText(/Add a projection step/)).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
   });
 
-  it("draws the projected table when the query has the step", () => {
+  it("draws the projected table when the panel has the step for that query", () => {
     render(
       <PanelBody
-        panel={panel("table", {
-          collection: "orders",
-          mode: "aggregate",
-          pipeline: [],
-          toFrame: { columns: [{ path: "customer.name", name: "Customer" }, { path: "total" }] },
-        })}
+        panel={panel("table", [
+          {
+            type: "toFrame",
+            refId: "A",
+            columns: [{ path: "customer.name", name: "Customer" }, { path: "total" }],
+          },
+        ])}
         title="T"
         range={RANGE}
         pending={false}
@@ -298,7 +299,7 @@ describe("panels and shapes", () => {
   it("says when a document panel gets a table", () => {
     render(
       <PanelBody
-        panel={panel("documents", { sql: "SELECT 1" })}
+        panel={panel("documents")}
         title="T"
         range={RANGE}
         pending={false}

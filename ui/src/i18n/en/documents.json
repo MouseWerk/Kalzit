@@ -5,7 +5,7 @@
   "documents.panels.schemaHint": "Lists every field path with its types and coverage, and marks fields that are missing in some documents or have mixed types.",
   "documents.panels.distribution": "Field distribution",
   "documents.panels.card": "Document card",
-  "documents.panel.needsProjection": "This visualization shows tables. Add a projection step to the query to turn its documents into columns, or choose a panel for documents.",
+  "documents.panel.needsProjection": "This visualization shows tables. Add a projection step under the query to turn its documents into columns, or choose a panel for documents.",
   "documents.panel.needsDocuments": "This visualization shows documents, and the query answered with a table.",
   "documents.summary.count": "{count} documents.",
   "documents.summary.truncated": "Cut off at {limit} documents.",
@@ -14,7 +14,7 @@
   "documents.tree.document": "Document {number}",
   "documents.tree.fields": "{count} fields",
   "documents.tree.items": "{count} items",
-  "documents.tree.bytes": "{count} bytes",
+  "documents.tree.hidden": "not shown",
   "documents.tree.hint": "Select a value to copy its path or filter by it.",
   "documents.tree.keys": "Arrow keys move through the documents. Right opens a field, Left closes it, Enter opens or closes.",
   "documents.tree.copyPath": "Copy path",
@@ -62,7 +62,6 @@
   "documents.pipeline.view.stages": "Stages",
   "documents.pipeline.view.raw": "Raw pipeline",
   "documents.pipeline.raw": "Raw pipeline",
-  "documents.pipeline.rawDisabled": "{count} disabled stages are not part of what runs and are not shown here. Editing the raw pipeline removes them.",
   "documents.pipeline.noStages": "No stages yet: the query returns the collection’s documents.",
   "documents.pipeline.stage": "Stage {number}: {name}",
   "documents.pipeline.stageLabel": "Stage {number}",
@@ -122,5 +121,9 @@
   "documents.type.null": "Null",
   "documents.type.object": "Object",
   "documents.type.array": "Array",
-  "documents.type.binary": "Binary"
+  "documents.type.binary": "Binary",
+  "documents.pipeline.macros": "In a $match, {“$__timeFilter”: “ts”} keeps the dashboard’s time range, and “${name}” stands for a variable.",
+  "documents.pipeline.disabledNotSaved": "{count} disabled stages do not run and are not saved with the query; they stay only while you edit.",
+  "documents.find.skip": "Skip",
+  "documents.find.skipInvalid": "Enter a whole number of 0 or more, or leave it empty."
 }

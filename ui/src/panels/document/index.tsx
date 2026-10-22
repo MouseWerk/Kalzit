@@ -3,7 +3,7 @@ import { isRecord } from "../../api/client";
 import { typeLabel, valueSummary } from "../../documents/labels";
 import { valueAt } from "../../documents/paths";
 import { SetPicker } from "../../documents/shared";
-import { isContainer, typeOf } from "../../documents/values";
+import { entriesOf, isContainer, typeOf, unwrap } from "../../documents/values";
 import { useI18n } from "../../i18n/i18n";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -19,7 +19,8 @@ const MAX_DEPTH = 6;
 
 function Value({ value, depth }: { value: unknown; depth: number }) {
   const { t, language } = useI18n();
-  if (!isContainer(value) || depth >= MAX_DEPTH || Object.keys(value).length === 0) {
+  const entries = entriesOf(value);
+  if (!isContainer(value) || depth >= MAX_DEPTH || entries.length === 0) {
     return (
       <span className="doc-card__value">
         <span>{valueSummary(t, value, language)}</span>
@@ -30,8 +31,7 @@ function Value({ value, depth }: { value: unknown; depth: number }) {
   if (Array.isArray(value)) {
     return (
       <ol className="doc-card__list">
-        {value.map((item, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: array elements are positions
+        {entries.map(([i, item]) => (
           <li key={i}>
             <Value value={item} depth={depth + 1} />
           </li>
@@ -39,13 +39,13 @@ function Value({ value, depth }: { value: unknown; depth: number }) {
       </ol>
     );
   }
-  return <Fields value={value} depth={depth + 1} />;
+  return <Fields value={unwrap(value) as Record<string, unknown>} depth={depth + 1} />;
 }
 
 function Fields({ value, depth }: { value: Record<string, unknown>; depth: number }) {
   return (
     <dl className="doc-card__fields">
-      {Object.entries(value).map(([key, child]) => (
+      {entriesOf(value).map(([key, child]) => (
         <div key={key} className="doc-card__field">
           <dt className="doc-card__key">{key}</dt>
           <dd>
@@ -118,8 +118,8 @@ function CardPanel({ documents = [], options }: PanelProps<CardOptions>) {
         <h3 className="doc-card__title" id={headingId}>
           {heading}
         </h3>
-        {isRecord(document) ? (
-          <Fields value={document} depth={0} />
+        {isRecord(unwrap(document)) ? (
+          <Fields value={unwrap(document) as Record<string, unknown>} depth={0} />
         ) : (
           <Value value={document} depth={0} />
         )}

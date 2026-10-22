@@ -1,5 +1,5 @@
 import type { DocumentSet, FieldSchema } from "../api/generated/shapes";
-import { isContainer, typeOf } from "./values";
+import { entriesOf, isContainer, typeOf } from "./values";
 
 /**
  * The schema of a document set. The server samples it (`DocumentSet.schema`: every path with its
@@ -49,8 +49,8 @@ export function sampleSchema(documents: readonly unknown[]): FieldSchema[] {
       }
       return;
     }
-    for (const [key, child] of Object.entries(value)) {
-      const childPath = path === "" ? key : `${path}.${key}`;
+    for (const [key, child] of entriesOf(value)) {
+      const childPath = path === "" ? String(key) : `${path}.${key}`;
       record(childPath, child);
       walk(child, childPath, depth + 1);
     }

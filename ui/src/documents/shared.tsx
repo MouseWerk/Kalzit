@@ -1,7 +1,23 @@
 import { useId } from "react";
-import type { DocumentSet } from "../api/generated/shapes";
+import type { DocumentSet, Notice } from "../api/generated/shapes";
 import { useI18n } from "../i18n/i18n";
 import "./documents.css";
+
+/**
+ * What the server sends beside the documents (docs/api/datasources.md, "The documents shape"):
+ * notices and the query as executed. Read defensively until the generated `DocumentSet` of this
+ * branch has both fields.
+ */
+export function documentsMeta(set: DocumentSet): {
+  notices: Notice[];
+  executedQuery?: string;
+} {
+  const wire = set as DocumentSet & { notices?: unknown; executedQuery?: unknown };
+  const notices = Array.isArray(wire.notices) ? (wire.notices as Notice[]) : [];
+  return typeof wire.executedQuery === "string"
+    ? { notices, executedQuery: wire.executedQuery }
+    : { notices };
+}
 
 /** Which result a document panel shows, when several queries answered with documents. */
 export function SetPicker({

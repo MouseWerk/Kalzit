@@ -1,21 +1,23 @@
-import type { QueryItem, QueryOutcome } from "../../../api/generated/shapes";
+import type { DocumentSet, QueryItem, QueryOutcome } from "../../../api/generated/shapes";
 import { sampleSchema } from "../../../documents/schema";
 
 /**
- * The MongoDB part of the data source fake: the query form of the `mongodb` kind (written from
- * features/datasources/mongoQuery.ts until docs/api/datasources.md documents it), the write
- * refusal for `$out` and `$merge`, and a small evaluator for the stages the UI's tests use:
- * `$match` with equality on dotted paths (arrays match by element, Extended JSON values typed),
- * `$sort`, `$skip`, `$limit`, `$project` by inclusion. Other stages pass documents through.
+ * The MongoDB part of the data source fake, written from docs/api/datasources.md ("MongoDB: a
+ * pipeline or find", "The documents shape"): the query form with its texts of Extended JSON, the
+ * refusals the UI shows (`mongodb.json_invalid`, `mongodb.write_stage`, ...), and a small
+ * evaluator for the stages the UI's tests use: `$match` with equality on dotted paths (arrays
+ * match by element, Extended JSON values typed), `$sort`, `$skip`, `$limit`, `$project` by
+ * inclusion. Other reading stages pass documents through.
  */
 
 const oid = (n: number) => ({
   $type: "objectId",
   value: `665f1c2e9b1e4a0001a1b0${String(n).padStart(2, "0")}`,
 });
-const date = (iso: string) => ({ $type: "date", value: iso });
+/** Dates arrive as Unix milliseconds in text. */
+const date = (iso: string) => ({ $type: "date", value: String(Date.parse(iso)) });
 
-/** A small orders collection with every typed value, nesting, arrays and two outliers. */
+/** A small orders collection with typed values, nesting, arrays and two outliers. */
 export function fakeOrders(): Record<string, unknown>[] {
   return [
     {
@@ -53,6 +55,7 @@ export function fakeOrders(): Record<string, unknown>[] {
       items: [{ sku: "C-3", price: 42.5, qty: 1 }],
       tags: ["eu"],
       rating: 4,
+      attachment: { $type: "binary", value: null },
     },
   ];
 }
@@ -61,79 +64,145 @@ export const FAKE_MONGO_COLLECTIONS = (): Record<string, Record<string, unknown>
   orders: fakeOrders(),
 });
 
-const QUERY_FIELDS = {
-  aggregate: ["collection", "mode", "pipeline", "disabledStages", "toFrame"],
-  find: ["collection", "mode", "filter", "projection", "sort", "limit", "toFrame"],
-};
+const FIELDS = ["collection", "pipeline", "filter", "projection", "sort", "skip", "limit"];
+const FIND_FIELDS = ["filter", "projection", "sort", "skip", "limit"];
+/** The reading stages the server allows. */
+const STAGES = new Set([
+  "$addFields",
+  "$bucket",
+  "$bucketAuto",
+  "$count",
+  "$densify",
+  "$facet",
+  "$fill",
+  "$geoNear",
+  "$graphLookup",
+  "$group",
+  "$limit",
+  "$lookup",
+  "$match",
+  "$project",
+  "$redact",
+  "$replaceRoot",
+  "$replaceWith",
+  "$sample",
+  "$search",
+  "$searchMeta",
+  "$set",
+  "$setWindowFields",
+  "$skip",
+  "$sort",
+  "$sortByCount",
+  "$unionWith",
+  "$unset",
+  "$unwind",
+  "$vectorSearch",
+]);
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The rejection of a query that does not fit the form, or null. */
-export function mongoQueryProblem(query: unknown): QueryOutcome | null {
-  const rejected = (
-    message: string,
-    reason = "query.invalid_form",
-    params?: Record<string, string>,
-  ) => ({
-    error: {
-      code: "query_rejected" as const,
-      message,
-      reason,
-      params: params ?? { detail: message },
-    },
-  });
+function rejected(message: string, reason: string, params: Record<string, string> = {}) {
+  return { error: { code: "query_rejected" as const, message, reason, params } };
+}
+
+interface Parsed {
+  collection: string;
+  pipeline?: Record<string, unknown>[];
+  filter: Record<string, unknown>;
+  projection?: Record<string, unknown>;
+  sort?: Record<string, unknown>;
+  skip: number;
+  limit?: number;
+}
+
+/** The query read as the server reads it, or its rejection. */
+export function parseMongo(query: unknown): Parsed | QueryOutcome {
   if (!isObject(query)) {
-    return rejected("the query is not an object");
+    return rejected("the query is not an object", "query.invalid_form", {
+      detail: "not an object",
+    });
   }
-  const mode = query.mode;
-  if (mode !== "aggregate" && mode !== "find") {
-    return rejected("mode is aggregate or find");
-  }
-  const extra = Object.keys(query).find((key) => !QUERY_FIELDS[mode].includes(key));
+  const extra = Object.keys(query).find((key) => !FIELDS.includes(key));
   if (extra !== undefined) {
-    return rejected(`unknown query field ${extra}`);
+    return rejected(`unknown field ${extra}`, "query.invalid_form", {
+      detail: `unknown field ${extra}`,
+    });
   }
   if (typeof query.collection !== "string" || query.collection.trim() === "") {
-    return rejected("collection is required");
+    return rejected("collection is required", "query.invalid_form", { detail: "collection" });
   }
-  if (mode === "find") {
-    if (!isObject(query.filter)) return rejected("filter is an object");
-    if (query.projection !== undefined && !isObject(query.projection))
-      return rejected("projection");
-    if (query.sort !== undefined && !isObject(query.sort)) return rejected("sort");
-    if (
-      query.limit !== undefined &&
-      !(Number.isInteger(query.limit) && (query.limit as number) > 0)
-    ) {
-      return rejected("limit");
-    }
-    return null;
-  }
-  if (!Array.isArray(query.pipeline)) {
-    return rejected("pipeline is a list of stages");
-  }
-  for (const stage of query.pipeline) {
-    const keys = isObject(stage) ? Object.keys(stage) : [];
-    if (keys.length !== 1 || !(keys[0] ?? "").startsWith("$")) {
-      return rejected("a stage has exactly one operator");
-    }
-    if (keys[0] === "$out" || keys[0] === "$merge") {
-      return rejected(`${keys[0]} writes data`, "mongo.write_stage", { stage: keys[0] });
+  for (const field of ["pipeline", "filter", "projection", "sort"]) {
+    if (query[field] !== undefined && typeof query[field] !== "string") {
+      // Objects instead of text are refused: text keeps the key order.
+      return rejected(`${field} must be text`, "query.invalid_form", { detail: field });
     }
   }
-  return null;
+  if (query.pipeline !== undefined && FIND_FIELDS.some((field) => query[field] !== undefined)) {
+    return rejected("pipeline together with find fields", "mongodb.pipeline_and_find");
+  }
+  const json = (field: string): { value: unknown } | { refused: QueryOutcome } => {
+    try {
+      return { value: JSON.parse(String(query[field])) };
+    } catch (problem) {
+      return {
+        refused: rejected(`${field} is not valid Extended JSON`, "mongodb.json_invalid", {
+          field,
+          detail: String(problem),
+        }),
+      };
+    }
+  };
+  const parsed: Parsed = { collection: query.collection, filter: {}, skip: 0 };
+  if (typeof query.pipeline === "string") {
+    const read = json("pipeline");
+    if ("refused" in read) return read.refused;
+    const stages = read.value;
+    if (!Array.isArray(stages)) {
+      return rejected("the pipeline is not an array", "mongodb.pipeline_not_array");
+    }
+    for (const stage of stages) {
+      const keys = isObject(stage) ? Object.keys(stage) : [];
+      const name = keys[0] ?? "";
+      if (keys.length !== 1 || !name.startsWith("$")) {
+        return rejected("a stage has exactly one stage name", "mongodb.stage_invalid");
+      }
+      if (name === "$out" || name === "$merge") {
+        return rejected(`${name} writes data`, "mongodb.write_stage", { stage: name });
+      }
+      if (!STAGES.has(name)) {
+        return rejected(`${name} is not allowed`, "mongodb.stage_not_allowed", { stage: name });
+      }
+    }
+    parsed.pipeline = stages as Record<string, unknown>[];
+    return parsed;
+  }
+  for (const field of ["filter", "projection", "sort"] as const) {
+    if (typeof query[field] !== "string" || (query[field] as string).trim() === "") {
+      continue;
+    }
+    const read = json(field);
+    if ("refused" in read) return read.refused;
+    if (!isObject(read.value)) {
+      return rejected(`${field} is not a document`, "mongodb.not_a_document", { field });
+    }
+    parsed[field] = read.value;
+  }
+  if (typeof query.skip === "number") parsed.skip = query.skip;
+  if (typeof query.limit === "number") parsed.limit = query.limit;
+  return parsed;
 }
 
 /** A value as a comparable key: typed values and Extended JSON of the same value agree. */
 function keyOf(value: unknown): string {
   if (isObject(value)) {
-    if (typeof value.$type === "string" && typeof value.value === "string") {
-      return value.$type === "date"
-        ? `date:${Date.parse(value.value)}`
-        : `${value.$type}:${value.value}`;
+    if (typeof value.$type === "string" && "value" in value) {
+      return `${value.$type}:${String(value.value)}`;
     }
     if (typeof value.$oid === "string") return `objectId:${value.$oid}`;
+    if (isObject(value.$date) && typeof value.$date.$numberLong === "string") {
+      return `date:${value.$date.$numberLong}`;
+    }
     if (typeof value.$date === "string") return `date:${Date.parse(value.$date)}`;
     if (typeof value.$numberDecimal === "string") return `decimal:${value.$numberDecimal}`;
     if (typeof value.$numberLong === "string") return `int64:${value.$numberLong}`;
@@ -171,7 +240,7 @@ function matches(document: unknown, filter: Record<string, unknown>): boolean {
   });
 }
 
-function numberOf(value: unknown): number | string {
+function sortable(value: unknown): number | string {
   if (typeof value === "number") return value;
   if (isObject(value) && typeof value.value === "string") {
     const n = Number(value.value);
@@ -184,8 +253,8 @@ function sortBy(documents: unknown[], sort: Record<string, unknown>): unknown[] 
   const [[path, direction] = ["", 1]] = Object.entries(sort);
   const sign = direction === -1 ? -1 : 1;
   return [...documents].sort((a, b) => {
-    const x = numberOf(resolve(a, path)[0]);
-    const y = numberOf(resolve(b, path)[0]);
+    const x = sortable(resolve(a, path)[0]);
+    const y = sortable(resolve(b, path)[0]);
     return x < y ? -sign : x > y ? sign : 0;
   });
 }
@@ -211,15 +280,19 @@ export function mongoOutcome(
   item: QueryItem,
   collections: Record<string, Record<string, unknown>[]>,
 ): QueryOutcome {
-  const query = item.query as Record<string, unknown>;
-  let documents: unknown[] = structuredClone(collections[String(query.collection)] ?? []);
-  if (query.mode === "find") {
-    documents = documents.filter((d) => matches(d, query.filter as Record<string, unknown>));
-    if (isObject(query.sort)) documents = sortBy(documents, query.sort);
-    if (isObject(query.projection)) documents = project(documents, query.projection);
-    if (typeof query.limit === "number") documents = documents.slice(0, query.limit);
+  const parsed = parseMongo(item.query);
+  if ("error" in parsed || "result" in parsed) {
+    return parsed;
+  }
+  let documents: unknown[] = structuredClone(collections[parsed.collection] ?? []);
+  if (parsed.pipeline === undefined) {
+    documents = documents.filter((d) => matches(d, parsed.filter));
+    if (parsed.sort !== undefined) documents = sortBy(documents, parsed.sort);
+    documents = documents.slice(parsed.skip);
+    if (parsed.projection !== undefined) documents = project(documents, parsed.projection);
+    if (parsed.limit !== undefined) documents = documents.slice(0, parsed.limit);
   } else {
-    for (const stage of query.pipeline as Record<string, unknown>[]) {
+    for (const stage of parsed.pipeline) {
       const [[name, argument] = ["", null]] = Object.entries(stage);
       if (name === "$match" && isObject(argument)) {
         documents = documents.filter((d) => matches(d, argument));
@@ -235,18 +308,17 @@ export function mongoOutcome(
     }
   }
   const limit = item.limit;
-  const truncated = limit !== undefined && documents.length > limit;
-  if (truncated) {
+  const cut = limit !== undefined && documents.length > limit;
+  if (cut) {
     documents = documents.slice(0, limit);
   }
-  return {
-    result: {
-      shape: "documents",
-      documents: {
-        documents,
-        schema: sampleSchema(documents),
-        ...(truncated ? { truncated: { limit } } : {}),
-      },
-    },
+  // As the server answers: with notices and the executed query beside the documents.
+  const set = {
+    documents,
+    schema: sampleSchema(documents),
+    notices: [],
+    executedQuery: `${parsed.collection}.${parsed.pipeline === undefined ? "find" : "aggregate"}(...)`,
+    ...(cut ? { truncated: { limit: documents.length } } : {}),
   };
+  return { result: { shape: "documents", documents: set as DocumentSet } };
 }

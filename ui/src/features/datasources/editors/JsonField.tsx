@@ -4,18 +4,14 @@ import { CodeEditor } from "./CodeEditor";
 import type { CompletionResult } from "./completion";
 import "../../../documents/documents.css";
 
-/** Indented, so a stage reads like it does in the MongoDB documentation. */
-export function formatJson(value: unknown): string {
-  return value === undefined ? "" : JSON.stringify(value, null, 2);
-}
-
 export interface JsonFieldProps {
   /** Accessible name of the editor. */
   label: string;
-  value: unknown;
-  /** Called with valid values only; `undefined` when an optional field is emptied. */
-  onChange: (value: unknown) => void;
-  /** An error text for a parsed value that does not fit, or null. */
+  /** The Extended JSON text as the query holds it. */
+  value: string;
+  /** Called with text that parses and passes `validate`; with "" when an optional field is emptied. */
+  onChange: (text: string) => void;
+  /** An error text for parsed JSON that does not fit, or null. */
   validate?: (value: unknown) => string | null;
   /** Empty text is allowed and means "not set". */
   optional?: boolean;
@@ -27,9 +23,11 @@ export interface JsonFieldProps {
 }
 
 /**
- * One JSON value edited as text. Every keystroke is kept in the field; only text that parses and
- * passes `validate` reaches the query, and until it does the field says why and the query keeps
- * its last valid value. A value changed from outside (a filter added by click) replaces the text.
+ * One Extended JSON value edited as text. The text itself goes into the query, so key order stays
+ * as written; it is parsed only to check it. Every keystroke is kept in the field; only text that
+ * parses and passes `validate` reaches the query, and until it does the field says why and the
+ * query keeps its last valid text. A value changed from outside (a filter added by click)
+ * replaces the text.
  */
 export function JsonField({
   label,
@@ -44,13 +42,12 @@ export function JsonField({
 }: JsonFieldProps) {
   const { t } = useI18n();
   const errorId = useId();
-  const signature = String(JSON.stringify(value));
-  const [text, setText] = useState(() => formatJson(value));
-  const [synced, setSynced] = useState(signature);
+  const [text, setText] = useState(value);
+  const [synced, setSynced] = useState(value);
   const [error, setError] = useState<string | null>(null);
-  if (signature !== synced) {
-    setSynced(signature);
-    setText(formatJson(value));
+  if (value !== synced) {
+    setSynced(value);
+    setText(value);
     setError(null);
   }
 
@@ -59,8 +56,8 @@ export function JsonField({
     if (next.trim() === "") {
       if (optional) {
         setError(null);
-        setSynced("undefined");
-        onChange(undefined);
+        setSynced("");
+        onChange("");
       } else {
         setError(t("documents.pipeline.empty"));
       }
@@ -83,8 +80,8 @@ export function JsonField({
       return;
     }
     setError(null);
-    setSynced(String(JSON.stringify(parsed)));
-    onChange(parsed);
+    setSynced(next);
+    onChange(next);
   }
 
   const described = [describedBy, error === null ? undefined : errorId]
