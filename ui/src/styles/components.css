@@ -1,10 +1,12 @@
 @layer components {
   /* Icons */
 
+  /* The stroke comes from the token, over the SVG's own attribute, so every icon shares it. */
   .icon {
     flex: none;
     width: var(--icon-size);
     height: var(--icon-size);
+    stroke-width: var(--icon-stroke);
   }
 
   /* Skip link: hidden until it receives keyboard focus. */
@@ -149,6 +151,27 @@
     border-radius: var(--radius-md);
     background: var(--bg-raised);
     color: var(--text);
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      border-color var(--duration-fast) var(--easing);
+  }
+
+  /* Hover darkens the frame a step, in the text color: neutral, never the accent. */
+  .input:hover:not(:disabled, [readonly]),
+  .select:hover:not(:disabled) {
+    border-color: var(--text-muted);
+  }
+
+  .input:disabled,
+  .input[readonly],
+  .select:disabled {
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .input[readonly] {
+    cursor: text;
   }
 
   .input::placeholder {
@@ -161,8 +184,15 @@
     font-variant-ligatures: none;
   }
 
+  /*
+   * As wide as its longest option, but never wider than its container: a long data source or
+   * dashboard name would otherwise push the page or a dialog past a phone's width. A percentage
+   * maximum also lets the select shrink inside grid and flex layouts.
+   */
   .select {
     width: auto;
+    min-width: 0;
+    max-width: 100%;
     padding-inline-end: var(--space-2);
   }
 
@@ -221,6 +251,15 @@
     gap: var(--space-2);
   }
 
+  /* The pages before the app greet in the website's serif; inside the app headings stay sans. */
+  .auth__header h1,
+  .status-page h1 {
+    font-family: var(--font-display);
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-display);
+    letter-spacing: var(--letter-spacing-display);
+  }
+
   .auth__lead {
     color: var(--text-muted);
   }
@@ -230,6 +269,7 @@
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
   }
 
   .auth__footer {
@@ -241,10 +281,13 @@
     color: var(--text-muted);
   }
 
+  /* Shrinks with its select, so a long option cannot widen the row past the page. */
   .preference {
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
   }
 
   /* App shell */
@@ -474,8 +517,8 @@
     position: fixed;
     z-index: var(--z-menu);
     display: grid;
-    min-width: 12rem;
-    max-width: 20rem;
+    min-width: var(--size-menu-min);
+    max-width: var(--size-menu-max);
     max-height: calc(100dvh - var(--space-2));
     overflow-y: auto;
     padding: var(--space-1);
@@ -648,6 +691,7 @@
 
   .page {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-5);
   }
 
@@ -662,13 +706,14 @@
 
   /* Empty states */
 
+  /* A quiet sunken field, as the website's panels: no dashed frame. */
   .empty-state {
     display: grid;
     justify-items: center;
     gap: var(--space-3);
     padding: var(--space-10) var(--space-6);
-    border: var(--border-width) dashed var(--border);
     border-radius: var(--radius-lg);
+    background: var(--bg-surface);
     text-align: center;
   }
 
@@ -677,8 +722,9 @@
     width: var(--space-10);
     height: var(--space-10);
     place-items: center;
-    border-radius: var(--radius-pill);
-    background: var(--bg-hover);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
     color: var(--text-muted);
   }
 
@@ -773,7 +819,7 @@
     inset-block-end: calc(100% + var(--space-1));
     inset-inline-start: 0;
     z-index: var(--z-menu);
-    width: max(100%, 15rem);
+    width: max(100%, var(--size-menu-min));
     max-height: calc(100dvh - var(--space-16));
     overflow-y: auto;
     padding: var(--space-1);
@@ -801,7 +847,7 @@
     .menu {
       inset-block: calc(100% + var(--space-1)) auto;
       inset-inline: auto 0;
-      width: 15rem;
+      width: var(--size-menu-min);
     }
   }
 
@@ -914,5 +960,34 @@
   .loading {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+
+  /*
+   * Skeleton loaders: neutral blocks in the shape of the content to come, breathing between two
+   * surface tints. Only the color changes, never the size; reduced motion keeps them still.
+   */
+  .skeleton {
+    display: block;
+    min-height: var(--font-size-md);
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    animation: skeleton-pulse var(--duration-pulse) var(--easing) infinite alternate;
+  }
+
+  .skeleton--block {
+    min-height: var(--control-height);
+    border-radius: var(--radius-md);
+  }
+
+  @keyframes skeleton-pulse {
+    to {
+      background-color: var(--bg-active);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
   }
 }

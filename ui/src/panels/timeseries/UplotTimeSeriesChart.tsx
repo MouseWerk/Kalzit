@@ -6,6 +6,7 @@ import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { alignSeries } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
+import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
 import "../panels.css";
 
 /** The palette classes, one probe each. */
@@ -105,10 +106,13 @@ export function UplotTimeSeriesChart({
       legend: { show: false },
       // The shell draws the cursor and the readout, the same for keyboard and pointer.
       cursor: { show: false },
+      // top, right, bottom, left; null keeps uPlot's own spacing.
+      padding: [null, TIME_LABEL_OVERHANG, null, null],
       scales: { x: { time: true, min: timeRange.from, max: timeRange.to } },
       axes: [
         {
           ...axisStyle,
+          space: PX_PER_TIME_TICK,
           values: (_u, splits, _axis, _space, step) =>
             splits.map((v) => (step >= DAY ? dates : times).format(v)),
         },
