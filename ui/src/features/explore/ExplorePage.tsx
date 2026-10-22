@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type KeyboardEvent, useId, useRef, useState } from "react";
+import { type KeyboardEvent, useDeferredValue, useId, useRef, useState } from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
 import { namedInputs, runPanelSteps } from "../../analysis/panel";
@@ -96,6 +96,8 @@ function Explore({ orgId }: { orgId: string }) {
   const [exporting, setExporting] = useState(false);
   // Analysis steps on the result; they go with the panel when it is added to a dashboard.
   const [steps, setSteps] = useState<Step[]>([]);
+  // The result and the steps editor share one run, a moment behind typing.
+  const deferredSteps = useDeferredValue(steps);
   const tabsId = useId();
 
   // Only the sources the caller may query (the role or a grant).
@@ -163,6 +165,7 @@ function Explore({ orgId }: { orgId: string }) {
   }
 
   const outcomes = result.data ?? [];
+  const stepsRun = runPanelSteps(deferredSteps, outcomes);
   const results = outcomes.flatMap((o) => ("result" in o ? [o.result] : []));
   const shapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
   const choices = panelsForShapes(shapes);
@@ -291,6 +294,7 @@ function Explore({ orgId }: { orgId: string }) {
                 pending={result.isPending}
                 error={result.error}
                 outcomes={outcomes}
+                stepsRun={stepsRun}
               />
             ) : null}
           </div>
@@ -311,11 +315,12 @@ function Explore({ orgId }: { orgId: string }) {
           onChange={setSteps}
           refIds={[REF_ID]}
           inputs={namedInputs(outcomes)}
+          run={stepsRun}
         />
       )}
       {exporting && submitted !== null ? (
         <ExportDialog
-          frames={runPanelSteps(steps, outcomes).frames.map((f) => f.name)}
+          frames={stepsRun.frames.map((f) => f.name)}
           run={(choice, signal) => {
             const timeRange = { from: submitted.from, to: submitted.to };
             return exportQuery(

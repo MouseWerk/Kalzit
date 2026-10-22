@@ -11,6 +11,7 @@ import {
   isoTime,
   numberText,
   parse,
+  parseNumber,
   toCell,
 } from "./expr";
 import { type ProjectionColumn, projectDocuments } from "./projection";
@@ -117,6 +118,36 @@ export const MAX_STEPS = 50;
 export const MAX_WINDOW = 10_000;
 export const MAX_ROWS = 500_000;
 export const MAX_COLUMNS = 500;
+/** Cells (rows times fields) one step may produce, checked before it builds them. */
+export const MAX_CELLS = 5_000_000;
+/** Text (UTF-16 units) the steps of one run may make: calculated text and the copies a join makes. */
+export const MAX_RUN_TEXT_UNITS = 64 * 1024 * 1024;
+
+/** The run's budget, the same as the server's (server/src/analysis/steps.rs, `Control`). */
+interface Budget {
+  textLeft: number;
+}
+
+function checkCells(rows: number, fields: number): void {
+  if (rows * fields > MAX_CELLS) {
+    throw detail("steps.too_many_cells", `the step would make more than ${MAX_CELLS} cells`, {
+      max: MAX_CELLS,
+    });
+  }
+}
+
+function spendText(budget: Budget, units: number): void {
+  if (units > budget.textLeft) {
+    throw detail(
+      "steps.too_much_text",
+      `the steps would make more than ${MAX_RUN_TEXT_UNITS} characters of text`,
+      { max: MAX_RUN_TEXT_UNITS },
+    );
+  }
+  budget.textLeft -= units;
+}
+
+const textUnits = (v: unknown) => (typeof v === "string" ? v.length : 0);
 
 export interface NamedFrame {
   name: string;
@@ -138,6 +169,14 @@ export function asStep(value: unknown): Step | null {
   const known = STEP_TYPES.includes(v.type as StepType) || v.type === "toFrame";
   if (typeof v.id !== "string" || !known) return null;
   return value as Step;
+}
+
+/**
+ * The edited steps, followed by the stored entries this UI does not know (a newer server's
+ * step type), so editing a panel never drops what it cannot show.
+ */
+export function withUnknown(stored: readonly unknown[], steps: readonly Step[]): unknown[] {
+  return [...steps, ...stored.filter((v) => asStep(v) === null)];
 }
 
 export function asSteps(values: readonly unknown[]): Step[] {
@@ -164,7 +203,12 @@ export interface StepsRun {
  * documents of its query into a frame at that query's place; documents are no frame for any
  * other step (as the server runs them).
  */
-export function runSteps(steps: readonly Step[], inputs: readonly NamedInput[]): StepsRun {
+export function runSteps(
+  steps: readonly Step[],
+  inputs: readonly NamedInput[],
+  options: { textBudget?: number } = {},
+): StepsRun {
+  const budget: Budget = { textLeft: options.textBudget ?? MAX_RUN_TEXT_UNITS };
   const order = inputs.map((i) => i.name);
   const documents = inputs.flatMap((i) => ("documents" in i ? [i] : []));
   let current: NamedFrame[] = inputs.flatMap((i) => ("frame" in i ? [i] : []));
@@ -178,7 +222,7 @@ export function runSteps(steps: readonly Step[], inputs: readonly NamedInput[]):
     try {
       current = isProjection(step)
         ? project(step, current, documents, order)
-        : apply(step, current);
+        : apply(step, current, budget);
       outcomes.push({ frames: current, skipped: false });
     } catch (e) {
       const error =
@@ -282,16 +326,30 @@ function checkFree(frame: Frame, name: string): void {
   }
 }
 
-const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
-
-/** A cell as a number: numbers, int64 digits and times; anything else is empty. */
+/**
+ * A cell as a number: numbers, int64 text (by the shared number grammar, `parseNumber`) and
+ * times; anything else is empty.
+ */
 export function numberAt(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string" && PLAIN_NUMBER.test(value)) {
-    const x = Number(value);
-    return Number.isFinite(x) ? x : null;
-  }
+  if (typeof value === "string") return parseNumber(value);
   return null;
+}
+
+const I128_MAX = (1n << 127n) - 1n;
+const I128_MIN = -(1n << 127n);
+
+/**
+ * An int64 cell as an exact integer: an optional sign and digits, spaces around allowed, within
+ * the range of i128 (as the server reads it).
+ */
+export function intOf(value: unknown): bigint | null {
+  if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : null;
+  if (typeof value !== "string") return null;
+  const t = value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+  if (!/^[+-]?\d+$/.test(t)) return null;
+  const n = BigInt(t);
+  return n > I128_MAX || n < I128_MIN ? null : n;
 }
 
 const numbers = (field: Field) => field.values.map(numberAt);
@@ -312,14 +370,7 @@ const withField = (frame: Frame, field: Field) => frameOf([...frame.fields, fiel
 function keyOf(value: unknown, type: FieldType): string | null {
   if (value === null || value === undefined) return null;
   if (type === "int64" && typeof value === "string") {
-    if (/^[+-]?\d+$/.test(value)) {
-      try {
-        return BigInt(value).toString();
-      } catch {
-        return value;
-      }
-    }
-    return value;
+    return intOf(value)?.toString() ?? value;
   }
   if (typeof value === "number") return numberText(value);
   if (typeof value === "string") return value;
@@ -333,8 +384,8 @@ function keyable(field: Field): void {
 
 // ---- steps ----
 
-function apply(step: AnalysisStep, frames: NamedFrame[]): NamedFrame[] {
-  if (step.type === "join") return join(frames, step);
+function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedFrame[] {
+  if (step.type === "join") return join(frames, step, budget);
   const index = position(frames, step.frame);
   const nf = frames[index] as NamedFrame;
   const frame = nf.frame;
@@ -344,9 +395,12 @@ function apply(step: AnalysisStep, frames: NamedFrame[]): NamedFrame[] {
       checkFree(frame, step.name);
       const compiled = compile(parse(step.expression), frame.fields);
       const type = compiled.result === "null" ? "number" : FIELD_TYPE_OF[compiled.result];
-      const values = Array.from({ length: rowsOf(frame) }, (_, row) =>
-        toCell(compiled.result, compiled.eval(row)),
-      );
+      checkCells(rowsOf(frame), frame.fields.length + 1);
+      const values = Array.from({ length: rowsOf(frame) }, (_, row) => {
+        const cell = toCell(compiled.result, compiled.eval(row));
+        spendText(budget, textUnits(cell));
+        return cell;
+      });
       result = withField(frame, newField(step.name, type, values));
       break;
     }
@@ -604,11 +658,10 @@ function aggregate(field: Field, op: Agg, rows: readonly number[]): unknown {
     default: {
       const less = (a: unknown, b: unknown): boolean => {
         if (field.type === "int64") {
-          try {
-            return BigInt(a as string) < BigInt(b as string);
-          } catch {
-            return false;
-          }
+          const x = intOf(a);
+          const y = intOf(b);
+          if (x !== null && y !== null) return x < y;
+          return (numberAt(a) as number) < (numberAt(b) as number);
         }
         if (field.type === "string") return compareText(String(a), String(b)) < 0;
         return (numberAt(a) as number) < (numberAt(b) as number);
@@ -647,6 +700,7 @@ function group(frame: Frame, by: string[], aggregations: Aggregation[]): Frame {
   const rows = groups(rowsOf(frame), (r) =>
     joinKeys(byFields.map((f) => keyOf(f.values[r], f.type))),
   );
+  checkCells(rows.length, by.length + plan.length);
   const fields = byFields.map((f) =>
     copyField(
       f,
@@ -680,6 +734,7 @@ function pivot(frame: Frame, row: string, column: string, value: string, op: Agg
       max: MAX_COLUMNS,
     });
   }
+  checkCells(rowGroups.length, colGroups.length + 1);
   const columnOf = new Array<number>(n).fill(0);
   colGroups.forEach((g, c) => {
     for (const r of g) columnOf[r] = c;
@@ -731,7 +786,11 @@ function convertKey(value: unknown, from: FieldType, to: FieldType): unknown {
   return value ?? null;
 }
 
-function join(frames: NamedFrame[], step: Extract<StepKind, { type: "join" }>): NamedFrame[] {
+function join(
+  frames: NamedFrame[],
+  step: Extract<StepKind, { type: "join" }>,
+  budget: Budget,
+): NamedFrame[] {
   const li = position(frames, step.left);
   const ri = position(frames, step.right);
   const l = frames[li] as NamedFrame;
@@ -763,6 +822,13 @@ function join(frames: NamedFrame[], step: Extract<StepKind, { type: "join" }>): 
     detail("steps.too_many_rows", `the join would make more than ${MAX_ROWS} rows`, {
       max: MAX_ROWS,
     });
+  // The result has the key and every other field of both sides; checked as pairs grow, before
+  // a single cell is copied.
+  const width = l.frame.fields.length + r.frame.fields.length - 1;
+  const fits = (n: number) => {
+    if (n > MAX_ROWS) throw tooMany();
+    checkCells(n, width);
+  };
   const pairs: [number | null, number | null][] = [];
   const matched = new Array<boolean>(rowsOf(r.frame)).fill(false);
   lkf.values.forEach((v, row) => {
@@ -772,17 +838,31 @@ function join(frames: NamedFrame[], step: Extract<StepKind, { type: "join" }>): 
       for (const j of hits) {
         matched[j] = true;
         pairs.push([row, j]);
+        if (pairs.length % 4096 === 0) fits(pairs.length);
       }
     } else if (step.mode !== "inner") {
       pairs.push([row, null]);
     }
-    if (pairs.length > MAX_ROWS) throw tooMany();
+    fits(pairs.length);
   });
   if (step.mode === "outer") {
     matched.forEach((m, j) => {
       if (!m) pairs.push([null, j]);
     });
-    if (pairs.length > MAX_ROWS) throw tooMany();
+    fits(pairs.length);
+  }
+  {
+    // The text the copies take, against the run's budget.
+    const rowText = (f: Frame) =>
+      Array.from({ length: rowsOf(f) }, (_, i) =>
+        f.fields.reduce((sum, x) => sum + textUnits(x.values[i]), 0),
+      );
+    const lt = rowText(l.frame);
+    const rt = rowText(r.frame);
+    let copied = 0;
+    for (const [i, j] of pairs)
+      copied += (i === null ? 0 : (lt[i] ?? 0)) + (j === null ? 0 : (rt[j] ?? 0));
+    spendText(budget, copied);
   }
   const keyCell = ([i, j]: [number | null, number | null]): unknown =>
     i !== null

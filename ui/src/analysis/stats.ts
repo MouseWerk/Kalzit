@@ -99,6 +99,9 @@ export function correlation(points: readonly (readonly [number, number])[]): num
 }
 
 /** The trailing moving average: empty until the window is full, then the mean of its values. */
+/** Rows between two fresh sums of the moving window (as the server). */
+const RESUM_EVERY = 1024;
+
 export function movingAverage(
   values: readonly (number | null)[],
   window: number,
@@ -117,6 +120,14 @@ export function movingAverage(
       if (old !== null) {
         total -= old;
         count--;
+      }
+    }
+    // A fresh sum now and then, so rounding left by adding and taking away cannot drift.
+    if ((i + 1) % RESUM_EVERY === 0) {
+      total = 0;
+      for (let k = Math.max(i + 1 - w, 0); k <= i; k++) {
+        const x = values[k] ?? null;
+        if (x !== null) total += x;
       }
     }
     out.push(i + 1 < w || count === 0 ? null : total / count);

@@ -10,6 +10,10 @@ import type { Field } from "../api/generated/shapes";
 
 export const MAX_CHARS = 2000;
 export const MAX_DEPTH = 64;
+/** Highest tree an expression may build (chains inside parentheses grow it past `MAX_DEPTH`). */
+export const MAX_HEIGHT = 128;
+/** Longest text an expression may make, in UTF-16 units (Excel's limit for a cell). */
+export const MAX_TEXT_UNITS = 32_767;
 const MAX_ARGS = 100;
 export const MIN_TIME_MS = -62_135_596_800_000;
 export const MAX_TIME_MS = 253_402_300_799_999;
@@ -94,6 +98,12 @@ const unclosed = (at: number) =>
   detail("expression.unclosed", `what starts at ${at} is not closed`, { at });
 
 function lex(chars: string[]): Token[] {
+  // The server reads only well-formed text; a lone surrogate, anywhere, cannot reach it.
+  chars.forEach((c, k) => {
+    if (c.length === 1 && c.charCodeAt(0) >= 0xd800 && c.charCodeAt(0) <= 0xdfff) {
+      throw syntax(k + 1);
+    }
+  });
   const out: Token[] = [];
   let i = 0;
   while (i < chars.length) {
@@ -247,10 +257,33 @@ export type Expr =
   | { kind: "bool"; value: boolean }
   | { kind: "null" }
   | { kind: "field"; name: string; at: number }
-  | { kind: "neg"; inner: Expr }
-  | { kind: "not"; inner: Expr }
-  | { kind: "bin"; op: BinOp; left: Expr; right: Expr }
-  | { kind: "call"; name: string; args: Expr[]; unit: Unit | null };
+  | { kind: "neg"; inner: Expr; height: number }
+  | { kind: "not"; inner: Expr; height: number }
+  | { kind: "bin"; op: BinOp; left: Expr; right: Expr; height: number }
+  | { kind: "call"; name: string; args: Expr[]; unit: Unit | null; height: number };
+
+/** The height of the tree: 1 for a leaf. Known from building it, without walking it. */
+export function height(e: Expr): number {
+  return "height" in e ? e.height : 1;
+}
+
+/**
+ * A node's height from its children's, refused above `MAX_HEIGHT` (as the server): nested
+ * parentheses around operator chains build trees far deeper than the parser's own nesting.
+ */
+function grown(children: readonly Expr[]): number {
+  const h = 1 + children.reduce((m, c) => Math.max(m, height(c)), 0);
+  if (h > MAX_HEIGHT) {
+    throw detail("expression.too_deep", `the expression nests deeper than ${MAX_HEIGHT} levels`, {
+      max: MAX_HEIGHT,
+    });
+  }
+  return h;
+}
+
+function bin(op: BinOp, left: Expr, right: Expr): Expr {
+  return { kind: "bin", op, left, right, height: grown([left, right]) };
+}
 
 const asciiLower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
@@ -336,7 +369,7 @@ class Parser {
     while (this.isWord("or") || this.isOp("||")) {
       this.next();
       this.enter();
-      left = { kind: "bin", op: "or", left, right: this.and() };
+      left = bin("or", left, this.and());
     }
     this.depth = mark;
     return left;
@@ -348,7 +381,7 @@ class Parser {
     while (this.isWord("and") || this.isOp("&&")) {
       this.next();
       this.enter();
-      left = { kind: "bin", op: "and", left, right: this.not() };
+      left = bin("and", left, this.not());
     }
     this.depth = mark;
     return left;
@@ -357,7 +390,8 @@ class Parser {
   not(): Expr {
     if (this.isWord("not") || this.isOp("!")) {
       this.next();
-      return { kind: "not", inner: this.nested(() => this.not()) };
+      const inner = this.nested(() => this.not());
+      return { kind: "not", inner, height: grown([inner]) };
     }
     return this.comparison();
   }
@@ -373,7 +407,7 @@ class Parser {
     if (after.kind === "op" && COMPARISONS[after.value] !== undefined) {
       throw syntax(this.peek().at);
     }
-    return { kind: "bin", op, left, right };
+    return bin(op, left, right);
   }
 
   additive(): Expr {
@@ -384,7 +418,7 @@ class Parser {
       if (op === null) break;
       this.next();
       this.enter();
-      left = { kind: "bin", op, left, right: this.multiplicative() };
+      left = bin(op, left, this.multiplicative());
     }
     this.depth = mark;
     return left;
@@ -398,7 +432,7 @@ class Parser {
       if (op === null) break;
       this.next();
       this.enter();
-      left = { kind: "bin", op, left, right: this.unary() };
+      left = bin(op, left, this.unary());
     }
     this.depth = mark;
     return left;
@@ -407,7 +441,8 @@ class Parser {
   unary(): Expr {
     if (this.isOp("-")) {
       this.next();
-      return { kind: "neg", inner: this.nested(() => this.unary()) };
+      const inner = this.nested(() => this.unary());
+      return { kind: "neg", inner, height: grown([inner]) };
     }
     return this.power();
   }
@@ -416,7 +451,11 @@ class Parser {
     const base = this.primary();
     if (this.isOp("^")) {
       this.next();
-      return { kind: "bin", op: "^", left: base, right: this.nested(() => this.unary()) };
+      return bin(
+        "^",
+        base,
+        this.nested(() => this.unary()),
+      );
     }
     return base;
   }
@@ -495,7 +534,7 @@ class Parser {
         );
       }
     }
-    return { kind: "call", name, args, unit };
+    return { kind: "call", name, args, unit, height: grown(args) };
   }
 }
 
@@ -603,7 +642,7 @@ export function daysFromCivil(year: number, month: number, day: number): number 
 
 const civilOf = (ms: number) => civilFromDays(Math.floor(ms / DAY_MS));
 
-function daysInMonth(year: number, month: number): number {
+export function daysInMonth(year: number, month: number): number {
   if (month === 2) return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28;
   return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
 }
@@ -749,10 +788,40 @@ function readNumber(v: unknown): number | null {
 }
 
 /** Type-checks `expr` against the fields of a frame and compiles it to a row function. */
+/** Set when a text result went past `MAX_TEXT_UNITS` during one evaluation. */
+let tooLong = false;
+
+/** Text within the limit, else empty and the evaluation is marked as failed. */
+function capped(text: string): string | null {
+  if (text.length > MAX_TEXT_UNITS) {
+    tooLong = true;
+    return null;
+  }
+  return text;
+}
+
+export const textTooLong = () =>
+  detail(
+    "expression.text_too_long",
+    `the expression makes text longer than ${MAX_TEXT_UNITS} characters`,
+    { max: MAX_TEXT_UNITS },
+  );
+
+/** Compiles; `eval` throws `expression.text_too_long` for a row whose text grows too long. */
 export function compile(expr: Expr, fields: readonly Field[]): Compiled {
   const [fn, result] = check(expr, fields);
   if (result === "null") throw detail("expression.no_type", "the expression is always empty");
-  return { result, eval: fn };
+  return {
+    result,
+    eval: (row) => {
+      tooLong = false;
+      const v = fn(row);
+      const over = tooLong;
+      tooLong = false;
+      if (over || (typeof v === "string" && v.length > MAX_TEXT_UNITS)) throw textTooLong();
+      return v;
+    },
+  };
 }
 
 function check(expr: Expr, fields: readonly Field[]): [Fn, Type] {
@@ -911,7 +980,15 @@ function binary(op: BinOp, left: Expr, right: Expr, fields: readonly Field[]): [
       default:
         break;
     }
-    if (kind === "text") return (a as string) + (b as string);
+    if (kind === "text") {
+      const x = a as string;
+      const y = b as string;
+      if (x.length + y.length > MAX_TEXT_UNITS) {
+        tooLong = true;
+        return null;
+      }
+      return x + y;
+    }
     if (kind === "timeDiff") return num((a as number) - (b as number));
     if (kind === "timeShift") {
       const [t, n] = lt === "time" ? [a as number, b as number] : [b as number, a as number];
@@ -1110,10 +1187,16 @@ function call(name: string, unit: Unit | null, args: Expr[], fields: readonly Fi
       return [
         (r) => {
           let out = "";
-          fns.forEach((f, i) => {
+          for (const [i, f] of fns.entries()) {
             const s = textOf(types[i] as Type, f(r));
-            if (s !== null) out += s;
-          });
+            if (s === null) continue;
+            if (out.length + s.length > MAX_TEXT_UNITS) {
+              // Stops before building anything longer.
+              tooLong = true;
+              return null;
+            }
+            out += s;
+          }
           return out;
         },
         "text",
@@ -1142,7 +1225,9 @@ function call(name: string, unit: Unit | null, args: Expr[], fields: readonly Fi
         (r) => {
           const v = f0(r);
           if (v === null) return null;
-          return name === "lower" ? (v as string).toLowerCase() : (v as string).toUpperCase();
+          return capped(
+            name === "lower" ? (v as string).toLowerCase() : (v as string).toUpperCase(),
+          );
         },
         "text",
       ];

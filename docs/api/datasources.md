@@ -617,17 +617,28 @@ browser-side export would need the data in the browser first and could not be re
 
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
-the format, the number of rows and the panel or the data sources, never the data.
+the format, the time range, the frame, the number of rows and the panel or the data sources,
+never the data; an export refused inside the route writes `data.export_refused` with the code and
+reason as well.
+
+Resources: a server makes at most 3 export files at once (`503 busy`, reason `export.busy`, for
+more). The steps and the encoder stop when the client goes away and when the query time limit
+(`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`). The
+steps' bounds hold here as in the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16
+units of made text per run), and a file is at most 256 MiB (`export.too_large`). The statement
+as sent to the database (`meta.executedQuery`) is not in the file.
 
 - `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
   `language` `de` separates with `;` and writes a decimal comma, `en` uses `,` and a decimal
   point. Numbers keep every digit (`1e+21` from 10^21 on), `int64` its digits, times ISO 8601 in
-  UTC, booleans `true`/`false`, `json` compact JSON. Text that starts with `=`, `+`, `-`, `@`, tab
-  or carriage return gets a leading `'` (field names too), so a spreadsheet never runs it as a
-  formula.
+  UTC (a fraction of a millisecond cut), booleans `true`/`false`, `json` compact JSON. Text that
+  starts with `=`, `+`, `-`, `@` (also full-width, and after leading spaces, line breaks or
+  invisible characters), tab or carriage return gets a leading `'`, field names and `int64` cells
+  that are not plain digits too, so a spreadsheet never runs it as a formula (DDE included).
 - `xlsx`: one sheet, bold frozen header row, typed cells: numbers, booleans and times (UTC, shown
   as `yyyy-mm-dd hh:mm:ss.000`). `int64` beyond 2^53 and times before 1900-03-01 are text; text is
-  cut at Excel's 32,767 characters; at most 1,048,575 rows and 16,384 columns. Written with
+  cut at Excel's 32,767 UTF-16 units, never inside a character; at most 1,048,575 rows and 16,384
+  columns. The sheet is named after the table, never Excel's reserved "History". Written with
   `rust_xlsxwriter` (maintained, no default features, writes cells and never formulas).
 - `json`: the result envelope of the frame, `{"shape": "frame", "frame": {...}}`.
 
@@ -820,6 +831,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.key_types` | `left`, `right` | join key fields of types that cannot be matched |
 | `steps.too_many_rows` | `max` | the join would make more than `max` rows |
 | `steps.too_many_columns` | `max` | the pivot would make more than `max` fields |
+| `steps.too_many_cells` | `max` | the step would make more than `max` cells (rows times fields); checked before it builds them |
+| `steps.too_much_text` | `max` | the steps of one run would make more than `max` UTF-16 units of text (calculated text and the copies a join makes) |
+| `steps.timeout` | `seconds` | `504 query_timeout`: an export's steps and file took longer than the query time limit |
+| `steps.cancelled` | | the client went away while its export was made (nobody receives this answer) |
 | `expression.empty` | | the expression is empty |
 | `expression.too_long` | `max` | longer than `max` characters |
 | `expression.too_deep` | `max` | nested deeper than `max` levels |
@@ -839,6 +854,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `expression.mixed_types` | `name`, `first`, `second` | `if`, `coalesce`, `min` or `max` mix types |
 | `expression.null_compare` | | a comparison with `null`; `isnull(...)` is meant |
 | `expression.no_type` | | the expression is always empty |
+| `expression.text_too_long` | `max` | a row's text would be longer than `max` UTF-16 units (Excel's limit for a cell) |
 
 ### Export (`422 validation`)
 
@@ -850,6 +866,8 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_many_rows` | `max` | Excel takes at most `max` rows |
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.failed` | `detail` | the file could not be written |
+| `export.too_large` | `max` | the file would be larger than `max` bytes |
+| `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
 
 ### Sources and the server (`datasource_error` unless noted)
 

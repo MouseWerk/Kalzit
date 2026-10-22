@@ -324,7 +324,11 @@ Migration from version 1 to 2: version 1 gave `transformations` no defined conte
 projections the documents UI stored there as `{"type": "toFrame", "refId", "columns"}`. Those
 become version 2 steps (`id` `projection-<refId>`, `refId` renamed to `frame`), keeping the
 columns version 2 accepts (a path, a known type, a name not used before); a projection with no
-column left and every other entry are dropped.
+column left, one of a query the panel does not have, an earlier one of the same query (the last
+stays, as the documents UI applied it) and every other entry are dropped. Version 2 is one
+combined version: the dashboard features of rows, repeat, links, annotations and library panels
+add their fields under it. A library panel (`libraryPanelId`) has no steps of its own:
+`transformations` must be empty there.
 
 Saving (create, save, restoring a version) checks `datasources:query` on every `datasourceId` of the
 panels and query variables: a data source the caller cannot see is `422 validation` field `model`
@@ -503,6 +507,10 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
   field. **pivot** answers one row per value of `row` and one field per value of `column` (at most
   500).
 - Empty values are left out of every statistic and aggregation.
+- Bounds, the same in the browser and on the server: a step makes at most 5,000,000 cells (rows
+  times fields, checked before it builds them: `steps.too_many_cells`); the steps of one run make
+  at most 67,108,864 UTF-16 units of text, calculated text and the copies a join makes
+  (`steps.too_much_text`).
 
 Saving checks each step's form and bounds and parses every expression (syntax errors name the
 place: `model.panels[0].transformations[1].expression: unexpected input at 4`). Field names and
@@ -533,4 +541,12 @@ Positions count characters from 1.
   'quarter' | 'year')`, `concat`, `text` (numbers as JavaScript writes them, times as ISO 8601),
   `number`, `lower`, `upper`, `length`, `contains`. Calendar functions use UTC; a time outside the
   years 1 to 9999 is empty.
-- Limits: 2000 characters, nesting 64 levels, 100 values per call.
+- Limits: 2000 characters, nesting 64 levels while parsing and a tree at most 128 high (chains
+  inside parentheses grow it), 100 values per call, text results at most 32,767 UTF-16 units per
+  cell (`expression.text_too_long`).
+- `int64` text and `number(...)` read one grammar: an optional sign, digits with an optional
+  fraction and exponent, ASCII spaces around; anything else is empty. Group keys and `min`/`max`
+  of `int64` compare exactly; cells that do not read are left out.
+- Both engines agree exactly, except `exp`, `ln`, `log10`, `pow` and `^`, whose platform libraries
+  may round the last bit differently (one unit in the last place). Numbers are written as
+  ECMAScript `Number::toString` writes them (`ryu-js` on the server).

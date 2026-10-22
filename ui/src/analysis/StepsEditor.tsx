@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useDeferredValue, useEffect, useId, useRef, useState } from "react";
 import type { Field, Frame } from "../api/generated/shapes";
 import { reasonText } from "../features/datasources/reasons";
 import { type MessageKey, type Translate, useI18n } from "../i18n/i18n";
@@ -17,6 +17,7 @@ import {
   STEP_TYPES,
   type Step,
   type StepKind,
+  type StepsRun,
   type StepType,
 } from "./steps";
 import "../features/dashboards/ui/shared.css";
@@ -33,7 +34,15 @@ interface StepsEditorProps {
   refIds: readonly string[];
   /** The queries' results as answered; empty until they ran. */
   inputs: readonly NamedInput[];
+  /**
+   * The steps' run, when the page already has one (the panel's preview uses the same), so the
+   * steps do not run twice; else the editor runs them, a moment behind typing.
+   */
+  run?: StepsRun | undefined;
 }
+
+/** What to focus after a step moved or went: a control of a step, or the step picker. */
+type FocusRequest = { id: string; action: "up" | "down" | "remove" } | { id: null };
 
 const numeric = (f: Field) => f.type === "number" || f.type === "int64";
 
@@ -41,16 +50,42 @@ const numeric = (f: Field) => f.type === "number" || f.type === "int64";
  * Edits a list of analysis steps: add, reorder, turn off, remove, and a preview of the frames
  * after any step. The steps run here as they will in the panel (docs/api/settings-dashboards.md, "Analysis steps").
  */
-export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProps) {
+export function StepsEditor({ steps, onChange, refIds, inputs, run: given }: StepsEditorProps) {
   const { t } = useI18n();
   const headingId = useId();
   const addId = useId();
+  const sectionRef = useRef<HTMLElement>(null);
   const [adding, setAdding] = useState<StepType>("calculate");
   // The step whose result the preview shows; -1 shows the queries' results.
   const [previewAt, setPreviewAt] = useState(-1);
+  const [announcement, setAnnouncement] = useState("");
+  const [focus, setFocus] = useState<FocusRequest | null>(null);
   const frames = inputs.flatMap((i) => ("frame" in i ? [i] : []));
-  const run = runSteps(steps, inputs);
+  // Typing stays quick: the steps run on the deferred list, a moment behind the keystrokes.
+  const deferred = useDeferredValue(steps);
+  const run = given ?? runSteps(deferred, inputs);
   const hasData = inputs.length > 0;
+
+  // A moved or removed step's control left the place it was; focus goes where the user expects.
+  useEffect(() => {
+    if (focus === null) return;
+    const root = sectionRef.current;
+    let target: HTMLElement | null | undefined;
+    if (focus.id === null) {
+      target = root?.querySelector<HTMLElement>("select");
+    } else {
+      const item = root?.querySelector(`[data-step="${CSS.escape(focus.id)}"]`);
+      const wanted = item?.querySelector<HTMLButtonElement>(`[data-action="${focus.action}"]`);
+      target =
+        wanted !== null && wanted !== undefined && !wanted.disabled
+          ? wanted
+          : item?.querySelector<HTMLButtonElement>(
+              `[data-action="${focus.action === "up" ? "down" : "up"}"]`,
+            );
+    }
+    target?.focus();
+    setFocus(null);
+  }, [focus]);
 
   const update = (index: number, step: Step) =>
     onChange(steps.map((s, i) => (i === index ? step : s)));
@@ -60,11 +95,20 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
     if (step === undefined) return;
     next.splice(index + by, 0, step);
     onChange(next);
+    // The preview stays on the step it showed, wherever that step now is.
     if (previewAt === index) setPreviewAt(index + by);
+    else if (previewAt === index + by) setPreviewAt(index);
+    setAnnouncement(t("analysis.steps.moved", { n: index + by + 1 }));
+    setFocus({ id: step.id, action: by < 0 ? "up" : "down" });
   };
   const remove = (index: number) => {
-    onChange(steps.filter((_, i) => i !== index));
-    if (previewAt >= index) setPreviewAt(previewAt - 1);
+    const next = steps.filter((_, i) => i !== index);
+    onChange(next);
+    if (previewAt === index) setPreviewAt(-1);
+    else if (previewAt > index) setPreviewAt(previewAt - 1);
+    setAnnouncement(t("analysis.steps.removed", { n: index + 1 }));
+    const neighbour = next[index] ?? next[index - 1];
+    setFocus(neighbour === undefined ? { id: null } : { id: neighbour.id, action: "remove" });
   };
   /** The frames a step reads: what the step before it made, or the queries' results. */
   const inputOf = (index: number): readonly NamedFrame[] => {
@@ -79,7 +123,10 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
     previewAt < 0 ? frames : (run.steps[previewAt]?.frames ?? inputOf(previewAt + 1));
 
   return (
-    <section className="steps" aria-labelledby={headingId}>
+    <section className="steps" aria-labelledby={headingId} ref={sectionRef}>
+      <p className="visually-hidden" aria-live="polite">
+        {announcement}
+      </p>
       <h3 className="steps__heading" id={headingId}>
         {t("analysis.steps.title")}
       </h3>
@@ -94,7 +141,7 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
             status = t("analysis.steps.status.off");
           } else if (outcome?.error !== undefined) {
             status = (
-              <span className="steps__error" role="alert">
+              <span className="steps__error">
                 {reasonText(t, {
                   reason: outcome.error.reason,
                   params: outcome.error.params,
@@ -114,7 +161,12 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
             });
           }
           return (
-            <li key={step.id} className="step" aria-label={t("analysis.steps.number", { n })}>
+            <li
+              key={step.id}
+              className="step"
+              aria-label={t("analysis.steps.number", { n })}
+              data-step={step.id}
+            >
               <div className="step__header">
                 <span className="step__number">{n}</span>
                 <span className="step__title">{t(`analysis.kind.${step.type}`)}</span>
@@ -146,6 +198,7 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
                     type="button"
                     className="button button--ghost button--small"
                     aria-label={t("analysis.steps.up", { n })}
+                    data-action="up"
                     disabled={index === 0}
                     onClick={() => move(index, -1)}
                   >
@@ -155,6 +208,7 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
                     type="button"
                     className="button button--ghost button--small"
                     aria-label={t("analysis.steps.down", { n })}
+                    data-action="down"
                     disabled={index === steps.length - 1}
                     onClick={() => move(index, 1)}
                   >
@@ -164,6 +218,7 @@ export function StepsEditor({ steps, onChange, refIds, inputs }: StepsEditorProp
                     type="button"
                     className="button button--ghost button--small"
                     aria-label={t("analysis.steps.removeNamed", { n })}
+                    data-action="remove"
                     onClick={() => remove(index)}
                   >
                     {t("analysis.steps.remove")}

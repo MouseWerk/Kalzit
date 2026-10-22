@@ -196,11 +196,14 @@ fn type_for(value: &J) -> FieldType {
 
 /// Text as JavaScript's `Number(text)` reads it, for typed decimals and int64.
 fn js_number(text: &str) -> Option<f64> {
-    let t = text.trim();
+    let t = text.trim_matches(|c: char| c.is_ascii_whitespace());
     if t.is_empty() {
         return Some(0.0);
     }
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))
+        && (1..=16).contains(&hex.len())
+        && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         return u64::from_str_radix(hex, 16).ok().map(|n| n as f64);
     }
     super::expr::parse_number(t)
@@ -259,7 +262,7 @@ pub fn rfc3339_ms(text: &str) -> Option<f64> {
 
 /// A typed date's ms: its value is a decimal count of ms or an RFC 3339 time, nothing else.
 fn date_ms(text: Option<&str>) -> Option<f64> {
-    let text = text.unwrap_or_default().trim();
+    let text = text.unwrap_or_default().trim_matches(|c: char| c.is_ascii_whitespace());
     let digits = text.strip_prefix('-').unwrap_or(text);
     if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
         return text.parse::<f64>().ok().filter(|x| x.is_finite());

@@ -12,6 +12,8 @@
   "analysis.steps.removeNamed": "Schritt {n} entfernen",
   "analysis.steps.preview": "Vorschau",
   "analysis.steps.previewNamed": "Vorschau nach Schritt {n}",
+  "analysis.steps.moved": "Der Schritt ist jetzt Schritt {n}.",
+  "analysis.steps.removed": "Schritt {n} entfernt.",
   "analysis.steps.status.rows": "{rows} Zeilen, {fields} Felder",
   "analysis.steps.status.off": "Ausgeschaltet",
   "analysis.steps.status.notRun": "Nicht ausgeführt, ein Schritt davor ist fehlgeschlagen",

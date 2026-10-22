@@ -1,5 +1,5 @@
 import type { DocumentSet, Field, FieldType, Frame } from "../api/generated/shapes";
-import { numberText, parseNumber } from "./expr";
+import { daysFromCivil, daysInMonth, numberText, parseNumber } from "./expr";
 
 /**
  * The projection step (`toFrame`): a `documents` result as a frame, one column per field path,
@@ -96,20 +96,60 @@ function typeFor(value: unknown): FieldType {
 
 /** Text as JavaScript's `Number(text)` reads it, as the server mirrors it. */
 function jsNumber(text: string): number | null {
-  const t = text.trim();
+  const t = trimAscii(text);
   if (t === "") return 0;
-  if (/^0[xX][0-9a-fA-F]+$/.test(t)) return Number.parseInt(t.slice(2), 16);
+  if (/^0[xX][0-9a-fA-F]{1,16}$/.test(t)) return Number(BigInt(t));
   return parseNumber(t);
 }
 
+/** Spaces around a value, as the server trims them (ASCII only). */
+function trimAscii(t: string): string {
+  return t.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+}
+
+/**
+ * RFC 3339 (`2026-01-02T03:04:05.678Z`, `t` or a space between, `Z` or `±hh:mm`) as Unix ms;
+ * fractions past the millisecond are cut. The server reads exactly the same forms.
+ */
+export function rfc3339Ms(text: string): number | null {
+  const m =
+    /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:([Zz])|([+-])(\d{2}):(\d{2}))$/.exec(
+      text,
+    );
+  if (m === null) return null;
+  const [year, month, day, hour, minute, second] = [1, 2, 3, 4, 5, 6].map((i) => Number(m[i]));
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined
+  ) {
+    return null;
+  }
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  const millis = m[7] === undefined ? 0 : Number(m[7].slice(0, 3).padEnd(3, "0"));
+  let offset = 0;
+  if (m[8] === undefined) {
+    const oh = Number(m[10]);
+    const om = Number(m[11]);
+    if (oh > 23 || om > 59) return null;
+    offset = (m[9] === "-" ? -1 : 1) * (oh * 60 + om);
+  }
+  const days = daysFromCivil(year, month, day);
+  return ((days * 24 + hour) * 60 + minute - offset) * 60_000 + second * 1000 + millis;
+}
+
+/** A typed date's ms: its value is a decimal count of ms or an RFC 3339 time, nothing else. */
 function dateMs(text: string | null): number | null {
-  const t = (text ?? "").trim();
+  const t = trimAscii(text ?? "");
   if (/^-?\d+$/.test(t)) {
     const ms = Number(t);
     return Number.isFinite(ms) ? ms : null;
   }
-  const ms = Date.parse(t);
-  return Number.isFinite(ms) ? ms : null;
+  return rfc3339Ms(t);
 }
 
 function convert(value: unknown, type: FieldType): unknown {

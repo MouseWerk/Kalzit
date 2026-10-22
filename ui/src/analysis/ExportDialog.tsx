@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { DownloadedFile } from "../api/client";
 import type { ExportFormat, ExportLanguage } from "../api/generated/shapes";
 import { FormAlert } from "../components/FormAlert";
@@ -38,30 +38,43 @@ export function ExportDialog({ frames, note, run, onClose }: ExportDialogProps) 
   const [frame, setFrame] = useState(frames[0] ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // The export that runs; closing the dialog or leaving the page cancels it, which also lets the
+  // server stop making the file.
+  const running = useRef<AbortController | null>(null);
+  useEffect(() => () => running.current?.abort(), []);
+
+  function close() {
+    running.current?.abort();
+    onClose();
+  }
 
   async function submit() {
     setBusy(true);
     setError(null);
+    running.current?.abort();
     const controller = new AbortController();
+    running.current = controller;
     try {
       const choice: ExportChoice = { format, language: numbers };
       if (frames.length > 1 && frame !== "") choice.frame = frame;
       saveFile(await run(choice, controller.signal));
+      running.current = null;
       onClose();
     } catch (e) {
+      if (controller.signal.aborted) return;
       setError(e);
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
 
   return (
     <Dialog
       title={t("analysis.export.title")}
-      onClose={onClose}
+      onClose={close}
       actions={
         <>
-          <button type="button" className="button button--secondary" onClick={onClose}>
+          <button type="button" className="button button--secondary" onClick={close}>
             {t("analysis.export.cancel")}
           </button>
           <button

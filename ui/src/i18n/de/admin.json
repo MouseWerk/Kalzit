@@ -392,6 +392,7 @@
   "admin.auditAction.dashboard.restored": "Dashboard wiederhergestellt",
   "admin.auditAction.dashboard.purged": "Dashboard endgültig gelöscht",
   "admin.auditAction.data.exported": "Daten exportiert",
+  "admin.auditAction.data.export_refused": "Export abgelehnt",
   "admin.users.cannotLock": "Dieses Konto lässt sich nicht sperren: Es ist der letzte Server-Admin oder der letzte Eigentümer einer Organisation, der sich anmelden kann. Gib die Rolle zuerst jemand anderem.",
   "admin.settings.datasources.sqlite_dirs.label": "SQLite-Ordner",
   "admin.settings.datasources.sqlite_dirs.description": "Ordner auf dem Server, aus denen SQLite-Datenquellen Datenbankdateien öffnen dürfen. Der Datenordner bleibt immer ausgeschlossen. Ist die Liste leer, sind keine SQLite-Dateien erlaubt.",

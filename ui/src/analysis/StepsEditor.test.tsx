@@ -82,9 +82,9 @@ describe("steps editor", () => {
     await user.clear(expression);
     await user.click(expression);
     await user.paste("betrag + 1");
-    expect(within(second).getByRole("alert").textContent).toBe(
-      "“*” cannot combine text and number.",
-    );
+    // Shown at the step, not announced on every keystroke.
+    expect(within(second).getByText("“*” cannot combine text and number.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("reorders, turns off and removes steps", async () => {
@@ -97,8 +97,8 @@ describe("steps editor", () => {
     expect(seen.steps.map((s) => s.id)).toEqual(["s2", "s1"]);
     // Now "b" runs before "a" exists.
     expect(
-      within(screen.getByRole("listitem", { name: "Step 1" })).getByRole("alert").textContent,
-    ).toMatch(/no field “a”/);
+      within(screen.getByRole("listitem", { name: "Step 1" })).getByText(/no field “a”/),
+    ).toBeTruthy();
 
     await user.click(
       within(screen.getByRole("listitem", { name: "Step 1" })).getByRole("checkbox", {
@@ -163,6 +163,7 @@ describe("steps editor", () => {
                 { kunde: { stadt: "Graz" }, summe: 4 },
               ],
               schema: [],
+              notices: [],
             },
           },
         ]}
@@ -179,6 +180,35 @@ describe("steps editor", () => {
       .getAllByRole("option")
       .map((o) => o.textContent);
     expect(kinds).not.toContain("Documents as a table");
+  });
+
+  it("keeps focus and the preview with a moved step and says where it went", async () => {
+    const { user, seen } = setup([
+      calc("s1", "a", "1"),
+      calc("s2", "b", "2"),
+      calc("s3", "c", "3"),
+    ]);
+    // The preview shows step 1; moving step 2 above it keeps the preview on the same step.
+    await user.click(screen.getByRole("button", { name: "Preview after step 1" }));
+    await user.click(screen.getByRole("button", { name: "Move step 2 up" }));
+    expect(seen.steps.map((s) => s.id)).toEqual(["s2", "s1", "s3"]);
+    expect(screen.getByRole("region", { name: "After step 2" })).toBeTruthy();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Move step 1 down");
+    expect(screen.getByText("The step is now step 1.")).toBeTruthy();
+    // At the top, focus stays on the step's other move button.
+    expect(screen.getByRole("button", { name: "Move step 1 up" }).hasAttribute("disabled")).toBe(
+      true,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Move step 3 up" }));
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Move step 2 up");
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    expect(seen.steps.map((s) => s.id)).toEqual(["s2", "s1"]);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Remove step 2");
+    expect(screen.getByText("Step 2 removed.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    await user.click(screen.getByRole("button", { name: "Remove step 1" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Kind of step"));
   });
 
   it("offers joins only when there is a second query", () => {

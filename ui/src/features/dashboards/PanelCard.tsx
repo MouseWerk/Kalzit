@@ -2,6 +2,7 @@ import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useSta
 import { exportPanel, exportQuery } from "../../analysis/api";
 import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
 import { runPanelSteps } from "../../analysis/panel";
+import { asSteps, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -287,8 +288,13 @@ function exportPanelData(
     const variables = storedQueryVariables(query.variables, query.saved ?? []);
     return exportPanel(query.orgId, query.dashboardId, panel.id, { ...common, variables }, signal);
   }
+  // Queries still being written are left out, unless a step reads them: then the server says
+  // what is wrong with them instead of refusing the steps.
+  const read = new Set(asSteps(panel.transformations).flatMap(stepFrames));
   const targets = panel.targets.filter(
-    (target) => target.datasourceId !== "" && queryText(target.query).trim() !== "",
+    (target) =>
+      read.has(target.refId) ||
+      (target.datasourceId !== "" && queryText(target.query).trim() !== ""),
   );
   return exportQuery(
     query.orgId,
@@ -314,13 +320,23 @@ interface PanelBodyProps {
   pending: boolean;
   error: Error | null;
   outcomes: readonly TargetOutcome[];
+  /** The steps' run when the caller already has it (the panel editor shares it with its steps). */
+  stepsRun?: StepsRun | undefined;
 }
 
 /**
  * Loading, failure and data of one panel. Errors are mapped per query: one failing query shows
  * its message while the others still draw.
  */
-export function PanelBody({ panel, title, range, pending, error, outcomes }: PanelBodyProps) {
+export function PanelBody({
+  panel,
+  title,
+  range,
+  pending,
+  error,
+  outcomes,
+  stepsRun: given,
+}: PanelBodyProps) {
   const { t } = useI18n();
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
@@ -343,7 +359,7 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
   }
   // The panel's steps run here, on what the queries answered; a failing step shows its reason
   // and the panel draws what the steps before it made.
-  const stepsRun = runPanelSteps(panel.transformations, outcomes);
+  const stepsRun = given ?? runPanelSteps(panel.transformations, outcomes);
   const frames = stepsRun.frames.map((f) => f.frame);
   const errors = errorsOf(outcomes);
   const shapes = otherShapes(outcomes);
@@ -373,7 +389,7 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
     <div className="panel-content">
       {errorList}
       {failed === undefined ? null : (
-        <p className="panel-error panel-error--partial" role="alert">
+        <p className="panel-error panel-error--partial">
           <Icon name="alert" />
           <span>
             {t("analysis.steps.failed", {

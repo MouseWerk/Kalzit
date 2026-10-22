@@ -12,6 +12,8 @@
   "analysis.steps.removeNamed": "Remove step {n}",
   "analysis.steps.preview": "Preview",
   "analysis.steps.previewNamed": "Preview after step {n}",
+  "analysis.steps.moved": "The step is now step {n}.",
+  "analysis.steps.removed": "Step {n} removed.",
   "analysis.steps.status.rows": "{rows} rows, {fields} fields",
   "analysis.steps.status.off": "Turned off",
   "analysis.steps.status.notRun": "Not run, an earlier step failed",

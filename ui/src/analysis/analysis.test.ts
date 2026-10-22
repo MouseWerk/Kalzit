@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Field } from "../api/generated/shapes";
 import { compile, DetailError, isoTime, numberText, parse, parseNumber } from "./expr";
 import * as stats from "./stats";
-import { type NamedFrame, runSteps, type Step } from "./steps";
+import { type NamedFrame, runSteps, type Step, withUnknown } from "./steps";
 
 const fields: Field[] = [
   { name: "zeit", type: "time", values: [1_767_225_600_000, null] },
@@ -103,6 +103,112 @@ describe("statistics", () => {
       5,
       5,
     ]);
+  });
+});
+
+describe("bounds shared with the server", () => {
+  const frameOf = (fields: Field[]): NamedFrame => ({ name: "A", frame: { fields } });
+  const calc = (id: string, name: string, expression: string): Step => ({
+    id,
+    type: "calculate",
+    frame: "A",
+    name,
+    expression,
+  });
+
+  it("refuses text the server could not read: a lone surrogate", () => {
+    expect(outcome("'a\ud800'")).toBe("expression.syntax");
+    expect(outcome("'a😀'")).toBe("ok");
+  });
+
+  it("refuses trees taller than the server takes", () => {
+    let text = "x";
+    for (let k = 63; k > 1; k--) {
+      const next = `(${text}${"*x".repeat(Math.max(64 - k - 1, 0))})`;
+      if (next.length > 1990) break;
+      text = next;
+    }
+    try {
+      parse(text);
+      throw new Error("parsed");
+    } catch (e) {
+      expect(e instanceof DetailError && e.detail).toMatchObject({
+        reason: "expression.too_deep",
+        params: { max: "128" },
+      });
+    }
+  });
+
+  it("caps text per cell and per run", () => {
+    const long = frameOf([{ name: "a", type: "string", values: ["x".repeat(20_000)] }]);
+    const nested = runSteps([calc("1", "b", "concat(a, a)")], [long]);
+    expect(nested.failed?.error.reason).toBe("expression.text_too_long");
+    const emoji = frameOf([{ name: "a", type: "string", values: ["😀".repeat(16_384)] }]);
+    expect(runSteps([calc("1", "b", "concat(a)")], [emoji]).failed?.error.reason).toBe(
+      "expression.text_too_long",
+    );
+    const many = frameOf([
+      { name: "a", type: "string", values: Array(100).fill("x".repeat(1000)) },
+    ]);
+    const run = runSteps([calc("1", "b", "concat(a, a)"), calc("2", "c", "concat(b, b)")], [many], {
+      textBudget: 300_000,
+    });
+    expect(run.failed).toMatchObject({ index: 1, error: { reason: "steps.too_much_text" } });
+  });
+
+  it("measures pivots and joins before building them", () => {
+    const n = 100_000;
+    const tall = frameOf([
+      { name: "r", type: "number", values: Array.from({ length: n }, (_, i) => i) },
+      { name: "c", type: "number", values: Array.from({ length: n }, (_, i) => i % 500) },
+    ]);
+    const pivot: Step = {
+      id: "p",
+      type: "pivot",
+      frame: "A",
+      row: "r",
+      column: "c",
+      value: "c",
+      op: "sum",
+    };
+    expect(runSteps([pivot], [tall]).failed?.error.reason).toBe("steps.too_many_cells");
+    const wide = (name: string): NamedFrame => ({
+      name,
+      frame: {
+        fields: [
+          { name: "k", type: "number", values: Array(700).fill(1) },
+          ...Array.from({ length: 60 }, (_, c) => ({
+            name: `f${c}`,
+            type: "number" as const,
+            values: Array(700).fill(0),
+          })),
+        ],
+      },
+    });
+    const join: Step = {
+      id: "j",
+      type: "join",
+      left: "A",
+      right: "B",
+      on: { by: "key", leftField: "k", rightField: "k" },
+      mode: "inner",
+    };
+    expect(runSteps([join], [wide("A"), wide("B")]).failed?.error.reason).toBe(
+      "steps.too_many_cells",
+    );
+  });
+
+  it("keeps stored entries it does not know", () => {
+    const stored = [{ id: "x", type: "fromTheFuture" }, calc("1", "b", "1")];
+    expect(withUnknown(stored, [calc("2", "c", "2")])).toEqual([
+      calc("2", "c", "2"),
+      { id: "x", type: "fromTheFuture" },
+    ]);
+  });
+
+  it("moving averages do not drift after a huge value", () => {
+    const v = [1e17, ...Array(3000).fill(0.1)];
+    expect(stats.movingAverage(v, 2)[2047]).toBe(0.1);
   });
 });
 

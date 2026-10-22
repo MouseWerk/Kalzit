@@ -16,6 +16,7 @@ interface Cases {
     frame: string;
     expression: string;
     type?: string;
+    ulp?: boolean;
     values?: unknown[];
     error?: { reason: string; params: Record<string, string> };
   }[];
@@ -44,17 +45,36 @@ const frame = (name: string): Frame => ({
   fields: structuredClone(cases.frames[name] ?? []),
 });
 
-function close(a: unknown, b: unknown): boolean {
+/** The bits of a double, to measure units in the last place. */
+function bits(x: number): bigint {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  return view.getBigInt64(0);
+}
+
+/**
+ * Numbers agree exactly; a case marked `ulp` (exp, ln, log10, pow, whose platform libraries may
+ * round the last bit differently) within one unit in the last place.
+ */
+function close(a: unknown, b: unknown, ulp: boolean): boolean {
   if (typeof a === "number" && typeof b === "number") {
-    return Math.abs(a - b) <= 1e-9 * Math.max(Math.abs(a), Math.abs(b), 1e-3);
+    if (a === b) return true;
+    if (!ulp || Math.sign(a) !== Math.sign(b)) return false;
+    const d = bits(a) - bits(b);
+    return d === 1n || d === -1n;
   }
   return a === b;
 }
 
-function expectValues(got: readonly unknown[], want: readonly unknown[], what: string) {
+function expectValues(
+  got: readonly unknown[],
+  want: readonly unknown[],
+  what: string,
+  ulp = false,
+) {
   expect(got.length, what).toBe(want.length);
   got.forEach((g, i) => {
-    expect(close(g, want[i]), `${what}[${i}]: ${String(g)} vs ${String(want[i])}`).toBe(true);
+    expect(close(g, want[i], ulp), `${what}[${i}]: ${String(g)} vs ${String(want[i])}`).toBe(true);
   });
 }
 
@@ -69,11 +89,11 @@ describe("conformance with the server's engine", () => {
     const rows = f.fields[0]?.values.length ?? 0;
     try {
       const compiled = compile(parse(c.expression), f.fields);
-      expect(c.error, "expected an error").toBeUndefined();
       const got = Array.from({ length: rows }, (_, row) =>
         toCell(compiled.result, compiled.eval(row)),
       );
-      expectValues(got, c.values ?? [], c.expression);
+      expect(c.error, "expected an error").toBeUndefined();
+      expectValues(got, c.values ?? [], c.expression, c.ulp === true);
       expect(compiled.result === "null" ? "number" : FIELD_TYPE_OF[compiled.result]).toBe(c.type);
     } catch (e) {
       if (!(e instanceof DetailError) || c.error === undefined) throw e;

@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
@@ -455,7 +455,7 @@ describe("dashboard view", () => {
       within(panel).getByText(/Step 1:/);
       return panel;
     });
-    expect(within(broken).getByRole("alert").textContent).toMatch(
+    expect(within(broken).getByText(/Step 1:/).textContent).toMatch(
       /Step 1: “\*” cannot combine text and number/,
     );
     // The queries' own result still shows.
@@ -470,13 +470,18 @@ describe("dashboard view", () => {
     cleanup();
 
     const server = setup("editor");
-    const created = vi.fn(() => "blob:kalzit");
-    const revoked = vi.fn();
-    vi.stubGlobal(
-      "URL",
-      Object.assign(URL, { createObjectURL: created, revokeObjectURL: revoked }),
-    );
+    // jsdom has no object URLs; they are put in for this test and taken out again after it.
+    const before = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = () => "blob:kalzit";
+    URL.revokeObjectURL = () => {};
+    const created = vi.spyOn(URL, "createObjectURL");
     const clicked = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    onTestFinished(() => {
+      created.mockRestore();
+      clicked.mockRestore();
+      URL.createObjectURL = before.create;
+      URL.revokeObjectURL = before.revoke;
+    });
     const { user } = renderApp("/dashboards/d-sales");
     const orders = await waitFor(() => {
       const panel = panelOf("Orders");
@@ -495,8 +500,6 @@ describe("dashboard view", () => {
     });
     expect(created).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog", { name: "Export data" })).toBeNull();
-    clicked.mockRestore();
-    vi.unstubAllGlobals();
   });
 
   it("gives viewers view mode only", async () => {

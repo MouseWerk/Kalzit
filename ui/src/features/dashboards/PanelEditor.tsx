@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
-import { namedInputs } from "../../analysis/panel";
+import { useDeferredValue, useId, useState } from "react";
+import { namedInputs, runPanelSteps } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
-import { asSteps } from "../../analysis/steps";
+import { asSteps, withUnknown } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
@@ -68,6 +68,10 @@ export function PanelEditor({
     source: unchanged ? "stored" : "draft",
     run: preview.run,
   });
+
+  // One run of the steps for the preview and the steps editor, a moment behind typing.
+  const deferredSteps = useDeferredValue(panel.transformations);
+  const stepsRun = runPanelSteps(deferredSteps, results.data ?? []);
 
   const kindOf = (datasourceId: string) =>
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
@@ -136,6 +140,7 @@ export function PanelEditor({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={results.data ?? []}
+              stepsRun={stepsRun}
             />
           </div>
         </section>
@@ -226,9 +231,12 @@ export function PanelEditor({
         </section>
         <StepsEditor
           steps={asSteps(panel.transformations)}
-          onChange={(steps) => setPanel((p) => ({ ...p, transformations: steps }))}
+          onChange={(steps) =>
+            setPanel((p) => ({ ...p, transformations: withUnknown(p.transformations, steps) }))
+          }
           refIds={panel.targets.map((target) => target.refId)}
           inputs={namedInputs(results.data ?? [])}
+          run={stepsRun}
         />
       </div>
     </Dialog>
