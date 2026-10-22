@@ -13,6 +13,12 @@
     background: var(--bg);
   }
 
+  /* Native check boxes and radios take the text color, not the browser's blue or the accent. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--text);
+  }
+
   h1,
   h2,
   h3 {
