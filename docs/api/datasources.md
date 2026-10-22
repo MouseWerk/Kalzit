@@ -501,7 +501,7 @@ huge file costs only what the answer may hold. A UTF-8 byte order mark is skippe
   document. The file is parsed whole, so it may be at most the response size limit and 256 MiB
   (`file.too_large`, `bytes`). Invalid JSON is `file.json_invalid` (`detail`).
 - NDJSON becomes `documents`, one per non-empty line, read line by line; an invalid line is
-  `file.json_invalid` (`line`, `detail`).
+  `file.ndjson_line_invalid` (`line`, `detail`).
 
 #### CSV columns
 
@@ -805,7 +805,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `elasticsearch.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `file.read_failed` | `detail` | the file cannot be read |
 | `file.too_large` | `bytes` | a JSON file is larger than `bytes` |
-| `file.json_invalid` | `detail`, `line` (NDJSON) | the file or a line is not valid JSON |
+| `file.json_invalid` | `detail` | the JSON file is not valid JSON |
+| `file.ndjson_line_invalid` | `line`, `detail` | a line of an NDJSON file is not valid JSON |
 | `csv.unclosed_quote` | `line` | a quoted field from `line` is never closed |
 | `http_json.status` | `status`, `detail` | the server answered an error status |
 | `http_json.not_json` | `status`, `detail` | the answer is not JSON |

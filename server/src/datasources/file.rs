@@ -341,14 +341,11 @@ fn read_csv(
 }
 
 fn json_invalid(line: Option<usize>, e: serde_json::Error) -> SourceError {
-    let message = match line {
-        Some(l) => format!("line {l} is not valid JSON: {e}"),
-        None => format!("the file is not valid JSON: {e}"),
-    };
-    let err = SourceError::failed("file.json_invalid", message).with("detail", e);
     match line {
-        Some(l) => err.with("line", l),
-        None => err,
+        Some(l) => SourceError::failed("file.ndjson_line_invalid", format!("line {l} is not valid JSON: {e}"))
+            .with("line", l)
+            .with("detail", e),
+        None => SourceError::failed("file.json_invalid", format!("the file is not valid JSON: {e}")).with("detail", e),
     }
 }
 
@@ -661,7 +658,7 @@ mod tests {
 
         let path = d.write("kaputt.ndjson", b"{\"a\":1}\n{kaputt\n");
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(10, 1 << 20)).await.unwrap_err();
-        assert_eq!((e.detail().reason, e.detail().params["line"].as_str()), ("file.json_invalid", "2"));
+        assert_eq!((e.detail().reason, e.detail().params["line"].as_str()), ("file.ndjson_line_invalid", "2"));
 
         let path = d.write("gross.json", format!("[\"{}\"]", "x".repeat(10_000)).as_bytes());
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(10, 1000)).await.unwrap_err();

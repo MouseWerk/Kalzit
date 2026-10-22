@@ -1815,3 +1815,145 @@ async fn file_sources_read_only_from_the_file_directories() {
     let r = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": {} }])).await;
     assert_eq!(r.body["results"]["A"]["error"]["reason"], "target.file_path_refused", "{}", r.text);
 }
+
+/// A fake search cluster and JSON API in one server; it records every request it gets.
+#[expect(clippy::disallowed_methods, reason = "a fake upstream server, not an API route")]
+async fn fake_search_and_json(seen: Arc<std::sync::Mutex<Vec<String>>>) -> SocketAddr {
+    use axum::http::{HeaderMap, Uri};
+    let app = Router::new()
+        .route(
+            "/api/items",
+            axum::routing::get(|headers: HeaderMap| async move {
+                let key = headers.get("x-api-key").map(|v| v.to_str().unwrap().to_string());
+                axum::Json(json!({ "data": [{ "id": 1, "key": key }, { "id": 2 }] }))
+            }),
+        )
+        .route("/api/wrong", axum::routing::get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "Fehler mit geheim-123") }))
+        .fallback(move |method: Method, uri: Uri, body: String| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(format!("{method} {}", uri.path()));
+                let answer = match uri.path() {
+                    "/" => json!({ "version": { "number": "9.1.0" } }),
+                    p if p.ends_with("/_search") && body.contains("\"aggs\"") => {
+                        json!({ "hits": { "hits": [] }, "aggregations": { "land": { "buckets": [{ "key": "AT", "doc_count": 3 }] } } })
+                    }
+                    p if p.ends_with("/_search") => json!({ "hits": { "hits": [{ "_id": "1", "_source": { "land": "AT" } }] } }),
+                    p if p.starts_with("/_cat/indices") => json!([{ "index": "logs-1" }]),
+                    p if p.ends_with("/_mapping") => {
+                        json!({ "logs-1": { "mappings": { "properties": { "land": { "type": "keyword" } } } } })
+                    }
+                    _ => json!({ "error": "unexpected" }),
+                };
+                axum::Json(answer)
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+#[tokio::test]
+async fn search_sources_through_the_routes() {
+    let t = T::new().await;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let addr = fake_search_and_json(seen.clone()).await;
+    let meta = json!({ "name": "M", "kind": "elasticsearch", "settings": { "url": "http://169.254.169.254:9200" } });
+    let r = t.post("/datasources", meta).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("datasource_target_blocked", Some("url")), "{}", r.text);
+    let bad_index = json!({ "name": "B", "kind": "elasticsearch",
+                            "settings": { "url": format!("http://{addr}"), "index": "x/_delete_by_query" } });
+    let r = t.post("/datasources", bad_index).await;
+    assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("index")), "{}", r.text);
+
+    let r = t
+        .post(
+            "/datasources",
+            json!({ "name": "Suche", "kind": "elasticsearch", "settings": { "url": format!("http://{addr}"), "index": "logs-*" },
+                    "secrets": { "apiKey": "geheim-123" } }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    assert!(!r.text.contains("geheim-123"));
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let h = t.post(&format!("/datasources/{id}/health"), json!({})).await;
+    assert_eq!(
+        (h.body["reason"].as_str(), h.body["params"]["engine"].as_str()),
+        (Some("health.connected"), Some("Elasticsearch")),
+        "{}",
+        h.text
+    );
+    let q = t
+        .query(
+            &t.owner,
+            json!([
+                { "refId": "H", "datasourceId": id, "query": { "lucene": "land:AT" } },
+                { "refId": "A", "datasourceId": id, "query": { "dsl": { "aggs": { "land": { "terms": { "field": "land" } } } } } },
+                { "refId": "S", "datasourceId": id, "query": { "dsl": { "script_fields": { "x": { "script": "ctx.op = 'delete'" } } } } },
+                { "refId": "I", "datasourceId": id, "query": { "lucene": "*", "index": "logs/_update_by_query" } }
+            ]),
+        )
+        .await;
+    let res = &q.body["results"];
+    assert_eq!(res["H"]["result"]["shape"], "documents", "{}", q.text);
+    assert_eq!(res["H"]["result"]["documents"]["documents"][0]["_source"]["land"], "AT");
+    assert_eq!(res["A"]["result"]["shape"], "frame", "{}", q.text);
+    assert_eq!(res["A"]["result"]["frame"]["fields"][0]["values"], json!(["AT"]));
+    assert_eq!(
+        (res["S"]["error"]["code"].as_str(), res["S"]["error"]["reason"].as_str()),
+        (Some("query_rejected"), Some("elasticsearch.script_writes"))
+    );
+    assert_eq!(res["I"]["error"]["reason"], "elasticsearch.index_invalid", "{}", q.text);
+    let schema = t.get(&format!("/datasources/{id}/schema")).await;
+    assert_eq!(schema.body["kind"], "indices", "{}", schema.text);
+    assert_eq!(schema.body["indices"][0]["columns"][0]["name"], "land");
+    let requests = seen.lock().unwrap().clone();
+    assert!(
+        requests.iter().all(|r| ["GET /", "POST /logs-*/_search", "GET /_cat/indices/logs-*", "GET /logs-*/_mapping"]
+            .contains(&r.as_str())),
+        "only read endpoints: {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn http_json_sources_through_the_routes() {
+    let t = T::new().await;
+    let addr = fake_search_and_json(Arc::new(std::sync::Mutex::new(Vec::new()))).await;
+    let r = t
+        .post(
+            "/datasources",
+            json!({ "name": "API", "kind": "http_json",
+                    "settings": { "url": format!("http://{addr}/api/"), "apiKeyHeader": "X-Api-Key", "documentsPath": "data" },
+                    "secrets": { "apiKey": "geheim-123" } }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let q = t
+        .query(
+            &t.owner,
+            json!([
+                { "refId": "A", "datasourceId": id, "query": { "path": "items" } },
+                { "refId": "U", "datasourceId": id, "query": { "path": "../secret" } },
+                { "refId": "W", "datasourceId": id, "query": { "path": "wrong" } }
+            ]),
+        )
+        .await;
+    let res = &q.body["results"];
+    assert_eq!(res["A"]["result"]["documents"]["documents"][0]["key"], "geheim-123", "{}", q.text);
+    assert_eq!(res["A"]["result"]["documents"]["documents"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        (res["U"]["error"]["code"].as_str(), res["U"]["error"]["reason"].as_str()),
+        (Some("query_rejected"), Some("http_json.path_invalid"))
+    );
+    assert_eq!(res["W"]["error"]["reason"], "http_json.status", "{}", q.text);
+    // The upstream repeats the secret in its error; the answer never does.
+    assert!(!res["W"].to_string().contains("geheim-123"), "{}", q.text);
+
+    // A changed URL needs the API key again, so it is never sent to another host.
+    let patch = json!({ "settings": { "url": "http://anders.example/api/", "apiKeyHeader": "X-Api-Key" } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{id}")), Some(patch), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text);
+    assert_eq!(r.body["error"]["reason"], "secrets.resend_on_target_change", "{}", r.text);
+}

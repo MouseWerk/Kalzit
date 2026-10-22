@@ -356,7 +356,7 @@ describe("editing a data source", () => {
       createdAt: 1,
       updatedAt: 1,
     });
-    const path = await screen.findByRole("textbox", { name: "Absolute path of the database file" });
+    const path = await screen.findByRole("textbox", { name: "Absolute path of the file" });
     // The fake refuses files outside /data with the reason target.sqlite_path_refused.
     await user.clear(path);
     await user.paste("/etc/shadow.db");
