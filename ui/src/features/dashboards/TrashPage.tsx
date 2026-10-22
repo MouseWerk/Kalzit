@@ -19,7 +19,7 @@ import {
   restoreFolder,
 } from "./api";
 import "./dashboards.css";
-import { zoned } from "../../preferences/preferences";
+import { zoneOption } from "../../lib/timeSettings";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
@@ -54,7 +54,7 @@ interface TrashItem {
 
 /** Trashed folders (each with what was trashed with it) and dashboards: restore or purge. */
 function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
   const [purging, setPurging] = useState<TrashItem | null>(null);
   const dashboards = useInfiniteQuery({
@@ -92,7 +92,7 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
   const format = new Intl.DateTimeFormat(language, {
     dateStyle: "medium",
     timeStyle: "short",
-    ...zoned(),
+    ...zoneOption(timeZone),
   });
 
   if (dashboards.isPending || (canFolders && (folders.isPending || liveFolders.isPending))) {

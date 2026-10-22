@@ -18,6 +18,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
 use crate::error::{ApiError, ApiResult};
+use crate::folders;
 use crate::shapes::Page;
 
 /// Views kept per user and organization; older ones are dropped when a new one is recorded.
@@ -26,7 +27,9 @@ pub const RECENT_KEEP: i64 = 50;
 pub const MAX_STARS: i64 = 1000;
 /// Longest search text, in characters.
 const MAX_QUERY_CHARS: usize = 100;
-/// Rows read per kind for one search; an organization with more matches gets the best of these.
+/// Rows read per kind for one search, after the database left out dashboards in hidden folders.
+/// An organization with more matches (or more data sources) gets the best of these; documented in
+/// docs/api/shell.md.
 const SEARCH_SCAN: i64 = 10_000;
 
 pub fn routes() -> Vec<RouteDef> {
@@ -240,11 +243,21 @@ async fn search(
 
     if wants(HitKind::Dashboard) {
         // `search_title` is the title in lower case by Unicode rules, written by the server.
-        let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
-            "SELECT id, folder_id, title, search_title FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL \
-             AND search_title LIKE $2 ESCAPE '\\' ORDER BY id LIMIT $3",
-        )
+        // Dashboards in folders hidden from the caller are left out before the scan limit (the
+        // rule of `VISIBILITY_CTE`, as the dashboard list applies it), so hidden content never
+        // takes the place of visible matches.
+        let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{} SELECT id, folder_id, title, search_title FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL \
+             AND search_title LIKE $5 ESCAPE '\\' \
+             AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders) \
+                  OR id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')) \
+             ORDER BY id LIMIT $6",
+            folders::VISIBILITY_CTE
+        )))
         .bind(&ctx.org_id)
+        .bind(&ctx.user.id)
+        .bind(&ctx.role)
+        .bind(folders::sees_every_folder(&ctx))
         .bind(subsequence_pattern(&needle))
         .bind(SEARCH_SCAN)
         .fetch_all(&mut *conn)
@@ -361,7 +374,11 @@ async fn readable(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<Option<
         .fetch_optional(&state.db)
         .await?;
     let Some((deleted_at,)) = row else { return Err(ApiError::not_found()) };
-    authz::check_resource(&state.db, ctx, Permission::DashboardsRead, Resource::Dashboard(id)).await?;
+    // Seeing a dashboard without reading it does not happen with today's levels; were it to, the
+    // dashboard still does not exist for stars and views.
+    authz::check_resource(&state.db, ctx, Permission::DashboardsRead, Resource::Dashboard(id))
+        .await
+        .map_err(|e| if e.code == "forbidden" { ApiError::not_found() } else { e })?;
     Ok(deleted_at)
 }
 
@@ -477,6 +494,9 @@ async fn list_stars(
     .await?;
     let mut items = entries(rows, &index, &folders);
     let sort_key = |e: &DashboardEntry| (e.title.to_lowercase(), e.id.clone());
+    // Ordered here, by the same key the cursor compares: the database's collation may order
+    // punctuation differently (PostgreSQL follows the locale), which would repeat or skip items.
+    items.sort_by_key(sort_key);
     if let Some(after) = after {
         items.retain(|e| sort_key(e) > after);
     }

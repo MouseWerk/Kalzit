@@ -3,6 +3,8 @@
   "app.documentTitle": "{page} – Kalzit",
   "common.loading": "Loading…",
   "common.retry": "Try again",
+  "common.undo": "Undo",
+  "common.dismiss": "Dismiss",
   "common.skipToContent": "Skip to content",
   "nav.label": "Main navigation",
   "nav.home": "Home",

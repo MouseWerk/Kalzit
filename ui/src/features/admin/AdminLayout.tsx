@@ -6,6 +6,7 @@ import { Page } from "../../components/Page";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useOrgPermissions } from "../../org/useOrg";
+import { useCrumbTitle } from "../../shell/crumbTitle";
 import { isWithin } from "../../shell/navItem";
 import "./admin.css";
 import { Notice, useNotice } from "./components/Notice";
@@ -45,6 +46,7 @@ export function AdminLayout() {
 function AdminCrumbs() {
   const { t } = useI18n();
   const { pathname } = useLocation();
+  const page = useCrumbTitle();
   const section = [...ORG_SECTIONS, ...SERVER_SECTIONS]
     .filter((candidate) => isWithin(pathname, candidate.to))
     .sort((a, b) => b.to.length - a.to.length)[0];
@@ -58,7 +60,7 @@ function AdminCrumbs() {
         pathname === section.to
           ? { label: t(section.label) }
           : { label: t(section.label), link: { to: section.to } },
-        ...(pathname === section.to ? [] : [{ label: t("shell.breadcrumbs.detail") }]),
+        ...(pathname === section.to ? [] : [{ label: page ?? t("shell.breadcrumbs.detail") }]),
       ]}
     />
   );

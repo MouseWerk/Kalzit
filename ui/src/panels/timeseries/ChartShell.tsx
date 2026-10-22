@@ -12,7 +12,7 @@ import { useEscapeLayer } from "../../lib/layers";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
 import "../panels.css";
-import { zoned } from "../../preferences/preferences";
+import { zoneOption } from "../../lib/timeSettings";
 
 export interface TimeSeriesChartProps {
   series: readonly Series[];
@@ -60,7 +60,7 @@ export function ChartShell({
   timeAt,
   children,
 }: ChartShellProps) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const hintId = useId();
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [cursorX, setCursorX] = useState<number | null>(null);
@@ -91,7 +91,7 @@ export function ChartShell({
     cursorTime === null || !byKeyboard
       ? ""
       : [
-          new Date(cursorTime).toLocaleString(language, zoned()),
+          new Date(cursorTime).toLocaleString(language, zoneOption(timeZone)),
           ...readout.map(
             (row) =>
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : valueText(row.value)}`,
@@ -167,7 +167,7 @@ export function ChartShell({
         {cursorTime === null ? null : (
           <div className="ts__tooltip" ref={tooltipRef} aria-hidden="true">
             <div className="ts__tooltip-time">
-              {new Date(cursorTime).toLocaleString(language, zoned())}
+              {new Date(cursorTime).toLocaleString(language, zoneOption(timeZone))}
             </div>
             {readout.map((row) => (
               <div key={row.index} className="ts__tooltip-row">

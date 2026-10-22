@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { readPreference, writePreference } from "../lib/storage";
+import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
 import { de, en } from "./catalogs";
 
 export const LANGUAGES = ["de", "en"] as const;
@@ -28,6 +29,25 @@ export function detectLanguage(preferred: readonly string[]): Language {
     }
   }
   return FALLBACK_LANGUAGE;
+}
+
+/**
+ * The language the browser already has: a choice stored in it, else the first supported one of
+ * its own language list; null when it names none Kalzit has.
+ */
+export function browserLanguage(): Language | null {
+  const stored = readPreference(LANGUAGE_STORAGE_KEY);
+  if (isLanguage(stored)) {
+    return stored;
+  }
+  const preferred = navigator.languages.length > 0 ? navigator.languages : [navigator.language];
+  for (const tag of preferred) {
+    const base = tag.toLowerCase().split("-")[0];
+    if (isLanguage(base)) {
+      return base;
+    }
+  }
+  return null;
 }
 
 function initialLanguage(): Language {
@@ -87,8 +107,18 @@ export function translate(language: Language, key: MessageKey, params?: MessageP
 
 export type Translate = (key: MessageKey, params?: MessageParams) => string;
 
-export function useI18n(): { language: Language; t: Translate } {
+/**
+ * The UI language with its translate function, and the user's time zone and first day of the
+ * week: whatever formats or rounds times reads them here, so a change re-renders it.
+ */
+export function useI18n(): {
+  language: Language;
+  t: Translate;
+  timeZone: string | null;
+  weekStart: WeekStart | null;
+} {
   const language = useSyncExternalStore(subscribe, getLanguage, getLanguage);
+  const time = useSyncExternalStore(subscribeTimeSettings, getTimeSettings, getTimeSettings);
   const t: Translate = (key, params) => translate(language, key, params);
-  return { language, t };
+  return { language, t, timeZone: time.timeZone, weekStart: time.weekStart };
 }

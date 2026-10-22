@@ -31,7 +31,7 @@ import {
   updateFolder,
 } from "./api";
 import "./dashboards.css";
-import { zoned } from "../../preferences/preferences";
+import { zoneOption } from "../../lib/timeSettings";
 import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
 import { emptyModel } from "./model";
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
@@ -228,7 +228,7 @@ function DashboardList({
   q: string | undefined;
   folders: readonly Folder[];
 }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const list = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "list", folderId ?? null, q ?? ""],
     queryFn: ({ pageParam, signal }) =>
@@ -241,7 +241,7 @@ function DashboardList({
   const dateFormat = new Intl.DateTimeFormat(language, {
     dateStyle: "medium",
     timeStyle: "short",
-    ...zoned(),
+    ...zoneOption(timeZone),
   });
 
   if (list.isPending) {

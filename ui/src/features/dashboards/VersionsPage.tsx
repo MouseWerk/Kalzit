@@ -16,7 +16,7 @@ import {
   restoreVersion,
 } from "./api";
 import "./dashboards.css";
-import { zoned } from "../../preferences/preferences";
+import { zoneOption } from "../../lib/timeSettings";
 import { type Change, diffModels } from "./diff";
 import type { DashboardModel } from "./model";
 import { changeText } from "./SaveDialogs";
@@ -37,7 +37,7 @@ export function VersionsPage() {
 }
 
 function VersionList({ orgId }: { orgId: string }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const { dashboardId } = versionsRoute.useParams();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
@@ -62,7 +62,7 @@ function VersionList({ orgId }: { orgId: string }) {
   const format = new Intl.DateTimeFormat(language, {
     dateStyle: "medium",
     timeStyle: "short",
-    ...zoned(),
+    ...zoneOption(timeZone),
   });
   const canRestore =
     (dashboard.data?.access?.write ?? permissions.has("dashboards:write")) &&

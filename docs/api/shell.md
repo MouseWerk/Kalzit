@@ -47,7 +47,10 @@ interface SearchHit {
   folders, data sources, then title and id. The UI ranks its own entries (sections, actions) with
   the same rules (`ui/src/shell/fuzzy.ts`).
 - `kind` limits to one kind; anything else is `validation` `kind`.
-- At most 10,000 rows per kind are considered per request.
+- At most 10,000 dashboards and 10,000 data sources are considered per request. Dashboards in
+  folders hidden from the caller are left out by the database before that limit, so hidden content
+  never takes the place of visible matches; folders are read in full. An organization with more
+  matching dashboards, or more data sources, gets the best matches among the first 10,000 by id.
 
 ## Stars
 
@@ -89,8 +92,8 @@ For any signed-in user (`Authenticated`).
 
 ```ts
 interface Preferences {
-  language: "de" | "en" | null;                          // null: defaults.language
-  theme: "system" | "light" | "dark" | "contrast" | null; // null: defaults.theme
+  language: "de" | "en" | null;                          // null: see below
+  theme: "system" | "light" | "dark" | "contrast" | null; // null: see below
   timeZone: string | null;                                // IANA name; null: the browser's
   weekStart: "monday" | "sunday" | "saturday" | null;     // null: Monday (ISO 8601)
   startDashboard: { orgId: string; dashboardId: string; title: string } | null;
@@ -110,6 +113,22 @@ alike. `timeZone` is checked for the shape of an IANA name only (`Europe/Berlin`
 browser knows the zones. Errors: `validation` with `field` `language`, `theme`, `timeZone`,
 `weekStart` or `startDashboard`. Audit `user.preferences_updated` with the changed field names.
 
+**Language and theme in the browser.** The UI decides in this order:
+
+1. the user's preference, when the server holds one;
+2. otherwise what the browser already has: a choice stored in it, or (language only) the first
+   language of the browser's own list that Kalzit has;
+3. otherwise the server's default (`defaults`).
+
+The first time a user signs in in a browser, language and theme of step 2 are saved as the user's
+preferences where the server holds none (one `PATCH`), so they follow the user to other browsers
+and are not lost to the server's default. The browser remembers that it did this per user, so a
+preference the user later resets to the default stays reset there.
+
+**Time zone and week start** apply to every time the UI shows or works with: lists, tables,
+tooltips, chart axes, the time range of dashboards and Explore (`now/d`, `now/w` and typed times
+are resolved on the wall clock of the chosen zone, also across a daylight saving change), and the
+day filter of the audit log.
 A start dashboard that was trashed, purged or is no longer readable answers `null` without being
 removed. The UI opens it when the user enters Kalzit at `/`; the start page stays reachable from
 the navigation.

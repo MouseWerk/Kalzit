@@ -19,8 +19,6 @@
   "admin.common.delete": "Delete",
   "admin.common.deleteAsk": "Delete…",
   "admin.common.rename": "Rename…",
-  "admin.common.undo": "Undo",
-  "admin.common.dismiss": "Dismiss",
   "admin.common.showMore": "Show more",
   "admin.common.nameRequired": "Enter a name.",
   "admin.common.nameAndEmail": "{name} ({email})",

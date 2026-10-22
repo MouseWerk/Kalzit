@@ -252,7 +252,7 @@ function PasswordSection() {
 }
 
 function SessionsSection() {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
   const notice = useNotice();
   const sessions = usePagedList(adminKeys.sessions, (cursor) => listMySessions(cursor));
@@ -287,7 +287,7 @@ function SessionsSection() {
       ) : (
         <ul className="admin-list" aria-label={t("admin.account.sessions")} {...keys.listProps}>
           {list.map((session, index) => {
-            const created = formatDateTime(session.createdAt, language);
+            const created = formatDateTime(session.createdAt, language, timeZone);
             return (
               <li key={session.id} className="admin-row" {...keys.rowProps(index)}>
                 <div className="admin-row__main">
@@ -296,8 +296,8 @@ function SessionsSection() {
                   </span>
                   <span className="admin-row__meta">
                     {t("admin.account.sessionTimes", {
-                      seen: formatDateTime(session.lastSeenAt, language),
-                      expires: formatDateTime(session.expiresAt, language),
+                      seen: formatDateTime(session.lastSeenAt, language, timeZone),
+                      expires: formatDateTime(session.expiresAt, language, timeZone),
                     })}
                   </span>
                 </div>

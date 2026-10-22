@@ -139,7 +139,7 @@ function DashboardView({
   dashboard: Dashboard;
   picked: Map<string, Record<string, string>>;
 }) {
-  const { t } = useI18n();
+  const { t, timeZone, weekStart } = useI18n();
   const permissions = useOrgPermissions();
   // For the breadcrumbs; without folders:read the trail starts at the list.
   const folders = useQuery({
@@ -205,7 +205,7 @@ function DashboardView({
     draft === null && search.from !== undefined && search.to !== undefined
       ? { from: search.from, to: search.to }
       : model.timeRange;
-  const resolved = resolveRange(textRange, clock.now);
+  const resolved = resolveRange(textRange, clock.now, { timeZone, weekStart });
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
 
   useEffect(() => {

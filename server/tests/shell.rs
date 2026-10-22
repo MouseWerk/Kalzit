@@ -191,6 +191,29 @@ impl TestApp {
         id
     }
 
+    /// Another organization with one dashboard titled `title`: (org id, dashboard id).
+    async fn foreign_org_with(&self, title: &str) -> (String, String) {
+        let org = uuid::Uuid::now_v7().to_string();
+        let dashboard = uuid::Uuid::now_v7().to_string();
+        sqlx::query("INSERT INTO orgs (id, name, created_at) VALUES ($1, 'Andere', 0)")
+            .bind(&org)
+            .execute(&self.state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO dashboards (id, org_id, title, search_title, version, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, 1, 0, 0)",
+        )
+        .bind(&dashboard)
+        .bind(&org)
+        .bind(title)
+        .bind(title.to_lowercase())
+        .execute(&self.state.db)
+        .await
+        .unwrap();
+        (org, dashboard)
+    }
+
     async fn search(&self, query: &str, cookie: &str) -> Reply {
         let r = self.get(&format!("~/search?{query}"), cookie).await;
         assert_eq!(r.status, StatusCode::OK, "{query}: {}", r.body);
@@ -251,6 +274,7 @@ on_both_databases! {
     search_names_only_what_the_caller_may_open;
     search_ranks_fuzzy_matches_and_pages;
     stars_are_personal_and_follow_access;
+    stars_page_through_titles_that_differ_in_punctuation;
     recents_keep_the_newest_and_follow_access;
     preferences_are_personal_validated_and_reset;
     start_dashboards_must_be_readable;
@@ -312,11 +336,26 @@ async fn search_names_only_what_the_caller_may_open(t: TestApp) {
 
     // A grant on a data source makes it readable (querying includes reading its name), for that
     // source only.
-    let other_source = t.datasource("Umsatzarchiv").await;
+    t.datasource("Umsatzarchiv").await;
     t.grant("Vera", "datasource", &source, "query").await;
-    let r = t.search("q=umsatzd", &viewer).await;
-    assert!(hit(&r, "Umsatzdaten").is_some() && hit(&r, "Umsatzarchiv").is_none(), "{}", r.body);
-    let _ = other_source;
+    let r = t.search("q=umsatz", &viewer).await;
+    assert!(hit(&r, "Umsatzdaten").is_some(), "{}", r.body);
+    assert!(hit(&r, "Umsatzarchiv").is_none(), "the matching source without a grant stays out: {}", r.body);
+
+    // Trashed folders and data sources are left out, also for the owner.
+    let old = t.folder("Umsatz alt", None, false).await;
+    assert_eq!(t.delete(&format!("~/folders/{old}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let gone = t.datasource("Umsatz gelöscht").await;
+    sqlx::query("UPDATE datasources SET deleted_at = 1 WHERE id = $1").bind(&gone).execute(&t.state.db).await.unwrap();
+    let r = t.search("q=umsatz", &t.owner).await;
+    assert!(hit(&r, "Umsatzarchiv").is_some(), "{}", r.body);
+    assert!(hit(&r, "Umsatz alt").is_none() && hit(&r, "Umsatz gelöscht").is_none(), "{}", r.body);
+
+    // Another organization's content never appears, and its search is not reachable.
+    let (foreign_org, _) = t.foreign_org_with("Umsatz Fremd").await;
+    assert!(hit(&t.search("q=umsatz", &t.owner).await, "Umsatz Fremd").is_none());
+    let r = t.get(&format!("/orgs/{foreign_org}/search?q=umsatz"), &t.owner).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
 
     // The hidden dashboard of another member stays hidden for them.
     let other = t.member("Otto", "viewer").await;
@@ -338,8 +377,13 @@ async fn search_ranks_fuzzy_matches_and_pages(t: TestApp) {
     let r = t.search("q=UMSÜBS", &t.owner).await;
     assert_eq!(r.titles(), ["Umsatz Übersicht"]);
     assert_eq!(t.search("q=ums%C3%A4", &t.owner).await.titles(), ["Umsätze"]);
-    // Wildcards are letters, not patterns.
-    assert!(t.search("q=%25", &t.owner).await.items().is_empty());
+    // Wildcards are letters, not patterns: each finds only titles that contain it.
+    for title in ["50% Rabatt", "a_b Liste", "C:\\Pfad"] {
+        t.dashboard(title, None).await;
+    }
+    assert_eq!(t.search("q=%25", &t.owner).await.titles(), ["50% Rabatt"]);
+    assert_eq!(t.search("q=_", &t.owner).await.titles(), ["a_b Liste"]);
+    assert_eq!(t.search("q=%5C", &t.owner).await.titles(), ["C:\\Pfad"]);
 
     // Pages follow the ranking without repeats or gaps.
     let all = t.search("q=um", &t.owner).await.titles().iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -415,12 +459,54 @@ async fn stars_are_personal_and_follow_access(t: TestApp) {
         .unwrap();
     assert_eq!(left, 0);
 
+    // A member whose role lacks dashboards:read (a custom role with folders:read only) gets
+    // `not_found` here, as for a dashboard that does not exist.
+    let role = t.post("~/roles", json!({ "name": "Ordnerblick", "permissions": ["folders:read"] }), &t.owner).await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let looker = t.member("Lea", role.body["id"].as_str().unwrap()).await;
+    let seen = t.dashboard("Sichtbar", None).await;
+    for r in [
+        t.put(&star(&seen), &looker).await,
+        t.get(&star(&seen), &looker).await,
+        t.post(&format!("~/dashboards/{seen}/views"), json!({}), &looker).await,
+    ] {
+        assert_eq!((r.status, r.code()), (StatusCode::NOT_FOUND, "not_found"), "{}", r.body);
+    }
+
     // Unstarring is idempotent and tells nothing about other dashboards.
     assert_eq!(t.delete(&star(&locked), &viewer).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.delete(&star(&locked), &viewer).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.delete(&star("no-such-dashboard"), &viewer).await.status, StatusCode::NO_CONTENT);
 }
 
+/// The cursor compares titles as the server does, so the database's collation (PostgreSQL sorts
+/// punctuation by locale rules) can neither repeat nor skip a star across pages.
+async fn stars_page_through_titles_that_differ_in_punctuation(t: TestApp) {
+    let titles = ["Lager-A", "Lager A", "Lager_A", "LagerA", "lager a2", "Lager.A", "Lager/A"];
+    for title in titles {
+        let id = t.dashboard(title, None).await;
+        assert_eq!(t.put(&format!("~/dashboards/{id}/star"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    }
+    let all: Vec<String> = t.get("~/stars", &t.owner).await.titles().iter().map(|s| s.to_string()).collect();
+    let mut expected: Vec<String> = titles.iter().map(|s| s.to_string()).collect();
+    expected.sort_by_key(|s| s.to_lowercase());
+    assert_eq!(all, expected);
+    let mut paged = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let path = match &cursor {
+            Some(c) => format!("~/stars?limit=1&cursor={c}"),
+            None => "~/stars?limit=1".to_string(),
+        };
+        let r = t.get(&path, &t.owner).await;
+        paged.extend(r.titles().iter().map(|s| s.to_string()));
+        match r.body["nextCursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    assert_eq!(paged, all);
+}
 async fn recents_keep_the_newest_and_follow_access(t: TestApp) {
     let vault = t.folder("Tresor", None, true).await;
     let a = t.dashboard("Erster", None).await;

@@ -90,11 +90,11 @@ export function Notice({
               undo?.();
             }}
           >
-            {t("admin.common.undo")}
+            {t("common.undo")}
           </button>
         )}
         <button type="button" className="admin-link-button" onClick={onDismiss}>
-          {t("admin.common.dismiss")}
+          {t("common.dismiss")}
         </button>
       </div>
     );

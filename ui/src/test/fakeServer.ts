@@ -99,15 +99,14 @@ export type FakeAreaStates = {
   [Name in keyof typeof AREA_FAKES]: ReturnType<(typeof AREA_FAKES)[Name]>["state"];
 };
 
-/** Stored preferences; 
-ull follows the defaults, as on the server (docs/api/shell.md). */
+/** Stored preferences; `null` follows the defaults, as on the server (docs/api/shell.md). */
 export interface FakePreferences {
   language: string | null;
   theme: string | null;
   timeZone: string | null;
   weekStart: string | null;
   startDashboard: { orgId: string; dashboardId: string } | null;
-  /** The server defaults (ppearance.*); English here, so tests read English. */
+  /** The server defaults (`appearance.*`); English here, so tests read English. */
   defaults: { language: string; theme: string };
 }
 
@@ -129,7 +128,7 @@ export interface FakeServer {
     signedIn: boolean;
     user: Me;
     offline: boolean;
-    /** The stored preferences (/api/me/preferences), as the server keeps them. */
+    /** The stored preferences (`/api/me/preferences`), as the server keeps them. */
     preferences: FakePreferences;
   };
   calls: { method: string; path: string; body: unknown }[];
@@ -174,7 +173,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       user: options.user ?? TEST_USER,
       offline: false,
       preferences: {
-        language: null,
+        // A user who already chose English, so signing in adopts nothing unless a test says so.
+        language: "en",
         theme: null,
         timeZone: null,
         weekStart: null,

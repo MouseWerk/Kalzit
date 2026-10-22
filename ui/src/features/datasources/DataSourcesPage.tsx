@@ -20,7 +20,7 @@ import {
 } from "./api";
 import { HealthResult } from "./DataSourceForm";
 import "./datasources.css";
-import { zoned } from "../../preferences/preferences";
+import { zoneOption } from "../../lib/timeSettings";
 
 const listRoute = getRouteApi("/_app/data-sources");
 
@@ -69,7 +69,7 @@ function DataSourceList({
   /** Adding a source needs the org-wide `datasources:write`; a grant is always on one source. */
   canCreate: boolean;
 }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
   const list = useInfiniteQuery({
@@ -91,7 +91,10 @@ function DataSourceList({
   const accessOf = (source: DatasourceSummary) => sourceAccess(source.access, permissions);
   // The trash lists what the caller may restore: offer it to those who may change a source.
   const canSeeTrash = canCreate || items.some((source) => accessOf(source).write);
-  const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: "medium", ...zoned() });
+  const dateFormat = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    ...zoneOption(timeZone),
+  });
 
   const toolbar = trash ? (
     <div className="toolbar">

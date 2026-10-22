@@ -63,7 +63,7 @@ export function AppShell() {
     };
   }, []);
   const palette = paletteShortcut();
-  usePreferencesSync();
+  usePreferencesSync(me.id);
 
   function onFlyoutLayerChange(open: boolean) {
     openFlyouts.current += open ? 1 : -1;
@@ -80,10 +80,11 @@ export function AppShell() {
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    // The palette opens from anywhere, also from a text field; a second Ctrl+K closes it. It does
-    // not open over a dialog, which keeps the focus to itself.
+    // The palette opens from anywhere, also from a text field or code editor; a second Ctrl+K
+    // closes it. Over a dialog (which keeps the focus to itself) it does nothing at all, so the
+    // key is left to the browser.
     if (isPaletteShortcut(event)) {
-      if (event.defaultPrevented || (overlay === null && blockingLayers())) {
+      if (event.defaultPrevented || (overlay !== "palette" && blockingLayers())) {
         return;
       }
       event.preventDefault();

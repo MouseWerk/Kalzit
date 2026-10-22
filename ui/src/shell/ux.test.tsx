@@ -1,12 +1,18 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { defaultKeymap } from "@codemirror/commands";
+import { EditorView, keymap } from "@codemirror/view";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import { Toaster } from "../components/Toaster";
 import { emptyModel } from "../features/dashboards/model";
 import { addDashboard, addFolder } from "../features/dashboards/test/fakeDashboards";
-import { getLanguage } from "../i18n/i18n";
-import { showToast } from "../lib/toasts";
+import { getLanguage, LANGUAGE_STORAGE_KEY } from "../i18n/i18n";
+import { setTimeZone } from "../lib/timeSettings";
+import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
+import { adoptedKey } from "../preferences/preferences";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
-import { getTheme } from "../theme/theme";
+import { getTheme, THEME_STORAGE_KEY } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
 
@@ -323,9 +329,180 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
+    const theme = await within(section).findByLabelText("Theme");
     server.failNext("/api/me/preferences", 422, "validation", "PATCH");
-    await user.selectOptions(await within(section).findByLabelText("Theme"), "dark");
+    await user.selectOptions(theme, "dark");
     expect((await screen.findByText(/did not accept/)).closest('[role="alert"]')).not.toBeNull();
     await waitFor(() => expect(getTheme()).toBe("system"));
+  });
+});
+
+describe("language and theme the browser already has", () => {
+  it("are kept and adopted once into the server's empty preferences", async () => {
+    const server = setup();
+    server.state.preferences.language = null;
+    server.state.preferences.defaults.language = "en";
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, "de");
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    renderApp("/");
+    await waitFor(() => expect(server.state.preferences.language).toBe("de"));
+    expect(server.state.preferences.theme).toBe("dark");
+    expect(getLanguage()).toBe("de");
+    expect(getTheme()).toBe("dark");
+    const adoptions = server.calls.filter(
+      (call) => call.method === "PATCH" && call.path === "/api/me/preferences",
+    );
+    expect(adoptions).toHaveLength(1);
+  });
+
+  it("are not adopted again once a preference was reset to the default", async () => {
+    const server = setup();
+    server.state.preferences.language = null;
+    server.state.preferences.defaults.language = "en";
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, "de");
+    window.localStorage.setItem(adoptedKey(TEST_USER.id), "true");
+    renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    await waitFor(() => expect(getLanguage()).toBe("en"));
+    expect(server.calls.some((call) => call.method === "PATCH")).toBe(false);
+  });
+
+  it("leave the server's default when the browser has none", async () => {
+    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
+    try {
+      const server = setup();
+      server.state.preferences.language = null;
+      server.state.preferences.defaults.language = "de";
+      renderApp("/");
+      expect(await screen.findByRole("navigation", { name: "Hauptnavigation" })).toBeTruthy();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(server.calls.some((call) => call.method === "PATCH")).toBe(false);
+      expect(server.state.preferences.language).toBeNull();
+    } finally {
+      languages.mockRestore();
+    }
+  });
+});
+
+describe("time zone", () => {
+  it("re-renders the times already on screen when it changes", async () => {
+    const server = setup();
+    server.state.preferences.timeZone = "UTC";
+    renderApp("/dashboards");
+    // The fake dashboards were last saved on 2026-10-01 at 00:00 UTC.
+    expect(await screen.findAllByText(/Oct 1, 2026, 12:00\s?AM/)).not.toHaveLength(0);
+    act(() => setTimeZone("Asia/Tokyo"));
+    expect(await screen.findAllByText(/Oct 1, 2026, 9:00\s?AM/)).not.toHaveLength(0);
+    expect(screen.queryByText(/Oct 1, 2026, 12:00\s?AM/)).toBeNull();
+  });
+});
+
+describe("toasts against each other and the clock", () => {
+  it("keep an unread error when a confirmation follows, and only confirmations time out", () => {
+    vi.useFakeTimers();
+    try {
+      render(<Toaster />);
+      act(() => {
+        showToast({ message: "Saving failed.", error: true });
+        showToast({ message: "Saved the other one." });
+      });
+      expect(screen.getByText("Saving failed.").closest('[role="alert"]')).not.toBeNull();
+      expect(screen.getByText("Saved the other one.").closest('[role="status"]')).not.toBeNull();
+      act(() => vi.advanceTimersByTime(UNDO_TOAST_MS + 1));
+      expect(screen.queryByText("Saved the other one.")).toBeNull();
+      expect(screen.getByText("Saving failed.")).toBeTruthy();
+      // A new error takes the error's place.
+      act(() => {
+        showToast({ message: "Second failure.", error: true });
+      });
+      expect(screen.queryByText("Saving failed.")).toBeNull();
+      expect(screen.getByRole("status", { name: "Notifications" })).toBeTruthy();
+      expect(screen.getByRole("alert", { name: "Errors" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("return focus to where it was when Undo or Dismiss closes them", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Before</button>
+        <main id="main" tabIndex={-1}>
+          content
+        </main>
+        <Toaster />
+      </>,
+    );
+    const before = screen.getByRole("button", { name: "Before" });
+    before.focus();
+    let undone = 0;
+    act(() => {
+      showToast({ message: "Saved.", undo: () => undone++ });
+    });
+    await user.tab();
+    expect(document.activeElement?.textContent).toBe("Undo");
+    await user.keyboard("{Enter}");
+    expect(undone).toBe(1);
+    expect(document.activeElement).toBe(before);
+
+    // Reached without a place to go back to: focus lands on the content.
+    act(() => {
+      showToast({ message: "Failed.", error: true });
+    });
+    before.blur();
+    screen.getByRole("button", { name: "Dismiss" }).focus();
+    await user.keyboard("{Enter}");
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+});
+
+describe("shortcuts and editors", () => {
+  /** A real CodeMirror editor in the page, as the query editors put one. */
+  function codeEditor(): HTMLElement {
+    const host = document.createElement("div");
+    screen.getByRole("main").append(host);
+    const view = new EditorView({
+      parent: host,
+      doc: "SELECT 1",
+      extensions: [keymap.of(defaultKeymap)],
+    });
+    return view.contentDOM;
+  }
+
+  it("opens the palette with Ctrl+K from inside a code editor and returns focus there", async () => {
+    setup();
+    renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    const editor = codeEditor();
+    editor.focus();
+    fireEvent.keyDown(editor, { key: "k", ctrlKey: true });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("does not open the help with ? from a text field or a code editor", async () => {
+    setup();
+    const { user } = renderApp("/dashboards");
+    const search = await screen.findByLabelText("Search dashboards");
+    await user.click(search);
+    await user.keyboard("?");
+    expect((search as HTMLInputElement).value).toBe("?");
+    const editor = codeEditor();
+    fireEvent.keyDown(editor, { key: "?" });
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
+  });
+
+  it("leaves Ctrl+K to the browser while a dialog is open", async () => {
+    setup();
+    renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    fireEvent.keyDown(document.body, { key: "?" });
+    const help = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    const notPrevented = fireEvent.keyDown(help, { key: "k", ctrlKey: true });
+    expect(notPrevented).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
   });
 });

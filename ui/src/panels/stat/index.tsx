@@ -117,7 +117,7 @@ function Sparkline({ frame, field, index }: { frame: Frame; field: Field; index:
 }
 
 function StatPanel({ frames, options }: PanelProps<StatOptions>) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const items = frames.flatMap((frame) => valueFields(frame).map((field) => ({ frame, field })));
   if (items.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
@@ -127,7 +127,7 @@ function StatPanel({ frames, options }: PanelProps<StatOptions>) {
       {items.map(({ frame, field }, index) => {
         const { value, type } = reduceField(field, options.reducer);
         const unit = options.unit !== "" ? options.unit : (field.unit ?? "");
-        const text = formatValue(type, value, language);
+        const text = formatValue(type, value, language, timeZone);
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: fields keep their order in the result
           <li key={index} className="stat__item">

@@ -267,7 +267,11 @@ async fn update_preferences(
     }
     let now = state.clock.now_ms();
     sqlx::query(
-        "INSERT INTO user_preferences (user_id, language, theme, time_zone, week_start, start_org_id,          start_dashboard_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)          ON CONFLICT (user_id) DO UPDATE SET language = excluded.language, theme = excluded.theme,          time_zone = excluded.time_zone, week_start = excluded.week_start, start_org_id = excluded.start_org_id,          start_dashboard_id = excluded.start_dashboard_id, updated_at = excluded.updated_at",
+        "INSERT INTO user_preferences (user_id, language, theme, time_zone, week_start, start_org_id, \
+         start_dashboard_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         ON CONFLICT (user_id) DO UPDATE SET language = excluded.language, theme = excluded.theme, \
+         time_zone = excluded.time_zone, week_start = excluded.week_start, start_org_id = excluded.start_org_id, \
+         start_dashboard_id = excluded.start_dashboard_id, updated_at = excluded.updated_at",
     )
     .bind(&user.id)
     .bind(&stored.language)
