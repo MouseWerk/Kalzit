@@ -622,3 +622,48 @@ describe("projection steps the server accepts", () => {
     });
   });
 });
+
+describe("after the second review", () => {
+  it("projects a time JavaScript cannot show as null, and keeps the executed query", () => {
+    const frame = projectDocuments(
+      {
+        documents: [{ t: { $type: "date", value: "9223372036854775807" } }, { t: 1e16 }, { t: 5 }],
+        schema: [],
+        notices: [],
+        executedQuery: "orders.find(...)",
+      },
+      { columns: [{ path: "t", type: "time" }] },
+    );
+    expect(frame.fields[0]?.values).toEqual([null, null, 5]);
+    expect(frame.meta?.executedQuery).toBe("orders.find(...)");
+    expect(formatLeaf({ $type: "date", value: "9223372036854775807" }, "en")).toBe(
+      "9223372036854775807",
+    );
+  });
+
+  it("offers no filter on empty keys or keys with a NUL character", () => {
+    expect(filterablePath(["a", ""])).toBe(false);
+    expect(filterablePath(["a\u0000b"])).toBe(false);
+  });
+
+  it("keeps the notices of every loaded page, each once", () => {
+    const cut = { severity: "warning" as const, code: "documents.limit", text: "cut" };
+    const hidden = { severity: "info" as const, code: "documents.hidden", text: "hidden" };
+    const first = {
+      refId: "A",
+      result: {
+        shape: "documents" as const,
+        documents: { documents: [1], schema: [], nextCursor: "1", notices: [cut] },
+      },
+    };
+    const [merged] = appendPages([first], "A", [
+      { documents: [2], schema: [], notices: [cut, hidden] },
+      { documents: [3], schema: [], notices: [] },
+    ]);
+    expect(
+      merged && "result" in merged && merged.result.shape === "documents"
+        ? merged.result.documents.notices
+        : null,
+    ).toEqual([cut, hidden]);
+  });
+});

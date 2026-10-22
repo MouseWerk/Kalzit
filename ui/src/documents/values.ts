@@ -98,17 +98,29 @@ export const NUMERIC_TYPES = new Set([
 const RFC_3339 = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
 
 /**
+ * The furthest a JavaScript date reaches from 1970 in ms; beyond it (a "never expires" sentinel
+ * such as the largest int64) a date cannot be formatted.
+ */
+export const MAX_DATE_MS = 8.64e15;
+
+/** Whether ms is a date JavaScript can show. */
+export function showableMs(ms: number): boolean {
+  return Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS;
+}
+
+/**
  * A date's Unix milliseconds: the value is a decimal count of ms (as the server sends it) or RFC
- * 3339 text, as the analysis engine and the server read dates; anything else is no date.
+ * 3339 text, as the analysis engine and the server read dates. Anything else, or a date beyond
+ * what JavaScript can show, is no date, and its text shows as it is.
  */
 export function dateMs(value: TypedValue): number | null {
   const text = (value.value ?? "").trim();
-  if (/^-?\d+$/.test(text)) {
-    const ms = Number(text);
-    return Number.isFinite(ms) ? ms : null;
-  }
-  const ms = RFC_3339.test(text) ? Date.parse(text.replace(" ", "T")) : Number.NaN;
-  return Number.isFinite(ms) ? ms : null;
+  const ms = /^-?\d+$/.test(text)
+    ? Number(text)
+    : RFC_3339.test(text)
+      ? Date.parse(text.replace(" ", "T"))
+      : Number.NaN;
+  return showableMs(ms) ? ms : null;
 }
 
 /** A value as a number for statistics and charts, or null when it is not numeric. */

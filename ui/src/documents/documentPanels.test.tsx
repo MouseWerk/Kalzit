@@ -423,3 +423,35 @@ describe("explorer revisions", () => {
     expect(rowNames()).toEqual(["Document 1", "Document 2", "Document 3"]);
   });
 });
+
+describe("dates beyond what JavaScript can show", () => {
+  // The largest int64 as ms: a common "never expires" sentinel.
+  const NEVER = "9223372036854775807";
+  const set = (): DocumentSet => {
+    const documents = [
+      { _id: "a", expires: { $type: "date", value: NEVER } },
+      { _id: "b", expires: { $type: "date", value: "1790000000000" } },
+    ];
+    return { documents, schema: sampleSchema(documents), notices: [] };
+  };
+
+  it("show their text in the explorer", async () => {
+    const user = userEvent.setup();
+    renderPanel("documents", [set()]);
+    await user.click(treeItems()[0] as HTMLElement);
+    expect(screen.getByText(NEVER)).toBeTruthy();
+  });
+
+  it("show their text on the card", () => {
+    renderPanel("document", [set()]);
+    expect(screen.getByText(NEVER)).toBeTruthy();
+  });
+
+  it("leave the distribution of the other dates drawn", () => {
+    renderPanel("distribution", [set()], { path: "expires" });
+    const value = (name: string) => screen.getByText(name).nextElementSibling?.textContent;
+    // Only the date JavaScript can show is on the scale.
+    expect(value("Minimum")).toBe(value("Maximum"));
+    expect(value("Minimum")).toMatch(/\/26,/);
+  });
+});

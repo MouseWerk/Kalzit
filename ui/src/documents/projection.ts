@@ -1,7 +1,7 @@
 import { isRecord } from "../api/client";
 import type { DocumentSet, Field, FieldSchema, FieldType, Frame } from "../api/generated/shapes";
 import { valueAt } from "./paths";
-import { dateMs, isContainer, isTyped, typeOf } from "./values";
+import { dateMs, isContainer, isTyped, showableMs, typeOf } from "./values";
 
 /**
  * The projection step (docs/PLAN.md, section 1): documents become a frame only through this
@@ -167,7 +167,8 @@ function convert(value: unknown, type: FieldType): unknown {
       if (isTyped(value) && value.$type === "date") {
         return dateMs(value);
       }
-      return !isTyped(value) && typeof value === "number" && Number.isFinite(value) ? value : null;
+      // A time JavaScript cannot show (beyond MAX_DATE_MS) is no time.
+      return !isTyped(value) && typeof value === "number" && showableMs(value) ? value : null;
     case "number": {
       if (typeof value === "number") {
         return Number.isFinite(value) ? value : null;
@@ -213,7 +214,11 @@ export function projectDocuments(set: DocumentSet, projection: FrameProjection):
   // The source's notices (a cut, hidden values) stay with what the panel shows.
   return {
     fields,
-    meta: { rowsTruncated: set.truncated !== undefined, notices: set.notices },
+    meta: {
+      rowsTruncated: set.truncated !== undefined,
+      notices: set.notices,
+      ...(set.executedQuery === undefined ? {} : { executedQuery: set.executedQuery }),
+    },
   };
 }
 

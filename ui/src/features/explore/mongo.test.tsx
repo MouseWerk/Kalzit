@@ -450,3 +450,16 @@ describe("projection steps the server accepts, in Explore", () => {
     ]);
   });
 });
+
+describe("inspecting a documents result", () => {
+  it("shows the query as the server executed it", async () => {
+    const { user } = await open();
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("3 documents.");
+    await user.click(screen.getByRole("tab", { name: "Inspect" }));
+    const inspect = screen.getByRole("tabpanel", { name: "Inspect" });
+    expect(within(inspect).getByText("Executed query")).toBeTruthy();
+    // The fake names the collection and the method, as the server's executedQuery does.
+    expect(within(inspect).getByText(/^orders\.(find|aggregate)\(\.\.\.\)$/)).toBeTruthy();
+  });
+});

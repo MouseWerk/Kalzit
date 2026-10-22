@@ -89,10 +89,23 @@ export function appendPages(
       return outcome;
     }
     const first = outcome.result.documents;
+    // Every page's notices, each said once (pages often repeat the same one).
+    const seen = new Set<string>();
+    const notices = [first, ...pages].flatMap((page) =>
+      page.notices.filter((notice) => {
+        const key = JSON.stringify([notice.severity, notice.code, notice.params, notice.text]);
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      }),
+    );
     const documents: DocumentSet = {
       ...last,
       documents: [...first.documents, ...pages.flatMap((page) => page.documents)],
       schema: first.schema,
+      notices,
     };
     return { refId, result: { shape: "documents", documents } };
   });

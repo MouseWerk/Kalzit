@@ -69,3 +69,49 @@ describe("the panel editor and the projection step", () => {
     ]);
   });
 });
+
+describe("click-to-filter in the panel editor", () => {
+  it("waits while a field holds text that does not parse, and keeps that text", async () => {
+    const server = installFakeServer({
+      signedIn: true,
+      user: {
+        ...TEST_USER,
+        isServerAdmin: false,
+        orgs: [{ id: "o1", name: "Org", role: "editor" }],
+      },
+    });
+    addMongoSource(server.areas.datasources);
+    const explorer: PanelModel = {
+      ...panel,
+      type: "documents",
+      targets: [
+        {
+          refId: "A",
+          datasourceId: MONGO_ID,
+          query: { collection: "orders", pipeline: '[{"$limit": 5}]' },
+        },
+      ],
+      transformations: [],
+    };
+    addDashboard(server.areas.dashboards, "d-shop", { ...emptyModel("Shop"), panels: [explorer] });
+    const { user } = renderApp("/dashboards/d-shop");
+    await user.click(await screen.findByRole("button", { name: "Edit" }, { timeout: 4000 }));
+    await user.click(screen.getByRole("button", { name: "Edit “Orders”" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit panel" });
+    const tree = await within(dialog).findByRole("tree", { name: "Orders" });
+    const before = server.areas.datasources.queries.length;
+    const typing = '{"$limit": ';
+    fireEvent.change(within(dialog).getByLabelText("Stage 1"), { target: { value: typing } });
+    await user.click(within(tree).getAllByRole("treeitem")[0] as HTMLElement);
+    const status = within(tree)
+      .getAllByRole("treeitem")
+      .find((row) => row.querySelector(".doc-tree__key")?.textContent === "status") as HTMLElement;
+    await user.click(status);
+    await user.click(within(dialog).getByRole("button", { name: "Filter by value" }));
+    expect(
+      within(dialog).getByText(/the query being edited has text that is not valid JSON/),
+    ).toBeTruthy();
+    expect(within(dialog).getByLabelText("Stage 1")).toHaveProperty("value", typing);
+    expect(server.areas.datasources.queries).toHaveLength(before);
+  });
+});

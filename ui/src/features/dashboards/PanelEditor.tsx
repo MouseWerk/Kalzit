@@ -120,7 +120,11 @@ export function PanelEditor({
     }));
   }
 
-  const run = () => setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
+  // A new run, or another data source, leaves an old filter refusal behind.
+  const run = () => {
+    setFilterError(null);
+    setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
+  };
 
   /** Click-to-filter in the preview: a `$match` stage on that target's query, run at once. */
   function filterBy(refId: string, path: string, value: unknown) {
@@ -265,7 +269,12 @@ export function PanelEditor({
               target={target}
               datasources={queryable}
               readOnly={!queryable.some((source) => source.id === target.datasourceId)}
-              onChange={(patch) => updateTarget(target.refId, patch)}
+              onChange={(patch) => {
+                if (patch.datasourceId !== undefined) {
+                  setFilterError(null);
+                }
+                updateTarget(target.refId, patch);
+              }}
               onRemove={() =>
                 setPanel((p) => ({
                   ...p,

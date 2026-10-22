@@ -148,6 +148,8 @@ function Explore({ orgId }: { orgId: string }) {
     if (datasource === undefined || nextQuery === null || queryText(nextQuery).trim() === "") {
       return;
     }
+    // A new run leaves an old filter refusal behind.
+    setFilterError(null);
     const resolved = resolveRange(nextRange, Date.now());
     if (!resolved.ok) {
       setRangeError(t(`dashboards.time.error.${resolved.error}`));
@@ -256,6 +258,7 @@ function Explore({ orgId }: { orgId: string }) {
             value={datasource.id}
             onChange={(event) => {
               setChosen(event.currentTarget.value);
+              setFilterError(null);
               writePreference(LAST_DATASOURCE_KEY, event.currentTarget.value);
             }}
           >

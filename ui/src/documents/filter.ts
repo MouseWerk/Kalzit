@@ -34,13 +34,17 @@ export function filterable(value: unknown): boolean {
 /**
  * Whether a value at these path segments can become a filter: a filter path is dotted, so a key
  * with a dot, or one starting with `$` (an operator there), cannot be named in it, and a key with
- * `${` would read as a variable.
+ * `${` would read as a variable. An empty key or one with a NUL character cannot be named either.
  */
 export function filterablePath(segments: readonly (string | number)[]): boolean {
   return segments.every(
     (segment) =>
       typeof segment === "number" ||
-      (!segment.startsWith("$") && !segment.includes(".") && !segment.includes("${")),
+      (segment !== "" &&
+        !segment.startsWith("$") &&
+        !segment.includes(".") &&
+        !segment.includes("${") &&
+        !segment.includes("\0")),
   );
 }
 
