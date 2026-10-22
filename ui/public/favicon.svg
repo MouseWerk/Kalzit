@@ -1,8 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linejoin="round">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#2a2520" stroke-width="1.7" stroke-linejoin="round">
   <title>Kalzit</title>
   <style>
-    path { stroke: #2a2520; }
-    @media (prefers-color-scheme: dark) { path { stroke: #f0ece6; } }
+    @media (prefers-color-scheme: dark) { svg { stroke: #f0ece6; } }
   </style>
   <path d="M3.5 8.5 8 4.2l11.5-2 1.8 13.6-4 4.4L6 22.3Z"/>
   <path d="M3.5 8.5 15 6.6l2.3 13.6M15 6.6l4.5-4.4"/>

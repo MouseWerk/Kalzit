@@ -290,14 +290,20 @@
       U+2C60-2C7F, U+A720-A7FF;
   }
 
-  /* Local stand-ins with the bundled faces' metrics, so the swap does not shift the layout. */
+  /*
+   * Local stand-ins with the bundled faces' metrics, so the swap does not shift the layout.
+   * Measured with fontTools from the woff2 files (default instance) against Windows' Arial and
+   * Georgia, as capsize does: size-adjust is the ratio of the average advance over a German UI
+   * sample text, the overrides are the web font's hhea ascender and descender per em divided by
+   * size-adjust. Instrument Sans: ascent 0.970, descent 0.250; Newsreader: 0.735, 0.265.
+   */
   @font-face {
     font-family: "Instrument Sans Fallback";
     font-display: swap;
     src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans");
-    size-adjust: 97%;
-    ascent-override: 100%;
-    descent-override: 25.8%;
+    size-adjust: 102.8%;
+    ascent-override: 94.4%;
+    descent-override: 24.3%;
     line-gap-override: 0%;
   }
 
@@ -305,9 +311,9 @@
     font-family: "Newsreader Fallback";
     font-display: swap;
     src: local("Georgia"), local("Times New Roman");
-    size-adjust: 92%;
-    ascent-override: 102%;
-    descent-override: 28%;
+    size-adjust: 96.7%;
+    ascent-override: 76%;
+    descent-override: 27.4%;
     line-gap-override: 0%;
   }
 
@@ -331,6 +337,10 @@
     /* Line icons: a little lighter than before, close to the website's 1.4. */
     --icon-stroke: 1.5;
 
+    /* Menus and the rail's flyout: wide enough for an email address, never a column. */
+    --size-menu-min: 15rem;
+    --size-menu-max: 20rem;
+
     /* Skeleton loaders breathe slowly; components.css stops them for reduced motion. */
     --duration-pulse: 1.4s;
   }
@@ -342,5 +352,12 @@
     --info-text: light-dark(oklch(36% 0.1 250), oklch(87% 0.07 245));
     --info-bg: light-dark(oklch(94% 0.025 245), oklch(22% 0.04 245));
     --icon-stroke: 1.75;
+  }
+
+  /* After the pulse is declared, so this block wins. */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --duration-pulse: 0ms;
+    }
   }
 }

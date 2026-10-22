@@ -507,8 +507,8 @@
     position: fixed;
     z-index: var(--z-menu);
     display: grid;
-    min-width: var(--size-sidebar-min);
-    max-width: var(--size-tooltip-max);
+    min-width: var(--size-menu-min);
+    max-width: var(--size-menu-max);
     max-height: calc(100dvh - var(--space-2));
     overflow-y: auto;
     padding: var(--space-1);
@@ -808,7 +808,7 @@
     inset-block-end: calc(100% + var(--space-1));
     inset-inline-start: 0;
     z-index: var(--z-menu);
-    width: max(100%, 15rem);
+    width: max(100%, var(--size-menu-min));
     max-height: calc(100dvh - var(--space-16));
     overflow-y: auto;
     padding: var(--space-1);
@@ -836,7 +836,7 @@
     .menu {
       inset-block: calc(100% + var(--space-1)) auto;
       inset-inline: auto 0;
-      width: 15rem;
+      width: var(--size-menu-min);
     }
   }
 

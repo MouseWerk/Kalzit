@@ -15,15 +15,37 @@ function walk(dir: string): string[] {
   });
 }
 
-// Binary assets (the bundled fonts) are not text; their bytes would match any text rule by chance.
-const BINARY = /\.(woff2?|ttf|otf|png|jpe?g|gif|webp|ico)$/i;
+// Signatures of the binary formats the UI ships: woff2, woff, PNG, JPEG, GIF, WebP (RIFF), ICO.
+const MAGIC = [
+  [0x77, 0x4f, 0x46, 0x32],
+  [0x77, 0x4f, 0x46, 0x46],
+  [0x89, 0x50, 0x4e, 0x47],
+  [0xff, 0xd8, 0xff],
+  [0x47, 0x49, 0x46, 0x38],
+  [0x52, 0x49, 0x46, 0x46],
+  [0x00, 0x00, 0x01, 0x00],
+];
 
-const sourceFiles = walk(SRC)
-  .filter((path) => !BINARY.test(path))
-  .map((path) => ({
-    path: relative(UI_ROOT, path).replaceAll("\\", "/"),
-    text: readFileSync(path, "utf8"),
-  }));
+/**
+ * Binary by content, not by name: a known signature or a NUL byte in the first kilobyte. Binary
+ * bytes would match text rules by chance; a text file with a binary extension is still checked.
+ */
+function isBinary(bytes: Uint8Array): boolean {
+  const head = bytes.subarray(0, 1024);
+  return MAGIC.some((magic) => magic.every((byte, i) => head[i] === byte)) || head.includes(0);
+}
+
+/** Text files below `dir`, paths relative to the UI root; binary files are left out. */
+function textFiles(dir: string): { path: string; text: string }[] {
+  return walk(dir).flatMap((path) => {
+    const bytes = readFileSync(path);
+    return isBinary(bytes)
+      ? []
+      : [{ path: relative(UI_ROOT, path).replaceAll("\\", "/"), text: bytes.toString("utf8") }];
+  });
+}
+
+const sourceFiles = textFiles(SRC);
 
 const isTestCode = (path: string) => /\.test\.tsx?$/.test(path) || path.startsWith("src/test/");
 const appCode = sourceFiles.filter(({ path }) => /\.(ts|tsx)$/.test(path) && !isTestCode(path));
@@ -65,16 +87,31 @@ describe("network access", () => {
 
 describe("source hygiene", () => {
   it("contains no emoji", () => {
-    const files = [
-      ...sourceFiles,
-      ...walk(resolve(UI_ROOT, "public")).map((path) => ({
-        path,
-        text: readFileSync(path, "utf8"),
-      })),
-    ];
+    const files = [...sourceFiles, ...textFiles(resolve(UI_ROOT, "public"))];
     for (const { path, text } of files) {
       expect(/\p{Extended_Pictographic}/u.test(text), path).toBe(false);
     }
+  });
+
+  it("skips only files that are binary by content", () => {
+    const text = (value: string) => new TextEncoder().encode(value);
+    const font = readFileSync(resolve(SRC, "assets/fonts/newsreader-latin-wght-normal.woff2"));
+    expect(isBinary(font)).toBe(true);
+    expect(isBinary(Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a))).toBe(true);
+    expect(isBinary(text("plain\u0000text"))).toBe(true);
+    // A text file is read whatever its name, so an emoji in a "fake.woff2" is still caught.
+    expect(isBinary(text("/* fake.woff2 */ .a { content: '\u{1F600}'; }"))).toBe(false);
+    expect(isBinary(text("<svg></svg>"))).toBe(false);
+  });
+
+  it("draws the favicon's stroke on the svg itself, so it shows without its style", () => {
+    const svg = readFileSync(resolve(UI_ROOT, "public/favicon.svg"), "utf8");
+    expect(/<svg\b[^>]*\sstroke="#[0-9a-f]{3,6}"/i.test(svg)).toBe(true);
+    // The style may only switch the color for dark mode.
+    const style = /<style>([\s\S]*?)<\/style>/.exec(svg)?.[1] ?? "";
+    expect(
+      style.replace(/@media \(prefers-color-scheme: dark\) \{[^{}]*\{[^{}]*\} \}/, "").trim(),
+    ).toBe("");
   });
 
   it("uses classes instead of inline styles, and never raw HTML", () => {
