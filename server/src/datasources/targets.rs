@@ -14,17 +14,43 @@ use std::path::{Path, PathBuf};
 
 use ipnet::IpNet;
 
-/// A refused target. The message names the rule, never a secret.
+use super::detail::Detail;
+
+/// A refused target. The detail names the rule, never a secret.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
-pub struct Blocked(pub String);
+pub struct Blocked(pub Detail);
+
+impl Blocked {
+    fn new(reason: &'static str, message: impl Into<String>) -> Self {
+        Self(Detail::new(reason, message))
+    }
+
+    fn with(self, key: &str, value: impl ToString) -> Self {
+        Self(self.0.with(key, value))
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
     #[error(transparent)]
     Blocked(#[from] Blocked),
+    /// The name does not resolve, or no address answers. `code` is `target.unresolvable` or
+    /// `target.unreachable`.
     #[error("cannot reach {host}: {reason}")]
-    Dns { host: String, reason: String },
+    Dns { code: &'static str, host: String, reason: String },
+}
+
+impl ResolveError {
+    /// The error as a detail for the API.
+    pub fn detail(&self) -> Detail {
+        match self {
+            ResolveError::Blocked(b) => b.0.clone(),
+            ResolveError::Dns { code, host, reason } => {
+                Detail::new(code, self.to_string()).with("host", host).with("detail", reason)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,6 +124,12 @@ impl TargetPolicy {
         Self { data_dir, own_sqlite, sqlite_dirs, sqlite_dirs_lexical, sqlite_unc_allowed, allowed }
     }
 
+    /// Kalzit's data directory (canonical): private to the server, for short-lived files such as
+    /// a CA certificate a driver reads from a path.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// The canonical file a SQLite source may open, or why not.
     ///
     /// The path is first checked as written, without touching the file system, so a path
@@ -106,10 +138,10 @@ impl TargetPolicy {
     /// opens the canonical path. Every refusal has the same message, so the answer does not tell
     /// whether a file exists.
     pub fn check_sqlite_path(&self, raw: &str) -> Result<PathBuf, Blocked> {
-        let refused = || Blocked(SQLITE_REFUSED.into());
+        let refused = || Blocked::new("target.sqlite_path_refused", SQLITE_REFUSED);
         let path = Path::new(raw);
         if !path.is_absolute() {
-            return Err(Blocked("the SQLite path must be absolute".into()));
+            return Err(Blocked::new("target.sqlite_path_relative", "the SQLite path must be absolute"));
         }
         if is_unc(raw) && !self.sqlite_unc_allowed {
             return Err(refused());
@@ -133,7 +165,11 @@ impl TargetPolicy {
     /// Checks one address, reached through `host` (the name as configured, for the allow-list).
     pub fn check_ip(&self, host: &str, ip: IpAddr) -> Result<(), Blocked> {
         if is_always_blocked(ip) {
-            return Err(Blocked(format!("{ip} is a link-local or cloud metadata address")));
+            return Err(Blocked::new(
+                "target.metadata_address",
+                format!("{ip} is a link-local or cloud metadata address"),
+            )
+            .with("address", ip));
         }
         let Some(allowed) = &self.allowed else { return Ok(()) };
         let ip = canonical_ip(ip);
@@ -143,7 +179,12 @@ impl TargetPolicy {
             AllowedTarget::Host(h) => *h == name,
             AllowedTarget::Suffix(s) => name.ends_with(s.as_str()) && name.len() > s.len(),
         });
-        if ok { Ok(()) } else { Err(Blocked(format!("{host} is not in datasources.allowed_targets"))) }
+        if ok {
+            Ok(())
+        } else {
+            Err(Blocked::new("target.not_allowed", format!("{host} is not in datasources.allowed_targets"))
+                .with("host", host))
+        }
     }
 
     /// The checks that need no network: an address literal, or a host name against the
@@ -174,15 +215,27 @@ impl TargetPolicy {
         }
         let addrs: Vec<SocketAddr> = tokio::net::lookup_host((normalize_host(host).as_str(), port))
             .await
-            .map_err(|e| ResolveError::Dns { host: host.to_string(), reason: e.to_string() })?
+            .map_err(|e| ResolveError::Dns {
+                code: "target.unresolvable",
+                host: host.to_string(),
+                reason: e.to_string(),
+            })?
             .collect();
         if addrs.is_empty() {
-            return Err(ResolveError::Dns { host: host.to_string(), reason: "no addresses".into() });
+            return Err(ResolveError::Dns {
+                code: "target.unresolvable",
+                host: host.to_string(),
+                reason: "no addresses".into(),
+            });
         }
         if let Some(bad) = addrs.iter().find(|a| is_always_blocked(a.ip())) {
-            return Err(
-                Blocked(format!("{host} resolves to {}, a link-local or cloud metadata address", bad.ip())).into()
-            );
+            return Err(Blocked::new(
+                "target.metadata_address",
+                format!("{host} resolves to {}, a link-local or cloud metadata address", bad.ip()),
+            )
+            .with("address", bad.ip())
+            .with("host", host)
+            .into());
         }
         let mut allowed = Vec::new();
         let mut last = None;
@@ -231,7 +284,11 @@ impl TargetPolicy {
                 Err(_) => last = format!("{addr}: no answer within {} seconds", timeout.as_secs()),
             }
         }
-        Err(ResolveError::Dns { host: host.to_string(), reason: format!("cannot connect ({last})") })
+        Err(ResolveError::Dns {
+            code: "target.unreachable",
+            host: host.to_string(),
+            reason: format!("cannot connect ({last})"),
+        })
     }
 }
 
@@ -477,12 +534,12 @@ mod tests {
         assert!(!ok.to_string_lossy().starts_with(r"\\?\"));
         // The data directory stays refused even when an admin lists it.
         let e = p.check_sqlite_path(data.join("kalzit.db").to_str().unwrap()).unwrap_err();
-        assert_eq!(e.0, SQLITE_REFUSED);
+        assert_eq!(e.0.message, SQLITE_REFUSED);
         // A missing file and a file outside answer the same, so existence does not leak.
         let missing = p.check_sqlite_path(allowed.join("fehlt.db").to_str().unwrap()).unwrap_err();
         let outside = p.check_sqlite_path(other.join("geheim.db").to_str().unwrap()).unwrap_err();
         let outside_missing = p.check_sqlite_path(other.join("fehlt.db").to_str().unwrap()).unwrap_err();
-        assert_eq!((missing.0.as_str(), outside.0.as_str()), (SQLITE_REFUSED, SQLITE_REFUSED));
+        assert_eq!((missing.0.message.as_str(), outside.0.message.as_str()), (SQLITE_REFUSED, SQLITE_REFUSED));
         assert_eq!(outside_missing, outside);
         assert!(p.check_sqlite_path(other.join("geheim.db").to_str().unwrap()).is_err());
         let sneaky = allowed.join("..").join("anderswo").join("geheim.db");
@@ -516,7 +573,7 @@ mod tests {
         }
         let p = TargetPolicy::new(&data, "sqlite::memory:", &[allowed.to_string_lossy().to_string()], &[]);
         let e = p.check_sqlite_path(link.join("kalzit.db").to_str().unwrap()).unwrap_err();
-        assert_eq!(e.0, SQLITE_REFUSED);
+        assert_eq!(e.0.message, SQLITE_REFUSED);
     }
 
     #[test]
@@ -551,11 +608,11 @@ mod tests {
         );
         // Climbing out by name is refused before anything is looked up.
         let climb = format!("{}{}..{}x.db", allowed.display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR);
-        assert_eq!(p.check_sqlite_path(&climb).unwrap_err().0, SQLITE_REFUSED);
+        assert_eq!(p.check_sqlite_path(&climb).unwrap_err().0.message, SQLITE_REFUSED);
         #[cfg(windows)]
         for unc in [r"\\server\share\x.db", r"\\?\C:\x.db", r"\\.\PhysicalDrive0", "//server/share/x.db"] {
             assert!(is_unc(unc), "{unc}");
-            assert_eq!(p.check_sqlite_path(unc).unwrap_err().0, SQLITE_REFUSED, "{unc}");
+            assert_eq!(p.check_sqlite_path(unc).unwrap_err().0.message, SQLITE_REFUSED, "{unc}");
         }
     }
 

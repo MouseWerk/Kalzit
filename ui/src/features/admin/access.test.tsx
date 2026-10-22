@@ -204,7 +204,9 @@ describe("access dialog", () => {
     const opener = await screen.findByRole("button", { name: "Access…" });
     await user.click(opener);
     const dialog = screen.getByRole("dialog", { name: "Access to “Revenue”" });
-    const why = within(dialog).getByRole("button", { name: "Why do I have dashboards:share?" });
+    const why = within(dialog).getByRole("button", {
+      name: "Why do I have this permission? Give users and teams of this organization access to dashboards.",
+    });
     await user.click(why);
     expect(screen.getByRole("dialog", { name: "Where this permission comes from" })).toBeTruthy();
 

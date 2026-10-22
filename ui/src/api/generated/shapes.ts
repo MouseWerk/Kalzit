@@ -18,7 +18,19 @@ export type FrameMeta = {
  */
 executedQuery?: string, rowsTruncated: boolean, notices: Array<Notice>, };
 
-export type Notice = { severity: NoticeSeverity, text: string, };
+export type Notice = { severity: NoticeSeverity, 
+/**
+ * A stable code the UI translates (see docs/api/datasources.md).
+ */
+code: string, 
+/**
+ * Values the code's text needs (`{column}`).
+ */
+params?: { [key in string]: string }, 
+/**
+ * English fallback.
+ */
+text: string, };
 
 export type NoticeSeverity = "info" | "warning";
 
@@ -36,13 +48,22 @@ labels?: { [key in string]: string }, };
 
 export type DocumentSet = { 
 /**
- * Documents with typed values (see `typed`) where JSON has no type for them.
+ * Documents with typed values (see `typed`) where JSON has no type for them, each in the
+ * field order the database stored.
  */
 documents: unknown[], 
 /**
  * Sampled from the result: every field path with its types and how many documents have it.
  */
-schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, };
+schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, 
+/**
+ * Why the set was cut, values that are not shown, ... (codes as for frames).
+ */
+notices: Array<Notice>, 
+/**
+ * The query as sent, after macros and variables were bound (shown in the inspector).
+ */
+executedQuery?: string, };
 
 export type FieldSchema = { 
 /**
@@ -133,6 +154,17 @@ export type QueryOutcome = { result: QueryResult, } | { error: ErrorBody, };
 
 export type ErrorEnvelope = { error: ErrorBody, };
 
-export type ErrorBody = { code: ErrorCode, message: string, field?: string, };
+export type ErrorBody = { code: ErrorCode, message: string, field?: string, 
+/**
+ * A finer, stable reason the UI translates (see docs/api/datasources.md); `message` is the
+ * English fallback.
+ */
+reason?: string, 
+/**
+ * Values the reason's text needs (`{name}`).
+ */
+params?: { [key in string]: string }, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
+
+export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };

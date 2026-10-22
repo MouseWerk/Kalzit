@@ -190,7 +190,7 @@ async fn kinds_describe_their_settings_forms() {
     let r = t.get("/datasource-kinds").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let kinds: Vec<&str> = r.body["items"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus"]);
+    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus", "mongodb"]);
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");
@@ -367,23 +367,61 @@ async fn secrets_are_never_returned_and_follow_patch_semantics() {
 async fn settings_and_secrets_are_validated() {
     let t = T::new().await;
     let pg = |settings: Value, secrets: Value| json!({ "name": "X", "kind": "postgres", "settings": settings, "secrets": secrets });
-    for (body, field) in [
-        (json!({ "name": "X", "kind": "oracle", "settings": {} }), "kind"),
-        (json!({ "name": " ", "kind": "sqlite", "settings": { "path": "/x" } }), "name"),
-        (pg(json!({ "database": "d", "user": "u" }), json!({})), "host"),
-        (pg(json!({ "host": "h", "database": "d", "user": "u", "password": "x" }), json!({})), "password"),
-        (pg(json!({ "host": "h", "database": "d", "user": "u" }), json!({ "apiKey": "x" })), "secrets"),
-        (pg(json!({ "host": "h", "database": "d", "user": "u", "port": 70000 }), json!({})), "port"),
-        (json!({ "name": "P", "kind": "prometheus", "settings": { "url": "https://admin:pw@prom.intern" } }), "url"),
-        (json!({ "name": "S", "kind": "sqlite", "settings": { "path": "relativ.db" } }), "path"),
+    for (body, field, reason) in [
+        (json!({ "name": "X", "kind": "oracle", "settings": {} }), "kind", Some("datasource.kind_unknown")),
+        (json!({ "name": " ", "kind": "sqlite", "settings": { "path": "/x" } }), "name", Some("request.name_length")),
+        (pg(json!({ "database": "d", "user": "u" }), json!({})), "host", Some("settings.required")),
+        (
+            pg(json!({ "host": "h", "database": "d", "user": "u", "password": "x" }), json!({})),
+            "password",
+            Some("settings.secret_in_settings"),
+        ),
+        (
+            pg(json!({ "host": "h", "database": "d", "user": "u" }), json!({ "apiKey": "x" })),
+            "secrets",
+            Some("secrets.unknown"),
+        ),
+        (
+            pg(json!({ "host": "h", "database": "d", "user": "u", "port": 70000 }), json!({})),
+            "port",
+            Some("settings.port_invalid"),
+        ),
+        (
+            json!({ "name": "P", "kind": "prometheus", "settings": { "url": "https://admin:pw@prom.intern" } }),
+            "url",
+            Some("settings.url_credentials"),
+        ),
+        (
+            json!({ "name": "S", "kind": "sqlite", "settings": { "path": "relativ.db" } }),
+            "path",
+            Some("settings.path_relative"),
+        ),
     ] {
         let r = t.post("/datasources", body.clone()).await;
         assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{body}: {}", r.text);
         assert_eq!(r.body["error"]["field"], field, "{body}");
+        if let Some(reason) = reason {
+            assert_eq!(r.body["error"]["reason"], reason, "{body}: {}", r.text);
+            let param = if field == "kind" { "kind" } else { "field" };
+            if field == "name" {
+                assert_eq!(r.body["error"]["params"]["max"], "100", "{body}: {}", r.text);
+            }
+            assert!(r.body["error"]["params"][param].is_string(), "{body}: {}", r.text);
+        }
         assert!(!r.text.contains("admin:pw"));
     }
     let r = t.post("/datasources", json!({ "name": "X", "kind": "sqlite", "settings": {}, "extra": 1 })).await;
     assert_eq!(r.code(), "validation");
+    // Only a choice names its options.
+    let r =
+        t.post("/datasources", pg(json!({ "host": "h", "database": "d", "user": "u", "port": "x" }), json!({}))).await;
+    assert_eq!(r.body["error"]["reason"], "settings.expected_number", "{}", r.text);
+    assert_eq!(r.body["error"]["params"], json!({ "field": "port" }), "{}", r.text);
+    let r = t
+        .post("/datasources", pg(json!({ "host": "h", "database": "d", "user": "u", "sslMode": "x" }), json!({})))
+        .await;
+    assert_eq!(r.body["error"]["reason"], "settings.expected_option", "{}", r.text);
+    assert_eq!(r.body["error"]["params"]["options"], "disable, prefer, require, verify-ca, verify-full", "{}", r.text);
 }
 
 #[tokio::test]
@@ -402,6 +440,7 @@ async fn blocked_targets_are_refused_when_saving_and_querying() {
             .await;
         assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"), "{}", r.text);
         assert_eq!(r.body["error"]["field"], "path");
+        assert_eq!(r.body["error"]["reason"], "target.sqlite_path_refused", "{}", r.text);
     }
     let meta = json!({ "name": "M", "kind": "prometheus", "settings": { "url": "http://169.254.169.254/" } });
     assert_eq!(t.post("/datasources", meta).await.code(), "datasource_target_blocked");
@@ -419,8 +458,10 @@ async fn blocked_targets_are_refused_when_saving_and_querying() {
     let r =
         t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT a FROM x" } }])).await;
     assert_eq!(r.body["results"]["A"]["error"]["code"], "datasource_target_blocked", "{}", r.text);
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "target.sqlite_path_refused", "{}", r.text);
     let h = t.post(&format!("/datasources/{id}/health"), json!({})).await;
     assert_eq!((h.body["ok"].as_bool(), h.body["code"].as_str()), (Some(false), Some("datasource_target_blocked")));
+    assert_eq!(h.body["reason"], "target.sqlite_path_refused", "{}", h.text);
 }
 
 #[tokio::test]
@@ -502,24 +543,41 @@ async fn writes_are_rejected_and_each_query_answers_on_its_own() {
     assert_eq!(r.status, StatusCode::OK);
     let res = &r.body["results"];
     assert_eq!(res["ok"]["result"]["frame"]["fields"][0]["values"], json!(["3"]));
-    for refid in ["del", "ext", "form"] {
+    for (refid, reason) in
+        [("del", "sql.not_select"), ("ext", "sql.function_not_allowed"), ("form", "query.invalid_form")]
+    {
         assert_eq!(res[refid]["error"]["code"], "query_rejected", "{refid}: {}", r.text);
+        assert_eq!(res[refid]["error"]["reason"], reason, "{refid}: {}", r.text);
     }
+    assert_eq!(res["ext"]["error"]["params"]["name"], "load_extension", "{}", r.text);
     assert_eq!(res["gone"]["error"]["code"], "not_found");
+    assert!(res["gone"]["error"].get("reason").is_none(), "the code says it all: {}", r.text);
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM verkauf")
         .fetch_one(&sqlx::SqlitePool::connect(&crate::config::sqlite_url(&file)).await.unwrap())
         .await
         .unwrap();
     assert_eq!(n, 3);
 
-    for bad in [
-        json!({ "queries": [], "timeRange": { "from": 0, "to": 1 } }),
-        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }, { "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 } }),
-        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 2, "to": 1 } }),
-        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 }, "extra": true }),
+    for (bad, reason) in [
+        (json!({ "queries": [], "timeRange": { "from": 0, "to": 1 } }), Some("query.count")),
+        (
+            json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }, { "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 } }),
+            Some("query.ref_id"),
+        ),
+        (
+            json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 2, "to": 1 } }),
+            Some("query.range_reversed"),
+        ),
+        (
+            json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": {} }], "timeRange": { "from": 0, "to": 1 }, "extra": true }),
+            Some("request.body_invalid"),
+        ),
     ] {
         let r = t.send(Method::POST, &t.path("/query"), Some(bad.clone()), Some(&t.owner)).await;
         assert_eq!(r.code(), "validation", "{bad}: {}", r.text);
+        if let Some(reason) = reason {
+            assert_eq!(r.body["error"]["reason"], reason, "{bad}: {}", r.text);
+        }
     }
 }
 
@@ -540,7 +598,8 @@ async fn row_limits_truncate_with_a_notice() {
     let frame = &r.body["results"]["A"]["result"]["frame"];
     assert_eq!(frame["fields"][0]["values"].as_array().unwrap().len(), 2, "{}", r.text);
     assert_eq!(frame["meta"]["rowsTruncated"], true);
-    assert!(!frame["meta"]["notices"].as_array().unwrap().is_empty());
+    assert_eq!(frame["meta"]["notices"][0]["code"], "frame.row_limit", "{}", r.text);
+    assert_eq!(frame["meta"]["notices"][0]["params"]["rows"], "2", "{}", r.text);
 
     t.set("datasources.max_response_bytes", json!(20));
     let r = t
@@ -607,13 +666,128 @@ async fn a_dropped_request_cancels_its_queries() {
 }
 
 #[tokio::test]
+async fn empty_sqlite_tables_keep_their_declared_types() {
+    let t = T::new().await;
+    let file = t
+        .sqlite_file(
+            "leer.db",
+            "CREATE TABLE leer (i INTEGER, r REAL, s TEXT, d DATETIME, b BOOLEAN, v VARCHAR(20), f DOUBLE, n NUMERIC);",
+        )
+        .await;
+    let id = t.create_sqlite("Leer", &file).await;
+    let sql = "SELECT i, r, s, d, b, v, f, n, r * 2 AS e FROM leer";
+    let r = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }])).await;
+    let frame = &r.body["results"]["A"]["result"]["frame"];
+    let types: Vec<&str> =
+        frame["fields"].as_array().expect(&r.text).iter().map(|f| f["type"].as_str().unwrap()).collect();
+    // NUMERIC and the expression have no type SQLite can name before a row exists: the
+    // documented default, string.
+    assert_eq!(types, ["int64", "number", "string", "time", "bool", "string", "number", "string", "string"]);
+    assert_eq!(frame["fields"][1]["values"], json!([]));
+}
+
+/// Values are converted to the column's type where nothing is lost: a whole REAL in an int64
+/// column is its integer, a fraction is `null` and counted; numbers in a time column are Unix
+/// seconds up to 10^11 and milliseconds above.
+#[tokio::test]
+async fn sqlite_values_keep_to_their_column_type() {
+    let t = T::new().await;
+    let file = t
+        .sqlite_file(
+            "werte.db",
+            // INTEGER affinity stores 3.0 as the integer 3 and keeps 1.5 and 2.5 as REAL.
+            "CREATE TABLE z (i INTEGER); INSERT INTO z VALUES (1), (3.0), (1.5), (2.5);
+             CREATE VIEW plus AS SELECT i + 1 AS j FROM z;
+             CREATE TABLE e (d DATETIME);
+             INSERT INTO e VALUES (1767261600), (1767261600000), (1767261600.5), ('2026-01-01 10:00:00'),
+                                  (9000000000000000), (1e300);",
+        )
+        .await;
+    let id = t.create_sqlite("Werte", &file).await;
+    let run = |sql: &str| {
+        let t = &t;
+        let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": sql } }]);
+        async move {
+            let r = t.query(&t.owner, q).await;
+            let frame = r.body["results"]["A"]["result"]["frame"].clone();
+            assert!(frame.is_object(), "{}", r.text);
+            frame
+        }
+    };
+    let mismatch = |frame: &Value| {
+        frame["meta"]["notices"].as_array().unwrap().iter().find(|n| n["code"] == "frame.value_mismatch").cloned()
+    };
+
+    // Declared INTEGER: the fractions are empty, counted once per column.
+    let frame = run("SELECT i FROM z ORDER BY rowid").await;
+    assert_eq!(frame["fields"][0]["type"], "int64");
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "3", null, null]));
+    let notice = mismatch(&frame).expect("a mismatch notice");
+    assert_eq!(notice["params"], json!({ "column": "i", "count": "2" }));
+    assert_eq!(frame["meta"]["notices"].as_array().unwrap().len(), 1, "one notice per column: {frame}");
+
+    // The view's expression has no declared type; its first value makes it int64.
+    let frame = run("SELECT j FROM plus").await;
+    assert_eq!(frame["fields"][0]["type"], "int64");
+    assert_eq!(frame["fields"][0]["values"], json!(["2", "4", null, null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"]["count"], "2");
+
+    // A whole number stored as REAL becomes its integer.
+    let frame = run("SELECT 1 AS n UNION ALL SELECT 4.0 UNION ALL SELECT 2.5").await;
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "4", null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"], json!({ "column": "n", "count": "1" }));
+
+    // Seconds, milliseconds, fractional seconds and text all name the same time; numbers past
+    // the year 9999 are no time.
+    let frame = run("SELECT d FROM e ORDER BY rowid").await;
+    assert_eq!(frame["fields"][0]["type"], "time");
+    let ms = 1_767_261_600_000_i64;
+    assert_eq!(frame["fields"][0]["values"], json!([ms, ms, ms + 500, ms, null, null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"], json!({ "column": "d", "count": "2" }));
+
+    // A row the limit cuts is not in the answer, so its mismatch is not counted.
+    let limited = |limit: u32| {
+        let t = &t;
+        let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT i FROM z ORDER BY rowid" }, "limit": limit }]);
+        async move { t.query(&t.owner, q).await.body["results"]["A"]["result"]["frame"].clone() }
+    };
+    let frame = limited(2).await;
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "3"]));
+    assert!(mismatch(&frame).is_none(), "the cut row holds the first fraction: {frame}");
+    let frame = limited(3).await;
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "3", null]));
+    assert_eq!(mismatch(&frame).unwrap()["params"]["count"], "1");
+}
+
+#[tokio::test]
+async fn a_recreated_sqlite_table_answers_with_its_new_types() {
+    let t = T::new().await;
+    let file = t.sqlite_file("wandel.db", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('a');").await;
+    let id = t.create_sqlite("Wandel", &file).await;
+    let q = json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT v FROM t" } }]);
+    let field = |r: &Reply| r.body["results"]["A"]["result"]["frame"]["fields"][0].clone();
+    let before = t.query(&t.owner, q.clone()).await;
+    assert_eq!(field(&before)["type"], "string", "{}", before.text);
+    // Recreated under the running server, whose pool keeps its connection open.
+    t.sqlite_file("wandel.db", "DROP TABLE t; CREATE TABLE t (v REAL); INSERT INTO t VALUES (1.5);").await;
+    let after = t.query(&t.owner, q).await;
+    assert_eq!(field(&after)["type"], "number", "{}", after.text);
+    assert_eq!(field(&after)["values"], json!([1.5]));
+}
+
+#[tokio::test]
 async fn health_and_schema_of_a_sqlite_file() {
     let t = T::new().await;
     let file = t.sqlite_file("umsatz.db", SALES).await;
     let id = t.create_sqlite("U", &file).await;
     let h = t.post(&format!("/datasources/{id}/health"), json!({})).await;
     assert_eq!(h.body["ok"], true, "{}", h.text);
+    // The UI translates the reason with its params; the message is the English fallback.
+    assert_eq!(h.body["reason"], "health.connected_read_only", "{}", h.text);
+    assert_eq!(h.body["params"]["engine"], "SQLite");
+    assert!(h.body["params"]["version"].as_str().is_some_and(|v| v.starts_with('3')), "{}", h.text);
     assert!(h.body["message"].as_str().unwrap().contains("read-only"));
+    assert!(h.body.get("code").is_none());
     assert!(h.body["latencyMs"].is_u64());
     let s = t.get(&format!("/datasources/{id}/schema")).await;
     assert_eq!(s.body["kind"], "tables", "{}", s.text);
@@ -1142,6 +1316,51 @@ async fn dashboard_variables_keep_to_the_dashboard() {
     }
 }
 
+/// A constant, a custom and a textbox variable in one statement each bind their own value, on
+/// the panel route as through `/query`.
+#[tokio::test]
+async fn constant_and_custom_variables_share_a_statement() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let sql = "SELECT id FROM verkauf WHERE land IN ($k, $wahl) OR land = $frei ORDER BY id";
+    let model = json!({
+        "schemaVersion": 1, "title": "V", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "k", "type": "constant", "current": { "value": "Schweiz" } },
+            { "name": "wahl", "type": "custom", "options": ["Österreich", "Deutschland"] },
+            { "name": "frei", "type": "textbox" }
+        ],
+        "panels": [{
+            "id": "p", "type": "table", "title": "T", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": sql } }],
+            "transformations": [], "options": {}, "fieldConfig": {}
+        }]
+    });
+    let r = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let body = json!({ "timeRange": range(), "variables": { "wahl": "Österreich", "frei": "-" } });
+    let r = t.panel(&viewer, &dashboard, "p", body).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["1", "2"]), "{}", r.text);
+    let body = json!({ "timeRange": range(), "variables": { "wahl": ["Österreich", "Deutschland"], "frei": "-" } });
+    let r = t.panel(&viewer, &dashboard, "p", body).await;
+    let frame = r.body["results"]["A"]["result"]["frame"].clone();
+    assert_eq!(frame["fields"][0]["values"], json!(["1", "2", "9007199254740993"]), "{}", r.text);
+    assert_eq!(
+        frame["meta"]["executedQuery"],
+        "SELECT id FROM verkauf WHERE land IN (?, ?, ?) OR land = ? ORDER BY id"
+    );
+    let free = json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": sql } }],
+        "timeRange": range(),
+        "variables": { "k": "Schweiz", "wahl": ["Österreich", "Deutschland"], "frei": "-" }
+    });
+    let r = t.send(Method::POST, &t.path("/query"), Some(free), Some(&t.owner)).await;
+    assert_eq!(r.body["results"]["A"]["result"]["frame"], frame, "the same answer through /query: {}", r.text);
+}
+
 /// The same rules hold for a Prometheus panel: a custom variable keeps to its options.
 #[tokio::test]
 async fn prometheus_panels_keep_variables_to_the_dashboard() {
@@ -1216,6 +1435,302 @@ async fn variable_changes_recheck_every_stored_query() {
     m["title"] = json!("Neu");
     let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 2 })), Some(&viewer)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+}
+
+/// List and detail answers say what the caller may do, from role and grants, and the routes
+/// agree with what they say.
+#[tokio::test]
+async fn answers_carry_the_callers_access() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let other = t.sqlite_file("anderes.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let access = |read: bool, query: bool, write: bool, permissions: bool, change_target: bool| json!({ "read": read, "query": query, "write": write, "permissions": permissions, "changeTarget": change_target });
+    let seen = |cookie: String| {
+        let t = &t;
+        let ds = ds.clone();
+        async move {
+            let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&cookie)).await;
+            let one = t.send(Method::GET, &t.path(&format!("/datasources/{ds}")), None, Some(&cookie)).await;
+            let listed = list.body["items"].as_array().unwrap().iter().find(|i| i["id"] == ds.as_str()).cloned();
+            assert_eq!(listed.as_ref().map(|i| &i["access"]), Some(&one.body["access"]), "{} {}", list.text, one.text);
+            one.body["access"].clone()
+        }
+    };
+    assert_eq!(seen(t.owner.clone()).await, access(true, true, true, true, true));
+    let editor = t.session_for_role("edda", Some("editor")).await;
+    assert_eq!(seen(editor.clone()).await, access(true, true, false, false, false));
+
+    // A custom role with the org-wide write but without permissions may repoint sources, so
+    // `changeTarget` is true where `permissions` is false.
+    let role = t
+        .post("/roles", json!({ "name": "Quellenpflege", "permissions": ["datasources:read", "datasources:write"] }))
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text);
+    let custom = t.session_for_role("quirin", role.body["id"].as_str()).await;
+    assert_eq!(seen(custom.clone()).await, access(true, false, true, false, true));
+    let moved = json!({ "settings": { "path": other.to_string_lossy() } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(moved), Some(&custom)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let back = json!({ "settings": { "path": file.to_string_lossy() } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(back), Some(&custom)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+
+    // A custom role with read and permissions but without write manages grants, but cannot change
+    // the source, so neither its target.
+    let role = t
+        .post("/roles", json!({ "name": "Freigaben", "permissions": ["datasources:read", "datasources:permissions"] }))
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text);
+    let granter = t.session_for_role("greta", role.body["id"].as_str()).await;
+    assert_eq!(seen(granter.clone()).await, access(true, false, false, true, false));
+    let moved = json!({ "settings": { "path": other.to_string_lossy() } });
+    let r = t.send(Method::PATCH, &t.path(&format!("/datasources/{ds}")), Some(moved), Some(&granter)).await;
+    assert_eq!(r.code(), "forbidden", "{}", r.text);
+
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'vera@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
+    assert_eq!(list.body["items"], json!([]), "{}", list.text);
+    let grant = |level: &str| json!({ "subjectType": "user", "subjectId": vera, "resourceType": "datasource", "resourceId": ds, "level": level });
+    for (level, expected) in [
+        ("query", access(true, true, false, false, false)),
+        ("edit", access(true, true, true, false, false)),
+        ("admin", access(true, true, true, true, true)),
+    ] {
+        // A second grant for the same member replaces the first.
+        let r = t.post("/grants", grant(level)).await;
+        assert!(r.status.is_success(), "{}", r.text);
+        assert_eq!(seen(viewer.clone()).await, expected, "{level}");
+    }
+    // With the admin grant the member may repoint the source (an edit grant alone may not, see
+    // an_edit_grant_cannot_repoint_a_data_source).
+    let r = t
+        .send(
+            Method::PATCH,
+            &t.path(&format!("/datasources/{ds}")),
+            Some(json!({ "settings": { "path": other.to_string_lossy() } })),
+            Some(&viewer),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["access"], access(true, true, true, true, true));
+
+    // The trash says the same.
+    t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&viewer)).await;
+    let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&viewer)).await;
+    assert_eq!(trash.body["items"][0]["access"], access(true, true, true, true, true), "{}", trash.text);
+}
+
+/// `access` against what each route allows, for every combination of data source permissions on
+/// a custom role (held directly or as a team role) and a grant (none, or query, edit or admin to
+/// the member, their team or their role): 192 principals. Read is `GET`, query is a free query
+/// (`/health` and `/schema` check the same permission), write is a rename, permissions is
+/// reading the grants, changeTarget is a path change; on the trash, `write` and being listed must
+/// match whether restore works. Every flag must be both true and false for some principals, so a
+/// broken setup cannot pass by allowing nothing.
+#[tokio::test]
+async fn access_matches_what_the_routes_allow() {
+    let t = T::new().await;
+    let file = t.sqlite_file("a.db", SALES).await;
+    let other = t.sqlite_file("b.db", SALES).await;
+    let ds = t.create_sqlite("A", &file).await;
+    let gone = t.create_sqlite("B", &file).await;
+    let r = t.send(Method::DELETE, &t.path(&format!("/datasources/{gone}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.text);
+    let db = t.state.db.clone();
+    let perms = ["datasources:read", "datasources:query", "datasources:write", "datasources:permissions"];
+    let grants: [(&str, &str); 6] =
+        [("none", ""), ("user", "query"), ("user", "edit"), ("user", "admin"), ("team", "edit"), ("role", "admin")];
+    let mut bad = Vec::new();
+    let mut n = 0;
+    let mut allowed = [0_usize; 5];
+    let mut restored = 0_usize;
+    for mask in 0..16u32 {
+        let set: Vec<&str> = perms.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, p)| *p).collect();
+        let role_id = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO roles (id, org_id, name, name_key, description, created_at) VALUES ($1, $2, $3, $4, $5, 0)",
+        )
+        .bind(&role_id)
+        .bind(&t.org)
+        .bind(format!("r{mask}"))
+        .bind(format!("r{mask}"))
+        .bind("x")
+        .execute(&db)
+        .await
+        .unwrap();
+        for p in &set {
+            sqlx::query("INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2)")
+                .bind(&role_id)
+                .bind(*p)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        for via_team in [false, true] {
+            for (subject, level) in grants {
+                n += 1;
+                let name = format!("u{n}");
+                let org_role = if via_team { "viewer".to_string() } else { role_id.clone() };
+                let cookie = t.session_for_role(&name, Some(&org_role)).await;
+                let (uid,): (String,) =
+                    sqlx::query_as("SELECT id FROM users WHERE name = $1").bind(&name).fetch_one(&db).await.unwrap();
+                let team = uuid::Uuid::now_v7().to_string();
+                sqlx::query("INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ($1, $2, $3, $4, 0)")
+                    .bind(&team)
+                    .bind(&t.org)
+                    .bind(format!("t{n}"))
+                    .bind(format!("t{n}"))
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ($1, $2, $3, 0)")
+                    .bind(&team)
+                    .bind(&uid)
+                    .bind("member")
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                if via_team {
+                    sqlx::query("INSERT INTO team_roles (team_id, role) VALUES ($1, $2)")
+                        .bind(&team)
+                        .bind(&role_id)
+                        .execute(&db)
+                        .await
+                        .unwrap();
+                }
+                let subject_id = match subject {
+                    "user" => uid.clone(),
+                    "team" => team.clone(),
+                    _ => role_id.clone(),
+                };
+                let mut grant_ids = Vec::new();
+                if subject != "none" {
+                    for res in [&ds, &gone] {
+                        let gid = uuid::Uuid::now_v7().to_string();
+                        sqlx::query("INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 0)")
+                            .bind(&gid).bind(&t.org).bind(subject).bind(&subject_id).bind("datasource").bind(res).bind(level)
+                            .execute(&db).await.unwrap();
+                        grant_ids.push(gid);
+                    }
+                }
+                let label = format!("perms={set:?} team={via_team} grant={subject}:{level}");
+                let flags = |a: &Value| -> [bool; 5] {
+                    ["read", "query", "write", "permissions", "changeTarget"].map(|k| a[k].as_bool().unwrap_or(false))
+                };
+                // Live source.
+                let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&cookie)).await;
+                let listed = list.body["items"].as_array().unwrap().iter().find(|i| i["id"] == ds.as_str()).cloned();
+                let one = t.send(Method::GET, &t.path(&format!("/datasources/{ds}")), None, Some(&cookie)).await;
+                if let Some(row) = &listed
+                    && one.status == StatusCode::OK
+                    && row["access"] != one.body["access"]
+                {
+                    bad.push(format!("{label}: list {} != detail {}", row["access"], one.body["access"]));
+                }
+                let claimed = listed
+                    .as_ref()
+                    .map(|r| flags(&r["access"]))
+                    .or_else(|| (one.status == StatusCode::OK).then(|| flags(&one.body["access"])))
+                    .unwrap_or_default();
+                let q = t.send(Method::POST, &t.path("/query"), Some(json!({ "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT 1 AS x" } }], "timeRange": { "from": 0, "to": 1 } })), Some(&cookie)).await;
+                let free_ok = q.body["results"]["A"].get("result").is_some();
+                let write = t
+                    .send(
+                        Method::PATCH,
+                        &t.path(&format!("/datasources/{ds}")),
+                        Some(json!({ "name": "A" })),
+                        Some(&cookie),
+                    )
+                    .await;
+                let gr = t
+                    .send(
+                        Method::GET,
+                        &t.path(&format!("/grants?resourceType=datasource&resourceId={ds}")),
+                        None,
+                        Some(&cookie),
+                    )
+                    .await;
+                let moved = t
+                    .send(
+                        Method::PATCH,
+                        &t.path(&format!("/datasources/{ds}")),
+                        Some(json!({ "settings": { "path": other.to_string_lossy() } })),
+                        Some(&cookie),
+                    )
+                    .await;
+                if moved.status == StatusCode::OK {
+                    let back = t
+                        .send(
+                            Method::PATCH,
+                            &t.path(&format!("/datasources/{ds}")),
+                            Some(json!({ "settings": { "path": file.to_string_lossy() } })),
+                            Some(&t.owner),
+                        )
+                        .await;
+                    assert_eq!(back.status, StatusCode::OK, "{}", back.text);
+                }
+                let actual = [
+                    one.status == StatusCode::OK,
+                    free_ok,
+                    write.status == StatusCode::OK,
+                    gr.status == StatusCode::OK,
+                    moved.status == StatusCode::OK,
+                ];
+                for (count, yes) in allowed.iter_mut().zip(actual) {
+                    *count += usize::from(yes);
+                }
+                if claimed != actual {
+                    bad.push(format!(
+                        "{label}: live access {claimed:?} vs routes {actual:?} (listed={})",
+                        listed.is_some()
+                    ));
+                }
+                let sees = actual[0] || actual[1];
+                if listed.is_some() != sees {
+                    bad.push(format!("{label}: listed={} but routes see={sees}", listed.is_some()));
+                }
+                // Trash.
+                let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&cookie)).await;
+                let row =
+                    trash.body["items"].as_array().and_then(|a| a.iter().find(|i| i["id"] == gone.as_str()).cloned());
+                let claimed = row.as_ref().map(|r| flags(&r["access"])).unwrap_or_default();
+                let restore = t
+                    .send(
+                        Method::POST,
+                        &t.path(&format!("/datasources/{gone}/restore")),
+                        Some(json!({})),
+                        Some(&cookie),
+                    )
+                    .await;
+                if restore.status == StatusCode::OK {
+                    let again =
+                        t.send(Method::DELETE, &t.path(&format!("/datasources/{gone}")), None, Some(&t.owner)).await;
+                    assert!(again.status.is_success(), "{}", again.text);
+                }
+                let restore_ok = restore.status == StatusCode::OK;
+                restored += usize::from(restore_ok);
+                if claimed[2] != restore_ok || row.is_some() != restore_ok {
+                    bad.push(format!(
+                        "{label}: trash listed={} access={claimed:?} but restore {}",
+                        row.is_some(),
+                        restore.status
+                    ));
+                }
+                for gid in grant_ids {
+                    sqlx::query("DELETE FROM resource_grants WHERE id = $1").bind(gid).execute(&db).await.unwrap();
+                }
+            }
+        }
+    }
+    assert_eq!(n, 192);
+    for (flag, count) in ["read", "query", "write", "permissions", "changeTarget"].iter().zip(allowed) {
+        assert!(count > 0 && count < n, "{flag} is allowed for {count} of {n} principals");
+    }
+    assert!(restored > 0 && restored < n, "restore works for {restored} of {n} principals");
+    assert!(bad.is_empty(), "{} of {n} principals disagree:\n{}", bad.len(), bad.join("\n"));
 }
 
 /// An edit grant on a data source renames it and changes its limits, but where it connects is

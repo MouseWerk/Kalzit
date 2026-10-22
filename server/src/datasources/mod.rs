@@ -7,7 +7,9 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod detail;
 pub mod frame;
+pub mod mongodb;
 pub mod mssql;
 pub mod mysql;
 pub mod postgres;
@@ -37,6 +39,7 @@ use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
 use crate::secrets::Keyring;
 use crate::shapes::{ErrorBody, QueryItem, QueryOutcome, QueryResponse, QueryResult, Shape, TimeRange};
+pub use detail::Detail;
 use frame::ResponseBudget;
 use targets::TargetPolicy;
 
@@ -50,18 +53,38 @@ pub trait DataSourcePlugin: Send + Sync {
     async fn health(&self, conn: &Connection) -> Health;
     async fn schema(&self, conn: &Connection) -> Result<SourceSchema, SourceError>;
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError>;
+    /// Whether `check_on_save` needs the source (and its stored secrets) when it is saved.
+    fn checks_on_save(&self) -> bool {
+        false
+    }
+    /// Checks that need the source itself, run when its settings or secrets are saved (MongoDB:
+    /// the login may only read). A refusal names the settings field at fault; a source that
+    /// cannot be reached is not refused.
+    async fn check_on_save(&self, _conn: &Connection) -> Result<(), (&'static str, SourceError)> {
+        Ok(())
+    }
 }
 
 /// A settings field that is not valid. `field` is the field's name in the kind's settings form.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldError {
     pub field: &'static str,
-    pub message: String,
+    /// The reason code (`settings.*`), its parameters and the English text.
+    pub detail: Detail,
 }
 
 impl FieldError {
-    pub fn new(field: &'static str, message: impl Into<String>) -> Self {
-        Self { field, message: message.into() }
+    pub fn new(field: &'static str, reason: &'static str, message: impl Into<String>) -> Self {
+        Self { field, detail: Detail::new(reason, message).with("field", field) }
+    }
+
+    pub fn with(mut self, key: &str, value: impl ToString) -> Self {
+        self.detail = self.detail.with(key, value);
+        self
+    }
+
+    pub fn message(&self) -> &str {
+        &self.detail.message
     }
 }
 
@@ -69,7 +92,40 @@ impl FieldError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Health {
     pub ok: bool,
-    pub message: String,
+    /// The error code when it failed (`datasource_error`, `datasource_target_blocked`, ...).
+    pub code: Option<&'static str>,
+    /// What to show: `health.connected` and friends with `engine` and `version`, or why it
+    /// failed.
+    pub detail: Detail,
+}
+
+impl Health {
+    /// Connected: `engine` and `version` for the text; `admin_login` when the login has
+    /// administrator rights (which the text advises against).
+    pub fn connected(engine: &str, version: &str, admin_login: bool) -> Self {
+        let detail = if admin_login {
+            Detail::new(
+                "health.connected_admin_login",
+                format!("{engine} {version}; the login has administrator rights, use a read-only login instead"),
+            )
+        } else {
+            Detail::new("health.connected", format!("{engine} {version}").trim().to_string())
+        };
+        Self { ok: true, code: None, detail: detail.with("engine", engine).with("version", version) }
+    }
+
+    pub fn failed(e: &SourceError) -> Self {
+        Self { ok: false, code: Some(e.code()), detail: e.detail() }
+    }
+}
+
+/// The detail of a refused target that a driver hands back as a boxed error: the target rule's
+/// own detail, or Kalzit's own database.
+pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -> Detail {
+    match inner.downcast_ref::<targets::Blocked>() {
+        Some(b) => b.0.clone(),
+        None => Detail::new("target.own_database", inner.to_string()),
+    }
 }
 
 /// What a query editor offers for completion: tables and columns, or metrics and labels.
@@ -78,6 +134,7 @@ pub struct Health {
 pub enum SourceSchema {
     Tables { tables: Vec<Table> },
     Metrics { metrics: Vec<String>, labels: Vec<String> },
+    Collections { database: String, collections: Vec<mongodb::CollectionSchema> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -115,24 +172,58 @@ impl SourceSchema {
     }
 }
 
+/// A source failure with its error code (`code()`) and a detail: the reason code, parameters and
+/// English text (`detail::Detail`).
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
     /// The query is not allowed (`query_rejected`).
     #[error("{0}")]
-    Rejected(String),
+    Rejected(Detail),
     /// The target is refused (`datasource_target_blocked`).
     #[error("{0}")]
-    Blocked(String),
+    Blocked(Detail),
     /// The query ran longer than allowed (`query_timeout`).
     #[error("the query took longer than {0} seconds")]
     Timeout(u64),
     /// The source failed: connection, authentication, the database's own error
     /// (`datasource_error`).
     #[error("{0}")]
-    Failed(String),
+    Failed(Detail),
 }
 
 impl SourceError {
+    pub fn rejected(reason: &'static str, message: impl Into<String>) -> Self {
+        SourceError::Rejected(Detail::new(reason, message))
+    }
+
+    pub fn failed(reason: &'static str, message: impl Into<String>) -> Self {
+        SourceError::Failed(Detail::new(reason, message))
+    }
+
+    /// The database's or server's own message, shown as the detail of `source.error`.
+    pub fn from_source(message: impl Into<String>) -> Self {
+        let message = message.into();
+        SourceError::Failed(Detail::new("source.error", message.clone()).with("detail", message))
+    }
+
+    /// Adds a parameter to the detail.
+    pub fn with(self, key: &str, value: impl ToString) -> Self {
+        match self {
+            SourceError::Rejected(d) => SourceError::Rejected(d.with(key, value)),
+            SourceError::Blocked(d) => SourceError::Blocked(d.with(key, value)),
+            SourceError::Failed(d) => SourceError::Failed(d.with(key, value)),
+            timeout => timeout,
+        }
+    }
+
+    /// The reason code, parameters and text.
+    pub fn detail(&self) -> Detail {
+        match self {
+            SourceError::Rejected(d) | SourceError::Blocked(d) | SourceError::Failed(d) => d.clone(),
+            SourceError::Timeout(secs) => Detail::new("query.timeout", self.to_string()).with("seconds", secs),
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             SourceError::Rejected(_) => "query_rejected",
@@ -153,7 +244,7 @@ impl SourceError {
 
 impl From<sql::Rejected> for SourceError {
     fn from(r: sql::Rejected) -> Self {
-        SourceError::Rejected(r.0)
+        SourceError::Rejected(r)
     }
 }
 
@@ -167,7 +258,7 @@ impl From<targets::ResolveError> for SourceError {
     fn from(e: targets::ResolveError) -> Self {
         match e {
             targets::ResolveError::Blocked(b) => b.into(),
-            other => SourceError::Failed(other.to_string()),
+            other => SourceError::Failed(other.detail()),
         }
     }
 }
@@ -184,12 +275,16 @@ pub struct SourceQuery {
     /// Variables that may be used as identifiers; `None` allows all (see `sql::Context`).
     pub identifier_variables: Option<std::collections::BTreeSet<String>>,
     pub limits: Limits,
+    /// Continues a `DocumentSet` from its `nextCursor`; frame sources ignore it.
+    pub cursor: Option<String>,
 }
 
 impl SourceQuery {
     /// The query's fields as the kind's struct; a wrong form is `query_rejected`.
     pub fn parse<T: DeserializeOwned>(&self) -> Result<T, SourceError> {
-        T::deserialize(&self.query).map_err(|e| SourceError::Rejected(format!("the query is not valid: {e}")))
+        T::deserialize(&self.query).map_err(|e| {
+            SourceError::rejected("query.invalid_form", format!("the query is not valid: {e}")).with("detail", e)
+        })
     }
 }
 
@@ -229,7 +324,10 @@ impl OwnDatabase {
                 .await
                 .map_err(|e| {
                     tracing::error!("reading the identity of Kalzit's own database: {e}");
-                    SourceError::Failed("cannot verify that the target is not Kalzit's own database".into())
+                    SourceError::failed(
+                        "target.own_database_unverifiable",
+                        "cannot verify that the target is not Kalzit's own database",
+                    )
                 })?;
                 Ok::<_, SourceError>(Some(row))
             })
@@ -269,8 +367,9 @@ impl Connection {
     }
 
     pub fn settings_as<T: DeserializeOwned>(&self) -> Result<T, SourceError> {
-        T::deserialize(&self.settings)
-            .map_err(|e| SourceError::Failed(format!("the stored settings are not valid: {e}")))
+        T::deserialize(&self.settings).map_err(|e| {
+            SourceError::failed("settings.stored_invalid", format!("the stored settings are not valid: {e}"))
+        })
     }
 
     pub fn secret(&self, field: &str) -> Option<&str> {
@@ -303,7 +402,7 @@ impl Connection {
             .await?;
         any.clone()
             .downcast::<T>()
-            .map_err(|_| SourceError::Failed("internal: connection state of another kind".into()))
+            .map_err(|_| SourceError::failed("internal", "internal: connection state of another kind"))
     }
 
     /// The text without this source's secrets.
@@ -489,18 +588,27 @@ impl Kind {
     /// entries, ready to store.
     pub fn validate_settings(&self, settings: &Value) -> Result<Value, FieldError> {
         let Value::Object(map) = settings else {
-            return Err(FieldError::new("settings", "settings must be an object"));
+            return Err(FieldError::new("settings", "settings.not_object", "settings must be an object"));
         };
         if settings.to_string().len() > MAX_SETTING_BYTES {
-            return Err(FieldError::new("settings", "settings are too large"));
+            return Err(FieldError::new("settings", "settings.too_large", "settings are too large"));
         }
         let mut clean = serde_json::Map::new();
         for (key, value) in map {
             let Some(field) = self.field(key) else {
-                return Err(FieldError::new("settings", format!("{key} is not a setting of {}", self.name)));
+                return Err(FieldError::new(
+                    "settings",
+                    "settings.unknown",
+                    format!("{key} is not a setting of {}", self.name),
+                )
+                .with("name", key));
             };
             if field.secret {
-                return Err(FieldError::new(field.name, format!("{key} is a secret; send it in secrets")));
+                return Err(FieldError::new(
+                    field.name,
+                    "settings.secret_in_settings",
+                    format!("{key} is a secret; send it in secrets"),
+                ));
             }
             if value.is_null() {
                 continue;
@@ -518,28 +626,50 @@ impl Kind {
                     SettingType::Bool => "true or false".to_string(),
                     SettingType::Select => format!("one of {}", field.options.join(", ")),
                 };
-                return Err(FieldError::new(field.name, format!("{key} must be {expected}")));
+                let reason = match field.field_type {
+                    SettingType::String | SettingType::Text => "settings.expected_text",
+                    SettingType::Number => "settings.expected_number",
+                    SettingType::Bool => "settings.expected_bool",
+                    SettingType::Select => "settings.expected_option",
+                };
+                let e = FieldError::new(field.name, reason, format!("{key} must be {expected}"));
+                return Err(match field.field_type {
+                    SettingType::Select => e.with("options", field.options.join(", ")),
+                    _ => e,
+                });
             }
             if field.field_type == SettingType::String
                 && value.as_str().is_some_and(|s| s.chars().any(char::is_control))
             {
-                return Err(FieldError::new(field.name, format!("{key} contains control characters")));
+                return Err(FieldError::new(
+                    field.name,
+                    "settings.control_characters",
+                    format!("{key} contains control characters"),
+                ));
             }
             clean.insert(key.clone(), value.clone());
         }
         for field in self.all_settings().filter(|f| f.required && !f.secret) {
             let present = clean.get(field.name).is_some_and(|v| v.as_str().is_none_or(|s| !s.trim().is_empty()));
             if !present {
-                return Err(FieldError::new(field.name, format!("{} is required", field.name)));
+                return Err(FieldError::new(field.name, "settings.required", format!("{} is required", field.name)));
             }
         }
         if let Some(t) = clean.get("queryTimeoutSecs").and_then(Value::as_u64)
             && !(1..=3600).contains(&t)
         {
-            return Err(FieldError::new("queryTimeoutSecs", "queryTimeoutSecs must be 1 to 3600"));
+            return Err(FieldError::new(
+                "queryTimeoutSecs",
+                "settings.out_of_range",
+                "queryTimeoutSecs must be 1 to 3600",
+            )
+            .with("min", 1)
+            .with("max", 3600));
         }
         if clean.get("maxRows").and_then(Value::as_u64) == Some(0) {
-            return Err(FieldError::new("maxRows", "maxRows must be at least 1"));
+            return Err(
+                FieldError::new("maxRows", "settings.out_of_range", "maxRows must be at least 1").with("min", 1)
+            );
         }
         let clean = Value::Object(clean);
         self.plugin.check_settings(&plugin_settings(&clean))?;
@@ -550,10 +680,15 @@ impl Kind {
     pub fn validate_secrets(&self, secrets: &crate::secrets::SecretPatch) -> Result<(), FieldError> {
         for (key, value) in secrets {
             let Some(field) = self.field(key).filter(|f| f.secret) else {
-                return Err(FieldError::new("secrets", format!("{key} is not a secret of {}", self.name)));
+                return Err(FieldError::new(
+                    "secrets",
+                    "secrets.unknown",
+                    format!("{key} is not a secret of {}", self.name),
+                )
+                .with("name", key));
             };
             if value.as_ref().is_some_and(|v| v.len() > MAX_SECRET_BYTES) {
-                return Err(FieldError::new(field.name, format!("{key} is too long")));
+                return Err(FieldError::new(field.name, "secrets.too_long", format!("{key} is too long")));
             }
         }
         Ok(())
@@ -716,7 +851,14 @@ impl DataSources {
     pub fn new(config: &Config, db: AnyPool, keyring: Arc<Keyring>) -> Self {
         let database_url = config.database_url();
         Self {
-            kinds: vec![postgres::kind(), mysql::kind(), sqlite::kind(), mssql::kind(), prometheus::kind()],
+            kinds: vec![
+                postgres::kind(),
+                mysql::kind(),
+                sqlite::kind(),
+                mssql::kind(),
+                prometheus::kind(),
+                mongodb::kind(),
+            ],
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),
@@ -792,7 +934,7 @@ impl DataSources {
         let limit = self
             .setting_u64(state, "datasources.max_parallel_queries")
             .await
-            .map_err(|e| SourceError::Failed(e.message))?
+            .map_err(|e| SourceError::failed("internal", e.message))?
             .max(1) as usize;
         let server = {
             let mut running = self.running.lock().expect("running lock");
@@ -801,7 +943,7 @@ impl DataSources {
             }
             running.1.clone()
         };
-        let closed = |_| SourceError::Failed("the server is shutting down".into());
+        let closed = |_| SourceError::failed("server.shutting_down", "the server is shutting down");
         let user = self.user_slots(user_id).acquire_owned().await.map_err(closed)?;
         let server = server.acquire_owned().await.map_err(closed)?;
         Ok(QuerySlots { _user: user, _server: server })
@@ -837,7 +979,7 @@ impl DataSources {
 
     /// The cached connection of a data source, or a new one.
     pub async fn connection(&self, state: &AppState, ds: &Datasource) -> Result<Arc<Connection>, SourceError> {
-        let policy = self.policy(state).await.map_err(|e| SourceError::Failed(e.message))?;
+        let policy = self.policy(state).await.map_err(|e| SourceError::failed("internal", e.message))?;
         {
             let cache = self.connections.lock().expect("connection cache lock");
             if let Some(c) = cache.get(&ds.id)
@@ -864,9 +1006,12 @@ impl DataSources {
         let secrets = crate::secrets::load_all(&state.db, &self.keyring, &ds.id).await.map_err(|e| match e {
             crate::secrets::LoadError::Database(db) => {
                 tracing::error!("loading secrets of data source {}: {db}", ds.id);
-                SourceError::Failed("the secrets of this data source cannot be read".into())
+                SourceError::failed("secrets.unreadable", "the secrets of this data source cannot be read")
             }
-            secret => SourceError::Failed(secret.to_string()),
+            crate::secrets::LoadError::Secret { field, error } => {
+                let message = format!("the stored secret {field} {error}; enter it again");
+                SourceError::failed("secrets.undecryptable", message).with("field", field)
+            }
         })?;
         Ok(Arc::new(Connection::new(ds.id.clone(), plugin_settings(&ds.settings), secrets, policy, self.own.clone())))
     }
@@ -882,8 +1027,29 @@ impl DataSources {
     }
 }
 
-fn outcome_error(code: &str, message: impl Into<String>) -> QueryOutcome {
-    QueryOutcome::Err { error: ErrorBody { code: code.to_string(), message: message.into(), field: None } }
+fn outcome_error(code: &str, detail: Detail) -> QueryOutcome {
+    QueryOutcome::Err { error: error_body(code, detail) }
+}
+
+/// An error code with its detail, as a query outcome or a single-route error carries it.
+pub fn error_body(code: &str, detail: Detail) -> ErrorBody {
+    ErrorBody {
+        code: code.to_string(),
+        message: detail.message,
+        field: None,
+        reason: Some(detail.reason.to_string()),
+        params: (!detail.params.is_empty()).then_some(detail.params),
+    }
+}
+
+/// An API error (not found, validation) as a query outcome, with its reason when it has one;
+/// `not_found`, `forbidden` and `internal` say everything with their code.
+pub fn api_error_body(e: ApiError) -> ErrorBody {
+    let (reason, params) = match e.reason {
+        Some(r) => (Some(r.code), (!r.params.is_empty()).then_some(r.params)),
+        None => (None, None),
+    };
+    ErrorBody { code: e.code.to_string(), message: e.message, field: e.field.map(str::to_string), reason, params }
 }
 
 /// The longest interval a request may ask for: a year.
@@ -893,7 +1059,9 @@ pub const MAX_INTERVAL_MS: u64 = 365 * 24 * 3_600_000;
 pub fn check_interval(interval_ms: Option<u64>) -> ApiResult<()> {
     match interval_ms {
         Some(ms) if !(1..=MAX_INTERVAL_MS).contains(&ms) => {
-            Err(ApiError::validation("intervalMs must be 1 ms to one year").with_field("intervalMs"))
+            Err(ApiError::validation("intervalMs must be 1 ms to one year")
+                .with_field("intervalMs")
+                .because("query.interval_out_of_range"))
         }
         _ => Ok(()),
     }
@@ -903,10 +1071,14 @@ pub fn check_interval(interval_ms: Option<u64>) -> ApiResult<()> {
 pub fn check_range(range: TimeRange) -> ApiResult<()> {
     let inside = |t: i64| (MIN_TIME_MS..=MAX_TIME_MS).contains(&t);
     if !inside(range.from) || !inside(range.to) {
-        return Err(ApiError::validation("timeRange must lie within the years 1 to 9999").with_field("timeRange"));
+        return Err(ApiError::validation("timeRange must lie within the years 1 to 9999")
+            .with_field("timeRange")
+            .because("query.range_out_of_bounds"));
     }
     if range.from > range.to {
-        return Err(ApiError::validation("timeRange.from must not be after timeRange.to").with_field("timeRange"));
+        return Err(ApiError::validation("timeRange.from must not be after timeRange.to")
+            .with_field("timeRange")
+            .because("query.range_reversed"));
     }
     Ok(())
 }
@@ -914,23 +1086,27 @@ pub fn check_range(range: TimeRange) -> ApiResult<()> {
 /// A bound time as a UTC timestamp; a time outside chrono's range is refused, never bound as
 /// NULL.
 pub fn bind_time(ms: i64) -> Result<chrono::DateTime<chrono::Utc>, SourceError> {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .ok_or_else(|| SourceError::Rejected(format!("the time {ms} is out of range")))
+    chrono::DateTime::from_timestamp_millis(ms).ok_or_else(|| {
+        SourceError::rejected("query.time_out_of_range", format!("the time {ms} is out of range")).with("time", ms)
+    })
 }
 
 /// Checks the shape of a request's queries: 1 to `MAX_QUERIES_PER_REQUEST`, each with a
 /// distinct, non-empty `refId`.
 pub fn check_items(items: &[QueryItem]) -> ApiResult<()> {
     if items.is_empty() || items.len() > MAX_QUERIES_PER_REQUEST {
-        return Err(ApiError::validation(format!("send 1 to {MAX_QUERIES_PER_REQUEST} queries")).with_field("queries"));
+        return Err(ApiError::validation(format!("send 1 to {MAX_QUERIES_PER_REQUEST} queries"))
+            .with_field("queries")
+            .because("query.count")
+            .param("max", MAX_QUERIES_PER_REQUEST));
     }
     let mut seen = std::collections::BTreeSet::new();
     for item in items {
         let ref_id = item.ref_id.trim();
         if ref_id.is_empty() || ref_id.chars().count() > 64 || !seen.insert(ref_id) {
-            return Err(
-                ApiError::validation("every query needs its own refId of 1 to 64 characters").with_field("queries")
-            );
+            return Err(ApiError::validation("every query needs its own refId of 1 to 64 characters")
+                .with_field("queries")
+                .because("query.ref_id"));
         }
     }
     Ok(())
@@ -972,7 +1148,8 @@ pub async fn run_queries_with(
     let budget = match state.datasources.response_budget(state).await {
         Ok(b) => b,
         Err(e) => {
-            let results = items.into_iter().map(|i| (i.ref_id, outcome_error(e.code, e.message.clone()))).collect();
+            let error = api_error_body(e);
+            let results = items.into_iter().map(|i| (i.ref_id, QueryOutcome::Err { error: error.clone() })).collect();
             return QueryResponse { results };
         }
     };
@@ -1004,14 +1181,17 @@ async fn run_one(
     let registry = &state.datasources;
     let ds = match resolve_in_org(&state.db, &ctx.org_id, &item.datasource_id).await {
         Ok(ds) => ds,
-        Err(e) => return outcome_error(e.code, e.message),
+        Err(e) => return QueryOutcome::Err { error: api_error_body(e) },
     };
     let Some(kind) = registry.kind(&ds.kind) else {
-        return outcome_error("datasource_error", format!("the data source kind {} is not available", ds.kind));
+        let detail =
+            Detail::new("datasource.kind_unavailable", format!("the data source kind {} is not available", ds.kind))
+                .with("kind", &ds.kind);
+        return outcome_error("datasource_error", detail);
     };
     let mut limits = match registry.limits(state, &ds, budget).await {
         Ok(l) => l,
-        Err(e) => return outcome_error(e.code, e.message),
+        Err(e) => return QueryOutcome::Err { error: api_error_body(e) },
     };
     if let Some(limit) = item.limit {
         limits.max_rows = limits.max_rows.min(limit.max(1) as usize);
@@ -1031,39 +1211,45 @@ async fn run_one(
             variables: variables.clone(),
             identifier_variables: identifier_variables.cloned(),
             limits,
+            cursor: item.cursor,
         };
         let result = kind.plugin.query(&conn, req).await;
         Ok::<_, SourceError>((conn, result))
     };
     match tokio::time::timeout(timeout, run).await {
-        Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).to_string()),
-        Ok(Err(e)) => outcome_error(e.code(), scrub(&e.to_string(), std::iter::empty())),
+        Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()),
+        Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),
         Ok(Ok((_, Ok(result)))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
             QueryOutcome::Ok { result }
         }
         Ok(Ok((conn, Err(e)))) => {
-            let message = conn.scrub(&e.to_string());
-            tracing::debug!(datasource = %ds.id, code = e.code(), "query failed: {message}");
-            outcome_error(e.code(), message)
+            let detail = e.detail().scrubbed(|t| conn.scrub(t));
+            tracing::debug!(datasource = %ds.id, code = e.code(), reason = detail.reason, "query failed: {}", detail.message);
+            outcome_error(e.code(), detail)
         }
     }
 }
 
 /// The source error as an API error, scrubbed of the connection's secrets.
 pub fn api_error(e: SourceError, conn: Option<&Connection>) -> ApiError {
-    let message = match conn {
-        Some(c) => c.scrub(&e.to_string()),
-        None => scrub(&e.to_string(), std::iter::empty()),
+    let detail = match conn {
+        Some(c) => e.detail().scrubbed(|t| c.scrub(t)),
+        None => e.detail().scrubbed(|t| scrub(t, std::iter::empty())),
     };
-    ApiError::new(e.status(), e.code(), message)
+    ApiError::new(e.status(), e.code(), detail.message).with_reason(detail.reason, detail.params)
 }
 
-/// "Test connection": `{ok, message, latencyMs}`, plus the error code when it failed.
+/// "Test connection": `ok`, a `reason` code the UI translates with its `params` (`engine`,
+/// `version`, or what failed), the English `message` as fallback, the latency, and the error
+/// code when it failed.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthReport {
     pub ok: bool,
+    pub reason: &'static str,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
     pub message: String,
     pub latency_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1085,6 +1271,9 @@ pub fn precheck_targets(
     if let Some(host) = settings.get("host").and_then(Value::as_str) {
         policy.precheck_host(host).map_err(|b| (b, "host"))?;
     }
+    for host in settings.get("hosts").and_then(Value::as_str).map(mongodb::host_names).unwrap_or_default() {
+        policy.precheck_host(&host).map_err(|b| (b, "hosts"))?;
+    }
     let url_host = settings
         .get("url")
         .and_then(Value::as_str)
@@ -1096,6 +1285,50 @@ pub fn precheck_targets(
     Ok(())
 }
 
+/// The kind's checks on the source itself before settings or secrets are saved
+/// (`DataSourcePlugin::check_on_save`): `settings` as they will be stored, the stored secrets of
+/// `datasource_id` (when it exists) with `patch` applied. A refused target answers
+/// `datasource_target_blocked`, any other refusal `validation`, both naming the field.
+pub async fn check_on_save(
+    state: &AppState,
+    kind: &Kind,
+    datasource_id: Option<&str>,
+    settings: &Value,
+    patch: &crate::secrets::SecretPatch,
+) -> ApiResult<()> {
+    if !kind.plugin.checks_on_save() {
+        return Ok(());
+    }
+    let registry = &state.datasources;
+    let mut secrets = match datasource_id {
+        // Unreadable secrets are reported when connecting; the save itself may replace them.
+        Some(id) => crate::secrets::load_all(&state.db, &registry.keyring, id).await.unwrap_or_default(),
+        None => BTreeMap::new(),
+    };
+    for (field, value) in patch {
+        match value {
+            Some(v) => secrets.insert(field.clone(), v.clone()),
+            None => secrets.remove(field),
+        };
+    }
+    let policy = registry.policy(state).await?;
+    let id = datasource_id.unwrap_or("new");
+    let conn = Connection::new(id, plugin_settings(settings), secrets, policy, registry.own.clone());
+    let check = tokio::time::timeout(MAX_HEALTH_TIMEOUT, kind.plugin.check_on_save(&conn)).await;
+    match check {
+        Ok(Err((field, e))) => {
+            let detail = e.detail().scrubbed(|t| conn.scrub(t));
+            Err(match e {
+                SourceError::Blocked(_) => ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, e.code(), detail.message),
+                _ => ApiError::validation(detail.message),
+            }
+            .with_field(field)
+            .with_reason(detail.reason, detail.params))
+        }
+        Ok(Ok(())) | Err(_) => Ok(()),
+    }
+}
+
 /// "Test connection" with the cached connection, counted against the caller's query slots.
 pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> ApiResult<HealthReport> {
     let registry = &state.datasources;
@@ -1105,8 +1338,18 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
     let timeout = registry.limits(state, ds, budget).await?.timeout.min(MAX_HEALTH_TIMEOUT);
     let started = Instant::now();
     let failed = |e: SourceError, conn: Option<&Connection>| {
-        let message = conn.map_or_else(|| e.to_string(), |c| c.scrub(&e.to_string()));
-        HealthReport { ok: false, message, latency_ms: started.elapsed().as_millis() as u64, code: Some(e.code()) }
+        let detail = match conn {
+            Some(c) => e.detail().scrubbed(|t| c.scrub(t)),
+            None => e.detail(),
+        };
+        HealthReport {
+            ok: false,
+            reason: detail.reason,
+            params: detail.params,
+            message: detail.message,
+            latency_ms: started.elapsed().as_millis() as u64,
+            code: Some(e.code()),
+        }
     };
     let policy = registry.policy(state).await?;
     // The plugin's health answer has no error code, so a target refused by the rules is
@@ -1129,11 +1372,14 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         // The next query should not reuse a pool that just failed.
         registry.forget(&ds.id);
     }
+    let detail = health.detail.scrubbed(|t| conn.scrub(t));
     Ok(HealthReport {
         ok: health.ok,
-        message: conn.scrub(&health.message),
+        reason: detail.reason,
+        params: detail.params,
+        message: detail.message,
         latency_ms: started.elapsed().as_millis() as u64,
-        code: (!health.ok).then_some("datasource_error"),
+        code: if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) },
     })
 }
 
@@ -1166,15 +1412,25 @@ pub fn check_host(field: &'static str, host: &str) -> Result<(), FieldError> {
     if ok {
         Ok(())
     } else if host.contains('@') {
-        Err(FieldError::new(field, "the host must not contain credentials; use the user and password fields"))
+        Err(FieldError::new(
+            field,
+            "settings.host_credentials",
+            "the host must not contain credentials; use the user and password fields",
+        ))
     } else {
-        Err(FieldError::new(field, "the host must be a host name or an IP address, without port or path"))
+        Err(FieldError::new(
+            field,
+            "settings.host_invalid",
+            "the host must be a host name or an IP address, without port or path",
+        ))
     }
 }
 
 pub fn check_port(field: &'static str, port: Option<u64>) -> Result<(), FieldError> {
     match port {
-        Some(p) if !(1..=65535).contains(&p) => Err(FieldError::new(field, "the port must be 1 to 65535")),
+        Some(p) if !(1..=65535).contains(&p) => {
+            Err(FieldError::new(field, "settings.port_invalid", "the port must be 1 to 65535"))
+        }
         _ => Ok(()),
     }
 }
@@ -1182,9 +1438,11 @@ pub fn check_port(field: &'static str, port: Option<u64>) -> Result<(), FieldErr
 /// A PEM certificate field, if set, must hold at least one certificate.
 pub fn check_pem(field: &'static str, pem: Option<&str>) -> Result<(), FieldError> {
     match pem {
-        Some(p) if !p.trim().is_empty() && !p.contains("-----BEGIN CERTIFICATE-----") => {
-            Err(FieldError::new(field, "the CA certificate must be in PEM format (-----BEGIN CERTIFICATE-----)"))
-        }
+        Some(p) if !p.trim().is_empty() && !p.contains("-----BEGIN CERTIFICATE-----") => Err(FieldError::new(
+            field,
+            "settings.pem_invalid",
+            "the CA certificate must be in PEM format (-----BEGIN CERTIFICATE-----)",
+        )),
         _ => Ok(()),
     }
 }

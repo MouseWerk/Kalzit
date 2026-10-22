@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
+use super::Detail;
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -50,14 +51,23 @@ async fn pool(conn: &Connection) -> Result<Arc<SqlitePool>, SourceError> {
             .read_only(true)
             .create_if_missing(false)
             // Belt and braces next to the read-only open: refuse writes on the connection too.
-            .pragma("query_only", "ON");
+            .pragma("query_only", "ON")
+            // sqlx keeps the columns a cached statement was first prepared with, even after the
+            // file's schema changed (SQLite re-prepares the statement, sqlx keeps the old
+            // columns). The file belongs to someone else and may change at any time, so nothing
+            // is cached: a query prepares three statements (the schema read in `query`, the
+            // user's statement for its columns, and the same statement again to run it), about
+            // 0.25 ms in all.
+            .statement_cache_capacity(0);
         SqlitePoolOptions::new()
             .max_connections(POOL_SIZE)
             .min_connections(0)
             .idle_timeout(std::time::Duration::from_secs(300))
             .connect_with(options)
             .await
-            .map_err(|e| SourceError::Failed(format!("cannot open the SQLite file: {e}")))
+            .map_err(|e| {
+                SourceError::failed("sqlite.open_failed", format!("cannot open the SQLite file: {e}")).with("detail", e)
+            })
     })
     .await
 }
@@ -74,10 +84,10 @@ fn failed_within(timeout: std::time::Duration) -> impl Fn(sqlx::Error) -> Source
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
         sqlx::Error::Database(db) if db.message().contains("interrupted") => {
-            SourceError::Failed("the query was stopped (time limit or cancelled)".into())
+            SourceError::failed("query.stopped", "the query was stopped (time limit or cancelled)")
         }
-        sqlx::Error::Database(db) => SourceError::Failed(db.message().to_string()),
-        other => SourceError::Failed(other.to_string()),
+        sqlx::Error::Database(db) => SourceError::from_source(db.message()),
+        other => SourceError::from_source(other.to_string()),
     }
 }
 
@@ -116,10 +126,12 @@ impl DataSourcePlugin for Sqlite {
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
-        let s = Settings::deserialize(settings).map_err(|e| FieldError::new("path", e.to_string()))?;
+        let s = Settings::deserialize(settings)
+            .map_err(|e| FieldError::new("path", "settings.invalid", e.to_string()).with("detail", e))?;
         if !Path::new(&s.path).is_absolute() {
             return Err(FieldError::new(
                 "path",
+                "settings.path_relative",
                 "the path must be absolute, like /srv/daten/umsatz.db or C:\\Daten\\umsatz.db",
             ));
         }
@@ -134,8 +146,15 @@ impl DataSourcePlugin for Sqlite {
             Ok::<_, SourceError>(version)
         };
         match check.await {
-            Ok(version) => Health { ok: true, message: format!("SQLite {version}, opened read-only") },
-            Err(e) => Health { ok: false, message: e.to_string() },
+            Ok(version) => {
+                let mut health = Health::connected("SQLite", &version, false);
+                health.detail =
+                    Detail::new("health.connected_read_only", format!("SQLite {version}, opened read-only"))
+                        .with("engine", "SQLite")
+                        .with("version", version);
+                health
+            }
+            Err(e) => Health::failed(&e),
         }
     }
 
@@ -168,15 +187,17 @@ impl DataSourcePlugin for Sqlite {
         let mut c = pool.acquire().await.map_err(failed)?;
         let _guard = guard_statement(&mut c, req.limits.timeout).await?;
         let stopped = failed_within(req.limits.timeout);
+        // A connection prepares against the schema it parsed last and notices a change only when
+        // a statement reads a table, so a table recreated since would show its old declared
+        // types. Reading the schema table first makes it reload the schema if it changed.
+        sqlx::query("SELECT 1 FROM sqlite_schema LIMIT 1").fetch_optional(&mut *c).await.map_err(&stopped)?;
         let statement =
             (&mut *c).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(&stopped)?;
-        let mut columns: Vec<Column> = Vec::new();
-        let mut declared = Vec::new();
-        for col in statement.columns() {
-            let decl = col.type_info().name().to_ascii_uppercase();
-            columns.push(Column::new(col.name(), declared_type(&decl)));
-            declared.push(decl);
-        }
+        let columns: Vec<Column> = statement
+            .columns()
+            .iter()
+            .map(|col| Column::new(col.name(), declared_type(col.type_info().name())))
+            .collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
         frame.executed_query(prepared.sql.clone());
         let mut query = statement.query();
@@ -191,25 +212,43 @@ impl DataSourcePlugin for Sqlite {
                 Bind::Interval(ms) => query.bind(sql::format_interval(ms)),
             };
         }
+        let mut mismatches = vec![0_u64; frame.columns_mut().len()];
         let mut rows = query.fetch(&mut *c);
         while let Some(row) = rows.try_next().await.map_err(&stopped)? {
-            let values = row_values(&row, &mut frame);
+            let (values, mismatched) = row_values(&row, &mut frame);
             if !frame.push_row(values) {
                 break;
             }
+            // Only rows that are shown count; a row the limit cut is not in the answer.
+            for i in mismatched {
+                mismatches[i] += 1;
+            }
+        }
+        drop(rows);
+        let names: Vec<String> = frame.columns_mut().iter().map(|c| c.name.clone()).collect();
+        for (name, count) in names.iter().zip(mismatches).filter(|(_, n)| *n > 0) {
+            let message = format!("{name} holds {count} values that do not fit its type; they are shown empty");
+            let detail = Detail::new("frame.value_mismatch", message).with("column", name).with("count", count);
+            frame.notice(NoticeSeverity::Warning, detail);
         }
         Ok(QueryResult::Frame { frame: frame.finish() })
     }
 }
 
-/// The field type a declared column type implies; `None` decides by the first value.
-fn declared_type(decl: &str) -> Option<FieldType> {
-    if decl.contains("BOOL") {
-        Some(FieldType::Bool)
-    } else if decl.contains("DATE") || decl.contains("TIME") {
-        Some(FieldType::Time)
-    } else {
-        None
+/// The field type a column's declared type implies, so a table without rows still answers its
+/// types. sqlx names the declared type by SQLite's affinity rules (`VARCHAR(20)` is `TEXT`,
+/// `DOUBLE` is `REAL`); without a declared type (an expression), or with one it cannot name
+/// (`NUMERIC`, `DECIMAL`), it reports the storage class of the first row, which before any row
+/// is `NULL`. `None` then decides by the first value, and a column without values is `string`.
+fn declared_type(name: &str) -> Option<FieldType> {
+    match name {
+        "INTEGER" => Some(FieldType::Int64),
+        "REAL" => Some(FieldType::Number),
+        "TEXT" => Some(FieldType::String),
+        "BOOLEAN" => Some(FieldType::Bool),
+        "DATE" | "TIME" | "DATETIME" => Some(FieldType::Time),
+        // Binary values are hidden with a notice; NUMERIC holds integers and reals alike.
+        _ => None,
     }
 }
 
@@ -232,10 +271,12 @@ pub fn parse_time_text(s: &str) -> Option<i64> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| d.and_hms_opt(0, 0, 0)).map(super::naive_to_ms)
 }
 
-/// SQLite types each value, not each column: the column takes the type of its first value, and
-/// later values are converted to it where that is lossless enough.
-fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
+/// SQLite types each value, not each column: a column without a declared type takes the type of
+/// its first value, and later values are converted to the column's type where that is lossless.
+/// Values that do not fit are `null`; the second part names their columns.
+fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usize>) {
     let mut out = Vec::with_capacity(row.len());
+    let mut mismatched = Vec::new();
     let mut notices = Vec::new();
     for (i, column) in frame.columns_mut().iter_mut().enumerate() {
         let Ok(raw) = row.try_get_raw(i) else {
@@ -254,7 +295,10 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
             _ => None,
         };
         let Some(natural) = natural else {
-            notices.push(format!("{} holds binary values, which are not shown", column.name));
+            notices.push(
+                Detail::new("frame.binary_hidden", format!("{} holds binary values, which are not shown", column.name))
+                    .with("column", &column.name),
+            );
             out.push(Value::Null);
             continue;
         };
@@ -265,14 +309,14 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> Vec<Value> {
         });
         let value = convert(natural, field_type);
         if value.is_null() {
-            notices.push(format!("{} holds values that do not fit its type; they are shown empty", column.name));
+            mismatched.push(i);
         }
         out.push(value);
     }
     for n in notices {
         frame.notice(NoticeSeverity::Warning, n);
     }
-    out
+    (out, mismatched)
 }
 
 enum Natural {
@@ -281,17 +325,44 @@ enum Natural {
     Text(String),
 }
 
+/// Above this, a number in a time column is Unix milliseconds, below it Unix seconds (what
+/// SQLite's `unixepoch()` returns). 10^11 seconds lie in the year 5138, 10^11 milliseconds in
+/// 1973, so both readings cover the dates people store.
+const EPOCH_MS_ABOVE: f64 = 1e11;
+
+/// Unix milliseconds of a number in a time column, or `None` outside the years 1 to 9999 (the
+/// range every time in an answer keeps to).
+fn epoch_ms(n: f64) -> Option<i64> {
+    let ms = if n.abs() > EPOCH_MS_ABOVE { n } else { n * 1000.0 };
+    // Compared as a float first: the cast saturates, which would turn any huge value into a
+    // valid-looking time at the edge.
+    let range = super::MIN_TIME_MS as f64..=super::MAX_TIME_MS as f64;
+    range.contains(&ms.round()).then(|| ms.round() as i64)
+}
+
+fn time_value(ms: Option<i64>) -> Value {
+    ms.filter(|ms| (super::MIN_TIME_MS..=super::MAX_TIME_MS).contains(ms)).map_or(Value::Null, |ms| json!(ms))
+}
+
 fn convert(natural: Natural, field_type: FieldType) -> Value {
     match (field_type, natural) {
         (FieldType::Int64, Natural::Int(i)) => json!(i.to_string()),
-        (FieldType::Int64, Natural::Real(f)) => json!(f.to_string()),
+        // A whole number stored as REAL fits; anything else would lose its fraction.
+        (FieldType::Int64, Natural::Real(f)) => {
+            if f.fract() == 0.0 && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&f) {
+                json!((f as i64).to_string())
+            } else {
+                Value::Null
+            }
+        }
         (FieldType::Number, Natural::Int(i)) => json!(i as f64),
         (FieldType::Number, Natural::Real(f)) => serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number),
         (FieldType::Bool, Natural::Int(i)) => json!(i != 0),
-        // A number in a date column is Unix seconds, what SQLite's unixepoch() returns.
-        (FieldType::Time, Natural::Int(i)) => json!(i.saturating_mul(1000)),
-        (FieldType::Time, Natural::Real(f)) => json!((f * 1000.0).round() as i64),
-        (FieldType::Time, Natural::Text(t)) => parse_time_text(&t).map_or(Value::Null, |ms| json!(ms)),
+        (FieldType::Time, Natural::Int(i)) => {
+            time_value(if i.unsigned_abs() > EPOCH_MS_ABOVE as u64 { Some(i) } else { i.checked_mul(1000) })
+        }
+        (FieldType::Time, Natural::Real(f)) if f.is_finite() => time_value(epoch_ms(f)),
+        (FieldType::Time, Natural::Text(t)) => time_value(parse_time_text(&t)),
         (FieldType::String, Natural::Text(t)) => json!(t),
         (FieldType::String, Natural::Int(i)) => json!(i.to_string()),
         (FieldType::String, Natural::Real(f)) => json!(f.to_string()),
@@ -302,6 +373,48 @@ fn convert(natural: Natural, field_type: FieldType) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_reals_fit_int64_and_epochs_are_seconds_or_milliseconds() {
+        assert_eq!(convert(Natural::Real(4.0), FieldType::Int64), json!("4"));
+        assert_eq!(convert(Natural::Real(-3.0), FieldType::Int64), json!("-3"));
+        assert_eq!(convert(Natural::Real(2.5), FieldType::Int64), Value::Null);
+        assert_eq!(convert(Natural::Real(f64::NAN), FieldType::Int64), Value::Null);
+        assert_eq!(convert(Natural::Real(1e19), FieldType::Int64), Value::Null);
+        // Seconds up to 10^11, milliseconds above.
+        assert_eq!(convert(Natural::Int(1_767_261_600), FieldType::Time), json!(1_767_261_600_000_i64));
+        assert_eq!(convert(Natural::Int(1_767_261_600_000), FieldType::Time), json!(1_767_261_600_000_i64));
+        assert_eq!(convert(Natural::Int(100_000_000_000), FieldType::Time), json!(100_000_000_000_000_i64));
+        assert_eq!(convert(Natural::Int(100_000_000_001), FieldType::Time), json!(100_000_000_001_i64));
+        assert_eq!(convert(Natural::Int(-1_767_261_600), FieldType::Time), json!(-1_767_261_600_000_i64));
+        assert_eq!(convert(Natural::Real(1_767_261_600.25), FieldType::Time), json!(1_767_261_600_250_i64));
+        assert_eq!(convert(Natural::Real(1_767_261_600_250.4), FieldType::Time), json!(1_767_261_600_250_i64));
+        assert_eq!(convert(Natural::Real(f64::INFINITY), FieldType::Time), Value::Null);
+        // Outside the years 1 to 9999 nothing is a time: neither huge integers (milliseconds far
+        // past 9999) nor reals whose conversion would saturate.
+        let max = crate::datasources::MAX_TIME_MS;
+        let min = crate::datasources::MIN_TIME_MS;
+        assert_eq!(convert(Natural::Int(max), FieldType::Time), json!(max));
+        assert_eq!(convert(Natural::Int(max + 1), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Int(min), FieldType::Time), json!(min));
+        assert_eq!(convert(Natural::Int(min - 1), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Int(i64::MAX), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Int(i64::MIN), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Real(1e30), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Real(-1e30), FieldType::Time), Value::Null);
+        assert_eq!(convert(Natural::Text("+12026-01-01".into()), FieldType::Time), Value::Null);
+    }
+
+    #[test]
+    fn declared_types() {
+        assert_eq!(declared_type("INTEGER"), Some(FieldType::Int64));
+        assert_eq!(declared_type("REAL"), Some(FieldType::Number));
+        assert_eq!(declared_type("TEXT"), Some(FieldType::String));
+        assert_eq!(declared_type("BOOLEAN"), Some(FieldType::Bool));
+        assert_eq!(declared_type("DATETIME"), Some(FieldType::Time));
+        assert_eq!(declared_type("NULL"), None);
+        assert_eq!(declared_type("BLOB"), None);
+    }
 
     #[test]
     fn date_texts() {

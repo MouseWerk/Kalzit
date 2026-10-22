@@ -7,6 +7,7 @@ import { formatDateTime, formatSummary, startOfDay, startOfNextDay } from "./for
 import { PagedSelect, type PickerOption } from "./PagedSelect";
 import { useRowKeys } from "./rows";
 import { LoadState } from "./Section";
+import "../admin.css";
 
 /** A list to filter by (people, organizations), loaded page by page. */
 export interface PickerSource {

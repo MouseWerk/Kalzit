@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::{Column as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
+use super::Detail;
 use super::frame::{Column, FrameBuilder};
 use super::sql::{self, Bind, Engine};
 use super::{
@@ -120,14 +121,15 @@ async fn pool(conn: &Connection) -> Result<Arc<MySqlPool>, SourceError> {
 fn failed(e: sqlx::Error) -> SourceError {
     match e {
         sqlx::Error::Configuration(inner) if inner.is::<super::targets::Blocked>() => {
-            SourceError::Blocked(inner.to_string())
+            SourceError::Blocked(super::blocked_detail(inner.as_ref()))
         }
         // 1792: cannot execute statement in a READ ONLY transaction.
         sqlx::Error::Database(db) if db.code().as_deref() == Some("25006") || db.message().contains("READ ONLY") => {
-            SourceError::Rejected(format!("the query tried to write: {}", db.message()))
+            SourceError::rejected("query.write_refused", format!("the query tried to write: {}", db.message()))
+                .with("detail", db.message())
         }
-        sqlx::Error::Database(db) => SourceError::Failed(db.message().to_string()),
-        other => SourceError::Failed(other.to_string()),
+        sqlx::Error::Database(db) => SourceError::from_source(db.message()),
+        other => SourceError::from_source(other.to_string()),
     }
 }
 
@@ -158,9 +160,9 @@ async fn limit_session(c: &mut sqlx::MySqlConnection, timeout: Duration) -> Resu
     let secs = timeout.as_secs_f64().max(0.001);
     match c.execute(sqlx::AssertSqlSafe(format!("SET SESSION max_statement_time = {secs}"))).await {
         Ok(_) => Ok(()),
-        Err(_) => Err(SourceError::Failed(
-            "the server supports neither max_execution_time nor max_statement_time, so query times cannot be limited"
-                .into(),
+        Err(_) => Err(SourceError::failed(
+            "mysql.no_time_limit",
+            "the server supports neither max_execution_time nor max_statement_time, so query times cannot be limited",
         )),
     }
 }
@@ -176,7 +178,8 @@ impl DataSourcePlugin for MySql {
     }
 
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
-        let s = Settings::deserialize(settings).map_err(|e| FieldError::new("settings", e.to_string()))?;
+        let s = Settings::deserialize(settings)
+            .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
         super::check_host("host", &s.host)?;
         super::check_port("port", s.port)?;
         super::check_pem("caCert", s.ca_cert.as_deref())?;
@@ -191,10 +194,10 @@ impl DataSourcePlugin for MySql {
         };
         match check.await {
             Ok(version) if version.to_ascii_lowercase().contains("mariadb") => {
-                Health { ok: true, message: format!("MariaDB {version}") }
+                Health::connected("MariaDB", &version, false)
             }
-            Ok(version) => Health { ok: true, message: format!("MySQL {version}") },
-            Err(e) => Health { ok: false, message: e.to_string() },
+            Ok(version) => Health::connected("MySQL", &version, false),
+            Err(e) => Health::failed(&e),
         }
     }
 
@@ -276,14 +279,17 @@ impl DataSourcePlugin for MySql {
             }
         }
         if binary_notice {
-            frame.notice(NoticeSeverity::Warning, "binary values that are not text are shown empty");
+            frame.notice(
+                NoticeSeverity::Warning,
+                Detail::new("frame.binary_hidden", "binary values that are not text are shown empty"),
+            );
         }
         for ((name, type_name), d) in names.iter().zip(&type_names).zip(&decoders) {
             if matches!(d, Decoder::Unsupported) {
-                frame.notice(
-                    NoticeSeverity::Warning,
-                    format!("{name} has the type {type_name}, which is not shown; convert it in the query"),
-                );
+                let message = format!("{name} has the type {type_name}, which is not shown; convert it in the query");
+                let detail =
+                    Detail::new("frame.type_unsupported", message).with("column", name).with("type", type_name);
+                frame.notice(NoticeSeverity::Warning, detail);
             }
         }
         tx.rollback().await.map_err(failed)?;
