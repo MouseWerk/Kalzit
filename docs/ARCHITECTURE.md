@@ -498,4 +498,39 @@ through `settings::get`; new registry entries are requested from the orchestrato
   skipped with a printed notice when the variable is not set.
 - UI: Vitest per feature; guard tests for design (every CSS file), i18n and the route tree;
   generated types current.
-- E2E: Playwright against the production build of the binary, on Linux and Windows (M1 end).
+- E2E: Playwright (`ui/e2e/`) against the server binary with the embedded UI, on Linux and
+  Windows (CI job `e2e`, which builds with the `e2e` profile: release settings, less
+  optimization). Global setup starts the binary on a free port with a fresh private data
+  directory, a random setup token and `datasources.sqlite_dirs` set to a fixture folder,
+  writes the fixture SQLite database there (sales per region and time, from code, nothing
+  binary committed) and stops the server by its PID afterwards. It records that PID in the run
+  folder; the next setup removes folders of runs that crashed, stopping a recorded server only
+  if it still runs the binary copied into that folder. The first project runs the first-run
+  setup through the UI; the other tests arrange what they need through the API and run in
+  parallel on unique names. Chromium runs every scenario, Firefox and WebKit the query editor
+  under the server's CSP. Every test fails on an unexpected browser console warning or error;
+  the CSP notice for CodeMirror's refused style element passes once per page load and only
+  while CodeMirror's is the page's only `<style>` element. axe (`@axe-core/playwright`) allows
+  no serious or critical finding on the main pages (light theme in English, dark theme in
+  German), and at 360 px nothing sticks out of the viewport or of an open dialog.
+  Run locally from `ui/`:
+
+  ```
+  npm run e2e                                  # builds the UI and the release server first
+  KALZIT_E2E_BINARY=../target/release/kalzit npm run e2e   # an existing binary, no build
+  npx playwright test -c e2e/playwright.config.ts viewer   # one file
+  ```
+
+  Once per machine: `npx playwright install chromium firefox webkit` (on Linux also
+  `npx playwright install-deps`). `KALZIT_E2E_BROWSERS=chromium` limits the browsers,
+  `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
+  `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
+  `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+- Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
+  in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
+  through the same global setup, seeds a demo organization through the API (members, teams,
+  the SQLite sales fixture, a dashboard with a variable and four panels) and writes PNGs at
+  1440x900 to `docs/screenshots/`. The fixture data lies around a fixed moment and the pages run
+  on a clock fixed to it; times the server records (sessions, member since, last saved) are
+  moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
+  UI reruns `npm run screenshots` and commits the changed images.**
