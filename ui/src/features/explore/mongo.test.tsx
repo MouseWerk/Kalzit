@@ -14,7 +14,9 @@ async function open() {
   });
   addMongoSource(server.areas.datasources);
   const rendered = renderApp("/explore");
-  fireEvent.change(await screen.findByLabelText("Data source"), { target: { value: MONGO_ID } });
+  // The first page load of a file also loads the route and the data sources; give it time.
+  const picker = await screen.findByLabelText("Data source", {}, { timeout: 4000 });
+  fireEvent.change(picker, { target: { value: MONGO_ID } });
   fireEvent.change(await screen.findByLabelText("Collection"), { target: { value: "orders" } });
   return { server, ...rendered };
 }
