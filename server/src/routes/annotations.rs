@@ -135,9 +135,9 @@ async fn writable(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResu
     Ok(())
 }
 
-/// First statement of a change's transaction: the organization's lock (ordered against a purge
-/// or trash of the dashboard, which lock it too), then the dashboard must still be there and
-/// outside the trash.
+/// First statement of a change's transaction: the organization's lock (ordered against a trash
+/// or purge of the dashboard, which take it too, in `routes/dashboards.rs`), then the dashboard
+/// must still be there and outside the trash.
 async fn lock_live(conn: &mut sqlx::AnyConnection, org_id: &str, dashboard_id: &str) -> ApiResult<()> {
     authz::lock_org(conn, org_id).await?;
     let live: Option<(Option<i64>,)> =

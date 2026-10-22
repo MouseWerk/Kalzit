@@ -1,7 +1,7 @@
 {
   "annotations.title": "Annotation",
-  "annotations.add": "Add an annotation",
-  "annotations.addNamed": "Add an annotation to “{title}”",
+  "annotations.add": "Annotate",
+  "annotations.addNamed": "Annotate “{title}”",
   "annotations.addHint": "Press A to add an annotation at the cursor, or Ctrl+click on the chart.",
   "annotations.addTitle": "Add annotation",
   "annotations.editTitle": "Change annotation",

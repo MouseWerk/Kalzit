@@ -187,6 +187,11 @@
     background: var(--bg);
   }
 
+  /* Kiosk mode keeps a strip at the top for its way out, so it never covers a panel's header. */
+  .dashboard--kiosk:not(.dashboard--tv) {
+    padding-block-start: var(--space-kiosk-top);
+  }
+
   .dashboard--idle {
     cursor: none;
   }

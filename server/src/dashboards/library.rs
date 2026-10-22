@@ -134,8 +134,19 @@ pub async fn check_references(
 /// the save (`422 validation` on `model`).
 pub async fn recheck_added(conn: &mut sqlx::AnyConnection, org_id: &str, ids: &BTreeSet<&str>) -> ApiResult<()> {
     for id in ids {
-        if fetch(&mut *conn, org_id, id).await?.is_none() {
-            return Err(ApiError::validation(format!("library panel {id} does not exist")).with_field("model"));
+        let missing = || ApiError::validation(format!("library panel {id} does not exist")).with_field("model");
+        let row = fetch(&mut *conn, org_id, id).await?.ok_or_else(missing)?;
+        // A folder trashed meanwhile takes its library panels out of reach, as in `check_references`.
+        if let Some(folder) = row.folder_id.as_deref() {
+            let trashed: Option<(Option<i64>,)> =
+                sqlx::query_as("SELECT deleted_at FROM folders WHERE org_id = $1 AND id = $2")
+                    .bind(org_id)
+                    .bind(folder)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+            if matches!(trashed, Some((Some(_),))) {
+                return Err(missing());
+            }
         }
     }
     Ok(())
@@ -227,5 +238,24 @@ mod tests {
         let e = recheck_added(&mut conn, "o", &BTreeSet::from(["lib"])).await.unwrap_err();
         assert!(e.message.contains("lib"), "{}", e.message);
         assert!(recheck_added(&mut conn, "o", &BTreeSet::new()).await.is_ok());
+        // One whose folder went to the trash meanwhile is out of reach too.
+        sqlx::query(
+            "INSERT INTO folders (id, org_id, name, restricted, version, created_at, updated_at, deleted_at) \
+             VALUES ('f', 'o', 'F', 0, 1, 0, 0, 5)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO library_panels (id, org_id, folder_id, name, search_name, model, version, created_at, \
+             updated_at) VALUES ('in-trash', 'o', 'f', 'T', 't', '{}', 1, 0, 0)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let e = recheck_added(&mut conn, "o", &BTreeSet::from(["in-trash"])).await.unwrap_err();
+        assert_eq!(e.field, Some("model"));
+        sqlx::query("UPDATE folders SET deleted_at = NULL WHERE id = 'f'").execute(&mut *conn).await.unwrap();
+        assert!(recheck_added(&mut conn, "o", &BTreeSet::from(["in-trash"])).await.is_ok());
     }
 }

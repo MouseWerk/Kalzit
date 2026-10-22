@@ -100,6 +100,11 @@ describe("rows", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Add row" }));
     const handle = screen.getByRole("button", { name: "Move row “Details”" });
+    // The way to move it is read with the handle, not only shown on hover.
+    const hint = document.getElementById(handle.getAttribute("aria-describedby") ?? "");
+    expect(hint?.textContent).toBe(
+      "Drag, or use the up and down arrow keys, to move the row with its panels.",
+    );
     handle.focus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByText("Row “Details” is now at position 2 of 3.")).toBeTruthy();
@@ -241,9 +246,7 @@ describe("annotations", () => {
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
-    await user.click(
-      within(article("Load")).getByRole("button", { name: "Add an annotation to “Load”" }),
-    );
+    await user.click(within(article("Load")).getByRole("button", { name: "Annotate “Load”" }));
     dialog = screen.getByRole("dialog", { name: "Add annotation" });
     await fill(user, within(dialog).getByRole("textbox", { name: "Text" }), "Wartung");
     await fill(user, within(dialog).getByRole("textbox", { name: /Tags/ }), "ops, nacht");
@@ -380,7 +383,73 @@ describe("annotations", () => {
     expect(within(dialog).getByText("Release")).toBeTruthy();
     expect(within(dialog).queryByRole("button", { name: "Delete" })).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("button", { name: /Add an annotation/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Annotate/ })).toBeNull();
+  });
+
+  it("reads the dashboard's own range first, so a wide panel range never crowds it out", async () => {
+    const model = timeModel();
+    const wide = {
+      ...(model.panels[0] as PanelModel),
+      id: "p2",
+      title: "Monat",
+      timeFrom: "now-30d",
+    };
+    model.panels = [...model.panels, { ...wide, grid: { x: 12, y: 0, w: 12, h: 8 } }];
+    const { server } = setup("viewer", model);
+    const old = Date.now() - 20 * 24 * 3_600_000;
+    for (let i = 0; i < 1100; i++) {
+      server.areas.dashboardFeatures.annotations.push({
+        id: `old-${String(i).padStart(4, "0")}`,
+        dashboardId: "d-main",
+        panelId: "p2",
+        time: old + i,
+        timeEnd: null,
+        text: `Alt ${i}`,
+        tags: [],
+        version: 1,
+      });
+    }
+    server.areas.dashboardFeatures.annotations.push({
+      id: "recent",
+      dashboardId: "d-main",
+      panelId: null,
+      time: Date.now() - 3_600_000,
+      timeEnd: null,
+      text: "Neueste",
+      tags: [],
+      version: 1,
+    });
+    renderApp("/dashboards/d-main");
+    const load = await screen.findByRole("article", { name: "Load" });
+    expect(
+      await within(load).findByRole("button", { name: /Annotation at .*: Neueste/ }),
+    ).toBeTruthy();
+    // The wide panel's own range was read on its own, and found its old marks too.
+    expect(
+      await within(screen.getByRole("article", { name: "Monat" })).findAllByRole("button", {
+        name: /Annotation at .*: Alt/,
+      }),
+    ).not.toHaveLength(0);
+    const ranges = new Set(
+      server.areas.dashboardFeatures.annotationListRequests.map((r) => r.to - r.from),
+    );
+    expect(ranges).toEqual(new Set([6 * 3_600_000, 30 * 24 * 3_600_000]));
+  });
+
+  it("asks for annotation times to the second, and keeps a new mark's exact time", async () => {
+    setup("editor", timeModel());
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(
+      within(await screen.findByRole("article", { name: "Load" })).getByRole("button", {
+        name: "Annotate “Load”",
+      }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Add annotation" });
+    const time = within(dialog).getByLabelText("Time");
+    expect(time.getAttribute("step")).toBe("1");
+    expect((time as HTMLInputElement).value).toMatch(/T\d{2}:\d{2}:\d{2}$/);
+    await user.click(within(dialog).getByRole("checkbox", { name: "Spans a period of time" }));
+    expect(within(dialog).getByLabelText("End").getAttribute("step")).toBe("1");
   });
 
   it("runs annotation queries through the dashboard and draws their rows", async () => {
@@ -646,6 +715,11 @@ describe("library panels", () => {
         targets: [
           { refId: "A", datasourceId: PG_ID, query: { sql: "SELECT amount FROM revenue" } },
         ],
+        // Content a slot must not copy: the slot shape below would show it.
+        options: { unit: "EUR" },
+        fieldConfig: { decimals: 2 },
+        transformations: [{ type: "filter" }],
+        links: [{ title: "More", url: "/dashboards" }],
       },
       version: 1,
     });
@@ -728,7 +802,14 @@ describe("library panels", () => {
   it("makes a library panel from a panel", async () => {
     const { server, stored } = setup("editor", {
       ...emptyModel("Main"),
-      panels: [panel("p1", "Orders")],
+      panels: [
+        panel("p1", "Orders", {
+          options: { unit: "EUR" },
+          fieldConfig: { decimals: 2 },
+          transformations: [{ type: "filter" }],
+          links: [{ title: "More", url: "/dashboards" }],
+        }),
+      ],
     });
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
@@ -759,6 +840,34 @@ describe("library panels", () => {
 });
 
 describe("JSON, import and export", () => {
+  it("asks before closing the JSON model with typed changes", async () => {
+    setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "JSON model…" }));
+    const dialog = screen.getByRole("dialog", { name: "JSON model" });
+    // Unchanged, Escape just closes it.
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "JSON model" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "JSON model…" }));
+    const again = screen.getByRole("dialog", { name: "JSON model" });
+    await user.type(within(again).getByRole("textbox", { name: "Dashboard model" }), " ");
+    await user.keyboard("{Escape}");
+    const confirm = screen.getByRole("dialog", { name: "Discard JSON changes?" });
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("dialog", { name: "JSON model" })).toBeTruthy();
+    await user.click(within(again).getByRole("button", { name: "Cancel" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Discard JSON changes?" })).getByRole("button", {
+        name: "Discard",
+      }),
+    );
+    expect(screen.queryByRole("dialog", { name: "JSON model" })).toBeNull();
+    expect(dialog.isConnected).toBe(false);
+  });
+
   it("applies an edited JSON model after the server checked it", async () => {
     const { stored } = setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
     const { user } = renderApp("/dashboards/d-main");

@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import type { Frame, QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import type { PanelAnnotation } from "../../panels/annotations";
@@ -10,10 +10,13 @@ import {
 } from "./featuresApi";
 import {
   type AnnotationQueryModel,
+  type PanelModel,
+  type RowModel,
   storedQueryVariables,
   type VariableModel,
   type VariableValues,
 } from "./model";
+import { panelRange, TIME_PANELS } from "./panelTime";
 
 /**
  * The annotations of a dashboard for one range: the ones people wrote, and the rows of its
@@ -93,9 +96,10 @@ interface Input {
   orgId: string;
   dashboardId: string;
   /**
-   * Every range a panel shows: the dashboard's, and those of panels with a range or shift of
-   * their own. Written annotations are read once for their union; each annotation query runs
-   * once per distinct range.
+   * The ranges time panels show, the dashboard's own first, then those of panels with a range or
+   * shift of their own (see `annotationRanges`). Written annotations are read per range, the
+   * dashboard's first, so a wide range of one panel never pushes the dashboard's own out of the
+   * page limit; each annotation query runs once per range.
    */
   ranges: readonly TimeRange[];
   /** The saved dashboard: only its annotation queries can run through the server. */
@@ -104,30 +108,79 @@ interface Input {
   run: number;
 }
 
-/** The distinct ranges, in a stable order, and the range that covers them all. */
-export function coverRanges(ranges: readonly TimeRange[]): {
-  distinct: TimeRange[];
-  union: TimeRange;
-} {
-  const distinct = [...new Map(ranges.map((r) => [`${r.from}:${r.to}`, r])).values()].sort(
-    (a, b) => a.from - b.from || a.to - b.to,
+/**
+ * The ranges annotations are read for: the dashboard's first, then the own ranges (time range or
+ * shift) of time panels that are drawn, so panels without a time axis and panels in collapsed
+ * rows ask for nothing. `panels` are resolved (a library panel's content in its slot).
+ */
+export function annotationRanges(
+  panels: readonly PanelModel[],
+  rows: readonly RowModel[],
+  collapsed: (row: RowModel) => boolean,
+  range: TimeRange,
+  now: number,
+): TimeRange[] {
+  const hidden = new Set(rows.filter(collapsed).map((r) => r.id));
+  const own = panels
+    .filter((p) => TIME_PANELS.has(p.type) && (p.rowId === undefined || !hidden.has(p.rowId)))
+    .map((p) => panelRange(p, range, now));
+  return distinctRanges([range, ...own]);
+}
+
+/** At most this many ranges are read: the dashboard's and seven of panels with their own. */
+export const MAX_ANNOTATION_RANGES = 8;
+
+/** The distinct ranges in the given order (the dashboard's first), at most `MAX_ANNOTATION_RANGES`. */
+export function distinctRanges(ranges: readonly TimeRange[]): TimeRange[] {
+  return [...new Map(ranges.map((r) => [`${r.from}:${r.to}`, r])).values()].slice(
+    0,
+    MAX_ANNOTATION_RANGES,
   );
-  const union = distinct.reduce(
-    (all, r) => ({ from: Math.min(all.from, r.from), to: Math.max(all.to, r.to) }),
-    distinct[0] ?? { from: 0, to: 0 },
+}
+
+/**
+ * The marks of one annotation query, from the answers for several ranges. A row counted in two
+ * overlapping ranges is one mark; rows that really repeat within one answer stay as many as the
+ * most any one answer had.
+ */
+export function mergeQueryMarks(perRange: readonly (readonly DashboardMark[])[]): DashboardMark[] {
+  const most = new Map<string, DashboardMark[]>();
+  for (const marks of perRange) {
+    const here = new Map<string, DashboardMark[]>();
+    for (const mark of marks) {
+      const identity = `${mark.time}:${mark.timeEnd}:${mark.text}:${mark.tags.join(",")}`;
+      here.set(identity, [...(here.get(identity) ?? []), mark]);
+    }
+    for (const [identity, list] of here) {
+      if (list.length > (most.get(identity)?.length ?? 0)) {
+        most.set(identity, list);
+      }
+    }
+  }
+  return [...most.entries()].flatMap(([identity, list]) =>
+    list.map((mark, index) => ({ ...mark, key: `${identity}:${index}` })),
   );
-  return { distinct, union };
 }
 
 export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, values, run }: Input) {
-  const { distinct, union } = coverRanges(ranges);
-  const manual = useQuery({
-    queryKey: [ANNOTATIONS_KEY, orgId, dashboardId, union.from, union.to, run],
-    queryFn: ({ signal }) => fetchAnnotations(orgId, dashboardId, union, signal),
-    staleTime: Number.POSITIVE_INFINITY,
-    enabled: distinct.length > 0,
-    ...BUSY_RETRY,
+  const distinct = distinctRanges(ranges);
+  const written = useQueries({
+    queries: distinct.map((range) => ({
+      queryKey: [ANNOTATIONS_KEY, orgId, dashboardId, range.from, range.to, run],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        fetchAnnotations(orgId, dashboardId, range, signal),
+      staleTime: Number.POSITIVE_INFINITY,
+      ...BUSY_RETRY,
+    })),
   });
+  // Each written annotation once, whichever range found it.
+  const byId = new Map<string, Annotation>();
+  for (const result of written) {
+    for (const a of result.data ?? []) {
+      byId.set(a.id, a);
+    }
+  }
+  const manual = { data: [...byId.values()], error: written.find((r) => r.error)?.error ?? null };
   const variables = storedQueryVariables(values, saved.variables);
   const enabled = (saved.annotations ?? []).filter((q) => q.enabled);
   const runs = enabled.flatMap((query) => distinct.map((range) => ({ query, range })));
@@ -159,20 +212,14 @@ export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, val
     panelId: a.panelId,
     annotation: a,
   }));
-  // A row found in two overlapping ranges is one mark.
-  const seen = new Set<string>();
-  fromQueries.forEach((result, index) => {
-    const query = runs[index]?.query;
-    if (result.data === undefined || query === undefined) {
-      return;
-    }
-    for (const mark of marksFromFrames(framesOfResponse(result.data), query)) {
-      const identity = `${query.id}:${mark.time}:${mark.timeEnd}:${mark.text}`;
-      if (!seen.has(identity)) {
-        seen.add(identity);
-        marks.push({ ...mark, key: identity });
-      }
-    }
-  });
+  for (const query of enabled) {
+    const perRange = runs.flatMap((r, index) => {
+      const data = fromQueries[index]?.data;
+      return r.query === query && data !== undefined
+        ? [marksFromFrames(framesOfResponse(data), query)]
+        : [];
+    });
+    marks.push(...mergeQueryMarks(perRange).map((m) => ({ ...m, key: `${query.id}:${m.key}` })));
+  }
   return { marks, error: manual.error };
 }

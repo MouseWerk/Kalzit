@@ -49,6 +49,8 @@ export interface FakeDashboardFeaturesState {
   libraryPanels: StoredLibraryPanel[];
   /** Every request body of the annotation query route. */
   annotationQueryRequests: { queryId: string; body: Record<string, unknown> }[];
+  /** The range of every page of the annotation list that was read. */
+  annotationListRequests: { from: number; to: number }[];
 }
 
 function unknownField(body: Record<string, unknown>, allowed: string[]): string | undefined {
@@ -66,6 +68,7 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
     playlists: [],
     libraryPanels: [],
     annotationQueryRequests: [],
+    annotationListRequests: [],
   };
 
   /** Restricted here or above, as fakeDashboards decides it. */
@@ -126,8 +129,15 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
           .filter(
             (a) => a.dashboardId === dashboard.id && a.time <= to && (a.timeEnd ?? a.time) >= from,
           )
-          .sort((a, b) => a.time - b.time);
-        return json(200, { items, nextCursor: null });
+          .sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+        // Pages as the server sends them: `limit` (default 50, at most 200), oldest first.
+        const limit = Number(search.get("limit") ?? 50);
+        if (!(limit >= 1 && limit <= 200)) return validation("limit");
+        const start = Number(search.get("cursor") ?? 0);
+        const page = items.slice(start, start + limit);
+        const next = start + limit < items.length ? String(start + limit) : null;
+        state.annotationListRequests.push({ from, to });
+        return json(200, { items: page, nextCursor: next });
       }
       if (!writes) return error(403, "forbidden");
       if (dashboard.deletedAt !== null) return error(409, "conflict");

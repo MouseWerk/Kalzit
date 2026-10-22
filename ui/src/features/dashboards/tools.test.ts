@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  annotationRanges,
+  type DashboardMark,
+  MAX_ANNOTATION_RANGES,
+  mergeQueryMarks,
+} from "./annotations";
+import {
   buildExport,
   readImport,
   referencedSources,
@@ -197,6 +203,48 @@ describe("panel time options", () => {
       isTimeShift("1x"),
       isTimeShift("123456s"),
     ]).toEqual([true, false, false, false]);
+  });
+});
+
+describe("annotation ranges and marks", () => {
+  const mark = (time: number, text: string): DashboardMark => ({
+    key: "",
+    time,
+    timeEnd: null,
+    text,
+    tags: [],
+    panelId: null,
+  });
+
+  it("counts a row seen in overlapping ranges once, and keeps rows that really repeat", () => {
+    const first = [mark(10, "A"), mark(20, "B"), mark(20, "B")];
+    const second = [mark(20, "B"), mark(30, "C")];
+    const merged = mergeQueryMarks([first, second]);
+    expect(merged.map((m) => `${m.time}${m.text}`).sort()).toEqual(["10A", "20B", "20B", "30C"]);
+    expect(new Set(merged.map((m) => m.key)).size).toBe(4);
+  });
+
+  it("reads the dashboard's range first, then drawn time panels' own, at most eight", () => {
+    const now = 1_000_000_000_000;
+    const range = { from: now - 6 * 3_600_000, to: now };
+    const rows = [{ id: "closed", title: "", collapsed: true }];
+    const panels = [
+      panel("t", { type: "timeseries", timeFrom: "now-24h" }),
+      panel("table", { type: "table", timeFrom: "now-7d" }),
+      panel("hidden", { type: "timeseries", timeFrom: "now-30d", rowId: "closed" }),
+      ...Array.from({ length: 12 }, (_, i) =>
+        panel(`s${i}`, { type: "timeseries", timeShift: `${i + 1}d` }),
+      ),
+    ];
+    const ranges = annotationRanges(panels, rows, (r) => r.collapsed, range, now);
+    expect(ranges).toHaveLength(MAX_ANNOTATION_RANGES);
+    expect(ranges[0]).toEqual(range);
+    expect(ranges[1]).toEqual({ from: now - 24 * 3_600_000, to: now });
+    const lengths = ranges.map((r) => r.to - r.from);
+    expect(lengths).not.toContain(7 * 24 * 3_600_000);
+    expect(lengths).not.toContain(30 * 24 * 3_600_000);
+    // An opened row's panels count again.
+    expect(annotationRanges(panels, rows, () => false, range, now)[2]?.to).toBe(now);
   });
 });
 

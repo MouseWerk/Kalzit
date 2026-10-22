@@ -1,7 +1,7 @@
 {
   "annotations.title": "Anmerkung",
-  "annotations.add": "Anmerkung hinzufügen",
-  "annotations.addNamed": "Anmerkung zu „{title}“ hinzufügen",
+  "annotations.add": "Anmerken",
+  "annotations.addNamed": "Anmerken: „{title}“",
   "annotations.addHint": "Drücke A, um an der Markierung eine Anmerkung hinzuzufügen, oder Strg+Klick ins Diagramm.",
   "annotations.addTitle": "Anmerkung hinzufügen",
   "annotations.editTitle": "Anmerkung ändern",

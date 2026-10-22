@@ -14,7 +14,7 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { linkHref } from "./links";
 import type { GridPos, PanelModel, VariableValues } from "./model";
-import { timeNote } from "./panelTime";
+import { TIME_PANELS, timeNote } from "./panelTime";
 import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
@@ -59,9 +59,6 @@ interface PanelCardProps {
   /** Full screen: the panel fills the view and has no arrange controls. */
   alone?: boolean;
 }
-
-/** Panel types with a time axis, which draw annotations. */
-const TIME_PANELS = new Set(["timeseries"]);
 
 /** One panel in the grid: title bar, its own query state, and the visualization. */
 export function PanelCard({

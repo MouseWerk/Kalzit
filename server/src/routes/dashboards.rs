@@ -673,6 +673,9 @@ async fn trash(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    // Ordered against annotation changes, which check under the same lock that the dashboard is
+    // outside the trash.
+    authz::lock_org(&mut tx, &ctx.org_id).await?;
     sqlx::query(
         "UPDATE dashboards SET deleted_at = $1, trash_batch = $2 WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL",
     )

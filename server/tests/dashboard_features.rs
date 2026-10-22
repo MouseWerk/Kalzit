@@ -672,6 +672,10 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &viewer).await;
     assert_eq!((uses.body["items"].as_array().unwrap().len(), uses.body["hidden"].as_i64()), (2, Some(0)));
     assert_eq!(t.get(&format!("~/library-panels/{lib}"), &viewer).await.body["uses"], 2);
+    // The list counts the same, for every row at once.
+    let listed = t.get("~/library-panels", &viewer).await;
+    let row = listed.body["items"].as_array().unwrap().iter().find(|p| p["id"] == json!(lib)).unwrap();
+    assert_eq!(row["uses"], 2, "{}", listed.body);
     let refused = t.delete(&format!("~/library-panels/{lib}"), &editor).await;
     assert_eq!((refused.status, refused.code()), (StatusCode::CONFLICT, "conflict"));
 

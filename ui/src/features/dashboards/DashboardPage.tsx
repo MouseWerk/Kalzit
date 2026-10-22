@@ -12,7 +12,7 @@ import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AnnotationDialog } from "./AnnotationDialog";
 import { AccessButton } from "./accessIntegration";
-import { type DashboardMark, useDashboardAnnotations } from "./annotations";
+import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
 import {
   createDashboard,
   DASHBOARDS_KEY,
@@ -407,15 +407,16 @@ function DashboardView({
   const annotations = useDashboardAnnotations({
     orgId,
     dashboardId: dashboard.id,
-    // The dashboard's range and every panel's own (time range or shift, from the library panel
-    // when it holds them), so a shifted panel shows the annotations of the period it draws.
+    // The dashboard's range and the own ranges of the time panels on screen, so a shifted panel
+    // shows the annotations of the period it draws.
     ranges: resolved.ok
-      ? [
+      ? annotationRanges(
+          model.panels.map((p) => resolvePanel(p, library)),
+          rows,
+          (row) => (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]),
           resolved.range,
-          ...model.panels.map((p) =>
-            panelRange(resolvePanel(p, library), resolved.range, clock.now),
-          ),
-        ]
+          clock.now,
+        )
       : [],
     saved: dashboard.model,
     values,

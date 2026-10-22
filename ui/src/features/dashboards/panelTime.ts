@@ -8,6 +8,9 @@ import { resolveTime } from "./timeRange";
  * days, months and years follow the calendar, as the range grammar does.
  */
 
+/** Panel types with a time axis, which draw annotations. */
+export const TIME_PANELS: ReadonlySet<string> = new Set(["timeseries"]);
+
 const RELATIVE_FROM = /^now-(\d{1,5}[smhdwMy])(?:\/[smhdwMy])?$/;
 const DURATION = /^\d{1,5}[smhdwMy]$/;
 

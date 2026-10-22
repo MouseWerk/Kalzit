@@ -202,5 +202,7 @@
     /* A span annotation's band: a light wash that keeps the series lines above it readable. */
     --annotation-fill: light-dark(oklch(47% 0.014 260 / 0.12), oklch(74% 0.01 260 / 0.16));
     --annotation-handle: 0.625rem;
+    /* Kiosk mode's strip at the top for its way out: a control and a gap. */
+    --space-kiosk-top: calc(var(--control-height) + var(--space-4));
   }
 }
