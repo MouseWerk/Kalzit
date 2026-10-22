@@ -12,7 +12,7 @@ const RANGE = { from: 0, to: 100_000 };
 
 function orders(): DocumentSet {
   const documents = fakeOrders();
-  return { documents, schema: sampleSchema(documents) };
+  return { documents, schema: sampleSchema(documents), notices: [] };
 }
 
 function renderPanel(
@@ -140,7 +140,11 @@ describe("document explorer", () => {
 
   it("pages long arrays instead of drawing them whole", async () => {
     const user = userEvent.setup();
-    const long = { documents: [{ values: Array.from({ length: 250 }, (_, i) => i) }], schema: [] };
+    const long = {
+      documents: [{ values: Array.from({ length: 250 }, (_, i) => i) }],
+      schema: [],
+      notices: [],
+    };
     renderPanel("documents", [long]);
     const tree = screen.getByRole("tree", { name: "Orders" });
     act(() => tree.focus());
@@ -169,7 +173,7 @@ describe("schema panel", () => {
 
   it("shows types, coverage and outliers, and narrows to outliers or a search", async () => {
     const user = userEvent.setup();
-    renderPanel("schema", [{ documents: [{}, {}], schema }]);
+    renderPanel("schema", [{ documents: [{}, {}], schema, notices: [] }]);
     expect(screen.getByText("Paths: 4 · Documents: 2 · With outliers: 3")).toBeTruthy();
     const cells = (path: string) =>
       within(screen.getByRole("cell", { name: path }).closest("tr") as HTMLElement)
@@ -189,7 +193,7 @@ describe("schema panel", () => {
   });
 
   it("samples the schema itself when the result came without", () => {
-    renderPanel("schema", [{ documents: fakeOrders(), schema: [] }]);
+    renderPanel("schema", [{ documents: fakeOrders(), schema: [], notices: [] }]);
     expect(screen.getByRole("cell", { name: "customer.address.city" })).toBeTruthy();
     const rating = within(
       screen.getByRole("cell", { name: "rating" }).closest("tr") as HTMLElement,
@@ -325,7 +329,7 @@ describe("review follow-ups", () => {
   it("pages long arrays in the card instead of drawing them whole", async () => {
     const user = userEvent.setup();
     const values = Array.from({ length: 60 }, (_, i) => `v${i}`);
-    renderPanel("document", [{ documents: [{ _id: "a", values }], schema: [] }]);
+    renderPanel("document", [{ documents: [{ _id: "a", values }], schema: [], notices: [] }]);
     expect(screen.getByText("v49")).toBeTruthy();
     expect(screen.queryByText("v50")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Show 10 more of 10" }));
@@ -344,7 +348,7 @@ describe("review follow-ups", () => {
     await user.click(treeRow("items"));
     await user.click(screen.getByRole("button", { name: "Open as list" }));
     expect(rowNames()).toEqual(["[0]", "[1]"]);
-    view.rerender(panel({ documents: [{ a: 1 }], schema: [] }));
+    view.rerender(panel({ documents: [{ a: 1 }], schema: [], notices: [] }));
     expect(rowNames()).toEqual(["Document 1"]);
     expect(screen.queryByRole("navigation", { name: "Where in the documents" })).toBeNull();
     // One document: the summary speaks of one.
@@ -356,7 +360,7 @@ describe("review follow-ups", () => {
     const onFilter = vi.fn();
     renderPanel(
       "documents",
-      [{ documents: [{ "a.b": 1, $kind: "x", gone: null }], schema: [] }],
+      [{ documents: [{ "a.b": 1, $kind: "x", gone: null }], schema: [], notices: [] }],
       {},
       onFilter,
     );
@@ -382,6 +386,7 @@ describe("review follow-ups", () => {
           { path: "b", coverage: 1, types: [{ name: "binData", share: 1 }] },
           { path: "j", coverage: 1, types: [{ name: "javascriptWithScope", share: 1 }] },
         ],
+        notices: [],
       },
     ]);
     expect(screen.getByText("Int64 100%")).toBeTruthy();

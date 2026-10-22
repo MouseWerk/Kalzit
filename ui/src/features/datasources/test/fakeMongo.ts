@@ -408,7 +408,7 @@ export function mongoOutcome(
   const cut = rest.length > page.length;
   // As the server answers: notices and the executed query beside the documents; a cut set says
   // how many it holds and continues from `nextCursor`.
-  const set = {
+  const set: DocumentSet = {
     documents: page,
     schema: serverSchema(page),
     notices: cut
@@ -424,5 +424,5 @@ export function mongoOutcome(
     executedQuery: `${parsed.collection}.${parsed.pipeline === undefined ? "find" : "aggregate"}(...)`,
     ...(cut ? { truncated: { limit: page.length }, nextCursor: String(offset + page.length) } : {}),
   };
-  return { result: { shape: "documents", documents: set as DocumentSet } };
+  return { result: { shape: "documents", documents: set } };
 }

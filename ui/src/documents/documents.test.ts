@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DocumentSet } from "../api/generated/shapes";
 import { appendPages, projectOutcomes } from "../features/dashboards/results";
 import { jsonContext, mongoCompletions } from "../features/datasources/editors/mongoCompletion";
 import { tokenizeJson } from "../features/datasources/editors/syntax";
@@ -144,8 +143,8 @@ describe("schema sampling", () => {
 
   it("prefers the server's schema and samples only when there is none", () => {
     const server = [{ path: "x", coverage: 0.25, types: [{ name: "int", share: 1 }] }];
-    expect(schemaOf({ documents: docs, schema: server })).toBe(server);
-    expect(schemaOf({ documents: docs, schema: [] }).length).toBe(schema.length);
+    expect(schemaOf({ documents: docs, schema: server, notices: [] })).toBe(server);
+    expect(schemaOf({ documents: docs, schema: [], notices: [] }).length).toBe(schema.length);
   });
 });
 
@@ -192,9 +191,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 
 describe("projection step", () => {
   it("turns documents into a frame with typed columns and keeps the source's notices", () => {
-    const notice = { severity: "warning", code: "documents.limit", text: "cut" };
+    const notice = { severity: "warning" as const, code: "documents.limit", text: "cut" };
     const frame = projectDocuments(
-      { documents: docs, schema: [], notices: [notice] } as DocumentSet,
+      { documents: docs, schema: [], notices: [notice] },
       {
         columns: [
           { path: "at" },
@@ -224,7 +223,10 @@ describe("projection step", () => {
   it("is a step of the panel in the analysis step form, applied only where it is on", () => {
     const outcome = {
       refId: "A",
-      result: { shape: "documents" as const, documents: { documents: docs, schema: [] } },
+      result: {
+        shape: "documents" as const,
+        documents: { documents: docs, schema: [], notices: [] },
+      },
     };
     expect(projectOutcomes([outcome], [])[0]).toBe(outcome);
     const steps = withProjection([{ type: "other" }], "A", { columns: [{ path: "at" }] });
@@ -285,15 +287,20 @@ describe("projection step", () => {
           documents: [1],
           schema: [{ path: "x", coverage: 1, types: [] }],
           nextCursor: "1",
+          notices: [],
         },
       },
     };
-    const [merged] = appendPages([first], "A", [{ documents: [2, 3], schema: [] }]);
+    const [merged] = appendPages([first], "A", [{ documents: [2, 3], schema: [], notices: [] }]);
     expect(merged).toEqual({
       refId: "A",
       result: {
         shape: "documents",
-        documents: { documents: [1, 2, 3], schema: [{ path: "x", coverage: 1, types: [] }] },
+        documents: {
+          documents: [1, 2, 3],
+          schema: [{ path: "x", coverage: 1, types: [] }],
+          notices: [],
+        },
       },
     });
   });
@@ -524,7 +531,7 @@ describe("projection steps the server accepts", () => {
     ).toEqual({ columns: [{ path: "a" }, { path: "b", type: "time" }] });
     expect(PROJECTION_TYPES).not.toContain("json");
     const frame = projectDocuments(
-      { documents: [{ a: { b: 1 } }], schema: [] },
+      { documents: [{ a: { b: 1 } }], schema: [], notices: [] },
       {
         columns: [{ path: "a" }],
       },
@@ -593,6 +600,7 @@ describe("projection steps the server accepts", () => {
           { n: -0, d: { $type: "date", value: "1790000000000" } },
         ],
         schema: [],
+        notices: [],
       },
       {
         columns: [

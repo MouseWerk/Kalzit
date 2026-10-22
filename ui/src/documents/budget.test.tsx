@@ -61,7 +61,7 @@ describe("performance budget", () => {
     let expanded = Number.POSITIVE_INFINITY;
     const rendered = best(3, () => {
       const start = performance.now();
-      const view = renderPanel("documents", { documents, schema: [] });
+      const view = renderPanel("documents", { documents, schema: [], notices: [] });
       const took = performance.now() - start;
       expect(treeItems().length).toBeLessThanOrEqual(MAX_DRAWN);
 
@@ -110,7 +110,7 @@ describe("performance budget", () => {
     let filtered = Number.POSITIVE_INFINITY;
     const rendered = best(3, () => {
       const start = performance.now();
-      const view = renderPanel("schema", { documents: [{}], schema });
+      const view = renderPanel("schema", { documents: [{}], schema, notices: [] });
       const took = performance.now() - start;
       // Header, two spacers and the rows in view.
       expect([...document.querySelectorAll("tr")].length).toBeLessThanOrEqual(MAX_DRAWN);

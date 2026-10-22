@@ -1,7 +1,7 @@
 import { isRecord } from "../api/client";
 import type { DocumentSet, Field, FieldSchema, FieldType, Frame } from "../api/generated/shapes";
 import { valueAt } from "./paths";
-import { dateMs, documentsMeta, isContainer, isTyped, typeOf } from "./values";
+import { dateMs, isContainer, isTyped, typeOf } from "./values";
 
 /**
  * The projection step (docs/PLAN.md, section 1): documents become a frame only through this
@@ -213,7 +213,7 @@ export function projectDocuments(set: DocumentSet, projection: FrameProjection):
   // The source's notices (a cut, hidden values) stay with what the panel shows.
   return {
     fields,
-    meta: { rowsTruncated: set.truncated !== undefined, notices: documentsMeta(set).notices },
+    meta: { rowsTruncated: set.truncated !== undefined, notices: set.notices },
   };
 }
 

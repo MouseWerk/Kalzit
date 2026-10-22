@@ -1,6 +1,5 @@
 import type { Notice } from "../../../api/generated/shapes";
 import { Icon } from "../../../components/Icon";
-import { documentsMeta } from "../../../documents/values";
 import { useI18n } from "../../../i18n/i18n";
 import { rowCount } from "../../../panels/frame";
 import type { TargetOutcome } from "../results";
@@ -78,7 +77,10 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
                   </span>
                 </p>
               )}
-              <Details {...documentsMeta(outcome.result.documents)} />
+              <Details
+                notices={outcome.result.documents.notices}
+                executedQuery={outcome.result.documents.executedQuery}
+              />
             </>
           ) : (
             <p className="inspect__meta">

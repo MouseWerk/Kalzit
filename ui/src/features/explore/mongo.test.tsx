@@ -363,7 +363,7 @@ describe("Explore with MongoDB, after review", () => {
     const { user } = await open();
     fireEvent.change(screen.getByLabelText("Collection"), { target: { value: "a$b" } });
     await user.click(screen.getByRole("button", { name: "Run query" }));
-    expect(await screen.findByText(/a\$b is not a collection name/)).toBeTruthy();
+    expect(await screen.findByText(/“a\$b” is no collection of this database/)).toBeTruthy();
   });
 });
 

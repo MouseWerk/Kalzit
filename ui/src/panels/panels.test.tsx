@@ -58,7 +58,9 @@ describe("registry", () => {
       ["table", false],
     ]);
     expect(
-      suggestPanel([{ shape: "documents", documents: { documents: [{ a: 1 }], schema: [] } }]),
+      suggestPanel([
+        { shape: "documents", documents: { documents: [{ a: 1 }], schema: [], notices: [] } },
+      ]),
     ).toBe("documents");
     expect(suggestPanel([{ shape: "frame", frame: tableFrame }])).toBe("table");
     const series: Frame = {

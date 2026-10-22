@@ -1,5 +1,4 @@
 import { isRecord } from "../api/client";
-import type { DocumentSet, Notice } from "../api/generated/shapes";
 import { dateTimeFormat, formatValue } from "../panels/frame";
 
 /**
@@ -152,20 +151,4 @@ export function formatLeaf(value: unknown, language: string): string {
     return formatValue("number", value, language);
   }
   return String(value);
-}
-
-/**
- * What the server sends beside the documents (docs/api/datasources.md, "The documents shape"):
- * notices and the query as executed. Read defensively until the generated `DocumentSet` of this
- * branch has both fields.
- */
-export function documentsMeta(set: DocumentSet): {
-  notices: Notice[];
-  executedQuery?: string;
-} {
-  const wire = set as DocumentSet & { notices?: unknown; executedQuery?: unknown };
-  const notices = Array.isArray(wire.notices) ? (wire.notices as Notice[]) : [];
-  return typeof wire.executedQuery === "string"
-    ? { notices, executedQuery: wire.executedQuery }
-    : { notices };
 }
