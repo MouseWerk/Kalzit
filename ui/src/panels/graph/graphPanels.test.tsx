@@ -1,20 +1,26 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
-import { FAKE_GRAPH } from "../../features/datasources/test/fakeGraph";
+import { cutGraph, FAKE_GRAPH, ID } from "../../features/datasources/test/fakeGraph";
 import { type PanelHost, PanelHostContext } from "../host";
-import { pathSteps } from "../path";
+import { pathSteps } from "../path/PathPanel";
 import { getPanel, suggestPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
 import { buildGraphModel } from "./model";
 
 const RANGE = { from: 0, to: 1 };
 
-function renderGraph(type: string, graph: GraphSet, options: unknown = {}, host: PanelHost = {}) {
+/** Renders a graph panel and waits for its code, which loads with the first use. */
+async function renderGraph(
+  type: string,
+  graph: GraphSet,
+  options: unknown = {},
+  host: PanelHost = {},
+) {
   const plugin = getPanel(type) as AnyPanelPlugin;
   const { Panel } = plugin;
-  return render(
+  const view = render(
     <PanelHostContext value={host}>
       <Panel
         frames={[]}
@@ -25,22 +31,24 @@ function renderGraph(type: string, graph: GraphSet, options: unknown = {}, host:
       />
     </PanelHostContext>,
   );
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+  return view;
 }
 
 describe("network panel", () => {
-  it("shows the graph as tables where it cannot draw, with the reason", () => {
-    renderGraph("network", FAKE_GRAPH);
+  it("shows the graph as tables where it cannot draw, with the reason", async () => {
+    await renderGraph("network", FAKE_GRAPH);
     expect(screen.getByText(/WebGL 2 is missing/)).toBeTruthy();
     const nodes = screen.getByRole("table", { name: "Nodes of Shop: 4" });
     expect(within(nodes).getByRole("button", { name: "Ada" })).toBeTruthy();
     const edges = screen.getByRole("table", { name: "Edges of Shop: 3" });
     expect(within(edges).getAllByRole("row")).toHaveLength(4);
-    expect(screen.getByText(/4 nodes, 3 edges, 1 components/)).toBeTruthy();
+    expect(screen.getByText(/4 nodes, 3 edges, 1 component\./)).toBeTruthy();
   });
 
   it("selects a node, shows its metrics and properties, and Escape clears it", async () => {
     const user = userEvent.setup();
-    renderGraph("network", FAKE_GRAPH);
+    await renderGraph("network", FAKE_GRAPH);
     await user.click(screen.getByRole("button", { name: "Ada" }));
     const details = screen.getByRole("region", { name: "Details of Ada" });
     expect(within(details).getByText("2 (0 in, 2 out)")).toBeTruthy();
@@ -52,30 +60,22 @@ describe("network panel", () => {
     expect(screen.queryByRole("region", { name: "Details of Ada" })).toBeNull();
   });
 
-  it("cuts to the node limit with a notice, and shows the source's own notices", () => {
-    renderGraph(
-      "network",
-      {
-        ...FAKE_GRAPH,
-        truncated: { limit: 4, reason: "graph.node_limit" },
-        notices: [{ severity: "warning", code: "graph.node_limit", text: "Cut at 4 nodes." }],
-      },
-      { nodeLimit: 2 },
-    );
+  it("cuts to the node limit with a notice, and shows the source's own notices", async () => {
+    await renderGraph("network", cutGraph(FAKE_GRAPH, 4), { nodeLimit: 2 });
     expect(screen.getByText(/Showing the 2 best connected of 4 nodes/)).toBeTruthy();
     // A notice code this UI has no text for shows the server's English text.
-    expect(screen.getByText("Cut at 4 nodes.")).toBeTruthy();
+    expect(screen.getByText("The graph was cut at 4 nodes.")).toBeTruthy();
     expect(screen.getByRole("table", { name: "Nodes of Shop: 2" })).toBeTruthy();
   });
 
   it("sets the dashboard variable a click names, to the chosen property", async () => {
     const user = userEvent.setup();
     const set = vi.fn();
-    renderGraph(
+    await renderGraph(
       "network",
       FAKE_GRAPH,
       { variable: "customerId", variableProperty: "customerId" },
-      { variables: { names: ["customerId"], set } },
+      { variables: { names: ["customerId"], accepts: () => true, set } },
     );
     await user.click(screen.getByRole("button", { name: "Grace" }));
     expect(set).toHaveBeenCalledWith("customerId", "43");
@@ -85,13 +85,18 @@ describe("network panel", () => {
   it("does not set a variable the dashboard does not define", async () => {
     const user = userEvent.setup();
     const set = vi.fn();
-    renderGraph("network", FAKE_GRAPH, { variable: "gone" }, { variables: { names: ["x"], set } });
+    await renderGraph(
+      "network",
+      FAKE_GRAPH,
+      { variable: "gone" },
+      { variables: { names: ["x"], accepts: () => true, set } },
+    );
     await user.click(screen.getByRole("button", { name: "Grace" }));
     expect(set).not.toHaveBeenCalled();
   });
 
-  it("shows the graph at a point in time with the time slider", () => {
-    renderGraph("network", FAKE_GRAPH, { timeProperty: "at" });
+  it("shows the graph at a point in time with the time slider", async () => {
+    await renderGraph("network", FAKE_GRAPH, { timeProperty: "at" });
     const slider = screen.getByRole("slider", { name: "Graph at" });
     expect(screen.getByRole("table", { name: "Edges of Shop: 3" })).toBeTruthy();
     fireEvent.change(slider, { target: { value: "0" } });
@@ -103,10 +108,10 @@ describe("network panel", () => {
 });
 
 describe("hierarchy panel", () => {
-  it("never groups nodes", () => {
+  it("never groups nodes", async () => {
     const plugin = getPanel("hierarchy") as AnyPanelPlugin;
     expect(plugin.options({ cluster: "label" }).cluster).toBe("off");
-    renderGraph("hierarchy", FAKE_GRAPH);
+    await renderGraph("hierarchy", FAKE_GRAPH);
     expect(screen.getByRole("table", { name: "Nodes of Shop: 4" })).toBeTruthy();
   });
 });
@@ -114,13 +119,13 @@ describe("hierarchy panel", () => {
 describe("path panel", () => {
   const withPath: GraphSet = {
     ...FAKE_GRAPH,
-    paths: [{ nodes: ["c2", "p1", "c1", "p2"], edges: ["b3", "b1", "b2"] }],
+    paths: [{ nodes: [ID.grace, ID.lamp, ID.ada, ID.desk], edges: [ID.b3, ID.b1, ID.b2] }],
   };
 
-  it("reads each path as node, edge, node with each edge's direction", () => {
+  it("reads each path as node, edge, node with each edge's direction", async () => {
     const steps = pathSteps(buildGraphModel([withPath], { nodeLimit: 100, caption: "" }), {
-      nodes: ["c2", "p1", "c1"],
-      edges: ["b3", "b1"],
+      nodes: [ID.grace, ID.lamp, ID.ada],
+      edges: [ID.b3, ID.b1],
     });
     expect(steps.map((s) => [s.text, s.forward])).toEqual([
       ["Grace", undefined],
@@ -132,39 +137,39 @@ describe("path panel", () => {
     ]);
   });
 
-  it("lists the paths readably, also for screen readers", () => {
-    renderGraph("path", withPath);
+  it("lists the paths readably, also for screen readers", async () => {
+    await renderGraph("path", withPath);
     const list = screen.getByRole("list", { name: "Shop" });
     expect(within(list).getByRole("heading", { name: "Path 1, 3 steps" })).toBeTruthy();
     expect(within(list).getAllByText("comes from")).toHaveLength(1);
     expect(within(list).getAllByText("leads to")).toHaveLength(2);
   });
 
-  it("says when the result has no paths", () => {
-    renderGraph("path", FAKE_GRAPH);
+  it("says when the result has no paths", async () => {
+    await renderGraph("path", FAKE_GRAPH);
     expect(screen.getByText(/The result has no paths/)).toBeTruthy();
   });
 
   it("sets a variable from a node of a path", async () => {
     const user = userEvent.setup();
     const set = vi.fn();
-    renderGraph(
+    await renderGraph(
       "path",
       withPath,
       { variable: "customerId" },
-      { variables: { names: ["customerId"], set } },
+      { variables: { names: ["customerId"], accepts: () => true, set } },
     );
     await user.click(screen.getAllByRole("button", { name: "Ada" })[0] as HTMLElement);
-    expect(set).toHaveBeenCalledWith("customerId", "c1");
+    expect(set).toHaveBeenCalledWith("customerId", ID.ada);
   });
 });
 
 describe("registry", () => {
-  it("suggests the network for graphs and the path panel when every graph is paths", () => {
+  it("suggests the network for graphs and the path panel when every graph is paths", async () => {
     expect(suggestPanel([{ shape: "graph", graph: FAKE_GRAPH }])).toBe("network");
     expect(
       suggestPanel([
-        { shape: "graph", graph: { ...FAKE_GRAPH, paths: [{ nodes: ["c1"], edges: [] }] } },
+        { shape: "graph", graph: { ...FAKE_GRAPH, paths: [{ nodes: [ID.ada], edges: [] }] } },
       ]),
     ).toBe("path");
   });

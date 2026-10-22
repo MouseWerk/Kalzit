@@ -13,28 +13,46 @@ export const NEO4J_ID = "ds-neo4j";
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 0, 1);
+const DB = "6f1c2a9e-4b7d-4f20-9a3e-81d5c0b7e214";
+
+/**
+ * Neo4j 5 element ids (`4:<database>:<number>` for nodes, `5:...` for relationships), the form
+ * the server passes on. Bolt 4.4 sends only the number, which the expand query matches with
+ * `id(n) = toInteger($nodeId)`.
+ */
+export const ID = {
+  ada: `4:${DB}:0`,
+  grace: `4:${DB}:1`,
+  lamp: `4:${DB}:2`,
+  desk: `4:${DB}:12`,
+  oak: `4:${DB}:17`,
+  b1: `5:${DB}:0`,
+  b2: `5:${DB}:1`,
+  b3: `5:${DB}:2`,
+  m1: `5:${DB}:3`,
+} as const;
 
 export const FAKE_GRAPH: GraphSet = {
   nodes: [
-    { id: "c1", labels: ["Customer"], properties: { name: "Ada", customerId: "42" } },
-    { id: "c2", labels: ["Customer"], properties: { name: "Grace", customerId: "43" } },
-    { id: "p1", labels: ["Product"], properties: { name: "Lamp", price: 30 } },
-    { id: "p2", labels: ["Product"], properties: { name: "Desk", price: 250 } },
+    { id: ID.ada, labels: ["Customer"], properties: { name: "Ada", customerId: "42" } },
+    { id: ID.grace, labels: ["Customer"], properties: { name: "Grace", customerId: "43" } },
+    { id: ID.lamp, labels: ["Product"], properties: { name: "Lamp", price: 30 } },
+    { id: ID.desk, labels: ["Product"], properties: { name: "Desk", price: 250 } },
   ],
   edges: [
-    { id: "b1", type: "BOUGHT", from: "c1", to: "p1", properties: { at: T0, quantity: 2 } },
+    { id: ID.b1, type: "BOUGHT", from: ID.ada, to: ID.lamp, properties: { at: T0, quantity: 2 } },
     {
-      id: "b2",
+      id: ID.b2,
       type: "BOUGHT",
-      from: "c1",
-      to: "p2",
+      from: ID.ada,
+      to: ID.desk,
       properties: { at: T0 + 10 * DAY, quantity: 1 },
     },
     {
-      id: "b3",
+      id: ID.b3,
       type: "BOUGHT",
-      from: "c2",
-      to: "p1",
+      from: ID.grace,
+      to: ID.lamp,
       properties: { at: T0 + 20 * DAY, quantity: 5 },
     },
   ],
@@ -45,14 +63,14 @@ export const FAKE_GRAPH: GraphSet = {
   },
 };
 
-/** Neighbours the first answer does not contain, by node id. */
+/** Neighbours the first answer does not contain, by node element id. */
 const NEIGHBOURHOOD: Record<string, GraphSet> = {
-  p2: {
+  [ID.desk]: {
     nodes: [
-      { id: "p2", labels: ["Product"], properties: { name: "Desk", price: 250 } },
-      { id: "s1", labels: ["Supplier"], properties: { name: "Oak & Co" } },
+      { id: ID.desk, labels: ["Product"], properties: { name: "Desk", price: 250 } },
+      { id: ID.oak, labels: ["Supplier"], properties: { name: "Oak & Co" } },
     ],
-    edges: [{ id: "m1", type: "MADE_BY", from: "p2", to: "s1", properties: {} }],
+    edges: [{ id: ID.m1, type: "MADE_BY", from: ID.desk, to: ID.oak, properties: {} }],
     schema: {
       labels: ["Product", "Supplier"],
       edgeTypes: ["MADE_BY"],
@@ -69,16 +87,24 @@ export const FAKE_GRAPH_SCHEMA = {
   propertyKeys: ["at", "customerId", "name", "price", "quantity"],
 };
 
-/** The answer of the fake graph source to a Cypher query. */
+const EMPTY: GraphSet = {
+  nodes: [],
+  edges: [],
+  schema: { labels: [], edgeTypes: [], propertyKeys: {} },
+};
+
+/**
+ * The answer of the fake graph source to a Cypher query. The explorer's expand query comes in
+ * both forms of adapter.ts: by element id (Neo4j 5) and by internal number (Bolt 4.4, Memgraph).
+ */
 export function graphOutcome(cypher: string, variables: Record<string, unknown>): QueryOutcome {
-  if (cypher.includes("elementId(n)")) {
-    const id = String(variables[EXPAND_NODE_VARIABLE] ?? "");
-    const graph = NEIGHBOURHOOD[id] ?? {
-      nodes: [],
-      edges: [],
-      schema: { labels: [], edgeTypes: [], propertyKeys: {} },
-    };
-    return { result: { shape: "graph", graph } };
+  const nodeId = String(variables[EXPAND_NODE_VARIABLE] ?? "");
+  if (/WHERE elementId\(n\) = \$nodeId RETURN n, r, m LIMIT \d+$/.test(cypher)) {
+    return { result: { shape: "graph", graph: NEIGHBOURHOOD[nodeId] ?? EMPTY } };
+  }
+  if (/WHERE id\(n\) = toInteger\(\$nodeId\) RETURN n, r, m LIMIT \d+$/.test(cypher)) {
+    const key = Object.keys(NEIGHBOURHOOD).find((id) => id.endsWith(`:${nodeId}`));
+    return { result: { shape: "graph", graph: (key && NEIGHBOURHOOD[key]) || EMPTY } };
   }
   if (/shortestPath/i.test(cypher)) {
     return {
@@ -86,29 +112,39 @@ export function graphOutcome(cypher: string, variables: Record<string, unknown>)
         shape: "graph",
         graph: {
           ...FAKE_GRAPH,
-          paths: [{ nodes: ["c2", "p1", "c1", "p2"], edges: ["b3", "b1", "b2"] }],
-        },
-      },
-    };
-  }
-  if (/LIMIT 1\b/.test(cypher)) {
-    return {
-      result: {
-        shape: "graph",
-        graph: {
-          ...FAKE_GRAPH,
-          truncated: { limit: 4, reason: "graph.node_limit" },
-          notices: [
+          paths: [
             {
-              severity: "warning",
-              code: "graph.node_limit",
-              params: { limit: "4" },
-              text: "The graph was cut at 4 nodes.",
+              nodes: [ID.grace, ID.lamp, ID.ada, ID.desk],
+              edges: [ID.b3, ID.b1, ID.b2],
             },
           ],
         },
       },
     };
   }
+  if (/LIMIT 1\b/.test(cypher)) {
+    return { result: { shape: "graph", graph: cutGraph(FAKE_GRAPH, 4) } };
+  }
   return { result: { shape: "graph", graph: FAKE_GRAPH } };
+}
+
+/**
+ * A graph as the server answers one cut at its node limit (docs/api/datasources.md, "Graph
+ * results"): `truncated.reason` and the notice, fields the generated type gets with the server
+ * side of M3, so they are added here as the wire carries them.
+ */
+export function cutGraph(graph: GraphSet, limit: number): GraphSet {
+  const wire = {
+    ...graph,
+    truncated: { limit, reason: "graph.node_limit" },
+    notices: [
+      {
+        severity: "warning",
+        code: "graph.node_limit",
+        params: { limit: String(limit) },
+        text: `The graph was cut at ${limit} nodes.`,
+      },
+    ],
+  };
+  return wire as GraphSet;
 }

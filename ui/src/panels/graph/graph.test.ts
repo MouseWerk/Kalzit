@@ -126,10 +126,16 @@ describe("model", () => {
   });
 
   it("takes the source's notices and names the limit of a cut without one", () => {
-    const cut: GraphSet = { ...SMALL, truncated: { limit: 4, reason: "graph.edge_limit" } };
-    const m = model([cut]);
+    const wire = { ...SMALL, truncated: { limit: 4, reason: "graph.edge_limit" } };
+    const m = model([wire as GraphSet]);
     expect(m.truncated).toBe(true);
-    expect(m.notices.map((n) => [n.code, n.params?.limit])).toEqual([["graph.edge_limit", "4"]]);
+    // A code to translate, not English text of its own.
+    expect(m.notices.map((n) => [n.code, n.params?.limit, n.text])).toEqual([
+      ["graph.edge_limit", "4", ""],
+    ]);
+    // Malformed extras are ignored rather than shown.
+    const odd = { ...SMALL, notices: [{ code: 7 }, "x"], truncated: { limit: 1, reason: 3 } };
+    expect(model([odd as unknown as GraphSet]).notices).toEqual([]);
   });
 
   it("sizes by degree or property and reads edge times", () => {

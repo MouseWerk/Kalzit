@@ -10,8 +10,8 @@
   "graph.showDrawing": "Zeichnung zeigen",
   "graph.roleDescription": "Graph",
   "graph.keyboardHint": "Pfeiltasten wählen den nächsten Knoten in diese Richtung. Eingabe öffnet eine Gruppe oder lädt die Nachbarn des Knotens und setzt die Variable, wo das Panel das tut. Escape hebt die Auswahl auf, Plus und Minus zoomen, 0 zeigt alles.",
-  "graph.summary": "{nodes} Knoten, {edges} Kanten, {components} Komponenten.",
-  "graph.communities.count": "{count} Communities.",
+  "graph.summary": "{nodes}, {edges}, {components}.",
+  "graph.communities.count": "{communities}.",
   "graph.communities.tooLarge": "Communities werden für Graphen bis {limit} Knoten berechnet.",
   "graph.notice.cut": "Gezeigt werden die {shown} am stärksten vernetzten von {count} Knoten, das Limit dieses Panels. Grenze die Abfrage ein oder erhöhe das Limit in den Panel-Optionen.",
   "graph.notice.truncated": "Die Datenquelle hat das Ergebnis an ihrem Limit abgeschnitten, der Graph ist womöglich unvollständig.",
@@ -94,5 +94,14 @@
   "graph.options.variableOff": "Keine Variable",
   "graph.options.variableProperty": "Knoten-Property für die Variable (optional)",
   "graph.options.variablePropertyHint": "Leer nimmt die Knoten-ID.",
-  "graph.layout.settling": "Der Graph wird angeordnet…"
+  "graph.layout.settling": "Der Graph wird angeordnet…",
+  "graph.count.node.one": "{count} Knoten",
+  "graph.count.node.other": "{count} Knoten",
+  "graph.count.edge.one": "{count} Kante",
+  "graph.count.edge.other": "{count} Kanten",
+  "graph.count.component.one": "{count} Komponente",
+  "graph.count.component.other": "{count} Komponenten",
+  "graph.count.community.one": "{count} Community",
+  "graph.count.community.other": "{count} Communities",
+  "graph.announce.variableRefused": "${name} kennt den Wert {value} nicht und bleibt, wie sie ist."
 }

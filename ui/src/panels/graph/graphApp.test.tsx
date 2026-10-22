@@ -4,7 +4,7 @@ import type { QueryRequest } from "../../api/generated/shapes";
 import { emptyModel, type PanelModel } from "../../features/dashboards/model";
 import { addDashboard } from "../../features/dashboards/test/fakeDashboards";
 import { addNeo4jSource, PG_ID } from "../../features/datasources/test/fakeDatasources";
-import { NEO4J_ID } from "../../features/datasources/test/fakeGraph";
+import { ID, NEO4J_ID } from "../../features/datasources/test/fakeGraph";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 
@@ -53,7 +53,7 @@ describe("graph panels on a dashboard", () => {
     expect(sent.queries[0]?.query).toEqual({
       cypher: "MATCH (n)-[r]-(m) WHERE elementId(n) = $nodeId RETURN n, r, m LIMIT 10",
     });
-    expect(sent.variables).toEqual({ nodeId: "p2" });
+    expect(sent.variables).toEqual({ nodeId: ID.desk });
 
     await user.click(within(panel).getByRole("button", { name: "Undo: neighbours of Desk" }));
     expect(within(panel).queryByRole("button", { name: "Oak & Co" })).toBeNull();

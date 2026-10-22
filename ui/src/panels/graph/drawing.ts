@@ -38,7 +38,8 @@ export function nodeDisplay(
       ? lit
         ? p.palette.neutral
         : p.palette.neutralDimmed
-      : ((lit ? p.palette.series : p.palette.dimmed)[group % p.palette.series.length] ?? "#666");
+      : ((lit ? p.palette.series : p.palette.dimmed)[group % p.palette.series.length] ??
+        p.palette.neutral);
   const allowed = labelAllowed(p.ranks[index] ?? 0, ratio, node.cluster >= 0);
   const labelVisibility = isSelected
     ? "visible"

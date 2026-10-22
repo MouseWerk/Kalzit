@@ -10,8 +10,8 @@
   "graph.showDrawing": "Show drawing",
   "graph.roleDescription": "graph",
   "graph.keyboardHint": "Arrow keys move the selection to the nearest node in that direction. Enter opens a group, or loads the node's neighbours and sets the variable where the panel does that. Escape clears the selection, plus and minus zoom, 0 shows everything.",
-  "graph.summary": "{nodes} nodes, {edges} edges, {components} components.",
-  "graph.communities.count": "{count} communities.",
+  "graph.summary": "{nodes}, {edges}, {components}.",
+  "graph.communities.count": "{communities}.",
   "graph.communities.tooLarge": "Communities are computed for graphs up to {limit} nodes.",
   "graph.notice.cut": "Showing the {shown} best connected of {count} nodes, the limit of this panel. Narrow the query or raise the limit in the panel options.",
   "graph.notice.truncated": "The data source cut the result at its limit, so the graph may be incomplete.",
@@ -94,5 +94,14 @@
   "graph.options.variableOff": "No variable",
   "graph.options.variableProperty": "Node property for the variable (optional)",
   "graph.options.variablePropertyHint": "Empty uses the node id.",
-  "graph.layout.settling": "Arranging the graph…"
+  "graph.layout.settling": "Arranging the graph…",
+  "graph.count.node.one": "{count} node",
+  "graph.count.node.other": "{count} nodes",
+  "graph.count.edge.one": "{count} edge",
+  "graph.count.edge.other": "{count} edges",
+  "graph.count.component.one": "{count} component",
+  "graph.count.component.other": "{count} components",
+  "graph.count.community.one": "{count} community",
+  "graph.count.community.other": "{count} communities",
+  "graph.announce.variableRefused": "${name} has no value {value}, so it stays as it is."
 }

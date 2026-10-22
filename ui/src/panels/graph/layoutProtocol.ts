@@ -16,11 +16,6 @@ export interface LayoutRequest {
   start: Float32Array;
 }
 
-export interface LayoutStop {
-  type: "stop";
-  run: number;
-}
-
 export interface LayoutProgress {
   type: "positions";
   run: number;

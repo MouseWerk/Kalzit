@@ -1,5 +1,5 @@
 import type { GraphPath, GraphSet, Notice } from "../../api/generated/shapes";
-import { nodeCaption, normalizeGraph, readNumber, readTime } from "./adapter";
+import { graphExtras, nodeCaption, normalizeGraph, readNumber, readTime } from "./adapter";
 
 /** Node colors cycle through this many palette entries (`--chart-1` ... `--chart-8`). */
 export const GRAPH_COLORS = 8;
@@ -72,18 +72,20 @@ export function buildGraphModel(sets: readonly GraphSet[], options: ModelOptions
 
   for (const raw of sets) {
     const set = normalizeGraph(raw);
+    const extras = graphExtras(raw);
     truncated ||= set.truncated !== undefined;
-    for (const notice of set.notices ?? []) {
+    for (const notice of extras.notices) {
       if (!notices.some((n) => n.code === notice.code)) notices.push(notice);
     }
-    // A cut without its own notice still says so, by the reason it names.
-    const reason = set.truncated?.reason;
-    if (reason !== undefined && !notices.some((n) => n.code === reason)) {
+    // A cut without its own notice still says so, by the reason it names: a code the UI
+    // translates, with no English text of its own (the panel's generic text stands in).
+    const reason = extras.truncatedReason;
+    if (reason !== null && !notices.some((n) => n.code === reason)) {
       notices.push({
         severity: "warning",
         code: reason,
         params: { limit: String(set.truncated?.limit ?? "") },
-        text: `The graph was cut at a limit of ${set.truncated?.limit ?? ""}.`,
+        text: "",
       });
     }
     for (const label of set.schema.labels) {

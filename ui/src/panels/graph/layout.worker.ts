@@ -3,7 +3,6 @@ import {
   ITERATIONS_PER_UPDATE,
   type LayoutProgress,
   type LayoutRequest,
-  type LayoutStop,
   UPDATE_INTERVAL_MS,
 } from "./layoutProtocol";
 
@@ -17,7 +16,7 @@ import {
 // library, which cannot be combined with the webworker one.
 interface WorkerScope {
   postMessage(message: unknown, transfer: Transferable[]): void;
-  onmessage: ((event: MessageEvent<LayoutRequest | LayoutStop>) => void) | null;
+  onmessage: ((event: MessageEvent<LayoutRequest>) => void) | null;
 }
 const scope = self as unknown as WorkerScope;
 let current = 0;
@@ -29,9 +28,6 @@ function post(message: LayoutProgress) {
 scope.onmessage = (event) => {
   const message = event.data;
   current = message.run;
-  if (message.type === "stop") {
-    return;
-  }
   const run = message.run;
   if (message.mode === "hierarchy") {
     const result = hierarchyLayout(message);

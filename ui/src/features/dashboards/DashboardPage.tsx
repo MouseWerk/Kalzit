@@ -24,6 +24,7 @@ import "./dashboards.css";
 import { DashboardGrid } from "./DashboardGrid";
 import {
   bottomRow,
+  clickTargets,
   type DashboardModel,
   type GridPos,
   newPanelId,
@@ -340,7 +341,7 @@ function DashboardView({
   const host = {
     orgId,
     variables: {
-      names: model.variables.filter((v) => v.type !== "constant").map((v) => v.name),
+      ...clickTargets(model.variables),
       set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
     },
   };

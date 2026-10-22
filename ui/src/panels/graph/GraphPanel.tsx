@@ -14,7 +14,7 @@ import type { GraphSet } from "../../api/generated/shapes";
 import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
-import { usePanelHost } from "../host";
+import { setVariableFromClick, usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
 import type { PanelGraph, PanelProps } from "../types";
 import { propertyText } from "./adapter";
@@ -25,6 +25,7 @@ import type { LayoutMode } from "./layoutProtocol";
 import { COMMUNITY_LIMIT, type Communities, communities, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, GRAPH_COLORS, nodeSizes } from "./model";
 import { AUTO_CLUSTER_NODES, type GraphPanelOptions } from "./options";
+import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
 import { useGraphLayout } from "./useGraphLayout";
@@ -279,13 +280,17 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     }
     const data = model.nodes[node.node];
     if (data === undefined) return;
-    if (variable !== null && host.variables !== undefined) {
+    if (variable !== null) {
       const value =
         options.variableProperty === ""
           ? data.id
           : propertyText(data.properties[options.variableProperty]);
-      host.variables.set(variable, value);
-      setAnnouncement(t("graph.announce.variable", { name: variable, value }));
+      const outcome = setVariableFromClick(host, variable, value);
+      setAnnouncement(
+        outcome === "set"
+          ? t("graph.announce.variable", { name: variable, value })
+          : t("graph.announce.variableRefused", { name: variable, value }),
+      );
     }
     if (
       explorer !== null &&
@@ -339,7 +344,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       }),
     );
   }
-  for (const notice of model.notices) notices.push(noticeText(t, notice));
+  for (const notice of model.notices) {
+    notices.push(noticeText(t, notice) || t("graph.notice.truncated"));
+  }
   if (model.truncated && model.notices.length === 0) notices.push(t("graph.notice.truncated"));
   if (model.dangling > 0)
     notices.push(t("graph.notice.dangling", { count: number.format(model.dangling) }));
@@ -408,15 +415,17 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       </div>
       <p className="graph__summary">
         {t("graph.summary", {
-          nodes: number.format(model.nodes.length),
-          edges: number.format(model.edges.length),
-          components: number.format(parts.sizes.length),
+          nodes: countText(t, language, "node", model.nodes.length),
+          edges: countText(t, language, "edge", model.edges.length),
+          components: countText(t, language, "component", parts.sizes.length),
         })}{" "}
         {model.nodes.length > COMMUNITY_LIMIT
           ? t("graph.communities.tooLarge", { limit: number.format(COMMUNITY_LIMIT) })
           : found === null
             ? ""
-            : t("graph.communities.count", { count: number.format(found.count) })}
+            : t("graph.communities.count", {
+                communities: countText(t, language, "community", found.count),
+              })}
       </p>
       {notices.length > 0 || view.clustered || !DRAWABLE ? (
         <ul className="graph__notices">

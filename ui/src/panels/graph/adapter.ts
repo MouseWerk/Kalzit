@@ -1,5 +1,5 @@
 import { isRecord } from "../../api/client";
-import type { GraphSet, Node } from "../../api/generated/shapes";
+import type { GraphSet, Node, Notice } from "../../api/generated/shapes";
 
 /*
  * Everything the graph panels assume about the `graph` shape and the graph sources beyond the
@@ -19,16 +19,50 @@ import type { GraphSet, Node } from "../../api/generated/shapes";
  *   (`$name`), never as text.
  * - The schema route answers `{"kind": "graph", "labels", "edgeTypes", "propertyKeys", "queries"?}`
  *   with property keys as one list for the whole source.
- * - `truncated.reason` and `notices` say which limit cut a graph (`graph.node_limit`, ...).
+ * - `truncated.reason` and `notices` say which limit cut a graph (`graph.node_limit`, ...). They
+ *   come with the server side of M3 and are read defensively by `graphExtras` until the generated
+ *   `GraphSet` type carries them.
  */
 
-/** Data source kinds whose results are graphs. */
-export const GRAPH_KINDS = ["neo4j", "memgraph", "tigergraph"] as const;
-/** Kinds queried in Cypher. */
-export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
+/** What the source said about a graph beyond the generated type: notices and the cut's reason. */
+export interface GraphExtras {
+  notices: Notice[];
+  /** The notice code of the limit that cut the result (`graph.node_limit`), if it says. */
+  truncatedReason: string | null;
+}
 
-export function isCypherKind(kind: string): boolean {
-  return (CYPHER_KINDS as readonly string[]).includes(kind);
+function readNotice(value: unknown): Notice | null {
+  if (!isRecord(value) || typeof value.code !== "string" || value.code === "") {
+    return null;
+  }
+  const params = isRecord(value.params)
+    ? Object.fromEntries(
+        Object.entries(value.params).flatMap(([k, v]) =>
+          typeof v === "string" || typeof v === "number" ? [[k, String(v)]] : [],
+        ),
+      )
+    : undefined;
+  return {
+    severity: value.severity === "info" ? "info" : "warning",
+    code: value.code,
+    ...(params === undefined ? {} : { params }),
+    text: typeof value.text === "string" ? value.text : "",
+  };
+}
+
+/** Notices and the cut's reason, whatever the answer carries; nothing when it has none. */
+export function graphExtras(set: GraphSet): GraphExtras {
+  const raw = set as unknown as Record<string, unknown>;
+  const notices = Array.isArray(raw.notices)
+    ? raw.notices.flatMap((n) => {
+        const notice = readNotice(n);
+        return notice === null ? [] : [notice];
+      })
+    : [];
+  const truncated = raw.truncated;
+  const reason =
+    isRecord(truncated) && typeof truncated.reason === "string" ? truncated.reason : "";
+  return { notices, truncatedReason: reason === "" ? null : reason };
 }
 
 /** Property keys tried, in order, for a node's caption when the panel names none. */
@@ -143,7 +177,6 @@ export function normalizeGraph(value: GraphSet): GraphSet {
       propertyKeys: value.schema?.propertyKeys ?? {},
     },
     ...(value.truncated === undefined ? {} : { truncated: value.truncated }),
-    ...(Array.isArray(value.notices) ? { notices: value.notices } : {}),
   };
 }
 

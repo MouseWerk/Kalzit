@@ -1,6 +1,5 @@
-import { GraphEditor } from "../graph/GraphEditor";
-import { GraphPanel } from "../graph/GraphPanel";
 import { type GraphPanelOptions, parseGraphOptions } from "../graph/options";
+import { lazyPanel } from "../lazy";
 import type { PanelPlugin } from "../types";
 
 /** Never clusters: a group would cut through the layers. */
@@ -17,6 +16,6 @@ export const hierarchyPanel: PanelPlugin<GraphPanelOptions> = {
   name: "graph.panels.hierarchy",
   shapes: ["graph"],
   options: parseOptions,
-  Panel: (props) => <GraphPanel {...props} mode="hierarchy" />,
-  Editor: (props) => <GraphEditor {...props} network={false} />,
+  Panel: lazyPanel(() => import("../graph/GraphPanels").then((m) => m.HierarchyPanel)),
+  Editor: lazyPanel(() => import("../graph/GraphPanels").then((m) => m.HierarchyEditor)),
 };
