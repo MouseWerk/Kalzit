@@ -400,7 +400,21 @@ parameters are tokens of their own, so a keyword inside them is never seen):
   `STORAGE MODE`, `FREE MEMORY`, `DUMP DATABASE`, ...) are refused.
 - Refused anywhere, also inside `CALL {}`, `CALL (x) {}`, `EXISTS {}`, `COUNT {}` and `COLLECT {}`:
   `CREATE`, `MERGE`, `DELETE`, `DETACH`, `NODETACH`, `SET`, `REMOVE`, `INSERT`, `FOREACH`, `LOAD`
-  (`LOAD CSV` and Memgraph's loaders), `USE`, `IN TRANSACTIONS`, `PERIODIC COMMIT`.
+  (`LOAD CSV` and Memgraph's loaders), `USE`, `IN TRANSACTIONS` (also `IN n CONCURRENT
+  TRANSACTIONS`), `PERIODIC COMMIT`.
+- A number or numbered parameter followed directly by letters (`1DELETE`, `LIMIT 1SET`,
+  `$1DELETE`) is refused: the database reads the letters as the next word. Hex (`0x1F`), octal
+  (`0o17`), exponents (`1e-3`) and `_` in numbers are fine. Line comments also end at U+0085,
+  U+2028 and U+2029.
+- Function calls must be built-ins (`count`, `toUpper`, `date`, `shortestPath`, ...) or start with
+  an allowed namespace: `date.`, `datetime.`, `localdatetime.`, `localtime.`, `time.`,
+  `duration.`, `point.`, `vector.similarity.`, and APOC's pure helpers (`apoc.coll.`,
+  `apoc.text.`, `apoc.map.`, `apoc.math.`, `apoc.convert.`, `apoc.date.`, `apoc.temporal.`,
+  `apoc.number.`, `apoc.agg.`, `apoc.label.`, `apoc.hashing.`, `apoc.meta.cypher.`,
+  `apoc.node.degree`, `apoc.node.labels`, `apoc.rel.type`, `apoc.util.md5` and `sha*`).
+  Everything else is refused, among it `apoc.cypher.*` (which runs Cypher given as text),
+  `apoc.load.*`, `apoc.export.*`, `apoc.periodic.*`, `apoc.trigger.*`, `apoc.schema.*`, `dbms.*`
+  and `db.*`.
 - `CALL` of a procedure only from this list (case does not matter): `db.labels`,
   `db.relationshipTypes`, `db.propertyKeys`, `db.schema.visualization`,
   `db.schema.nodeTypeProperties`, `db.schema.relTypeProperties`, `dbms.components`,
@@ -411,13 +425,27 @@ parameters are tokens of their own, so a keyword inside them is never seen):
 
 Neo4j enforces the read transaction on the server (a write answers `query_rejected` with
 `query.write_refused`). Memgraph accepts it but does not enforce it, so the user's privileges
-decide: on every new connection and on Test connection, Kalzit runs each writing clause on
-`MATCH (n) WHERE false` (which matches nothing) in a transaction it rolls back. Memgraph checks
-privileges before it runs a query, so a read-only user is refused each one, and a user who may
-write gets an empty result and nothing changes. A user who may write is refused
+decide. On every new connection, before reusing a pooled connection checked more than a minute
+ago, and on Test connection, Kalzit probes them:
+
+- `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`: each clause on `MATCH (n) WHERE false` (which
+  matches nothing) in a transaction it rolls back.
+- `READ_FILE`: `LOAD CSV` of a file that does not exist, on no rows, rolled back.
+- `AUTH`, `TRIGGER`, `STREAM`, `CONFIG`: `SHOW USERS`, `SHOW TRIGGERS`, `SHOW STREAMS`,
+  `SHOW CONFIG`, which change nothing.
+
+Memgraph checks privileges before it runs a query, so a read-only user is refused each one, and a
+user who has them gets an empty result and nothing changes. A replica (or read-only instance) refuses
+writes the same way, so it counts as read-only. A user with any of these privileges is refused
 (`memgraph.user_can_write`) unless `allowWriteCapableUser` is set; Memgraph Community has no
 read-only users, so there the setting is needed, Test connection answers
 `health.connected_write_capable`, and only the query check keeps queries read-only.
+
+Not covered by the probes: privileges without a harmless probe (`MODULE_WRITE`, `DURABILITY`,
+`REPLICATION`, `STORAGE_MODE`, `FREE_MEMORY`, `INDEX`, `CONSTRAINT`, `DUMP`, multi-tenancy and
+impersonation), label-based (fine-grained) permissions, which can allow writes on some labels only,
+and a privilege granted after the last check (at most a minute on a pooled connection). The query
+check refuses the statements behind all of them.
 
 Parameters: variables are bound as Cypher parameters (`$name`), never spliced into the text; a
 list becomes a list. Macros: `$__timeFrom`, `$__timeTo` (UTC DateTime values),
@@ -431,8 +459,10 @@ dashboard variable of the same name.
 
 - Interpreted queries go to the GSQL server with the user and password: 4.x
   `POST /gsql/v1/queries/interpret?graph=<graph>`, 3.x `POST /gsqlserver/interpreted_query`. The
-  text is one `INTERPRET QUERY (...) FOR GRAPH <graph> { ... }`; a `FOR GRAPH` other than the
-  source's graph is refused.
+  text is one `INTERPRET QUERY (...) FOR GRAPH <graph> { ... }`; `FOR GRAPH` is required (3.x
+  takes the graph from it), and another graph than the source's is refused. Requests with a body
+  (interpreted queries, `SHOW USER`, token requests) do not follow redirects: a redirect answers
+  `tigergraph.error`, so a body or secret never reaches another URL.
 - Installed queries go to REST++ `GET /query/<graph>/<name>` with a token. With `secret`, the
   token comes from it (4.x `POST /gsql/v1/tokens`, 3.x `POST <restppUrl>/requesttoken`); without
   it, 4.x issues one for the user and password, and 3.x calls REST++ without a token (for servers
@@ -475,8 +505,10 @@ Read-only rules:
   (loading jobs, schema changes), `INSTALL`, `GRANT`, `REVOKE`, `CLEAR`, `USE`, `LOAD`, `EXPORT`,
   `IMPORT`, calls of functions and methods outside a fixed list of built-ins (so calls of other
   queries, user-defined functions, `SelectVertex` and `evaluate`, and methods such as
-  `setAttr`), characters outside ASCII outside strings, `#`, and `\"` inside strings. Global
-  (`@@`) and vertex (`v.@x`) accumulators live for one run and are allowed.
+  `setAttr`), characters outside ASCII outside strings, `#`, `\"` inside strings, `'` anywhere but
+  right after an accumulator (`@@total'`), and a `TYPEDEF` named like a built-in, this or another
+  query (4.x) or a name used before it. Global (`@@`) and vertex (`v.@x`) accumulators live for
+  one run and are allowed.
 - An installed query runs only when its text can be read and passes the check (the result of a
   check is kept for a minute), or when its text cannot be read and its name is in
   `approvedQueries`. Then only the reader user protects the data.
@@ -716,6 +748,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `cypher.in_transactions` | | `CALL { } IN TRANSACTIONS` or `PERIODIC COMMIT` |
 | `cypher.procedure_not_allowed` | `name` | `CALL` of a procedure that is not on the read list |
 | `cypher.parse_error` | | `CALL` without a procedure name or subquery |
+| `cypher.function_not_allowed` | `name` | a function that is neither a built-in nor on the list of allowed namespaced functions |
+| `cypher.number_followed_by_letters` | | a number or `$0` parameter with letters glued to it (`1DELETE`, `LIMIT 1SET`) |
 | `cypher.unclosed_quote`, `cypher.unclosed_comment`, `cypher.unclosed_backtick` | | an unclosed string, `/*` comment or backtick name |
 | `cypher.macro_unknown` | `name` | an unknown `$__` macro |
 | `cypher.variable_missing` | `name` | a parameter without a variable value |
@@ -730,6 +764,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `gsql.function_not_allowed` | `name` | a function outside the built-ins Kalzit allows (also other queries) |
 | `gsql.method_not_allowed` | `name` | a method outside the allowed ones (such as `setAttr`) |
 | `gsql.other_graph` | `graph` | the query is for another graph |
+| `gsql.graph_missing` | | an interpreted query without `FOR GRAPH` |
+| `gsql.typedef_name` | `name` | a `TYPEDEF` named like a function, a query or a name used before it |
 | `gsql.string_escape` | | `\"` inside a string |
 | `gsql.unexpected_character` | `character` | a character outside ASCII, or `#`, outside strings and comments |
 | `gsql.unclosed_quote`, `gsql.unclosed_comment` | | an unclosed string or comment |
@@ -805,6 +841,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `graph.node_limit` | `limit` | notice: the graph was cut at `limit` nodes |
 | `graph.edge_limit` | `limit` | notice: the graph was cut at `limit` edges |
 | `graph.size_limit` | | notice: the graph was cut at the response size limit |
+| `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
 
 ## Not here yet

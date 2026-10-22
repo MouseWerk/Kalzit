@@ -601,3 +601,58 @@ async fn memgraph_refuses_users_who_may_write_unless_allowed() {
     assert!(h["params"]["privileges"].as_str().unwrap().contains("CREATE"), "{h}");
     graph_reads(&t, &id).await;
 }
+
+/// Whether the server accepts `query` (planned with EXPLAIN, so nothing runs).
+async fn bolt_explains(url: &str, query: &str) -> bool {
+    let (host, port, user, password, _) = parts(url);
+    let policy = kalzit::datasources::targets::TargetPolicy::new(
+        &std::env::temp_dir().join("kalzit-none"),
+        "sqlite::memory:",
+        &[],
+        &[],
+    );
+    let opts = kalzit::datasources::bolt::ConnectOptions {
+        host: &host,
+        port,
+        user: (!user.is_empty()).then_some(user.as_str()),
+        password: password.as_deref(),
+        tls: None,
+        timeout: std::time::Duration::from_secs(10),
+    };
+    let mut c = kalzit::datasources::bolt::connect(&policy, opts).await.unwrap();
+    match c.run_auto(&format!("EXPLAIN {query}"), None).await {
+        Ok(_) => c.pull(-1, 1 << 20, |_, _| true).await.is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Kalzit refuses numbers glued to letters. Where Neo4j accepts such a text, it must read it as
+/// the number followed by a word, exactly as with a space: then the refusal is what keeps a
+/// hidden keyword out.
+#[tokio::test]
+async fn neo4j_reads_glued_numbers_as_number_and_word() {
+    let Some(url) = env("KALZIT_TEST_NEO4J_URL") else { return };
+    let t = T::new(None).await;
+    let (settings, secrets) = graph_settings(&url, json!({}));
+    let id = t.create("neo4j", settings, secrets).await;
+    for (glued, spaced) in [
+        ("MATCH (n) WITH n, 1DELETE n", "MATCH (n) WITH n, 1 DELETE n"),
+        ("MATCH (n) RETURN n LIMIT 1SET n.x = 1", "MATCH (n) RETURN n LIMIT 1 SET n.x = 1"),
+        (
+            "MATCH (n) WITH n LIMIT 1CALL dbms.killQueries(['x'])",
+            "MATCH (n) WITH n LIMIT 1 CALL dbms.killQueries(['x'])",
+        ),
+        (
+            "MATCH (n) WITH n LIMIT 1LOAD CSV FROM 'file:///x.csv' AS l RETURN l",
+            "MATCH (n) WITH n LIMIT 1 LOAD CSV FROM 'file:///x.csv' AS l RETURN l",
+        ),
+        ("MATCH (n) WHERE n.x = $1DELETE n", "MATCH (n) WHERE n.x = $1 DELETE n"),
+    ] {
+        let r = t.query(&id, json!({ "cypher": glued })).await;
+        assert_eq!(r["error"]["reason"], "cypher.number_followed_by_letters", "{glued}: {r}");
+        let server_glued = bolt_explains(&url, glued).await;
+        let server_spaced = bolt_explains(&url, spaced).await;
+        eprintln!("{glued}: server accepts glued {server_glued}, spaced {server_spaced}");
+        assert!(!server_glued || server_spaced, "Neo4j reads {glued:?} in a way Kalzit does not know");
+    }
+}

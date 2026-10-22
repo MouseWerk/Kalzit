@@ -271,6 +271,14 @@ fn lex(q: &str) -> Result<Vec<T>, Detail> {
             }
             out.push(T::Num);
             i = j;
+        } else if c == b'\'' && !matches!(out.as_slice(), [.., T::Sym("@" | "@@"), T::Ident(_)]) {
+            // `@@acc'` (the value before this iteration) is the only use; anywhere else a quote
+            // could start text that Kalzit and TigerGraph read differently.
+            return Err(reject(
+                "gsql.unexpected_character",
+                "a quote ' is allowed only after an accumulator, as in @@total'",
+            )
+            .with("character", '\''));
         } else if let Some(sym) = SYMS.iter().find(|s| q[i..].starts_with(**s)) {
             out.push(T::Sym(sym));
             i += sym.len();
@@ -341,6 +349,8 @@ struct P {
     t: Vec<T>,
     i: usize,
     typedefs: HashSet<String>,
+    /// Names a `TYPEDEF` may not take (upper case): built-ins, this query and other queries.
+    reserved: HashSet<String>,
 }
 
 fn upper(t: &T) -> Option<String> {
@@ -350,18 +360,34 @@ fn upper(t: &T) -> Option<String> {
     }
 }
 
+fn upper_eq(t: &T, upper: &str) -> bool {
+    matches!(t, T::Ident(s) if s.eq_ignore_ascii_case(upper))
+}
+
 fn is_kw(t: Option<&T>, kw: &str) -> bool {
     matches!(t, Some(T::Ident(s)) if s.eq_ignore_ascii_case(kw))
 }
 
 /// Checks a GSQL query (see the module documentation).
 pub fn check(q: &str, form: Form) -> Result<Checked, Detail> {
+    check_with(q, form, &[])
+}
+
+/// `check`, where `queries` are the names of the graph's other queries, which a `TYPEDEF` may not
+/// take (a tuple called like a query would otherwise make the call look like a constructor).
+pub fn check_with(q: &str, form: Form, queries: &[String]) -> Result<Checked, Detail> {
     let t = lex(q)?;
     if t.is_empty() {
         return Err(reject("gsql.empty", "the query is empty"));
     }
-    let mut p = P { t, i: 0, typedefs: HashSet::new() };
+    let mut reserved: HashSet<String> = FUNCTIONS.iter().chain(METHODS).map(|f| f.to_ascii_uppercase()).collect();
+    reserved.extend(TYPES.iter().chain(EXPR_KEYWORDS).chain(STATEMENTS).chain(WRITES).map(|s| s.to_string()));
+    reserved.extend(queries.iter().map(|q| q.to_ascii_uppercase()));
+    let mut p = P { t, i: 0, typedefs: HashSet::new(), reserved };
     let checked = p.header(form)?;
+    if let Some(name) = &checked.name {
+        p.reserved.insert(name.to_ascii_uppercase());
+    }
     p.expect_sym("{")?;
     p.block(false, &[])?;
     p.expect_sym("}")?;
@@ -445,6 +471,12 @@ impl P {
             self.i += 1;
             self.expect_kw("GRAPH")?;
             graph = Some(self.ident()?);
+        }
+        if graph.is_none() && form == Form::Interpret {
+            return Err(reject(
+                "gsql.graph_missing",
+                "an interpreted query names its graph: INTERPRET QUERY (...) FOR GRAPH name { ... }",
+            ));
         }
         if is_kw(self.peek(), "RETURNS") {
             self.i += 1;
@@ -670,9 +702,23 @@ impl P {
                 self.expr(&rest, false)
             }
             "TYPEDEF" => {
+                let start = self.i;
                 let rest = self.region(accum, stops);
                 if let Some(T::Ident(name)) = rest.last() {
-                    self.typedefs.insert(name.to_ascii_uppercase());
+                    let upper = name.to_ascii_uppercase();
+                    // A tuple named like a function or query, or like a name already used, would
+                    // make a call of it look like a constructor.
+                    let used_before = self.t[..start].iter().any(|t| upper_eq(t, &upper));
+                    if self.reserved.contains(&upper) || used_before {
+                        return Err(reject(
+                            "gsql.typedef_name",
+                            format!(
+                                "{name} cannot be a tuple name: it names a function, a query or something used before"
+                            ),
+                        )
+                        .with("name", name));
+                    }
+                    self.typedefs.insert(upper);
                 }
                 self.expr(&rest[1..], false)
             }
@@ -769,7 +815,7 @@ impl P {
         }
         for (clause, body) in parts {
             if clause == "ACCUM" || clause == "POST_ACCUM" {
-                let mut inner = P { t: body, i: 0, typedefs: self.typedefs.clone() };
+                let mut inner = P { t: body, i: 0, typedefs: self.typedefs.clone(), reserved: self.reserved.clone() };
                 inner.block(true, &[])?;
                 if inner.i != inner.t.len() {
                     return Err(parse_error(format!("unexpected text in {clause}")));
@@ -902,6 +948,7 @@ mod tests {
             FOREACH v IN @@edges DO @@total += 1; END;
             IF @@total > 0 THEN PRINT "many"; ELSE IF @@total == 0 THEN PRINT "none"; ELSE PRINT "x"; END;
             CASE WHEN x == 1 THEN PRINT x; ELSE PRINT 0; END;
+            INT vorher = @@total';
             @@edges.clear();
             log(TRUE, @@total);
             PRINT Friends[Friends.name, Friends.@visited AS v], @@edges, @@total, to_string(now()) AS t;
@@ -971,9 +1018,18 @@ mod tests {
             ("PRINT 1; # Kommentar?", "gsql.unexpected_character"),
             ("PRINT 1;\u{00A0}", "gsql.unexpected_character"),
             ("PRINT ünïcödé;", "gsql.unexpected_character"),
+            ("PRINT '\"' ; DELETE s FROM Person:s; '\"';", "gsql.unexpected_character"),
+            ("PRINT 1'; DELETE s FROM Person:s;", "gsql.unexpected_character"),
+            ("TYPEDEF TUPLE <INT a> count; PRINT count(1);", "gsql.typedef_name"),
+            ("TYPEDEF TUPLE <INT a> To_String; PRINT 1;", "gsql.typedef_name"),
+            ("INT foo = 1; TYPEDEF TUPLE <INT a> foo; PRINT foo(1);", "gsql.typedef_name"),
         ] {
             assert_eq!(refused(body), reason, "{body}");
         }
+    }
+
+    fn installed_check(s: &str) -> Result<(), &'static str> {
+        check(s, Form::Installed).map(|_| ()).map_err(|d| d.reason)
     }
 
     #[test]
@@ -988,6 +1044,18 @@ mod tests {
         );
         assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; }; DROP ALL"), Err("gsql.not_one_query"));
         assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; };"), Ok(()));
+        assert_eq!(q("INTERPRET QUERY () { PRINT 1; }"), Err("gsql.graph_missing"));
+        let other =
+            |s: &str| check_with(s, Form::Interpret, &["andereAbfrage".to_string()]).map(|_| ()).map_err(|d| d.reason);
+        assert_eq!(
+            other("INTERPRET QUERY () FOR GRAPH g { TYPEDEF TUPLE <INT a> ANDEREABFRAGE; PRINT andereAbfrage(1); }"),
+            Err("gsql.typedef_name")
+        );
+        assert_eq!(other("INTERPRET QUERY () FOR GRAPH g { TYPEDEF TUPLE <INT a> Zeile; PRINT Zeile(1); }"), Ok(()));
+        assert_eq!(
+            installed_check("CREATE QUERY selbst() FOR GRAPH g { TYPEDEF TUPLE <INT a> selbst; PRINT 1; }"),
+            Err("gsql.typedef_name")
+        );
         assert_eq!(q("INTERPRET QUERY (FILE f) FOR GRAPH g { PRINT 1; }"), Err("gsql.file_output"));
         assert_eq!(q("INTERPRET OPENCYPHER QUERY () { MATCH (n) RETURN n }"), Err("gsql.parse_error"));
         assert_eq!(q("CREATE QUERY x() FOR GRAPH g { PRINT 1; }"), Err("gsql.not_one_query"));

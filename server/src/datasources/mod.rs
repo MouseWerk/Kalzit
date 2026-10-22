@@ -1280,13 +1280,15 @@ pub fn precheck_targets(
     if let Some(host) = settings.get("host").and_then(Value::as_str) {
         policy.precheck_host(host).map_err(|b| (b, "host"))?;
     }
-    let url_host = settings
-        .get("url")
-        .and_then(Value::as_str)
-        .and_then(|u| reqwest::Url::parse(u).ok())
-        .and_then(|u| u.host_str().map(String::from));
-    if let Some(host) = url_host {
-        policy.precheck_host(&host).map_err(|b| (b, "url"))?;
+    for field in ["url", "restppUrl"] {
+        let url_host = settings
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(|u| reqwest::Url::parse(u).ok())
+            .and_then(|u| u.host_str().map(String::from));
+        if let Some(host) = url_host {
+            policy.precheck_host(&host).map_err(|b| (b, field))?;
+        }
     }
     Ok(())
 }
@@ -1480,6 +1482,17 @@ mod tests {
         let secrets: crate::secrets::SecretPatch =
             [("token".to_string(), Some(zeroize::Zeroizing::new("x".to_string())))].into();
         assert_eq!(kind.validate_secrets(&secrets).unwrap_err().field, "secrets");
+    }
+
+    #[test]
+    fn every_url_setting_is_prechecked() {
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
+        let kind = tigergraph::kind();
+        let ok = serde_json::json!({ "url": "http://tg.intern:14240", "graph": "g", "user": "u" });
+        assert!(precheck_targets(&policy, &kind, &ok).is_ok());
+        let mut restpp = ok.clone();
+        restpp["restppUrl"] = serde_json::json!("http://169.254.169.254/restpp");
+        assert_eq!(precheck_targets(&policy, &kind, &restpp).unwrap_err().1, "restppUrl");
     }
 
     #[test]

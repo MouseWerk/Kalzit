@@ -125,6 +125,12 @@ impl GraphBuilder {
         }
     }
 
+    /// Stops at the source's row limit: the records (rows) that carry the graph, counted by the
+    /// caller.
+    pub fn cut_at_rows(&mut self, rows: usize) {
+        self.truncate("graph.row_limit", rows, format!("only the first {rows} records are shown (row limit)"));
+    }
+
     fn truncate(&mut self, reason: &'static str, limit: usize, message: String) {
         if self.truncated.is_none() {
             self.truncated =

@@ -139,29 +139,12 @@ impl HttpClient {
     /// Sends a request and follows redirects, checking every target. Authorization is dropped
     /// when a redirect leaves the origin, so credentials are not handed to another host.
     pub async fn send(&self, method: Method, url: Url, headers: HeaderMap) -> Result<reqwest::Response, HttpError> {
-        self.send_body(method, url, headers, None).await
-    }
-
-    /// `send` with a request body. A `303 See Other` continues as a `GET` without the body; other
-    /// redirects send it again.
-    pub async fn send_body(
-        &self,
-        method: Method,
-        url: Url,
-        headers: HeaderMap,
-        body: Option<Vec<u8>>,
-    ) -> Result<reqwest::Response, HttpError> {
         let mut url = url;
         let mut method = method;
         let mut headers = headers;
-        let mut body = body;
         for _ in 0..=MAX_REDIRECTS {
             self.check_url(&url).await?;
-            let mut request = self.client.request(method.clone(), url.clone()).headers(headers.clone());
-            if let Some(b) = &body {
-                request = request.body(b.clone());
-            }
-            let response = request.send().await?;
+            let response = self.client.request(method.clone(), url.clone()).headers(headers.clone()).send().await?;
             if !response.status().is_redirection() {
                 return Ok(response);
             }
@@ -174,11 +157,27 @@ impl HttpClient {
             }
             if response.status() == StatusCode::SEE_OTHER {
                 method = Method::GET;
-                body = None;
             }
             url = next;
         }
         Err(HttpError::Other(format!("more than {MAX_REDIRECTS} redirects")))
+    }
+
+    /// One request that does not follow redirects; a redirect is the answer. For requests with a
+    /// body, such as a token request carrying a secret, which must reach exactly this URL.
+    pub async fn send_once(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, HttpError> {
+        self.check_url(&url).await?;
+        let mut request = self.client.request(method, url).headers(headers);
+        if let Some(b) = body {
+            request = request.body(b);
+        }
+        Ok(request.send().await?)
     }
 
     /// Names are checked by the resolver when the client connects (there is no proxy); this
@@ -345,7 +344,7 @@ mod tests {
     async fn redirector(target: String) -> std::net::SocketAddr {
         let app = Router::new().route(
             "/",
-            axum::routing::get(move || async move {
+            axum::routing::any(move || async move {
                 (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, target)]).into_response()
             }),
         );
@@ -368,5 +367,16 @@ mod tests {
         let hop = redirector(format!("http://{addr}/auth")).await;
         let r = c.send(Method::GET, Url::parse(&format!("http://{hop}/")).unwrap(), headers).await.unwrap();
         assert_eq!(r.text().await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn send_once_does_not_follow_redirects() {
+        let addr = upstream().await;
+        let c = test_client(&[]);
+        let hop = Url::parse(&format!("http://{}/", redirector(format!("http://{addr}/auth")).await)).unwrap();
+        let once = c.send_once(Method::POST, hop, HeaderMap::new(), Some(b"secret".to_vec())).await.unwrap();
+        assert_eq!(once.status(), StatusCode::TEMPORARY_REDIRECT, "not followed");
+        let blocked = Url::parse("http://169.254.169.254/").unwrap();
+        assert!(matches!(c.send_once(Method::POST, blocked, HeaderMap::new(), None).await, Err(HttpError::Blocked(_))));
     }
 }

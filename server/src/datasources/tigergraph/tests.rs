@@ -26,6 +26,8 @@ struct Fake {
     last_body: Mutex<String>,
     /// The user that `GET /gsql/v1/users/{name}` and `SHOW USER` describe.
     v3: bool,
+    /// The token endpoint redirects (to a same-origin twin that would issue a token).
+    redirect_tokens: bool,
 }
 
 type S = Arc<Fake>;
@@ -101,6 +103,13 @@ fn base64_basic(user: &str, password: &str) -> String {
 }
 
 async fn tokens(State(s): State<S>, h: AxHeaders, body: String) -> Response {
+    if s.redirect_tokens {
+        return (AxStatus::TEMPORARY_REDIRECT, [("location", "/gsql/v1/tokens2")]).into_response();
+    }
+    tokens2(State(s), h, body).await
+}
+
+async fn tokens2(State(s): State<S>, h: AxHeaders, body: String) -> Response {
     if !authorized(&h) {
         return json_reply(401, json!({ "error": true, "message": "no credentials" }));
     }
@@ -192,9 +201,13 @@ async fn queries() -> Response {
     json_reply(200, json!({ "error": false, "results": ["nachbarn", "loescht"] }))
 }
 
-#[expect(clippy::disallowed_methods, reason = "a fake TigerGraph server, not an API route")]
 async fn fake(v3: bool) -> (std::net::SocketAddr, S) {
-    let state: S = Arc::new(Fake { v3, ..Fake::default() });
+    fake_with(Fake { v3, ..Fake::default() }).await
+}
+
+#[expect(clippy::disallowed_methods, reason = "a fake TigerGraph server, not an API route")]
+async fn fake_with(fake: Fake) -> (std::net::SocketAddr, S) {
+    let state: S = Arc::new(fake);
     let app = Router::new()
         .route("/gsql/v1/schema/graphs/{g}", get(schema_v4))
         .route("/gsqlserver/gsql/schema", get(schema_v3))
@@ -202,6 +215,7 @@ async fn fake(v3: bool) -> (std::net::SocketAddr, S) {
         .route("/gsql/v1/statements", post(statements))
         .route("/gsqlserver/gsql/file", post(statements))
         .route("/gsql/v1/tokens", post(tokens))
+        .route("/gsql/v1/tokens2", post(tokens2))
         .route("/gsql/v1/queries/{name}", get(query_text))
         .route("/gsql/v1/queries", get(queries))
         .route("/gsql/v1/queries/interpret", post(interpret))
@@ -335,6 +349,12 @@ async fn interpreted_queries_are_checked_and_sent_with_basic_auth() {
         ("INTERPRET QUERY () FOR GRAPH social { DELETE s FROM Person:s; }", "gsql.write"),
         ("INTERPRET QUERY () FOR GRAPH andere { PRINT 1; }", "gsql.other_graph"),
         ("INTERPRET QUERY () FOR GRAPH social { PRINT 1; } DROP ALL", "gsql.not_one_query"),
+        ("INTERPRET QUERY () { PRINT 1; }", "gsql.graph_missing"),
+        // A tuple named like an installed query of the graph.
+        (
+            "INTERPRET QUERY () FOR GRAPH social { TYPEDEF TUPLE <INT a> Nachbarn; PRINT nachbarn(1); }",
+            "gsql.typedef_name",
+        ),
     ] {
         assert_eq!(reason(TigerGraph.query(&conn, req(json!({ "gsql": gsql }), json!({}))).await), why, "{gsql}");
     }
@@ -362,6 +382,15 @@ async fn users_who_may_write_are_refused() {
     assert!(h.ok, "{h:?}");
     let global = connection(addr, "jemand", json!({})).await;
     assert_eq!(TigerGraph.health(&global).await.detail.reason, "tigergraph.user_can_write");
+}
+
+#[tokio::test]
+async fn token_requests_do_not_follow_redirects() {
+    let (addr, fake) = fake_with(Fake { redirect_tokens: true, ..Fake::default() }).await;
+    let conn = connection(addr, "leser", json!({})).await;
+    let r = TigerGraph.query(&conn, req(json!({ "installed": "nachbarn", "params": { "p": "1" } }), json!({}))).await;
+    assert_eq!(reason(r), "tigergraph.error");
+    assert_eq!(*fake.tokens_issued.lock().unwrap(), 0, "the redirect was not followed");
 }
 
 #[tokio::test]
@@ -400,6 +429,11 @@ fn rights_and_parameters() {
     let show = "- Name: x\n- Global Roles: \n- Graph 'social' Roles: queryreader, designer\n";
     assert_eq!(rights_from_show_user(show, "social").unwrap().excess(), ["designer"]);
     assert!(rights_from_show_user("nothing here", "social").is_none());
+    // Only global roles and roles on the source's graph count.
+    let other = "- Graph 'other' Roles: designer\n- Roles: designer\n- Graph 'social' Roles: queryreader\n";
+    assert_eq!(rights_from_show_user(other, "social").unwrap().excess(), Vec::<String>::new());
+    let anywhere = "- Graph 'other' Roles: superuser\n- Graph 'social' Roles: queryreader\n";
+    assert_eq!(rights_from_show_user(anywhere, "social").unwrap().excess(), ["superuser"]);
     let mut out = Vec::new();
     typed_pairs(
         "v",

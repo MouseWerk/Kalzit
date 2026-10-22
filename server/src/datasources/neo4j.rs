@@ -81,6 +81,8 @@ const MEMGRAPH_SETTINGS: &[SettingField] = &{
 const POOL_SIZE: usize = 4;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// A pooled Memgraph connection older than this has its user's privileges checked again before use.
+const RECHECK: Duration = Duration::from_secs(60);
 /// Records asked for per PULL.
 const BATCH: i64 = 1000;
 /// The largest single message read, whatever the budget.
@@ -156,6 +158,8 @@ struct Opened {
     conn: BoltConn,
     /// Memgraph: the writing clauses the user may run (empty when read-only or for Neo4j).
     write_privileges: Vec<&'static str>,
+    /// When the privileges were last checked.
+    checked: Instant,
 }
 
 /// A connection on loan. It goes back only through `release`, after a clean finish; one dropped
@@ -172,8 +176,11 @@ impl Lease<'_> {
         &mut self.opened.as_mut().expect("a lease holds its connection until released").conn
     }
 
+    /// Back to the pool, unless the connection is in an unknown state (then it is closed).
     fn release(mut self) {
-        if let Some(o) = self.opened.take() {
+        if let Some(o) = self.opened.take()
+            && !o.conn.broken
+        {
             self.pool.idle.lock().expect("pool lock").push((o, Instant::now()));
         }
     }
@@ -192,10 +199,22 @@ async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<
         idle.pop().map(|(o, _)| o)
     };
     let opened = match idle {
+        // A user's privileges can change while a connection waits in the pool.
+        Some(mut o) if needs_recheck(flavor, o.checked.elapsed()) => {
+            let s: Settings = conn.settings_as()?;
+            o.write_privileges = checked_privileges(&mut o.conn, &s).await?;
+            o.checked = Instant::now();
+            o
+        }
         Some(o) => o,
         None => open(flavor, conn).await?,
     };
     Ok(Lease { pool, opened: Some(opened), _permit: permit })
+}
+
+/// Whether a pooled connection has its user's privileges checked again before use.
+fn needs_recheck(flavor: Flavor, since_check: Duration) -> bool {
+    flavor == Flavor::Memgraph && since_check > RECHECK
 }
 
 async fn open(flavor: Flavor, conn: &Connection) -> Result<Opened, SourceError> {
@@ -217,7 +236,7 @@ async fn open(flavor: Flavor, conn: &Connection) -> Result<Opened, SourceError> 
     if flavor == Flavor::Memgraph {
         write_privileges = checked_privileges(&mut c, &s).await?;
     }
-    Ok(Opened { conn: c, write_privileges })
+    Ok(Opened { conn: c, write_privileges, checked: Instant::now() })
 }
 
 /// The Memgraph user's writing clauses, or the refusal when it may write and the settings do not
@@ -238,46 +257,88 @@ async fn checked_privileges(c: &mut BoltConn, s: &Settings) -> Result<Vec<&'stat
     Ok(write_privileges)
 }
 
-/// Each writing clause on nothing, in a transaction that is rolled back.
-const PROBES: &[(&str, &str)] = &[
-    ("CREATE", "MATCH (n) WHERE false CREATE (n)-[:KALZIT_PROBE]->(n)"),
-    ("MERGE", "MATCH (n) WHERE false MERGE (n)-[:KALZIT_PROBE]->(n)"),
-    ("SET", "MATCH (n) WHERE false SET n.kalzit_probe = 1"),
-    ("REMOVE", "MATCH (n) WHERE false REMOVE n.kalzit_probe"),
-    ("DELETE", "MATCH (n) WHERE false DETACH DELETE n"),
+/// How a probe runs and what its answer means.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Probe {
+    /// A writing clause on nothing, in a transaction that is rolled back. Success means the
+    /// privilege; another failure than a refusal means Kalzit cannot tell.
+    Clause,
+    /// `LOAD CSV` of a file that does not exist, on no rows, rolled back: past the privilege
+    /// check, any answer (also "file not found") means the privilege.
+    ReadFile,
+    /// A harmless `SHOW` (auto-commit, as Memgraph runs such queries only outside transactions):
+    /// success means the privilege; another failure means the feature is missing here.
+    Show,
+}
+
+const PROBES: &[(&str, Probe, &str)] = &[
+    ("CREATE", Probe::Clause, "MATCH (n) WHERE false CREATE (n)-[:KALZIT_PROBE]->(n)"),
+    ("MERGE", Probe::Clause, "MATCH (n) WHERE false MERGE (n)-[:KALZIT_PROBE]->(n)"),
+    ("SET", Probe::Clause, "MATCH (n) WHERE false SET n.kalzit_probe = 1"),
+    ("REMOVE", Probe::Clause, "MATCH (n) WHERE false REMOVE n.kalzit_probe"),
+    ("DELETE", Probe::Clause, "MATCH (n) WHERE false DETACH DELETE n"),
+    (
+        "READ_FILE",
+        Probe::ReadFile,
+        "UNWIND [] AS x LOAD CSV FROM '/kalzit-probe-that-does-not-exist.csv' NO HEADER AS row RETURN row",
+    ),
+    ("AUTH", Probe::Show, "SHOW USERS"),
+    ("TRIGGER", Probe::Show, "SHOW TRIGGERS"),
+    ("STREAM", Probe::Show, "SHOW STREAMS"),
+    ("CONFIG", Probe::Show, "SHOW CONFIG"),
 ];
 
+/// Memgraph's refusal of a query the user lacks the privilege for, and a replica's or read-only
+/// instance's refusal of any write: either way the write cannot happen.
 fn is_denied(message: &str) -> bool {
     let m = message.to_lowercase();
-    m.contains("not authorized") || m.contains("privilege") || m.contains("permission")
+    ["not authorized", "privilege", "permission", "forbidden on the replica", "replica", "read-only", "read only"]
+        .iter()
+        .any(|w| m.contains(w))
 }
 
 /// The writing clauses Memgraph lets this user run (see the module documentation).
 async fn memgraph_write_privileges(c: &mut BoltConn, db: Option<&str>) -> Result<Vec<&'static str>, SourceError> {
     let mut allowed = Vec::new();
-    for (clause, probe) in PROBES {
-        c.begin(db, CONNECT_TIMEOUT, false).await.map_err(BoltError::into_source)?;
+    for (privilege, kind, probe) in PROBES {
+        let in_tx = *kind != Probe::Show;
+        if in_tx {
+            c.begin(db, CONNECT_TIMEOUT, false).await.map_err(BoltError::into_source)?;
+        }
         let ran = async {
-            c.run(probe, Vec::new()).await?;
+            if in_tx {
+                c.run(probe, Vec::new()).await?;
+            } else {
+                c.run_auto(probe, db).await?;
+            }
             c.pull(-1, 1 << 20, |_, _| true).await
         }
         .await;
-        match ran {
-            Ok(_) => {
-                allowed.push(*clause);
-                c.rollback().await.map_err(BoltError::into_source)?;
+        match (ran, kind) {
+            (Ok(_), _) => {
+                allowed.push(*privilege);
+                if in_tx {
+                    c.rollback().await.map_err(BoltError::into_source)?;
+                }
             }
-            Err(BoltError::Failure { message, .. }) if is_denied(&message) => {
+            (Err(BoltError::Failure { message, .. }), _) if is_denied(&message) => {
                 c.reset().await.map_err(BoltError::into_source)?;
             }
-            Err(BoltError::Failure { message, .. }) => {
+            (Err(BoltError::Failure { .. }), Probe::ReadFile) => {
+                allowed.push(*privilege);
+                c.reset().await.map_err(BoltError::into_source)?;
+            }
+            (Err(BoltError::Failure { .. }), Probe::Show) => {
+                c.reset().await.map_err(BoltError::into_source)?;
+            }
+            (Err(BoltError::Failure { message, .. }), Probe::Clause) => {
                 return Err(SourceError::failed(
                     "memgraph.privileges_unverifiable",
                     format!("cannot check whether the Memgraph user may write: {message}"),
                 )
                 .with("detail", message));
             }
-            Err(other) => return Err(other.into_source()),
+            (Err(other), _) => return Err(other.into_source()),
         }
     }
     Ok(allowed)
@@ -766,6 +827,8 @@ struct Collector {
     graph: GraphBuilder,
     /// Columns that held graph values.
     graph_columns: BTreeSet<usize>,
+    /// Records taken into the graph.
+    graph_records: usize,
     /// Columns that held other values.
     other_columns: BTreeSet<usize>,
     rows: Vec<Vec<Bv>>,
@@ -785,6 +848,7 @@ impl Collector {
             pending: Vec::new(),
             graph: GraphBuilder::new(limits),
             graph_columns: BTreeSet::new(),
+            graph_records: 0,
             other_columns: BTreeSet::new(),
             rows: Vec::new(),
             max_rows: req.limits.max_rows,
@@ -833,6 +897,12 @@ impl Collector {
     }
 
     fn add_graph(&mut self, record: Vec<Bv>) -> bool {
+        // The row limit counts records here too, also those holding only nodes already seen.
+        if self.graph_records >= self.max_rows {
+            self.graph.cut_at_rows(self.max_rows);
+            return false;
+        }
+        self.graph_records += 1;
         for (i, v) in record.iter().enumerate() {
             match v {
                 Bv::Null => {}
@@ -1183,6 +1253,32 @@ mod tests {
         assert!(!c.push(vec![node5(3, "A", "c")], 1));
         let QueryResult::Graph { graph } = c.finish("q".into()) else { panic!("a graph") };
         assert_eq!(graph.truncated.unwrap().reason.as_deref(), Some("graph.node_limit"));
+    }
+
+    #[test]
+    fn graph_records_count_against_the_row_limit() {
+        let mut c = collector(&["n"], 2);
+        assert!(c.push(vec![node5(1, "A", "a")], 1));
+        assert!(c.push(vec![node5(1, "A", "a")], 1));
+        assert!(!c.push(vec![node5(1, "A", "a")], 1), "the same node again still counts as a record");
+        let QueryResult::Graph { graph } = c.finish("q".into()) else { panic!("a graph") };
+        assert_eq!(graph.truncated.unwrap().reason.as_deref(), Some("graph.row_limit"));
+    }
+
+    #[test]
+    fn pooled_memgraph_connections_are_checked_again_after_a_minute() {
+        assert!(!needs_recheck(Flavor::Memgraph, Duration::from_secs(59)));
+        assert!(needs_recheck(Flavor::Memgraph, Duration::from_secs(61)));
+        assert!(!needs_recheck(Flavor::Neo4j, Duration::from_secs(3600)), "Neo4j enforces read transactions");
+    }
+
+    #[test]
+    fn refusals_of_replicas_count_as_denied() {
+        assert!(is_denied("Write queries are forbidden on the replica instance."));
+        assert!(is_denied("You are not authorized to execute this query! Please contact your database administrator."));
+        assert!(!is_denied("Syntax error at line 1"));
+        let probes: Vec<&str> = PROBES.iter().map(|(p, _, _)| *p).collect();
+        assert!(probes.contains(&"READ_FILE") && probes.contains(&"AUTH"), "{probes:?}");
     }
 
     #[test]

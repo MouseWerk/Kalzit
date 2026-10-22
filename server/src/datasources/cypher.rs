@@ -81,7 +81,7 @@ pub fn lex(q: &str) -> Result<Vec<Tok>, Detail> {
         if c.is_whitespace() {
             i += 1;
         } else if c == '/' && chars.get(i + 1) == Some(&'/') {
-            while i < chars.len() && chars[i] != '\n' && chars[i] != '\r' {
+            while i < chars.len() && !matches!(chars[i], '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}') {
                 i += 1;
             }
         } else if c == '/' && chars.get(i + 1) == Some(&'*') {
@@ -119,7 +119,17 @@ pub fn lex(q: &str) -> Result<Vec<Tok>, Detail> {
                     out.push(Tok::Param(text));
                     i = end;
                 }
-                Some(&d) if is_ident_part(d) => {
+                // `$0`: a numbered parameter is digits only, as the database reads it.
+                Some(d) if d.is_ascii_digit() => {
+                    let mut j = i + 1;
+                    while j < chars.len() && chars[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    glued(&chars, j)?;
+                    out.push(Tok::Param(chars[i + 1..j].iter().collect()));
+                    i = j;
+                }
+                Some(&d) if is_ident_start(d) => {
                     let mut j = i + 1;
                     while j < chars.len() && is_ident_part(chars[j]) {
                         j += 1;
@@ -140,17 +150,8 @@ pub fn lex(q: &str) -> Result<Vec<Tok>, Detail> {
             out.push(Tok::Ident { text: chars[i..j].iter().collect(), quoted: false });
             i = j;
         } else if c.is_ascii_digit() {
-            let mut j = i;
-            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
-                j += 1;
-            }
-            // A fraction, but not the `..` of a range such as `*1..3`.
-            if chars.get(j) == Some(&'.') && chars.get(j + 1).is_some_and(char::is_ascii_digit) {
-                j += 1;
-                while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
-                    j += 1;
-                }
-            }
+            let j = number_end(&chars, i);
+            glued(&chars, j)?;
             out.push(Tok::Num);
             i = j;
         } else {
@@ -159,6 +160,46 @@ pub fn lex(q: &str) -> Result<Vec<Tok>, Detail> {
         }
     }
     Ok(out)
+}
+
+/// The end of a number literal at `i`: `0x1F`, `0o17`, `1_000`, `1.5`, `1e-3`, `1.5E+3`.
+fn number_end(chars: &[char], i: usize) -> usize {
+    let run = |mut j: usize, ok: &dyn Fn(char) -> bool| {
+        while j < chars.len() && (ok(chars[j]) || chars[j] == '_') {
+            j += 1;
+        }
+        j
+    };
+    if chars[i] == '0' && matches!(chars.get(i + 1), Some('x' | 'X')) {
+        return run(i + 2, &|c| c.is_ascii_hexdigit());
+    }
+    if chars[i] == '0' && matches!(chars.get(i + 1), Some('o' | 'O')) {
+        return run(i + 2, &|c| ('0'..='7').contains(&c));
+    }
+    let mut j = run(i, &|c| c.is_ascii_digit());
+    // A fraction, but not the `..` of a range such as `*1..3`.
+    if chars.get(j) == Some(&'.') && chars.get(j + 1).is_some_and(char::is_ascii_digit) {
+        j = run(j + 1, &|c| c.is_ascii_digit());
+    }
+    if matches!(chars.get(j), Some('e' | 'E')) {
+        let sign = usize::from(matches!(chars.get(j + 1), Some('+' | '-')));
+        if chars.get(j + 1 + sign).is_some_and(char::is_ascii_digit) {
+            j = run(j + 1 + sign, &|c| c.is_ascii_digit());
+        }
+    }
+    j
+}
+
+/// A number with letters glued to it (`1DELETE`, `LIMIT 1SET`) is refused: the database reads
+/// the letters as the next word, so they could hide a keyword.
+fn glued(chars: &[char], end: usize) -> Result<(), Detail> {
+    match chars.get(end) {
+        Some(&c) if is_ident_part(c) => Err(reject(
+            "cypher.number_followed_by_letters",
+            "a number is directly followed by letters; put a space between them",
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// A backtick name starting at `start`; ``` `` ``` is one backtick. Answers the name and the
@@ -253,12 +294,16 @@ pub fn check(q: &str) -> Result<Checked, Detail> {
                 ));
             }
             "PERIODIC" => return Err(reject("cypher.in_transactions", "PERIODIC COMMIT writes in batches")),
-            "TRANSACTIONS" if i > 0 && is_word(&toks[i - 1], "IN") => {
+            // `IN TRANSACTIONS`, `IN 4 CONCURRENT TRANSACTIONS`, `IN CONCURRENT TRANSACTIONS`.
+            "TRANSACTIONS" | "CONCURRENT" => {
                 return Err(reject("cypher.in_transactions", "CALL { } IN TRANSACTIONS writes in batches"));
             }
             "CALL" => check_call(&toks, i)?,
             _ => {}
         }
+    }
+    for i in 0..toks.len() {
+        check_function(&toks, i)?;
     }
     Ok(checked)
 }
@@ -284,6 +329,240 @@ fn first_clause(toks: &[Tok]) -> Option<usize> {
             None => return None,
         }
     }
+}
+
+/// Words that stand before `(` without naming a function: clauses, operators, path modes.
+const NOT_FUNCTIONS: &[&str] = &[
+    "MATCH",
+    "OPTIONAL",
+    "WHERE",
+    "AND",
+    "OR",
+    "XOR",
+    "NOT",
+    "IN",
+    "RETURN",
+    "WITH",
+    "UNWIND",
+    "AS",
+    "CASE",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "END",
+    "IS",
+    "DISTINCT",
+    "ON",
+    "BY",
+    "SKIP",
+    "LIMIT",
+    "OFFSET",
+    "ORDER",
+    "YIELD",
+    "UNION",
+    "CALL",
+    "SHORTEST",
+    "PATH",
+    "PATHS",
+    "WALK",
+    "TRAIL",
+    "ACYCLIC",
+    "SIMPLE",
+    "REPEATABLE",
+    "DIFFERENT",
+    "ELEMENTS",
+    "FINISH",
+    "LET",
+    "NEXT",
+    "EXPLAIN",
+    "PROFILE",
+    "STARTS",
+    "ENDS",
+    "CONTAINS",
+    "ASC",
+    "DESC",
+    "ASCENDING",
+    "DESCENDING",
+    "GROUP",
+    "GROUPS",
+    "KEEP",
+    "ROWS",
+    "OF",
+];
+
+/// Cypher's built-in functions (Neo4j and Memgraph), compared without regard to case.
+const FUNCTIONS: &[&str] = &[
+    "abs",
+    "acos",
+    "all",
+    "allshortestpaths",
+    "any",
+    "asin",
+    "atan",
+    "atan2",
+    "avg",
+    "btrim",
+    "ceil",
+    "char_length",
+    "character_length",
+    "coalesce",
+    "collect",
+    "contains",
+    "cos",
+    "cot",
+    "count",
+    "date",
+    "datetime",
+    "degrees",
+    "duration",
+    "e",
+    "elementid",
+    "endnode",
+    "endswith",
+    "exists",
+    "exp",
+    "extract",
+    "filter",
+    "floor",
+    "haversin",
+    "head",
+    "id",
+    "isempty",
+    "isnan",
+    "keys",
+    "labels",
+    "last",
+    "left",
+    "length",
+    "localdatetime",
+    "localtime",
+    "log",
+    "log10",
+    "lower",
+    "ltrim",
+    "max",
+    "min",
+    "nodes",
+    "none",
+    "normalize",
+    "nullif",
+    "percentilecont",
+    "percentiledisc",
+    "pi",
+    "point",
+    "properties",
+    "radians",
+    "rand",
+    "randomuuid",
+    "range",
+    "reduce",
+    "relationships",
+    "replace",
+    "reverse",
+    "right",
+    "round",
+    "rtrim",
+    "shortestpath",
+    "sign",
+    "sin",
+    "single",
+    "size",
+    "split",
+    "sqrt",
+    "startnode",
+    "startswith",
+    "stdev",
+    "stdevp",
+    "substring",
+    "sum",
+    "tail",
+    "tan",
+    "time",
+    "timestamp",
+    "toboolean",
+    "tobooleanlist",
+    "tobooleanornull",
+    "tofloat",
+    "tofloatlist",
+    "tofloatornull",
+    "tointeger",
+    "tointegerlist",
+    "tointegerornull",
+    "tolower",
+    "toset",
+    "tostring",
+    "tostringlist",
+    "tostringornull",
+    "toupper",
+    "trim",
+    "type",
+    "upper",
+    "valuetype",
+];
+
+/// Namespaced functions, by prefix: the temporal and spatial built-ins and APOC's pure helpers.
+/// Not here, so refused: `apoc.cypher.*` (runs Cypher given as text), `apoc.load.*`,
+/// `apoc.export.*`, `apoc.periodic.*`, `apoc.trigger.*`, `apoc.schema.*`, `dbms.*`, `db.*`.
+const FUNCTION_PREFIXES: &[&str] = &[
+    "date.",
+    "datetime.",
+    "localdatetime.",
+    "localtime.",
+    "time.",
+    "duration.",
+    "point.",
+    "vector.similarity.",
+    "apoc.coll.",
+    "apoc.text.",
+    "apoc.map.",
+    "apoc.math.",
+    "apoc.convert.",
+    "apoc.date.",
+    "apoc.temporal.",
+    "apoc.number.",
+    "apoc.agg.",
+    "apoc.label.",
+    "apoc.node.degree",
+    "apoc.node.labels",
+    "apoc.rel.type",
+    "apoc.hashing.",
+    "apoc.util.md5",
+    "apoc.util.sha1",
+    "apoc.util.sha256",
+    "apoc.util.sha384",
+    "apoc.util.sha512",
+    "apoc.meta.cypher.",
+];
+
+/// A function call (a name, possibly dotted, before `(`) must be a built-in or on the list of
+/// namespaced functions. Procedures after `CALL` are checked by `check_call`.
+fn check_function(toks: &[Tok], i: usize) -> Result<(), Detail> {
+    if !matches!(toks.get(i), Some(Tok::Ident { .. })) || toks.get(i + 1) != Some(&Tok::Sym('(')) {
+        return Ok(());
+    }
+    let mut start = i;
+    while start >= 2 && toks[start - 1] == Tok::Sym('.') && matches!(toks[start - 2], Tok::Ident { .. }) {
+        start -= 2;
+    }
+    if start > 0 && is_word(&toks[start - 1], "CALL") {
+        return Ok(());
+    }
+    let name: String = toks[start..=i]
+        .iter()
+        .filter_map(|t| match t {
+            Tok::Ident { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    let single_keyword = start == i
+        && matches!(&toks[i], Tok::Ident { text, quoted: false } if NOT_FUNCTIONS.contains(&text.to_uppercase().as_str()));
+    let lower = name.to_lowercase();
+    if single_keyword || FUNCTIONS.contains(&lower.as_str()) || FUNCTION_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+        return Ok(());
+    }
+    Err(reject("cypher.function_not_allowed", format!("the function {name} is not on the list of allowed functions"))
+        .with("name", name))
 }
 
 /// `CALL {` and `CALL (...) {` are subqueries, checked with the rest of the query. Any other
@@ -358,6 +637,12 @@ mod tests {
             "RETURN 'it\\'s' AS s",
             "WITH 1 AS ünïcödé RETURN ünïcödé",
             "MATCH (n:$($label)) RETURN n",
+            "RETURN 0x1F, 0o17, 1e5, 1.5E-3, 2e+2, 1_000, 3.14 AS n",
+            "MATCH (n) WHERE n.id = $0 OR n.id = $p1 RETURN n LIMIT 1",
+            "MATCH p = shortestPath((a)-[*]-(b)) RETURN nodes(p), relationships(p), length(p)",
+            "RETURN toUpper('a'), date.truncate('month', date()), duration.between(date(), date()), point.distance(point({x: 1, y: 2}), point({x: 0, y: 0}))",
+            "MATCH (n) WHERE all(x IN n.tags WHERE x <> '') AND (n)-->() RETURN coalesce(n.a, 1), apoc.coll.sum([1, 2])",
+            "MATCH (n) RETURN `toLower`(n.name)",
         ] {
             assert!(check(q).is_ok(), "{q}: {:?}", check(q));
         }
@@ -409,6 +694,32 @@ mod tests {
             ),
             ("CALL `apoc`.`create`.`node`(['X'], {})", "cypher.procedure_not_allowed"),
             ("CALL mg.load_all()", "cypher.procedure_not_allowed"),
+            ("MATCH (n) WITH n, 1DELETE n", "cypher.number_followed_by_letters"),
+            ("MATCH (n) RETURN n LIMIT 1SET n.x = 1", "cypher.number_followed_by_letters"),
+            ("MATCH (n) RETURN n LIMIT 1CALL dbms.killQueries(['x'])", "cypher.number_followed_by_letters"),
+            (
+                "MATCH (n) RETURN n LIMIT 1LOAD CSV FROM 'file:///etc/passwd' AS l RETURN l",
+                "cypher.number_followed_by_letters",
+            ),
+            ("MATCH (n) WHERE n.x = $1DELETE n", "cypher.number_followed_by_letters"),
+            ("RETURN 0x1G", "cypher.number_followed_by_letters"),
+            ("RETURN 1.5e3x", "cypher.number_followed_by_letters"),
+            ("MATCH (n) // Kommentar\u{2028}DELETE n", "cypher.write_clause"),
+            ("MATCH (n) // Kommentar\u{85}DELETE n", "cypher.write_clause"),
+            ("MATCH (n) // Kommentar\u{2029}DELETE n", "cypher.write_clause"),
+            ("MATCH (n) CALL { MATCH (m) RETURN m } IN 4 CONCURRENT TRANSACTIONS RETURN n", "cypher.in_transactions"),
+            ("MATCH (n) CALL { MATCH (m) RETURN m } IN CONCURRENT TRANSACTIONS RETURN n", "cypher.in_transactions"),
+            ("RETURN apoc.cypher.runFirstColumnSingle('MATCH (n) DETACH DELETE n', {})", "cypher.function_not_allowed"),
+            ("RETURN apoc.cypher.runFirstColumnMany('CREATE ()', {})", "cypher.function_not_allowed"),
+            ("RETURN `apoc`.`cypher`.`runFirstColumn`('CREATE ()', {})", "cypher.function_not_allowed"),
+            ("RETURN apoc.load.json('http://x')", "cypher.function_not_allowed"),
+            ("RETURN apoc.export.csv.all('x', {})", "cypher.function_not_allowed"),
+            ("RETURN apoc.periodic.list()", "cypher.function_not_allowed"),
+            ("RETURN apoc.trigger.list()", "cypher.function_not_allowed"),
+            ("RETURN apoc.schema.assert({}, {})", "cypher.function_not_allowed"),
+            ("RETURN dbms.listConfig()", "cypher.function_not_allowed"),
+            ("RETURN db.createLabel('X')", "cypher.function_not_allowed"),
+            ("RETURN eigeneFunktion(1)", "cypher.function_not_allowed"),
             ("CALL", "cypher.parse_error"),
             ("SHOW USERS", "cypher.not_read_query"),
             ("SHOW TRANSACTIONS", "cypher.not_read_query"),

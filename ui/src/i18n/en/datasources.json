@@ -306,5 +306,10 @@
   "datasources.reason.graph.node_limit": "The graph was cut at {limit} nodes.",
   "datasources.reason.graph.edge_limit": "The graph was cut at {limit} edges.",
   "datasources.reason.graph.size_limit": "The graph was cut at the size limit of an answer.",
-  "datasources.reason.graph.columns_omitted": "{columns} hold no nodes or edges and are not part of the graph. Query them separately for a table."
+  "datasources.reason.graph.columns_omitted": "{columns} hold no nodes or edges and are not part of the graph. Query them separately for a table.",
+  "datasources.reason.cypher.function_not_allowed": "The function {name} is not allowed. Built-in functions and a list of harmless namespaced ones are.",
+  "datasources.reason.cypher.number_followed_by_letters": "Put a space between a number and the word after it.",
+  "datasources.reason.gsql.graph_missing": "Name the graph with FOR GRAPH after the parameters of INTERPRET QUERY.",
+  "datasources.reason.gsql.typedef_name": "{name} cannot be a tuple name: a function or query has this name, or it is used before.",
+  "datasources.reason.graph.row_limit": "The graph was cut after {limit} records."
 }

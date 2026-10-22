@@ -136,6 +136,8 @@ struct Client {
     api: Api,
     token: Mutex<Option<(String, Instant)>>,
     texts: Mutex<HashMap<String, CheckedText>>,
+    /// The graph's query names (4.x), which a `TYPEDEF` may not take, with when they were read.
+    query_names: Mutex<Option<(Instant, Vec<String>)>>,
 }
 
 fn parse_url(raw: &str) -> Result<Url, Detail> {
@@ -220,6 +222,7 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             api: Api::V4,
             token: Mutex::new(None),
             texts: Mutex::new(HashMap::new()),
+            query_names: Mutex::new(None),
         };
         c.api = c.detect_api().await?;
         c.check_reader().await?;
@@ -276,9 +279,22 @@ impl Client {
                 headers.insert(*k, v);
             }
         }
-        let response =
-            self.http.send_body(method, url, headers, body.map(|(b, _)| b)).await.map_err(|e| self.failed(e))?;
+        // A request with a body (a query text, a command) goes to this URL only: a redirect is not
+        // followed, so the body never reaches another host.
+        let response = match body {
+            Some((b, _)) => self.http.send_once(method, url, headers, Some(b)).await,
+            None => self.http.send(method, url, headers).await,
+        }
+        .map_err(|e| self.failed(e))?;
         let status = response.status();
+        if status.is_redirection() {
+            return Err(SourceError::failed(
+                "tigergraph.error",
+                format!("TigerGraph answered {status} to a request with a body; Kalzit does not follow it"),
+            )
+            .with("status", status.as_u16())
+            .with("detail", "redirect"));
+        }
         let bytes = match charge {
             Some(charge) => crate::http::read_counted(response, max, |n| charge.add(n)).await,
             None => crate::http::read_limited(response, max).await,
@@ -431,6 +447,7 @@ impl Client {
             (Api::V3, None) => return Ok(None),
         };
         let url = url.map_err(|e| SourceError::failed("internal", e.to_string()))?;
+        // The body carries the secret; `call` sends a body to this URL only, never along a redirect.
         let body = Some((body.to_string().into_bytes(), "application/json"));
         let (status, bytes) = self.call(Method::POST, url, auth, body, &[], MAX_SMALL_RESPONSE, None).await?;
         let parsed = self.parse(status, &bytes)?;
@@ -444,6 +461,25 @@ impl Client {
         let until = Instant::now() + Duration::from_secs(TOKEN_LIFETIME_SECS);
         *self.token.lock().expect("token lock") = Some((token.clone(), until));
         Ok(Some(token))
+    }
+
+    /// The names of the graph's queries (4.x; kept for a minute). Empty when they cannot be read,
+    /// which leaves the other `TYPEDEF` rules.
+    async fn query_names(&self) -> Vec<String> {
+        if let Some((at, names)) = self.query_names.lock().expect("names lock").as_ref()
+            && at.elapsed() < TEXT_CACHE
+        {
+            return names.clone();
+        }
+        let names = match self.api {
+            Api::V4 => match self.gsql_json(Method::GET, "gsql/v1/queries", &[("graph", &self.graph)]).await {
+                Ok(a) if a.status.is_success() => query_names(a.body.get("results").unwrap_or(&a.body)),
+                _ => Vec::new(),
+            },
+            Api::V3 => Vec::new(),
+        };
+        *self.query_names.lock().expect("names lock") = Some((Instant::now(), names.clone()));
+        names
     }
 
     /// The checked parameters of an installed query, or why it may not run.
@@ -474,7 +510,8 @@ impl Client {
             )
             .with("name", name));
         };
-        let checked = gsql::check(&text, Form::Installed).and_then(|c| {
+        let names = self.query_names().await;
+        let checked = gsql::check_with(&text, Form::Installed, &names).and_then(|c| {
             if c.name.as_deref().is_some_and(|n| !n.eq_ignore_ascii_case(name)) {
                 return Err(Detail::new("gsql.not_one_query", "the installed text belongs to another query"));
             }
@@ -579,6 +616,7 @@ fn rights_from_json(body: &Value, user: &str) -> Option<Rights> {
 fn rights_from_show_user(text: &str, graph: &str) -> Option<Rights> {
     let mut roles = Vec::new();
     let mut found = false;
+    let mut superuser = false;
     for line in text.lines() {
         let line = line.trim().trim_start_matches('-').trim();
         let Some((label, value)) = line.split_once(':') else { continue };
@@ -586,15 +624,16 @@ fn rights_from_show_user(text: &str, graph: &str) -> Option<Rights> {
         if !label.to_ascii_lowercase().ends_with("roles") {
             continue;
         }
+        // Superuser reaches every graph, however the line is labelled.
+        superuser |= value.split(',').any(|r| r.trim().eq_ignore_ascii_case("superuser"));
         let global = label.to_ascii_lowercase().starts_with("global");
         let this_graph = label.contains(&format!("'{graph}'")) || label.contains(&format!("\"{graph}\""));
         // Roles on other graphs do not reach this one; global roles do.
-        if global || this_graph || !label.contains('\'') {
+        if global || this_graph {
             found = true;
             roles.extend(value.split(',').map(|r| r.trim().to_string()).filter(|r| !r.is_empty()));
         }
     }
-    let superuser = roles.iter().any(|r| r.eq_ignore_ascii_case("superuser"));
     found.then_some(Rights { superuser, roles, privileges: None })
 }
 
@@ -1066,7 +1105,8 @@ impl DataSourcePlugin for TigerGraph {
         let mut charge = req.limits.budget.charge();
         let (status, bytes, executed) = match (q.gsql, q.installed) {
             (Some(text), None) => {
-                let checked = gsql::check(&text, Form::Interpret).map_err(SourceError::Rejected)?;
+                let names = c.query_names().await;
+                let checked = gsql::check_with(&text, Form::Interpret, &names).map_err(SourceError::Rejected)?;
                 if let Some(g) = checked.graph.as_deref().filter(|g| !g.eq_ignore_ascii_case(&c.graph)) {
                     return Err(SourceError::Rejected(other_graph(g)));
                 }
@@ -1127,8 +1167,8 @@ impl DataSourcePlugin for TigerGraph {
         };
         let body = c.parse(status, &bytes)?;
         drop(bytes);
-        let body = c.ok_or_error(Answer { status, body })?;
-        let results = body.get("results").cloned().unwrap_or(Value::Array(Vec::new()));
+        let mut body = c.ok_or_error(Answer { status, body })?;
+        let results = body.get_mut("results").map(Value::take).unwrap_or(Value::Array(Vec::new()));
         drop(body);
         let result = to_result(&results, &req, conn.settings(), executed);
         // The raw answer is gone; only the result's own charge remains.

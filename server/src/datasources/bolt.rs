@@ -23,6 +23,8 @@ use super::targets::TargetPolicy;
 /// Values nested deeper than this are refused instead of recursing further.
 const MAX_DEPTH: usize = 64;
 const MAX_CHUNK: usize = 0xFFFF;
+/// Entries reserved ahead for a list or map, whatever count the server claims.
+const PREALLOCATE: usize = 1024;
 const USER_AGENT: &str = concat!("Kalzit/", env!("CARGO_PKG_VERSION"));
 
 /// A PackStream value.
@@ -244,7 +246,8 @@ impl<'a> Reader<'a> {
     }
 
     fn list(&mut self, n: usize, depth: usize) -> Result<Bv, BoltError> {
-        let mut items = Vec::with_capacity(n);
+        // A count is only a claim; space grows with what actually arrives.
+        let mut items = Vec::with_capacity(n.min(PREALLOCATE));
         for _ in 0..n {
             items.push(self.value(depth + 1)?);
         }
@@ -252,7 +255,7 @@ impl<'a> Reader<'a> {
     }
 
     fn map(&mut self, n: usize, depth: usize) -> Result<Bv, BoltError> {
-        let mut entries = Vec::with_capacity(n);
+        let mut entries = Vec::with_capacity(n.min(PREALLOCATE));
         for _ in 0..n {
             let Bv::String(key) = self.value(depth + 1)? else {
                 return Err(protocol("a map key that is not a string"));
@@ -358,6 +361,9 @@ pub struct BoltConn {
     pub utc: bool,
     /// The server's agent string from HELLO, such as `Neo4j/5.26.0`.
     pub server: String,
+    /// The connection is in an unknown state (a result read only in part, a failed reset, a broken
+    /// stream) and must be closed, not reused.
+    pub broken: bool,
 }
 
 fn tls_config(tls: &Tls) -> Result<rustls::ClientConfig, SourceError> {
@@ -455,7 +461,13 @@ pub async fn connect(policy: &TargetPolicy, opts: ConnectOptions<'_>) -> Result<
         }
     };
     let login = async {
-        let mut conn = BoltConn { stream: BufStream::new(stream), version: (0, 0), utc: false, server: String::new() };
+        let mut conn = BoltConn {
+            stream: BufStream::new(stream),
+            version: (0, 0),
+            utc: false,
+            server: String::new(),
+            broken: false,
+        };
         conn.handshake().await?;
         conn.login(opts.user, opts.password).await?;
         Ok::<_, BoltError>(conn)
@@ -578,6 +590,14 @@ impl BoltConn {
 
     /// Sends a request and expects SUCCESS with small metadata.
     async fn request(&mut self, tag: u8, fields: Vec<Bv>) -> Result<Bv, BoltError> {
+        let answer = self.request_inner(tag, fields).await;
+        if matches!(answer, Err(ref e) if !matches!(e, BoltError::Failure { .. })) {
+            self.broken = true;
+        }
+        answer
+    }
+
+    async fn request_inner(&mut self, tag: u8, fields: Vec<Bv>) -> Result<Bv, BoltError> {
         self.send(tag, fields).await?;
         match self.recv(16 * 1024 * 1024).await?.0 {
             Response::Success(meta) => Ok(meta),
@@ -635,6 +655,19 @@ impl BoltConn {
         &mut self,
         n: i64,
         max_message: usize,
+        on_record: impl FnMut(Vec<Bv>, usize) -> bool,
+    ) -> Result<PullEnd, BoltError> {
+        let end = self.pull_inner(n, max_message, on_record).await;
+        if matches!(end, Ok(PullEnd::Stopped)) || matches!(end, Err(ref e) if !matches!(e, BoltError::Failure { .. })) {
+            self.broken = true;
+        }
+        end
+    }
+
+    async fn pull_inner(
+        &mut self,
+        n: i64,
+        max_message: usize,
         mut on_record: impl FnMut(Vec<Bv>, usize) -> bool,
     ) -> Result<PullEnd, BoltError> {
         self.send(0x3F, vec![Bv::map(vec![("n", Bv::Int(n)), ("qid", Bv::Int(-1))])]).await?;
@@ -658,9 +691,14 @@ impl BoltConn {
         self.request(0x13, Vec::new()).await.map(|_| ())
     }
 
-    /// Back to a clean, logged-in state after a failure.
+    /// Back to a clean, logged-in state after a failure. A failed reset leaves the connection
+    /// broken.
     pub async fn reset(&mut self) -> Result<(), BoltError> {
-        self.request(0x0F, Vec::new()).await.map(|_| ())
+        let done = self.request(0x0F, Vec::new()).await.map(|_| ());
+        if done.is_err() {
+            self.broken = true;
+        }
+        done
     }
 }
 
@@ -720,6 +758,26 @@ mod tests {
         let deep: Vec<u8> = std::iter::repeat_n(0x91, 200).chain([0x01]).collect();
         assert!(decode(&deep).is_err());
         assert!(decode(&[0xE0]).is_err(), "0xE0..0xEF are reserved");
+        // Nested maps that each claim as many entries as bytes are left: reserving space for the
+        // claims (gigabytes over the nesting) would abort the process.
+        let total = 8 << 20;
+        let mut msg = Vec::with_capacity(total);
+        for _ in 0..60 {
+            let left = (total - msg.len() - 5) as u32;
+            msg.push(0xDA);
+            msg.extend_from_slice(&left.to_be_bytes());
+            msg.push(0x80);
+        }
+        msg.resize(total, 0xC0);
+        assert!(decode(&msg).is_err());
+        let mut lists = Vec::with_capacity(total);
+        for _ in 0..60 {
+            let left = (total - lists.len() - 5) as u32;
+            lists.push(0xD6);
+            lists.extend_from_slice(&left.to_be_bytes());
+        }
+        lists.resize(total, 0x01);
+        assert!(decode(&lists).is_err());
     }
 
     /// A Bolt server in a task: answers the handshake with `version`, then each request with the
@@ -804,8 +862,53 @@ mod tests {
             PullEnd::Done
         );
         assert_eq!(got, [vec![Bv::Int(7)]]);
+        assert!(!c.broken);
         let e = c.run("CREATE ()", vec![]).await.unwrap_err();
         assert!(matches!(e.into_source(), SourceError::Rejected(d) if d.reason == "query.write_refused"));
+        assert!(!c.broken, "a failure leaves the connection usable after a reset");
+    }
+
+    #[tokio::test]
+    async fn a_result_read_in_part_breaks_the_connection() {
+        let record = |i| Bv::Struct(RECORD, vec![Bv::List(vec![Bv::Int(i)])]);
+        let records = vec![
+            vec![success(vec![])],
+            vec![success(vec![("fields", Bv::List(vec![Bv::String("n".into())]))])],
+            vec![record(1), record(2), success(vec![])],
+        ];
+        let addr = fake_server([0, 0, 4, 4], records).await;
+        let opts = ConnectOptions {
+            host: "127.0.0.1",
+            port: addr.port(),
+            user: None,
+            password: None,
+            tls: None,
+            timeout: Duration::from_secs(5),
+        };
+        let mut c = connect(&policy(), opts).await.unwrap();
+        c.run("UNWIND [1, 2] AS n RETURN n", vec![]).await.unwrap();
+        assert_eq!(c.pull(100, 1 << 20, |_, _| false).await.unwrap(), PullEnd::Stopped);
+        assert!(c.broken, "the rest of the result is still on the wire");
+        // A reset the server does not answer breaks it as well.
+        let mut d = connect(
+            &policy(),
+            ConnectOptions { port: fake_server([0, 0, 4, 4], vec![vec![success(vec![])]]).await.port(), ..opts_copy() },
+        )
+        .await
+        .unwrap();
+        assert!(d.reset().await.is_err());
+        assert!(d.broken);
+    }
+
+    fn opts_copy() -> ConnectOptions<'static> {
+        ConnectOptions {
+            host: "127.0.0.1",
+            port: 0,
+            user: None,
+            password: None,
+            tls: None,
+            timeout: Duration::from_secs(5),
+        }
     }
 
     #[tokio::test]
