@@ -544,6 +544,7 @@ mod tests {
             variables: serde_json::from_value(vars).unwrap(),
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
+            cursor: None,
         }
     }
 
