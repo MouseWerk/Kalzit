@@ -345,10 +345,27 @@ fn check_range(what: &str, value: Option<u32>, min: u32, max: u32) -> Result<(),
 
 /// Links a cell may open: web and mail addresses, paths on this server, or the cell's own value
 /// (`${__value}`, checked again by the UI once filled in). `javascript:` and the like never pass.
+/// A backslash is refused anywhere: browsers read `/\host` as `//host`, another site.
 fn is_safe_link(link: &str) -> bool {
     let lower = link.trim_start().to_ascii_lowercase();
-    ["http://", "https://", "mailto:", "./", "?", "#", "${__value}"].iter().any(|p| lower.starts_with(p))
-        || (lower.starts_with('/') && !lower.starts_with("//"))
+    !lower.contains('\\')
+        && (["http://", "https://", "mailto:", "./", "?", "#", "${__value}"].iter().any(|p| lower.starts_with(p))
+            || (lower.starts_with('/') && !lower.starts_with("//")))
+}
+
+/// Largest compiled size of a pattern; real field patterns are a few hundred bytes.
+const MAX_PATTERN_BYTES: usize = 256 * 1024;
+
+/// Patterns use RE2 syntax, which the UI runs with a linear-time engine (re2js): no
+/// backreferences or lookaround, so no pattern can make a page hang. One that does not compile
+/// here is not stored.
+fn check_pattern(what: &str, pattern: &str) -> Result<(), String> {
+    check_text(what, pattern, MAX_TEXT_CHARS, false)?;
+    regex::RegexBuilder::new(pattern)
+        .size_limit(MAX_PATTERN_BYTES)
+        .build()
+        .map(|_| ())
+        .map_err(|_| format!("{what} is not a valid regular expression (RE2 syntax, no lookaround or backreferences)"))
 }
 
 fn check_options(at: &str, o: &FieldOptions) -> Result<(), String> {
@@ -386,7 +403,10 @@ fn check_options(at: &str, o: &FieldOptions) -> Result<(), String> {
             let what = format!("{at}.mappings[{i}]");
             let (matched, text) = match m {
                 Mapping::Value { value, text, .. } => (Some(value), text),
-                Mapping::Regex { pattern, text, .. } => (Some(pattern), text),
+                Mapping::Regex { pattern, text, .. } => {
+                    check_pattern(&format!("{what}.pattern"), pattern)?;
+                    (Some(pattern), text)
+                }
                 Mapping::Range { from, to, text, .. } => {
                     if let (Some(from), Some(to)) = (from, to)
                         && from > to
@@ -429,6 +449,9 @@ fn check_field_config(value: &Value) -> Result<(), String> {
     for (i, o) in config.overrides.iter().enumerate() {
         let at = format!("fieldConfig.overrides[{i}]");
         check_text(&format!("{at}.matcher.value"), &o.matcher.value, MAX_TEXT_CHARS, false)?;
+        if matches!(o.matcher.kind, MatcherType::Regex) {
+            check_pattern(&format!("{at}.matcher.value"), &o.matcher.value)?;
+        }
         check_options(&format!("{at}.properties"), &o.properties)?;
     }
     Ok(())
@@ -449,9 +472,8 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
     if !PANEL_TYPES.contains(&kind) {
         return Ok(());
     }
-    if kind != "text" {
-        check_field_config(field_config)?;
-    }
+    // The text panel uses no field options, but whatever it stores is checked like the others.
+    check_field_config(field_config)?;
     let unit = |unit: &Option<String>| match unit {
         Some(u) => check_text("options.unit", u, MAX_UNIT_CHARS, false),
         None => Ok(()),
@@ -669,15 +691,62 @@ mod tests {
     }
 
     #[test]
+    fn patterns_must_be_re2_syntax() {
+        let with_pattern = |pattern: &str| {
+            let config = json!({ "defaults": { "mappings": [{ "type": "regex", "pattern": pattern, "text": "x" }] },
+                                 "overrides": [] });
+            check("stat", &json!({}), &config)
+        };
+        assert!(with_pattern("^err(or)?\\b").is_ok());
+        assert!(with_pattern("(a+)+$").is_ok(), "linear-time engines run it safely");
+        for bad in ["(a)\\1", "(?<=a)b", "(?=a)", "(unclosed", "[z-a]"] {
+            let err = with_pattern(bad).unwrap_err();
+            assert!(err.contains("not a valid regular expression"), "{bad}: {err}");
+        }
+        let override_with = |value: &str| {
+            let config = json!({ "overrides": [{ "matcher": { "type": "regex", "value": value }, "properties": {} }] });
+            check("table", &json!({}), &config)
+        };
+        assert!(override_with("^cpu_").is_ok());
+        assert!(override_with("(?!x)").unwrap_err().contains("matcher.value"));
+        // A name matcher is plain text, not a pattern.
+        let by_name = json!({ "overrides": [{ "matcher": { "type": "name", "value": "(" }, "properties": {} }] });
+        assert!(check("table", &json!({}), &by_name).is_ok());
+    }
+
+    #[test]
+    fn null_in_an_override_clears_the_default() {
+        let config = json!({
+            "defaults": { "unit": "ms", "thresholds": { "mode": "absolute", "steps": [{ "value": null, "tone": "ok" }] } },
+            "overrides": [{ "matcher": { "type": "name", "value": "a" },
+                            "properties": { "unit": null, "thresholds": null, "mappings": null, "color": null } }]
+        });
+        check("stat", &json!({}), &config).unwrap();
+    }
+
+    #[test]
+    fn the_text_panel_checks_its_field_options_too() {
+        assert!(check("text", &json!({ "content": "x" }), &json!({})).is_ok());
+        assert!(check("text", &json!({}), &json!({ "anything": 1 })).unwrap_err().contains("fieldConfig"));
+    }
+
+    #[test]
     fn safe_links_pass() {
         for ok in
             ["https://a.example/x", "http://a", "mailto:a@b.example", "/d/abc", "./x", "?q=1", "#top", "${__value}"]
         {
             assert!(is_safe_link(ok), "{ok}");
         }
-        for bad in
-            ["javascript:alert(1)", "JavaScript:x", "data:text/html,x", "//evil.example", "vbscript:x", "ftp://x"]
-        {
+        for bad in [
+            "javascript:alert(1)",
+            "JavaScript:x",
+            "data:text/html,x",
+            "//evil.example",
+            "/\\evil.example",
+            "https://a.example\\@evil",
+            "vbscript:x",
+            "ftp://x",
+        ] {
             assert!(!is_safe_link(bad), "{bad}");
         }
     }

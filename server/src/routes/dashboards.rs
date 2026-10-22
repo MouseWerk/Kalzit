@@ -228,6 +228,11 @@ fn parse_model(raw: Value) -> ApiResult<model::DashboardModel> {
     model::parse(raw).map_err(|e| ApiError::validation(e).with_field("model"))
 }
 
+/// The panel option checks of a write, against the stored model it replaces (none for a new one).
+fn check_panels(model: &model::DashboardModel, previous: Option<&model::DashboardModel>) -> ApiResult<()> {
+    model::check_panel_options(model, previous).map_err(|e| ApiError::validation(e).with_field("model"))
+}
+
 fn clean_message(raw: Option<&str>) -> ApiResult<String> {
     clean_text(raw.unwrap_or(""), "message", MAX_MESSAGE_CHARS).map_err(|e| e.with_field("message"))
 }
@@ -416,6 +421,7 @@ async fn create(
         fields.insert("timeRange".into(), default);
     }
     let model = parse_model(raw)?;
+    check_panels(&model, None)?;
     let message = clean_message(body.message.as_deref())?;
     authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
     check_dashboard_sources(&state.db, &ctx, &model, None).await?;
@@ -579,6 +585,7 @@ async fn save(
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
     let stored = current_model(&state, &row).await?;
+    check_panels(&model, Some(&stored))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&stored)).await?;
     let new = NewVersion { model: &model, message: &message, restored_from: None };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
@@ -821,6 +828,7 @@ async fn restore_version(
     // Rules may have tightened since that version was saved; it must pass today's.
     let model = parse_model(stored)?;
     let current = current_model(&state, &row).await?;
+    check_panels(&model, Some(&current))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&current)).await?;
     let new = NewVersion { model: &model, message: "", restored_from: Some(summary.version) };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))

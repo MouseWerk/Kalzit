@@ -143,7 +143,26 @@ impl DashboardModel {
     }
 }
 
-/// Migrates a stored or submitted model to `SCHEMA_VERSION` and parses and validates it.
+/// Checks the options and field options of the panels a write adds or changes: every panel of a
+/// new dashboard, and on a save or restore those whose type, options or field options differ
+/// from the `previous` model's panel with the same id. Only writes run it, so a stored dashboard
+/// that predates a rule keeps loading and querying, and can still be saved while that panel is
+/// left as it is.
+pub fn check_panel_options(model: &DashboardModel, previous: Option<&DashboardModel>) -> Result<(), String> {
+    for (i, p) in model.panels.iter().enumerate() {
+        let unchanged = previous
+            .and_then(|m| m.panels.iter().find(|old| old.id == p.id))
+            .is_some_and(|old| old.kind == p.kind && old.options == p.options && old.field_config == p.field_config);
+        if !unchanged {
+            super::panel_options::check(&p.kind, &p.options, &p.field_config)
+                .map_err(|e| format!("model.panels[{i}].{e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Migrates a stored or submitted model to `SCHEMA_VERSION` and parses and validates it. Panel
+/// options are left to `check_panel_options`, which writes run on top.
 pub fn parse(raw: Value) -> Result<DashboardModel, String> {
     let current = migrate(raw)?;
     let model: DashboardModel = serde_json::from_value(current).map_err(|e| format!("model: {e}"))?;
@@ -263,7 +282,6 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
         check_grid(&p.grid).map_err(|e| format!("{at}.grid: {e}"))?;
-        super::panel_options::check(&p.kind, &p.options, &p.field_config).map_err(|e| format!("{at}.{e}"))?;
         if p.transformations.len() > MAX_TRANSFORMATIONS {
             return Err(format!("{at}.transformations takes at most {MAX_TRANSFORMATIONS} entries"));
         }
@@ -464,12 +482,33 @@ mod tests {
             (vec!["refreshSeconds"], json!(1), "refreshSeconds"),
             (vec!["unknownField"], json!(1), "unknown field"),
             (vec!["panels", "0", "colour"], json!("red"), "unknown field"),
-            (vec!["panels", "0", "options"], json!({ "lineWidth": 9 }), "panels[0].options.lineWidth"),
-            (vec!["panels", "0", "fieldConfig"], json!({ "defaults": { "decimals": 99 } }), "panels[0].fieldConfig"),
         ] {
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");
         }
+    }
+
+    #[test]
+    fn panel_options_are_checked_where_a_write_changes_them() {
+        let checked = |model: Value, previous: Option<&DashboardModel>| {
+            let model = parse(model).expect("reading never checks panel options");
+            check_panel_options(&model, previous)
+        };
+        let odd = with(sample(), &["panels", "0", "options"], json!({ "lineWidth": 9 }));
+        let err = checked(odd.clone(), None).unwrap_err();
+        assert!(err.contains("model.panels[0].options.lineWidth"), "{err}");
+        let err =
+            checked(with(sample(), &["panels", "0", "fieldConfig"], json!({ "defaults": { "decimals": 99 } })), None)
+                .unwrap_err();
+        assert!(err.contains("model.panels[0].fieldConfig"), "{err}");
+        // A stored panel that predates the rule may stay as it is; changing it means fixing it.
+        let stored = parse(odd.clone()).unwrap();
+        assert!(checked(with(odd.clone(), &["title"], json!("Neu")), Some(&stored)).is_ok());
+        let changed = with(odd.clone(), &["panels", "0", "options"], json!({ "lineWidth": 8 }));
+        assert!(checked(changed, Some(&stored)).is_err());
+        let retyped = with(odd, &["panels", "0", "type"], json!("stat"));
+        assert!(checked(retyped, Some(&stored)).is_err(), "another type is another panel");
+        assert!(checked(sample(), None).is_ok());
     }
 
     #[test]
