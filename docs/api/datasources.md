@@ -455,8 +455,14 @@ math names (`<logs-{now/d}>`) are not supported. The search body is checked:
   (`elasticsearch.stored_script`), and so are `scripted_metric` and every `*_script` key
   (`elasticsearch.script_not_allowed`), whose scripts keep state across shards or that sort or
   compute buckets by script (`_script` sorts, `bucket_script`, `bucket_selector`).
-- A `wrapper` query (a query in base64) is decoded and checked by the same rules; one that is not
-  base64 of a JSON query is `elasticsearch.wrapper_invalid`.
+- A `wrapper` query (a query in base64, padding optional) is decoded and checked by the same
+  rules wherever Elasticsearch reads a query (`query`, `bool` clauses, `post_filter`, `filter`,
+  the `filters` of the `filters` and `adjacency_matrix` aggregations, `positive`, `negative`,
+  `queries`, `rescore_query`, `highlight_query`, ...). There it must carry JSON (Elasticsearch
+  would also read YAML, CBOR or SMILE, which the check cannot): anything else is
+  `elasticsearch.wrapper_invalid`. Elsewhere `wrapper` is an ordinary field name, so
+  `{"match": {"wrapper": {"query": "abc"}}}` works; should such a value still decode to a JSON
+  query, that query is checked too.
 - At most 256 KiB and 64 levels of nesting.
 
 **Limits.** `size` (in the query or the body; default 500) is at most the row limit and 10,000.
@@ -505,14 +511,17 @@ A UTF-8 byte order mark is skipped.
   (`,` when none). With `header` the first record names the columns (blank names become
   `column_<n>`, repeats get `_2`, `_3`); without it columns are `column_1` ... A row with fewer
   fields has `null` for the rest; extra fields are left out with the notice `csv.extra_fields`
-  (`count`). At most 10,000 columns (`csv.too_many_columns`, `max`); the header counts against the
+  (`count`). At most 10,000 columns (`csv.too_many_columns`, `max`; the reader stops at the
+  field past the cap, before the record is held whole); the header counts against the
   response size limit like the rows. A file with a UTF-16 byte order mark (Excel's "Unicode
   text") is read as UTF-16. A record that is not UTF-8 is read as Windows-1252 (what Excel writes
   on German Windows) with the notice `csv.legacy_encoding`.
 - JSON becomes `documents`: the elements of a top-level array, or the value itself as one
   document. The file may be at most 256 MiB (`file.too_large`, `bytes`). An array is read element
-  by element, so only the documents kept are held: the first one that does not fit the limits
-  cuts the answer, and the rest is only checked to be valid JSON. Any other value is parsed whole,
+  by element, and an element may take at most the bytes the answer has left: the reader counts
+  them while the element is read and stops it as soon as it passes them, before it is held whole.
+  The first element that does not fit the limits cuts the answer; once the row limit is reached,
+  the rest is only checked to be valid JSON. Any other value is parsed whole,
   so it must fit the response size limit (`file.too_large`). Invalid JSON is `file.json_invalid`
   (`detail`). The schema samples the first 1,000 elements, so it works for large arrays too.
 - NDJSON becomes `documents`, one per non-empty line, read line by line; an invalid line is
@@ -553,8 +562,10 @@ All fields optional (`{}` requests the source's URL as it is).
   there (or the answer itself) gives one document per element; any other value is one document.
 - Only `GET` is sent; the target checks apply to the address and to every redirect (see
   [Connections and targets](#connections-and-targets)). A redirect is followed only when it stays
-  on the source's origin at or below its URL; any other is refused before it is followed
-  (`http_json.redirect_refused`, `path`), so an open redirect of the API cannot reach other hosts.
+  on the source's origin at or below its URL, with the same segment rules as `path` (no segment
+  starting with `..`, since some servers read `..;` as `..`, no encoded dots, slashes, backslashes or
+  percent signs); any other is refused before it is followed (`http_json.redirect_refused`,
+  `path`), so an open redirect of the API cannot reach other hosts or paths.
 
 ### Documents
 

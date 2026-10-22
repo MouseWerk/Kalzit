@@ -176,6 +176,18 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
 
 /// A path below the base URL: relative segments only, no `.` or `..` (also percent-encoded),
 /// no query or fragment.
+/// The segment rules for a path below the source's URL, for paths a query adds and for redirect
+/// targets alike: no `.` segment, no segment starting with `..` (servers such as Tomcat read
+/// `..;` as `..`), no backslash or control character, and no encoded dot, slash, backslash or
+/// percent sign, which a server may decode into one of those.
+fn relative_path_ok(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    !(path.contains('\\')
+        || ["%2e", "%2f", "%5c", "%25"].iter().any(|e| lower.contains(e))
+        || path.split('/').any(|s| s == "." || s.starts_with(".."))
+        || path.chars().any(char::is_control))
+}
+
 fn join_path(base: &Url, path: &str) -> Result<Url, SourceError> {
     let refused = || {
         SourceError::rejected(
@@ -183,16 +195,10 @@ fn join_path(base: &Url, path: &str) -> Result<Url, SourceError> {
             "the path must be relative to the source's URL, without .., query or fragment",
         )
     };
-    let lower = path.to_ascii_lowercase();
     if path.starts_with(['/', '\\'])
-        || path.contains(['?', '#', '\\'])
-        || lower.contains("%2e")
-        || lower.contains("%2f")
-        || lower.contains("%5c")
-        || lower.contains("%25")
+        || path.contains(['?', '#'])
         || path.split('/').next().is_some_and(|first| first.contains(':'))
-        || path.split('/').any(|s| s == "." || s.starts_with(".."))
-        || path.chars().any(char::is_control)
+        || !relative_path_ok(path)
     {
         return Err(refused());
     }
@@ -270,7 +276,7 @@ impl Client {
     fn check_hop(&self, method: &Method, url: &Url) -> Result<(), Detail> {
         let path = self.base.path();
         let dir = if path.ends_with('/') { path.to_string() } else { format!("{path}/") };
-        let below = url.path() == path || url.path().starts_with(&dir);
+        let below = url.path() == path || url.path().strip_prefix(dir.as_str()).is_some_and(relative_path_ok);
         if *method == Method::GET && url.origin() == self.base.origin() && below {
             return Ok(());
         }
@@ -688,5 +694,44 @@ mod hardening_tests {
         let Err(e) = HttpJson.query(&conn, req(json!({}))).await else { panic!("expected an error") };
         let detail = e.detail().scrubbed(|t| conn.scrub(t));
         assert!(!detail.message.contains("TOKEN-0123"), "{}", detail.message);
+    }
+}
+
+#[cfg(test)]
+mod review_followup_tests {
+    use super::*;
+
+    /// A redirect target below the base path in name only: servers that treat `..;` as `..`
+    /// (Tomcat, Jetty) or decode `%2f` / `%25` again resolve it outside the base.
+    #[test]
+    fn redirect_hops_follow_the_path_rules() {
+        let base = Url::parse("http://api.intern/v1/").unwrap();
+        let policy = crate::datasources::targets::TargetPolicy::new(
+            &std::env::temp_dir().join("kalzit-none"),
+            "sqlite::memory:",
+            &[],
+            &[],
+        );
+        let http = crate::http::client(crate::http::HttpOptions {
+            timeout: Duration::from_secs(5),
+            extra_root_pem: None,
+            policy: Arc::new(policy),
+        })
+        .unwrap();
+        let c = Client { http, base: base.clone(), headers: HeaderMap::new(), documents_path: None, secrets: vec![] };
+        let mut passed = Vec::new();
+        for loc in ["/v1/..;/admin", "/v1/%2e%2e%2fadmin", "/v1/%252e%252e/admin", "/v1/a/..%3b/admin"] {
+            let url = base.join(loc).unwrap();
+            if c.check_hop(&Method::GET, &url).is_ok() {
+                passed.push(url.to_string());
+            }
+        }
+        assert!(passed.is_empty(), "followed: {passed:#?}");
+        for ok in ["/v1/", "/v1/daten/2026", "/v1/a.b/..c"] {
+            let url = base.join(ok).unwrap();
+            let followed = c.check_hop(&Method::GET, &url).is_ok();
+            assert_eq!(followed, !ok.ends_with("..c"), "{url}");
+        }
+        assert!(c.check_hop(&Method::POST, &base).is_err(), "only GET");
     }
 }

@@ -20,10 +20,15 @@ pub enum Decimal {
     Comma,
 }
 
+/// Fields a record may have; one more ends the read, before the record is held whole.
+pub const MAX_COLUMNS: usize = 10_000;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum CsvError {
     /// A record is longer than the bytes left; the caller stops and marks the result cut.
     TooLarge,
+    /// A record has more than `MAX_COLUMNS` fields.
+    TooManyFields,
     /// The file ends inside a quoted field; `line` is where the field began.
     UnclosedQuote {
         line: usize,
@@ -315,6 +320,11 @@ impl<R: BufRead> Reader<R> {
                     d if d == self.delimiter => {
                         fields.push(std::mem::take(&mut field));
                         was_quoted = false;
+                        // Each field costs far more memory than its delimiter byte; stop early.
+                        if fields.len() >= MAX_COLUMNS {
+                            self.input.consume(used);
+                            return Err(CsvError::TooManyFields);
+                        }
                     }
                     other => field.push(other),
                 }

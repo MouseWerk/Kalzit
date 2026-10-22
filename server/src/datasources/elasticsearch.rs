@@ -363,23 +363,78 @@ pub fn check_dsl(dsl: &Value) -> Result<(), SourceError> {
     walk_dsl(dsl, 0)
 }
 
-/// The query inside a `wrapper` query: `{"query": "<base64 of JSON>"}`.
-fn unwrap_query(wrapper: &Value) -> Result<Value, SourceError> {
+/// Keys whose value Elasticsearch parses as a query (or a list of queries).
+const QUERY_KEYS: &[&str] = &[
+    "query",
+    "filter",
+    "must",
+    "must_not",
+    "should",
+    "post_filter",
+    "positive",
+    "negative",
+    "queries",
+    "rescore_query",
+    "highlight_query",
+    "organic",
+    "background_filter",
+];
+
+/// Where a value sits in the search body, as far as queries go.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pos {
+    Other,
+    /// A query clause: its keys are query types (`term`, `bool`, `wrapper`, ...).
+    Query,
+    /// A map or list of queries (`filters` of the `filters` and `adjacency_matrix` aggregations).
+    QueryMap,
+}
+
+fn child_pos(key: &str, parent: Pos) -> Pos {
+    if QUERY_KEYS.contains(&key) {
+        Pos::Query
+    } else if key == "filters" {
+        Pos::QueryMap
+    } else if parent == Pos::QueryMap {
+        Pos::Query
+    } else {
+        Pos::Other
+    }
+}
+
+/// Base64 as Elasticsearch reads it: padding optional.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD_NO_PAD.decode(text.trim().trim_end_matches('=')).ok()
+}
+
+/// The query inside a `wrapper` query (`{"query": "<base64>"}`), which Elasticsearch decodes
+/// and parses itself. Only JSON is accepted: Elasticsearch would also read YAML, CBOR or SMILE,
+/// which the check cannot read.
+fn unwrap_query(wrapper: &Value) -> Result<Value, SourceError> {
     let invalid = || reject("elasticsearch.wrapper_invalid", "a wrapper query must hold a base64-encoded JSON query");
     let encoded = wrapper.get("query").and_then(Value::as_str).ok_or_else(invalid)?;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded.trim()).map_err(|_| invalid())?;
+    let bytes = decode_base64(encoded).ok_or_else(invalid)?;
     serde_json::from_slice(&bytes).map_err(|_| invalid())
 }
 
+/// Whether a value has the form of a wrapper query's body: exactly `{"query": "<text>"}`.
+fn wrapper_shaped(v: &Value) -> bool {
+    v.as_object().is_some_and(|m| m.len() == 1 && m.get("query").is_some_and(Value::is_string))
+}
+
 fn walk_dsl(value: &Value, depth: usize) -> Result<(), SourceError> {
+    walk_at(value, depth, Pos::Other)
+}
+
+fn walk_at(value: &Value, depth: usize, pos: Pos) -> Result<(), SourceError> {
     if depth > MAX_DSL_DEPTH {
         return Err(reject("elasticsearch.dsl_too_deep", "the query is nested too deeply"));
     }
     match value {
         Value::Object(map) => {
             for (key, v) in map {
-                if key == "scripted_metric" || key.ends_with("_script") {
+                if key == "scripted_metric" || key == "bucket_selector" || key.ends_with("_script") {
                     return Err(reject(
                         "elasticsearch.script_not_allowed",
                         format!("{key} runs scripts that keep state and is not allowed"),
@@ -389,15 +444,27 @@ fn walk_dsl(value: &Value, depth: usize) -> Result<(), SourceError> {
                 if key == "script" {
                     check_script(v)?;
                 }
-                if key == "wrapper" && v.is_object() {
-                    // `wrapper` carries a whole query in base64; the check reads it too.
-                    walk_dsl(&unwrap_query(v)?, depth + 1)?;
+                if key == "wrapper" {
+                    if pos == Pos::Query {
+                        // A wrapper query: the check reads the query it carries.
+                        walk_at(&unwrap_query(v)?, depth + 1, Pos::Query)?;
+                    } else if wrapper_shaped(v)
+                        && let Some(inner) = v["query"].as_str().and_then(decode_base64)
+                        && let Ok(inner) = serde_json::from_slice::<Value>(&inner)
+                    {
+                        // Most likely a field named `wrapper`; should Elasticsearch still read
+                        // it as a query somewhere, what it carries is checked all the same.
+                        walk_at(&inner, depth + 1, Pos::Query)?;
+                    }
                 }
-                walk_dsl(v, depth + 1)?;
+                walk_at(v, depth + 1, child_pos(key, pos))?;
             }
             Ok(())
         }
-        Value::Array(items) => items.iter().try_for_each(|v| walk_dsl(v, depth + 1)),
+        Value::Array(items) => {
+            let inner = if pos == Pos::QueryMap { Pos::Query } else { pos };
+            items.iter().try_for_each(|v| walk_at(v, depth + 1, inner))
+        }
         _ => Ok(()),
     }
 }
@@ -1829,5 +1896,49 @@ mod hardening_tests {
             }
         }
         assert!(wrong.is_empty(), "accepted: {wrong:#?}");
+    }
+}
+
+#[cfg(test)]
+mod review_followup_tests {
+    use super::*;
+
+    #[test]
+    fn documented_refusals_match() {
+        let d = json!({ "aggs": { "h": { "histogram": { "field": "x", "interval": 1 }, "aggs": {
+            "s": { "bucket_selector": { "buckets_path": { "c": "_count" }, "script": "params.c > 1" } } } } } });
+        assert!(check_dsl(&d).is_err(), "docs say bucket_selector is refused");
+    }
+
+    #[test]
+    fn a_field_named_wrapper_is_not_a_wrapper_query() {
+        let d = json!({ "query": { "match": { "wrapper": { "query": "abc" } } } });
+        assert!(check_dsl(&d).is_ok(), "{:?}", check_dsl(&d).err().map(|e| e.detail()));
+    }
+
+    /// Wrapper queries are found wherever Elasticsearch parses a query, also without padding,
+    /// and must carry JSON.
+    #[test]
+    fn wrapper_queries_are_checked_in_every_query_position() {
+        use base64::Engine as _;
+        let stored = json!({ "script": { "script": { "id": "x" } } }).to_string();
+        let b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(stored);
+        let reason = |d: Value| check_dsl(&d).err().map(|e| e.detail().reason);
+        let wrapper = json!({ "wrapper": { "query": b64 } });
+        for d in [
+            json!({ "query": { "bool": { "filter": [wrapper] } } }),
+            json!({ "post_filter": wrapper }),
+            json!({ "aggs": { "f": { "filters": { "filters": { "a": wrapper } } } } }),
+            json!({ "aggs": { "f": { "filters": { "filters": [wrapper] } } } }),
+            json!({ "aggs": { "f": { "filter": wrapper } } }),
+            // Even in a field position, content that decodes to a query is checked.
+            json!({ "query": { "match": { "wrapper": { "query": b64 } } } }),
+        ] {
+            assert_eq!(reason(d.clone()), Some("elasticsearch.stored_script"), "{d}");
+        }
+        let yaml = base64::engine::general_purpose::STANDARD.encode("---\nmatch_all: {}\n");
+        assert_eq!(reason(json!({ "query": { "wrapper": { "query": yaml } } })), Some("elasticsearch.wrapper_invalid"));
+        let fine = base64::engine::general_purpose::STANDARD.encode(r#"{"match_all":{}}"#);
+        assert_eq!(reason(json!({ "query": { "wrapper": { "query": fine } } })), None);
     }
 }

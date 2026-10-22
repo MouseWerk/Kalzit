@@ -6,9 +6,11 @@
 //! Files are read on a blocking thread, within the row limit, the response budget and the
 //! query's time limit, so a huge file costs only what the answer may hold.
 
+use std::cell::Cell;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -17,7 +19,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::Detail;
-use super::csv::{self, CsvError, Decimal};
+use super::csv::{self, CsvError, Decimal, MAX_COLUMNS};
 use super::frame::{Column, FrameBuilder, ResponseBudget};
 use super::json_documents::DocumentsBuilder;
 use super::{
@@ -49,8 +51,6 @@ const SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bytes a JSON parser reads between checks of the time limit.
 const DEADLINE_BYTES: usize = 1024 * 1024;
 const READ_BUFFER: usize = 64 * 1024;
-/// Columns a CSV file may have.
-pub const MAX_COLUMNS: usize = 10_000;
 
 pub fn kind() -> Kind {
     Kind { name: "CSV/JSON file", hint_key: "datasources.kinds.file.hint", settings: SETTINGS, plugin: Arc::new(Files) }
@@ -201,11 +201,39 @@ impl Deadline {
 }
 
 /// A reader that checks the deadline every `DEADLINE_BYTES`, for parsers that read on their own
-/// (a whole JSON file).
+/// (a whole JSON file), and stops an array element that grows past its byte limit before the
+/// parser holds it whole.
 struct DeadlineReader<'a, R> {
     inner: R,
     deadline: &'a Deadline,
     since_check: usize,
+    element: ElementBytes,
+}
+
+/// Bytes read since the current array element began, and how many it may take; shared with the
+/// visitor that starts each element.
+#[derive(Clone)]
+struct ElementBytes {
+    read: Rc<Cell<usize>>,
+    limit: Rc<Cell<usize>>,
+}
+
+impl ElementBytes {
+    fn unlimited() -> Self {
+        Self { read: Rc::new(Cell::new(0)), limit: Rc::new(Cell::new(usize::MAX)) }
+    }
+
+    /// A new element begins that may take `limit` bytes.
+    fn start(&self, limit: usize) {
+        self.read.set(0);
+        self.limit.set(limit);
+    }
+}
+
+impl<'a, R> DeadlineReader<'a, R> {
+    fn new(inner: R, deadline: &'a Deadline) -> Self {
+        Self { inner, deadline, since_check: 0, element: ElementBytes::unlimited() }
+    }
 }
 
 impl<R: Read> Read for DeadlineReader<'_, R> {
@@ -218,9 +246,16 @@ impl<R: Read> Read for DeadlineReader<'_, R> {
         }
         let n = self.inner.read(buf)?;
         self.since_check += n;
+        let element = self.element.read.get() + n;
+        self.element.read.set(element);
+        if element > self.element.limit.get() {
+            return Err(std::io::Error::other(ELEMENT_TOO_LARGE));
+        }
         Ok(n)
     }
 }
+
+const ELEMENT_TOO_LARGE: &str = "an array element is larger than the answer may hold";
 
 const DEADLINE_PASSED: &str = "the time limit passed";
 
@@ -232,6 +267,7 @@ fn csv_error(e: CsvError) -> SourceError {
         }
         CsvError::Io(e) => read_failed(e),
         CsvError::TooLarge => SourceError::failed("internal", "a record exceeded the limit"),
+        CsvError::TooManyFields => too_many_columns(),
     }
 }
 
@@ -421,8 +457,13 @@ fn too_large(limit: u64) -> SourceError {
 }
 
 /// The elements of a top-level array go into the documents one by one; once the documents are
-/// full, the rest of the array is only checked to be JSON, without being kept.
-struct Elements<'a>(&'a mut DocumentsBuilder);
+/// full, the rest of the array is only checked to be JSON, without being kept. Each element
+/// may take at most the bytes the answer has left, counted while it is read.
+struct Elements<'a> {
+    docs: &'a mut DocumentsBuilder,
+    budget: &'a ResponseBudget,
+    element: ElementBytes,
+}
 
 impl<'de> serde::de::Visitor<'de> for Elements<'_> {
     type Value = ();
@@ -432,14 +473,16 @@ impl<'de> serde::de::Visitor<'de> for Elements<'_> {
     }
 
     fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
-        while !self.0.is_full() {
+        while !self.docs.is_full() {
+            self.element.start(self.budget.remaining());
             match seq.next_element::<Value>()? {
                 Some(v) => {
-                    self.0.push(v);
+                    self.docs.push(v);
                 }
                 None => return Ok(()),
             }
         }
+        self.element.start(usize::MAX);
         while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
         Ok(())
     }
@@ -469,10 +512,11 @@ fn read_json(
     if !is_array && !charge.add(len as usize) {
         return Err(too_large(budget.remaining() as u64));
     }
-    let reader = DeadlineReader { inner: input, deadline, since_check: 0 };
+    let reader = DeadlineReader::new(input, deadline);
+    let element = reader.element.clone();
     let mut de = serde_json::Deserializer::from_reader(reader);
     let parsed = if is_array {
-        serde::Deserializer::deserialize_seq(&mut de, Elements(&mut docs))
+        serde::Deserializer::deserialize_seq(&mut de, Elements { docs: &mut docs, budget, element })
     } else {
         <Value as serde::Deserialize>::deserialize(&mut de).map(|v| {
             docs.push(v);
@@ -481,6 +525,11 @@ fn read_json(
     if let Err(e) = parsed.and_then(|()| de.end()) {
         if e.is_io() && e.to_string().contains(DEADLINE_PASSED) {
             return Err(SourceError::Timeout(deadline.timeout.as_secs()));
+        }
+        if e.is_io() && e.to_string().contains(ELEMENT_TOO_LARGE) {
+            // The element that did not fit ends the answer, like any document that does not.
+            docs.mark_truncated();
+            return Ok(docs);
         }
         return Err(if e.is_io() { read_failed(e) } else { json_invalid(None, e) });
     }
@@ -947,17 +996,13 @@ mod hardening_tests {
     fn json_parsing_keeps_to_the_deadline() {
         let text = vec![b' '; 4 * DEADLINE_BYTES];
         let deadline = Deadline::new(Instant::now() - Duration::from_secs(1), Duration::from_secs(1));
-        let mut reader = DeadlineReader { inner: &text[..], deadline: &deadline, since_check: 0 };
+        let mut reader = DeadlineReader::new(&text[..], &deadline);
         let mut out = Vec::new();
         let e = std::io::Read::read_to_end(&mut reader, &mut out).unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
         assert!(out.len() <= 2 * DEADLINE_BYTES, "read {} bytes past the deadline", out.len());
         // The parser's error from that reader is the query's timeout.
-        let mut de = serde_json::Deserializer::from_reader(DeadlineReader {
-            inner: &text[..],
-            deadline: &deadline,
-            since_check: 0,
-        });
+        let mut de = serde_json::Deserializer::from_reader(DeadlineReader::new(&text[..], &deadline));
         let e = <Value as serde::Deserialize>::deserialize(&mut de).unwrap_err();
         assert!(e.is_io() && e.to_string().contains(DEADLINE_PASSED), "{e}");
     }
@@ -1005,5 +1050,70 @@ mod hardening_tests {
         assert_eq!(budget.remaining(), (1 << 20) - 18, "the header is held");
         drop(rows);
         assert_eq!(budget.remaining(), 1 << 20);
+    }
+}
+
+#[cfg(test)]
+mod bounded_reads_tests {
+    use super::*;
+
+    fn later() -> Deadline {
+        Deadline::new(Instant::now() + Duration::from_secs(600), Duration::from_secs(600))
+    }
+
+    /// A 24 MiB header of commas under the default 50 MiB budget: the reader stops at the
+    /// column cap instead of first turning the record into 24 million fields.
+    #[test]
+    fn wide_header_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("breit.csv");
+        let mut text = vec![b','; 24 * 1024 * 1024];
+        text.push(b'\n');
+        std::fs::write(&path, &text).unwrap();
+        drop(text);
+        let plan = Plan { path, format: Format::Csv, delimiter: Some(b','), decimal: Decimal::Auto, header: true };
+        let started = Instant::now();
+        let r = read_csv_rows(&plan, 10, &ResponseBudget::new(50 * 1024 * 1024), &later());
+        assert_eq!(r.err().map(|e| e.detail().reason), Some("csv.too_many_columns"));
+        assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+        // The reader itself stops at the field after the cap, without reading the rest.
+        let line = vec![b','; 1024 * 1024];
+        let mut input = std::io::Cursor::new(&line[..]);
+        let mut reader = csv::Reader::new(std::io::BufReader::with_capacity(4096, &mut input), b',');
+        assert_eq!(reader.next_record(usize::MAX), Err(CsvError::TooManyFields));
+        drop(reader);
+        assert!(input.position() < 64 * 1024, "read {} bytes", input.position());
+    }
+
+    /// One array element far larger than the budget is stopped while it is read, not parsed
+    /// whole first: the parser reads little more than the budget.
+    #[test]
+    fn big_array_element_memory() {
+        let mut text = String::from("[1,[");
+        while text.len() < 8 * 1024 * 1024 {
+            text.push_str("0,");
+        }
+        text.push_str("0]]");
+        let budget = ResponseBudget::new(1024 * 1024);
+        let deadline = later();
+        let mut input = std::io::Cursor::new(text.as_bytes());
+        let reader = DeadlineReader::new(&mut input, &deadline);
+        let element = reader.element.clone();
+        let mut docs = DocumentsBuilder::new(10, budget.clone());
+        let mut de = serde_json::Deserializer::from_reader(reader);
+        let e = serde::Deserializer::deserialize_seq(&mut de, Elements { docs: &mut docs, budget: &budget, element })
+            .unwrap_err();
+        assert!(e.to_string().contains(ELEMENT_TOO_LARGE), "{e}");
+        drop(de);
+        assert!(input.position() < 2 * 1024 * 1024, "read {} bytes", input.position());
+
+        // Through `read_json`: the documents before the element are kept and the answer is cut.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gross.json");
+        std::fs::write(&path, &text).unwrap();
+        let plan = Plan { path, format: Format::Json, delimiter: None, decimal: Decimal::Auto, header: true };
+        let docs = read_json(&plan, 10, &ResponseBudget::new(1024 * 1024), &later()).unwrap().finish();
+        assert_eq!(docs.documents, [serde_json::json!(1)]);
+        assert_eq!(docs.truncated, Some(crate::shapes::Truncated { limit: 1 }));
     }
 }
