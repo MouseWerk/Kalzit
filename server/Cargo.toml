@@ -34,7 +34,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 sqlparser = { version = "0.63.0", features = ["visitor"] }
 thiserror = "2.0.21"
 tiberius = { version = "0.13.0", default-features = false, features = ["tds80", "rustls", "chrono"] }
-tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "signal", "net", "fs", "time", "sync", "io-util"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "fs", "time", "sync", "io-util"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-util = { version = "0.7.20", features = ["compat"] }
 toml = "1.1.8"
