@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentSet, FieldSchema } from "../api/generated/shapes";
@@ -57,8 +57,10 @@ describe("document explorer", () => {
     expect(rowNames()).toEqual(["Document 1", "Document 2", "Document 3"]);
     expect(treeItems()[0]?.getAttribute("aria-expanded")).toBe("false");
 
-    tree.focus();
-    await user.keyboard("{ArrowDown}{ArrowRight}");
+    act(() => tree.focus());
+    // Focus on the tree makes the first row the active one.
+    expect(tree.getAttribute("aria-activedescendant")).toBe(treeItems()[0]?.id);
+    await user.keyboard("{ArrowRight}");
     expect(rowNames().slice(0, 4)).toEqual(["Document 1", "_id", "createdAt", "status"]);
     const row = treeRow;
 
@@ -141,8 +143,8 @@ describe("document explorer", () => {
     const long = { documents: [{ values: Array.from({ length: 250 }, (_, i) => i) }], schema: [] };
     renderPanel("documents", [long]);
     const tree = screen.getByRole("tree", { name: "Orders" });
-    tree.focus();
-    await user.keyboard("{ArrowDown}{ArrowRight}{ArrowDown}{ArrowRight}{End}");
+    act(() => tree.focus());
+    await user.keyboard("{ArrowRight}{ArrowDown}{ArrowRight}{End}");
     const last = treeItems().at(-1) as HTMLElement;
     expect(last.textContent).toBe("Show 100 more of 150");
     await user.keyboard("{Enter}{End}");
@@ -158,7 +160,7 @@ describe("schema panel", () => {
       path: "age",
       coverage: 1,
       types: [
-        { name: "int32", share: 0.8 },
+        { name: "int", share: 0.8 },
         { name: "string", share: 0.2 },
       ],
     },
@@ -168,7 +170,7 @@ describe("schema panel", () => {
   it("shows types, coverage and outliers, and narrows to outliers or a search", async () => {
     const user = userEvent.setup();
     renderPanel("schema", [{ documents: [{}, {}], schema }]);
-    expect(screen.getByText("4 paths in 2 documents, 3 with outliers.")).toBeTruthy();
+    expect(screen.getByText("Paths: 4 · Documents: 2 · With outliers: 3")).toBeTruthy();
     const cells = (path: string) =>
       within(screen.getByRole("cell", { name: path }).closest("tr") as HTMLElement)
         .getAllByRole("cell")
@@ -316,5 +318,74 @@ describe("panels and shapes", () => {
       />,
     );
     expect(screen.getByText(/shows documents, and the query answered with a table/)).toBeTruthy();
+  });
+});
+
+describe("review follow-ups", () => {
+  it("pages long arrays in the card instead of drawing them whole", async () => {
+    const user = userEvent.setup();
+    const values = Array.from({ length: 60 }, (_, i) => `v${i}`);
+    renderPanel("document", [{ documents: [{ _id: "a", values }], schema: [] }]);
+    expect(screen.getByText("v49")).toBeTruthy();
+    expect(screen.queryByText("v50")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show 10 more of 10" }));
+    expect(screen.getByText("v59")).toBeTruthy();
+  });
+
+  it("starts at the top of a new result, leaving an array drilldown", async () => {
+    const user = userEvent.setup();
+    const plugin = getPanel("documents") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    const panel = (documents: DocumentSet) => (
+      <Panel frames={[]} documents={[documents]} options={{}} timeRange={RANGE} title="Orders" />
+    );
+    const view = render(panel(orders()));
+    await user.click(treeItems()[0] as HTMLElement);
+    await user.click(treeRow("items"));
+    await user.click(screen.getByRole("button", { name: "Open as list" }));
+    expect(rowNames()).toEqual(["[0]", "[1]"]);
+    view.rerender(panel({ documents: [{ a: 1 }], schema: [] }));
+    expect(rowNames()).toEqual(["Document 1"]);
+    expect(screen.queryByRole("navigation", { name: "Where in the documents" })).toBeNull();
+    // One document: the summary speaks of one.
+    expect(screen.getByText("1 document.")).toBeTruthy();
+  });
+
+  it("offers no filter on keys a filter path cannot name, and explains null", async () => {
+    const user = userEvent.setup();
+    const onFilter = vi.fn();
+    renderPanel(
+      "documents",
+      [{ documents: [{ "a.b": 1, $kind: "x", gone: null }], schema: [] }],
+      {},
+      onFilter,
+    );
+    await user.click(treeItems()[0] as HTMLElement);
+    await user.click(treeRow("a.b"));
+    expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Filter by value" })).toBeNull();
+    await user.click(treeRow("$kind"));
+    expect(screen.queryByRole("button", { name: "Filter by value" })).toBeNull();
+    await user.click(treeRow("gone"));
+    expect(screen.getByRole("button", { name: "Filter by value" })).toBeTruthy();
+    expect(
+      screen.getByText(/A filter on null also matches documents without this field/),
+    ).toBeTruthy();
+  });
+
+  it("names the server's type aliases", () => {
+    renderPanel("schema", [
+      {
+        documents: [{}],
+        schema: [
+          { path: "n", coverage: 1, types: [{ name: "long", share: 1 }] },
+          { path: "b", coverage: 1, types: [{ name: "binData", share: 1 }] },
+          { path: "j", coverage: 1, types: [{ name: "javascriptWithScope", share: 1 }] },
+        ],
+      },
+    ]);
+    expect(screen.getByText("Int64 100%")).toBeTruthy();
+    expect(screen.getByText("Binary 100%")).toBeTruthy();
+    expect(screen.getByText("JavaScript with scope 100%")).toBeTruthy();
   });
 });

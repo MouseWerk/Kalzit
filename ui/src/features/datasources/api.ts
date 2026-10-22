@@ -161,12 +161,22 @@ export interface PromSchema {
 }
 
 /**
- * MongoDB (branch m2/mongodb; this is the UI's adapter until docs/api/datasources.md has it): the
- * collections, each with the fields sampled from it in the result envelope's `FieldSchema` form.
+ * MongoDB's schema answer (docs/api/datasources.md, "Schema"): the database's collections by name,
+ * up to 1,000; the first 100 with their indexes and the field paths of a sample of up to 100
+ * documents in the result envelope's `FieldSchema` form (`sampled` is 0 where no sample ran).
  */
 export interface CollectionsSchema {
   kind: "collections";
-  collections: { name: string; fields?: FieldSchema[] }[];
+  database: string;
+  collections: CollectionInfo[];
+}
+
+export interface CollectionInfo {
+  name: string;
+  type: "collection" | "view" | "timeseries";
+  indexes: { name: string; keys: { field: string; kind: unknown }[]; unique: boolean }[];
+  fields: FieldSchema[];
+  sampled: number;
 }
 
 export type SourceSchema = SqlSchema | PromSchema | CollectionsSchema;
@@ -405,21 +415,66 @@ export async function fetchSchema(
   if (isRecord(value) && value.kind === "collections" && Array.isArray(value.collections)) {
     return {
       kind: "collections",
-      collections: value.collections.flatMap((item) =>
-        isRecord(item) && typeof item.name === "string"
-          ? [
-              Array.isArray(item.fields)
-                ? { name: item.name, fields: item.fields as FieldSchema[] }
-                : { name: item.name },
-            ]
-          : [],
-      ),
+      database: typeof value.database === "string" ? value.database : "",
+      collections: value.collections.flatMap(parseCollection),
     };
   }
   if (isRecord(value) && value.kind === "tables" && Array.isArray(value.tables)) {
     return { kind: "tables", tables: value.tables as SqlSchema["tables"] };
   }
   return invalid("schema");
+}
+
+const COLLECTION_TYPES = ["collection", "view", "timeseries"] as const;
+
+function parseFieldSchema(value: unknown): FieldSchema[] {
+  if (!isRecord(value) || typeof value.path !== "string" || typeof value.coverage !== "number") {
+    return [];
+  }
+  const types = Array.isArray(value.types)
+    ? value.types.flatMap((type) =>
+        isRecord(type) && typeof type.name === "string" && typeof type.share === "number"
+          ? [{ name: type.name, share: type.share }]
+          : [],
+      )
+    : [];
+  return [{ path: value.path, coverage: value.coverage, types }];
+}
+
+/** One collection of the schema answer, every documented field read with its type checked. */
+function parseCollection(item: unknown): CollectionInfo[] {
+  if (!isRecord(item) || typeof item.name !== "string") {
+    return [];
+  }
+  const type = (COLLECTION_TYPES as readonly unknown[]).includes(item.type)
+    ? (item.type as CollectionInfo["type"])
+    : "collection";
+  const indexes = Array.isArray(item.indexes)
+    ? item.indexes.flatMap((index) =>
+        isRecord(index) && typeof index.name === "string" && Array.isArray(index.keys)
+          ? [
+              {
+                name: index.name,
+                keys: index.keys.flatMap((key) =>
+                  isRecord(key) && typeof key.field === "string"
+                    ? [{ field: key.field, kind: key.kind }]
+                    : [],
+                ),
+                unique: index.unique === true,
+              },
+            ]
+          : [],
+      )
+    : [];
+  return [
+    {
+      name: item.name,
+      type,
+      indexes,
+      fields: Array.isArray(item.fields) ? item.fields.flatMap(parseFieldSchema) : [],
+      sampled: typeof item.sampled === "number" ? item.sampled : 0,
+    },
+  ];
 }
 
 /** `POST /query`: free queries for members with `datasources:query`. */

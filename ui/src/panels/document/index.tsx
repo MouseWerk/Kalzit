@@ -16,9 +16,12 @@ export interface CardOptions {
 
 /** Below this depth nested values are summarized, so a deep document stays a readable card. */
 const MAX_DEPTH = 6;
+/** Array elements shown at first, and added by each "Show more". */
+export const CARD_PAGE = 50;
 
 function Value({ value, depth }: { value: unknown; depth: number }) {
   const { t, language } = useI18n();
+  const [shown, setShown] = useState(CARD_PAGE);
   const entries = entriesOf(value);
   if (!isContainer(value) || depth >= MAX_DEPTH || entries.length === 0) {
     return (
@@ -30,13 +33,27 @@ function Value({ value, depth }: { value: unknown; depth: number }) {
   }
   if (Array.isArray(value)) {
     return (
-      <ol className="doc-card__list">
-        {entries.map(([i, item]) => (
-          <li key={i}>
-            <Value value={item} depth={depth + 1} />
-          </li>
-        ))}
-      </ol>
+      <>
+        <ol className="doc-card__list">
+          {entries.slice(0, shown).map(([i, item]) => (
+            <li key={i}>
+              <Value value={item} depth={depth + 1} />
+            </li>
+          ))}
+        </ol>
+        {entries.length > shown ? (
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={() => setShown(shown + CARD_PAGE)}
+          >
+            {t("documents.tree.showMore", {
+              count: Math.min(CARD_PAGE, entries.length - shown),
+              rest: entries.length - shown,
+            })}
+          </button>
+        ) : null}
+      </>
     );
   }
   return <Fields value={unwrap(value) as Record<string, unknown>} depth={depth + 1} />;

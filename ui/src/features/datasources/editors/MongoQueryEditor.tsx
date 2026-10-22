@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useState } from "react";
 import { isRecord } from "../../../api/client";
+import type { TimeRange } from "../../../api/generated/shapes";
 import { DocumentTree } from "../../../documents/DocumentTree";
+import { plural } from "../../../documents/labels";
 import { filterPaths, schemaOf } from "../../../documents/schema";
 import { SetSummary } from "../../../documents/shared";
 import { type Translate, useI18n } from "../../../i18n/i18n";
@@ -26,8 +28,19 @@ import "../../dashboards/ui/shared.css";
 
 /** Documents a stage preview asks for: enough to see the shape, cheap to run. */
 export const PREVIEW_LIMIT = 20;
-/** The time range a preview runs with, for pipelines that use the time macros. */
+/** Without a context from the page, a preview runs over the last hour and without variables. */
 const PREVIEW_RANGE_MS = 60 * 60 * 1000;
+
+/** What a stage preview runs with: the editor's time range and variable values when asked. */
+export interface PreviewRun {
+  range: TimeRange;
+  variables: Record<string, unknown>;
+}
+
+const PreviewContext = createContext<() => PreviewRun>(() => {
+  const now = Date.now();
+  return { range: { from: now - PREVIEW_RANGE_MS, to: now }, variables: {} };
+});
 
 /** What a new stage starts with, so it is valid JSON from the first moment. */
 const TEMPLATES: Record<string, string> = {
@@ -79,6 +92,7 @@ export function MongoQueryEditor({
   onChange,
   onRun,
   label,
+  previewRun,
 }: QueryEditorProps) {
   const { t } = useI18n();
   const collectionId = useId();
@@ -94,77 +108,101 @@ export function MongoQueryEditor({
     ...new Set([...filterPaths(known?.fields ?? []), ...sampled].filter((f) => f !== "")),
   ];
 
+  const fallback = useContext(PreviewContext);
+  // The query of the other mode, kept for one undo after switching.
+  const [setAside, setSetAside] = useState<MongoQuery | null>(null);
+
+  function switchMode(name: "aggregate" | "find") {
+    setSetAside(value);
+    onChange(
+      name === "find"
+        ? { collection: value.collection }
+        : { collection: value.collection, pipeline: "[]" },
+    );
+  }
+
   return (
-    <fieldset className="pipeline">
-      <legend className="visually-hidden">{label ?? t("datasources.editor.label")}</legend>
-      <div className="pipeline__head">
-        <div className="field pipeline__collection">
-          <label className="field__label" htmlFor={collectionId}>
-            {t("documents.pipeline.collection")}
-          </label>
-          <input
-            id={collectionId}
-            className="input input--mono"
-            list={listId}
-            value={value.collection}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => onChange({ ...value, collection: event.currentTarget.value })}
-          />
-          <datalist id={listId}>
-            {collections.map((collection) => (
-              <option key={collection.name} value={collection.name} />
-            ))}
-          </datalist>
-        </div>
-        <fieldset className="pipeline__mode">
-          <legend className="field__label">{t("documents.pipeline.mode")}</legend>
-          {(["aggregate", "find"] as const).map((name) => (
-            <label key={name} className="radio">
-              <input
-                type="radio"
-                name={`${collectionId}-mode`}
-                value={name}
-                checked={mode === name}
-                onChange={() =>
-                  onChange(
-                    name === "find"
-                      ? { collection: value.collection }
-                      : { collection: value.collection, pipeline: "[]" },
-                  )
-                }
-              />
-              <span>{t(`documents.pipeline.mode.${name}`)}</span>
+    <PreviewContext value={previewRun ?? fallback}>
+      <fieldset className="pipeline">
+        <legend className="visually-hidden">{label ?? t("datasources.editor.label")}</legend>
+        <div className="pipeline__head">
+          <div className="field pipeline__collection">
+            <label className="field__label" htmlFor={collectionId}>
+              {t("documents.pipeline.collection")}
             </label>
-          ))}
-        </fieldset>
-      </div>
-      <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}{" "}
-        {t("documents.pipeline.macros")}
-        {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
-      </p>
-      {mode === "aggregate" ? (
-        <PipelineEditor
-          orgId={orgId}
-          datasourceId={datasource.id}
-          query={value}
-          fields={fields}
-          hintId={hintId}
-          onChange={onChange}
-          onRun={onRun}
-          onSampled={setSampled}
-        />
-      ) : (
-        <FindEditor
-          query={value}
-          fields={fields}
-          hintId={hintId}
-          onChange={onChange}
-          onRun={onRun}
-        />
-      )}
-    </fieldset>
+            <input
+              id={collectionId}
+              className="input input--mono"
+              list={listId}
+              value={value.collection}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => onChange({ ...value, collection: event.currentTarget.value })}
+            />
+            <datalist id={listId}>
+              {collections.map((collection) => (
+                <option key={collection.name} value={collection.name} />
+              ))}
+            </datalist>
+          </div>
+          <fieldset className="pipeline__mode">
+            <legend className="field__label">{t("documents.pipeline.mode")}</legend>
+            {(["aggregate", "find"] as const).map((name) => (
+              <label key={name} className="radio">
+                <input
+                  type="radio"
+                  name={`${collectionId}-mode`}
+                  value={name}
+                  checked={mode === name}
+                  onChange={() => switchMode(name)}
+                />
+                <span>{t(`documents.pipeline.mode.${name}`)}</span>
+              </label>
+            ))}
+          </fieldset>
+        </div>
+        {setAside === null ? null : (
+          <div className="pipeline__set-aside" role="status">
+            <span>{t(`documents.pipeline.switched.${mode}`)}</span>
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={() => {
+                onChange(setAside);
+                setSetAside(null);
+              }}
+            >
+              {t("documents.pipeline.undo")}
+            </button>
+          </div>
+        )}
+        <p className="field__hint" id={hintId}>
+          {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}{" "}
+          {t("documents.pipeline.macros")}
+          {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
+        </p>
+        {mode === "aggregate" ? (
+          <PipelineEditor
+            orgId={orgId}
+            datasourceId={datasource.id}
+            query={value}
+            fields={fields}
+            hintId={hintId}
+            onChange={onChange}
+            onRun={onRun}
+            onSampled={setSampled}
+          />
+        ) : (
+          <FindEditor
+            query={value}
+            fields={fields}
+            hintId={hintId}
+            onChange={onChange}
+            onRun={onRun}
+          />
+        )}
+      </fieldset>
+    </PreviewContext>
   );
 }
 
@@ -245,6 +283,7 @@ function PipelineEditor({
   // Disabled stages are the editor's own: the server's query form has no place for them.
   const [stages, setStages] = useState<Stages>(() => initialStages(pipeline));
   const [focus, setFocus] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
   if (pipeline !== stages.synced) {
     setStages(mergeStages(stages, pipeline));
   }
@@ -283,12 +322,17 @@ function PipelineEditor({
     nextEntries[target] = moved;
     commit(nextEntries);
     setFocus(`${baseId}-${moved.id}-${by === -1 ? "up" : "down"}`);
+    // Focus stays on the moved stage's button; its new place is said aloud.
+    setAnnouncement(t("documents.pipeline.moved", { number: target + 1, count: entries.length }));
   }
 
   const disabledCount = entries.filter((e) => !e.enabled).length;
 
   return (
     <div className="pipeline__body">
+      <p className="visually-hidden" role="status">
+        {announcement}
+      </p>
       <fieldset className="pipeline__view">
         <legend className="visually-hidden">{t("documents.pipeline.view")}</legend>
         {(["stages", "raw"] as const).map((name) => (
@@ -306,7 +350,7 @@ function PipelineEditor({
       </fieldset>
       {disabledCount > 0 ? (
         <p className="field__hint">
-          {t("documents.pipeline.disabledNotSaved", { count: disabledCount })}
+          {plural(t, "documents.pipeline.disabledNotSaved", disabledCount)}
         </p>
       ) : null}
       {view === "raw" ? (
@@ -462,7 +506,10 @@ function StageItem({
 }: StageItemProps) {
   const { t } = useI18n();
   const number = index + 1;
-  const [requested, setRequested] = useState<{ query: MongoQuery; at: number } | null>(null);
+  const previewRun = useContext(PreviewContext);
+  const [requested, setRequested] = useState<
+    ({ query: MongoQuery; at: number } & PreviewRun) | null
+  >(null);
   return (
     <li
       className={entry.enabled ? "pipeline__stage" : "pipeline__stage pipeline__stage--off"}
@@ -515,7 +562,7 @@ function StageItem({
             type="button"
             className="button button--secondary button--small"
             aria-label={t("documents.pipeline.preview", { number })}
-            onClick={() => setRequested({ query: preview(), at: Date.now() })}
+            onClick={() => setRequested({ query: preview(), at: Date.now(), ...previewRun() })}
           >
             {t("documents.pipeline.previewShort")}
           </button>
@@ -539,6 +586,8 @@ function StageItem({
           number={number}
           query={requested.query}
           at={requested.at}
+          range={requested.range}
+          variables={requested.variables}
           onSampled={onSampled}
         />
       )}
@@ -553,13 +602,18 @@ function StagePreview({
   number,
   query,
   at,
+  range,
+  variables,
   onSampled,
 }: {
   orgId: string;
   datasourceId: string;
   number: number;
   query: MongoQuery;
+  /** When it was asked for: each request runs once. */
   at: number;
+  range: TimeRange;
+  variables: Record<string, unknown>;
   onSampled: (fields: string[]) => void;
 }) {
   const { t } = useI18n();
@@ -572,8 +626,8 @@ function StagePreview({
         orgId,
         {
           queries: [{ refId: "preview", datasourceId, query, limit: PREVIEW_LIMIT }],
-          timeRange: { from: at - PREVIEW_RANGE_MS, to: at },
-          variables: {},
+          timeRange: range,
+          variables,
         },
         signal,
       );
@@ -627,6 +681,21 @@ function StagePreview({
 }
 
 const WHOLE = /^(0|[1-9]\d*)$/;
+/**
+ * The largest skip or limit: whole numbers beyond it lose digits in JSON and JavaScript, and
+ * every server limit on documents is far below it.
+ */
+export const MAX_FIND_NUMBER = Number.MAX_SAFE_INTEGER;
+
+/** The number a text stands for when it is a whole number from `min` to the maximum. */
+function wholeIn(text: string, min: number): number | null {
+  const trimmed = text.trim();
+  if (!WHOLE.test(trimmed)) {
+    return null;
+  }
+  const number = Number(trimmed);
+  return Number.isSafeInteger(number) && number >= min && number <= MAX_FIND_NUMBER ? number : null;
+}
 
 function FindEditor({
   query,
@@ -641,7 +710,7 @@ function FindEditor({
   onChange: (query: MongoQuery) => void;
   onRun?: (() => void) | undefined;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const baseId = useId();
   const objectOnly = (value: unknown) =>
     isRecord(value) ? null : t("documents.pipeline.notObject");
@@ -677,7 +746,9 @@ function FindEditor({
     <NumberField
       id={`${baseId}-${name}`}
       label={t(`documents.find.${name}`)}
-      error={t(min === 0 ? "documents.find.skipInvalid" : "documents.find.limitInvalid")}
+      error={t(min === 0 ? "documents.find.skipInvalid" : "documents.find.limitInvalid", {
+        max: new Intl.NumberFormat(language).format(MAX_FIND_NUMBER),
+      })}
       value={query[name]}
       min={min}
       onChange={(value) => {
@@ -720,7 +791,7 @@ function NumberField({
   onChange: (value: number | undefined) => void;
 }) {
   const [text, setText] = useState(value === undefined ? "" : String(value));
-  const valid = text.trim() === "" || (WHOLE.test(text.trim()) && Number(text) >= min);
+  const valid = text.trim() === "" || wholeIn(text, min) !== null;
   return (
     <div className="field pipeline__limit">
       <label className="field__label" htmlFor={id}>
@@ -738,8 +809,11 @@ function NumberField({
           setText(next);
           if (next.trim() === "") {
             onChange(undefined);
-          } else if (WHOLE.test(next.trim()) && Number(next) >= min) {
-            onChange(Number(next.trim()));
+          } else {
+            const number = wholeIn(next, min);
+            if (number !== null) {
+              onChange(number);
+            }
           }
         }}
       />

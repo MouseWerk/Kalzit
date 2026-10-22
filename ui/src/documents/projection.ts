@@ -1,16 +1,23 @@
 import { isRecord } from "../api/client";
-import type { DocumentSet, Field, FieldType, Frame } from "../api/generated/shapes";
+import type { DocumentSet, Field, FieldSchema, FieldType, Frame } from "../api/generated/shapes";
 import { valueAt } from "./paths";
-import { dateMs, isContainer, isTyped, typeOf } from "./values";
+import { dateMs, documentsMeta, isContainer, isTyped, typeOf } from "./values";
 
 /**
  * The projection step (docs/PLAN.md, section 1): documents become a frame only through this
- * explicit step, stored with the panel as a transformation of one query:
- * `{ "type": "toFrame", "refId": "A", "columns": [{ path, name?, type? }] }`. The query itself
- * stays in the server's form, which takes no other fields. Each column reads one field path per
- * document; the type is chosen or taken from the first value. Removing the step brings the
- * documents back. Applied in `projectOutcomes` (dashboards/results.ts), never implicitly: a
- * result the server already answered as a frame passes unchanged.
+ * explicit step, stored with the panel among its `transformations` as a step of one query, in the
+ * step form of the analysis steps (docs/api/settings-dashboards.md, "Transformations"):
+ *
+ * ```json
+ * { "id": "<uuid>", "type": "toFrame", "frame": "A", "columns": [{ "path", "name"?, "type"? }],
+ *   "disabled"?: true }
+ * ```
+ *
+ * The query stays in the server's form, which takes no other fields. Each column reads one field
+ * path per document (array elements by index: `items.0.price`; a path through an array without an
+ * index reads nothing); the type is chosen or taken from the first value. Removing or disabling
+ * the step brings the documents back. Applied in `projectOutcomes` (dashboards/results.ts), never
+ * implicitly: a result the server already answered as a frame passes unchanged.
  */
 
 export const PROJECTION_STEP = "toFrame";
@@ -28,6 +35,8 @@ export interface ProjectionColumn {
 
 export interface FrameProjection {
   columns: ProjectionColumn[];
+  /** Kept, but not applied: the query's documents show as they came. */
+  disabled?: boolean;
 }
 
 export function parseProjection(value: unknown): FrameProjection | undefined {
@@ -48,7 +57,7 @@ export function parseProjection(value: unknown): FrameProjection | undefined {
     }
     columns.push(column);
   }
-  return { columns };
+  return value.disabled === true ? { columns, disabled: true } : { columns };
 }
 
 /** The frame type a value reads as when the column does not name one. */
@@ -59,7 +68,6 @@ function typeFor(value: unknown): FieldType {
     case "number":
     case "decimal":
     case "double":
-    case "int32":
       return "number";
     case "int64":
       return "int64";
@@ -125,10 +133,35 @@ export function projectDocuments(set: DocumentSet, projection: FrameProjection):
       values: raw.map((value) => convert(value, type)),
     };
   });
+  // The source's notices (a cut, hidden values) stay with what the panel shows.
   return {
     fields,
-    meta: { rowsTruncated: set.truncated !== undefined, notices: [] },
+    meta: { rowsTruncated: set.truncated !== undefined, notices: documentsMeta(set).notices },
   };
+}
+
+/**
+ * Paths a projection column can read: the schema's paths outside arrays as they are, and paths
+ * into arrays through their first element (`items[].price` becomes `items.0.price`).
+ */
+export function projectionPaths(schema: readonly FieldSchema[]): string[] {
+  return [
+    ...new Set(
+      schema
+        .map((field) => field.path.replace(/\[\]/g, ".0"))
+        .filter((path) => !path.endsWith(".0")),
+    ),
+  ];
+}
+
+/** Whether a stored transformation is the projection step of query `refId`. */
+function isStepFor(value: unknown, refId: string): value is Record<string, unknown> {
+  // `refId` is the shape of the first drafts, read so they keep working.
+  return (
+    isRecord(value) &&
+    value.type === PROJECTION_STEP &&
+    (value.frame === refId || (value.frame === undefined && value.refId === refId))
+  );
 }
 
 /** The projection step of the query `refId` among a panel's transformations. */
@@ -136,22 +169,46 @@ export function projectionFor(
   transformations: readonly unknown[],
   refId: string,
 ): FrameProjection | undefined {
-  const step = transformations.find(
-    (t) => isRecord(t) && t.type === PROJECTION_STEP && t.refId === refId,
-  );
-  return parseProjection(step);
+  return parseProjection(transformations.find((t) => isStepFor(t, refId)));
 }
 
-/** The transformations with the step of `refId` set, replaced or (undefined) removed. */
+/** A new step id: a random UUID, also where the browser offers no `randomUUID` (plain HTTP). */
+export function newStepId(): string {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = ((bytes[6] as number) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] as number) & 0x3f) | 0x80;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * The transformations with the step of `refId` set or (undefined) removed. A step that is there
+ * keeps its id and place; an old draft's step is rewritten in the current shape.
+ */
 export function withProjection(
   transformations: readonly unknown[],
   refId: string,
   projection: FrameProjection | undefined,
 ): unknown[] {
-  const others = transformations.filter(
-    (t) => !(isRecord(t) && t.type === PROJECTION_STEP && t.refId === refId),
-  );
-  return projection === undefined
-    ? others
-    : [...others, { type: PROJECTION_STEP, refId, columns: projection.columns }];
+  const index = transformations.findIndex((t) => isStepFor(t, refId));
+  if (projection === undefined) {
+    return transformations.filter((_, i) => i !== index);
+  }
+  const old = transformations[index];
+  const id = isRecord(old) && typeof old.id === "string" ? old.id : newStepId();
+  const step: Record<string, unknown> = {
+    id,
+    type: PROJECTION_STEP,
+    frame: refId,
+    columns: projection.columns,
+  };
+  if (projection.disabled === true) {
+    step.disabled = true;
+  }
+  return index === -1
+    ? [...transformations, step]
+    : transformations.map((t, i) => (i === index ? step : t));
 }

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { projectOutcomes } from "../features/dashboards/results";
+import { describe, expect, it, vi } from "vitest";
+import type { DocumentSet } from "../api/generated/shapes";
+import { appendPages, projectOutcomes } from "../features/dashboards/results";
 import { jsonContext, mongoCompletions } from "../features/datasources/editors/mongoCompletion";
 import { tokenizeJson } from "../features/datasources/editors/syntax";
 import {
@@ -11,10 +12,17 @@ import {
   previewQuery,
   splitPipeline,
 } from "../features/datasources/mongoQuery";
+import { serverSchema } from "../features/datasources/test/fakeMongo";
 import { distribution, histogram } from "./distribution";
-import { filterable, toExtendedJson } from "./filter";
+import { filterable, filterablePath, toExtendedJson } from "./filter";
 import { filterPath, mongoPath, schemaPath, valueAt, valuesAt } from "./paths";
-import { projectDocuments, projectionFor, withProjection } from "./projection";
+import {
+  newStepId,
+  projectDocuments,
+  projectionFor,
+  projectionPaths,
+  withProjection,
+} from "./projection";
 import { outliersOf, sampleSchema, schemaOf } from "./schema";
 import { entriesOf, formatLeaf, isTyped, typeOf, unwrap } from "./values";
 
@@ -86,26 +94,37 @@ describe("schema sampling", () => {
   const schema = sampleSchema(docs);
   const field = (path: string) => schema.find((f) => f.path === path);
 
-  it("gives every path with coverage and type shares, arrays as []", () => {
+  it("gives every path with coverage and the server's type aliases, arrays as []", () => {
     expect(field("_id")).toEqual({
       path: "_id",
       coverage: 1,
       types: [{ name: "objectId", share: 1 }],
     });
-    expect(field("n")?.coverage).toBe(0.5);
+    expect(field("n")).toEqual({ path: "n", coverage: 0.5, types: [{ name: "long", share: 1 }] });
     expect(field("items[].p")).toEqual({
       path: "items[].p",
       coverage: 1,
-      types: [{ name: "number", share: 1 }],
+      types: [{ name: "int", share: 1 }],
     });
     // A document with an empty array has the array, not its elements.
     expect(field("tags")?.coverage).toBe(1);
     expect(field("tags[]")?.coverage).toBe(0.5);
+    expect(sampleSchema([{ x: 1.5 }, { x: 2 ** 40 }])[0]?.types).toEqual([
+      { name: "double", share: 1 },
+    ]);
+  });
+
+  it("counts type shares per document, so a mixed array counts for each type", () => {
+    const mixed = sampleSchema([{ a: [1, "x"] }, { a: [2] }]);
+    expect(mixed.find((f) => f.path === "a[]")?.types).toEqual([
+      { name: "int", share: 1 },
+      { name: "string", share: 0.5 },
+    ]);
   });
 
   it("keeps umlauts and emoji in field names and finds mixed types", () => {
     expect(field("größe")?.types).toEqual([
-      { name: "number", share: 0.5 },
+      { name: "int", share: 0.5 },
       { name: "string", share: 0.5 },
     ]);
     expect(outliersOf(field("größe") ?? { path: "", coverage: 0, types: [] })).toEqual({
@@ -119,7 +138,7 @@ describe("schema sampling", () => {
   });
 
   it("prefers the server's schema and samples only when there is none", () => {
-    const server = [{ path: "x", coverage: 0.25, types: [{ name: "int32", share: 1 }] }];
+    const server = [{ path: "x", coverage: 0.25, types: [{ name: "int", share: 1 }] }];
     expect(schemaOf({ documents: docs, schema: server })).toBe(server);
     expect(schemaOf({ documents: docs, schema: [] }).length).toBe(schema.length);
   });
@@ -164,10 +183,13 @@ describe("distribution", () => {
   });
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 describe("projection step", () => {
-  it("turns documents into a frame with typed columns", () => {
+  it("turns documents into a frame with typed columns and keeps the source's notices", () => {
+    const notice = { severity: "warning", code: "documents.limit", text: "cut" };
     const frame = projectDocuments(
-      { documents: docs, schema: [] },
+      { documents: docs, schema: [], notices: [notice] } as DocumentSet,
       {
         columns: [
           { path: "at" },
@@ -191,22 +213,84 @@ describe("projection step", () => {
     // int64 stays exact as text; a missing value is null.
     expect(frame.fields[2]?.values).toEqual(["9007199254740993", null]);
     expect(frame.fields[4]?.values).toEqual([oid.value, oid.value]);
+    expect(frame.meta?.notices).toEqual([notice]);
   });
 
-  it("is a transformation of the panel for one query, applied only where it is", () => {
+  it("is a step of the panel in the analysis step form, applied only where it is on", () => {
     const outcome = {
       refId: "A",
       result: { shape: "documents" as const, documents: { documents: docs, schema: [] } },
     };
     expect(projectOutcomes([outcome], [])[0]).toBe(outcome);
     const steps = withProjection([{ type: "other" }], "A", { columns: [{ path: "at" }] });
-    expect(steps).toEqual([
-      { type: "other" },
-      { type: "toFrame", refId: "A", columns: [{ path: "at" }] },
-    ]);
+    const step = steps[1] as Record<string, unknown>;
+    expect(step).toEqual({
+      id: expect.stringMatching(UUID),
+      type: "toFrame",
+      frame: "A",
+      columns: [{ path: "at" }],
+    });
     expect(projectionFor(steps, "B")).toBeUndefined();
     expect(projectOutcomes([outcome], steps)[0]).toMatchObject({ result: { shape: "frame" } });
+
+    // Changed or switched off, the step keeps its id and place; off, the documents show.
+    const off = withProjection(steps, "A", { columns: [{ path: "at" }], disabled: true });
+    expect(off[1]).toEqual({ ...step, disabled: true });
+    expect(projectOutcomes([outcome], off)[0]).toBe(outcome);
     expect(withProjection(steps, "A", undefined)).toEqual([{ type: "other" }]);
+  });
+
+  it("reads the first drafts' shape and writes the current one when the step changes", () => {
+    const old = [{ type: "toFrame", refId: "A", columns: [{ path: "at" }] }];
+    expect(projectionFor(old, "A")).toEqual({ columns: [{ path: "at" }] });
+    const rewritten = withProjection(old, "A", { columns: [{ path: "total" }] });
+    expect(rewritten).toEqual([
+      {
+        id: expect.stringMatching(UUID),
+        type: "toFrame",
+        frame: "A",
+        columns: [{ path: "total" }],
+      },
+    ]);
+  });
+
+  it("makes step ids also where the browser has no randomUUID", () => {
+    vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    expect(newStepId()).toMatch(UUID);
+  });
+
+  it("suggests only paths a column can read: outside arrays, or through an index", () => {
+    expect(
+      projectionPaths([
+        { path: "status", coverage: 1, types: [] },
+        { path: "items", coverage: 1, types: [] },
+        { path: "items[]", coverage: 1, types: [] },
+        { path: "items[].price", coverage: 1, types: [] },
+        { path: "m[][]", coverage: 1, types: [] },
+      ]),
+    ).toEqual(["status", "items", "items.0.price"]);
+  });
+
+  it("appends loaded pages to the first one, with the last page's cursor", () => {
+    const first = {
+      refId: "A",
+      result: {
+        shape: "documents" as const,
+        documents: {
+          documents: [1],
+          schema: [{ path: "x", coverage: 1, types: [] }],
+          nextCursor: "1",
+        },
+      },
+    };
+    const [merged] = appendPages([first], "A", [{ documents: [2, 3], schema: [] }]);
+    expect(merged).toEqual({
+      refId: "A",
+      result: {
+        shape: "documents",
+        documents: { documents: [1, 2, 3], schema: [{ path: "x", coverage: 1, types: [] }] },
+      },
+    });
   });
 });
 
@@ -231,6 +315,26 @@ describe("click-to-filter values", () => {
     expect(filterable({ $type: "javascript", value: "f()" })).toBe(false);
     expect(filterable({ a: 1 })).toBe(false);
     expect(filterable(null)).toBe(true);
+  });
+
+  it("sends text the server would bind as an exact, escaped regular expression", () => {
+    // Joined, so it reads as the text a document holds, not as a template.
+    const variable = ["$", "{land}"].join("");
+    expect(toExtendedJson(variable)).toEqual({
+      $regularExpression: { pattern: "^\\$\\{land\\}$", options: "" },
+    });
+    expect(toExtendedJson("$__timeFrom (a.b)")).toEqual({
+      $regularExpression: { pattern: "^\\$__timeFrom \\(a\\.b\\)$", options: "" },
+    });
+    expect(/^\$\{land\}$/.test(variable)).toBe(true);
+    // A dollar elsewhere is plain text.
+    expect(toExtendedJson("costs $5")).toBe("costs $5");
+  });
+
+  it("offers no filter on paths a filter cannot name", () => {
+    expect(filterablePath(["items", 0, "price"])).toBe(true);
+    expect(filterablePath(["$type"])).toBe(false);
+    expect(filterablePath(["a.b"])).toBe(false);
   });
 });
 
@@ -264,18 +368,35 @@ describe("MongoDB query form", () => {
       "items.sku",
       oid,
     );
-    expect(splitPipeline(next.pipeline ?? "")).toEqual([
+    expect("query" in next && splitPipeline(next.query.pipeline ?? "")).toEqual([
       '{"$sort": {"b": 1, "a": -1}}',
       `{"$match": {"items.sku": {"$oid":"${oid.value}"}}}`,
     ]);
     expect(addMatch({ collection: "c", filter: '{"z": 1, "a": 2}' }, "b", 3)).toEqual({
-      collection: "c",
-      filter: '{"z": 1, "a": 2, "b": 3}',
+      query: { collection: "c", filter: '{"z": 1, "a": 2, "b": 3}' },
     });
-    expect(addMatch({ collection: "c", filter: "{ }" }, "b", "x").filter).toBe('{"b": "x"}');
+    expect(addMatch({ collection: "c", filter: "{ }" }, "b", "x")).toEqual({
+      query: { collection: "c", filter: '{"b": "x"}' },
+    });
     expect(addMatch({ collection: "c" }, "b", true)).toEqual({
-      collection: "c",
-      filter: '{"b": true}',
+      query: { collection: "c", filter: '{"b": true}' },
+    });
+  });
+
+  it("joins a condition on a path the filter already names with $and", () => {
+    expect(addMatch({ collection: "c", filter: '{"b": {"$gt": 1}, "a": 2}' }, "b", 3)).toEqual({
+      query: { collection: "c", filter: '{"$and": [{"b": {"$gt": 1}, "a": 2}, {"b": 3}]}' },
+    });
+  });
+
+  it("never replaces text it cannot read", () => {
+    expect(addMatch({ collection: "c", filter: '{"a": ' }, "b", 1)).toEqual({ refused: "filter" });
+    expect(addMatch({ collection: "c", filter: "[1]" }, "b", 1)).toEqual({ refused: "filter" });
+    expect(addMatch({ collection: "c", pipeline: '[{"$match": }]' }, "b", 1)).toEqual({
+      refused: "pipeline",
+    });
+    expect(addMatch({ collection: "c", pipeline: '{"$match": {}}' }, "b", 1)).toEqual({
+      refused: "pipeline",
     });
   });
 
@@ -293,6 +414,28 @@ describe("MongoDB query form", () => {
       'orders.find({"a": 1})',
     );
     expect(mongoQueryText({ collection: "", pipeline: "[]" })).toBe("");
+  });
+});
+
+describe("the fake's schema, from the server docs", () => {
+  it("names type aliases and counts shares per document", () => {
+    const schema = serverSchema([
+      { n: 1, big: { $type: "int64", value: "9" }, bin: { $type: "binary", value: null } },
+      { n: "x", a: [1, "y"], meta: { $type: "document", value: { $type: "k" } } },
+    ]);
+    const byPath = Object.fromEntries(schema.map((field) => [field.path, field]));
+    expect(byPath.n?.types).toEqual([
+      { name: "int", share: 0.5 },
+      { name: "string", share: 0.5 },
+    ]);
+    expect(byPath.big?.types).toEqual([{ name: "long", share: 1 }]);
+    expect(byPath.bin?.types).toEqual([{ name: "binData", share: 1 }]);
+    expect(byPath["a[]"]?.types).toEqual([
+      { name: "int", share: 1 },
+      { name: "string", share: 1 },
+    ]);
+    expect(byPath.meta?.types).toEqual([{ name: "object", share: 1 }]);
+    expect(byPath["meta.$type"]?.coverage).toBe(0.5);
   });
 });
 

@@ -2,7 +2,7 @@ import { type KeyboardEvent, useId, useRef, useState } from "react";
 import { useI18n } from "../i18n/i18n";
 import { useStyleVars } from "../panels/styleVars";
 import { useElementSize } from "../panels/useElementSize";
-import { filterable } from "./filter";
+import { filterable, filterablePath } from "./filter";
 import { typeLabel, valueSummary } from "./labels";
 import { filterPath, mongoPath, type Segment } from "./paths";
 import { entriesOf, typeOf } from "./values";
@@ -332,7 +332,12 @@ export function DocumentTree({
     active.more === undefined &&
     (active.segments.length > 0 || prefix !== undefined);
   const path = hasPath ? mongoPath(fullSegments(active)) : "";
-  const canFilter = hasPath && onFilter !== undefined && filterable(active.value);
+  // A key with a dot or a leading $ cannot be named in a filter path, so it offers none.
+  const canFilter =
+    hasPath &&
+    onFilter !== undefined &&
+    filterable(active.value) &&
+    filterablePath(fullSegments(active));
   const canOpen =
     hasPath && onOpenList !== undefined && Array.isArray(active.value) && active.value.length > 0;
 
@@ -369,6 +374,9 @@ export function DocumentTree({
                 {t("documents.tree.filter")}
               </button>
             ) : null}
+            {canFilter && active.value === null ? (
+              <span className="doc-tree__hint">{t("documents.tree.nullHint")}</span>
+            ) : null}
             {canOpen ? (
               <button
                 type="button"
@@ -397,6 +405,13 @@ export function DocumentTree({
           activeIndex >= start && activeIndex < end ? domId(activeIndex) : undefined
         }
         tabIndex={0}
+        onFocus={(event) => {
+          // Focus arrives on the tree itself: the first row becomes the active one, so arrow
+          // keys and screen readers start from a row instead of from nothing.
+          if (event.target === event.currentTarget && activeId === null && rows[0] !== undefined) {
+            setActiveId(rows[0].id);
+          }
+        }}
         onKeyDown={onKeyDown}
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       >

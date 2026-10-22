@@ -314,6 +314,32 @@ interface Panel {
 }
 ```
 
+### Transformations
+
+`transformations` holds the panel's steps, in order, each `{"id", "type", "disabled"?, ...}`: `id` is
+a UUID that stays with the step, `disabled: true` keeps a step without applying it. Steps name the
+query they work on by its `refId` in `frame`. The query keeps its own form; nothing a step does
+is part of it.
+
+The projection step turns the documents of one query into a frame (docs/PLAN.md, section 1):
+
+```json
+{ "id": "0199f0a0-1c2e-7a4b-9e1d-3f5a6b7c8d90", "type": "toFrame", "frame": "A",
+  "columns": [{ "path": "createdAt", "type": "time" }, { "path": "items.0.price", "name": "Price" }],
+  "disabled": false }
+```
+
+- `columns`: one per frame column. `path` is a dotted field path; inside an array it names the
+  element by index (`items.0.price`), and a path through an array without an index reads nothing.
+  `name` defaults to the path. `type` (`time`, `number`, `int64`, `string`, `bool`, `json`)
+  defaults to the type of the first value; a value that does not fit the type is `null`.
+- The UI applies the step to the documents it holds; a result that is already a frame passes
+  unchanged. The source's notices go with the frame.
+- Early drafts wrote `{"type": "toFrame", "refId": "A", "columns": [...]}` without `id`; the UI
+  still reads them and writes the shape above when the step changes.
+- Until the analysis steps (`m1/analysis`) bring the server's check of each step,
+  `transformations` is stored as sent.
+
 Unknown fields are refused. The server stores the model with defaults filled in and answers it so;
 stored that way it may take at most 1 MiB (1048576 bytes), else `422 validation` field `model`.
 A model with a lower `schemaVersion` is migrated on save and on read; a higher one ("comes from a

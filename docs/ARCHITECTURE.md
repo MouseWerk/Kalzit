@@ -152,7 +152,9 @@ type QueryResult =
   "binary" | "int64", "value": string}`. The schema sample gives every path with coverage and
   type shares (finite numbers 0 to 1).
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
-- Projections (documents or graph to a frame) are explicit query steps stored in the query,
+- Projections (documents or graph to a frame) are explicit steps stored with the panel in its
+  `transformations` (`{"id", "type": "toFrame", "frame": "<refId>", "columns", "disabled"?}`,
+  docs/api/settings-dashboards.md), not in the query, which keeps the source's own form. They are
   never applied by the backend on its own.
 - Query API: `POST /api/orgs/{orgId}/query` (`QueryRequest`, needs `datasources:query`) and
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`

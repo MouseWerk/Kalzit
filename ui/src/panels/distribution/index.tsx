@@ -2,7 +2,7 @@ import { useId, useRef, useState } from "react";
 import { isRecord } from "../../api/client";
 import type { FieldSchema } from "../../api/generated/shapes";
 import { type Bin, distribution } from "../../documents/distribution";
-import { filterable } from "../../documents/filter";
+import { filterable, filterablePath } from "../../documents/filter";
 import { typeLabel, valueSummary } from "../../documents/labels";
 import { schemaOf } from "../../documents/schema";
 import { SetPicker } from "../../documents/shared";
@@ -124,6 +124,8 @@ function DistributionPanel({
   const show = (value: unknown) =>
     typeof value === "number" ? format(value) : valueSummary(t, value, language);
   const filterPathOf = path.replaceAll("[]", "");
+  // A path with an operator-like key ($...) cannot be filtered by.
+  const pathFilterable = filterablePath(path.replaceAll("[]", "").split("."));
 
   return (
     <div className="doc-panel">
@@ -201,7 +203,7 @@ function DistributionPanel({
               <span className="dist__count">
                 {number.format(entry.count)} ({percent.format(entry.count / result.values)})
               </span>
-              {onFilter !== undefined && filterable(entry.value) ? (
+              {onFilter !== undefined && pathFilterable && filterable(entry.value) ? (
                 <button
                   type="button"
                   className="button button--ghost button--small"

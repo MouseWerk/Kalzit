@@ -1,6 +1,6 @@
 import type { Notice } from "../../../api/generated/shapes";
 import { Icon } from "../../../components/Icon";
-import { documentsMeta } from "../../../documents/shared";
+import { documentsMeta } from "../../../documents/values";
 import { useI18n } from "../../../i18n/i18n";
 import { rowCount } from "../../../panels/frame";
 import type { TargetOutcome } from "../results";

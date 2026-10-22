@@ -1,5 +1,9 @@
-import type { DocumentSet, QueryItem, QueryOutcome } from "../../../api/generated/shapes";
-import { sampleSchema } from "../../../documents/schema";
+import type {
+  DocumentSet,
+  FieldSchema,
+  QueryItem,
+  QueryOutcome,
+} from "../../../api/generated/shapes";
 
 /**
  * The MongoDB part of the data source fake, written from docs/api/datasources.md ("MongoDB: a
@@ -131,6 +135,14 @@ export function parseMongo(query: unknown): Parsed | QueryOutcome {
   }
   if (typeof query.collection !== "string" || query.collection.trim() === "") {
     return rejected("collection is required", "query.invalid_form", { detail: "collection" });
+  }
+  const name = query.collection;
+  if (name.startsWith("system.")) {
+    return rejected(`${name} is a system collection`, "mongodb.system_collection", { name });
+  }
+  // Collection names hold neither `$` nor a NUL character, and are at most 255 bytes long.
+  if (/[$\0]/.test(name) || new TextEncoder().encode(name).length > 255) {
+    return rejected(`${name} is not a collection name`, "mongodb.collection_invalid", { name });
   }
   for (const field of ["pipeline", "filter", "projection", "sort"]) {
     if (query[field] !== undefined && typeof query[field] !== "string") {
@@ -275,6 +287,84 @@ function project(documents: unknown[], projection: Record<string, unknown>): unk
   );
 }
 
+/** Documents a page holds when the request sets no limit, as `datasources.max_rows` would. */
+export const FAKE_PAGE = 1000;
+
+/** The type alias the server names a stored value by (the documents shape's table, read back). */
+function alias(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (isObject(value) && typeof value.$type === "string" && "value" in value) {
+    const named: Record<string, string> = {
+      int64: "long",
+      uuid: "binData",
+      binary: "binData",
+      document: "object",
+    };
+    return named[value.$type] ?? value.$type;
+  }
+  if (typeof value === "number") {
+    return Number.isInteger(value) && Math.abs(value) < 2 ** 31 ? "int" : "double";
+  }
+  if (typeof value === "boolean") return "bool";
+  return typeof value === "string" ? "string" : "object";
+}
+
+/**
+ * The schema as the server samples it (docs/api/datasources.md, "The documents shape"), written
+ * from the docs rather than from the UI: the first 1,000 documents, at most 2,000 paths and 32
+ * levels, paths in first appearance, coverage per document, and per type alias the share of the
+ * documents with the path where it has that type.
+ */
+export function serverSchema(documents: readonly unknown[]): FieldSchema[] {
+  const sample = documents.slice(0, 1000);
+  const order: string[] = [];
+  const withPath = new Map<string, number>();
+  const typed = new Map<string, Map<string, number>>();
+  for (const document of sample) {
+    const found = new Map<string, Set<string>>();
+    const visit = (value: unknown, path: string, depth: number) => {
+      if (path !== "") {
+        if (!found.has(path)) found.set(path, new Set());
+        found.get(path)?.add(alias(value));
+      }
+      if (depth >= 32) return;
+      const inner =
+        isObject(value) && value.$type === "document" && isObject(value.value)
+          ? value.value
+          : value;
+      if (Array.isArray(inner)) {
+        for (const element of inner) visit(element, `${path}[]`, depth + 1);
+      } else if (isObject(inner) && !(typeof inner.$type === "string" && "value" in inner)) {
+        for (const [key, child] of Object.entries(inner)) {
+          visit(child, path === "" ? key : `${path}.${key}`, depth + 1);
+        }
+      }
+    };
+    visit(document, "", 0);
+    for (const [path, types] of found) {
+      if (!withPath.has(path)) {
+        if (order.length >= 2000) continue;
+        order.push(path);
+        typed.set(path, new Map());
+      }
+      withPath.set(path, (withPath.get(path) ?? 0) + 1);
+      const counts = typed.get(path) as Map<string, number>;
+      for (const type of types) counts.set(type, (counts.get(type) ?? 0) + 1);
+    }
+  }
+  return order.map((path) => {
+    const documentsWithPath = withPath.get(path) ?? 0;
+    return {
+      path,
+      coverage: sample.length === 0 ? 0 : documentsWithPath / sample.length,
+      types: [...(typed.get(path) ?? new Map<string, number>())]
+        .map(([name, count]) => ({ name, share: count / documentsWithPath }))
+        .sort((a, b) => b.share - a.share),
+    };
+  });
+}
+
 /** Runs a query in the documented form against the fake collections. */
 export function mongoOutcome(
   item: QueryItem,
@@ -283,6 +373,11 @@ export function mongoOutcome(
   const parsed = parseMongo(item.query);
   if ("error" in parsed || "result" in parsed) {
     return parsed;
+  }
+  // The fake's cursor is the offset where the next page starts.
+  const offset = item.cursor === undefined ? 0 : Number(item.cursor);
+  if (!Number.isInteger(offset) || offset < 0) {
+    return rejected("the cursor does not belong to this query", "mongodb.cursor_invalid");
   }
   let documents: unknown[] = structuredClone(collections[parsed.collection] ?? []);
   if (parsed.pipeline === undefined) {
@@ -307,18 +402,27 @@ export function mongoOutcome(
       }
     }
   }
-  const limit = item.limit;
-  const cut = limit !== undefined && documents.length > limit;
-  if (cut) {
-    documents = documents.slice(0, limit);
-  }
-  // As the server answers: with notices and the executed query beside the documents.
+  const limit = item.limit ?? FAKE_PAGE;
+  const rest = documents.slice(offset);
+  const page = rest.slice(0, limit);
+  const cut = rest.length > page.length;
+  // As the server answers: notices and the executed query beside the documents; a cut set says
+  // how many it holds and continues from `nextCursor`.
   const set = {
-    documents,
-    schema: sampleSchema(documents),
-    notices: [],
+    documents: page,
+    schema: serverSchema(page),
+    notices: cut
+      ? [
+          {
+            severity: "warning",
+            code: "documents.limit",
+            params: { limit: String(page.length) },
+            text: `cut off at ${page.length} documents`,
+          },
+        ]
+      : [],
     executedQuery: `${parsed.collection}.${parsed.pipeline === undefined ? "find" : "aggregate"}(...)`,
-    ...(cut ? { truncated: { limit: documents.length } } : {}),
+    ...(cut ? { truncated: { limit: page.length }, nextCursor: String(offset + page.length) } : {}),
   };
   return { result: { shape: "documents", documents: set as DocumentSet } };
 }

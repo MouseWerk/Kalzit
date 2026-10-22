@@ -1,10 +1,13 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
+import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMongoSource, MONGO_ID } from "../datasources/test/fakeDatasources";
 
 async function open() {
@@ -93,7 +96,7 @@ describe("Explore with MongoDB", () => {
     await user.click(screen.getAllByRole("checkbox", { name: "Run this stage" })[0] as HTMLElement);
     expect(screen.getByRole("heading", { name: "Stage 1: $limit (disabled)" })).toBeTruthy();
     // The server's form has no place for disabled stages; the editor says so.
-    expect(screen.getByText(/1 disabled stages do not run and are not saved/)).toBeTruthy();
+    expect(screen.getByText(/1 disabled stage does not run and is not saved/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await waitFor(() =>
       expect(sent(server).queries[0]?.query).toEqual({
@@ -171,7 +174,7 @@ describe("Explore with MongoDB", () => {
     fireEvent.change(screen.getByLabelText("Skip"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "1" } });
     await user.click(screen.getByRole("button", { name: "Run query" }));
-    expect(await screen.findByText("1 documents.")).toBeTruthy();
+    expect(await screen.findByText("1 document.")).toBeTruthy();
     expect(sent(server).queries[0]?.query).toEqual({
       collection: "orders",
       filter: '{"status": "paid"}',
@@ -201,7 +204,7 @@ describe("Explore with MongoDB", () => {
         pipeline: `[\n${stage}\n]`,
       }),
     );
-    expect(await screen.findByText("1 documents.")).toBeTruthy();
+    expect(await screen.findByText("1 document.")).toBeTruthy();
     // The filter is a visible stage of the query, editable like any other.
     expect(screen.getByRole("heading", { name: "Stage 1: $match" })).toBeTruthy();
     expect(screen.getByLabelText("Stage 1")).toHaveProperty("value", stage);
@@ -242,8 +245,9 @@ describe("Explore with MongoDB", () => {
       targets: [{ refId: "A", query: { collection: "orders", pipeline: "[]" } }],
       transformations: [
         {
+          id: expect.stringMatching(/^[0-9a-f-]{36}$/),
           type: "toFrame",
-          refId: "A",
+          frame: "A",
           columns: [{ path: "createdAt" }, { path: "total", name: "Total" }],
         },
       ],
@@ -262,5 +266,107 @@ describe("Explore with MongoDB", () => {
     expect(options()).toEqual(["$matchkeyword"]);
     fireEvent.change(stage, { target: { value: '{"$match": {"sta' } });
     expect(options()).toEqual(["statuscolumn"]);
+  });
+});
+
+describe("Explore with MongoDB, after review", () => {
+  it("filters the query that gave the result, not a draft typed since", async () => {
+    const { server, user } = await open();
+    await addStage(user, "$match", MATCH);
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("2 documents.");
+    // A draft stage after the run is not part of the result being filtered.
+    await addStage(user, "$limit", '{"$limit": 1}');
+    const result = screen.getByRole("tree", { name: "Result" });
+    await user.click(within(result).getAllByRole("treeitem")[0] as HTMLElement);
+    const status = within(result)
+      .getAllByRole("treeitem")
+      .find((row) => row.querySelector(".doc-tree__key")?.textContent === "status") as HTMLElement;
+    await user.click(status);
+    await user.click(screen.getByRole("button", { name: "Filter by value" }));
+    await waitFor(() =>
+      expect(sent(server).queries[0]?.query).toEqual({
+        collection: "orders",
+        pipeline: `[\n${MATCH},\n{"$match": {"status": "paid"}}\n]`,
+      }),
+    );
+  });
+
+  it("loads more documents through the cursor and shows them after the first page", async () => {
+    const { server, user } = await open();
+    server.areas.datasources.mongo.orders = Array.from({ length: 1500 }, (_, i) => ({ n: i }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    expect(
+      await screen.findByText("1,000 documents. Cut off at 1,000 documents. The source has more."),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load more documents" }));
+    expect(await screen.findByText("1,500 documents.")).toBeTruthy();
+    expect(sent(server).queries[0]).toMatchObject({ cursor: "1000" });
+    expect(screen.queryByRole("button", { name: "Load more documents" })).toBeNull();
+  });
+
+  it("says where a moved stage went", async () => {
+    const { user } = await open();
+    await addStage(user, "$match", MATCH);
+    await addStage(user, "$limit", '{"$limit": 1}');
+    await user.click(screen.getByRole("button", { name: "Move stage 2 up" }));
+    expect(screen.getByText("Stage moved to position 1 of 2.")).toBeTruthy();
+  });
+
+  it("brings the pipeline back after switching to find", async () => {
+    const { server, user } = await open();
+    await addStage(user, "$match", MATCH);
+    await user.click(screen.getByRole("radio", { name: "Find" }));
+    expect(screen.getByText("Switched to find; the pipeline was set aside.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("heading", { name: "Stage 1: $match" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() =>
+      expect(sent(server).queries[0]?.query).toEqual({
+        collection: "orders",
+        pipeline: `[\n${MATCH}\n]`,
+      }),
+    );
+  });
+
+  it("refuses a skip beyond what stays exact", async () => {
+    const { server, user } = await open();
+    await user.click(screen.getByRole("radio", { name: "Find" }));
+    fireEvent.change(screen.getByLabelText("Skip"), { target: { value: "99999999999999999" } });
+    expect(screen.getByText(/Enter a whole number from 0 to 9,007,199,254,740,991/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(sent(server).queries[0]?.query).toEqual({ collection: "orders" }));
+  });
+
+  it("shows the server's refusal of a collection name", async () => {
+    const { user } = await open();
+    fireEvent.change(screen.getByLabelText("Collection"), { target: { value: "a$b" } });
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    expect(await screen.findByText(/a\$b is not a collection name/)).toBeTruthy();
+  });
+});
+
+describe("stage preview", () => {
+  it("runs with the time range and variables of the page", async () => {
+    const server = installFakeServer({ signedIn: true });
+    addMongoSource(server.areas.datasources);
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <QueryEditor
+          orgId="o1"
+          datasource={{ id: MONGO_ID, kind: "mongodb" }}
+          query={{ collection: "orders", pipeline: '[{"$limit": 1}]' }}
+          onChange={() => undefined}
+          previewRun={() => ({ range: { from: 1000, to: 2000 }, variables: { land: "AT" } })}
+        />
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Preview after stage 1" }));
+    await screen.findByText("1 document.");
+    expect(sent(server)).toMatchObject({
+      timeRange: { from: 1000, to: 2000 },
+      variables: { land: "AT" },
+    });
   });
 });

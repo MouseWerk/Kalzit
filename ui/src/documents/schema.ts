@@ -1,40 +1,65 @@
 import type { DocumentSet, FieldSchema } from "../api/generated/shapes";
-import { entriesOf, isContainer, typeOf } from "./values";
+import { entriesOf, isContainer, isTyped } from "./values";
 
 /**
- * The schema of a document set. The server samples it (`DocumentSet.schema`: every path with its
- * coverage and type shares); `sampleSchema` derives the same from the documents at hand, for sets
- * without one and for array drilldowns. Coverage is the share of documents that contain the path
- * at least once; type shares count values, so an array of mixed elements shows both types.
+ * The schema of a document set. The server samples it (`DocumentSet.schema`, docs/api/datasources.md
+ * "The documents shape"); `sampleSchema` derives the same from the documents at hand, for sets
+ * without one and for array drilldowns, by the same rules: every field path in the order it first
+ * appears (array elements as `items[]`, their fields as `items[].price`), `coverage` as the share
+ * of documents with the path, and per type the share of those documents where the path has that
+ * type, named by MongoDB's type aliases (`int`, `long`, `double`, `string`, ...). A path with
+ * several types in one document counts for each, so shares may add up to more than 1.
  */
 
 /** Deeper levels are left out of the schema; the tree still shows them. */
 const MAX_DEPTH = 32;
 
-interface PathCounts {
-  documents: number;
-  values: number;
-  types: Map<string, number>;
+const INT32 = 2 ** 31;
+
+/** The MongoDB type alias of a value as it arrived (`$type` queries use the same names). */
+export function schemaType(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "null";
+  }
+  if (isTyped(value)) {
+    switch (value.$type) {
+      case "int64":
+        return "long";
+      case "uuid":
+      case "binary":
+        return "binData";
+      default:
+        return value.$type;
+    }
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  switch (typeof value) {
+    case "number":
+      return Number.isInteger(value) && value >= -INT32 && value < INT32 ? "int" : "double";
+    case "boolean":
+      return "bool";
+    case "string":
+      return "string";
+    default:
+      return "object";
+  }
 }
 
 export function sampleSchema(documents: readonly unknown[]): FieldSchema[] {
   // Insertion order is first appearance, which reads like the documents themselves.
-  const paths = new Map<string, PathCounts>();
-  let seen = new Set<string>();
+  const paths = new Map<string, { documents: number; types: Map<string, number> }>();
+  /** Per path, the types it has in the document being walked. */
+  let current = new Map<string, Set<string>>();
 
   function record(path: string, value: unknown) {
-    let counts = paths.get(path);
-    if (counts === undefined) {
-      counts = { documents: 0, values: 0, types: new Map() };
-      paths.set(path, counts);
+    let types = current.get(path);
+    if (types === undefined) {
+      types = new Set();
+      current.set(path, types);
     }
-    if (!seen.has(path)) {
-      seen.add(path);
-      counts.documents++;
-    }
-    counts.values++;
-    const type = typeOf(value);
-    counts.types.set(type, (counts.types.get(type) ?? 0) + 1);
+    types.add(schemaType(value));
   }
 
   function walk(value: unknown, path: string, depth: number) {
@@ -57,15 +82,26 @@ export function sampleSchema(documents: readonly unknown[]): FieldSchema[] {
   }
 
   for (const document of documents) {
-    seen = new Set();
+    current = new Map();
     walk(document, "", 0);
+    for (const [path, types] of current) {
+      let counts = paths.get(path);
+      if (counts === undefined) {
+        counts = { documents: 0, types: new Map() };
+        paths.set(path, counts);
+      }
+      counts.documents++;
+      for (const type of types) {
+        counts.types.set(type, (counts.types.get(type) ?? 0) + 1);
+      }
+    }
   }
   const total = documents.length;
   return [...paths].map(([path, counts]) => ({
     path,
     coverage: total === 0 ? 0 : counts.documents / total,
     types: [...counts.types]
-      .map(([name, count]) => ({ name, share: count / counts.values }))
+      .map(([name, count]) => ({ name, share: count / counts.documents }))
       .sort((a, b) => b.share - a.share),
   }));
 }

@@ -28,7 +28,36 @@ export function filterable(value: unknown): boolean {
   return true;
 }
 
+/**
+ * Whether a value at these path segments can become a filter: a filter path is dotted, so a key
+ * with a dot, or one starting with `$` (an operator there), cannot be named in it.
+ */
+export function filterablePath(segments: readonly (string | number)[]): boolean {
+  return segments.every(
+    (segment) =>
+      typeof segment === "number" || (!segment.startsWith("$") && !segment.includes(".")),
+  );
+}
+
+/**
+ * Text the server would read as a macro or a variable (`$__timeFrom`, `${name}`) if it went in as
+ * a plain string. Such a value goes in as an anchored, escaped regular expression instead, which
+ * the server binds as it is and which matches exactly that text.
+ */
+function looksBound(text: string): boolean {
+  return text.includes("${") || text.startsWith("$__");
+}
+
+const REGEX_SPECIAL = /[\\^$.*+?()[\]{}|/]/g;
+
+function escapeRegex(text: string): string {
+  return text.replace(REGEX_SPECIAL, (char) => `\\${char}`);
+}
+
 export function toExtendedJson(value: unknown): unknown {
+  if (typeof value === "string" && looksBound(value)) {
+    return { $regularExpression: { pattern: `^${escapeRegex(value)}$`, options: "" } };
+  }
   if (!isTyped(value) || value.value === null) {
     return value;
   }

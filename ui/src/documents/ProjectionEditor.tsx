@@ -26,16 +26,36 @@ export function ProjectionEditor({
   const baseId = useId();
   const listId = `${baseId}-fields`;
   const columns = projection?.columns ?? [];
+  // Every change keeps the rest of the step (whether it is applied).
+  const setColumns = (next: ProjectionColumn[]) => onChange({ ...projection, columns: next });
   const replace = (index: number, column: ProjectionColumn) =>
-    onChange({ columns: columns.map((c, i) => (i === index ? column : c)) });
+    setColumns(columns.map((c, i) => (i === index ? column : c)));
   return (
     <fieldset className="pipeline__projection">
       <legend className="field__label">{t("documents.projection.title")}</legend>
       <p className="field__hint">
         {projection === undefined
           ? t("documents.projection.none")
-          : t("documents.projection.active")}
+          : t("documents.projection.active")}{" "}
+        {t("documents.projection.arrays")}
       </p>
+      {projection === undefined ? null : (
+        <label className="checkbox" htmlFor={`${baseId}-on`}>
+          <input
+            id={`${baseId}-on`}
+            type="checkbox"
+            checked={projection.disabled !== true}
+            onChange={(event) => {
+              const next: FrameProjection = { columns };
+              if (!event.currentTarget.checked) {
+                next.disabled = true;
+              }
+              onChange(next);
+            }}
+          />
+          {t("documents.projection.apply")}
+        </label>
+      )}
       <datalist id={listId}>
         {fields.map((field) => (
           <option key={field} value={field} />
@@ -126,7 +146,7 @@ export function ProjectionEditor({
                     type="button"
                     className="button button--ghost button--small"
                     aria-label={t("documents.projection.removeColumn", { number })}
-                    onClick={() => onChange({ columns: columns.filter((_, i) => i !== index) })}
+                    onClick={() => setColumns(columns.filter((_, i) => i !== index))}
                   >
                     {t("documents.pipeline.removeShort")}
                   </button>
@@ -138,7 +158,7 @@ export function ProjectionEditor({
             <button
               type="button"
               className="button button--secondary"
-              onClick={() => onChange({ columns: [...columns, { path: "" }] })}
+              onClick={() => setColumns([...columns, { path: "" }])}
             >
               {t("documents.projection.addColumn")}
             </button>

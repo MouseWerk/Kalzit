@@ -57,13 +57,44 @@ export function projectOutcomes(
       return outcome;
     }
     const projection = projectionFor(transformations, outcome.refId);
-    if (projection === undefined || projection.columns.length === 0) {
+    if (
+      projection === undefined ||
+      projection.disabled === true ||
+      projection.columns.length === 0
+    ) {
       return outcome;
     }
     return {
       refId: outcome.refId,
       result: { shape: "frame", frame: projectDocuments(outcome.result.documents, projection) },
     };
+  });
+}
+
+/**
+ * The document set of `refId` with the pages loaded after it (`nextCursor`): the documents of
+ * all pages in order, the first page's schema, and cut, cursor and notices of the last page.
+ */
+export function appendPages(
+  outcomes: readonly TargetOutcome[],
+  refId: string,
+  pages: readonly DocumentSet[],
+): TargetOutcome[] {
+  const last = pages.at(-1);
+  if (last === undefined) {
+    return [...outcomes];
+  }
+  return outcomes.map((outcome) => {
+    if (outcome.refId !== refId || !("result" in outcome) || outcome.result.shape !== "documents") {
+      return outcome;
+    }
+    const first = outcome.result.documents;
+    const documents: DocumentSet = {
+      ...last,
+      documents: [...first.documents, ...pages.flatMap((page) => page.documents)],
+      schema: first.schema,
+    };
+    return { refId, result: { shape: "documents", documents } };
   });
 }
 

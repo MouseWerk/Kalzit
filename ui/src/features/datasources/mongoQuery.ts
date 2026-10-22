@@ -145,17 +145,51 @@ function addCondition(objectText: string | undefined, condition: string): string
   return body.endsWith("{") ? `${body}${condition}}` : `${body}, ${condition}}`;
 }
 
+/** The result of click-to-filter: the new query, or why the query was left as it was. */
+export type MatchResult =
+  | { query: MongoQuery }
+  /** The pipeline or the filter text does not parse; it is never replaced. */
+  | { refused: "pipeline" | "filter" };
+
+function parsesAs<T>(text: string, check: (value: unknown) => value is T): T | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return check(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Click-to-filter: adds `{ "$match": { path: value } }` as the last stage of a pipeline, or the
- * condition to the filter of a find. The value goes in as Extended JSON, typed.
+ * condition to the filter of a find. The value goes in as Extended JSON, typed. The query's text
+ * is never lost: one that does not parse is refused rather than replaced, and a filter that
+ * already names the path keeps its condition, joined with the new one by `$and`.
  */
-export function addMatch(query: MongoQuery, path: string, value: unknown): MongoQuery {
+export function addMatch(query: MongoQuery, path: string, value: unknown): MatchResult {
   const condition = `${JSON.stringify(path)}: ${JSON.stringify(toExtendedJson(value))}`;
   if (modeOf(query) === "find") {
-    return { ...query, filter: addCondition(query.filter, condition) };
+    const old = (query.filter ?? "").trim();
+    if (old === "") {
+      return { query: { ...query, filter: `{${condition}}` } };
+    }
+    const filter = parsesAs(old, isRecord);
+    if (filter === null) {
+      return { refused: "filter" };
+    }
+    const next = Object.hasOwn(filter, path)
+      ? `{"$and": [${old}, {${condition}}]}`
+      : addCondition(old, condition);
+    return { query: { ...query, filter: next } };
   }
-  const stages = splitPipeline(query.pipeline ?? "[]") ?? [];
-  return { ...query, pipeline: joinPipeline([...stages, `{"$match": {${condition}}}`]) };
+  const pipeline = query.pipeline ?? "[]";
+  const stages = splitPipeline(pipeline);
+  if (stages === null || parsesAs(pipeline, Array.isArray) === null) {
+    return { refused: "pipeline" };
+  }
+  return {
+    query: { ...query, pipeline: joinPipeline([...stages, `{"$match": {${condition}}}`]) },
+  };
 }
 
 /** Text for summaries (the read-only view of a stored target) and the "anything to run" check. */

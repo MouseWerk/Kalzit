@@ -2,12 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
-import { type FrameProjection, projectionFor, withProjection } from "../../documents/projection";
-import { filterPaths, schemaOf } from "../../documents/schema";
+import {
+  type FrameProjection,
+  projectionFor,
+  projectionPaths,
+  withProjection,
+} from "../../documents/projection";
+import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
 import { panelsForShapes } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
+import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
@@ -47,6 +53,7 @@ export function PanelEditor({
   const titleId = useId();
   const permissions = useOrgPermissions();
   const [panel, setPanel] = useState(initial);
+  const [filterError, setFilterError] = useState<string | null>(null);
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
@@ -75,13 +82,13 @@ export function PanelEditor({
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
   const shapes: Shape[] = [
     ...new Set(
-      panel.targets.flatMap((target): Shape[] => [
-        ...(kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? []),
-        // A projection step turns the target's documents into a frame.
-        ...(projectionFor(panel.transformations, target.refId) === undefined
-          ? []
-          : ["frame" as const]),
-      ]),
+      panel.targets.flatMap((target): Shape[] => {
+        const kindShapes =
+          kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [];
+        // An applied projection step turns the target's documents into a frame.
+        const step = projectionFor(panel.transformations, target.refId);
+        return step === undefined || step.disabled === true ? kindShapes : [...kindShapes, "frame"];
+      }),
     ),
   ];
   const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes);
@@ -113,10 +120,19 @@ export function PanelEditor({
 
   /** Click-to-filter in the preview: a `$match` stage on that target's query, run at once. */
   function filterBy(refId: string, path: string, value: unknown) {
+    // The filter joins the query that gave the preview, not a draft typed since.
+    const shown = preview.targets.find((target) => target.refId === refId);
+    if (shown === undefined || !isMongoQuery(shown.query)) {
+      return;
+    }
+    const added = addMatch(parseMongoQuery(shown.query), path, value);
+    if ("refused" in added) {
+      setFilterError(t(`documents.filter.refused.${added.refused}`));
+      return;
+    }
+    setFilterError(null);
     const targets = panel.targets.map((target) =>
-      target.refId === refId && isMongoQuery(target.query)
-        ? { ...target, query: addMatch(parseMongoQuery(target.query), path, value) }
-        : target,
+      target.refId === refId ? { ...target, query: added.query } : target,
     );
     setPanel((p) => ({ ...p, targets }));
     setPreview((current) => ({ targets, run: current.run + 1 }));
@@ -145,6 +161,11 @@ export function PanelEditor({
           <h3 className="panel-editor__heading" id={titleId}>
             {t("dashboards.editor.preview")}
           </h3>
+          {filterError === null ? null : (
+            <p className="field__error" role="alert">
+              {filterError}
+            </p>
+          )}
           <div className="panel-editor__viz">
             <PanelBody
               panel={{ ...panel, targets: preview.targets }}
@@ -154,7 +175,7 @@ export function PanelEditor({
               error={results.error}
               outcomes={results.data ?? []}
               onFilter={
-                panel.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
+                preview.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
               }
             />
           </div>
@@ -228,10 +249,11 @@ export function PanelEditor({
                 }))
               }
               onRun={run}
+              previewRun={() => ({ range, variables })}
               projection={projectionFor(panel.transformations, target.refId)}
               fields={documentsOf(results.data ?? [])
                 .filter((d) => d.refId === target.refId)
-                .flatMap((d) => filterPaths(schemaOf(d.documents)))}
+                .flatMap((d) => projectionPaths(schemaOf(d.documents)))}
               onProjection={(projection) =>
                 setPanel((p) => ({
                   ...p,
@@ -268,10 +290,13 @@ function TargetEditor({
   onChange,
   onRemove,
   onRun,
+  previewRun,
   projection,
   fields,
   onProjection,
 }: {
+  /** The dashboard's time range and variables, for stage previews. */
+  previewRun: () => PreviewRun;
   orgId: string;
   target: Target;
   /** The projection step of this query, stored with the panel. */
@@ -358,6 +383,7 @@ function TargetEditor({
           query={target.query}
           onChange={(query) => onChange({ query })}
           onRun={onRun}
+          previewRun={previewRun}
           label={t("dashboards.inspect.query", { refId: target.refId })}
         />
       )}

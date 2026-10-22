@@ -30,6 +30,12 @@ function ExplorerPanel({ documents = [], title, onFilter }: PanelProps<ExplorerO
   const [trail, setTrail] = useState<Drill[]>([]);
   const position = Math.min(index, documents.length - 1);
   const set = documents[position];
+  // A new result (a run, a filter) starts at its top: the old trail may not exist in it.
+  const [trailOf, setTrailOf] = useState({ set, generation: 0 });
+  if (trailOf.set !== set) {
+    setTrailOf({ set, generation: trailOf.generation + 1 });
+    setTrail([]);
+  }
   if (set === undefined) {
     return <EmptyPanel reason="noData" />;
   }
@@ -104,7 +110,7 @@ function ExplorerPanel({ documents = [], title, onFilter }: PanelProps<ExplorerO
       </div>
       <DocumentTree
         // A new list starts closed, with nothing selected.
-        key={`${position}:${trail.length}`}
+        key={`${trailOf.generation}:${position}:${trail.length}`}
         items={Array.isArray(items) ? items : []}
         itemLabel={(i) =>
           here === undefined ? t("documents.tree.document", { number: i + 1 }) : `[${i}]`
