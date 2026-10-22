@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, m2/search-and-files]
+    branches: [main]
   pull_request:
 
 concurrency:
