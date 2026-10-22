@@ -17,28 +17,35 @@ function walk(dir: string): string[] {
 
 /**
  * Binary by content, never by name or signature (several signatures are plain ASCII that a text
- * file may start with): a NUL byte in the first 8 KB, or bytes that are not valid UTF-8. Binary
- * bytes would match text rules by chance; every text file is checked whatever it is called.
+ * file may start with): a NUL byte in the first 8 KB. Everything else is text and is checked
+ * whatever it is called; text that is not valid UTF-8 fails its own test instead of being skipped.
  */
 function isBinary(bytes: Uint8Array): boolean {
-  if (bytes.subarray(0, 8192).includes(0)) {
-    return true;
-  }
+  return bytes.subarray(0, 8192).includes(0);
+}
+
+function isUtf8(bytes: Uint8Array): boolean {
   try {
     new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return false;
-  } catch {
     return true;
+  } catch {
+    return false;
   }
 }
 
 /** Text files below `dir`, paths relative to the UI root; binary files are left out. */
-function textFiles(dir: string): { path: string; text: string }[] {
+function textFiles(dir: string): { path: string; bytes: Uint8Array; text: string }[] {
   return walk(dir).flatMap((path) => {
     const bytes = readFileSync(path);
     return isBinary(bytes)
       ? []
-      : [{ path: relative(UI_ROOT, path).replaceAll("\\", "/"), text: bytes.toString("utf8") }];
+      : [
+          {
+            path: relative(UI_ROOT, path).replaceAll("\\", "/"),
+            bytes,
+            text: bytes.toString("utf8"),
+          },
+        ];
   });
 }
 
@@ -83,9 +90,15 @@ describe("network access", () => {
 });
 
 describe("source hygiene", () => {
+  const checkedFiles = [...sourceFiles, ...textFiles(resolve(UI_ROOT, "public"))];
+
+  it("keeps every file that is not binary in UTF-8", () => {
+    const offenders = checkedFiles.filter(({ bytes }) => !isUtf8(bytes)).map(({ path }) => path);
+    expect(offenders).toEqual([]);
+  });
+
   it("contains no emoji", () => {
-    const files = [...sourceFiles, ...textFiles(resolve(UI_ROOT, "public"))];
-    for (const { path, text } of files) {
+    for (const { path, text } of checkedFiles) {
       expect(/\p{Extended_Pictographic}/u.test(text), path).toBe(false);
     }
   });
@@ -98,8 +111,9 @@ describe("source hygiene", () => {
     for (const name of woff2) {
       expect(isBinary(readFileSync(resolve(fonts, name))), name).toBe(true);
     }
-    expect(isBinary(Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))).toBe(true);
-    expect(isBinary(Uint8Array.of(0x61, 0xff, 0xfe, 0x62))).toBe(true);
+    // A PNG signature followed by its IHDR chunk length.
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d];
+    expect(isBinary(Uint8Array.of(...png))).toBe(true);
     expect(isBinary(text("plain\u0000text"))).toBe(true);
     // Text that starts like a binary signature is still text, and its emoji is still caught.
     expect(isBinary(text("GIF89a looks like an image header \u{1F600}"))).toBe(false);
@@ -107,6 +121,21 @@ describe("source hygiene", () => {
     expect(isBinary(text("wOFF RIFF export const a = 1;"))).toBe(false);
     expect(isBinary(text("/* fake.woff2 */ .a { content: '\u{1F600}'; }"))).toBe(false);
     expect(isBinary(text("<svg></svg>"))).toBe(false);
+  });
+
+  it("checks text with a stray non-UTF-8 byte instead of skipping it", () => {
+    const withByte = (value: string) => Uint8Array.of(...new TextEncoder().encode(value), 0xff);
+    const decoded = (bytes: Uint8Array) => Buffer.from(bytes).toString("utf8");
+    // A .ts file with one invalid byte: not skipped, flagged as not UTF-8, its fetch still found.
+    const source = withByte('export const load = () => fetch("/api/x");\n');
+    expect(isBinary(source)).toBe(false);
+    expect(isUtf8(source)).toBe(false);
+    expect(/\bfetch\(/.test(decoded(source))).toBe(true);
+    // A .txt file with an emoji and an invalid byte: not skipped, and the emoji is still caught.
+    const notes = withByte("notes \u{1F600}\n");
+    expect(isBinary(notes)).toBe(false);
+    expect(isUtf8(notes)).toBe(false);
+    expect(/\p{Extended_Pictographic}/u.test(decoded(notes))).toBe(true);
   });
 
   it("draws the favicon's stroke on the svg itself, so it shows without its style", () => {
