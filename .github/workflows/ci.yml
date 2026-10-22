@@ -100,7 +100,7 @@ jobs:
         image: prom/prometheus:v3.5.0
         ports: ["9090:9090"]
       mongodb:
-        image: mongo:8.0
+        image: mongo:8.2
         env:
           MONGO_INITDB_ROOT_USERNAME: kalzit
           MONGO_INITDB_ROOT_PASSWORD: kalzit-ci-mongo
