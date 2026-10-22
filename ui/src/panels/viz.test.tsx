@@ -5,13 +5,13 @@ import { describe, expect, it } from "vitest";
 import type { Frame } from "../api/generated/shapes";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
-import type { FieldConfig } from "./fieldConfig/fieldConfig";
-import { heatLevel, heatmapData } from "./heatmap";
+import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
+import { compareBounds, heatLevel, heatmapData } from "./heatmap";
 import { histogram } from "./histogram";
 import { PanelPicker } from "./picker/PanelPicker";
 import { pieSlices } from "./piechart";
 import { getPanel, PANELS } from "./registry";
-import { segments, stateData } from "./state/stateData";
+import { mergeNarrow, segments, stateData } from "./state/stateData";
 import { filterRows, parseFilter, sortedRows } from "./table";
 import { interpolate, markdown } from "./text/markdown";
 import type { AnyPanelPlugin } from "./types";
@@ -124,15 +124,29 @@ describe("every new panel", () => {
     expect(screen.queryByText("The query returned no data.")).toBeNull();
   });
 
+  // About five times the typical time on a developer machine busy with other builds (with an
+  // idle one far below); twice that in CI.
+  const BUDGETS: Record<string, { ms: number; root: string }> = {
+    gauge: { ms: 500, root: ".gauge__value-arc" },
+    bargauge: { ms: 300, root: ".bargauge__fill" },
+    piechart: { ms: 2500, root: ".pie__slice" },
+    heatmap: { ms: 1500, root: ".heatmap__cell" },
+    histogram: { ms: 300, root: ".bar__rect" },
+    "state-timeline": { ms: 1500, root: ".state__cell" },
+    "status-history": { ms: 1200, root: ".state__cell--status" },
+  };
+
   it.each(FRAME_TYPES)("%s draws 100,000 rows within budget", (type) => {
     const frame = bigSeries(100_000);
+    const budget = BUDGETS[type] as { ms: number; root: string };
     const start = performance.now();
     const { container, unmount } = renderPanel(type, [frame], {}, NONE);
     const ms = performance.now() - start;
-    expect(container.querySelector("svg")).not.toBeNull();
+    // The panel's own marks, not just any svg: an empty state would pass that.
+    expect(container.querySelector(budget.root), budget.root).not.toBeNull();
     unmount();
     process.stdout.write(`${type}: 100k rows drawn in ${ms.toFixed(0)} ms\n`);
-    expect(ms).toBeLessThan(process.env.CI === undefined ? 3000 : 6000);
+    expect(ms).toBeLessThan(process.env.CI === undefined ? budget.ms : budget.ms * 2);
   });
 
   it("is reachable by keyboard and reads out what it shows", async () => {
@@ -258,7 +272,9 @@ describe("pie chart", () => {
     };
     const slices = pieSlices([frame], NONE, "last", "en");
     expect(slices).toHaveLength(20);
-    expect(slices.at(-1)).toMatchObject({ name: "", value: 66, tone: "neutral" });
+    expect(slices.at(-1)).toMatchObject({ value: 66, tone: "neutral", other: true });
+    // A real category may be named "" without becoming "Other".
+    expect(slices.filter((s) => s.other === true)).toHaveLength(1);
     renderPanel("piechart", [frame], { legend: { mode: "table", placement: "right" } });
     expect(screen.getByRole("columnheader", { name: "Percent" })).toBeTruthy();
     expect(screen.getByText("Other")).toBeTruthy();
@@ -283,12 +299,26 @@ describe("heatmap and histogram", () => {
     expect(heatLevel(10, 10, "linear")).toBe(8);
   });
 
-  it("orders prepared buckets by their upper bound", () => {
+  it("de-cumulates Prometheus buckets per series and orders them by le, +Inf last", () => {
+    const at = (
+      le: string,
+      instance: string,
+      values: (number | null)[],
+    ): Frame["fields"][number] => ({
+      name: "requests_bucket",
+      type: "number",
+      values,
+      labels: { le, instance },
+    });
     const buckets: Frame = {
       fields: [
         { name: "time", type: "time", values: [0, 50_000] },
-        { name: "b", type: "number", values: [1, 2], labels: { le: "+Inf" } },
-        { name: "a", type: "number", values: [3, 4], labels: { le: "0.5" } },
+        at("+Inf", "a", [6, 7]),
+        at("0.1", "b", [1, null]),
+        at("0.5", "a", [5, 2]),
+        at("+Inf", "b", [4, null]),
+        at("0.1", "a", [2, 3]),
+        at("0.5", "b", [1, null]),
       ],
     };
     const data = heatmapData(
@@ -298,8 +328,30 @@ describe("heatmap and histogram", () => {
       NONE,
       "en",
     );
-    expect(data?.rows).toEqual(['a{le="0.5"}', 'b{le="+Inf"}']);
-    expect([...(data?.cells ?? [])]).toEqual([3, 1, 4, 2]);
+    expect(data?.rows).toEqual(["≤ 0.1", "≤ 0.5", "+Inf"]);
+    // Column 0: a gives 2, 3, 1 and b gives 1, 0, 3. Column 1: a's 0.5 bucket fell below its
+    // 0.1 bucket (a reset between scrapes), which counts as 0, not as a negative count.
+    expect([...(data?.cells ?? [])]).toEqual([3, 3, 4, 3, 0, 5]);
+    expect(compareBounds(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(compareBounds(Number.POSITIVE_INFINITY, 1e300)).toBe(1);
+  });
+
+  it("widens the bucket size instead of piling values into the last bucket", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "v", type: "number", values: Array.from({ length: 1000 }, (_, i) => i / 100) },
+      ],
+    };
+    const options = {
+      combine: false,
+      legend: { mode: "list" as const, placement: "bottom" as const, values: [] },
+      tooltip: { mode: "all" as const },
+    };
+    const data = histogram([frame], { ...options, bucketSize: 0.001 }, NONE);
+    const counts = data?.series[0]?.counts ?? [];
+    expect(counts.length).toBeLessThanOrEqual(200);
+    expect(counts.reduce((a, b) => a + b, 0)).toBe(1000);
+    expect(Math.max(...counts)).toBeLessThan(20);
   });
 
   it("buckets values by count or by size", () => {
@@ -355,6 +407,21 @@ describe("state timeline and status history", () => {
     expect(api[0]?.value.colorClass).not.toBe(api[1]?.value.colorClass);
   });
 
+  it("folds runs narrower than a pixel into the run before them", () => {
+    const value = (text: string) => ({ text, colorClass: "series-1" });
+    const runs = [
+      { value: value("up"), from: 0, to: 100 },
+      { value: value("down"), from: 100, to: 100.5 },
+      { value: value("up"), from: 100.5, to: 200 },
+      { value: value("down"), from: 200, to: 260 },
+    ];
+    expect(mergeNarrow(runs, 1).map((r) => [r.value.text, r.from, r.to])).toEqual([
+      ["up", 0, 100.5],
+      ["up", 100.5, 200],
+      ["down", 200, 260],
+    ]);
+  });
+
   it("thins long results and names at most 24 values in the legend", () => {
     const n = 5_000;
     const frame: Frame = {
@@ -399,6 +466,19 @@ describe("text panel", () => {
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).toContain('<img src=x onerror="alert(1)">');
     expect(container.querySelectorAll("td")).toHaveLength(2);
+  });
+
+  it("fills variables into text only, so a value cannot add a link", () => {
+    const { container } = render(
+      <div>
+        {markdown("Hallo $name, see [docs](https://kalzit.dev/a_(b)) and [x](/\\evil.example)", {
+          name: "[Login](https://evil.example)",
+        })}
+      </div>,
+    );
+    const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toEqual(["https://kalzit.dev/a_(b)"]);
+    expect(container.textContent).toContain("Hallo [Login](https://evil.example), see docs and x");
   });
 
   it("fills in dashboard variables and needs no query", () => {
@@ -620,9 +700,102 @@ describe("performance budget", () => {
     expect(rendered).toBeLessThan(CI ? 1500 : 800);
   });
 
+  it("runs mappings, patterns and the text filter over 100,000 cells within budget", async () => {
+    const user = userEvent.setup();
+    const rows = 30_000;
+    const hosts = ["web-1", "web-2", "db-1", "cache-1", "error-gateway"];
+    const frame: Frame = {
+      fields: [
+        {
+          name: "host",
+          type: "string",
+          values: Array.from({ length: rows }, (_, r) => hosts[r % 5]),
+        },
+        {
+          name: "status",
+          type: "int64",
+          values: Array.from({ length: rows }, (_, r) => String([200, 404, 500][r % 3])),
+        },
+        {
+          name: "latency",
+          type: "number",
+          values: Array.from({ length: rows }, (_, r) => (r * 37) % 2000),
+        },
+        {
+          name: "note",
+          type: "string",
+          values: Array.from({ length: rows }, (_, r) => `${"a".repeat(r % 40)}b`),
+        },
+      ],
+    };
+    const config: FieldConfig = {
+      defaults: {},
+      overrides: [
+        {
+          matcher: { type: "regex", value: "^(host|note)$" },
+          properties: {
+            cellDisplay: "color-text",
+            mappings: [
+              { type: "regex", pattern: "^error", text: "Fehler", tone: "critical" },
+              // Catastrophic for a backtracking engine; linear here.
+              { type: "regex", pattern: "(a+)+$", text: "nur a", tone: "warn" },
+            ],
+          },
+        },
+        {
+          matcher: { type: "name", value: "status" },
+          properties: {
+            cellDisplay: "color-background",
+            mappings: [
+              { type: "range", from: 200, to: 299, text: "OK", tone: "ok" },
+              { type: "range", from: 500, to: 599, text: "Server", tone: "critical" },
+            ],
+          },
+        },
+        {
+          matcher: { type: "name", value: "latency" },
+          properties: {
+            unit: "ms",
+            cellDisplay: "gauge",
+            min: 0,
+            max: 2000,
+            thresholds: DEFAULT_THRESHOLDS,
+          },
+        },
+      ],
+    };
+    const start = performance.now();
+    renderPanel("table", [frame], { columnFilters: true }, config);
+    await user.type(screen.getByLabelText("Filter host"), "fehler");
+    await user.type(screen.getByLabelText("Filter status"), "server");
+    const ms = performance.now() - start;
+    const shown = screen.getAllByRole("row").slice(2);
+    // Every fifth row is the gateway, every third a 500; both hold every fifteenth.
+    expect(screen.getByRole("table").getAttribute("aria-rowcount")).toBe(String(rows / 15 + 2));
+    expect(within(shown[0] as HTMLElement).getAllByRole("cell")[0]?.textContent).toContain(
+      "Fehler",
+    );
+    process.stdout.write(
+      `table: 100k cells with mappings, patterns and filters in ${ms.toFixed(0)} ms\n`,
+    );
+    expect(ms).toBeLessThan(CI ? 12_000 : 6_000);
+  });
+
   it("renders a dashboard of 50 panels of every type within budget", () => {
     const types = PANELS.map((p) => p.type);
-    const frame = bigSeries(2_000);
+    // A realistic dashboard: a few hundred rows per panel, with field options in use.
+    const frame = bigSeries(500);
+    const options: FieldConfig = {
+      defaults: { unit: "percent", decimals: 1, thresholds: DEFAULT_THRESHOLDS, min: 0, max: 100 },
+      overrides: [
+        {
+          matcher: { type: "name", value: "state" },
+          properties: {
+            mappings: [{ type: "value", value: "slow", text: "langsam", tone: "warn" }],
+          },
+        },
+      ],
+    };
     const start = performance.now();
     const { container, unmount } = render(
       <div>
@@ -637,8 +810,8 @@ describe("performance budget", () => {
                 options={plugin.options(
                   plugin.type === "text" ? { content: "# Notes\n\nAll **fine**." } : {},
                 )}
-                fieldConfig={NONE}
-                timeRange={{ from: 0, to: 2_000 }}
+                fieldConfig={options}
+                timeRange={{ from: 0, to: 500 }}
                 title={`Panel ${i}`}
               />
             </div>
@@ -647,9 +820,13 @@ describe("performance budget", () => {
       </div>,
     );
     const ms = performance.now() - start;
-    expect(container.querySelectorAll("svg, table, section").length).toBeGreaterThanOrEqual(50);
+    // Every panel drew its own content, none fell back to an empty or error state.
+    expect(container.querySelectorAll(".panel-empty")).toHaveLength(0);
+    expect(container.querySelectorAll(".gauge__value-arc").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("table[aria-rowcount]").length).toBeGreaterThan(0);
     unmount();
     process.stdout.write(`dashboard: 50 panels rendered in ${ms.toFixed(0)} ms\n`);
-    expect(ms).toBeLessThan(CI ? 8000 : 4000);
+    // About five times the measured time on a busy machine.
+    expect(ms).toBeLessThan(CI ? 6000 : 3000);
   });
 });

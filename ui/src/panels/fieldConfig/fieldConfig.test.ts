@@ -9,10 +9,12 @@ import {
   type FieldConfig,
   fieldOptionsFor,
   findMapping,
+  isSafeHref,
   parseFieldConfig,
   thresholdTone,
 } from "./fieldConfig";
 import { parseLegend } from "./legendOptions";
+import { compilePattern, MAX_TESTED_CHARS } from "./pattern";
 import { formatUnit, fromNow, joinFormatted, UNITS } from "./units";
 import { legacyUnit, upgradePanel } from "./upgrade";
 
@@ -67,6 +69,20 @@ describe("units", () => {
     expect(shown(7, "suffix:Kerne", "de")).toBe(`7${NBSP}Kerne`);
     expect(shown(7, "Stück", "de")).toBe(`7${NBSP}Stück`);
     expect(shown(Number.NaN, "bytes", "en")).toBe("");
+  });
+
+  it("picks the step after rounding, so a value never reads 1024 of a smaller unit", () => {
+    expect(shown(1_048_575, "bytes", "en")).toBe(`1${NBSP}MiB`);
+    expect(shown(1023.9, "bytes", "en")).toBe(`1${NBSP}KiB`);
+    expect(shown(999_999, "decbytes", "en")).toBe(`1${NBSP}MB`);
+    expect(shown(1023, "bytes", "en")).toBe(`1,023${NBSP}B`);
+    expect(shown(59_999, "ms", "en")).toBe(`1${NBSP}min`);
+  });
+
+  it("shows numbers outside the range of dates as numbers", () => {
+    expect(shown(1e20, "dateTime", "en")).toBe("100,000,000,000,000,000,000");
+    expect(shown(-9e15, "dateIso", "en")).toBe("-9,000,000,000,000,000");
+    expect(fromNow(1e20, "en")).toBe("100,000,000,000,000,000,000");
   });
 
   it("has unique ids", () => {
@@ -223,9 +239,70 @@ describe("field options", () => {
       "https://x.example/q?v=a%20b%26c",
     );
     expect(cellLink("/d/${__field}", "1", "host name")).toBe("/d/host%20name");
+    // A template that is the value alone uses the value as the address, checked like any other.
+    expect(cellLink("${__value}", "https://docs.example/a?b=1", "f")).toBe(
+      "https://docs.example/a?b=1",
+    );
+    expect(cellLink(" ${__value} ", "/d/abc", "f")).toBe("/d/abc");
     expect(cellLink("${__value}", "javascript:alert(1)", "f")).toBeNull();
+    expect(cellLink("${__value}", "JavaScript:alert(1)", "f")).toBeNull();
     expect(cellLink("//evil.example", "1", "f")).toBeNull();
     expect(cellLink("data:text/html,x", "1", "f")).toBeNull();
+    // Browsers read a backslash as a slash: /\evil.example would be another site.
+    expect(cellLink("/\\evil.example", "1", "f")).toBeNull();
+    expect(cellLink("${__value}", "/\\evil.example", "f")).toBeNull();
+    expect(isSafeHref("https://a.example\\@evil.example")).toBe(false);
+  });
+
+  it("runs patterns in linear time, so (a+)+$ cannot hang a page", () => {
+    // A backtracking engine needs ages for this already at 30 characters; RE2 does not.
+    const evil = `${"a".repeat(MAX_TESTED_CHARS - 1)}b`;
+    const start = performance.now();
+    expect(findMapping(evil, [{ type: "regex", pattern: "(a+)+$", text: "x" }])).toBeUndefined();
+    const field: Field = { name: evil, type: "number", values: [1] };
+    expect(
+      fieldOptionsFor(field, {
+        defaults: {},
+        overrides: [{ matcher: { type: "regex", value: "(a+)+$" }, properties: { decimals: 1 } }],
+      }),
+    ).toEqual({});
+    expect(performance.now() - start).toBeLessThan(500);
+    // RE2 syntax: lookaround and backreferences are no valid patterns and match nothing.
+    expect(compilePattern("(?=a)a")).toBeNull();
+    expect(compilePattern("(a)\\1")).toBeNull();
+    expect(findMapping("aa", [{ type: "regex", pattern: "(a)\\1", text: "x" }])).toBeUndefined();
+    expect(findMapping("error: disk", [{ type: "regex", pattern: "^err", text: "E" }])?.text).toBe(
+      "E",
+    );
+  });
+
+  it("tests only the start of very long values", () => {
+    const long = `${"x".repeat(MAX_TESTED_CHARS)}needle`;
+    expect(
+      findMapping(long, [{ type: "regex", pattern: "needle", text: "found" }]),
+    ).toBeUndefined();
+    expect(
+      findMapping(`needle${long}`, [{ type: "regex", pattern: "needle", text: "found" }])?.text,
+    ).toBe("found");
+  });
+
+  it("clears a default where an override says null, and keeps the null when read", () => {
+    const config = parseFieldConfig({
+      defaults: { unit: "ms", thresholds: DEFAULT_THRESHOLDS, decimals: 2 },
+      overrides: [
+        { matcher: { type: "name", value: "count" }, properties: { unit: null, thresholds: null } },
+      ],
+    });
+    expect(config.overrides[0]?.properties).toEqual({ unit: null, thresholds: null });
+    const count: Field = { name: "count", type: "number", values: [1], unit: "B" };
+    // The data source's unit is cleared as well: null means "no unit here".
+    expect(fieldOptionsFor(count, config)).toEqual({ decimals: 2 });
+    const other: Field = { name: "latency", type: "number", values: [1] };
+    expect(fieldOptionsFor(other, config)).toEqual({
+      unit: "ms",
+      thresholds: DEFAULT_THRESHOLDS,
+      decimals: 2,
+    });
   });
 });
 
@@ -243,7 +320,8 @@ describe("older panels", () => {
         legend: { mode: "hidden", placement: "bottom", values: [] },
         lineWidth: 2,
       },
-      fieldConfig: { defaults: { unit: "ms" } },
+      // A unit typed by hand keeps its old meaning: written after the value, not scaled.
+      fieldConfig: { defaults: { unit: "suffix:ms" } },
     });
     expect(upgradePanel({ options: { unit: "Stück", sparkline: false }, fieldConfig: {} })).toEqual(
       {
@@ -261,7 +339,7 @@ describe("older panels", () => {
   });
 
   it("still draw with the old options until they are saved again", () => {
-    expect(legacyUnit(EMPTY, "ms").defaults.unit).toBe("ms");
+    expect(legacyUnit(EMPTY, "ms").defaults.unit).toBe("suffix:ms");
     expect(legacyUnit({ defaults: { unit: "s" }, overrides: [] }, "ms").defaults.unit).toBe("s");
     expect(parseLegend({ showLegend: false }).mode).toBe("hidden");
     expect(parseLegend({ legend: "{{job}}" }).mode).toBe("list");

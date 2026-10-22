@@ -267,6 +267,17 @@ type QueryResult =
   }
   ```
 - Panels declare the shapes they accept; the panel picker offers matching panels first.
+- A panel's `options` belong to its type; `fieldConfig` holds the shared field options
+  (`{defaults, overrides}`: unit, decimals, min and max, thresholds, value mappings, no-value
+  text, display name, color, table cell display, link, width). `null` in an override clears what
+  the defaults set. Regex matchers and mappings use RE2 syntax (no backreferences or
+  lookaround): the UI runs them with re2js in linear time, the server checks them with the
+  `regex` crate.
+- `dashboards::panel_options` checks the options and field options of the built-in frame panel
+  types on create, save and restore, and only for panels the write adds or changes, so stored
+  dashboards keep loading and querying when a rule tightens. Reads never run it. A new panel type
+  (the document and graph panels, plugins) adds its own check there when it lands; unknown types
+  are left alone.
 
 ## Settings and audit
 
@@ -474,6 +485,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
 - `ui/src/features/<area>/` own their routes (`routes.tsx`, attached under the signed-in app
   route), nav item, API calls (`api.ts`, through `ui/src/api/client.ts`), components and pages.
 - `ui/src/panels/<type>/` export `{ type, shapes, Editor, Panel }`; a registry lists them.
+  Optional: `description` and `Preview` for the panel picker, `fieldOptions` (the field option
+  groups the panel uses, edited by the shared `FieldConfigEditor`) and `standalone` for panels
+  that draw without a query (text). Panels receive `fieldConfig` parsed and the dashboard's
+  `variables`.
 - Translations: `ui/src/i18n/<lang>/<area>.json`, keys prefixed with the area; core holds only
   shared keys. Tests check prefixes, duplicates and per-file parity.
 - The current organization's permissions come from `GET /api/orgs/{orgId}`; areas hide what the

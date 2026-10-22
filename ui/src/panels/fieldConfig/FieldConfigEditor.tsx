@@ -30,6 +30,26 @@ export function toneLabel(t: Translate, tone: Tone): string {
   return t(`panels.tone.${tone as "ok" | "warn" | "critical" | "neutral"}`);
 }
 
+/*
+ * What the editor adds when asked for a new entry. The contract test sends these, with every
+ * panel's default options, through the server's checks (panel_options_fixture.json).
+ */
+export function newStep(last: number): Thresholds["steps"][number] {
+  return { value: last + 10, tone: "warn" };
+}
+
+export function newMapping(type: ValueMapping["type"]): ValueMapping {
+  return type === "value"
+    ? { type, value: "" }
+    : type === "range"
+      ? { type, from: null, to: null }
+      : { type, pattern: "" };
+}
+
+export function newOverride(): FieldOverride {
+  return { matcher: { type: "name", value: "" }, properties: {} };
+}
+
 /** A copy of the options without one key, for clearing a setting. */
 function without<K extends keyof FieldOptions>(options: FieldOptions, key: K): FieldOptions {
   const next = { ...options };
@@ -219,7 +239,7 @@ function ThresholdsEditor({
           disabled={steps.length >= LIMITS.thresholdSteps}
           onClick={() => {
             const last = steps.at(-1)?.value ?? 0;
-            onChange({ ...value, steps: [...steps, { value: last + 10, tone: "warn" }] });
+            onChange({ ...value, steps: [...steps, newStep(last)] });
           }}
         >
           {t("panels.thresholds.addStep")}
@@ -259,13 +279,7 @@ function MappingEditor({
         ]}
         onChange={(type) => {
           const shown = { text: mapping.text, tone: mapping.tone };
-          const base =
-            type === "value"
-              ? { type, value: "" }
-              : type === "range"
-                ? { type, from: null, to: null }
-                : { type, pattern: "" };
-          onChange(JSON.parse(JSON.stringify({ ...base, ...shown })) as ValueMapping);
+          onChange(JSON.parse(JSON.stringify({ ...newMapping(type), ...shown })) as ValueMapping);
         }}
       />
       {mapping.type === "value" ? (
@@ -443,9 +457,7 @@ function OptionsFields({
             type="button"
             className="button button--secondary button--small"
             disabled={mappings.length >= LIMITS.mappings}
-            onClick={() =>
-              onChange({ ...options, mappings: [...mappings, { type: "value", value: "" }] })
-            }
+            onClick={() => onChange({ ...options, mappings: [...mappings, newMapping("value")] })}
           >
             {t("panels.mappings.add")}
           </button>
@@ -655,7 +667,7 @@ export function FieldConfigEditor({
             onClick={() =>
               onChange({
                 ...config,
-                overrides: [...overrides, { matcher: { type: "name", value: "" }, properties: {} }],
+                overrides: [...overrides, newOverride()],
               })
             }
           >

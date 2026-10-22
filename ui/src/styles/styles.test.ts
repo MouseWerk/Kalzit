@@ -181,8 +181,10 @@ describe("tokens only", () => {
 describe("no accent frames for states", () => {
   // From design/guard-tests.md.
   const STATE =
-    /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
+    /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|--(active|selected|current|checked)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
   const FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow)$/;
+  // The outline of an SVG mark (a cell, a slice) is its stroke; a state must not color it either.
+  const STATE_FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow|stroke)$/;
   const ACCENT =
     /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?|tone(-[\w-]+)?)\b/;
 
@@ -192,11 +194,19 @@ describe("no accent frames for states", () => {
         continue;
       }
       for (const { property, value } of rule.declarations) {
-        if (FRAME.test(property)) {
+        if (STATE_FRAME.test(property)) {
           expect(ACCENT.test(value), where(rule, `${property}: ${value}`)).toBe(false);
         }
       }
     }
+  });
+
+  it("counts BEM state modifiers and SVG strokes", () => {
+    expect(STATE.test(".heatmap__cell--active")).toBe(true);
+    expect(STATE.test(".picker__card--current .picker__name")).toBe(true);
+    expect(STATE.test(".gauge__track")).toBe(false);
+    expect(STATE_FRAME.test("stroke")).toBe(true);
+    expect(ACCENT.test("var(--tone-critical)")).toBe(true);
   });
 
   it("puts status colors into text, icons and fills, never frames", () => {

@@ -103,7 +103,9 @@ function scaled(steps: readonly [factor: number, symbol: string][]) {
 
 /** The number as it will be written, rounded the way `formatNumber` rounds it. */
 function rounded(value: number, decimals: number | undefined): number {
-  const text = numberFormat("en-US", { useGrouping: false, ...digits(value, decimals) }).format(value);
+  const text = numberFormat("en-US", { useGrouping: false, ...digits(value, decimals) }).format(
+    value,
+  );
   return Number(text);
 }
 
