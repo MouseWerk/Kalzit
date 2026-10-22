@@ -11,7 +11,7 @@ import { useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { toneClass } from "../fieldConfig/fieldConfig";
 import { Legend, type LegendItem, WithLegend } from "../fieldConfig/Legend";
-import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legend";
+import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
 import "../panels.css";

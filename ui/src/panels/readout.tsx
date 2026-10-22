@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
-import type { TooltipMode } from "./fieldConfig/legend";
+import type { TooltipMode } from "./fieldConfig/legendOptions";
 import { useStyleVars } from "./styleVars";
 import "./panels.css";
 import "./viz.css";

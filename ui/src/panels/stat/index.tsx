@@ -129,7 +129,7 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
               <span className="stat__value">
                 {text}
                 {item.display.suffix === "" || item.display.text === "" ? null : (
-                  <span className="stat__unit">{` ${item.display.suffix}`}</span>
+                  <span className="stat__unit">{`\u00a0${item.display.suffix}`}</span>
                 )}
                 {state === undefined ? null : (
                   <span className="visually-hidden">{` (${t(state)})`}</span>
@@ -140,7 +140,10 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
               <Sparkline
                 frame={item.frame}
                 field={item.field}
-                colorClass={toneClass(item.options.color ?? (colored ? tone : undefined), item.index)}
+                colorClass={toneClass(
+                  item.options.color ?? (colored ? tone : undefined),
+                  item.index,
+                )}
               />
             ) : null}
           </li>

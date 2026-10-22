@@ -3,7 +3,10 @@ import { useId, useState } from "react";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
-import { panelsForShapes } from "../../panels/registry";
+import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
+import { upgradePanel } from "../../panels/fieldConfig/upgrade";
+import { PanelPicker } from "../../panels/picker/PanelPicker";
+import { getPanel } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
@@ -41,7 +44,8 @@ export function PanelEditor({
   const { t } = useI18n();
   const titleId = useId();
   const permissions = useOrgPermissions();
-  const [panel, setPanel] = useState(initial);
+  // Panels saved before the field options existed move their old options to the new place.
+  const [panel, setPanel] = useState(() => upgradePanel(initial));
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
@@ -68,14 +72,18 @@ export function PanelEditor({
 
   const kindOf = (datasourceId: string) =>
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
+  // What the preview returned decides which panels fit; before it ran, what the sources can return.
+  const returned = (results.data ?? []).flatMap((o) => ("result" in o ? [o.result.shape] : []));
   const shapes: Shape[] = [
     ...new Set(
-      panel.targets.flatMap(
-        (target) => kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [],
-      ),
+      returned.length > 0
+        ? returned
+        : panel.targets.flatMap(
+            (target) =>
+              kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [],
+          ),
     ),
   ];
-  const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes);
 
   const updateTarget = (refId: string, patch: Partial<Target>) =>
     setPanel((p) => ({
@@ -101,7 +109,7 @@ export function PanelEditor({
   }
 
   const run = () => setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
-  const plugin = choices.find((c) => c.panel.type === panel.type)?.panel;
+  const plugin = getPanel(panel.type);
   const Editor = plugin?.Editor;
 
   return (
@@ -133,6 +141,7 @@ export function PanelEditor({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={results.data ?? []}
+              variables={variables}
             />
           </div>
         </section>
@@ -152,30 +161,27 @@ export function PanelEditor({
               data-autofocus
             />
           </div>
-          <fieldset className="panel-editor__types">
-            <legend className="field__label">{t("dashboards.editor.visualization")}</legend>
-            {choices.map(({ panel: choice, accepts }) => (
-              <label key={choice.type} className="radio">
-                <input
-                  type="radio"
-                  name={`${titleId}-type`}
-                  value={choice.type}
-                  checked={panel.type === choice.type}
-                  onChange={() => setPanel((p) => ({ ...p, type: choice.type, options: {} }))}
-                />
-                <span>{t(choice.name)}</span>
-                {accepts ? null : (
-                  <span className="field__hint">{t("dashboards.editor.notForShape")}</span>
-                )}
-              </label>
-            ))}
-          </fieldset>
+          <PanelPicker
+            value={panel.type}
+            shapes={shapes}
+            onChange={(type) => setPanel((p) => ({ ...p, type, options: {} }))}
+          />
           {plugin === undefined || Editor === undefined ? null : (
             <fieldset className="panel-editor__options">
               <legend className="field__label">{t("dashboards.editor.options")}</legend>
               <Editor
                 options={plugin.options(panel.options)}
                 onChange={(options: unknown) => setPanel((p) => ({ ...p, options }))}
+              />
+            </fieldset>
+          )}
+          {plugin?.fieldOptions === undefined ? null : (
+            <fieldset className="panel-editor__options">
+              <legend className="field__label">{t("panels.fieldOptions")}</legend>
+              <FieldConfigEditor
+                value={panel.fieldConfig}
+                groups={plugin.fieldOptions}
+                onChange={(fieldConfig) => setPanel((p) => ({ ...p, fieldConfig }))}
               />
             </fieldset>
           )}

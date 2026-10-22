@@ -10,6 +10,7 @@ import {
   MAX_DECIMALS,
   MAX_UNIT_CHARS,
 } from "./units";
+import "../viz.css";
 
 /**
  * The shared field options of frame panels, stored in the panel's `fieldConfig`: defaults for
@@ -274,7 +275,8 @@ export function matches(matcher: FieldMatcher, field: Field): boolean {
  * override wins over an earlier one property by property.
  */
 export function fieldOptionsFor(field: Field, config: FieldConfig): FieldOptions {
-  let options: FieldOptions = field.unit === undefined || field.unit === "" ? {} : { unit: field.unit };
+  let options: FieldOptions =
+    field.unit === undefined || field.unit === "" ? {} : { unit: field.unit };
   options = { ...options, ...config.defaults };
   for (const override of config.overrides) {
     if (matches(override.matcher, field)) {
@@ -346,7 +348,7 @@ export function findMapping(
         );
       case "regex": {
         const pattern = mapping.pattern === "" ? null : compilePattern(mapping.pattern);
-        return pattern !== null && pattern.test(asText);
+        return pattern?.test(asText);
       }
       default:
         return false;
@@ -386,7 +388,8 @@ export function displayValue(
   range?: { min: number; max: number },
 ): DisplayValue {
   const numeric = type === "number" || type === "int64" ? toNumber(raw) : null;
-  const missing = raw === null || raw === undefined || (typeof raw === "number" && !Number.isFinite(raw));
+  const missing =
+    raw === null || raw === undefined || (typeof raw === "number" && !Number.isFinite(raw));
   if (missing) {
     return { text: options.noValue ?? "", suffix: "", tone: undefined, numeric: null, missing };
   }
@@ -446,8 +449,11 @@ const SAFE_LINK = /^(https?:\/\/|mailto:|\/(?!\/)|\.\/|\?|#)/i;
  * web, mail and same-site links are made; anything else (javascript:, data:) gives null.
  */
 export function cellLink(template: string, value: string, fieldName: string): string | null {
+  // The placeholders are written as users type them, not as template literals.
   const href = template
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
     .replaceAll("${__value}", encodeURIComponent(value))
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type
     .replaceAll("${__field}", encodeURIComponent(fieldName))
     .trim();
   return SAFE_LINK.test(href) ? href : null;

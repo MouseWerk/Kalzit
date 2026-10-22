@@ -46,10 +46,8 @@ export function SvgTimeSeriesChart({
     Math.max(2, Math.floor(plotHeight / PX_PER_VALUE_TICK)),
   );
   // Fixed ends from the field options are kept exactly; open ends round out to a tick.
-  const yMin =
-    yRange?.min ?? Math.min(yTicks[0] ?? extent.min, extent.min - padding);
-  const yMax =
-    yRange?.max ?? Math.max(yTicks.at(-1) ?? extent.max, extent.max + padding);
+  const yMin = yRange?.min ?? Math.min(yTicks[0] ?? extent.min, extent.min - padding);
+  const yMax = yRange?.max ?? Math.max(yTicks.at(-1) ?? extent.max, extent.max + padding);
   const { from, to } = timeRange;
   const scale: Scale = {
     x: (time) => AXIS_LEFT + ((time - from) / (to - from || 1)) * plotWidth,
@@ -83,19 +81,19 @@ export function SvgTimeSeriesChart({
           {yTicks
             .filter((tick) => tick >= yMin && tick <= yMax)
             .map((tick) => (
-            <g key={`y${tick}`}>
-              <line
-                className="ts__grid"
-                x1={AXIS_LEFT}
-                x2={AXIS_LEFT + plotWidth}
-                y1={scale.y(tick)}
-                y2={scale.y(tick)}
-              />
-              <text className="ts__label" x={AXIS_LEFT - 6} y={scale.y(tick)} textAnchor="end">
-                {axisFormat(tick)}
-              </text>
-            </g>
-          ))}
+              <g key={`y${tick}`}>
+                <line
+                  className="ts__grid"
+                  x1={AXIS_LEFT}
+                  x2={AXIS_LEFT + plotWidth}
+                  y1={scale.y(tick)}
+                  y2={scale.y(tick)}
+                />
+                <text className="ts__label" x={AXIS_LEFT - 6} y={scale.y(tick)} textAnchor="end">
+                  {axisFormat(tick)}
+                </text>
+              </g>
+            ))}
           {xTicks.map((tick) => (
             <text
               key={`x${tick}`}

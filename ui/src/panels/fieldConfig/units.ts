@@ -70,7 +70,11 @@ function digits(value: number, decimals: number | undefined): Intl.NumberFormatO
     : { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
 }
 
-export function formatNumber(value: number, decimals: number | undefined, language: string): string {
+export function formatNumber(
+  value: number,
+  decimals: number | undefined,
+  language: string,
+): string {
   return numberFormat(language, digits(value, decimals)).format(value);
 }
 
@@ -307,5 +311,5 @@ export function formatUnit(
 
 /** Value and unit as one string, joined with a no-break space so they never wrap apart. */
 export function joinFormatted({ text, suffix }: Formatted): string {
-  return suffix === "" || text === "" ? text : `${text} ${suffix}`;
+  return suffix === "" || text === "" ? text : `${text}\u00a0${suffix}`;
 }

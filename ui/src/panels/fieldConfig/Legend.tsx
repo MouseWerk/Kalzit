@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n/i18n";
-import type { LegendOptions, LegendValue } from "./legend";
+import type { LegendOptions, LegendValue } from "./legendOptions";
 import "../panels.css";
 import "../viz.css";
 
@@ -8,8 +8,8 @@ export interface LegendItem {
   name: string;
   /** A palette or tone class (`series-3`, `tone--warn`) for the swatch. */
   colorClass: string;
-  /** Formatted values per legend value; missing ones show empty. */
-  values?: Partial<Record<LegendValue, string>>;
+  /** Formatted values per column key; missing ones show empty. */
+  values?: Partial<Record<string, string>>;
 }
 
 const VALUE_KEYS = {
@@ -19,12 +19,26 @@ const VALUE_KEYS = {
   mean: "panels.legend.value.mean",
 } as const;
 
-/** The legend as a wrapping list or a table with a column per value. */
-export function Legend({ items, options }: { items: readonly LegendItem[]; options: LegendOptions }) {
+/**
+ * The legend as a wrapping list or a table with a column per value. The columns are the legend
+ * values of the options unless the panel names its own (a pie shows value and percent).
+ */
+export function Legend({
+  items,
+  options,
+  columns,
+}: {
+  items: readonly LegendItem[];
+  options: LegendOptions;
+  columns?: readonly { key: string; label: string }[];
+}) {
   const { t } = useI18n();
   if (options.mode === "hidden" || items.length === 0) {
     return null;
   }
+  const shown =
+    columns ??
+    options.values.map((value: LegendValue) => ({ key: value, label: t(VALUE_KEYS[value]) }));
   if (options.mode === "table") {
     return (
       <div className="viz-legend viz-legend--table">
@@ -32,9 +46,9 @@ export function Legend({ items, options }: { items: readonly LegendItem[]; optio
           <thead>
             <tr>
               <th scope="col">{t("panels.legend.name")}</th>
-              {options.values.map((value) => (
-                <th key={value} scope="col" className="viz-legend__number">
-                  {t(VALUE_KEYS[value])}
+              {shown.map((column) => (
+                <th key={column.key} scope="col" className="viz-legend__number">
+                  {column.label}
                 </th>
               ))}
             </tr>
@@ -49,9 +63,9 @@ export function Legend({ items, options }: { items: readonly LegendItem[]; optio
                     {item.name}
                   </span>
                 </th>
-                {options.values.map((value) => (
-                  <td key={value} className="viz-legend__number">
-                    {item.values?.[value] ?? ""}
+                {shown.map((column) => (
+                  <td key={column.key} className="viz-legend__number">
+                    {item.values?.[column.key] ?? ""}
                   </td>
                 ))}
               </tr>
@@ -70,9 +84,9 @@ export function Legend({ items, options }: { items: readonly LegendItem[]; optio
           <span className="truncate" title={item.name}>
             {item.name}
           </span>
-          {options.values.map((value) => (
-            <span key={value} className="viz-legend__value">
-              {t(VALUE_KEYS[value])} {item.values?.[value] ?? ""}
+          {shown.map((column) => (
+            <span key={column.key} className="viz-legend__value">
+              {column.label} {item.values?.[column.key] ?? ""}
             </span>
           ))}
         </li>

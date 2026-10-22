@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useI18n } from "../../i18n/i18n";
+import { TONES } from "../fieldConfig/fieldConfig";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { alignSeries } from "./align";
-import { TONES } from "../fieldConfig/fieldConfig";
 import {
   ChartShell,
   type PlotArea,

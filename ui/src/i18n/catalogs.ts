@@ -6,11 +6,27 @@ import deCore from "./de/core.json";
 import deDashboards from "./de/dashboards.json";
 import deDatasources from "./de/datasources.json";
 import deExplore from "./de/explore.json";
+import dePanels from "./de/panels.json";
 import enAdmin from "./en/admin.json";
 import enCore from "./en/core.json";
 import enDashboards from "./en/dashboards.json";
 import enDatasources from "./en/datasources.json";
 import enExplore from "./en/explore.json";
+import enPanels from "./en/panels.json";
 
-export const en = { ...enCore, ...enAdmin, ...enDatasources, ...enDashboards, ...enExplore };
-export const de = { ...deCore, ...deAdmin, ...deDatasources, ...deDashboards, ...deExplore };
+export const en = {
+  ...enCore,
+  ...enAdmin,
+  ...enDatasources,
+  ...enDashboards,
+  ...enExplore,
+  ...enPanels,
+};
+export const de = {
+  ...deCore,
+  ...deAdmin,
+  ...deDatasources,
+  ...deDashboards,
+  ...deExplore,
+  ...dePanels,
+};
