@@ -294,7 +294,7 @@
   "datasources.reason.bolt.tls": "Die verschlüsselte Verbindung ist fehlgeschlagen: {detail}",
   "datasources.reason.bolt.login_timeout": "Der Server hat die Anmeldung nicht rechtzeitig abgeschlossen.",
   "datasources.reason.bolt.too_large": "Eine einzelne Antwort des Servers war größer als das Größenlimit.",
-  "datasources.reason.memgraph.user_can_write": "Der Memgraph-Benutzer darf Daten ändern ({privileges}). Nutze einen Benutzer, der nur lesen darf, oder erlaube in den Einstellungen einen Benutzer mit Schreibrechten.",
+  "datasources.reason.memgraph.user_can_write": "Der Memgraph-Benutzer hat Rechte über das Lesen hinaus ({privileges}): Daten ändern, Dateien auf dem Server lesen oder Benutzer, Trigger, Streams oder Einstellungen verwalten. Nutze einen Benutzer, der nur lesen darf, oder erlaube einen solchen Benutzer in den Einstellungen.",
   "datasources.reason.memgraph.privileges_unverifiable": "Kalzit konnte nicht prüfen, ob der Memgraph-Benutzer Daten ändern darf: {detail}",
   "datasources.reason.tigergraph.user_can_write": "Der TigerGraph-Benutzer darf mehr als lesen ({privileges}). Nutze einen Benutzer nur mit der Rolle queryreader.",
   "datasources.reason.tigergraph.privileges_unverifiable": "Kalzit kann die Rollen und Rechte des TigerGraph-Benutzers nicht lesen und daher nicht prüfen, dass er nur liest.",

@@ -248,8 +248,9 @@ async fn checked_privileges(c: &mut BoltConn, s: &Settings) -> Result<Vec<&'stat
         return Err(SourceError::failed(
             "memgraph.user_can_write",
             format!(
-                "the Memgraph user may write ({list}); use a user without these privileges, \
-                 or allow a write-capable user in the settings"
+                "the Memgraph user has privileges beyond reading ({list}: writing clauses, reading server \
+                 files, users, triggers, streams or settings); use a user without them, or allow a \
+                 write-capable user in the settings"
             ),
         )
         .with("privileges", list));

@@ -294,7 +294,7 @@
   "datasources.reason.bolt.tls": "The encrypted connection failed: {detail}",
   "datasources.reason.bolt.login_timeout": "The server did not complete the sign-in in time.",
   "datasources.reason.bolt.too_large": "A single answer of the server was larger than the size limit.",
-  "datasources.reason.memgraph.user_can_write": "The Memgraph user may change data ({privileges}). Use a user that may only read, or allow a write-capable user in the settings.",
+  "datasources.reason.memgraph.user_can_write": "The Memgraph user has rights beyond reading ({privileges}): changing data, reading files on the server, or managing users, triggers, streams or settings. Use a user that may only read, or allow such a user in the settings.",
   "datasources.reason.memgraph.privileges_unverifiable": "Kalzit could not check whether the Memgraph user may change data: {detail}",
   "datasources.reason.tigergraph.user_can_write": "The TigerGraph user may do more than read ({privileges}). Use a user with only the queryreader role.",
   "datasources.reason.tigergraph.privileges_unverifiable": "Kalzit cannot read the roles and rights of the TigerGraph user, so it cannot check that the user only reads.",

@@ -25,6 +25,12 @@ const MAX_DEPTH: usize = 64;
 const MAX_CHUNK: usize = 0xFFFF;
 /// Entries reserved ahead for a list or map, whatever count the server claims.
 const PREALLOCATE: usize = 1024;
+
+/// The entries to reserve for a claimed count: never more than `PREALLOCATE`, so a hostile count
+/// cannot make Kalzit ask for gigabytes before the entries arrive.
+fn preallocate(claimed: usize) -> usize {
+    claimed.min(PREALLOCATE)
+}
 const USER_AGENT: &str = concat!("Kalzit/", env!("CARGO_PKG_VERSION"));
 
 /// A PackStream value.
@@ -247,7 +253,7 @@ impl<'a> Reader<'a> {
 
     fn list(&mut self, n: usize, depth: usize) -> Result<Bv, BoltError> {
         // A count is only a claim; space grows with what actually arrives.
-        let mut items = Vec::with_capacity(n.min(PREALLOCATE));
+        let mut items = Vec::with_capacity(preallocate(n));
         for _ in 0..n {
             items.push(self.value(depth + 1)?);
         }
@@ -255,7 +261,7 @@ impl<'a> Reader<'a> {
     }
 
     fn map(&mut self, n: usize, depth: usize) -> Result<Bv, BoltError> {
-        let mut entries = Vec::with_capacity(n.min(PREALLOCATE));
+        let mut entries = Vec::with_capacity(preallocate(n));
         for _ in 0..n {
             let Bv::String(key) = self.value(depth + 1)? else {
                 return Err(protocol("a map key that is not a string"));
@@ -758,6 +764,10 @@ mod tests {
         let deep: Vec<u8> = std::iter::repeat_n(0x91, 200).chain([0x01]).collect();
         assert!(decode(&deep).is_err());
         assert!(decode(&[0xE0]).is_err(), "0xE0..0xEF are reserved");
+        // The cap itself (the operating system may overcommit, so a huge reservation alone would
+        // not fail the test below).
+        assert_eq!(preallocate(u32::MAX as usize), 1024);
+        assert_eq!(preallocate(3), 3);
         // Nested maps that each claim as many entries as bytes are left: reserving space for the
         // claims (gigabytes over the nesting) would abort the process.
         let total = 8 << 20;

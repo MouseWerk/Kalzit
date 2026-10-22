@@ -137,7 +137,7 @@ struct Client {
     token: Mutex<Option<(String, Instant)>>,
     texts: Mutex<HashMap<String, CheckedText>>,
     /// The graph's query names (4.x), which a `TYPEDEF` may not take, with when they were read.
-    query_names: Mutex<Option<(Instant, Vec<String>)>>,
+    query_names: Mutex<Option<(Instant, Option<Vec<String>>)>>,
 }
 
 fn parse_url(raw: &str) -> Result<Url, Detail> {
@@ -463,9 +463,9 @@ impl Client {
         Ok(Some(token))
     }
 
-    /// The names of the graph's queries (4.x; kept for a minute). Empty when they cannot be read,
-    /// which leaves the other `TYPEDEF` rules.
-    async fn query_names(&self) -> Vec<String> {
+    /// The names of the graph's queries (4.x; kept for a minute). `None` when they cannot be read
+    /// (3.x, or no right to list them): the GSQL check then refuses every `TYPEDEF`.
+    async fn query_names(&self) -> Option<Vec<String>> {
         if let Some((at, names)) = self.query_names.lock().expect("names lock").as_ref()
             && at.elapsed() < TEXT_CACHE
         {
@@ -473,10 +473,10 @@ impl Client {
         }
         let names = match self.api {
             Api::V4 => match self.gsql_json(Method::GET, "gsql/v1/queries", &[("graph", &self.graph)]).await {
-                Ok(a) if a.status.is_success() => query_names(a.body.get("results").unwrap_or(&a.body)),
-                _ => Vec::new(),
+                Ok(a) if a.status.is_success() => Some(query_names(a.body.get("results").unwrap_or(&a.body))),
+                _ => None,
             },
-            Api::V3 => Vec::new(),
+            Api::V3 => None,
         };
         *self.query_names.lock().expect("names lock") = Some((Instant::now(), names.clone()));
         names
@@ -511,7 +511,7 @@ impl Client {
             .with("name", name));
         };
         let names = self.query_names().await;
-        let checked = gsql::check_with(&text, Form::Installed, &names).and_then(|c| {
+        let checked = gsql::check_with(&text, Form::Installed, names.as_deref()).and_then(|c| {
             if c.name.as_deref().is_some_and(|n| !n.eq_ignore_ascii_case(name)) {
                 return Err(Detail::new("gsql.not_one_query", "the installed text belongs to another query"));
             }
@@ -1106,7 +1106,8 @@ impl DataSourcePlugin for TigerGraph {
         let (status, bytes, executed) = match (q.gsql, q.installed) {
             (Some(text), None) => {
                 let names = c.query_names().await;
-                let checked = gsql::check_with(&text, Form::Interpret, &names).map_err(SourceError::Rejected)?;
+                let checked =
+                    gsql::check_with(&text, Form::Interpret, names.as_deref()).map_err(SourceError::Rejected)?;
                 if let Some(g) = checked.graph.as_deref().filter(|g| !g.eq_ignore_ascii_case(&c.graph)) {
                     return Err(SourceError::Rejected(other_graph(g)));
                 }

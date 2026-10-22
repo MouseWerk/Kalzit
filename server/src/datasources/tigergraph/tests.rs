@@ -419,6 +419,9 @@ async fn version_3_uses_the_gsqlserver_paths() {
     TigerGraph.query(&conn, req(json!({ "gsql": text }), json!({}))).await.unwrap();
     assert_eq!(fake.last_body.lock().unwrap().as_str(), text);
     assert_eq!(fake.last_query.lock().unwrap().as_str(), "", "3.x takes the graph from the query text");
+    // 3.x cannot list the graph's queries, so no tuple name can be checked: TYPEDEF is refused.
+    let typedef = "INTERPRET QUERY () FOR GRAPH social { TYPEDEF TUPLE <INT a> otherQuery; otherQuery(1); }";
+    assert_eq!(reason(TigerGraph.query(&conn, req(json!({ "gsql": typedef }), json!({}))).await), "gsql.typedef_name");
     // 3.x has no endpoint for a query's text: only approved installed queries run.
     let r = TigerGraph.query(&conn, req(json!({ "installed": "nachbarn" }), json!({}))).await;
     assert_eq!(reason(r), "tigergraph.query_text_unreadable");

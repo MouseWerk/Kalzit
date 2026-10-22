@@ -507,7 +507,8 @@ Read-only rules:
   queries, user-defined functions, `SelectVertex` and `evaluate`, and methods such as
   `setAttr`), characters outside ASCII outside strings, `#`, `\"` inside strings, `'` anywhere but
   right after an accumulator (`@@total'`), and a `TYPEDEF` named like a built-in, this or another
-  query (4.x) or a name used before it. Global (`@@`) and vertex (`v.@x`) accumulators live for
+  query or a name used before it; when the graph's query names cannot be read (3.x, or a user
+  without the right to list them), every `TYPEDEF` is refused. Global (`@@`) and vertex (`v.@x`) accumulators live for
   one run and are allowed.
 - An installed query runs only when its text can be read and passes the check (the result of a
   check is kept for a minute), or when its text cannot be read and its name is in
@@ -765,7 +766,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `gsql.method_not_allowed` | `name` | a method outside the allowed ones (such as `setAttr`) |
 | `gsql.other_graph` | `graph` | the query is for another graph |
 | `gsql.graph_missing` | | an interpreted query without `FOR GRAPH` |
-| `gsql.typedef_name` | `name` | a `TYPEDEF` named like a function, a query or a name used before it |
+| `gsql.typedef_name` | `name` | a `TYPEDEF` named like a built-in, a query or a name used before it, or any `TYPEDEF` when the graph's query names cannot be read |
 | `gsql.string_escape` | | `\"` inside a string |
 | `gsql.unexpected_character` | `character` | a character outside ASCII, or `#`, outside strings and comments |
 | `gsql.unclosed_quote`, `gsql.unclosed_comment` | | an unclosed string or comment |
@@ -806,7 +807,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `bolt.tls` | `detail` (when known) | TLS could not be set up or failed |
 | `bolt.login_timeout` | | the server did not complete the login in time |
 | `bolt.too_large` | | a single message was larger than the response size limit |
-| `memgraph.user_can_write` | `privileges` | the Memgraph user may write (the clauses it may run) and `allowWriteCapableUser` is off |
+| `memgraph.user_can_write` | `privileges` | the Memgraph user has privileges beyond reading (writing clauses, `READ_FILE`, `AUTH`, `TRIGGER`, `STREAM`, `CONFIG`) and `allowWriteCapableUser` is off |
 | `memgraph.privileges_unverifiable` | `detail` | the check of the Memgraph user's privileges failed for another reason |
 | `tigergraph.user_can_write` | `privileges` | the TigerGraph user may do more than read (privileges or roles beyond a reader's, or superuser) |
 | `tigergraph.privileges_unverifiable` | | the user's roles and privileges cannot be read |

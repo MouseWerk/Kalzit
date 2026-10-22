@@ -116,6 +116,34 @@ const METHODS: &[&str] = &[
     "values",
 ];
 
+/// GSQL built-ins that are not in `FUNCTIONS` (they read files, run text, or are not needed
+/// for reading). Calls of them are refused as unknown functions, and no `TYPEDEF` may take their
+/// names.
+const OTHER_BUILTINS: &[&str] = &[
+    "selectvertex",
+    "evaluate",
+    "setattr",
+    "to_jsonobject",
+    "to_jsonarray",
+    "gsql_uuid_v4",
+    "gsql_current_time_epoch",
+    "gsql_system_time",
+    "get_neighbors",
+    "datetime_add_ms",
+    "split",
+    "find",
+    "instr",
+    "replace",
+    "concat",
+    "is_vertex_type",
+    "is_edge_type",
+    "neighbors",
+    "accum_function",
+    "bitwise_and",
+    "bitwise_or",
+    "bitwise_xor",
+];
+
 /// Words that end a query's checks wherever they appear outside strings.
 const WRITES: &[&str] = &["INSERT", "UPDATE", "DELETE"];
 const STATEMENTS: &[&str] = &[
@@ -351,6 +379,8 @@ struct P {
     typedefs: HashSet<String>,
     /// Names a `TYPEDEF` may not take (upper case): built-ins, this query and other queries.
     reserved: HashSet<String>,
+    /// Whether the graph's query names are known; without them no `TYPEDEF` is accepted.
+    queries_known: bool,
 }
 
 fn upper(t: &T) -> Option<String> {
@@ -368,22 +398,26 @@ fn is_kw(t: Option<&T>, kw: &str) -> bool {
     matches!(t, Some(T::Ident(s)) if s.eq_ignore_ascii_case(kw))
 }
 
-/// Checks a GSQL query (see the module documentation).
+/// Checks a GSQL query (see the module documentation). Without the graph's query names, any
+/// `TYPEDEF` is refused (see `check_with`).
 pub fn check(q: &str, form: Form) -> Result<Checked, Detail> {
-    check_with(q, form, &[])
+    check_with(q, form, None)
 }
 
 /// `check`, where `queries` are the names of the graph's other queries, which a `TYPEDEF` may not
-/// take (a tuple called like a query would otherwise make the call look like a constructor).
-pub fn check_with(q: &str, form: Form, queries: &[String]) -> Result<Checked, Detail> {
+/// take: a tuple called like a query or a built-in would make the call look like a constructor.
+/// `None` when the names cannot be read (3.x, or a 4.x list Kalzit may not read); then every
+/// `TYPEDEF` is refused, since its name cannot be checked.
+pub fn check_with(q: &str, form: Form, queries: Option<&[String]>) -> Result<Checked, Detail> {
     let t = lex(q)?;
     if t.is_empty() {
         return Err(reject("gsql.empty", "the query is empty"));
     }
     let mut reserved: HashSet<String> = FUNCTIONS.iter().chain(METHODS).map(|f| f.to_ascii_uppercase()).collect();
+    reserved.extend(OTHER_BUILTINS.iter().map(|f| f.to_ascii_uppercase()));
     reserved.extend(TYPES.iter().chain(EXPR_KEYWORDS).chain(STATEMENTS).chain(WRITES).map(|s| s.to_string()));
-    reserved.extend(queries.iter().map(|q| q.to_ascii_uppercase()));
-    let mut p = P { t, i: 0, typedefs: HashSet::new(), reserved };
+    reserved.extend(queries.unwrap_or_default().iter().map(|q| q.to_ascii_uppercase()));
+    let mut p = P { t, i: 0, typedefs: HashSet::new(), reserved, queries_known: queries.is_some() };
     let checked = p.header(form)?;
     if let Some(name) = &checked.name {
         p.reserved.insert(name.to_ascii_uppercase());
@@ -704,6 +738,16 @@ impl P {
             "TYPEDEF" => {
                 let start = self.i;
                 let rest = self.region(accum, stops);
+                if !self.queries_known {
+                    return Err(reject(
+                        "gsql.typedef_name",
+                        "TYPEDEF is not allowed here: the graph's query names cannot be read, so the tuple name cannot be checked",
+                    )
+                    .with("name", rest.last().map(|t| match t {
+                        T::Ident(s) => s.clone(),
+                        _ => String::new(),
+                    }).unwrap_or_default()));
+                }
                 if let Some(T::Ident(name)) = rest.last() {
                     let upper = name.to_ascii_uppercase();
                     // A tuple named like a function or query, or like a name already used, would
@@ -815,7 +859,13 @@ impl P {
         }
         for (clause, body) in parts {
             if clause == "ACCUM" || clause == "POST_ACCUM" {
-                let mut inner = P { t: body, i: 0, typedefs: self.typedefs.clone(), reserved: self.reserved.clone() };
+                let mut inner = P {
+                    t: body,
+                    i: 0,
+                    typedefs: self.typedefs.clone(),
+                    reserved: self.reserved.clone(),
+                    queries_known: self.queries_known,
+                };
                 inner.block(true, &[])?;
                 if inner.i != inner.t.len() {
                     return Err(parse_error(format!("unexpected text in {clause}")));
@@ -913,12 +963,12 @@ mod tests {
 
     fn ok(body: &str) -> Checked {
         let q = format!("INTERPRET QUERY (STRING name, INT k = 3) FOR GRAPH social {{ {body} }}");
-        check(&q, Form::Interpret).unwrap_or_else(|e| panic!("refused: {body}: {e:?}"))
+        check_with(&q, Form::Interpret, Some(&[])).unwrap_or_else(|e| panic!("refused: {body}: {e:?}"))
     }
 
     fn refused(body: &str) -> &'static str {
         let q = format!("INTERPRET QUERY () FOR GRAPH social {{ {body} }}");
-        match check(&q, Form::Interpret) {
+        match check_with(&q, Form::Interpret, Some(&[])) {
             Ok(_) => panic!("accepted: {body}"),
             Err(d) => d.reason,
         }
@@ -1023,13 +1073,18 @@ mod tests {
             ("TYPEDEF TUPLE <INT a> count; PRINT count(1);", "gsql.typedef_name"),
             ("TYPEDEF TUPLE <INT a> To_String; PRINT 1;", "gsql.typedef_name"),
             ("INT foo = 1; TYPEDEF TUPLE <INT a> foo; PRINT foo(1);", "gsql.typedef_name"),
+            (
+                "TYPEDEF TUPLE <INT a> SelectVertex; S = SelectVertex(\"/etc/passwd\", \"a\", Person, \",\", false);",
+                "gsql.typedef_name",
+            ),
+            ("TYPEDEF TUPLE <INT a> evaluate; PRINT evaluate(\"1\", \"int\");", "gsql.typedef_name"),
         ] {
             assert_eq!(refused(body), reason, "{body}");
         }
     }
 
     fn installed_check(s: &str) -> Result<(), &'static str> {
-        check(s, Form::Installed).map(|_| ()).map_err(|d| d.reason)
+        check_with(s, Form::Installed, Some(&[])).map(|_| ()).map_err(|d| d.reason)
     }
 
     #[test]
@@ -1045,8 +1100,18 @@ mod tests {
         assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; }; DROP ALL"), Err("gsql.not_one_query"));
         assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; };"), Ok(()));
         assert_eq!(q("INTERPRET QUERY () { PRINT 1; }"), Err("gsql.graph_missing"));
-        let other =
-            |s: &str| check_with(s, Form::Interpret, &["andereAbfrage".to_string()]).map(|_| ()).map_err(|d| d.reason);
+        // Without the graph's query names a tuple name cannot be checked: no TYPEDEF at all.
+        assert_eq!(
+            q("INTERPRET QUERY () FOR GRAPH g { TYPEDEF TUPLE <INT a> otherQuery; otherQuery(1); }"),
+            Err("gsql.typedef_name")
+        );
+        assert_eq!(
+            q("INTERPRET QUERY () FOR GRAPH g { TYPEDEF TUPLE <INT a> Zeile; PRINT Zeile(1); }"),
+            Err("gsql.typedef_name")
+        );
+        let other = |s: &str| {
+            check_with(s, Form::Interpret, Some(&["andereAbfrage".to_string()])).map(|_| ()).map_err(|d| d.reason)
+        };
         assert_eq!(
             other("INTERPRET QUERY () FOR GRAPH g { TYPEDEF TUPLE <INT a> ANDEREABFRAGE; PRINT andereAbfrage(1); }"),
             Err("gsql.typedef_name")

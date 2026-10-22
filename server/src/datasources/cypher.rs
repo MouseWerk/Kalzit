@@ -294,8 +294,7 @@ pub fn check(q: &str) -> Result<Checked, Detail> {
                 ));
             }
             "PERIODIC" => return Err(reject("cypher.in_transactions", "PERIODIC COMMIT writes in batches")),
-            // `IN TRANSACTIONS`, `IN 4 CONCURRENT TRANSACTIONS`, `IN CONCURRENT TRANSACTIONS`.
-            "TRANSACTIONS" | "CONCURRENT" => {
+            "TRANSACTIONS" if in_transactions_clause(&toks, i) => {
                 return Err(reject("cypher.in_transactions", "CALL { } IN TRANSACTIONS writes in batches"));
             }
             "CALL" => check_call(&toks, i)?,
@@ -329,6 +328,38 @@ fn first_clause(toks: &[Tok]) -> Option<usize> {
             None => return None,
         }
     }
+}
+
+/// `} IN TRANSACTIONS`, `} IN 4 CONCURRENT TRANSACTIONS`, `} IN CONCURRENT TRANSACTIONS` (with
+/// `$n` or an expression in brackets as the count): the clause after a `CALL` subquery, not a
+/// variable named `transactions`.
+fn in_transactions_clause(toks: &[Tok], i: usize) -> bool {
+    let mut j = i;
+    if j > 0 && is_word(&toks[j - 1], "CONCURRENT") {
+        j -= 1;
+        match toks.get(j.wrapping_sub(1)) {
+            Some(Tok::Num | Tok::Param(_)) => j -= 1,
+            Some(Tok::Sym(')')) => {
+                // `IN (expression) CONCURRENT TRANSACTIONS`: back to the matching `(`.
+                let mut depth = 0usize;
+                while j > 0 {
+                    j -= 1;
+                    match toks[j] {
+                        Tok::Sym(')') => depth += 1,
+                        Tok::Sym('(') => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    j >= 2 && is_word(&toks[j - 1], "IN") && toks[j - 2] == Tok::Sym('}')
 }
 
 /// Words that stand before `(` without naming a function: clauses, operators, path modes.
@@ -500,7 +531,8 @@ const FUNCTIONS: &[&str] = &[
     "valuetype",
 ];
 
-/// Namespaced functions, by prefix: the temporal and spatial built-ins and APOC's pure helpers.
+/// Namespaced functions: an entry ending in `.` allows the namespace, any other entry exactly that
+/// function. The temporal and spatial built-ins and APOC's pure helpers.
 /// Not here, so refused: `apoc.cypher.*` (runs Cypher given as text), `apoc.load.*`,
 /// `apoc.export.*`, `apoc.periodic.*`, `apoc.trigger.*`, `apoc.schema.*`, `dbms.*`, `db.*`.
 const FUNCTION_PREFIXES: &[&str] = &[
@@ -523,6 +555,8 @@ const FUNCTION_PREFIXES: &[&str] = &[
     "apoc.agg.",
     "apoc.label.",
     "apoc.node.degree",
+    "apoc.node.degree.in",
+    "apoc.node.degree.out",
     "apoc.node.labels",
     "apoc.rel.type",
     "apoc.hashing.",
@@ -535,7 +569,9 @@ const FUNCTION_PREFIXES: &[&str] = &[
 ];
 
 /// A function call (a name, possibly dotted, before `(`) must be a built-in or on the list of
-/// namespaced functions. Procedures after `CALL` are checked by `check_call`.
+/// namespaced functions. A name right after `CALL` is a procedure, not a function: it is skipped
+/// here because `check_call` holds it to the stricter `READ_PROCEDURES` list (tested in
+/// `procedures_are_checked_by_check_call`).
 fn check_function(toks: &[Tok], i: usize) -> Result<(), Detail> {
     if !matches!(toks.get(i), Some(Tok::Ident { .. })) || toks.get(i + 1) != Some(&Tok::Sym('(')) {
         return Ok(());
@@ -558,7 +594,10 @@ fn check_function(toks: &[Tok], i: usize) -> Result<(), Detail> {
     let single_keyword = start == i
         && matches!(&toks[i], Tok::Ident { text, quoted: false } if NOT_FUNCTIONS.contains(&text.to_uppercase().as_str()));
     let lower = name.to_lowercase();
-    if single_keyword || FUNCTIONS.contains(&lower.as_str()) || FUNCTION_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+    if single_keyword
+        || FUNCTIONS.contains(&lower.as_str())
+        || FUNCTION_PREFIXES.iter().any(|p| if p.ends_with('.') { lower.starts_with(p) } else { lower == *p })
+    {
         return Ok(());
     }
     Err(reject("cypher.function_not_allowed", format!("the function {name} is not on the list of allowed functions"))
@@ -720,6 +759,13 @@ mod tests {
             ("RETURN dbms.listConfig()", "cypher.function_not_allowed"),
             ("RETURN db.createLabel('X')", "cypher.function_not_allowed"),
             ("RETURN eigeneFunktion(1)", "cypher.function_not_allowed"),
+            ("RETURN apoc.util.md5x(['a'])", "cypher.function_not_allowed"),
+            ("RETURN apoc.node.labelsAndMore(n)", "cypher.function_not_allowed"),
+            ("MATCH (n) CALL { MATCH (m) RETURN m } IN $n CONCURRENT TRANSACTIONS RETURN n", "cypher.in_transactions"),
+            (
+                "MATCH (n) CALL { MATCH (m) RETURN m } IN (2 + 2) CONCURRENT TRANSACTIONS RETURN n",
+                "cypher.in_transactions",
+            ),
             ("CALL", "cypher.parse_error"),
             ("SHOW USERS", "cypher.not_read_query"),
             ("SHOW TRANSACTIONS", "cypher.not_read_query"),
@@ -747,6 +793,43 @@ mod tests {
             ("(n) RETURN n", "cypher.not_read_query"),
         ] {
             assert_eq!(refused(q), reason, "{q}");
+        }
+    }
+
+    #[test]
+    fn variables_may_be_called_transactions() {
+        for q in [
+            "MATCH (t) WITH collect(t) AS transactions RETURN size(transactions)",
+            "UNWIND [1, 2] AS concurrent RETURN concurrent",
+            "MATCH (n) WHERE n.id IN transactions RETURN n",
+            "RETURN apoc.util.md5(['a']), apoc.node.degree.in(null)",
+        ] {
+            assert!(check(q).is_ok(), "{q}: {:?}", check(q));
+        }
+    }
+
+    #[test]
+    fn procedures_are_checked_by_check_call() {
+        // Names after CALL are procedures; check_function leaves them to check_call, whose list
+        // is stricter: a harmless function name is still no allowed procedure.
+        for q in ["CALL apoc.util.md5(['a'])", "CALL apoc.cypher.run('CREATE ()', {})", "CALL toUpper('a')"] {
+            assert_eq!(refused(q), "cypher.procedure_not_allowed", "{q}");
+        }
+        assert!(check("CALL db.labels() YIELD label RETURN toUpper(label)").is_ok());
+    }
+
+    /// The explorer-mode expand queries of the graph panel (`ui/src/panels/graph/adapter.ts`,
+    /// `expandQuery`), with the smallest, a usual and the largest limit it produces.
+    #[test]
+    fn graph_panel_expand_queries_pass() {
+        for limit in [1, 25, 200] {
+            for q in [
+                format!("MATCH (n)-[r]-(m) WHERE elementId(n) = $nodeId RETURN n, r, m LIMIT {limit}"),
+                format!("MATCH (n)-[r]-(m) WHERE id(n) = toInteger($nodeId) RETURN n, r, m LIMIT {limit}"),
+            ] {
+                let checked = check(&q).unwrap_or_else(|e| panic!("{q}: {e:?}"));
+                assert_eq!(checked.params, ["nodeId".to_string()].into(), "{q}");
+            }
         }
     }
 
