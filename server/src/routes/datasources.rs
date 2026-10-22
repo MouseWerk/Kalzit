@@ -349,6 +349,7 @@ async fn create(
     let secrets: SecretPatch = body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect();
     kind.validate_secrets(&secrets).map_err(field_error)?;
     precheck_targets(&state, kind, &settings).await?;
+    datasources::check_on_save(&state, kind, None, &settings, &secrets).await?;
     if name_taken(&state, &ctx.org_id, &name, "").await? {
         return Err(name_conflict());
     }
@@ -486,6 +487,9 @@ async fn update(
     changed.extend(body.secrets.keys().map(|k| format!("secrets.{k}")));
     if changed.is_empty() {
         return Ok(Json(view(&state, &ctx, ds).await?));
+    }
+    if changed.iter().any(|c| c.starts_with("settings.") || c.starts_with("secrets.")) {
+        datasources::check_on_save(&state, kind, Some(&ds.id), &settings, &body.secrets).await?;
     }
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
