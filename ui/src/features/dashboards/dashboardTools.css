@@ -153,6 +153,24 @@
     inset-inline-end: 0;
   }
 
+  /*
+   * On a phone a tag's list opens from the start of the links line, not under its own link, so
+   * with its width capped at the screen minus the gutters it never runs past the right edge.
+   */
+  @media (max-width: 48rem) {
+    .dash-links {
+      position: relative;
+    }
+
+    .dash-links__menu {
+      position: static;
+    }
+
+    .dash-links__dashboards {
+      inset-inline-start: 0;
+    }
+  }
+
   .tool-menu__list .button {
     justify-content: flex-start;
   }
