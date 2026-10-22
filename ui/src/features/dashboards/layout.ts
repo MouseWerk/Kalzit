@@ -85,7 +85,15 @@ function placeSection(
   expand: boolean,
 ): PlacedPanel[] {
   if (!expand) {
-    return readingOrder(panels).map((panel) => ({ key: panel.id, panel, grid: panel.grid }));
+    // Arranged once, as stored; its queries run with the first value, as its first copy does
+    // (a list in place of one value would not fit the query).
+    return readingOrder(panels).map((panel): PlacedPanel => {
+      const variable = panel.repeat?.variable;
+      const first = variable === undefined ? undefined : valueList(values[variable])[0];
+      return variable === undefined || first === undefined
+        ? { key: panel.id, panel, grid: panel.grid }
+        : { key: panel.id, panel, grid: panel.grid, repeat: { variable, value: first } };
+    });
   }
   const placed = panels.flatMap((panel) => expandPanel(panel, values));
   // Positions of the copies, with collisions resolved as when a panel is moved.
@@ -121,8 +129,11 @@ export function layoutSections(
   ];
   for (const row of rows) {
     const own = panelsOf(panels, row.id, rows);
+    // In edit mode a repeated row shows once, with its first value.
     const repeatValues =
-      row.repeat === undefined || !expand ? [] : valueList(values[row.repeat.variable]);
+      row.repeat === undefined
+        ? []
+        : valueList(values[row.repeat.variable]).slice(0, expand ? undefined : 1);
     if (row.repeat === undefined || repeatValues.length === 0) {
       sections.push({ key: row.id, row, first: true, panels: placeSection(own, values, expand) });
       continue;

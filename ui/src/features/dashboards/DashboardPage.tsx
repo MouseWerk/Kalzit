@@ -38,6 +38,7 @@ import {
   type PanelModel,
   type RowModel,
   type VariableValues,
+  valueList,
 } from "./model";
 import { PanelCard } from "./PanelCard";
 import { PanelEditor } from "./PanelEditor";
@@ -221,6 +222,20 @@ type DialogState =
   | { kind: "annotate"; time: number; panelId: string | null }
   | { kind: "mark"; mark: DashboardMark }
   | null;
+
+/**
+ * The values the panel editor previews with: a repeated panel (or one in a repeated row) shows
+ * its first copy, so the repeat's variable has one value, not the list.
+ */
+function editorValues(panel: PanelModel, rows: readonly RowModel[], values: VariableValues) {
+  const row = rows.find((r) => r.id === panel.rowId);
+  const variable = panel.repeat?.variable ?? row?.repeat?.variable;
+  if (variable === undefined) {
+    return values;
+  }
+  const first = valueList(values[variable])[0];
+  return first === undefined ? values : { ...values, [variable]: first };
+}
 
 /** The panel as the dashboard stores it when it shows a library panel: its place, no queries. */
 function linkedPlace(panel: PanelModel): PanelModel {
@@ -854,12 +869,12 @@ function DashboardView({
                   orgId,
                   dashboardId: dashboard.id,
                   range: panelRange(alone, resolved.range, clock.now),
-                  variables: values,
+                  variables: editorValues(alone, rows, values),
                   saved: dashboard.model.variables,
                   source: "stored",
                   run: clock.run,
                 }}
-                view={{ ...viewActions, values }}
+                view={{ ...viewActions, values: editorValues(alone, rows, values) }}
               />
             </div>
           ) : model.panels.length === 0 && rows.length === 0 ? (
@@ -921,7 +936,7 @@ function DashboardView({
           dashboardId={dashboard.id}
           panel={dialog.panel}
           range={resolved.range}
-          variables={values}
+          variables={editorValues(dialog.panel, rows, values)}
           stored={(() => {
             const saved = dashboard.model.panels.find((p) => p.id === dialog.panel.id);
             return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);

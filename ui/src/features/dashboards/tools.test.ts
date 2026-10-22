@@ -109,6 +109,9 @@ describe("layout", () => {
     const edit = layoutSections(panels, rows, values, false);
     expect(edit.map((s) => s.key)).toEqual(["top", "r"]);
     expect(edit[0]?.panels.map((p) => p.key)).toEqual(["top", "rep", "below"]);
+    // Shown once, a repeated panel or row queries with its first value, never the whole list.
+    expect(edit[0]?.panels[1]?.repeat).toEqual({ variable: "v", value: "a" });
+    expect(edit[1]?.repeat).toEqual({ variable: "v", value: "a" });
   });
 
   it("moves panels within their section and rows within the list", () => {
