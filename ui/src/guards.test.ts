@@ -15,24 +15,21 @@ function walk(dir: string): string[] {
   });
 }
 
-// Signatures of the binary formats the UI ships: woff2, woff, PNG, JPEG, GIF, WebP (RIFF), ICO.
-const MAGIC = [
-  [0x77, 0x4f, 0x46, 0x32],
-  [0x77, 0x4f, 0x46, 0x46],
-  [0x89, 0x50, 0x4e, 0x47],
-  [0xff, 0xd8, 0xff],
-  [0x47, 0x49, 0x46, 0x38],
-  [0x52, 0x49, 0x46, 0x46],
-  [0x00, 0x00, 0x01, 0x00],
-];
-
 /**
- * Binary by content, not by name: a known signature or a NUL byte in the first kilobyte. Binary
- * bytes would match text rules by chance; a text file with a binary extension is still checked.
+ * Binary by content, never by name or signature (several signatures are plain ASCII that a text
+ * file may start with): a NUL byte in the first 8 KB, or bytes that are not valid UTF-8. Binary
+ * bytes would match text rules by chance; every text file is checked whatever it is called.
  */
 function isBinary(bytes: Uint8Array): boolean {
-  const head = bytes.subarray(0, 1024);
-  return MAGIC.some((magic) => magic.every((byte, i) => head[i] === byte)) || head.includes(0);
+  if (bytes.subarray(0, 8192).includes(0)) {
+    return true;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 /** Text files below `dir`, paths relative to the UI root; binary files are left out. */
@@ -95,11 +92,19 @@ describe("source hygiene", () => {
 
   it("skips only files that are binary by content", () => {
     const text = (value: string) => new TextEncoder().encode(value);
-    const font = readFileSync(resolve(SRC, "assets/fonts/newsreader-latin-wght-normal.woff2"));
-    expect(isBinary(font)).toBe(true);
-    expect(isBinary(Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a))).toBe(true);
+    const fonts = resolve(SRC, "assets/fonts");
+    const woff2 = readdirSync(fonts).filter((name) => name.endsWith(".woff2"));
+    expect(woff2.length).toBeGreaterThan(0);
+    for (const name of woff2) {
+      expect(isBinary(readFileSync(resolve(fonts, name))), name).toBe(true);
+    }
+    expect(isBinary(Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))).toBe(true);
+    expect(isBinary(Uint8Array.of(0x61, 0xff, 0xfe, 0x62))).toBe(true);
     expect(isBinary(text("plain\u0000text"))).toBe(true);
-    // A text file is read whatever its name, so an emoji in a "fake.woff2" is still caught.
+    // Text that starts like a binary signature is still text, and its emoji is still caught.
+    expect(isBinary(text("GIF89a looks like an image header \u{1F600}"))).toBe(false);
+    expect(isBinary(text("wOF2: notes on the font format \u{1F600}"))).toBe(false);
+    expect(isBinary(text("wOFF RIFF export const a = 1;"))).toBe(false);
     expect(isBinary(text("/* fake.woff2 */ .a { content: '\u{1F600}'; }"))).toBe(false);
     expect(isBinary(text("<svg></svg>"))).toBe(false);
   });

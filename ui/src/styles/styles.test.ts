@@ -449,10 +449,16 @@ describe("motion and typography", () => {
       "@import '//example.com/a.css';",
       '@IMPORT "HTTPS://example.com/a.css";',
       "@import url(https://example.com/a.css);",
+      '.a { background: image-set("https://example.com/a.png" 1x, "./a2.png" 2x); }',
+      ".a { background: -webkit-IMAGE-SET('//example.com/a.png' 1x); }",
+      '.a { background: image-set(url("https://example.com/a.png") 1x); }',
     ]) {
       expect(remoteLoads(source), source).toHaveLength(1);
     }
     expect(remoteLoads('@import "./tokens.css"; .a { background: url("./a.png"); }')).toEqual([]);
+    expect(
+      remoteLoads('.a { background: image-set("./a.png" 1x, "a2.png" type("image/png")); }'),
+    ).toEqual([]);
   });
 
   it("loads fonts only from the bundled, licensed files declared in tokens.css", () => {
@@ -601,6 +607,12 @@ function remoteLoads(source: string): string[] {
   }
   for (const [, target = ""] of css.matchAll(/@import\s+("[^"]*"|'[^']*')/gi)) {
     if (remote.test(target)) found.push(`@import ${target}`);
+  }
+  // image-set() also takes plain strings as image addresses (url() inside it is caught above).
+  for (const [, inner = ""] of css.matchAll(/image-set\(((?:[^()]|\([^()]*\))*)\)/gi)) {
+    for (const [target] of inner.replace(/url\([^)]*\)/gi, "").matchAll(/"[^"]*"|'[^']*'/g)) {
+      if (remote.test(target)) found.push(`image-set ${target}`);
+    }
   }
   return found;
 }
