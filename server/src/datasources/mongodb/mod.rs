@@ -77,7 +77,8 @@ const SCHEMA_SAMPLE_TIME: Duration = Duration::from_secs(2);
 
 /// Privileges a login may hold: those of the built-in `read` and `readAnyDatabase` roles.
 /// `planCacheRead` (`PLAN_CACHE_READ`) shows the server's cached query plans; the `read` role
-/// grants it on `<db>.system.js` only, so it is accepted there and nowhere else.
+/// grants it on its whole database, so it is accepted on the source's own database (any
+/// collection) and refused on other databases and cluster-wide.
 const READ_ACTIONS: &[&str] = &[
     "changeStream",
     "collStats",
@@ -472,7 +473,7 @@ fn resource_text(resource: Option<&Document>) -> String {
 
 /// The `connectionStatus` answer judged: only reading privileges, and with a login, the login and
 /// its privileges must be reported.
-fn privileges_verdict(status: &Document, has_user: bool) -> Result<(), SourceError> {
+fn privileges_verdict(status: &Document, has_user: bool, database: &str) -> Result<(), SourceError> {
     let auth = status.get_document("authInfo").ok();
     let users = auth.and_then(|a| a.get_array("authenticatedUsers").ok()).map_or(0, |u| u.len());
     let privileges = auth.and_then(|a| a.get_array("authenticatedUserPrivileges").ok()).cloned().unwrap_or_default();
@@ -490,8 +491,8 @@ fn privileges_verdict(status: &Document, has_user: bool) -> Result<(), SourceErr
         for action in actions {
             let action = action.as_str().unwrap_or("?");
             let resource_doc = p.get_document("resource").ok();
-            let on_system_js = resource_doc.and_then(|r| r.get_str("collection").ok()) == Some("system.js");
-            if !READ_ACTIONS.contains(&action) && !(action == PLAN_CACHE_READ && on_system_js) {
+            let own_database = resource_doc.and_then(|r| r.get_str("db").ok()) == Some(database);
+            if !READ_ACTIONS.contains(&action) && !(action == PLAN_CACHE_READ && own_database) {
                 let resource = resource_text(resource_doc);
                 return Err(SourceError::failed(
                     "mongodb.login_not_read_only",
@@ -509,7 +510,7 @@ fn privileges_verdict(status: &Document, has_user: bool) -> Result<(), SourceErr
 /// server without access control (where any login may write).
 async fn check_read_only(shared: &Shared, timeout: Duration) -> Result<(), SourceError> {
     let status = shared.command("admin", doc! { "connectionStatus": 1, "showPrivileges": true }, timeout).await?;
-    privileges_verdict(&status, shared.has_user)?;
+    privileges_verdict(&status, shared.has_user, &shared.database)?;
     // hostInfo needs a privilege no reading role holds; a server that runs it anyway does not
     // check privileges at all.
     shared.guard()?;
@@ -1021,24 +1022,37 @@ mod tests {
             doc! { "authInfo": { "authenticatedUsers": users, "authenticatedUserRoles": [], "authenticatedUserPrivileges": privileges }, "ok": 1 }
         };
         let user = doc! { "user": "leser", "db": "shop" };
-        assert!(privileges_verdict(&status(vec![user.clone()], vec![read.clone()]), true).is_ok());
+        assert!(privileges_verdict(&status(vec![user.clone()], vec![read.clone()]), true, "shop").is_ok());
         let reason = |r: Result<(), SourceError>| r.unwrap_err().detail().reason;
         // A login the server does not name, or names without privileges, proves nothing.
-        assert_eq!(reason(privileges_verdict(&status(vec![], vec![read.clone()]), true)), "mongodb.privileges_unknown");
-        assert_eq!(reason(privileges_verdict(&status(vec![user.clone()], vec![]), true)), "mongodb.privileges_unknown");
-        assert_eq!(reason(privileges_verdict(&doc! { "ok": 1 }, true)), "mongodb.privileges_unknown");
+        assert_eq!(
+            reason(privileges_verdict(&status(vec![], vec![read.clone()]), true, "shop")),
+            "mongodb.privileges_unknown"
+        );
+        assert_eq!(
+            reason(privileges_verdict(&status(vec![user.clone()], vec![]), true, "shop")),
+            "mongodb.privileges_unknown"
+        );
+        assert_eq!(reason(privileges_verdict(&doc! { "ok": 1 }, true, "shop")), "mongodb.privileges_unknown");
         // Without a login, an empty answer is what a server with access control gives.
-        assert!(privileges_verdict(&status(vec![], vec![]), false).is_ok());
-        // What MongoDB 8.0's read role grants: planCacheRead on system.js only.
-        let system_js =
-            doc! { "resource": { "db": "shop", "collection": "system.js" }, "actions": ["find", "planCacheRead"] };
-        assert!(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), system_js]), true).is_ok());
-        for collection in ["", "orders", "system.jsx"] {
+        assert!(privileges_verdict(&status(vec![], vec![]), false, "shop").is_ok());
+        // What MongoDB 8.0's read role grants: planCacheRead on its database, any collection.
+        for collection in ["", "system.js", "orders"] {
             let plan = doc! { "resource": { "db": "shop", "collection": collection }, "actions": ["planCacheRead"] };
-            assert_eq!(
-                reason(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true)),
-                "mongodb.login_not_read_only",
+            assert!(
+                privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true, "shop").is_ok(),
                 "{collection:?}"
+            );
+        }
+        // On another database or the cluster it is refused.
+        for resource in
+            [doc! { "db": "andere", "collection": "" }, doc! { "db": "", "collection": "" }, doc! { "cluster": true }]
+        {
+            let plan = doc! { "resource": resource.clone(), "actions": ["planCacheRead"] };
+            assert_eq!(
+                reason(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true, "shop")),
+                "mongodb.login_not_read_only",
+                "{resource}"
             );
         }
     }
