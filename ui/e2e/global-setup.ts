@@ -208,7 +208,12 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     copyFileSync(binary, exe);
     const fixtures = join(run, "fixtures");
     mkdirSync(fixtures, { mode: 0o700 });
-    writeSalesDatabase(join(fixtures, "sales.db"));
+    // The screenshots fix the clock, so their data lies around that moment instead of now.
+    const fixedNow = Number(process.env.KALZIT_E2E_FIXTURE_NOW ?? "");
+    writeSalesDatabase(
+      join(fixtures, "sales.db"),
+      Number.isFinite(fixedNow) && fixedNow > 0 ? fixedNow : Date.now(),
+    );
 
     const setupToken = randomBytes(12).toString("hex");
     child = spawn(exe, ["serve"], {

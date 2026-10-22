@@ -117,6 +117,37 @@ export class Api {
     );
   }
 
+  /** Completes the first-run setup through the API, for runs that do not test that page. */
+  static async setup(input: {
+    token: string;
+    orgName: string;
+    name: string;
+    email: string;
+    password: string;
+  }): Promise<void> {
+    const context = await request.newContext({ baseURL: baseUrl() });
+    try {
+      await json(await context.post("/api/setup", { data: input }), "setup");
+    } finally {
+      await context.dispose();
+    }
+  }
+
+  /** A team with these members (user ids). */
+  async createTeam(name: string, memberIds: readonly string[]): Promise<string> {
+    const team = await json<{ id: string }>(
+      await this.context.post(this.org("/teams"), { data: { name } }),
+      "create team",
+    );
+    for (const userId of memberIds) {
+      await json(
+        await this.context.put(this.org(`/teams/${team.id}/members/${userId}`), { data: {} }),
+        "add team member",
+      );
+    }
+    return team.id;
+  }
+
   async createDashboard(model: Record<string, unknown>): Promise<string> {
     const dashboard = await json<{ id: string }>(
       await this.context.post(this.org("/dashboards"), { data: { model } }),

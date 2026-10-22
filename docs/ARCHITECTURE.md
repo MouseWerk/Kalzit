@@ -501,5 +501,13 @@ through `settings::get`; new registry entries are requested from the orchestrato
   Once per machine: `npx playwright install chromium firefox webkit` (on Linux also
   `npx playwright install-deps`). `KALZIT_E2E_BROWSERS=chromium` limits the browsers,
   `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
-  `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in `ui/e2e/.output/`
-  (`npx playwright show-report e2e/.output/report`).
+  `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
+  `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+- Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
+  in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
+  through the same global setup, seeds a demo organization through the API (members, teams,
+  the SQLite sales fixture, a dashboard with a variable and four panels) and writes PNGs at
+  1440x900 to `docs/screenshots/`. The fixture data lies around a fixed moment and the pages run
+  on a clock fixed to it, so reruns give near-identical files; dates the server records (member
+  since, sessions) still show the day of the run. **Every pull request that visibly changes the
+  UI reruns `npm run screenshots` and commits the changed images.**
