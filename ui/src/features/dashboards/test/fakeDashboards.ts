@@ -67,6 +67,8 @@ export interface FakeDashboardsState {
   variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
   panelQueries: { dashboardId: string; panelId: string; body: PanelQueryRequest }[];
+  /** Every panel export request (docs/api/analysis.md). */
+  panelExports: { dashboardId: string; panelId: string; body: Record<string, unknown> }[];
   /** Holds every panel query until the test calls `release`, to observe loading and limits. */
   holdPanelQueries: boolean;
   release: () => void;
@@ -189,7 +191,7 @@ function modelProblem(model: unknown): string | null {
   const m = model as Record<string, unknown>;
   const extra = unknownField(m, MODEL_FIELDS);
   if (extra !== undefined) return `model.${extra}: unknown field`;
-  if (m.schemaVersion !== 1) return "model.schemaVersion: must be 1";
+  if (m.schemaVersion !== 1 && m.schemaVersion !== 2) return "model.schemaVersion: 1 or 2";
   if (typeof m.title !== "string" || m.title.length < 1 || m.title.length > 200) {
     return "model.title: 1 to 200 characters";
   }
@@ -267,6 +269,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     createdWithoutRange: [],
     variableRequests: [],
     panelQueries: [],
+    panelExports: [],
     holdPanelQueries: false,
     release: () => {
       state.holdPanelQueries = false;
@@ -541,6 +544,33 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       return (
         needs("dashboards:read") ?? panelQuery(dashboard, decodeURIComponent(parts[3] ?? ""), body)
       );
+    }
+    if (parts[2] === "panels" && parts[4] === "export" && method === "POST") {
+      // data:export on the route, then dashboards:read on the dashboard, as on the server.
+      const denied = needs("data:export") ?? needs("dashboards:read");
+      if (denied !== null) return denied;
+      const panelId = decodeURIComponent(parts[3] ?? "");
+      if (!latest(dashboard).model.panels.some((p) => p.id === panelId)) {
+        return error(404, "not_found");
+      }
+      const extra = unknownField(body, [
+        "timeRange",
+        "intervalMs",
+        "maxDataPoints",
+        "variables",
+        "format",
+        "language",
+        "frame",
+      ]);
+      if (extra !== undefined) return validation(extra);
+      state.panelExports.push({ dashboardId: dashboard.id, panelId, body });
+      return new Response("﻿a;b\r\n1;2,5\r\n", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="Orders.csv"',
+        },
+      });
     }
     if (parts[2] === "variables" && parts[4] === "options" && method === "POST") {
       // The decided contract: VariableOptionsRequest {timeRange, variables} without the

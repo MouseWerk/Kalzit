@@ -1,7 +1,7 @@
 import { isRecord } from "../../api/client";
 
 /**
- * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"), schemaVersion 1. The server migrates
+ * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"), schemaVersion 2. The server migrates
  * older models on read; the UI still parses defensively, so one odd panel cannot break the page.
  */
 
@@ -119,7 +119,7 @@ export function currentValue(variable: VariableModel): string | undefined {
 }
 
 export interface DashboardModel {
-  schemaVersion: 1;
+  schemaVersion: 2;
   title: string;
   /** Text as typed: "now-6h", "now", or ISO times; resolved to milliseconds per run. */
   timeRange: { from: string; to: string };
@@ -132,7 +132,7 @@ export const DEFAULT_TIME_RANGE = { from: "now-6h", to: "now" };
 
 export function emptyModel(title: string): DashboardModel {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     title,
     timeRange: { ...DEFAULT_TIME_RANGE },
     variables: [],
@@ -224,7 +224,7 @@ export function parseModel(value: unknown, fallbackTitle: string): DashboardMode
   const model = isRecord(value) ? value : {};
   const range = isRecord(model.timeRange) ? model.timeRange : {};
   const parsed: DashboardModel = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     title: typeof model.title === "string" ? model.title : fallbackTitle,
     timeRange: {
       from: typeof range.from === "string" ? range.from : DEFAULT_TIME_RANGE.from,

@@ -1,7 +1,11 @@
 import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from "react";
+import { exportPanel, exportQuery } from "../../analysis/api";
+import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
+import { runPanelSteps } from "../../analysis/panel";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { useOrgPermissions } from "../../org/useOrg";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
@@ -9,8 +13,10 @@ import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
 import "./dashboards.css";
-import type { GridPos, PanelModel } from "./model";
-import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import { reasonText } from "../datasources/reasons";
+import { type GridPos, type PanelModel, storedQueryVariables } from "./model";
+import { errorsOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -43,6 +49,9 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
   const titleId = useId();
   const hintId = useId();
   const [inspecting, setInspecting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // The server checks data:export on the export routes; without it the action is not offered.
+  const mayExport = useOrgPermissions().has("data:export");
   const handleRef = useRef<HTMLButtonElement>(null);
   const keepHandleFocus = useRef(false);
 
@@ -169,6 +178,18 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           >
             {t("dashboards.panel.inspect")}
           </button>
+          {mayExport ? (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => setExporting(true)}
+              aria-label={t("analysis.export.buttonNamed", { title })}
+              disabled={results.data === undefined}
+            >
+              {t("analysis.export.button")}
+            </button>
+          ) : null}
           {edit === undefined ? null : (
             <>
               <button
@@ -228,7 +249,61 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           <Inspect outcomes={outcomes} />
         </Dialog>
       ) : null}
+      {exporting ? (
+        <ExportDialog
+          frames={runPanelSteps(panel.transformations, outcomes).frames.map((f) => f.name)}
+          note={
+            query.source === "stored" && edit !== undefined
+              ? t("analysis.export.stored")
+              : undefined
+          }
+          run={(choice, signal) => exportPanelData(query, panel, choice, signal)}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
     </article>
+  );
+}
+
+/**
+ * The file of one panel: the saved panel through its export route, as viewers see it, or the
+ * panel being edited through the free export route, as editors run it.
+ */
+function exportPanelData(
+  query: Omit<PanelQueryInput, "panel">,
+  panel: PanelModel,
+  choice: ExportChoice,
+  signal: AbortSignal,
+) {
+  const common = {
+    timeRange: query.range,
+    maxDataPoints: MAX_DATA_POINTS,
+    intervalMs: intervalFor(query.range),
+    format: choice.format,
+    language: choice.language,
+    ...(choice.frame === undefined ? {} : { frame: choice.frame }),
+  };
+  if (query.source === "stored") {
+    const variables = storedQueryVariables(query.variables, query.saved ?? []);
+    return exportPanel(query.orgId, query.dashboardId, panel.id, { ...common, variables }, signal);
+  }
+  const targets = panel.targets.filter(
+    (target) => target.datasourceId !== "" && queryText(target.query).trim() !== "",
+  );
+  return exportQuery(
+    query.orgId,
+    {
+      ...common,
+      variables: query.variables,
+      queries: targets.map((t) => ({
+        refId: t.refId,
+        datasourceId: t.datasourceId,
+        query: t.query,
+      })),
+      steps: panel.transformations,
+      title: panel.title,
+    },
+    signal,
   );
 }
 
@@ -266,7 +341,10 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
-  const frames = framesOf(outcomes);
+  // The panel's steps run here, on what the queries answered; a failing step shows its reason
+  // and the panel draws what the steps before it made.
+  const stepsRun = runPanelSteps(panel.transformations, outcomes);
+  const frames = stepsRun.frames.map((f) => f.frame);
   const errors = errorsOf(outcomes);
   const shapes = otherShapes(outcomes);
   const failedAll = frames.length === 0 && errors.length > 0;
@@ -290,9 +368,26 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
     return errorList;
   }
   const { Panel } = plugin;
+  const failed = stepsRun.failed;
   return (
     <div className="panel-content">
       {errorList}
+      {failed === undefined ? null : (
+        <p className="panel-error panel-error--partial" role="alert">
+          <Icon name="alert" />
+          <span>
+            {t("analysis.steps.failed", {
+              n: failed.index + 1,
+              message:
+                reasonText(t, {
+                  reason: failed.error.reason,
+                  params: failed.error.params,
+                  fallback: failed.error.message,
+                }) ?? failed.error.message,
+            })}
+          </span>
+        </p>
+      )}
       {frames.length === 0 ? (
         shapes.length > 0 ? (
           <p className="panel-empty">

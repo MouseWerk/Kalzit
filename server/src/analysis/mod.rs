@@ -364,6 +364,85 @@ mod tests {
         check_steps(steps.as_array().unwrap(), &frames(), "steps")
     }
 
+    fn close(a: &Value, b: &Value) -> bool {
+        match (a.as_f64(), b.as_f64()) {
+            (Some(x), Some(y)) if a.is_number() && b.is_number() => {
+                (x - y).abs() <= 1e-9 * x.abs().max(y.abs()).max(1e-3)
+            }
+            _ => a == b,
+        }
+    }
+
+    fn same_values(got: &[Value], want: &Value) -> bool {
+        let want = want.as_array().unwrap();
+        got.len() == want.len() && got.iter().zip(want).all(|(g, w)| close(g, w))
+    }
+
+    /// The cases both engines share (`conformance.json`); the UI runs them in
+    /// `ui/src/analysis/conformance.test.ts`.
+    #[test]
+    fn conformance_cases() {
+        use crate::shapes::{Field, Frame};
+        let cases: Value = serde_json::from_str(include_str!("conformance.json")).unwrap();
+        let frame = |name: &str| -> Frame {
+            let fields: Vec<Field> = serde_json::from_value(cases["frames"][name].clone()).unwrap();
+            Frame::new(fields).unwrap()
+        };
+        for case in cases["expressions"].as_array().unwrap() {
+            let text = case["expression"].as_str().unwrap();
+            let f = frame(case["frame"].as_str().unwrap());
+            let outcome = expr::parse(text).and_then(|e| expr::compile(&e, f.fields()));
+            match (outcome, case.get("error")) {
+                (Ok(c), None) => {
+                    let got: Vec<Value> = (0..f.rows()).map(|row| c.cell(f.fields(), row)).collect();
+                    assert!(same_values(&got, &case["values"]), "{text}: {got:?}");
+                    let t = serde_json::to_value(c.result.field_type()).unwrap();
+                    assert_eq!(t, case["type"], "{text}");
+                }
+                (Err(e), Some(want)) => {
+                    assert_eq!(e.reason, want["reason"].as_str().unwrap(), "{text}");
+                    assert_eq!(serde_json::to_value(&e.params).unwrap(), want["params"], "{text}");
+                }
+                (got, _) => panic!("{text}: {got:?}"),
+            }
+        }
+        for case in cases["steps"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let frames: Vec<steps::NamedFrame> = case["frames"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(n, source)| steps::NamedFrame { name: n.clone(), frame: frame(source.as_str().unwrap()) })
+                .collect();
+            let list: Vec<Step> = case["steps"].as_array().unwrap().iter().map(|s| parse_step(s).unwrap()).collect();
+            match (steps::run(&list, frames), case.get("error")) {
+                (Ok(out), None) => {
+                    for (frame_name, want) in case["expect"].as_object().unwrap() {
+                        let got = &out.iter().find(|f| &f.name == frame_name).unwrap().frame;
+                        if let Some(names) = want.get("names") {
+                            let got_names: Vec<&str> = got.fields().iter().map(|f| f.name.as_str()).collect();
+                            assert_eq!(json!(got_names), *names, "{name}");
+                        }
+                        for field in want["fields"].as_array().unwrap() {
+                            let f = got.fields().iter().find(|f| f.name == field["name"]).unwrap();
+                            assert_eq!(serde_json::to_value(f.field_type).unwrap(), field["type"], "{name}");
+                            assert!(same_values(&f.values, &field["values"]), "{name} {}: {:?}", f.name, f.values);
+                        }
+                    }
+                    for gone in case.get("gone").and_then(Value::as_array).into_iter().flatten() {
+                        assert!(!out.iter().any(|f| f.name == gone.as_str().unwrap()), "{name}");
+                    }
+                }
+                (Err(failure), Some(want)) => {
+                    assert_eq!(failure.index as u64, want["index"].as_u64().unwrap(), "{name}");
+                    assert_eq!(failure.detail.reason, want["reason"].as_str().unwrap(), "{name}");
+                    assert_eq!(serde_json::to_value(&failure.detail.params).unwrap(), want["params"], "{name}");
+                }
+                (got, _) => panic!("{name}: {got:?}"),
+            }
+        }
+    }
+
     #[test]
     fn every_kind_parses() {
         let steps = check(json!([

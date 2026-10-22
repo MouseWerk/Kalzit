@@ -32,7 +32,7 @@ pub fn encode(frame: &Frame, name: &str, format: ExportFormat, language: ExportL
         ExportFormat::Csv => Ok(File { bytes: csv(frame, language), content_type: "text/csv; charset=utf-8", extension: "csv" }),
         ExportFormat::Json => Ok(File {
             bytes: serde_json::to_vec(&QueryResult::Frame { frame: frame.clone() })
-                .map_err(|e| Detail::new("export.failed", format!("the file could not be written: {e}")))?,
+                .map_err(|e| Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e))?,
             content_type: "application/json",
             extension: "json",
         }),
@@ -110,7 +110,7 @@ fn excel_date(ms: i64) -> Option<f64> {
 }
 
 fn xlsx_error(e: rust_xlsxwriter::XlsxError) -> Detail {
-    Detail::new("export.failed", format!("the file could not be written: {e}"))
+    Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e)
 }
 
 /// One sheet: a bold, frozen header row and typed cells. Numbers, booleans and times are cells of

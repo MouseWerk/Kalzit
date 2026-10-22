@@ -31,6 +31,29 @@ function fill(reason: string, params: Record<string, string>): Record<string, st
   return params;
 }
 
+/** Params of analysis reasons that name a type (`number`, `int64`, ...), shown in the UI's words. */
+const TYPE_PARAMS = ["type", "left", "right", "expected", "found", "first", "second"];
+const TYPE_PHRASES: Record<string, string> = {
+  "a number, text or time": "orderable",
+  "a value": "any",
+};
+
+function typeWords(t: Translate, reason: string, params: Record<string, string>) {
+  if (!reason.startsWith("expression.") && !reason.startsWith("steps.")) {
+    return params;
+  }
+  const out = { ...params };
+  for (const name of TYPE_PARAMS) {
+    const value = out[name];
+    if (value === undefined) continue;
+    const key = `analysis.valueType.${TYPE_PHRASES[value] ?? value}`;
+    if (Object.hasOwn(catalogs.en, key)) {
+      out[name] = t(key as MessageKey);
+    }
+  }
+  return out;
+}
+
 /**
  * The text of a reason: the translation when this UI knows it, else the server's English text,
  * else undefined (the caller falls back to the error code).
@@ -42,7 +65,7 @@ export function reasonText(t: Translate, { reason, params, fallback }: Reason): 
   }
   const key = reasonKey(reason);
   if (key !== undefined) {
-    return t(key, fill(reason, params ?? {}));
+    return t(key, typeWords(t, reason, fill(reason, params ?? {})));
   }
   return fallback === undefined || fallback === "" ? undefined : fallback;
 }

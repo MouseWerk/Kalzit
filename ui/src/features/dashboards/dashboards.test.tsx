@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -426,6 +426,77 @@ describe("dashboard view", () => {
     const two = await waitFor(() => panelOf("Two"));
     expect(await within(two).findByText(/Query B: .*rejected/)).toBeTruthy();
     expect(within(two).getByText("Ada")).toBeTruthy();
+  });
+
+  it("draws a panel after its stored steps and names a failing step", async () => {
+    setup("viewer", [
+      {
+        ...sqlPanel("p-steps", "Scores", "SELECT * FROM scores"),
+        transformations: [
+          { id: "s1", type: "calculate", frame: "A", name: "doubled", expression: "score * 2" },
+        ],
+      },
+      {
+        ...sqlPanel("p-broken", "Broken", "SELECT * FROM scores", 12, 0),
+        transformations: [
+          { id: "s1", type: "calculate", frame: "A", name: "x", expression: "name * 2" },
+        ],
+      },
+    ]);
+    renderApp("/dashboards/d-sales");
+    const scores = await waitFor(() => {
+      const panel = panelOf("Scores");
+      within(panel).getByRole("columnheader", { name: "doubled" });
+      return panel;
+    });
+    expect(within(scores).getByText("6")).toBeTruthy();
+    const broken = await waitFor(() => {
+      const panel = panelOf("Broken");
+      within(panel).getByText(/Step 1:/);
+      return panel;
+    });
+    expect(within(broken).getByRole("alert").textContent).toMatch(
+      /Step 1: “\*” cannot combine text and number/,
+    );
+    // The queries' own result still shows.
+    expect(within(broken).getByText("Ada")).toBeTruthy();
+  });
+
+  it("offers export only with data:export and asks the panel's export route", async () => {
+    setup("viewer");
+    renderApp("/dashboards/d-sales");
+    await waitFor(() => within(panelOf("Orders")).getByText("9,007,199,254,740,993"));
+    expect(screen.queryByRole("button", { name: "Export Orders" })).toBeNull();
+    cleanup();
+
+    const server = setup("editor");
+    const created = vi.fn(() => "blob:kalzit");
+    const revoked = vi.fn();
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, { createObjectURL: created, revokeObjectURL: revoked }),
+    );
+    const clicked = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const { user } = renderApp("/dashboards/d-sales");
+    const orders = await waitFor(() => {
+      const panel = panelOf("Orders");
+      within(panel).getByText("9,007,199,254,740,993");
+      return panel;
+    });
+    await user.click(within(orders).getByRole("button", { name: "Export Orders" }));
+    const dialog = screen.getByRole("dialog", { name: "Export data" });
+    await user.click(within(dialog).getByRole("radio", { name: /German/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(clicked).toHaveBeenCalled());
+    expect(server.areas.dashboards.panelExports).toHaveLength(1);
+    expect(server.areas.dashboards.panelExports[0]).toMatchObject({
+      panelId: "p-orders",
+      body: { format: "csv", language: "de" },
+    });
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "Export data" })).toBeNull();
+    clicked.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it("gives viewers view mode only", async () => {

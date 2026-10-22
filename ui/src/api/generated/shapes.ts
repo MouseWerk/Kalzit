@@ -159,3 +159,23 @@ params?: { [key in string]: string }, };
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
 export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };
+
+export type ExportFormat = "csv" | "json" | "xlsx";
+
+export type ExportLanguage = "de" | "en";
+
+export type ExportRequest = { queries: Array<QueryItem>, timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, 
+/**
+ * Analysis steps, as a panel stores them in `transformations`.
+ */
+steps: unknown[], format: ExportFormat, language: ExportLanguage, 
+/**
+ * The frame to export, by `refId`; the first frame when absent.
+ */
+frame?: string, 
+/**
+ * The file name's base, such as the Explore data source's name.
+ */
+title?: string, };
+
+export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, };

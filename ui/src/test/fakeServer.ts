@@ -41,6 +41,7 @@ const EDIT_PERMISSIONS: Permission[] = [
   "folders:write",
   "datasources:query",
   "datasources:read",
+  "data:export",
 ];
 const DATA_ADMIN_PERMISSIONS: Permission[] = [
   "datasources:write",

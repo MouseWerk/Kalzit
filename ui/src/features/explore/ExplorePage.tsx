@@ -1,5 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
+import { exportQuery } from "../../analysis/api";
+import { ExportDialog } from "../../analysis/ExportDialog";
+import { namedFrames, runPanelSteps } from "../../analysis/panel";
+import { StepsEditor } from "../../analysis/StepsEditor";
+import type { Step } from "../../analysis/steps";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -88,6 +93,9 @@ function Explore({ orgId }: { orgId: string }) {
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
   const [adding, setAdding] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // Analysis steps on the result; they go with the panel when it is added to a dashboard.
+  const [steps, setSteps] = useState<Step[]>([]);
   const tabsId = useId();
 
   // Only the sources the caller may query (the role or a grant).
@@ -168,7 +176,7 @@ function Explore({ orgId }: { orgId: string }) {
       submitted === null
         ? []
         : [{ refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query }],
-    transformations: [],
+    transformations: steps,
     options: {},
     fieldConfig: {},
   };
@@ -246,6 +254,16 @@ function Explore({ orgId }: { orgId: string }) {
                 ))}
               </select>
             </div>
+            {permissions.has("data:export") ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setExporting(true)}
+                disabled={result.data === undefined}
+              >
+                {t("analysis.export.button")}
+              </button>
+            ) : null}
             {permissions.has("dashboards:write") ? (
               <button
                 type="button"
@@ -287,6 +305,41 @@ function Explore({ orgId }: { orgId: string }) {
           </div>
         </section>
       )}
+      {submitted === null ? null : (
+        <StepsEditor
+          steps={steps}
+          onChange={setSteps}
+          refIds={[REF_ID]}
+          frames={namedFrames(outcomes)}
+        />
+      )}
+      {exporting && submitted !== null ? (
+        <ExportDialog
+          frames={runPanelSteps(steps, outcomes).frames.map((f) => f.name)}
+          run={(choice, signal) => {
+            const timeRange = { from: submitted.from, to: submitted.to };
+            return exportQuery(
+              orgId,
+              {
+                queries: [
+                  { refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query },
+                ],
+                timeRange,
+                maxDataPoints: MAX_DATA_POINTS,
+                intervalMs: intervalFor(timeRange),
+                variables: {},
+                steps,
+                format: choice.format,
+                language: choice.language,
+                ...(choice.frame === undefined ? {} : { frame: choice.frame }),
+                title: datasource.name,
+              },
+              signal,
+            );
+          }}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
       {adding && submitted !== null ? (
         <AddToDashboardDialog
           orgId={orgId}

@@ -561,6 +561,56 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table (no `field`) |
 
+### Analysis steps and expressions
+
+The browser shows these at the step; the export routes answer them as `422 validation` with
+`field: steps` (docs/api/analysis.md). `type` params are field types (`time`, `number`, `int64`,
+`string`, `bool`, `json`), `left`, `right`, `expected`, `found`, `first` and `second` in
+`expression.*` are expression types (`number`, `text`, `bool`, `time`, `null`).
+
+| Reason | Params | When |
+|---|---|---|
+| `steps.invalid` | `detail` | the steps sent with an export are not valid steps |
+| `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
+| `steps.field_missing` | `field` | the table has no such field |
+| `steps.field_ambiguous` | `field` | several fields have this name |
+| `steps.field_type` | `field`, `type` | the field's type does not fit the step (a sum of text) |
+| `steps.name_taken` | `name` | the step's result field has the name of an existing field |
+| `steps.no_time_field` | `frame` | a join or comparison by time on a table without a time field |
+| `steps.key_types` | `left`, `right` | join key fields of types that cannot be matched |
+| `steps.too_many_rows` | `max` | the join would make more than `max` rows |
+| `steps.too_many_columns` | `max` | the pivot would make more than `max` fields |
+| `expression.empty` | | the expression is empty |
+| `expression.too_long` | `max` | longer than `max` characters |
+| `expression.too_deep` | `max` | nested deeper than `max` levels |
+| `expression.syntax` | `at` | unexpected input at character `at` |
+| `expression.unclosed` | `at` | a parenthesis, quote or bracket opened at `at` is not closed |
+| `expression.number` | `at` | the number at `at` is too large |
+| `expression.unknown_function` | `name` | no such function |
+| `expression.arguments_exact` | `name`, `count` | the function takes `count` values |
+| `expression.arguments_range` | `name`, `min`, `max` | the function takes `min` to `max` values |
+| `expression.arguments_min` | `name`, `min` | the function takes at least `min` values |
+| `expression.unit` | | `startOf` needs a unit in quotes |
+| `expression.unknown_field` | `field` | the table has no such field |
+| `expression.ambiguous_field` | `field` | several fields have this name |
+| `expression.field_type` | `field`, `type` | a JSON field cannot be used in an expression |
+| `expression.operand_types` | `operator`, `left`, `right` | the operator cannot combine these types |
+| `expression.argument_type` | `name`, `position`, `expected`, `found` | a function's value of the wrong type |
+| `expression.mixed_types` | `name`, `first`, `second` | `if`, `coalesce`, `min` or `max` mix types |
+| `expression.null_compare` | | a comparison with `null`; `isnull(...)` is meant |
+| `expression.no_type` | | the expression is always empty |
+
+### Export (`422 validation`)
+
+| Reason | Params | When |
+|---|---|---|
+| `export.no_queries` | | the panel has no query |
+| `export.frame_missing` | `frame` | no table with this reference id after the steps (`field: frame`) |
+| `export.shape_unsupported` | `shape` | documents and graphs cannot be exported yet |
+| `export.too_many_rows` | `max` | Excel takes at most `max` rows |
+| `export.too_many_columns` | `max` | Excel takes at most `max` columns |
+| `export.failed` | `detail` | the file could not be written |
+
 ### Sources and the server (`datasource_error` unless noted)
 
 | Reason | Params | When |
