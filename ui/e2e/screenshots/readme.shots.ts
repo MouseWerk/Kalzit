@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
-import { baseUrl } from "../support/api";
+import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
 import { fillQuery } from "../support/ui";
 import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
@@ -43,7 +43,41 @@ async function openPage(browser: Browser, colorScheme: "light" | "dark" = "light
   const page = await context.newPage();
   // Date.now stands still at that moment; timers keep running, so the app works as usual.
   await page.clock.setFixedTime(SCREENSHOT_NOW);
+  // The server stamps sessions, memberships and saves with the real time of the run; the
+  // pictures show them at the screenshot moment instead.
+  for (const pattern of [
+    /\/api\/me\/sessions(\?|$)/,
+    /\/api\/orgs\/[^/]+\/(members|dashboards)(\?|$)/,
+  ]) {
+    await context.route(pattern, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: atScreenshotTime(body, Date.now()) });
+    });
+  }
   return page;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Moves every timestamp in an API answer (Unix ms, as the API writes times) to the screenshot
+ * moment, keeping whole days apart: "signed in now, expires in 30 days" stays so.
+ */
+function atScreenshotTime(value: unknown, realNow: number): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => atScreenshotTime(item, realNow));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, atScreenshotTime(item, realNow)]),
+    );
+  }
+  const isTimestamp =
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    Math.abs(value - realNow) < 400 * DAY_MS;
+  return isTimestamp ? SCREENSHOT_NOW + Math.round((value - realNow) / DAY_MS) * DAY_MS : value;
 }
 
 async function signIn(page: Page): Promise<void> {
@@ -91,13 +125,14 @@ test("sign-in", async ({ browser }) => {
   await page.context().close();
 });
 
-test("start page", async ({ browser }) => {
+// The start page is still the placeholder in this version (always the empty state, whatever
+// exists); the list of dashboards stands in for it until the start page shows content.
+test("dashboards", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);
-  await expect(
-    page.getByRole("heading", { name: t("home.welcome", { name: DEMO_OWNER.name }) }),
-  ).toBeVisible();
-  await shoot(page, "start");
+  await page.goto("/dashboards");
+  await expect(page.getByRole("link", { name: demo.dashboardTitle })).toBeVisible();
+  await shoot(page, "dashboards");
   await page.context().close();
 });
 
@@ -158,9 +193,19 @@ test("administration, members", async ({ browser }) => {
 test("account", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);
+  // Every picture signed in once; two sessions (this browser and one other) look like real use.
+  expect((await page.request.post("/api/me/sessions/revoke-others")).ok()).toBe(true);
+  const other = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
   await page.goto("/account");
   await expect(page.getByRole("heading", { name: t("admin.account.title") })).toBeVisible();
-  await expect(page.getByRole("list", { name: t("admin.account.sessions") })).toBeVisible();
+  const sessions = page.getByRole("list", { name: t("admin.account.sessions") });
+  await expect(sessions).toBeVisible();
+  // Scrolled so the sessions list is whole, not cut at the bottom edge.
+  await page
+    .getByRole("heading", { name: t("admin.account.sessions") })
+    .evaluate((heading) => heading.scrollIntoView({ block: "start" }));
+  await expect(sessions.getByRole("listitem")).toHaveCount(2);
   await shoot(page, "account");
+  await other.dispose();
   await page.context().close();
 });

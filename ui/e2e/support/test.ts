@@ -45,8 +45,22 @@ const WEBKIT_NOTICES_PER_DOCUMENT = 3;
  * notice (CodeMirror's element, the WebKit inspector's `body {}`) and records any other.
  */
 function recordStyleWrites(): void {
-  const log = { doc: Math.random().toString(36).slice(2), permitted: 0, foreign: [] as string[] };
+  const log = {
+    doc: Math.random().toString(36).slice(2),
+    permitted: 0,
+    foreign: [] as string[],
+    refusedAttributes: [] as string[],
+  };
   (window as unknown as { __kalzitStyles: typeof log }).__kalzitStyles = log;
+  // A style attribute the policy refused keeps its text but applies no declaration. Writes
+  // through the CSSOM (element.style, as React does) are allowed and always apply.
+  const checkAttribute = (element: Element) => {
+    const text = element.getAttribute("style")?.trim() ?? "";
+    const applied = (element as HTMLElement).style?.length ?? 0;
+    if (text !== "" && applied === 0 && element.closest('[class*="cm-"]') === null) {
+      log.refusedAttributes.push(`<${element.tagName.toLowerCase()} style="${text.slice(0, 60)}">`);
+    }
+  };
   const classify = (style: HTMLStyleElement) => {
     const text = (style.textContent ?? "").trim();
     if (text.includes(".cm-") || text === "body {}") {
@@ -57,6 +71,10 @@ function recordStyleWrites(): void {
   };
   new MutationObserver((records) => {
     for (const record of records) {
+      if (record.type === "attributes") {
+        checkAttribute(record.target as Element);
+        continue;
+      }
       // New text in a style element: the element itself, or a text node inside it.
       const owner = record.target instanceof Text ? record.target.parentElement : record.target;
       if (owner instanceof HTMLStyleElement) {
@@ -67,15 +85,30 @@ function recordStyleWrites(): void {
         if (node instanceof HTMLStyleElement) {
           classify(node);
         }
+        // Markup inserted with style attributes (innerHTML) brings no attribute record.
+        if (node instanceof Element) {
+          for (const styled of [node, ...node.querySelectorAll("[style]")]) {
+            if (styled.hasAttribute("style")) {
+              checkAttribute(styled);
+            }
+          }
+        }
       }
     }
-  }).observe(document, { childList: true, characterData: true, subtree: true });
+  }).observe(document, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["style"],
+  });
 }
 
 interface StyleLog {
   doc: string;
   permitted: number;
   foreign: string[];
+  refusedAttributes: string[];
 }
 
 function styleLog(page: Page): Promise<StyleLog | null> {
@@ -151,6 +184,10 @@ class Guard {
   private styleProblem(log: StyleLog | null): string | null {
     if (log === null) {
       return "the page's style writes could not be read";
+    }
+    // A refused style attribute fails whatever the budget: nothing in the app may write one.
+    if (log.refusedAttributes.length > 0) {
+      return `refused style attribute: ${log.refusedAttributes.join(" | ")}`;
     }
     if (log.foreign.length > 0) {
       return `inline style that is not CodeMirror's: ${log.foreign.join(" | ")}`;

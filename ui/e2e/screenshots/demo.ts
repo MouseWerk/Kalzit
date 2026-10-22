@@ -91,5 +91,29 @@ export async function seedDemo(setupToken: string): Promise<Demo> {
       },
     ],
   });
+  // A few more dashboards, so the list looks like one in use.
+  for (const [title, region] of [
+    ["Region North", "Nord"],
+    ["Region West", "West"],
+    ["Weekly review", "Süd"],
+  ] as const) {
+    await owner.createDashboard({
+      schemaVersion: 1,
+      title,
+      timeRange: { from: "now-6h", to: "now" },
+      variables: [],
+      panels: [
+        {
+          id: "trend",
+          type: "timeseries",
+          title: `Sales, ${region}`,
+          grid: { x: 0, y: 0, w: 24, h: 9 },
+          targets: target(
+            `SELECT ts AS time, amount FROM sales WHERE region = '${region}' AND $__timeFilter(ts) ORDER BY ts`,
+          ),
+        },
+      ],
+    });
+  }
   return { owner, sourceId, sourceName, dashboardId, dashboardTitle };
 }

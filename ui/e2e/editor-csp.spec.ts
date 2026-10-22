@@ -83,3 +83,30 @@ test("the query editor is styled under the server's Content-Security-Policy", as
     page.getByRole("region", { name: t("explore.result") }).locator(".ts__plot"),
   ).toBeVisible();
 });
+
+/**
+ * Probes that the console guard's allowance for CodeMirror's refused style stays narrow: any
+ * other inline style the policy refuses fails the test, in every engine. Expected to fail.
+ */
+const REFUSED_STYLES = {
+  "a <style> element": () => {
+    const style = document.createElement("style");
+    style.textContent = "body { color: red; }";
+    document.head.append(style);
+  },
+  "a style attribute": () => {
+    document.querySelector("main")?.setAttribute("style", "color: red");
+  },
+} as const;
+
+for (const [name, inject] of Object.entries(REFUSED_STYLES)) {
+  test(`the console guard catches ${name} on an admin page`, async ({ page }) => {
+    test.fail(true, "the probe adds an inline style the policy refuses, on purpose");
+    await signInOwner(page);
+    await page.goto("/admin/members");
+    await expect(page.getByRole("heading", { name: t("admin.members.title") })).toBeVisible();
+    await page.evaluate(inject);
+    // Gives the browser time to report the refusal before the guard checks.
+    await page.waitForTimeout(500);
+  });
+}
