@@ -10,8 +10,8 @@ import { useEscapeLayer } from "../../lib/layers";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
-import { AccessButton } from "./accessIntegration";
 import { AnnotationDialog } from "./AnnotationDialog";
+import { AccessButton } from "./accessIntegration";
 import { type DashboardMark, useDashboardAnnotations } from "./annotations";
 import {
   createDashboard,

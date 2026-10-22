@@ -44,13 +44,14 @@ export function inlineLibraryPanels(
       if (linked === undefined) {
         return panel;
       }
-      const { libraryPanelId: _id, ...place } = panel;
+      // The library's content in the panel's place (id, grid, row and repeat).
+      const { libraryPanelId: _id, rowId: _row, repeat: _repeat, ...content } = linked.model;
       return {
-        ...linked.model,
-        ...place,
+        ...content,
         id: panel.id,
         grid: panel.grid,
-        targets: linked.model.targets,
+        ...(panel.rowId === undefined ? {} : { rowId: panel.rowId }),
+        ...(panel.repeat === undefined ? {} : { repeat: panel.repeat }),
       };
     }),
   };
