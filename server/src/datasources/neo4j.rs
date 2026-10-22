@@ -200,10 +200,10 @@ async fn lease<'p>(flavor: Flavor, conn: &Connection, pool: &'p Pool) -> Result<
 
 async fn open(flavor: Flavor, conn: &Connection) -> Result<Opened, SourceError> {
     let s: Settings = conn.settings_as()?;
-    let tls = s.encrypt.unwrap_or(false).then(|| bolt::Tls {
-        ca_pem: s.ca_cert.clone(),
-        trust_any: s.trust_server_certificate.unwrap_or(false),
-    });
+    let tls = s
+        .encrypt
+        .unwrap_or(false)
+        .then(|| bolt::Tls { ca_pem: s.ca_cert.clone(), trust_any: s.trust_server_certificate.unwrap_or(false) });
     let opts = bolt::ConnectOptions {
         host: &s.host,
         port: s.port.unwrap_or(7687) as u16,
@@ -289,11 +289,12 @@ async fn read_all(c: &mut BoltConn, db: Option<&str>, query: &str) -> Result<Vec
     c.run(query, Vec::new()).await?;
     let mut rows = Vec::new();
     loop {
-        match c.pull(BATCH, MAX_MESSAGE, |r, _| {
-            rows.push(r);
-            rows.len() <= MAX_SCHEMA_NAMES
-        })
-        .await?
+        match c
+            .pull(BATCH, MAX_MESSAGE, |r, _| {
+                rows.push(r);
+                rows.len() <= MAX_SCHEMA_NAMES
+            })
+            .await?
         {
             PullEnd::More => continue,
             PullEnd::Done => break,
@@ -333,8 +334,12 @@ fn agent_version(agent: &str) -> String {
 }
 
 fn texts(rows: &[Vec<Bv>]) -> Vec<String> {
-    let mut out: Vec<String> =
-        rows.iter().filter_map(|r| r.first().and_then(Bv::as_str).map(String::from)).collect::<BTreeSet<_>>().into_iter().collect();
+    let mut out: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.first().and_then(Bv::as_str).map(String::from))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     out.truncate(MAX_SCHEMA_NAMES);
     out
 }
@@ -360,9 +365,8 @@ impl DataSourcePlugin for GraphDb {
         super::check_pem("caCert", s.ca_cert.as_deref())?;
         for (field, value) in [("maxNodes", s.max_nodes), ("maxEdges", s.max_edges)] {
             if value == Some(0) {
-                return Err(
-                    FieldError::new(field, "settings.out_of_range", format!("{field} must be at least 1")).with("min", 1)
-                );
+                return Err(FieldError::new(field, "settings.out_of_range", format!("{field} must be at least 1"))
+                    .with("min", 1));
             }
         }
         Ok(())
@@ -521,7 +525,9 @@ fn parameters(names: &BTreeSet<String>, req: &SourceQuery, utc: bool) -> Result<
             "__timeToMs" => Bv::Int(req.range.to),
             "__interval_ms" => Bv::Int(req.interval_ms as i64),
             m if m.starts_with("__") => {
-                return Err(SourceError::rejected("cypher.macro_unknown", format!("unknown macro ${m}")).with("name", m));
+                return Err(
+                    SourceError::rejected("cypher.macro_unknown", format!("unknown macro ${m}")).with("name", m)
+                );
             }
             var => {
                 let value = req.variables.get(var).ok_or_else(|| {
@@ -593,7 +599,11 @@ fn iso(t: chrono::NaiveDateTime) -> String {
 fn offset_text(secs: i64) -> String {
     let sign = if secs < 0 { '-' } else { '+' };
     let a = secs.unsigned_abs();
-    if a % 60 == 0 { format!("{sign}{:02}:{:02}", a / 3600, a % 3600 / 60) } else { format!("{sign}{:02}:{:02}:{:02}", a / 3600, a % 3600 / 60, a % 60) }
+    if a.is_multiple_of(60) {
+        format!("{sign}{:02}:{:02}", a / 3600, a % 3600 / 60)
+    } else {
+        format!("{sign}{:02}:{:02}:{:02}", a / 3600, a % 3600 / 60, a % 60)
+    }
 }
 
 fn time_of_day(nanos: i64) -> String {
@@ -651,7 +661,11 @@ fn temporal(tag: u8, f: &[Bv]) -> Option<Value> {
         }
         0x45 => {
             let (months, days, secs, nanos) = (int(f, 0)?, int(f, 1)?, int(f, 2)?, int(f, 3)?);
-            let frac = if nanos == 0 { String::new() } else { format!(".{}", format!("{:09}", nanos.abs()).trim_end_matches('0')) };
+            let frac = if nanos == 0 {
+                String::new()
+            } else {
+                format!(".{}", format!("{:09}", nanos.abs()).trim_end_matches('0'))
+            };
             typed("duration", format!("P{months}M{days}DT{secs}{frac}S"))
         }
         0x58 | 0x59 => {
@@ -697,8 +711,11 @@ fn element_id(f: &[Bv], text_at: usize, int_at: usize) -> String {
 }
 
 fn to_node(f: &[Bv], utc: bool) -> Node {
-    let labels =
-        f.get(1).and_then(Bv::as_list).map(|l| l.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+    let labels = f
+        .get(1)
+        .and_then(Bv::as_list)
+        .map(|l| l.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     Node { id: element_id(f, 3, 0), labels, properties: props(f.get(2), utc) }
 }
 
@@ -925,8 +942,7 @@ impl Collector {
             }
             let mut graph = self.graph.finish();
             if self.size_cut && graph.truncated.is_none() {
-                graph.truncated =
-                    Some(crate::shapes::Truncated { limit: 0, reason: Some("graph.size_limit".into()) });
+                graph.truncated = Some(crate::shapes::Truncated { limit: 0, reason: Some("graph.size_limit".into()) });
             }
             return QueryResult::Graph { graph };
         }
@@ -934,7 +950,8 @@ impl Collector {
         if self.mode.is_none() {
             rows = std::mem::take(&mut self.pending);
         }
-        let types: Vec<FieldType> = (0..self.fields.len()).map(|i| column_type(rows.iter().filter_map(|r| r.get(i)))).collect();
+        let types: Vec<FieldType> =
+            (0..self.fields.len()).map(|i| column_type(rows.iter().filter_map(|r| r.get(i)))).collect();
         let columns = self.fields.iter().zip(&types).map(|(name, t)| Column::new(name.clone(), Some(*t))).collect();
         // The buffered bytes go back; the frame takes what its rows need.
         drop(std::mem::replace(&mut self.charge, self.budget.charge()));
@@ -1006,7 +1023,8 @@ mod tests {
             range: TimeRange { from: 1_800_000_000_123, to: 1_800_003_600_000 },
             interval_ms: 15_000,
             max_data_points: None,
-            variables: serde_json::from_value(json!({ "land": "Österreich", "ids": [1, 2], "doc": { "a": 1 } })).unwrap(),
+            variables: serde_json::from_value(json!({ "land": "Österreich", "ids": [1, 2], "doc": { "a": 1 } }))
+                .unwrap(),
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows, budget: ResponseBudget::new(1 << 20) },
         }
@@ -1060,14 +1078,23 @@ mod tests {
             v(0x69, vec![Bv::Int(1_704_103_200), Bv::Int(0), Bv::String("Europe/Berlin".into())]),
             json!({ "$type": "dateTime", "value": "2024-01-01T10:00:00Z", "zone": "Europe/Berlin" })
         );
-        assert_eq!(v(0x74, vec![Bv::Int(3_661_000_000_001)]), json!({ "$type": "localTime", "value": "01:01:01.000000001" }));
+        assert_eq!(
+            v(0x74, vec![Bv::Int(3_661_000_000_001)]),
+            json!({ "$type": "localTime", "value": "01:01:01.000000001" })
+        );
         assert_eq!(v(0x54, vec![Bv::Int(0), Bv::Int(-19_800)]), json!({ "$type": "time", "value": "00:00:00-05:30" }));
-        assert_eq!(v(0x45, vec![Bv::Int(14), Bv::Int(3), Bv::Int(5), Bv::Int(500_000_000)]), json!({ "$type": "duration", "value": "P14M3DT5.5S" }));
+        assert_eq!(
+            v(0x45, vec![Bv::Int(14), Bv::Int(3), Bv::Int(5), Bv::Int(500_000_000)]),
+            json!({ "$type": "duration", "value": "P14M3DT5.5S" })
+        );
         assert_eq!(
             v(0x58, vec![Bv::Int(4326), Bv::Float(13.4), Bv::Float(52.5)]),
             json!({ "$type": "point", "srid": 4326, "x": 13.4, "y": 52.5 })
         );
-        assert_eq!(to_json(&Bv::Int(9_007_199_254_740_993), true), json!({ "$type": "int64", "value": "9007199254740993" }));
+        assert_eq!(
+            to_json(&Bv::Int(9_007_199_254_740_993), true),
+            json!({ "$type": "int64", "value": "9007199254740993" })
+        );
         assert_eq!(to_json(&Bv::Bytes(vec![1, 2]), true), json!({ "$type": "binary", "value": "AQI=" }));
         assert_eq!(time_ms(&Bv::Struct(0x46, vec![Bv::Int(7200), Bv::Int(0), Bv::Int(7200)])), Some(0));
         assert_eq!(agent_version("Neo4j/5.26.0"), "5.26.0");
@@ -1089,8 +1116,10 @@ mod tests {
                 Bv::String("4:x:2".into()),
             ],
         );
-        let unbound =
-            Bv::Struct(UNBOUND_REL, vec![Bv::Int(9), Bv::String("KENNT".into()), Bv::Map(vec![]), Bv::String("5:x:9".into())]);
+        let unbound = Bv::Struct(
+            UNBOUND_REL,
+            vec![Bv::Int(9), Bv::String("KENNT".into()), Bv::Map(vec![]), Bv::String("5:x:9".into())],
+        );
         // b <-[KENNT]- a, walked from b: the relationship index is negative.
         let path = Bv::Struct(
             PATH,
@@ -1131,7 +1160,10 @@ mod tests {
             ],
             5
         ));
-        assert!(!c.push(vec![Bv::Int(2), Bv::Int(2), Bv::Null, Bv::String("x".into()), Bv::Null], 5), "the limit is reached");
+        assert!(
+            !c.push(vec![Bv::Int(2), Bv::Int(2), Bv::Null, Bv::String("x".into()), Bv::Null], 5),
+            "the limit is reached"
+        );
         let QueryResult::Frame { frame } = c.finish("RETURN 1".into()) else { panic!("a frame") };
         let types: Vec<FieldType> = frame.fields().iter().map(|f| f.field_type).collect();
         assert_eq!(types, [FieldType::Int64, FieldType::Number, FieldType::Time, FieldType::Json, FieldType::String]);
@@ -1157,8 +1189,14 @@ mod tests {
     fn settings_are_checked() {
         let kind = memgraph();
         assert!(kind.validate_settings(&json!({ "host": "graph.intern", "allowWriteCapableUser": true })).is_ok());
-        assert_eq!(kind.validate_settings(&json!({ "host": "graph.intern", "maxNodes": 0 })).unwrap_err().field, "maxNodes");
-        assert_eq!(neo4j().validate_settings(&json!({ "host": "x", "allowWriteCapableUser": true })).unwrap_err().field, "settings");
+        assert_eq!(
+            kind.validate_settings(&json!({ "host": "graph.intern", "maxNodes": 0 })).unwrap_err().field,
+            "maxNodes"
+        );
+        assert_eq!(
+            neo4j().validate_settings(&json!({ "host": "x", "allowWriteCapableUser": true })).unwrap_err().field,
+            "settings"
+        );
         assert!(kind.settings.iter().any(|f| f.name == "allowWriteCapableUser" && f.target));
     }
 }

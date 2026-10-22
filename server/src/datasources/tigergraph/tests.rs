@@ -76,7 +76,10 @@ async fn user(Path(name): Path<String>) -> Response {
                 "roles": { "social": ["querywriter"] },
                 "privileges": { "social": { "privileges": ["READ_DATA", "CREATE_DATA", "DELETE_DATA"] } } }] }),
         ),
-        "chef" => json_reply(200, json!({ "error": false, "results": [{ "name": "chef", "isSuperUser": true, "roles": { "1": ["superuser"] } }] })),
+        "chef" => json_reply(
+            200,
+            json!({ "error": false, "results": [{ "name": "chef", "isSuperUser": true, "roles": { "1": ["superuser"] } }] }),
+        ),
         // Not allowed to read its own record: Kalzit asks with SHOW USER.
         _ => json_reply(403, json!({ "error": true, "message": "Permission denied: READ_USER" })),
     }
@@ -117,7 +120,9 @@ const NACHBARN: &str = "CREATE QUERY nachbarn(VERTEX<Person> p, INT tiefe, SET<S
 async fn query_text(Path(name): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> Response {
     assert_eq!(q.get("graph").map(String::as_str), Some("social"));
     match name.as_str() {
-        "nachbarn" => json_reply(200, json!({ "error": false, "results": { "name": "nachbarn", "queryContent": NACHBARN } })),
+        "nachbarn" => {
+            json_reply(200, json!({ "error": false, "results": { "name": "nachbarn", "queryContent": NACHBARN } }))
+        }
         "loescht" => json_reply(
             200,
             json!({ "error": false, "results": { "queryContent": "CREATE QUERY loescht() FOR GRAPH social { DELETE s FROM Person:s; }" } }),
@@ -153,13 +158,17 @@ async fn restpp_query(
 ) -> Response {
     assert_eq!(graph, "social");
     let valid = s.valid_token.lock().unwrap().clone();
-    let bearer = h.get("authorization").and_then(|v| v.to_str().ok()).map(|v| v.trim_start_matches("Bearer ").to_string());
+    let bearer =
+        h.get("authorization").and_then(|v| v.to_str().ok()).map(|v| v.trim_start_matches("Bearer ").to_string());
     if valid.is_none() || bearer != valid {
         return json_reply(401, json!({ "error": true, "message": "token expired" }));
     }
     assert!(h.get("gsql-timeout").is_some());
     *s.last_query.lock().unwrap() = raw.0.unwrap_or_default();
-    json_reply(200, json!({ "error": false, "message": "", "version": { "edition": "enterprise" }, "results": results_for(&name) }))
+    json_reply(
+        200,
+        json!({ "error": false, "message": "", "version": { "edition": "enterprise" }, "results": results_for(&name) }),
+    )
 }
 
 async fn interpret(State(s): State<S>, h: AxHeaders, raw: axum::extract::RawQuery, body: String) -> Response {
@@ -173,7 +182,10 @@ async fn interpret(State(s): State<S>, h: AxHeaders, raw: axum::extract::RawQuer
 }
 
 async fn version() -> Response {
-    json_reply(200, json!({ "error": false, "message": "\nTigerGraph RESTPP:\n --- Version --- \nTigerGraph version: 4.1.2\nEdition: enterprise\n" }))
+    json_reply(
+        200,
+        json!({ "error": false, "message": "\nTigerGraph RESTPP:\n --- Version --- \nTigerGraph version: 4.1.2\nEdition: enterprise\n" }),
+    )
 }
 
 async fn queries() -> Response {
@@ -212,7 +224,8 @@ async fn connection(addr: std::net::SocketAddr, user: &str, extra: Value) -> Con
     let policy = Arc::new(TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]));
     let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
     let own = Arc::new(OwnDatabase::new(db, "sqlite::memory:"));
-    let secrets: BTreeMap<String, Zeroizing<String>> = [("password".to_string(), Zeroizing::new("geheim".to_string()))].into();
+    let secrets: BTreeMap<String, Zeroizing<String>> =
+        [("password".to_string(), Zeroizing::new("geheim".to_string()))].into();
     Connection::new("ds", settings, secrets, policy, own)
 }
 
@@ -308,7 +321,10 @@ async fn interpreted_queries_are_checked_and_sent_with_basic_auth() {
     let text = "INTERPRET QUERY (STRING name, DATETIME ab) FOR GRAPH social { SumAccum<INT> @@total; \
                 S = {Person.*}; R = SELECT s FROM S:s WHERE s.name == name ACCUM @@total += 1; PRINT @@total; }";
     let r = TigerGraph
-        .query(&conn, req(json!({ "gsql": text, "params": { "ab": 1_800_000_000_000_i64 } }), json!({ "name": "Ana Ö" })))
+        .query(
+            &conn,
+            req(json!({ "gsql": text, "params": { "ab": 1_800_000_000_000_i64 } }), json!({ "name": "Ana Ö" })),
+        )
         .await
         .unwrap();
     assert!(matches!(r, QueryResult::Frame { .. }));
@@ -322,7 +338,10 @@ async fn interpreted_queries_are_checked_and_sent_with_basic_auth() {
     ] {
         assert_eq!(reason(TigerGraph.query(&conn, req(json!({ "gsql": gsql }), json!({}))).await), why, "{gsql}");
     }
-    assert_eq!(reason(TigerGraph.query(&conn, req(json!({ "gsql": "x", "installed": "y" }), json!({}))).await), "query.invalid_form");
+    assert_eq!(
+        reason(TigerGraph.query(&conn, req(json!({ "gsql": "x", "installed": "y" }), json!({}))).await),
+        "query.invalid_form"
+    );
 }
 
 #[tokio::test]
@@ -353,7 +372,8 @@ async fn health_and_schema() {
     assert!(h.ok, "{h:?}");
     assert_eq!(h.detail.params["version"], "4.1.2");
     assert_eq!(h.detail.params["edition"], "enterprise");
-    let SourceSchema::Graph { labels, edge_types, property_keys, queries } = TigerGraph.schema(&conn).await.unwrap() else {
+    let SourceSchema::Graph { labels, edge_types, property_keys, queries } = TigerGraph.schema(&conn).await.unwrap()
+    else {
         panic!("a graph schema")
     };
     assert_eq!(labels, ["Person"]);
@@ -381,13 +401,23 @@ fn rights_and_parameters() {
     assert_eq!(rights_from_show_user(show, "social").unwrap().excess(), ["designer"]);
     assert!(rights_from_show_user("nothing here", "social").is_none());
     let mut out = Vec::new();
-    typed_pairs("v", "v", &ParamType::Many(Box::new(ParamType::Vertex(None))), &json!([{ "type": "Person", "id": 7 }]), &mut out)
-        .unwrap();
+    typed_pairs(
+        "v",
+        "v",
+        &ParamType::Many(Box::new(ParamType::Vertex(None))),
+        &json!([{ "type": "Person", "id": 7 }]),
+        &mut out,
+    )
+    .unwrap();
     assert_eq!(out, [("v[0]".to_string(), "7".to_string()), ("v[0].type".to_string(), "Person".to_string())]);
     assert!(typed_pairs("u", "u", &ParamType::Uint, &json!(-1), &mut Vec::new()).is_err());
     assert!(typed_pairs("b", "b", &ParamType::Bool, &json!("ja"), &mut Vec::new()).is_err());
     assert_eq!(version_from("product release_3.10.1_02-01-2024"), Some("3.10.1".into()));
     assert!(kind().validate_settings(&json!({ "url": "http://tg", "graph": "a/b", "user": "u" })).is_err());
     assert!(kind().validate_settings(&json!({ "url": "http://tg", "graph": "g", "user": "u/../x" })).is_err());
-    assert!(kind().validate_settings(&json!({ "url": "http://tg", "graph": "g", "user": "u", "approvedQueries": "a;b" })).is_err());
+    assert!(
+        kind()
+            .validate_settings(&json!({ "url": "http://tg", "graph": "g", "user": "u", "approvedQueries": "a;b" }))
+            .is_err()
+    );
 }

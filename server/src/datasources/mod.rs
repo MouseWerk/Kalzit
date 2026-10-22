@@ -127,8 +127,13 @@ pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SourceSchema {
-    Tables { tables: Vec<Table> },
-    Metrics { metrics: Vec<String>, labels: Vec<String> },
+    Tables {
+        tables: Vec<Table>,
+    },
+    Metrics {
+        metrics: Vec<String>,
+        labels: Vec<String>,
+    },
     /// Graph sources: node labels (TigerGraph: vertex types), relationship (edge) types, property
     /// keys, and for TigerGraph the installed queries.
     Graph {

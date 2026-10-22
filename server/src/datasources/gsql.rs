@@ -28,34 +28,168 @@ use super::detail::Detail;
 
 /// Built-in functions that only compute. Compared without regard to case.
 const FUNCTIONS: &[&str] = &[
-    "abs", "acos", "asin", "atan", "atan2", "avg", "ceil", "coalesce", "cos", "cosh", "count", "datetime_add",
-    "datetime_diff", "datetime_format", "datetime_sub", "datetime_to_epoch", "day", "epoch_to_datetime", "exp",
-    "float_to_int", "floor", "fmod", "getvid", "hour", "ldexp", "length", "log", "log10", "lower", "ltrim", "max",
-    "min", "minute", "month", "now", "parse_json_array", "parse_json_object", "pow", "rand", "round", "rtrim",
-    "second", "sin", "sinh", "sqrt", "str_to_int", "substr", "sum", "tan", "tanh", "to_datetime", "to_float",
-    "to_int", "to_string", "to_vertex", "to_vertex_set", "trim", "upper", "year",
+    "abs",
+    "acos",
+    "asin",
+    "atan",
+    "atan2",
+    "avg",
+    "ceil",
+    "coalesce",
+    "cos",
+    "cosh",
+    "count",
+    "datetime_add",
+    "datetime_diff",
+    "datetime_format",
+    "datetime_sub",
+    "datetime_to_epoch",
+    "day",
+    "epoch_to_datetime",
+    "exp",
+    "float_to_int",
+    "floor",
+    "fmod",
+    "getvid",
+    "hour",
+    "ldexp",
+    "length",
+    "log",
+    "log10",
+    "lower",
+    "ltrim",
+    "max",
+    "min",
+    "minute",
+    "month",
+    "now",
+    "parse_json_array",
+    "parse_json_object",
+    "pow",
+    "rand",
+    "round",
+    "rtrim",
+    "second",
+    "sin",
+    "sinh",
+    "sqrt",
+    "str_to_int",
+    "substr",
+    "sum",
+    "tan",
+    "tanh",
+    "to_datetime",
+    "to_float",
+    "to_int",
+    "to_string",
+    "to_vertex",
+    "to_vertex_set",
+    "trim",
+    "upper",
+    "year",
 ];
 
 /// Methods of accumulators, containers, vertices and edges that only read or change the query's
 /// own accumulators. `setAttr` and the like are not here.
 const METHODS: &[&str] = &[
-    "clear", "contains", "containskey", "edgeattribute", "filter", "get", "getattr", "getordefault", "insert",
-    "isdirected", "keys", "neighborattribute", "neighbors", "outdegree", "pop", "remove", "resize", "size", "top",
-    "type", "update", "values",
+    "clear",
+    "contains",
+    "containskey",
+    "edgeattribute",
+    "filter",
+    "get",
+    "getattr",
+    "getordefault",
+    "insert",
+    "isdirected",
+    "keys",
+    "neighborattribute",
+    "neighbors",
+    "outdegree",
+    "pop",
+    "remove",
+    "resize",
+    "size",
+    "top",
+    "type",
+    "update",
+    "values",
 ];
 
 /// Words that end a query's checks wherever they appear outside strings.
 const WRITES: &[&str] = &["INSERT", "UPDATE", "DELETE"];
 const STATEMENTS: &[&str] = &[
-    "CREATE", "ALTER", "DROP", "RUN", "INSTALL", "GRANT", "REVOKE", "CLEAR", "USE", "LOAD", "EXPORT", "IMPORT",
-    "INTERPRET", "SCHEMA_CHANGE", "BEGIN", "COMMIT", "ABORT",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "RUN",
+    "INSTALL",
+    "GRANT",
+    "REVOKE",
+    "CLEAR",
+    "USE",
+    "LOAD",
+    "EXPORT",
+    "IMPORT",
+    "INTERPRET",
+    "SCHEMA_CHANGE",
+    "BEGIN",
+    "COMMIT",
+    "ABORT",
 ];
 /// Keywords that may stand before `(` without being a function.
-const EXPR_KEYWORDS: &[&str] =
-    &["AND", "OR", "NOT", "IN", "IS", "WHEN", "THEN", "ELSE", "CASE", "ANY", "ALL", "DISTINCT", "LIKE", "BETWEEN", "AS", "FROM", "WHERE", "HAVING", "BY", "ON", "ACCUM", "POST_ACCUM", "LIMIT", "SAMPLE", "UNION", "INTERSECT", "MINUS", "DO", "EXISTS", "RANGE", "TRUE", "FALSE", "NULL", "PER"];
+const EXPR_KEYWORDS: &[&str] = &[
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "IS",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "CASE",
+    "ANY",
+    "ALL",
+    "DISTINCT",
+    "LIKE",
+    "BETWEEN",
+    "AS",
+    "FROM",
+    "WHERE",
+    "HAVING",
+    "BY",
+    "ON",
+    "ACCUM",
+    "POST_ACCUM",
+    "LIMIT",
+    "SAMPLE",
+    "UNION",
+    "INTERSECT",
+    "MINUS",
+    "DO",
+    "EXISTS",
+    "RANGE",
+    "TRUE",
+    "FALSE",
+    "NULL",
+    "PER",
+];
 const TYPES: &[&str] = &[
-    "INT", "UINT", "FLOAT", "DOUBLE", "STRING", "BOOL", "DATETIME", "VERTEX", "EDGE", "JSONOBJECT", "JSONARRAY",
-    "SET", "BAG", "LIST", "MAP",
+    "INT",
+    "UINT",
+    "FLOAT",
+    "DOUBLE",
+    "STRING",
+    "BOOL",
+    "DATETIME",
+    "VERTEX",
+    "EDGE",
+    "JSONOBJECT",
+    "JSONARRAY",
+    "SET",
+    "BAG",
+    "LIST",
+    "MAP",
 ];
 const ASSIGN: &[&str] = &["=", "+=", "-=", "*=", "/=", "%=", "|=", "&="];
 const SELECT_CLAUSES: &[&str] =
@@ -79,8 +213,8 @@ fn parse_error(message: impl Into<String>) -> Detail {
 }
 
 const SYMS: &[&str] = &[
-    "==", "!=", "<>", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "->", "@@", "..", "(", ")", "[", "]",
-    "{", "}", "<", ">", "=", "+", "-", "*", "/", "%", ",", ";", ".", ":", "@", "|", "&", "^", "~", "!", "?", "'",
+    "==", "!=", "<>", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "->", "@@", "..", "(", ")", "[", "]", "{",
+    "}", "<", ">", "=", "+", "-", "*", "/", "%", ",", ";", ".", ":", "@", "|", "&", "^", "~", "!", "?", "'",
 ];
 
 fn lex(q: &str) -> Result<Vec<T>, Detail> {
@@ -96,7 +230,8 @@ fn lex(q: &str) -> Result<Vec<T>, Detail> {
                 i += 1;
             }
         } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
-            let end = q[i + 2..].find("*/").ok_or_else(|| reject("gsql.unclosed_comment", "a /* comment is not closed"))?;
+            let end =
+                q[i + 2..].find("*/").ok_or_else(|| reject("gsql.unclosed_comment", "a /* comment is not closed"))?;
             i += 2 + end + 2;
         } else if c == b'"' {
             let mut j = i + 1;
@@ -150,7 +285,10 @@ fn lex(q: &str) -> Result<Vec<T>, Detail> {
     for t in out {
         if matches!(&t, T::Ident(s) if s.eq_ignore_ascii_case("accum")) {
             let n = merged.len();
-            if n >= 2 && merged[n - 1] == T::Sym("-") && matches!(&merged[n - 2], T::Ident(s) if s.eq_ignore_ascii_case("post")) {
+            if n >= 2
+                && merged[n - 1] == T::Sym("-")
+                && matches!(&merged[n - 2], T::Ident(s) if s.eq_ignore_ascii_case("post"))
+            {
                 merged.truncate(n - 2);
                 merged.push(T::Ident("POST_ACCUM".into()));
                 continue;
@@ -456,8 +594,9 @@ impl P {
     fn statement(&mut self, accum: bool, stops: &[&str]) -> Result<(), Detail> {
         let first = upper(self.peek().expect("block checked for a token")).unwrap_or_default();
         match first.as_str() {
-            w if WRITES.contains(&w) => Err(reject("gsql.write", format!("{w} changes data; Kalzit only reads"))
-                .with("statement", w)),
+            w if WRITES.contains(&w) => {
+                Err(reject("gsql.write", format!("{w} changes data; Kalzit only reads")).with("statement", w))
+            }
             s if STATEMENTS.contains(&s) => Err(reject(
                 "gsql.statement_not_allowed",
                 format!("{s} statements are not allowed in a query Kalzit runs"),
@@ -568,7 +707,7 @@ impl P {
         }
         let Some(at) = at else {
             // Without an assignment, a statement must be a call: `@@list.clear()`, `log(...)`.
-            let is_call = toks.last() == Some(&T::Sym(")")) && toks.iter().any(|t| *t == T::Sym("("));
+            let is_call = toks.last() == Some(&T::Sym(")")) && toks.contains(&T::Sym("("));
             if !is_call {
                 return Err(parse_error("expected an assignment, a declaration or a call"));
             }
@@ -595,11 +734,7 @@ impl P {
             .with("target", target));
         }
         self.expr(lhs, false)?;
-        if is_kw(rhs.first(), "SELECT") {
-            self.select(rhs)
-        } else {
-            self.expr(rhs, false)
-        }
+        if is_kw(rhs.first(), "SELECT") { self.select(rhs) } else { self.expr(rhs, false) }
     }
 
     /// A `SELECT` block: clauses split at their keywords; `ACCUM` and `POST-ACCUM` hold statements.
@@ -674,8 +809,11 @@ impl P {
                         && toks[j - 2] == T::Sym(".")
                         && matches!(toks[j - 1], T::Ident(_)) =>
                 {
-                    return Err(reject("gsql.attribute_assignment", "assigning an attribute changes data; Kalzit only reads")
-                        .with("target", "attribute"));
+                    return Err(reject(
+                        "gsql.attribute_assignment",
+                        "assigning an attribute changes data; Kalzit only reads",
+                    )
+                    .with("target", "attribute"));
                 }
                 T::Sym(";") => return Err(parse_error("a ; inside an expression")),
                 T::Ident(name) => {
@@ -690,18 +828,16 @@ impl P {
                         continue;
                     }
                     if WRITES.contains(&u.as_str()) {
-                        return Err(reject("gsql.write", format!("{u} changes data; Kalzit only reads"))
-                            .with("statement", &u));
+                        return Err(
+                            reject("gsql.write", format!("{u} changes data; Kalzit only reads")).with("statement", &u)
+                        );
                     }
                     if u == "TO_CSV" || u == "FILE" {
                         return Err(reject("gsql.file_output", "writing files (TO_CSV, FILE) is not allowed"));
                     }
                     if STATEMENTS.contains(&u.as_str()) || u == "SELECT" || u == "PRINT" {
-                        return Err(reject(
-                            "gsql.statement_not_allowed",
-                            format!("{u} is not allowed here"),
-                        )
-                        .with("statement", &u));
+                        return Err(reject("gsql.statement_not_allowed", format!("{u} is not allowed here"))
+                            .with("statement", &u));
                     }
                     let allowed = EXPR_KEYWORDS.contains(&u.as_str())
                         || FUNCTIONS.iter().any(|f| f.eq_ignore_ascii_case(name))
@@ -773,10 +909,7 @@ mod tests {
         assert_eq!(c.graph.as_deref(), Some("social"));
         assert_eq!(
             c.params,
-            [
-                Param { name: "name".into(), ty: ParamType::String },
-                Param { name: "k".into(), ty: ParamType::Int }
-            ]
+            [Param { name: "name".into(), ty: ParamType::String }, Param { name: "k".into(), ty: ParamType::Int }]
         );
         let installed = check(
             "CREATE OR REPLACE DISTRIBUTED QUERY nachbarn(VERTEX<Person> p, SET<STRING> tags, VERTEX any, DOUBLE w = -1.5) \
@@ -801,9 +934,15 @@ mod tests {
             ("S = {Person.*}; R = SELECT s FROM S:s ACCUM DELETE (s);", "gsql.write"),
             ("S = {Person.*}; R = SELECT s FROM S:s ACCUM INSERT INTO Person VALUES (\"y\", 2);", "gsql.write"),
             ("S = {Person.*}; R = SELECT s FROM S:s POST-ACCUM s.age = 1;", "gsql.attribute_assignment"),
-            ("S = {Person.*}; R = SELECT s FROM S:s -(Friend:e)- Person:t ACCUM e.weight += 1;", "gsql.attribute_assignment"),
+            (
+                "S = {Person.*}; R = SELECT s FROM S:s -(Friend:e)- Person:t ACCUM e.weight += 1;",
+                "gsql.attribute_assignment",
+            ),
             ("S = {Person.*}; R = SELECT s FROM S:s ACCUM IF TRUE THEN s.age = 1 END;", "gsql.attribute_assignment"),
-            ("S = {Person.*}; R = SELECT s FROM S:s ACCUM FOREACH x IN s.tags DO s.n = x END;", "gsql.attribute_assignment"),
+            (
+                "S = {Person.*}; R = SELECT s FROM S:s ACCUM FOREACH x IN s.tags DO s.n = x END;",
+                "gsql.attribute_assignment",
+            ),
             ("S = {Person.*}; R = SELECT s FROM S:s POST_ACCUM s.setAttr(\"age\", 1);", "gsql.method_not_allowed"),
             ("S = {Person.*}; PRINT S TO_CSV \"/tmp/x\";", "gsql.file_output"),
             ("FILE f (\"/tmp/x\"); f.println(1);", "gsql.file_output"),
@@ -843,7 +982,10 @@ mod tests {
         assert_eq!(q(""), Err("gsql.empty"));
         assert_eq!(q("// nur Kommentar"), Err("gsql.empty"));
         assert_eq!(q("SELECT s FROM Person:s"), Err("gsql.not_one_query"));
-        assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; } INTERPRET QUERY () { PRINT 2; }"), Err("gsql.not_one_query"));
+        assert_eq!(
+            q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; } INTERPRET QUERY () { PRINT 2; }"),
+            Err("gsql.not_one_query")
+        );
         assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; }; DROP ALL"), Err("gsql.not_one_query"));
         assert_eq!(q("INTERPRET QUERY () FOR GRAPH g { PRINT 1; };"), Ok(()));
         assert_eq!(q("INTERPRET QUERY (FILE f) FOR GRAPH g { PRINT 1; }"), Err("gsql.file_output"));

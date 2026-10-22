@@ -120,6 +120,9 @@ enum Api {
     V3,
 }
 
+/// When an installed query's text was checked, and the outcome: its parameters or the refusal.
+type CheckedText = (Instant, Result<Vec<gsql::Param>, Detail>);
+
 struct Client {
     http: HttpClient,
     gsql: Url,
@@ -132,7 +135,7 @@ struct Client {
     approved: Vec<String>,
     api: Api,
     token: Mutex<Option<(String, Instant)>>,
-    texts: Mutex<HashMap<String, (Instant, Result<Vec<gsql::Param>, Detail>)>>,
+    texts: Mutex<HashMap<String, CheckedText>>,
 }
 
 fn parse_url(raw: &str) -> Result<Url, Detail> {
@@ -193,10 +196,16 @@ async fn client(conn: &Connection) -> Result<Arc<Client>, SourceError> {
             policy: Arc::new(conn.policy().clone()),
         })
         .map_err(|e| SourceError::Failed(e.detail()))?;
-        let token = base64::engine::general_purpose::STANDARD
-            .encode(format!("{}:{}", s.user, conn.secret("password").unwrap_or("")));
+        let token = base64::engine::general_purpose::STANDARD.encode(format!(
+            "{}:{}",
+            s.user,
+            conn.secret("password").unwrap_or("")
+        ));
         let basic = HeaderValue::from_str(&format!("Basic {token}")).map_err(|_| {
-            SourceError::failed("tigergraph.credentials_invalid", "the credentials contain characters a header cannot carry")
+            SourceError::failed(
+                "tigergraph.credentials_invalid",
+                "the credentials contain characters a header cannot carry",
+            )
         })?;
         let mut c = Client {
             http,
@@ -244,6 +253,7 @@ impl Client {
     }
 
     /// Sends a request and reads the body (at most `max` bytes, charged to `charge` when given).
+    #[expect(clippy::too_many_arguments, reason = "the parts of one HTTP call, each needed by some caller")]
     async fn call(
         &self,
         method: Method,
@@ -340,7 +350,8 @@ impl Client {
         };
         let url = self.gsql.join(path).map_err(|e| SourceError::failed("internal", e.to_string()))?;
         let body = Some((command.as_bytes().to_vec(), "text/plain"));
-        let (status, bytes) = self.call(Method::POST, url, self.basic.clone(), body, &[], MAX_SMALL_RESPONSE, None).await?;
+        let (status, bytes) =
+            self.call(Method::POST, url, self.basic.clone(), body, &[], MAX_SMALL_RESPONSE, None).await?;
         let text = String::from_utf8_lossy(&bytes).to_string();
         if !status.is_success() {
             let body = serde_json::from_str(&text).unwrap_or(json!({ "message": text }));
@@ -354,7 +365,8 @@ impl Client {
         let rights = match self.api {
             Api::V4 => {
                 // The name goes in as one encoded path segment.
-                let mut url = self.gsql.join("gsql/v1/users/").map_err(|e| SourceError::failed("internal", e.to_string()))?;
+                let mut url =
+                    self.gsql.join("gsql/v1/users/").map_err(|e| SourceError::failed("internal", e.to_string()))?;
                 url.path_segments_mut()
                     .map_err(|_| SourceError::failed("internal", "the GSQL URL cannot take a path"))?
                     .pop_if_empty()
@@ -386,7 +398,9 @@ impl Client {
             let list = too_much.join(", ");
             Err(SourceError::failed(
                 "tigergraph.user_can_write",
-                format!("the TigerGraph user may do more than read ({list}); use a user with only the queryreader role"),
+                format!(
+                    "the TigerGraph user may do more than read ({list}); use a user with only the queryreader role"
+                ),
             )
             .with("privileges", list))
         }
@@ -411,7 +425,9 @@ impl Client {
                 }
                 (self.gsql.join("gsql/v1/tokens"), body, self.basic.clone())
             }
-            (Api::V3, Some(s)) => (self.restpp.join("requesttoken"), json!({ "secret": s, "lifetime": lifetime }), None),
+            (Api::V3, Some(s)) => {
+                (self.restpp.join("requesttoken"), json!({ "secret": s, "lifetime": lifetime }), None)
+            }
             (Api::V3, None) => return Ok(None),
         };
         let url = url.map_err(|e| SourceError::failed("internal", e.to_string()))?;
@@ -439,9 +455,8 @@ impl Client {
         }
         let text = match self.api {
             Api::V4 => {
-                let a = self
-                    .gsql_json(Method::GET, &format!("gsql/v1/queries/{name}"), &[("graph", &self.graph)])
-                    .await?;
+                let a =
+                    self.gsql_json(Method::GET, &format!("gsql/v1/queries/{name}"), &[("graph", &self.graph)]).await?;
                 let ok = a.status.is_success() && a.body.get("error").and_then(Value::as_bool) != Some(true);
                 if ok { find_text(&a.body, "queryContent").or_else(|| find_text(&a.body, "code")) } else { None }
             }
@@ -474,7 +489,8 @@ impl Client {
 }
 
 fn other_graph(g: &str) -> Detail {
-    Detail::new("gsql.other_graph", format!("the query is for the graph {g}, not the data source's graph")).with("graph", g)
+    Detail::new("gsql.other_graph", format!("the query is for the graph {g}, not the data source's graph"))
+        .with("graph", g)
 }
 
 fn find_text(v: &Value, key: &str) -> Option<String> {
@@ -507,7 +523,9 @@ impl Rights {
             return vec!["superuser".into()];
         }
         let mut out: Vec<String> = match &self.privileges {
-            Some(p) => p.iter().filter(|p| !READ_PRIVILEGES.contains(&p.to_ascii_uppercase().as_str())).cloned().collect(),
+            Some(p) => {
+                p.iter().filter(|p| !READ_PRIVILEGES.contains(&p.to_ascii_uppercase().as_str())).cloned().collect()
+            }
             None => self.roles.iter().filter(|r| !r.eq_ignore_ascii_case("queryreader")).cloned().collect(),
         };
         if self.privileges.is_none() && self.roles.is_empty() {
@@ -598,7 +616,13 @@ fn scalar_text(v: &Value) -> Option<String> {
 }
 
 /// One value as REST++ query pairs, by the declared type.
-fn typed_pairs(name: &str, key: &str, ty: &ParamType, v: &Value, out: &mut Vec<(String, String)>) -> Result<(), SourceError> {
+fn typed_pairs(
+    name: &str,
+    key: &str,
+    ty: &ParamType,
+    v: &Value,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), SourceError> {
     let text = match ty {
         ParamType::Int | ParamType::Uint => {
             let i = match v {
@@ -647,7 +671,8 @@ fn typed_pairs(name: &str, key: &str, ty: &ParamType, v: &Value, out: &mut Vec<(
                 other => vec![other],
             };
             for (i, item) in items.into_iter().enumerate() {
-                let key = if matches!(**inner, ParamType::Vertex(None)) { format!("{key}[{i}]") } else { key.to_string() };
+                let key =
+                    if matches!(**inner, ParamType::Vertex(None)) { format!("{key}[{i}]") } else { key.to_string() };
                 typed_pairs(name, &key, inner, item, out)?;
             }
             return Ok(());
@@ -740,7 +765,10 @@ fn node_id(ty: &str, id: &str) -> String {
 }
 
 fn attributes(v: &Value) -> BTreeMap<String, Value> {
-    v.get("attributes").and_then(Value::as_object).map(|m| m.iter().map(|(k, v)| (k.clone(), tg_value(v))).collect()).unwrap_or_default()
+    v.get("attributes")
+        .and_then(Value::as_object)
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), tg_value(v))).collect())
+        .unwrap_or_default()
 }
 
 /// Builds a graph or a frame from the `results` of a query.
@@ -913,7 +941,11 @@ impl DataSourcePlugin for TigerGraph {
             parse_url(u).map_err(|d| FieldError { field: "restppUrl", detail: d.with("field", "restppUrl") })?;
         }
         if !is_name(&s.graph) {
-            return Err(FieldError::new("graph", "settings.name_invalid", "the graph name has letters, digits and _ only"));
+            return Err(FieldError::new(
+                "graph",
+                "settings.name_invalid",
+                "the graph name has letters, digits and _ only",
+            ));
         }
         let user_ok = !s.user.is_empty()
             && s.user.len() <= 128
@@ -935,9 +967,8 @@ impl DataSourcePlugin for TigerGraph {
         super::check_pem("caCert", s.ca_cert.as_deref())?;
         for (field, value) in [("maxNodes", s.max_nodes), ("maxEdges", s.max_edges)] {
             if value == Some(0) {
-                return Err(
-                    FieldError::new(field, "settings.out_of_range", format!("{field} must be at least 1")).with("min", 1)
-                );
+                return Err(FieldError::new(field, "settings.out_of_range", format!("{field} must be at least 1"))
+                    .with("min", 1));
             }
         }
         Ok(())
@@ -989,7 +1020,12 @@ impl DataSourcePlugin for TigerGraph {
             results
                 .get(key)
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|t| t.get("Name").and_then(Value::as_str).map(String::from)).take(MAX_SCHEMA_NAMES).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.get("Name").and_then(Value::as_str).map(String::from))
+                        .take(MAX_SCHEMA_NAMES)
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let mut keys: Vec<String> = ["VertexTypes", "EdgeTypes"]
@@ -1014,7 +1050,12 @@ impl DataSourcePlugin for TigerGraph {
             }
         }
         queries.sort();
-        Ok(SourceSchema::Graph { labels: names("VertexTypes"), edge_types: names("EdgeTypes"), property_keys: keys, queries })
+        Ok(SourceSchema::Graph {
+            labels: names("VertexTypes"),
+            edge_types: names("EdgeTypes"),
+            property_keys: keys,
+            queries,
+        })
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
@@ -1060,8 +1101,7 @@ impl DataSourcePlugin for TigerGraph {
                     .join(&format!("query/{}/{name}", c.graph))
                     .map_err(|e| SourceError::failed("internal", e.to_string()))?;
                 url.query_pairs_mut().extend_pairs(&pairs);
-                let headers =
-                    [("gsql-timeout", timeout_ms.clone()), ("response-limit", max_bytes.max(1).to_string())];
+                let headers = [("gsql-timeout", timeout_ms.clone()), ("response-limit", max_bytes.max(1).to_string())];
                 let mut renew = false;
                 loop {
                     let token = c.token(renew).await?;
@@ -1101,7 +1141,9 @@ fn query_names(v: &Value) -> Vec<String> {
     let mut out: Vec<String> = match v {
         Value::Array(a) => a
             .iter()
-            .filter_map(|q| q.as_str().map(String::from).or_else(|| q.get("name").and_then(Value::as_str).map(String::from)))
+            .filter_map(|q| {
+                q.as_str().map(String::from).or_else(|| q.get("name").and_then(Value::as_str).map(String::from))
+            })
             .collect(),
         Value::Object(m) => m.keys().cloned().collect(),
         _ => Vec::new(),

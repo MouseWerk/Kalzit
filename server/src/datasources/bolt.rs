@@ -159,7 +159,8 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], BoltError> {
-        let end = self.at.checked_add(n).filter(|e| *e <= self.bytes.len()).ok_or_else(|| protocol("truncated value"))?;
+        let end =
+            self.at.checked_add(n).filter(|e| *e <= self.bytes.len()).ok_or_else(|| protocol("truncated value"))?;
         let s = &self.bytes[self.at..end];
         self.at = end;
         Ok(s)
@@ -222,19 +223,19 @@ impl<'a> Reader<'a> {
             0xC9 => Bv::Int(i16::from_be_bytes(self.take(2)?.try_into().expect("2 bytes")) as i64),
             0xCA => Bv::Int(i32::from_be_bytes(self.take(4)?.try_into().expect("4 bytes")) as i64),
             0xCB => Bv::Int(i64::from_be_bytes(self.take(8)?.try_into().expect("8 bytes"))),
-            0xCC | 0xCD | 0xCE => {
+            0xCC..=0xCE => {
                 let n = self.len(1 << (m - 0xCC))?;
                 Bv::Bytes(self.take(n)?.to_vec())
             }
-            0xD0 | 0xD1 | 0xD2 => {
+            0xD0..=0xD2 => {
                 let n = self.len(1 << (m - 0xD0))?;
                 Bv::String(self.string(n)?)
             }
-            0xD4 | 0xD5 | 0xD6 => {
+            0xD4..=0xD6 => {
                 let n = self.count(1 << (m - 0xD4))?;
                 self.list(n, depth)?
             }
-            0xD8 | 0xD9 | 0xDA => {
+            0xD8..=0xDA => {
                 let n = self.count(1 << (m - 0xD8))?;
                 self.map(n, depth)?
             }
@@ -446,7 +447,9 @@ pub async fn connect(policy: &TargetPolicy, opts: ConnectOptions<'_>) -> Result<
             let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
             let tls = tokio::time::timeout(opts.timeout, connector.connect(name, tcp))
                 .await
-                .map_err(|_| SourceError::failed("bolt.login_timeout", "the server did not complete the login in time"))?
+                .map_err(|_| {
+                    SourceError::failed("bolt.login_timeout", "the server did not complete the login in time")
+                })?
                 .map_err(|e| SourceError::failed("bolt.tls", format!("TLS failed: {e}")).with("detail", e))?;
             Box::new(tls)
         }
@@ -508,7 +511,10 @@ impl BoltConn {
         let meta = self.request(0x01, vec![Bv::map(hello)]).await?;
         self.server = meta.get("server").and_then(Bv::as_str).unwrap_or_default().to_string();
         self.utc = self.version.0 >= 5
-            || meta.get("patch_bolt").and_then(Bv::as_list).is_some_and(|p| p.iter().any(|v| v.as_str() == Some("utc")));
+            || meta
+                .get("patch_bolt")
+                .and_then(Bv::as_list)
+                .is_some_and(|p| p.iter().any(|v| v.as_str() == Some("utc")));
         if logon {
             self.request(0x6A, vec![Bv::map(auth)]).await?;
         }
@@ -677,7 +683,8 @@ mod tests {
 
     #[test]
     fn packstream_round_trips() {
-        for i in [0, 1, -1, -16, -17, 127, 128, -128, -129, 32_767, 32_768, -32_769, 2_147_483_648, i64::MAX, i64::MIN] {
+        for i in [0, 1, -1, -16, -17, 127, 128, -128, -129, 32_767, 32_768, -32_769, 2_147_483_648, i64::MAX, i64::MIN]
+        {
             round_trip(Bv::Int(i));
         }
         round_trip(Bv::Float(-1.25));
@@ -787,7 +794,15 @@ mod tests {
         c.begin(Some("neo4j"), Duration::from_secs(3), true).await.unwrap();
         assert_eq!(c.run("RETURN 7 AS n", vec![]).await.unwrap(), ["n"]);
         let mut got = Vec::new();
-        assert_eq!(c.pull(100, 1 << 20, |r, _| { got.push(r); true }).await.unwrap(), PullEnd::Done);
+        assert_eq!(
+            c.pull(100, 1 << 20, |r, _| {
+                got.push(r);
+                true
+            })
+            .await
+            .unwrap(),
+            PullEnd::Done
+        );
         assert_eq!(got, [vec![Bv::Int(7)]]);
         let e = c.run("CREATE ()", vec![]).await.unwrap_err();
         assert!(matches!(e.into_source(), SourceError::Rejected(d) if d.reason == "query.write_refused"));

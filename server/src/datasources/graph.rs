@@ -127,7 +127,8 @@ impl GraphBuilder {
 
     fn truncate(&mut self, reason: &'static str, limit: usize, message: String) {
         if self.truncated.is_none() {
-            self.truncated = Some(Truncated { limit: limit.min(u32::MAX as usize) as u32, reason: Some(reason.into()) });
+            self.truncated =
+                Some(Truncated { limit: limit.min(u32::MAX as usize) as u32, reason: Some(reason.into()) });
             let detail = Detail::new(reason, message);
             let detail = if reason == "graph.size_limit" { detail } else { detail.with("limit", limit) };
             self.notice(NoticeSeverity::Warning, detail);
@@ -204,7 +205,8 @@ impl GraphBuilder {
         if !self.ensure_node(&edge.from, from_labels) || !self.ensure_node(&edge.to, to_labels) {
             return false;
         }
-        let size = edge.id.len() + edge.edge_type.len() + edge.from.len() + edge.to.len() + props_size(&edge.properties) + 40;
+        let size =
+            edge.id.len() + edge.edge_type.len() + edge.from.len() + edge.to.len() + props_size(&edge.properties) + 40;
         if !self.take(size) {
             return false;
         }

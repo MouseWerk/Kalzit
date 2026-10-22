@@ -7,8 +7,10 @@
 //! - `KALZIT_TEST_MYSQL_URL`, `KALZIT_TEST_MARIADB_URL`: `mysql://user[:password]@host:port/database`
 //! - `KALZIT_TEST_MSSQL_URL`: `mssql://user:password@host:port/database` (self-signed certificate)
 //! - `KALZIT_TEST_PROMETHEUS_URL`: `http://host:port`
+//! - `KALZIT_TEST_NEO4J_URL`, `KALZIT_TEST_MEMGRAPH_URL`: `bolt://[user:password@]host:port`
 //!
-//! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run.
+//! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run, and
+//! TigerGraph against a fake server in `src/datasources/tigergraph/tests.rs`.
 
 mod common;
 
@@ -466,4 +468,136 @@ async fn prometheus_range_and_instant_queries() {
     assert_eq!(body["results"]["I"]["result"]["frame"]["fields"][1]["type"], "number", "{body}");
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "metrics", "{schema}");
+}
+
+/// Runs Cypher on the test database directly (auto-commit), to set up data Kalzit then only reads.
+async fn bolt_setup(url: &str, statements: &[&str]) {
+    let (host, port, user, password, _) = parts(url);
+    let policy = kalzit::datasources::targets::TargetPolicy::new(
+        &std::env::temp_dir().join("kalzit-none"),
+        "sqlite::memory:",
+        &[],
+        &[],
+    );
+    let opts = kalzit::datasources::bolt::ConnectOptions {
+        host: &host,
+        port,
+        user: (!user.is_empty()).then_some(user.as_str()),
+        password: password.as_deref(),
+        tls: None,
+        timeout: std::time::Duration::from_secs(10),
+    };
+    let mut c = kalzit::datasources::bolt::connect(&policy, opts).await.unwrap();
+    for s in statements {
+        c.run_auto(s, None).await.unwrap_or_else(|e| panic!("{s}: {e}"));
+        c.pull(-1, 1 << 20, |_, _| true).await.unwrap();
+    }
+}
+
+fn graph_settings(url: &str, extra: Value) -> (Value, Value) {
+    let (host, port, user, password, _) = parts(url);
+    let mut settings = json!({ "host": host, "port": port });
+    if !user.is_empty() {
+        settings["user"] = json!(user);
+    }
+    for (k, v) in extra.as_object().unwrap() {
+        settings[k] = v.clone();
+    }
+    (settings, secrets(password))
+}
+
+const GRAPH_SETUP: &[&str] = &[
+    "MATCH (n:KalzitTest) DETACH DELETE n",
+    "CREATE (a:KalzitTest:Person {name: 'Ana', gross: 9007199254740993, seit: date('2024-01-01')})-[:KENNT {seit: 2020}]->(b:KalzitTest:Person {name: 'Bo'})",
+];
+
+/// The checks both Bolt kinds share: graph and frame answers, native types, refusals, schema.
+async fn graph_reads(t: &T, id: &str) {
+    let r = t.query(id, json!({ "cypher": "MATCH p = (a:KalzitTest {name: 'Ana'})-[:KENNT]->(b) RETURN p" })).await;
+    let graph = &r["result"]["graph"];
+    assert_eq!(r["result"]["shape"], "graph", "{r}");
+    assert_eq!(graph["nodes"].as_array().unwrap().len(), 2, "{r}");
+    assert_eq!(graph["edges"][0]["type"], "KENNT", "{r}");
+    assert_eq!(graph["edges"][0]["properties"]["seit"], 2020, "{r}");
+    assert_eq!(graph["paths"][0]["nodes"].as_array().unwrap().len(), 2, "{r}");
+    let ana = graph["nodes"].as_array().unwrap().iter().find(|n| n["properties"]["name"] == "Ana").unwrap();
+    assert_eq!(ana["properties"]["gross"], json!({ "$type": "int64", "value": "9007199254740993" }), "{r}");
+    assert_eq!(ana["properties"]["seit"], json!({ "$type": "date", "value": "2024-01-01" }), "{r}");
+
+    let r = t
+        .query(
+            id,
+            json!({ "cypher": "MATCH (n:KalzitTest) WHERE n.name = $land OR n.name IS NOT NULL \
+                               RETURN n.name AS name, n.gross AS g, $__timeFrom AS ab ORDER BY name" }),
+        )
+        .await;
+    assert_eq!(types(&r), ["string", "int64", "time"], "{r}");
+    let fields = &r["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"], json!(["Ana", "Bo"]), "{r}");
+    assert_eq!(fields[2]["values"][0], 1_700_000_000_000_i64, "{r}");
+
+    for q in [
+        "MATCH (n) DETACH DELETE n",
+        "CREATE (n:KalzitTest)",
+        "MATCH (n:KalzitTest) SET n.x = 1",
+        "MATCH (n) CALL { WITH n MERGE (m:KalzitTest) } RETURN n",
+        "LOAD CSV FROM 'file:///etc/passwd' AS l RETURN l",
+    ] {
+        assert_eq!(t.query(id, json!({ "cypher": q })).await["error"]["code"], "query_rejected", "{q}");
+    }
+    let count = t.query(id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN count(n) AS c" })).await;
+    assert_eq!(count["result"]["frame"]["fields"][0]["values"][0], "2", "nothing changed: {count}");
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert_eq!(schema["kind"], "graph", "{schema}");
+    assert!(schema["labels"].as_array().unwrap().contains(&json!("KalzitTest")), "{schema}");
+    assert!(schema["edgeTypes"].as_array().unwrap().contains(&json!("KENNT")), "{schema}");
+}
+
+#[tokio::test]
+async fn neo4j_reads_graphs_in_read_transactions() {
+    let Some(url) = env("KALZIT_TEST_NEO4J_URL") else { return };
+    bolt_setup(&url, GRAPH_SETUP).await;
+    let t = T::new(None).await;
+    let (settings, secrets) = graph_settings(&url, json!({}));
+    let id = t.create("neo4j", settings.clone(), secrets).await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+    assert_eq!(h["reason"], "health.connected", "{h}");
+    assert_eq!(h["params"]["engine"], "Neo4j", "{h}");
+    graph_reads(&t, &id).await;
+
+    // The node limit cuts the graph with a reason.
+    let mut limited = settings;
+    limited["maxNodes"] = json!(1);
+    let (status, body) =
+        t.send(Method::PATCH, &format!("/datasources/{id}"), Some(json!({ "settings": limited }))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let r = t.query(&id, json!({ "cypher": "MATCH (n:KalzitTest) RETURN n" })).await;
+    assert_eq!(r["result"]["graph"]["truncated"]["reason"], "graph.node_limit", "{r}");
+}
+
+#[tokio::test]
+async fn memgraph_refuses_users_who_may_write_unless_allowed() {
+    let Some(url) = env("KALZIT_TEST_MEMGRAPH_URL") else { return };
+    bolt_setup(&url, GRAPH_SETUP).await;
+    let t = T::new(None).await;
+    // The CI container has no users, so anyone may write: refused by default.
+    let (settings, secrets) = graph_settings(&url, json!({}));
+    let strict = t.create("memgraph", settings, secrets).await;
+    let h = t.health(&strict).await;
+    assert_eq!(h["ok"], false, "{h}");
+    assert_eq!(h["reason"], "memgraph.user_can_write", "{h}");
+    let r = t.query(&strict, json!({ "cypher": "MATCH (n) RETURN n LIMIT 1" })).await;
+    assert_eq!(r["error"]["reason"], "memgraph.user_can_write", "{r}");
+
+    let (settings, secrets) = graph_settings(&url, json!({ "allowWriteCapableUser": true }));
+    let body = json!({ "name": "Memgraph erlaubt", "kind": "memgraph", "settings": settings, "secrets": secrets });
+    let (status, created) = t.send(Method::POST, "/datasources", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap().to_string();
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+    assert_eq!(h["reason"], "health.connected_write_capable", "{h}");
+    assert!(h["params"]["privileges"].as_str().unwrap().contains("CREATE"), "{h}");
+    graph_reads(&t, &id).await;
 }

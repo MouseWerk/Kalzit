@@ -48,7 +48,10 @@ const WRITE_CLAUSES: &[&str] = &["CREATE", "MERGE", "DELETE", "DETACH", "NODETAC
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Tok {
     /// A name; `quoted` when written in backticks.
-    Ident { text: String, quoted: bool },
+    Ident {
+        text: String,
+        quoted: bool,
+    },
     /// `$name` or `` $`name` ``.
     Param(String),
     Str,
@@ -237,8 +240,9 @@ pub fn check(q: &str) -> Result<Checked, Detail> {
         let Some(k) = keyword(&toks, i) else { continue };
         match k.as_str() {
             w if WRITE_CLAUSES.contains(&w) => {
-                return Err(reject("cypher.write_clause", format!("{w} writes data; Kalzit only reads"))
-                    .with("clause", w));
+                return Err(
+                    reject("cypher.write_clause", format!("{w} writes data; Kalzit only reads")).with("clause", w)
+                );
             }
             "FOREACH" => return Err(reject("cypher.foreach", "FOREACH can only write; Kalzit only reads")),
             "LOAD" => return Err(reject("cypher.load", "LOAD reads files or URLs on the server and is not allowed")),
@@ -305,8 +309,11 @@ fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
     if READ_PROCEDURES.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
         Ok(())
     } else {
-        Err(reject("cypher.procedure_not_allowed", format!("the procedure {name} is not on the list of read procedures"))
-            .with("name", name))
+        Err(reject(
+            "cypher.procedure_not_allowed",
+            format!("the procedure {name} is not on the list of read procedures"),
+        )
+        .with("name", name))
     }
 }
 
@@ -396,7 +403,10 @@ mod tests {
             ("MATCH (n) RETURN n; DROP INDEX x", "cypher.multiple_statements"),
             ("CALL apoc.create.node(['X'], {})", "cypher.procedure_not_allowed"),
             ("CALL dbms.killQuery('x')", "cypher.procedure_not_allowed"),
-            ("MATCH (n) CALL apoc.periodic.iterate('MATCH (x) RETURN x', 'DELETE x', {})", "cypher.procedure_not_allowed"),
+            (
+                "MATCH (n) CALL apoc.periodic.iterate('MATCH (x) RETURN x', 'DELETE x', {})",
+                "cypher.procedure_not_allowed",
+            ),
             ("CALL `apoc`.`create`.`node`(['X'], {})", "cypher.procedure_not_allowed"),
             ("CALL mg.load_all()", "cypher.procedure_not_allowed"),
             ("CALL", "cypher.parse_error"),
