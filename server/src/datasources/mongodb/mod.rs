@@ -76,9 +76,10 @@ const SCHEMA_SAMPLE: i64 = 100;
 const SCHEMA_SAMPLE_TIME: Duration = Duration::from_secs(2);
 
 /// Privileges a login may hold: those of the built-in `read` and `readAnyDatabase` roles.
-/// `planCacheRead` (`PLAN_CACHE_READ`) shows the server's cached query plans; the `read` role
-/// grants it on its whole database, so it is accepted on the source's own database (any
-/// collection) and refused on other databases and cluster-wide.
+/// `OWN_DATABASE_ACTIONS` are also part of `read`, but only accepted on the source's own database
+/// (any collection) and refused on other databases and cluster-wide: `planCacheRead` shows the
+/// server's cached query plans, `performRawDataOperations` (MongoDB 8.2) lets reads see the raw
+/// storage of time series collections (writing that way still needs a write privilege).
 const READ_ACTIONS: &[&str] = &[
     "changeStream",
     "collStats",
@@ -91,7 +92,7 @@ const READ_ACTIONS: &[&str] = &[
     "listIndexes",
     "listSearchIndexes",
 ];
-const PLAN_CACHE_READ: &str = "planCacheRead";
+const OWN_DATABASE_ACTIONS: &[&str] = &["planCacheRead", "performRawDataOperations"];
 
 pub fn kind() -> Kind {
     Kind { name: "MongoDB", hint_key: "datasources.kinds.mongodb.hint", settings: SETTINGS, plugin: Arc::new(MongoDb) }
@@ -492,7 +493,7 @@ fn privileges_verdict(status: &Document, has_user: bool, database: &str) -> Resu
             let action = action.as_str().unwrap_or("?");
             let resource_doc = p.get_document("resource").ok();
             let own_database = resource_doc.and_then(|r| r.get_str("db").ok()) == Some(database);
-            if !READ_ACTIONS.contains(&action) && !(action == PLAN_CACHE_READ && own_database) {
+            if !READ_ACTIONS.contains(&action) && !(OWN_DATABASE_ACTIONS.contains(&action) && own_database) {
                 let resource = resource_text(resource_doc);
                 return Err(SourceError::failed(
                     "mongodb.login_not_read_only",
@@ -1038,7 +1039,7 @@ mod tests {
         assert!(privileges_verdict(&status(vec![], vec![]), false, "shop").is_ok());
         // What MongoDB 8.0's read role grants: planCacheRead on its database, any collection.
         for collection in ["", "system.js", "orders"] {
-            let plan = doc! { "resource": { "db": "shop", "collection": collection }, "actions": ["planCacheRead"] };
+            let plan = doc! { "resource": { "db": "shop", "collection": collection }, "actions": ["planCacheRead", "performRawDataOperations"] };
             assert!(
                 privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true, "shop").is_ok(),
                 "{collection:?}"
@@ -1048,6 +1049,14 @@ mod tests {
         for resource in
             [doc! { "db": "andere", "collection": "" }, doc! { "db": "", "collection": "" }, doc! { "cluster": true }]
         {
+            for action in ["planCacheRead", "performRawDataOperations"] {
+                let plan = doc! { "resource": resource.clone(), "actions": [action] };
+                assert_eq!(
+                    reason(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true, "shop")),
+                    "mongodb.login_not_read_only",
+                    "{action} on {resource}"
+                );
+            }
             let plan = doc! { "resource": resource.clone(), "actions": ["planCacheRead"] };
             assert_eq!(
                 reason(privileges_verdict(&status(vec![user.clone()], vec![read.clone(), plan]), true, "shop")),

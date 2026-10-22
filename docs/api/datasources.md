@@ -444,9 +444,9 @@ Read-only check (on the BSON as sent, after binding; `query_rejected`):
   source is saved. With a login, the server must report it and its privileges (otherwise
   `mongodb.privileges_unknown`). Every privilege must be one of those of the `read` and `readAnyDatabase`
   roles (`changeStream`, `collStats`, `dbHash`, `dbStats`, `find`, `killCursors`,
-  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`, and `planCacheRead` on
-  the source's own database (any collection), as the `read` role grants it there; on other
-  databases or cluster-wide it is refused);
+  `listCollections`, `listDatabases`, `listIndexes`, `listSearchIndexes`, and `planCacheRead` and
+  `performRawDataOperations` (MongoDB 8.2) on the source's own database (any collection), as the
+  `read` role grants them there; on other databases or cluster-wide they are refused);
   anything more, on any database, is `mongodb.login_not_read_only` (`action`, `resource`). A
   server where `hostInfo` succeeds although no such privilege was granted checks no rights at all
   and is refused with `mongodb.access_control_off`.
