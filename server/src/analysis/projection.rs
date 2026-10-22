@@ -89,7 +89,11 @@ fn js_number(text: &str) -> Option<f64> {
 
 /// Unix ms as a cell: whole numbers as integers, as times are everywhere else.
 fn ms_cell(ms: f64) -> Value {
-    if ms.fract() == 0.0 && ms.abs() < 9.2e18 { Value::from(ms as i64) } else { super::expr::to_json(super::expr::V::Num(ms)) }
+    if ms.fract() == 0.0 && ms.abs() < 9.2e18 {
+        Value::from(ms as i64)
+    } else {
+        super::expr::to_json(super::expr::V::Num(ms))
+    }
 }
 
 /// A typed date's ms: its value is a decimal count of ms or an ISO 8601 time.
@@ -127,7 +131,13 @@ fn convert(value: Option<&Value>, field_type: FieldType) -> Value {
             },
             _ => Value::Null,
         },
-        FieldType::Bool => if value.is_boolean() { value.clone() } else { Value::Null },
+        FieldType::Bool => {
+            if value.is_boolean() {
+                value.clone()
+            } else {
+                Value::Null
+            }
+        }
         FieldType::Json => value.clone(),
         FieldType::String => match (t, value) {
             (Some((_, text)), _) => text.map_or(Value::Null, Value::from),

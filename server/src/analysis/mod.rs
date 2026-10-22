@@ -12,9 +12,9 @@
 //! aggregation); a later version will turn a leading group, reduce or pivot step into the query
 //! for sources that can do it, and run here only what the source cannot.
 
+pub mod export;
 pub mod expr;
 pub mod projection;
-pub mod export;
 pub mod stats;
 pub mod steps;
 
@@ -45,10 +45,19 @@ pub struct Step {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
 pub enum StepKind {
     /// A new field computed by an expression over the fields of `frame`.
-    Calculate { frame: String, name: String, expression: String },
+    Calculate {
+        frame: String,
+        name: String,
+        expression: String,
+    },
     /// Joins frame `right` onto frame `left` by time or by key fields; the result takes the
     /// place of `left` and `right` is used up.
-    Join { left: String, right: String, on: JoinOn, mode: JoinMode },
+    Join {
+        left: String,
+        right: String,
+        on: JoinOn,
+        mode: JoinMode,
+    },
     /// Statistics per field: one row per field, one column per measure.
     Reduce {
         frame: String,
@@ -67,9 +76,18 @@ pub enum StepKind {
         #[serde(default)]
         name: Option<String>,
     },
-    MovingAverage { frame: String, field: String, window: u32, name: String },
+    MovingAverage {
+        frame: String,
+        field: String,
+        window: u32,
+        name: String,
+    },
     /// Pearson's correlation of two fields.
-    Correlate { frame: String, x: String, y: String },
+    Correlate {
+        frame: String,
+        x: String,
+        y: String,
+    },
     /// Each value next to the value one period earlier (UTC calendar).
     Compare {
         frame: String,
@@ -80,12 +98,25 @@ pub enum StepKind {
         output: CompareOutput,
         name: String,
     },
-    Group { frame: String, by: Vec<String>, aggregations: Vec<Aggregation> },
-    Pivot { frame: String, row: String, column: String, value: String, op: Agg },
+    Group {
+        frame: String,
+        by: Vec<String>,
+        aggregations: Vec<Aggregation>,
+    },
+    Pivot {
+        frame: String,
+        row: String,
+        column: String,
+        value: String,
+        op: Agg,
+    },
     /// The projection (docs/PLAN.md, section 1): the `documents` result of query `frame` as a
     /// frame, one column per field path. The steps after it work on that frame; a result that
     /// already is a frame passes unchanged.
-    ToFrame { frame: String, columns: Vec<ProjectionColumn> },
+    ToFrame {
+        frame: String,
+        columns: Vec<ProjectionColumn>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -116,7 +147,10 @@ pub const MAX_PATH_CHARS: usize = 500;
 pub enum JoinOn {
     /// The first time field of each frame.
     Time,
-    Key { left_field: String, right_field: String },
+    Key {
+        left_field: String,
+        right_field: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -320,7 +354,9 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
             }
             let wants = stats.contains(&Stat::Percentile);
             if wants != !percentiles.is_empty() || percentiles.len() > MAX_PERCENTILES {
-                return Err(format!("{at}.percentiles: give 1 to {MAX_PERCENTILES} with the percentile measure, none without"));
+                return Err(format!(
+                    "{at}.percentiles: give 1 to {MAX_PERCENTILES} with the percentile measure, none without"
+                ));
             }
             let mut seen = BTreeSet::new();
             for p in percentiles {
@@ -517,7 +553,10 @@ mod tests {
         assert_eq!(columns[1].field_type, Some(crate::shapes::FieldType::Number));
         let one = |columns: Value| json!([{ "id": "p", "type": "toFrame", "frame": "A", "columns": columns }]);
         for (bad, expect) in [
-            (json!([{ "id": "p", "type": "toFrame", "frame": "C", "columns": [{ "path": "a" }] }]), "there is no query C"),
+            (
+                json!([{ "id": "p", "type": "toFrame", "frame": "C", "columns": [{ "path": "a" }] }]),
+                "there is no query C",
+            ),
             (json!([{ "type": "toFrame", "frame": "A", "columns": [{ "path": "a" }] }]), "id must be text"),
             (json!([{ "id": "p", "type": "toFrame", "refId": "A", "columns": [{ "path": "a" }] }]), "unknown field"),
             (one(json!([])), "columns takes 1 to 200"),
@@ -555,7 +594,10 @@ mod tests {
         .unwrap();
         assert_eq!(steps.len(), 11);
         assert!(steps[2].disabled && !steps[0].disabled);
-        assert_eq!(steps[1].kind, StepKind::Join { left: "A".into(), right: "B".into(), on: JoinOn::Time, mode: JoinMode::Outer });
+        assert_eq!(
+            steps[1].kind,
+            StepKind::Join { left: "A".into(), right: "B".into(), on: JoinOn::Time, mode: JoinMode::Outer }
+        );
         let StepKind::Group { aggregations, .. } = &steps[9].kind else { panic!() };
         assert_eq!(aggregations[0].output_name(), "sum(betrag)");
     }
@@ -581,27 +623,71 @@ mod tests {
             (with("expression", json!("1 +")), "steps[0].expression: unexpected input at 4"),
             (with("expression", json!("x".repeat(2001))), "more than 2000"),
             (json!([base, base]), "steps[1].id s is used twice"),
-            (json!([{ "id": "j", "type": "join", "left": "A", "right": "A", "on": { "by": "time" }, "mode": "left" }]), "with itself"),
-            (json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "key" }, "mode": "left" }]), "missing field"),
-            (json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": [], "stats": ["sum"] }]), "fields takes 1 to 50"),
-            (json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["sum", "sum"] }]), "each once"),
-            (json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["percentile"] }]), "percentiles"),
-            (json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["sum"], "percentiles": [5] }]), "none without"),
-            (json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["percentile"], "percentiles": [101] }]), "0 to 100"),
-            (json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["percentile"], "percentiles": [5, 5.0] }]), "distinct"),
-            (json!([{ "id": "t", "type": "trend", "frame": "A", "field": "a", "output": "fitted" }]), "name is required"),
-            (json!([{ "id": "t", "type": "trend", "frame": "A", "field": "a", "output": "summary", "name": "n" }]), "only to the fitted"),
-            (json!([{ "id": "m", "type": "movingAverage", "frame": "A", "field": "a", "window": 0, "name": "n" }]), "window"),
-            (json!([{ "id": "m", "type": "movingAverage", "frame": "A", "field": "a", "window": 10001, "name": "n" }]), "window"),
-            (json!([{ "id": "m", "type": "movingAverage", "frame": "A", "field": "a", "window": -1, "name": "n" }]), "invalid value"),
+            (
+                json!([{ "id": "j", "type": "join", "left": "A", "right": "A", "on": { "by": "time" }, "mode": "left" }]),
+                "with itself",
+            ),
+            (
+                json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "key" }, "mode": "left" }]),
+                "missing field",
+            ),
+            (
+                json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": [], "stats": ["sum"] }]),
+                "fields takes 1 to 50",
+            ),
+            (
+                json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["sum", "sum"] }]),
+                "each once",
+            ),
+            (
+                json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["percentile"] }]),
+                "percentiles",
+            ),
+            (
+                json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["sum"], "percentiles": [5] }]),
+                "none without",
+            ),
+            (
+                json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["percentile"], "percentiles": [101] }]),
+                "0 to 100",
+            ),
+            (
+                json!([{ "id": "r", "type": "reduce", "frame": "A", "fields": ["a"], "stats": ["percentile"], "percentiles": [5, 5.0] }]),
+                "distinct",
+            ),
+            (
+                json!([{ "id": "t", "type": "trend", "frame": "A", "field": "a", "output": "fitted" }]),
+                "name is required",
+            ),
+            (
+                json!([{ "id": "t", "type": "trend", "frame": "A", "field": "a", "output": "summary", "name": "n" }]),
+                "only to the fitted",
+            ),
+            (
+                json!([{ "id": "m", "type": "movingAverage", "frame": "A", "field": "a", "window": 0, "name": "n" }]),
+                "window",
+            ),
+            (
+                json!([{ "id": "m", "type": "movingAverage", "frame": "A", "field": "a", "window": 10001, "name": "n" }]),
+                "window",
+            ),
+            (
+                json!([{ "id": "m", "type": "movingAverage", "frame": "A", "field": "a", "window": -1, "name": "n" }]),
+                "invalid value",
+            ),
             (json!([{ "id": "g", "type": "group", "frame": "A", "by": [], "aggregations": [] }]), "by takes 1 to 10"),
-            (json!([{ "id": "g", "type": "group", "frame": "A", "by": ["a"], "aggregations": [{ "field": "b", "op": "avg" }] }]), "unknown variant"),
+            (
+                json!([{ "id": "g", "type": "group", "frame": "A", "by": ["a"], "aggregations": [{ "field": "b", "op": "avg" }] }]),
+                "unknown variant",
+            ),
         ] {
             let err = check(steps.clone()).unwrap_err();
             assert!(err.contains(expect), "{steps}: {err}");
         }
         let many: Vec<Value> = (0..=MAX_STEPS)
-            .map(|i| json!({ "id": format!("s{i}"), "type": "calculate", "frame": "A", "name": "x", "expression": "1" }))
+            .map(
+                |i| json!({ "id": format!("s{i}"), "type": "calculate", "frame": "A", "name": "x", "expression": "1" }),
+            )
             .collect();
         assert!(check(json!(many)).unwrap_err().contains("at most 50"));
     }

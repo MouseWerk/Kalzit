@@ -287,7 +287,10 @@ async fn export_needs_the_permission_and_the_same_rights_as_running() {
     let editor = t.member("editor", "editor").await;
     let r = t.post(&panel, panel_body.clone(), &editor).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert_eq!(r.text(), "\u{FEFF}land,summe\r\nÖsterreich,1234.5\r\nSchweiz,7.25\r\n=Formel,\r\n".replace("=Formel", "'=Formel"));
+    assert_eq!(
+        r.text(),
+        "\u{FEFF}land,summe\r\nÖsterreich,1234.5\r\nSchweiz,7.25\r\n=Formel,\r\n".replace("=Formel", "'=Formel")
+    );
     assert_eq!(r.header(header::CONTENT_DISPOSITION), "attachment; filename=\"Verk-ufe.csv\"");
 
     // Export without query rights: stored panels yes (as viewing them), free queries no.

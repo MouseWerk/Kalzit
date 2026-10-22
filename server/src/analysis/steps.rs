@@ -226,11 +226,8 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>) -> Result<(), Detail> {
         }
         StepKind::Correlate { x, y, .. } => {
             let (fx, fy) = (numeric_field(frame, x)?, numeric_field(frame, y)?);
-            let points: Vec<(f64, f64)> = numbers(fx)
-                .into_iter()
-                .zip(numbers(fy))
-                .filter_map(|(a, b)| Some((a?, b?)))
-                .collect();
+            let points: Vec<(f64, f64)> =
+                numbers(fx).into_iter().zip(numbers(fy)).filter_map(|(a, b)| Some((a?, b?))).collect();
             let r = stats::correlation(&points);
             frame_of(
                 vec![
@@ -312,7 +309,13 @@ fn stat_name(s: Stat) -> &'static str {
     }
 }
 
-fn trend(nf: &NamedFrame, field: &str, x: Option<&str>, output: TrendOutput, name: Option<&str>) -> Result<Frame, Detail> {
+fn trend(
+    nf: &NamedFrame,
+    field: &str,
+    x: Option<&str>,
+    output: TrendOutput,
+    name: Option<&str>,
+) -> Result<Frame, Detail> {
     let frame = &nf.frame;
     let y = numbers(numeric_field(frame, field)?);
     // x: the named field, else the first time field, else the row number.
@@ -335,10 +338,8 @@ fn trend(nf: &NamedFrame, field: &str, x: Option<&str>, output: TrendOutput, nam
         TrendOutput::Fitted => {
             let name = name.unwrap_or("trend");
             check_free(frame, name)?;
-            let values = xs
-                .iter()
-                .map(|x| num_value(line.and_then(|l| x.map(|x| l.intercept + l.slope * x))))
-                .collect();
+            let values =
+                xs.iter().map(|x| num_value(line.and_then(|l| x.map(|x| l.intercept + l.slope * x)))).collect();
             with_field(frame, new_field(name, FieldType::Number, values))
         }
         TrendOutput::Summary => {
@@ -431,7 +432,7 @@ fn aggregate(field: &Field, op: Agg, rows: &[usize]) -> Value {
     match op {
         Agg::Count => Value::from(cells().count()),
         Agg::First => cells().next().cloned().unwrap_or(Value::Null),
-        Agg::Last => cells().last().cloned().unwrap_or(Value::Null),
+        Agg::Last => cells().next_back().cloned().unwrap_or(Value::Null),
         Agg::Sum => {
             let v = nums();
             num_value((!v.is_empty()).then(|| stats::sum(&v)))
@@ -486,7 +487,8 @@ fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation]) -> Result<F
         out_names.push(name.clone());
         plan.push((f, a.op, t, name));
     }
-    let rows = groups((0..frame.rows()).map(|r| by_fields.iter().map(|f| key_of(&f.values[r], f.field_type)).collect()));
+    let rows =
+        groups((0..frame.rows()).map(|r| by_fields.iter().map(|f| key_of(&f.values[r], f.field_type)).collect()));
     let mut fields: Vec<Field> = by_fields
         .iter()
         .map(|f| Field {
@@ -583,7 +585,13 @@ fn join(frames: &mut Vec<NamedFrame>, left: &str, right: &str, on: &JoinOn, mode
     if !same_family(lkf.field_type, rkf.field_type) {
         return Err(detail(
             "steps.key_types",
-            format!("{} ({}) cannot be matched with {} ({})", lkf.name, type_name(lkf.field_type), rkf.name, type_name(rkf.field_type)),
+            format!(
+                "{} ({}) cannot be matched with {} ({})",
+                lkf.name,
+                type_name(lkf.field_type),
+                rkf.name,
+                type_name(rkf.field_type)
+            ),
         )
         .with("left", type_name(lkf.field_type))
         .with("right", type_name(rkf.field_type)));
@@ -594,7 +602,9 @@ fn join(frames: &mut Vec<NamedFrame>, left: &str, right: &str, on: &JoinOn, mode
             by_key.entry(k).or_default().push(row);
         }
     }
-    let too_many = || detail("steps.too_many_rows", format!("the join would make more than {MAX_ROWS} rows")).with("max", MAX_ROWS);
+    let too_many = || {
+        detail("steps.too_many_rows", format!("the join would make more than {MAX_ROWS} rows")).with("max", MAX_ROWS)
+    };
     let mut pairs: Vec<(Option<usize>, Option<usize>)> = Vec::new();
     let mut matched = vec![false; r.frame.rows()];
     for (row, v) in lkf.values.iter().enumerate() {
@@ -785,14 +795,18 @@ mod tests {
         assert_eq!(values(&out[0], "zeit"), [json!(T0), json!(T0 + DAY)]);
         assert_eq!(values(&out[0], "proSitzung"), [json!(2.0), json!(5.0)]);
 
-        let outer = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "outer" }]));
+        let outer = steps(
+            json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "outer" }]),
+        );
         let out = run(&outer, vec![sales(), sessions.clone()]).unwrap();
         let times: Vec<i64> = values(&out[0], "zeit").iter().map(|v| v.as_i64().unwrap()).collect();
         assert_eq!(times, [T0, T0 + DAY, T0 + 2 * DAY, T0 + 3 * DAY, T0 + 9 * DAY], "in time order");
         assert_eq!(values(&out[0], "B.sitzungen"), [json!(5), json!(4), Value::Null, Value::Null, json!(1)]);
         assert_eq!(values(&out[0], "A.betrag")[4], Value::Null);
 
-        let left = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "left" }]));
+        let left = steps(
+            json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "left" }]),
+        );
         assert_eq!(run(&left, vec![sales(), sessions]).unwrap()[0].frame.rows(), 4);
     }
 
@@ -808,14 +822,19 @@ mod tests {
         let s = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B",
             "on": { "by": "key", "leftField": "stueck", "rightField": "nr" }, "mode": "outer" }]));
         let out = run(&s, vec![sales(), prices]).unwrap();
-        assert_eq!(values(&out[0], "stueck"), [json!("1"), json!("2"), json!("3"), json!("3"), json!("9007199254740993"), Value::Null]);
+        assert_eq!(
+            values(&out[0], "stueck"),
+            [json!("1"), json!("2"), json!("3"), json!("3"), json!("9007199254740993"), Value::Null]
+        );
         assert_eq!(values(&out[0], "B.preis"), [Value::Null, json!(1.5), json!(2), json!(2.5), Value::Null, json!(9)]);
         let bad = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B",
             "on": { "by": "key", "leftField": "land", "rightField": "nr" }, "mode": "outer" }]));
         let prices = named("B", vec![field("nr", FieldType::Number, vec![json!(1)])]);
         assert_eq!(run(&bad, vec![sales(), prices]).unwrap_err().detail.reason, "steps.key_types");
         let no_time = named("B", vec![field("nr", FieldType::Number, vec![json!(1)])]);
-        let by_time = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "inner" }]));
+        let by_time = steps(
+            json!([{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "inner" }]),
+        );
         assert_eq!(run(&by_time, vec![sales(), no_time]).unwrap_err().detail.reason, "steps.no_time_field");
     }
 
@@ -860,7 +879,8 @@ mod tests {
         assert!((trend[3] - trend[2] - 10.25).abs() < 1e-9, "{trend:?}");
         assert_eq!(values(&out[0], "schnitt"), [Value::Null, json!(15.0), json!(25.25), json!(30.5)]);
 
-        let summary = steps(json!([{ "id": "t", "type": "trend", "frame": "A", "field": "betrag", "output": "summary" }]));
+        let summary =
+            steps(json!([{ "id": "t", "type": "trend", "frame": "A", "field": "betrag", "output": "summary" }]));
         let out = run(&summary, vec![sales()]).unwrap();
         assert!((values(&out[0], "slope")[0].as_f64().unwrap() - 10.25).abs() < 1e-9);
         assert_eq!(values(&out[0], "n"), [json!(3)]);
@@ -915,7 +935,9 @@ mod tests {
                 field("betrag", FieldType::Number, vec![json!(1), json!(2), json!(3), json!(4)]),
             ],
         );
-        let p = steps(json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "land", "column": "jahr", "value": "betrag", "op": "sum" }]));
+        let p = steps(
+            json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "land", "column": "jahr", "value": "betrag", "op": "sum" }]),
+        );
         let out = run(&p, vec![wide.clone()]).unwrap();
         assert_eq!(names(&out[0]), ["land", "2025", "2026"]);
         assert_eq!(values(&out[0], "2025"), [json!(1.0), Value::Null]);
@@ -927,9 +949,13 @@ mod tests {
                 field("c", FieldType::Number, (0..600).map(|i| json!(i)).collect()),
             ],
         );
-        let p = steps(json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "r", "column": "c", "value": "c", "op": "count" }]));
+        let p = steps(
+            json!([{ "id": "p", "type": "pivot", "frame": "A", "row": "r", "column": "c", "value": "c", "op": "count" }]),
+        );
         assert_eq!(run(&p, vec![many]).unwrap_err().detail.reason, "steps.too_many_columns");
-        let bad = steps(json!([{ "id": "g", "type": "group", "frame": "A", "by": ["land"], "aggregations": [{ "field": "land", "op": "sum" }] }]));
+        let bad = steps(
+            json!([{ "id": "g", "type": "group", "frame": "A", "by": ["land"], "aggregations": [{ "field": "land", "op": "sum" }] }]),
+        );
         assert_eq!(run(&bad, vec![wide]).unwrap_err().detail.reason, "steps.field_type");
     }
 

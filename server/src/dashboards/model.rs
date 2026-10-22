@@ -78,7 +78,9 @@ fn v1_projection(step: &Value) -> Option<Value> {
         return None;
     }
     // Stable, since stored version 1 models are migrated on every read.
-    Some(serde_json::json!({ "id": format!("projection-{ref_id}"), "type": "toFrame", "frame": ref_id, "columns": columns }))
+    Some(
+        serde_json::json!({ "id": format!("projection-{ref_id}"), "type": "toFrame", "frame": ref_id, "columns": columns }),
+    )
 }
 
 /// The grid has 24 columns; rows are unbounded but a dashboard this tall is a mistake.
@@ -545,7 +547,8 @@ mod tests {
     fn sizes_and_counts_are_bounded() {
         let big = with(sample(), &["panels", "0", "options"], json!({ "text": "x".repeat(MAX_MODEL_BYTES) }));
         assert!(parse(big).unwrap_err().contains("at most 1048576"));
-        let many = with(sample(), &["panels", "0", "transformations"], json!(vec![json!({}); crate::analysis::MAX_STEPS + 1]));
+        let many =
+            with(sample(), &["panels", "0", "transformations"], json!(vec![json!({}); crate::analysis::MAX_STEPS + 1]));
         assert!(parse(many).unwrap_err().contains("transformations takes at most"));
         let targets: Vec<Value> =
             (0..=MAX_TARGETS).map(|i| json!({ "refId": format!("R{i}"), "datasourceId": "ds", "query": {} })).collect();
@@ -649,19 +652,27 @@ mod tests {
         let model = parse(with(sample(), &["panels", "0", "transformations"], steps.clone())).unwrap();
         assert_eq!(model.panels[0].transformations, steps.as_array().unwrap().clone());
         for (bad, expect) in [
-            (json!([{ "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1 +" }]),
-             "model.panels[0].transformations[0].expression: unexpected input at 4"),
-            (json!([{ "id": "s", "type": "calculate", "frame": "C", "name": "x", "expression": "1" }]),
-             "model.panels[0].transformations[0]: there is no query C"),
+            (
+                json!([{ "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1 +" }]),
+                "model.panels[0].transformations[0].expression: unexpected input at 4",
+            ),
+            (
+                json!([{ "id": "s", "type": "calculate", "frame": "C", "name": "x", "expression": "1" }]),
+                "model.panels[0].transformations[0]: there is no query C",
+            ),
             (json!([{ "id": "s", "type": "zauber" }]), "model.panels[0].transformations[0]: unknown variant"),
         ] {
             let err = parse(with(sample(), &["panels", "0", "transformations"], bad)).unwrap_err();
             assert!(err.contains(expect), "{err}");
         }
         // A panel without queries has no frames for steps to work on.
-        let err = parse(with(sample(), &["panels", "1", "transformations"], json!([
-            { "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }
-        ])))
+        let err = parse(with(
+            sample(),
+            &["panels", "1", "transformations"],
+            json!([
+                { "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }
+            ]),
+        ))
         .unwrap_err();
         assert!(err.contains("panels[1].transformations[0]: there is no query A"), "{err}");
     }

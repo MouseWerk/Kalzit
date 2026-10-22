@@ -552,7 +552,11 @@ impl Parser {
             Tok::Op("(") => {
                 let inner = self.expr()?;
                 if !self.is_op(")") {
-                    return Err(if matches!(self.peek().tok, Tok::End) { unclosed(token.at) } else { syntax(self.peek().at) });
+                    return Err(if matches!(self.peek().tok, Tok::End) {
+                        unclosed(token.at)
+                    } else {
+                        syntax(self.peek().at)
+                    });
                 }
                 self.next();
                 Ok(inner)
@@ -581,7 +585,9 @@ impl Parser {
     fn call(&mut self, word: String, at: usize) -> Result<Expr, Detail> {
         let lower = word.to_lowercase();
         let Some(&(name, func, min, max)) = FUNCTIONS.iter().find(|f| f.0 == lower) else {
-            return Err(error("expression.unknown_function", format!("there is no function {word}")).with("name", &word));
+            return Err(
+                error("expression.unknown_function", format!("there is no function {word}")).with("name", &word)
+            );
         };
         let open = self.next().at;
         let mut args = Vec::new();
@@ -626,9 +632,9 @@ impl Parser {
 
 fn arguments(name: &str, min: usize, max: Option<usize>) -> Detail {
     match max {
-        Some(max) if max == min => {
-            error("expression.arguments_exact", format!("{name} takes {min} values")).with("name", name).with("count", min)
-        }
+        Some(max) if max == min => error("expression.arguments_exact", format!("{name} takes {min} values"))
+            .with("name", name)
+            .with("count", min),
         Some(max) => error("expression.arguments_range", format!("{name} takes {min} to {max} values"))
             .with("name", name)
             .with("min", min)
@@ -703,11 +709,10 @@ pub fn find_field(fields: &[Field], name: &str) -> Result<usize, Detail> {
     let mut found = fields.iter().enumerate().filter(|(_, f)| f.name == name).map(|(i, _)| i);
     match (found.next(), found.next()) {
         (Some(i), None) => Ok(i),
-        (None, _) => {
-            Err(error("expression.unknown_field", format!("there is no field {name}")).with("field", name))
+        (None, _) => Err(error("expression.unknown_field", format!("there is no field {name}")).with("field", name)),
+        (Some(_), Some(_)) => {
+            Err(error("expression.ambiguous_field", format!("several fields are named {name}")).with("field", name))
         }
-        (Some(_), Some(_)) => Err(error("expression.ambiguous_field", format!("several fields are named {name}"))
-            .with("field", name)),
     }
 }
 
@@ -727,14 +732,11 @@ fn operands(op: BinOp, l: Type, r: Type) -> Detail {
 }
 
 fn argument_type(name: &str, position: usize, expected: &str, found: Type) -> Detail {
-    error(
-        "expression.argument_type",
-        format!("value {position} of {name} must be {expected}, not {}", found.name()),
-    )
-    .with("name", name)
-    .with("position", position)
-    .with("expected", expected)
-    .with("found", found.name())
+    error("expression.argument_type", format!("value {position} of {name} must be {expected}, not {}", found.name()))
+        .with("name", name)
+        .with("position", position)
+        .with("expected", expected)
+        .with("found", found.name())
 }
 
 /// Type-checks `expr` against the fields of a frame.
@@ -761,9 +763,12 @@ fn check(expr: &Expr, fields: &[Field]) -> Result<(Node, Type), Detail> {
                 FieldType::String => (Read::Text, Type::Text),
                 FieldType::Bool => (Read::Bool, Type::Bool),
                 FieldType::Json => {
-                    return Err(error("expression.field_type", format!("field {name} holds JSON, which has no type here"))
-                        .with("field", name)
-                        .with("type", "json"));
+                    return Err(error(
+                        "expression.field_type",
+                        format!("field {name} holds JSON, which has no type here"),
+                    )
+                    .with("field", name)
+                    .with("type", "json"));
                 }
             };
             (Node::Field(index, read), t)
@@ -1207,9 +1212,8 @@ pub fn parse_number(text: &str) -> Option<f64> {
         None => (mantissa, None),
     };
     let digits = |p: &str| p.bytes().all(|b| b.is_ascii_digit());
-    let mantissa_ok = digits(whole)
-        && fraction.is_none_or(digits)
-        && (!whole.is_empty() || fraction.is_some_and(|f| !f.is_empty()));
+    let mantissa_ok =
+        digits(whole) && fraction.is_none_or(digits) && (!whole.is_empty() || fraction.is_some_and(|f| !f.is_empty()));
     let exponent_ok = exponent.is_none_or(|e| {
         let e = e.strip_prefix(['+', '-']).unwrap_or(e);
         !e.is_empty() && digits(e)
@@ -1377,7 +1381,11 @@ mod tests {
 
     fn sample() -> Vec<Field> {
         vec![
-            field("zeit", FieldType::Time, vec![json!(1_767_225_600_000_i64), json!(1_767_312_000_000_i64), Value::Null]),
+            field(
+                "zeit",
+                FieldType::Time,
+                vec![json!(1_767_225_600_000_i64), json!(1_767_312_000_000_i64), Value::Null],
+            ),
             field("betrag", FieldType::Number, vec![json!(12.5), json!(-3), Value::Null]),
             field("anzahl", FieldType::Int64, vec![json!("4"), json!("9007199254740993"), Value::Null]),
             field("land", FieldType::String, vec![json!("Österreich"), json!("Schweiz"), Value::Null]),
@@ -1587,7 +1595,8 @@ mod tests {
         assert_eq!(run("TRUE AND NOT False"), vec![json!(true); 3]);
         assert_eq!(run("IF(true, 1, 2)"), vec![json!(1.0); 3]);
         assert_eq!(run("'it\\'s' + \"\\\"\""), vec![json!("it's\""); 3]);
-        let fields = vec![field("a]b", FieldType::Number, vec![json!(1)]), field("A.wert", FieldType::Number, vec![json!(2)])];
+        let fields =
+            vec![field("a]b", FieldType::Number, vec![json!(1)]), field("A.wert", FieldType::Number, vec![json!(2)])];
         let c = compile(&parse("[a]]b] + A.wert").unwrap(), &fields).unwrap();
         assert_eq!(c.cell(&fields, 0), json!(3.0));
         let fields = vec![field("größe_2", FieldType::Number, vec![json!(4)])];
@@ -1647,7 +1656,8 @@ mod tests {
 
     #[test]
     fn parse_number_accepts_only_plain_numbers() {
-        for (text, value) in [("1", 1.0), ("-1.5", -1.5), ("+.5", 0.5), ("2.", 2.0), (" 1e3 ", 1000.0), ("1E-2", 0.01)] {
+        for (text, value) in [("1", 1.0), ("-1.5", -1.5), ("+.5", 0.5), ("2.", 2.0), (" 1e3 ", 1000.0), ("1E-2", 0.01)]
+        {
             assert_eq!(parse_number(text), Some(value), "{text}");
         }
         for text in ["", " ", ".", "e5", "1e", "0x10", "inf", "NaN", "1_000", "1,5", "--1", "1e999", "١"] {

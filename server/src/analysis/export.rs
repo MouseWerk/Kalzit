@@ -29,10 +29,13 @@ const XLSX_MAX_TEXT: usize = 32_767;
 
 pub fn encode(frame: &Frame, name: &str, format: ExportFormat, language: ExportLanguage) -> Result<File, Detail> {
     match format {
-        ExportFormat::Csv => Ok(File { bytes: csv(frame, language), content_type: "text/csv; charset=utf-8", extension: "csv" }),
+        ExportFormat::Csv => {
+            Ok(File { bytes: csv(frame, language), content_type: "text/csv; charset=utf-8", extension: "csv" })
+        }
         ExportFormat::Json => Ok(File {
-            bytes: serde_json::to_vec(&QueryResult::Frame { frame: frame.clone() })
-                .map_err(|e| Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e))?,
+            bytes: serde_json::to_vec(&QueryResult::Frame { frame: frame.clone() }).map_err(|e| {
+                Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e)
+            })?,
             content_type: "application/json",
             extension: "json",
         }),
@@ -65,9 +68,8 @@ fn csv_cell(value: &Value, field_type: FieldType, language: ExportLanguage) -> S
 }
 
 fn quote(cell: &str, separator: char) -> String {
-    let needs = cell.contains([separator, '"', '\n', '\r'])
-        || cell.starts_with([' ', '\t'])
-        || cell.ends_with([' ', '\t']);
+    let needs =
+        cell.contains([separator, '"', '\n', '\r']) || cell.starts_with([' ', '\t']) || cell.ends_with([' ', '\t']);
     if needs { format!("\"{}\"", cell.replace('"', "\"\"")) } else { cell.to_string() }
 }
 
@@ -81,8 +83,11 @@ pub fn csv(frame: &Frame, language: ExportLanguage) -> Vec<u8> {
     out.push_str(&header.join(&sep));
     out.push_str("\r\n");
     for row in 0..frame.rows() {
-        let cells: Vec<String> =
-            frame.fields().iter().map(|f| quote(&csv_cell(&f.values[row], f.field_type, language), separator)).collect();
+        let cells: Vec<String> = frame
+            .fields()
+            .iter()
+            .map(|f| quote(&csv_cell(&f.values[row], f.field_type, language), separator))
+            .collect();
         out.push_str(&cells.join(&sep));
         out.push_str("\r\n");
     }
@@ -196,10 +201,18 @@ mod tests {
 
     fn sample() -> Frame {
         Frame::new(vec![
-            field("zeit", FieldType::Time, vec![json!(1_767_225_600_000_i64), Value::Null, json!(-2_208_988_800_000_i64)]),
+            field(
+                "zeit",
+                FieldType::Time,
+                vec![json!(1_767_225_600_000_i64), Value::Null, json!(-2_208_988_800_000_i64)],
+            ),
             field("betrag", FieldType::Number, vec![json!(1234.5), json!(-0.25), json!(1e21)]),
             field("stück", FieldType::Int64, vec![json!("9007199254740993"), json!("7"), Value::Null]),
-            field("text", FieldType::String, vec![json!("a;b,\"c\""), json!("=HYPERLINK(\"x\")"), json!(" Zeile\nzwei ")]),
+            field(
+                "text",
+                FieldType::String,
+                vec![json!("a;b,\"c\""), json!("=HYPERLINK(\"x\")"), json!(" Zeile\nzwei ")],
+            ),
             field("ok", FieldType::Bool, vec![json!(true), json!(false), Value::Null]),
             field("roh", FieldType::Json, vec![json!({ "a": [1, "x"] }), Value::Null, json!("-1")]),
         ])
@@ -212,7 +225,10 @@ mod tests {
         assert!(text.starts_with('\u{FEFF}'), "BOM for Excel");
         let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
         assert_eq!(lines[0], "zeit;betrag;stück;text;ok;roh");
-        assert_eq!(lines[1], "2026-01-01T00:00:00.000Z;1234,5;9007199254740993;\"a;b,\"\"c\"\"\";true;\"{\"\"a\"\":[1,\"\"x\"\"]}\"");
+        assert_eq!(
+            lines[1],
+            "2026-01-01T00:00:00.000Z;1234,5;9007199254740993;\"a;b,\"\"c\"\"\";true;\"{\"\"a\"\":[1,\"\"x\"\"]}\""
+        );
         assert_eq!(lines[2], ";-0,25;7;\"'=HYPERLINK(\"\"x\"\")\";false;");
         // A line break inside a quoted cell stays a bare LF; rows end with CRLF.
         assert_eq!(lines[3], "1900-01-01T00:00:00.000Z;1e+21;;\" Zeile\nzwei \";;\"\"\"-1\"\"\"");
@@ -224,13 +240,21 @@ mod tests {
         let text = String::from_utf8(csv(&sample(), ExportLanguage::En)).unwrap();
         let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').split("\r\n").collect();
         assert_eq!(lines[0], "zeit,betrag,stück,text,ok,roh");
-        assert!(lines[1].starts_with("2026-01-01T00:00:00.000Z,1234.5,9007199254740993,\"a;b,\"\"c\"\"\",true,"), "{}", lines[1]);
+        assert!(
+            lines[1].starts_with("2026-01-01T00:00:00.000Z,1234.5,9007199254740993,\"a;b,\"\"c\"\"\",true,"),
+            "{}",
+            lines[1]
+        );
         assert!(lines[2].starts_with(",-0.25,7,"), "{}", lines[2]);
     }
 
     #[test]
     fn header_names_are_defused_and_quoted_too() {
-        let frame = Frame::new(vec![field("=SUM(A1)", FieldType::Number, vec![json!(1)]), field("a,b", FieldType::Number, vec![json!(2)])]).unwrap();
+        let frame = Frame::new(vec![
+            field("=SUM(A1)", FieldType::Number, vec![json!(1)]),
+            field("a,b", FieldType::Number, vec![json!(2)]),
+        ])
+        .unwrap();
         let text = String::from_utf8(csv(&frame, ExportLanguage::En)).unwrap();
         assert!(text.starts_with("\u{FEFF}'=SUM(A1),\"a,b\"\r\n1,2\r\n"), "{text:?}");
         assert_eq!(String::from_utf8(csv(&Frame::new(vec![]).unwrap(), ExportLanguage::De)).unwrap(), "\u{FEFF}\r\n");
@@ -280,7 +304,9 @@ mod tests {
         let long = Frame::new(vec![field("t", FieldType::String, vec![json!("ä".repeat(40_000))])]).unwrap();
         let (_, strings) = sheet_xml(&xlsx(&long, "x").unwrap());
         assert_eq!(strings.matches('ä').count(), XLSX_MAX_TEXT);
-        let wide = Frame::new((0..=XLSX_MAX_COLUMNS).map(|i| field(&format!("f{i}"), FieldType::Number, vec![])).collect()).unwrap();
+        let wide =
+            Frame::new((0..=XLSX_MAX_COLUMNS).map(|i| field(&format!("f{i}"), FieldType::Number, vec![])).collect())
+                .unwrap();
         assert_eq!(xlsx(&wide, "x").unwrap_err().reason, "export.too_many_columns");
     }
 

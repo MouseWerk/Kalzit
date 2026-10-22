@@ -1086,7 +1086,11 @@ async fn dashboards_save_versions_and_refuse_stale_writes(t: TestApp) {
     assert_eq!(created.body["model"]["panels"][0]["fieldConfig"], json!({}), "defaults are filled in");
 
     let got = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
-    assert_eq!((got.status, &got.body["model"]["schemaVersion"]), (StatusCode::OK, &json!(2)), "migrated to the current version");
+    assert_eq!(
+        (got.status, &got.body["model"]["schemaVersion"]),
+        (StatusCode::OK, &json!(2)),
+        "migrated to the current version"
+    );
 
     let saved = t
         .put(

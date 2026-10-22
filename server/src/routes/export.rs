@@ -11,10 +11,10 @@
 
 use std::collections::BTreeSet;
 
+use axum::Extension;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode, header};
-use axum::Extension;
 use axum::response::Response;
 use serde_json::{Value, json};
 
@@ -30,7 +30,10 @@ use crate::datasources::{check_interval, check_items, check_range, run_queries, 
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
-use crate::shapes::{ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse, QueryResult, Shape};
+use crate::shapes::{
+    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
+    QueryResult, Shape,
+};
 
 pub fn routes() -> Vec<RouteDef> {
     vec![
@@ -68,9 +71,8 @@ async fn export_query(
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     let refs: BTreeSet<&str> = req.queries.iter().map(|q| q.ref_id.as_str()).collect();
-    let steps = check_steps(&req.steps, &refs, "steps").map_err(|e| {
-        ApiError::validation(e.clone()).with_field("steps").because("steps.invalid").param("detail", e)
-    })?;
+    let steps = check_steps(&req.steps, &refs, "steps")
+        .map_err(|e| ApiError::validation(e.clone()).with_field("steps").because("steps.invalid").param("detail", e))?;
     // The file holds what running the queries would show, so the same right decides: each data
     // source must be one the caller may query. Unlike a run, one refusal refuses the file.
     for item in &req.queries {
@@ -182,7 +184,8 @@ async fn produce(
             let shape = other_shapes.iter().find(|(r, _)| frame.as_ref().is_none_or(|f| f == r)).map(|(_, s)| *s);
             return Err(match shape {
                 Some(shape) => {
-                    let shape = serde_json::to_value(shape).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+                    let shape =
+                        serde_json::to_value(shape).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
                     refused(
                         Detail::new("export.shape_unsupported", format!("{shape} results cannot be exported yet"))
                             .with("shape", shape),
@@ -190,8 +193,11 @@ async fn produce(
                 }
                 None => {
                     let name = frame.unwrap_or_default();
-                    refused(Detail::new("export.frame_missing", format!("there is no table {name} to export")).with("frame", &name))
-                        .with_field("frame")
+                    refused(
+                        Detail::new("export.frame_missing", format!("there is no table {name} to export"))
+                            .with("frame", &name),
+                    )
+                    .with_field("frame")
                 }
             });
         };
