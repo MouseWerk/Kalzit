@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
+import "../admin.css";
 
 export interface NoticeContent {
   message: string;

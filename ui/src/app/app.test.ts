@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, errorFromResponse } from "../api/client";
-import { retryDelayMs, shouldRetryMutation, shouldRetryQuery } from "./app";
+import { retryDelayMs, shouldRetryMutation, shouldRetryQuery } from "../api/retry";
 
 const busy = (retryAfterMs?: number) =>
   new ApiError(

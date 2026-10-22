@@ -147,7 +147,7 @@ export function WhyCanI({ permission, resource, orgId }: WhyCanIProps) {
         className="admin-link-button"
         aria-expanded={open}
         aria-controls={open ? popoverId : undefined}
-        aria-label={t("admin.why.buttonLabel", { permission })}
+        aria-label={t("admin.why.buttonLabel", { permission: t(PERMISSION_TEXT[permission]) })}
         onClick={() => (open ? close(false) : setOpen(true))}
       >
         {t("admin.why.button")}

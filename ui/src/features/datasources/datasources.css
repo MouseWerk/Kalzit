@@ -1,0 +1,108 @@
+@layer components {
+  .ds-list,
+  .ds-edit {
+    display: grid;
+    gap: var(--space-4);
+    max-width: var(--content-max-width);
+  }
+
+  .ds-form {
+    max-width: var(--size-form);
+  }
+
+  .ds-form__kind {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ds-form__saved {
+    align-self: center;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-trash-notice,
+  .ds-conflict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .ds-kinds {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .ds-kinds__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--size-field), 1fr));
+    gap: var(--space-2);
+    list-style: none;
+  }
+
+  .ds-kinds__item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    text-decoration: none;
+  }
+
+  .ds-kinds__item:hover {
+    background: var(--bg-hover);
+  }
+
+  .ds-secret {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ds-secret__status {
+    min-width: var(--size-label);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-secret-input {
+    display: grid;
+    gap: var(--space-1);
+    justify-items: start;
+  }
+
+  .ds-secret-input .field {
+    width: 100%;
+  }
+
+  .ds-health {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .ds-health__message {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .ds-edit__footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding-block-start: var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .ds-textarea {
+    min-height: var(--size-textarea-min);
+    resize: vertical;
+  }
+}

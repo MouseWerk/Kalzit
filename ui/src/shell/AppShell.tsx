@@ -1,5 +1,5 @@
 import { getRouteApi, Link, Outlet } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { NAV_ITEMS } from "../features/nav";
 import { useI18n } from "../i18n/i18n";
@@ -33,7 +33,10 @@ export function AppShell() {
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarId = useId();
   const permissions = useOrgPermissions();
-  const items = NAV_ITEMS.filter((item) => item.visible?.(permissions) ?? true);
+  // Hidden by the permissions: an entry with `useGranted` may still show, from its own data.
+  const items = NAV_ITEMS.filter(
+    (item) => (item.visible?.(permissions) ?? true) || item.useGranted !== undefined,
+  );
   const currentOrg = currentOrgOf(me);
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const wide = useWideLayout();
@@ -135,16 +138,28 @@ export function AppShell() {
         </div>
         <nav ref={navRef} className="shell__nav" aria-label={t("nav.label")}>
           <ul className="shell__nav-list">
-            {items.map((item) => (
-              <NavEntry
-                key={item.to}
-                item={item}
-                rail={rail}
-                wide={wide}
-                permissions={permissions}
-                onFlyoutLayerChange={onFlyoutLayerChange}
-              />
-            ))}
+            {items.map((item) =>
+              (item.visible?.(permissions) ?? true) || item.useGranted === undefined ? (
+                <NavEntry
+                  key={item.to}
+                  item={item}
+                  rail={rail}
+                  wide={wide}
+                  permissions={permissions}
+                  onFlyoutLayerChange={onFlyoutLayerChange}
+                />
+              ) : (
+                <GrantedNavEntry
+                  key={item.to}
+                  useGranted={item.useGranted}
+                  item={item}
+                  rail={rail}
+                  wide={wide}
+                  permissions={permissions}
+                  onFlyoutLayerChange={onFlyoutLayerChange}
+                />
+              ),
+            )}
           </ul>
         </nav>
         <UserMenu me={me} rail={rail} />
@@ -157,4 +172,13 @@ export function AppShell() {
       </main>
     </div>
   );
+}
+
+/** An entry the permissions hide, shown when its area's hook finds a grant. */
+function GrantedNavEntry({
+  useGranted,
+  ...entry
+}: ComponentProps<typeof NavEntry> & { useGranted: () => boolean }) {
+  const granted = useGranted();
+  return granted ? <NavEntry {...entry} /> : null;
 }
