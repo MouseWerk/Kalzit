@@ -369,7 +369,7 @@
   "admin.orgs.ownerGone": "This account does not exist anymore. Choose another owner.",
   "admin.orgs.noOwner": "There is no account that can sign in to own the organization. Create or unlock a user first.",
   "admin.account.sessionCreated": "Signed in {date}",
-  "admin.account.revokeNamed": "End the session signed in {date}",
+  "admin.account.revokeNamed": "End this session (signed in {date})",
   "admin.auditAction.team.renamed": "Team renamed",
   "admin.auditAction.team.member_changed": "Team role changed",
   "admin.auditAction.grant.changed": "Access level changed",
