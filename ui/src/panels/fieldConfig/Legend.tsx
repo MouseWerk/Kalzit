@@ -106,9 +106,12 @@ export function WithLegend({
   children: ReactNode;
 }) {
   return (
-    <div className={`viz-layout viz-layout--${placement}`}>
-      <div className="viz-layout__main">{children}</div>
-      {legend}
+    // The outer box is the size container: a container query cannot style the container itself.
+    <div className="viz-layout-box">
+      <div className={`viz-layout viz-layout--${placement}`}>
+        <div className="viz-layout__main">{children}</div>
+        {legend}
+      </div>
     </div>
   );
 }
