@@ -688,31 +688,31 @@ function SettingsForm({
         required
         disabled={readOnly}
       />
-      {plain.map((spec) => (
-        <SettingField
-          key={spec.name}
-          spec={spec}
-          value={values[spec.name] ?? ""}
-          error={fieldError(spec.name)}
-          onChange={(value) => change(spec.name, value)}
-          disabled={readOnly || (targetLocked && spec.target)}
-        />
-      ))}
-      {readOnly
-        ? null
-        : secret.map((spec) => (
-            <SecretField
-              key={spec.name}
-              spec={spec}
-              state={secrets[spec.name] ?? { mode: "keep" }}
-              stored={initial?.secrets[spec.name]?.set === true}
-              error={fieldError(spec.name)}
-              onChange={(state) => {
-                setSecrets((current) => ({ ...current, [spec.name]: state }));
-                setDirty(true);
-              }}
-            />
-          ))}
+      {/* In the kind's own order, so a password follows its user name, not the limits. */}
+      {kind.settings.map((spec) =>
+        !spec.secret ? (
+          <SettingField
+            key={spec.name}
+            spec={spec}
+            value={values[spec.name] ?? ""}
+            error={fieldError(spec.name)}
+            onChange={(value) => change(spec.name, value)}
+            disabled={readOnly || (targetLocked && spec.target)}
+          />
+        ) : readOnly ? null : (
+          <SecretField
+            key={spec.name}
+            spec={spec}
+            state={secrets[spec.name] ?? { mode: "keep" }}
+            stored={initial?.secrets[spec.name]?.set === true}
+            error={fieldError(spec.name)}
+            onChange={(state) => {
+              setSecrets((current) => ({ ...current, [spec.name]: state }));
+              setDirty(true);
+            }}
+          />
+        ),
+      )}
       {readOnly ? null : (
         <div className="form__actions">
           <button
