@@ -1,0 +1,346 @@
+@layer components {
+  /* Graph panels: network, hierarchy and path. */
+
+  .graph {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .graph__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .graph__summary,
+  .graph__note,
+  .graph__notices {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph__notices {
+    display: grid;
+    gap: var(--space-1);
+    padding: 0;
+    list-style: none;
+  }
+
+  .graph__note--error {
+    color: var(--danger-text);
+  }
+
+  .graph__body {
+    display: grid;
+    flex: 1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    min-height: 0;
+  }
+
+  .graph__stage {
+    position: relative;
+    min-width: 0;
+    min-height: var(--size-graph-min);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    overflow: hidden;
+  }
+
+  .graph__stage:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .graph__canvas {
+    position: absolute;
+    inset: 0;
+  }
+
+  .graph__probes {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+  }
+
+  .graph__probe--1 {
+    color: var(--chart-1);
+  }
+
+  .graph__probe--2 {
+    color: var(--chart-2);
+  }
+
+  .graph__probe--3 {
+    color: var(--chart-3);
+  }
+
+  .graph__probe--4 {
+    color: var(--chart-4);
+  }
+
+  .graph__probe--5 {
+    color: var(--chart-5);
+  }
+
+  .graph__probe--6 {
+    color: var(--chart-6);
+  }
+
+  .graph__probe--7 {
+    color: var(--chart-7);
+  }
+
+  .graph__probe--8 {
+    color: var(--chart-8);
+  }
+
+  .graph__probe--neutral {
+    color: var(--text-muted);
+  }
+
+  .graph__probe--edge {
+    color: var(--border-strong);
+  }
+
+  .graph__probe--text {
+    color: var(--text);
+  }
+
+  .graph__probe--bg {
+    color: var(--bg-raised);
+  }
+
+  .graph__gesture,
+  .graph__overlay-note {
+    position: absolute;
+    inset-inline: var(--space-2);
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .graph__gesture {
+    top: var(--space-2);
+  }
+
+  .graph__overlay-note {
+    bottom: var(--space-2);
+  }
+
+  .graph__details {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    width: var(--size-column);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    overflow: auto;
+  }
+
+  .graph__details-title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  .graph__properties {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    font-size: var(--font-size-xs);
+  }
+
+  .graph__properties dt {
+    color: var(--text-muted);
+  }
+
+  .graph__properties dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .graph__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .graph__time {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph__time-range {
+    flex: 1;
+    min-width: var(--size-card-min);
+    accent-color: var(--text-muted);
+  }
+
+  .graph__time-value {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @container (max-width: 36rem) {
+    .graph__body {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(var(--size-graph-min), 1fr) auto;
+    }
+
+    .graph__details {
+      width: auto;
+    }
+  }
+
+  /* The table view of a graph. */
+
+  .graph-table {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    min-width: 0;
+    overflow: auto;
+    font-size: var(--font-size-sm);
+  }
+
+  .graph-table__table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .graph-table__caption {
+    padding-block: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    text-align: start;
+  }
+
+  .graph-table__table th,
+  .graph-table__table td {
+    padding: var(--space-1) var(--space-2);
+    border-bottom: var(--border-width) solid var(--border);
+    text-align: start;
+    overflow-wrap: anywhere;
+  }
+
+  .graph-table__table thead th {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .graph-table__number {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .graph-table__select {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-weight: var(--font-weight-regular);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .graph-table__select:hover {
+    text-decoration: underline;
+  }
+
+  .graph-table__select[aria-pressed="true"] {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-table__select:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* Path panel: each path as node, edge, node. */
+
+  .paths {
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .paths__title {
+    margin: 0 0 var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .path {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .path__node {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text);
+  }
+
+  .path__node-label {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .path__edge {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+  }
+
+  .path__pick {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .path__pick:hover {
+    text-decoration: underline;
+  }
+
+  .path__pick:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+}

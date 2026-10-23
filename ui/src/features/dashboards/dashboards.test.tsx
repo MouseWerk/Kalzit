@@ -565,6 +565,22 @@ describe("editing a dashboard", () => {
     expect(server.areas.datasources.queries.length).toBeGreaterThan(0);
   });
 
+  it("keeps each panel type's options while stepping through the picker", async () => {
+    setup("editor", []);
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
+    const dialog = screen.getByRole("dialog", { name: "Edit panel" });
+    await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Color" }), "background");
+    // Arrow keys in the radio group pass through other types; coming back restores the options.
+    await user.click(within(dialog).getByRole("radio", { name: "Gauge" }));
+    await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
+    expect(
+      (within(dialog).getByRole("combobox", { name: "Color" }) as HTMLSelectElement).value,
+    ).toBe("background");
+  });
+
   it("adds a variable whose value reaches every panel query", async () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");

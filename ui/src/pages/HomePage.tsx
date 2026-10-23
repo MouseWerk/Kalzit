@@ -252,12 +252,12 @@ function Stats({ orgId }: { orgId: string }) {
       <ul className="start__stats">
         {stats.map((stat) => (
           <li key={stat.key}>
-            <Link to={stat.to} className="stat">
-              <span className="stat__text">
-                <span className="stat__label">{t(stat.label)}</span>
+            <Link to={stat.to} className="stat-tile">
+              <span className="stat-tile__text">
+                <span className="stat-tile__label">{t(stat.label)}</span>
                 <StatValue count={stat.count} failed={stat.failed} />
               </span>
-              <span className="stat__well" aria-hidden="true">
+              <span className="stat-tile__well" aria-hidden="true">
                 {stat.well}
               </span>
             </Link>
@@ -272,17 +272,19 @@ function StatValue({ count, failed }: { count: Count | undefined; failed: boolea
   const { t, language } = useI18n();
   if (count === undefined) {
     return failed ? (
-      <span className="stat__value stat__value--none">{t("shell.start.stat.unknown")}</span>
+      <span className="stat-tile__value stat-tile__value--none">
+        {t("shell.start.stat.unknown")}
+      </span>
     ) : (
-      <span className="stat__value">
-        <span className="stat__skeleton skeleton" />
+      <span className="stat-tile__value">
+        <span className="stat-tile__skeleton skeleton" />
         <span className="visually-hidden">{t("common.loading")}</span>
       </span>
     );
   }
   const value = new Intl.NumberFormat(language).format(count.value);
   return (
-    <span className="stat__value">
+    <span className="stat-tile__value">
       {count.more ? t("shell.start.stat.more", { count: value }) : value}
     </span>
   );

@@ -1,6 +1,13 @@
 import type { MessageKey } from "../../../i18n/i18n";
-import type { PromSchema, SqlSchema } from "../api";
-import { PROMQL_FUNCTIONS, PROMQL_KEYWORDS, SQL_FUNCTIONS, SQL_KEYWORDS } from "./syntax";
+import type { GraphSourceSchema, PromSchema, SqlSchema } from "../api";
+import {
+  CYPHER_FUNCTIONS,
+  CYPHER_KEYWORDS,
+  PROMQL_FUNCTIONS,
+  PROMQL_KEYWORDS,
+  SQL_FUNCTIONS,
+  SQL_KEYWORDS,
+} from "./syntax";
 
 /**
  * Schema-based completion for the query editors, as pure functions over the text and the cursor,
@@ -15,7 +22,10 @@ export type CompletionKind =
   | "macro"
   | "metric"
   | "label"
-  | "duration";
+  | "duration"
+  | "nodeLabel"
+  | "edgeType"
+  | "property";
 
 export interface Completion {
   label: string;
@@ -208,6 +218,72 @@ export function promqlCompletions(
       ...(schema?.metrics ?? []).map((name) => ({ label: name, kind: "metric" as const })),
       ...PROMQL_FUNCTIONS.map((f) => ({ label: f, kind: "function" as const })),
       ...PROMQL_KEYWORDS.map((k) => ({ label: k, kind: "keyword" as const })),
+    ];
+  }
+  const found = matching(options, word);
+  return found.length === 0 ? null : { from, to: cursor, options: found };
+}
+
+/** The Cypher macros of docs/api/datasources.md; the server binds them as parameters. */
+export const CYPHER_MACROS: { name: string; help: MessageKey }[] = [
+  { name: "$__timeFrom", help: "datasources.editor.macro.timeFromDateTime" },
+  { name: "$__timeTo", help: "datasources.editor.macro.timeToDateTime" },
+  { name: "$__timeFromMs", help: "datasources.editor.macro.timeFromMs" },
+  { name: "$__timeToMs", help: "datasources.editor.macro.timeToMs" },
+  { name: "$__interval_ms", help: "datasources.editor.macro.intervalMs" },
+];
+
+/** The source's property keys; the schema lists them for the whole source, not per label. */
+function propertyKeys(schema: GraphSourceSchema | undefined): Completion[] {
+  return [...new Set(schema?.propertyKeys ?? [])]
+    .sort()
+    .map((key) => ({ label: key, kind: "property" as const }));
+}
+
+/**
+ * Completions for Cypher from the graph schema: labels after a colon in a node pattern
+ * (`(c:Cu`), edge types after a colon or a bar in an edge pattern (`[:BO`, `[:A|B`), property
+ * keys after a variable and a dot and inside a pattern's braces, macros after `$`, else keywords
+ * and functions.
+ */
+export function cypherCompletions(
+  text: string,
+  cursor: number,
+  schema: GraphSourceSchema | undefined,
+  explicit = false,
+): CompletionResult | null {
+  const before = text.slice(0, cursor);
+  const word = /\$?\w*$/.exec(before)?.[0] ?? "";
+  const from = cursor - word.length;
+  const head = before.slice(0, from);
+  let options: Completion[];
+
+  const openParen = head.lastIndexOf("(");
+  const openBracket = head.lastIndexOf("[");
+  const openBrace = head.lastIndexOf("{");
+  const closed = (open: number, close: string) => open > head.lastIndexOf(close);
+  if (/:\s*$/.test(head) || (/\|\s*$/.test(head) && closed(openBracket, "]"))) {
+    const inEdge = closed(openBracket, "]") && openBracket > openParen;
+    options = inEdge
+      ? (schema?.edgeTypes ?? []).map((type) => ({ label: type, kind: "edgeType" as const }))
+      : (schema?.labels ?? []).map((label) => ({ label, kind: "nodeLabel" as const }));
+    // A colon in a map (`{since: 2020}`) is not a label position.
+    if (closed(openBrace, "}") && openBrace > Math.max(openParen, openBracket)) {
+      return null;
+    }
+  } else if (word.startsWith("$")) {
+    options = CYPHER_MACROS.map((m) => ({ label: m.name, kind: "macro" as const }));
+  } else if (/\b\w+\.$/.test(head)) {
+    options = propertyKeys(schema);
+  } else if (closed(openBrace, "}") && /[{,]\s*$/.test(head)) {
+    options = propertyKeys(schema);
+  } else {
+    if (word === "" && !explicit) {
+      return null;
+    }
+    options = [
+      ...CYPHER_KEYWORDS.map((k) => ({ label: k.toUpperCase(), kind: "keyword" as const })),
+      ...CYPHER_FUNCTIONS.map((f) => ({ label: f, kind: "function" as const })),
     ];
   }
   const found = matching(options, word);

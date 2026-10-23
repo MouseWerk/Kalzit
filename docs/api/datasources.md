@@ -988,6 +988,12 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table (no `field`) |
 
+### Dashboards (`422 validation`, `field: model`)
+
+| Reason | Params | When |
+|---|---|---|
+| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes has options or field options the server refuses: `panel` is its title (else its id), `detail` names the option |
+
 ### Sources and the server (`datasource_error` unless noted)
 
 | Reason | Params | When |

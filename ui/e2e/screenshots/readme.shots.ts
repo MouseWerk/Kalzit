@@ -136,7 +136,7 @@ test("start page", async ({ browser }) => {
   await expect(
     page.getByRole("heading", { name: t("home.welcome", { name: DEMO_OWNER.name }) }),
   ).toBeVisible();
-  await expect(page.locator(".stat__skeleton")).toHaveCount(0);
+  await expect(page.locator(".stat-tile__skeleton")).toHaveCount(0);
   await expect(page.locator(".dash-card")).toHaveCount(2);
   await shoot(page, "start");
   await page.context().close();

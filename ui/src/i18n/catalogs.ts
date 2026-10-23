@@ -6,12 +6,16 @@ import deCore from "./de/core.json";
 import deDashboards from "./de/dashboards.json";
 import deDatasources from "./de/datasources.json";
 import deExplore from "./de/explore.json";
+import deGraph from "./de/graph.json";
+import dePanels from "./de/panels.json";
 import deShell from "./de/shell.json";
 import enAdmin from "./en/admin.json";
 import enCore from "./en/core.json";
 import enDashboards from "./en/dashboards.json";
 import enDatasources from "./en/datasources.json";
 import enExplore from "./en/explore.json";
+import enGraph from "./en/graph.json";
+import enPanels from "./en/panels.json";
 import enShell from "./en/shell.json";
 
 export const en = {
@@ -20,6 +24,8 @@ export const en = {
   ...enDatasources,
   ...enDashboards,
   ...enExplore,
+  ...enPanels,
+  ...enGraph,
   ...enShell,
 };
 export const de = {
@@ -28,5 +34,7 @@ export const de = {
   ...deDatasources,
   ...deDashboards,
   ...deExplore,
+  ...dePanels,
+  ...deGraph,
   ...deShell,
 };

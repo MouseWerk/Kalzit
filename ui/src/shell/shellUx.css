@@ -670,7 +670,7 @@
    * fill is the border color and shows through a 1 px gap, so the hairline between the two
    * parts is the card's own border, not a bar.
    */
-  .stat {
+  .stat-tile {
     display: flex;
     height: 100%;
     min-height: var(--size-stat-height);
@@ -683,7 +683,7 @@
     text-decoration: none;
   }
 
-  .stat__text {
+  .stat-tile__text {
     display: grid;
     flex: 1;
     align-content: space-between;
@@ -694,33 +694,33 @@
     transition: background-color var(--duration-fast) var(--easing);
   }
 
-  .stat:hover .stat__text {
+  .stat-tile:hover .stat-tile__text {
     background: var(--bg-hover);
   }
 
-  .stat__label {
+  .stat-tile__label {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
-  .stat__value {
+  .stat-tile__value {
     font-size: var(--font-size-display);
     font-weight: var(--font-weight-regular);
     font-variant-numeric: tabular-nums;
     line-height: var(--line-height-tight);
   }
 
-  .stat__value--none {
+  .stat-tile__value--none {
     color: var(--text-muted);
     font-size: var(--font-size-md);
   }
 
-  .stat__skeleton {
+  .stat-tile__skeleton {
     width: var(--space-12);
     min-height: var(--size-switcher-mark);
   }
 
-  .stat__well {
+  .stat-tile__well {
     display: grid;
     flex: none;
     width: var(--size-stat-well);
