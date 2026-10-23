@@ -34,7 +34,22 @@ struct T {
     app: Router,
     org: String,
     cookie: String,
-    _dir: tempfile::TempDir,
+    state: AppState,
+    dir: Arc<tempfile::TempDir>,
+}
+
+impl T {
+    /// Stops the app and deletes its data directory (`common::Finish`).
+    async fn finish(self) {
+        let finish = self.finisher();
+        drop(self);
+        finish.finish().await;
+    }
+
+    /// What `finish` does, for a test that hands the app on by value.
+    fn finisher(&self) -> common::Finish {
+        common::Finish::new(self.state.clone(), self.dir.clone())
+    }
 }
 
 fn env(name: &str) -> Option<String> {
@@ -88,8 +103,13 @@ impl T {
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let state = AppState::new(config, pool, clock, Some(SETUP_CODE.into())).await.unwrap();
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-        let mut t =
-            T { app: router(state).layer(MockConnectInfo(peer)), org: String::new(), cookie: String::new(), _dir: dir };
+        let mut t = T {
+            app: router(state.clone()).layer(MockConnectInfo(peer)),
+            org: String::new(),
+            cookie: String::new(),
+            state,
+            dir: Arc::new(dir),
+        };
         let body = json!({ "token": SETUP_CODE, "orgName": "Test", "name": "Jörg", "email": "joerg@example.de",
                            "password": "Grün und sicher 2026" });
         let req = Request::builder()
@@ -207,6 +227,7 @@ async fn postgres_reads_in_a_read_only_transaction() {
     assert!(slow["result"].is_object(), "{slow}");
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "tables");
+    t.finish().await;
 }
 
 /// A PostgreSQL source pointing at Kalzit's own database is refused after connecting, whatever
@@ -232,7 +253,7 @@ async fn postgres_refuses_kalzits_own_database() {
         let r = t.query(id, json!({ "sql": "SELECT 1" })).await;
         assert_eq!(r["error"]["code"], "datasource_target_blocked", "{alias}: {r}");
     }
-    drop(t);
+    t.finish().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin).await.unwrap();
 }
 
@@ -282,6 +303,7 @@ async fn postgres_panels_bind_mixed_variables() {
     });
     let (_, r) = t.send(Method::POST, "/query", Some(free)).await;
     assert_eq!(r["results"]["A"]["result"]["frame"], *frame, "the same answer through /query: {r}");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -318,6 +340,7 @@ async fn postgres_errors_never_show_the_password() {
     assert_eq!(h["ok"], false, "{h}");
     assert_eq!(h["reason"], "source.error", "{h}");
     assert!(!h.to_string().contains(&wrong), "{h}");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -381,6 +404,7 @@ async fn mysql_like(url: &str) {
     let load = sqlx::raw_sql("LOAD DATA LOCAL INFILE 'Cargo.toml' INTO TABLE kalzit_infile").execute(&pool).await;
     assert!(load.is_err(), "LOCAL INFILE must not work");
     pool.close().await;
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -445,6 +469,7 @@ async fn mssql_reads_and_rolls_back() {
     assert_eq!(slow["error"]["code"], "query_timeout", "{slow}");
     let after = t.query(&id, json!({ "sql": "SELECT 1 AS eins" })).await;
     assert!(after["result"].is_object(), "{after}");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -468,6 +493,7 @@ async fn prometheus_range_and_instant_queries() {
     assert_eq!(body["results"]["I"]["result"]["frame"]["fields"][1]["type"], "number", "{body}");
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "metrics", "{schema}");
+    t.finish().await;
 }
 
 /// Runs Cypher on the test database directly (auto-commit), to set up data Kalzit then only reads.

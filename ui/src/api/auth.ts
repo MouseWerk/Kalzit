@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { expectShape, isApiError, isRecord, request } from "./client";
 
 export const ORG_ROLES = ["owner", "admin", "editor", "viewer"] as const;
@@ -102,3 +102,13 @@ export const meQuery = queryOptions({
   queryFn: fetchMe,
   staleTime: 60_000,
 });
+
+/**
+ * Drops everything cached for the account that was signed in (preferences, organizations, data),
+ * keeping only the session itself and the setup status: after a session ends, or when another
+ * account signs in, nothing of the previous one may answer for the new one.
+ */
+export function forgetAccountData(queryClient: QueryClient): void {
+  const keep = new Set<unknown>([meQuery.queryKey[0], setupStatusQuery.queryKey[0]]);
+  queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
+}

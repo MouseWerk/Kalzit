@@ -1034,6 +1034,10 @@ mod tests {
         lock.lock().unwrap();
         let err = Keyring::load_for_server(dir.path(), &db).await.unwrap_err();
         assert!(format!("{err:#}").contains("rotate"), "{err:#}");
+        // Closed before the folder goes: Windows cannot delete files that are still open.
+        drop(lock);
+        db.close().await;
+        dir.close().unwrap();
     }
 
     #[tokio::test]

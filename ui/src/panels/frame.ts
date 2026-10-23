@@ -1,4 +1,5 @@
 import type { Field, FieldType, Frame } from "../api/generated/shapes";
+import { getTimeZone, zoneOption } from "../lib/timeSettings";
 
 /**
  * Reading frames (docs/ARCHITECTURE.md, result envelope): `time` is Unix ms, `int64` arrives as a
@@ -64,11 +65,16 @@ function numberFormat(language: string): Intl.NumberFormat {
   return format;
 }
 
-export function dateTimeFormat(language: string): Intl.DateTimeFormat {
-  let format = dateFormats.get(language);
+export function dateTimeFormat(language: string, zone: string | null): Intl.DateTimeFormat {
+  const key = `${language}|${zone ?? ""}`;
+  let format = dateFormats.get(key);
   if (format === undefined) {
-    format = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
-    dateFormats.set(language, format);
+    format = new Intl.DateTimeFormat(language, {
+      dateStyle: "short",
+      timeStyle: "medium",
+      ...zoneOption(zone),
+    });
+    dateFormats.set(key, format);
   }
   return format;
 }
@@ -83,7 +89,12 @@ function formatInt64(value: unknown, language: string): string {
 }
 
 /** A value as text: null is empty, int64 keeps every digit, numbers follow the language. */
-export function formatValue(type: FieldType, value: unknown, language: string): string {
+export function formatValue(
+  type: FieldType,
+  value: unknown,
+  language: string,
+  zone: string | null = getTimeZone(),
+): string {
   if (value === null || value === undefined) {
     return "";
   }
@@ -93,7 +104,9 @@ export function formatValue(type: FieldType, value: unknown, language: string): 
     case "number":
       return typeof value === "number" ? numberFormat(language).format(value) : String(value);
     case "time":
-      return typeof value === "number" ? dateTimeFormat(language).format(value) : String(value);
+      return typeof value === "number"
+        ? dateTimeFormat(language, zone).format(value)
+        : String(value);
     case "json":
       return JSON.stringify(value);
     default:

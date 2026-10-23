@@ -11,6 +11,7 @@ import {
   toStoredAbsolute,
 } from "./timeRange";
 import "./dashboards.css";
+import { getTimeSettings, zoneOption } from "../../lib/timeSettings";
 import { Dialog } from "./ui/Dialog";
 
 const PRESET_LABELS: Record<string, MessageKey> = {
@@ -37,22 +38,31 @@ function presetLabel(t: Translate, preset: Preset): string {
 }
 
 /** One end as the user reads it: relative text as typed, absolute times in local format. */
-function endLabel(text: string, language: string): string {
+function endLabel(text: string, language: string, zone: string | null): string {
   if (isRelative(text)) {
     return text;
   }
-  const time = resolveTime(text, Date.now());
+  const time = resolveTime(text, Date.now(), false, { ...getTimeSettings(), timeZone: zone });
   return time === null
     ? text
-    : new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" }).format(time);
+    : new Intl.DateTimeFormat(language, {
+        dateStyle: "short",
+        timeStyle: "short",
+        ...zoneOption(zone),
+      }).format(time);
 }
 
-export function rangeLabel(t: Translate, language: string, range: TextRange): string {
+export function rangeLabel(
+  t: Translate,
+  language: string,
+  range: TextRange,
+  zone: string | null,
+): string {
   const preset = presetOf(range);
   if (preset !== undefined) {
     return presetLabel(t, preset);
   }
-  return `${endLabel(range.from, language)} – ${endLabel(range.to, language)}`;
+  return `${endLabel(range.from, language, zone)} – ${endLabel(range.to, language, zone)}`;
 }
 
 /** "2026-10-20 08:00" is accepted like the ISO form with a T. */
@@ -77,9 +87,9 @@ interface TimeRangePickerProps {
 
 /** The time range button and its dialog: quick choices, or from and to as text. */
 export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const [open, setOpen] = useState(false);
-  const label = rangeLabel(t, language, value);
+  const label = rangeLabel(t, language, value, timeZone);
   return (
     <>
       <button
@@ -113,7 +123,7 @@ function RangeDialog({
   onClose: () => void;
   onApply: (range: TextRange) => void;
 }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone, weekStart } = useI18n();
   const fromId = useId();
   const toId = useId();
   const hintId = useId();
@@ -121,8 +131,15 @@ function RangeDialog({
   const [to, setTo] = useState(value.to);
   const [submitted, setSubmitted] = useState(false);
   const current = presetOf(value);
-  const resolved = resolveRange({ from: normalize(from), to: normalize(to) }, Date.now());
-  const format = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "medium" });
+  const resolved = resolveRange({ from: normalize(from), to: normalize(to) }, Date.now(), {
+    timeZone,
+    weekStart,
+  });
+  const format = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    ...zoneOption(timeZone),
+  });
   const problem = resolved.ok ? undefined : t(`dashboards.time.error.${resolved.error}`);
 
   return (
