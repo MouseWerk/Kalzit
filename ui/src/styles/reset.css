@@ -19,6 +19,16 @@
     min-height: 100dvh;
   }
 
+  /*
+   * A list with a class is laid out by it (presets, legends, stat values) and sits flush; the
+   * browser's 40 px indent pushed such lists off their column. Plain lists, such as Markdown in
+   * a text panel, keep it.
+   */
+  ul[class],
+  ol[class] {
+    padding: 0;
+  }
+
   img,
   picture,
   svg,
