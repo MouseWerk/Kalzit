@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { fixturesDir, OWNER, unique } from "./support/api";
+import { fixturesDir, OWNER_DE, unique } from "./support/api";
 import { de } from "./support/i18n";
 import { expect, test } from "./support/test";
 
@@ -15,7 +15,7 @@ for (const [what, path] of CASES) {
   }) => {
     // The server refuses the new source with 422, which the browser logs.
     consoleGuard.allow(/status of 422 .*\/datasources$/);
-    const page = await pageAs(OWNER.email, OWNER.password, { locale: "de-DE" });
+    const page = await pageAs(OWNER_DE.email, OWNER_DE.password, { locale: "de-DE" });
     await page.goto("/data-sources/new?kind=sqlite");
     await page.getByLabel(de("datasources.form.name")).fill(unique("Abgelehnt"));
     const file = page.getByLabel(de("datasources.settings.path"));

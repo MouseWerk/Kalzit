@@ -289,6 +289,8 @@ async fn produce(
     // Steps and encoding take CPU time; they run off the request threads.
     let work = tokio::task::spawn_blocking(move || -> Result<(export::File, usize), ApiError> {
         let _permit = permit;
+        #[cfg(test)]
+        tests::hold_if_asked(&steps);
         let frames = steps::run_inputs(&steps, inputs, &control).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
             step_error(message, f.detail)

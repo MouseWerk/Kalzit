@@ -500,3 +500,56 @@ fn a_late_export_answers_query_timeout() {
     let e = super::step_error("step 1: no".into(), crate::datasources::detail::Detail::new("steps.name_taken", "no"));
     assert_eq!((e.status, e.code, e.field), (StatusCode::UNPROCESSABLE_ENTITY, "validation", Some("steps")));
 }
+
+type Hold = (std::sync::mpsc::SyncSender<()>, std::sync::mpsc::Receiver<()>);
+
+/// Set by a test that wants an export's blocking work to stop at its start: the work says it
+/// started and waits until the test lets it go.
+static HOLD: std::sync::Mutex<Option<Hold>> = std::sync::Mutex::new(None);
+
+/// Called by the export's blocking work; only steps with the id `hold-for-test` wait.
+pub(super) fn hold_if_asked(steps: &[crate::analysis::Step]) {
+    if !steps.iter().any(|s| s.id == "hold-for-test") {
+        return;
+    }
+    let (started, release) = HOLD.lock().unwrap().take().expect("a test set up the hold");
+    started.send(()).unwrap();
+    let _ = release.recv();
+}
+
+/// A client that goes away while its file is made does not free the slot early: the work holds
+/// it until it has stopped.
+#[tokio::test]
+async fn an_aborted_export_holds_its_slot_until_the_work_stops() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    *HOLD.lock().unwrap() = Some((started_tx, release_rx));
+    let steps = json!([{ "id": "hold-for-test", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }]);
+    let body = free(&ds, "csv", "en", steps);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/orgs/{}/export", t.org))
+        .header(header::HOST, "kalzit.test")
+        .header(header::COOKIE, &t.owner)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let request = tokio::spawn(t.app.clone().oneshot(req));
+    tokio::task::spawn_blocking(move || started_rx.recv().unwrap()).await.unwrap();
+    assert_eq!(t.state.exports.available_permits(), super::MAX_EXPORTS - 1);
+    // The client goes away while the file is being made.
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(t.state.exports.available_permits(), super::MAX_EXPORTS - 1, "the work still holds the slot");
+    release_tx.send(()).unwrap();
+    let freed = async {
+        while t.state.exports.available_permits() != super::MAX_EXPORTS {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), freed)
+        .await
+        .expect("the slot comes back once the work stops");
+}

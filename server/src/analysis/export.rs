@@ -116,10 +116,18 @@ impl Write for Sink<'_> {
         }
         self.writes += 1;
         self.total += buf.len();
-        self.current.extend_from_slice(buf);
-        if self.current.len() >= CHUNK {
-            let full = std::mem::replace(&mut self.current, Vec::with_capacity(CHUNK));
-            self.chunks.push(full);
+        // Split at the chunk boundary, so no chunk ever grows past its 1 MiB (a growing buffer
+        // would double its capacity and hold twice the file).
+        let mut rest = buf;
+        while !rest.is_empty() {
+            let room = CHUNK - self.current.len();
+            let (now, later) = rest.split_at(room.min(rest.len()));
+            self.current.extend_from_slice(now);
+            rest = later;
+            if self.current.len() == CHUNK {
+                let full = std::mem::replace(&mut self.current, Vec::with_capacity(CHUNK));
+                self.chunks.push(full);
+            }
         }
         Ok(buf.len())
     }
@@ -575,6 +583,12 @@ mod tests {
         let big = Frame::new(vec![field("t", FieldType::String, vec![json!("x".repeat(1024)); 3 * 1024])]).unwrap();
         let file = encode(&big, "A", ExportFormat::Csv, ExportLanguage::En, &Control::unbounded()).unwrap();
         assert!(file.chunks.len() >= 3, "written in chunks, not one buffer");
+        // Rows of 1025 bytes cross the boundary in every chunk; none grows past 1 MiB.
+        for c in &file.chunks {
+            assert!(c.capacity() <= CHUNK && c.len() <= CHUNK, "{} / {}", c.len(), c.capacity());
+        }
+        assert!(file.chunks[..file.chunks.len() - 1].iter().all(|c| c.len() == CHUNK));
+        assert_eq!(file.bytes(), csv(&big, ExportLanguage::En), "nothing lost at the boundaries");
     }
 
     /// The statement as sent to the database stays in Kalzit.

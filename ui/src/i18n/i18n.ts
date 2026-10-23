@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { readPreference, writePreference } from "../lib/storage";
+import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
 import { de, en } from "./catalogs";
 
 export const LANGUAGES = ["de", "en"] as const;
@@ -87,8 +88,18 @@ export function translate(language: Language, key: MessageKey, params?: MessageP
 
 export type Translate = (key: MessageKey, params?: MessageParams) => string;
 
-export function useI18n(): { language: Language; t: Translate } {
+/**
+ * The UI language with its translate function, and the user's time zone and first day of the
+ * week: whatever formats or rounds times reads them here, so a change re-renders it.
+ */
+export function useI18n(): {
+  language: Language;
+  t: Translate;
+  timeZone: string | null;
+  weekStart: WeekStart | null;
+} {
   const language = useSyncExternalStore(subscribe, getLanguage, getLanguage);
+  const time = useSyncExternalStore(subscribeTimeSettings, getTimeSettings, getTimeSettings);
   const t: Translate = (key, params) => translate(language, key, params);
-  return { language, t };
+  return { language, t, timeZone: time.timeZone, weekStart: time.weekStart };
 }
