@@ -33,10 +33,78 @@ export interface StateData {
   legend: StateValue[];
 }
 
+/** Words that name a state, in English and German, by the tone that means it. */
+const STATE_WORDS: Record<"ok" | "warn" | "critical" | "neutral", readonly string[]> = {
+  ok: [
+    "ok",
+    "up",
+    "healthy",
+    "success",
+    "succeeded",
+    "online",
+    "running",
+    "pass",
+    "passed",
+    "ready",
+    "active",
+    "green",
+    "gesund",
+    "erfolgreich",
+    "läuft",
+    "bereit",
+    "aktiv",
+  ],
+  warn: [
+    "warn",
+    "warning",
+    "degraded",
+    "pending",
+    "slow",
+    "unstable",
+    "yellow",
+    "warnung",
+    "eingeschränkt",
+    "ausstehend",
+    "langsam",
+  ],
+  critical: [
+    "down",
+    "error",
+    "failed",
+    "fail",
+    "failure",
+    "critical",
+    "offline",
+    "crashed",
+    "red",
+    "fehler",
+    "fehlgeschlagen",
+    "ausgefallen",
+    "kritisch",
+  ],
+  neutral: ["unknown", "none", "n/a", "skipped", "stopped", "idle", "paused", "unbekannt"],
+};
+
+/**
+ * The tone a state's own word stands for ("ok" good, "down" danger, "degraded" warning,
+ * "unknown" neutral), so a status column reads at a glance without value mappings. Mappings,
+ * thresholds and a field color the author set win.
+ */
+export function stateTone(text: string): "ok" | "warn" | "critical" | "neutral" | undefined {
+  const word = text.trim().toLowerCase();
+  for (const [tone, words] of Object.entries(STATE_WORDS)) {
+    if (words.includes(word)) {
+      return tone as keyof typeof STATE_WORDS;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Every field except time becomes a row of states over the frame's time points. A value's color
- * comes from its mapping or the thresholds; values without one take palette colors in the
- * order they first appear, the same color for the same text in every row.
+ * comes from its mapping or the thresholds, else from a state word it is (stateTone); other
+ * values take palette colors in the order they first appear, the same color for the same text
+ * in every row.
  */
 export function stateData(
   frames: readonly Frame[],
@@ -83,8 +151,11 @@ export function stateData(
         const display = displayValue(raw, field.type, options, language);
         const text = displayText(display);
         let colorClass: string;
+        const known = options.color === undefined ? stateTone(text) : undefined;
         if (display.tone !== undefined) {
           colorClass = toneClass(display.tone);
+        } else if (known !== undefined) {
+          colorClass = toneClass(known);
         } else {
           if (!palette.has(text)) palette.set(text, palette.size);
           colorClass = toneClass(options.color, palette.get(text));
