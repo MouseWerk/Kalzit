@@ -281,7 +281,12 @@
     gap: var(--space-3);
   }
 
+  /*
+   * Filters share one row: a picker is as wide as its longest option, which pushed the date
+   * fields onto a row of their own; each filter now takes a column's width at most.
+   */
   .admin-filters > .field {
+    flex: 0 1 var(--size-column);
     min-width: 0;
     max-width: 100%;
   }
@@ -292,6 +297,11 @@
   .admin-dialog .field .select {
     min-width: 0;
     max-width: 100%;
+  }
+
+  .admin-filters > .field .select,
+  .admin-filters > .field .input {
+    width: 100%;
   }
 
   .admin-picker {

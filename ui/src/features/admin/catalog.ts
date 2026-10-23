@@ -228,6 +228,10 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "settings.": "admin.auditArea.settings",
   "folder.": "admin.auditArea.folder",
   "dashboard.": "admin.auditArea.dashboard",
+  "datasource.": "admin.auditArea.datasource",
+  "annotation.": "admin.auditArea.annotation",
+  "library_panel.": "admin.auditArea.library_panel",
+  "playlist.": "admin.auditArea.playlist",
 };
 
 /**
