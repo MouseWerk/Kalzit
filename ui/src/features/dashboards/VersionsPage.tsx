@@ -4,6 +4,7 @@ import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
+import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -91,27 +92,33 @@ function VersionList({ orgId }: { orgId: string }) {
           {t("dashboards.history.emptyText")}
         </EmptyState>
       ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th scope="col">{t("dashboards.history.version")}</th>
-              <th scope="col">{t("dashboards.history.saved")}</th>
-              <th scope="col">{t("dashboards.history.message")}</th>
-              <th scope="col">
+        <table className="data-table data-table--stack" {...STACK_ROLES.table}>
+          <thead {...STACK_ROLES.rowgroup}>
+            <tr {...STACK_ROLES.row}>
+              <th scope="col" {...STACK_ROLES.columnheader}>
+                {t("dashboards.history.version")}
+              </th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
+                {t("dashboards.history.saved")}
+              </th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
+                {t("dashboards.history.message")}
+              </th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
                 <span className="visually-hidden">{t("dashboards.history.actions")}</span>
               </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody {...STACK_ROLES.rowgroup}>
             {items.map((item) => (
-              <tr key={item.version}>
-                <td>
+              <tr key={item.version} {...STACK_ROLES.row}>
+                <td {...STACK_ROLES.cell} data-label={t("dashboards.history.version")}>
                   {item.version}
                   {item.version === currentVersion ? (
                     <span className="data-table__muted"> {t("dashboards.history.current")}</span>
                   ) : null}
                 </td>
-                <td>
+                <td {...STACK_ROLES.cell} data-label={t("dashboards.history.saved")}>
                   {format.format(item.createdAt)}
                   {item.authorName === null ? null : (
                     <span className="data-table__muted">
@@ -126,14 +133,14 @@ function VersionList({ orgId }: { orgId: string }) {
                     </span>
                   )}
                 </td>
-                <td>
+                <td {...STACK_ROLES.cell} data-label={t("dashboards.history.message")}>
                   {item.message === "" ? (
                     <span className="data-table__muted">{t("dashboards.history.noMessage")}</span>
                   ) : (
                     item.message
                   )}
                 </td>
-                <td className="data-table__actions">
+                <td {...STACK_ROLES.cell} className="data-table__actions">
                   {item.version === currentVersion ? null : (
                     <>
                       <button

@@ -17,6 +17,7 @@ import { timeField, toNumber, valueFields } from "../frame";
 import { HeatmapPreview } from "../picker/previews";
 import { Readout, type ReadoutItem } from "../readout";
 import { EmptyPanel, emptyReason, NumberField, SelectField } from "../shared";
+import { TIME_LABEL_OVERHANG } from "../timeseries/layout";
 import { timeTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
@@ -340,20 +341,17 @@ function HeatmapPanel({
                   </text>
                 ) : null,
               )}
-              {ticks.map((tick) => (
-                <text
-                  key={tick}
-                  className="ts__label"
-                  x={
-                    AXIS_LEFT +
-                    ((tick - timeRange.from) / (timeRange.to - timeRange.from || 1)) * plotWidth
-                  }
-                  y={height - 6}
-                  textAnchor="middle"
-                >
-                  {timeLabel.format(tick)}
-                </text>
-              ))}
+              {ticks.map((tick) => {
+                const x =
+                  AXIS_LEFT +
+                  ((tick - timeRange.from) / (timeRange.to - timeRange.from || 1)) * plotWidth;
+                // A label centered this close to the right edge would be cut ("09:00 P").
+                return x + TIME_LABEL_OVERHANG > width ? null : (
+                  <text key={tick} className="ts__label" x={x} y={height - 6} textAnchor="middle">
+                    {timeLabel.format(tick)}
+                  </text>
+                );
+              })}
               {cells.map((cell, index) => (
                 <rect
                   key={`${cell.x}-${cell.y}`}

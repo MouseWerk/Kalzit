@@ -104,7 +104,10 @@ export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
                   : undefined
             }
           >
-            <span className="truncate">{folder.name}</span>
+            <span className="folder-tree__name">
+              <Icon name="folder" />
+              <span className="truncate">{folder.name}</span>
+            </span>
             {folder.restricted || inherited ? (
               <span className="folder-tree__restricted">
                 <Icon name="lock" />
@@ -128,7 +131,10 @@ export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
             aria-current={selected === undefined ? "true" : undefined}
             onClick={() => onSelect(undefined)}
           >
-            <span className="truncate">{t("dashboards.folders.all")}</span>
+            <span className="folder-tree__name">
+              <Icon name="dashboards" />
+              <span className="truncate">{t("dashboards.folders.all")}</span>
+            </span>
           </button>
         </li>
       </ul>

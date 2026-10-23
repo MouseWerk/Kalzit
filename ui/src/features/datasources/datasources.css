@@ -10,7 +10,9 @@
     max-width: var(--content-max-width);
   }
 
-  .ds-form {
+  /* The test result belongs to the form above it and keeps its width. */
+  .ds-form,
+  .ds-health-region {
     max-width: var(--size-form);
   }
 

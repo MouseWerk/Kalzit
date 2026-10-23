@@ -207,7 +207,7 @@ function NewRoleForm({ access }: { access: AdminAccess }) {
       : errorText(t, create.error, ROLE_ERRORS);
 
   return (
-    <form className="form" noValidate onSubmit={submit}>
+    <form className="form admin-form" noValidate onSubmit={submit}>
       <TextField
         ref={nameRef}
         label={t("admin.roles.name")}
@@ -388,7 +388,7 @@ function EditRole({ role, access }: { role: Role; access: AdminAccess }) {
   }
 
   return (
-    <div className="form">
+    <div className="form admin-form">
       <Notice notice={notice.notice} onDismiss={notice.clear} />
       <TextField
         label={t("admin.roles.name")}
