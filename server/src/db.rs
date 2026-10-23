@@ -5,12 +5,15 @@
 //! servers on one database need PostgreSQL.
 
 use std::cell::Cell;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use sqlx::any::AnyPoolOptions;
 use sqlx::{Any, AnyPool, Transaction};
+use tokio_util::sync::CancellationToken;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
@@ -23,10 +26,12 @@ pub const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(15);
 /// large file behind (64 MiB).
 const SQLITE_JOURNAL_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
 
-/// How long a session touch waits for the write lock on SQLite before it gives up. Short, because
-/// SQLite keeps waiting even when the touch is dropped, and closing the database at a stop waits
-/// for that.
-pub const TOUCH_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long the server's own background writes (session touches, the hourly jobs) wait for the
+/// write lock on SQLite before they give up. Short, because SQLite keeps waiting even when the
+/// write is dropped, and closing the database at a stop waits for that. Under load SQLite's busy
+/// sleeps overshoot (about half again on Windows), so this stays well inside
+/// `BACKGROUND_STOP_WAIT`.
+pub const BACKGROUND_BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
     connect_with(url, max_connections, SQLITE_BUSY_TIMEOUT).await
@@ -76,6 +81,98 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
 pub fn side_pool(pool: &AnyPool, url: &str, max_connections: u32, busy_timeout: Duration) -> Option<AnyPool> {
     sqlite_file(url)?;
     Some(pool_options(max_connections, busy_timeout).connect_lazy_with((*pool.connect_options()).clone()))
+}
+
+/// The writes the server makes on its own, outside requests: session touches and the hourly
+/// jobs. They run as tasks the server aborts when it stops, and on SQLite through a `side_pool`
+/// that waits at most `BACKGROUND_BUSY_TIMEOUT` for the write lock, so a stop never waits the
+/// full busy timeout for one. Each of them is repeated later, so a dropped one costs nothing.
+pub struct Background {
+    db: AnyPool,
+    own_pool: bool,
+    /// Cancelled when the server stops: tasks start no new statement and end their sleeps.
+    stopping: CancellationToken,
+    /// `None` once stopped: nothing new starts.
+    tasks: Mutex<Option<tokio::task::JoinSet<()>>>,
+}
+
+/// How long a stop waits for background tasks to end on their own before it aborts them. A
+/// running statement ends within `BACKGROUND_BUSY_TIMEOUT`, which a loaded machine stretches to
+/// a second or more (measured: opening the connection 0.1 to 0.6 s, then 0.9 s for a 0.5 s busy
+/// timeout); this leaves room for both.
+const BACKGROUND_STOP_WAIT: Duration = Duration::from_secs(3);
+
+impl Background {
+    /// For the server's pool `main` on `url`, with up to `max_connections` of its own on SQLite.
+    pub fn new(main: &AnyPool, url: &str, max_connections: u32) -> Self {
+        let own = side_pool(main, url, max_connections, BACKGROUND_BUSY_TIMEOUT);
+        Self {
+            own_pool: own.is_some(),
+            db: own.unwrap_or_else(|| main.clone()),
+            stopping: CancellationToken::new(),
+            tasks: Mutex::new(Some(tokio::task::JoinSet::new())),
+        }
+    }
+
+    /// Cancelled when the server stops. A task checks it before each statement and races it
+    /// against its sleeps; a statement already running is left to finish.
+    pub fn stopping(&self) -> CancellationToken {
+        self.stopping.clone()
+    }
+
+    /// The pool background writes go through.
+    pub fn db(&self) -> &AnyPool {
+        &self.db
+    }
+
+    /// Connections of the own pool in use right now: background writes running or waiting for
+    /// the lock (tests). 0 without an own pool.
+    #[doc(hidden)]
+    pub fn connections_in_use(&self) -> u32 {
+        if !self.own_pool {
+            return 0;
+        }
+        self.db.size().saturating_sub(self.db.num_idle() as u32)
+    }
+
+    /// Runs `task` in the background; after the stop began it does not start. The task ends on
+    /// its own when `stopping` is cancelled.
+    pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
+        if self.stopping.is_cancelled() {
+            return;
+        }
+        if let Some(tasks) = self.lock_tasks().as_mut() {
+            // Finished tasks leave their result in the set; drop them so it does not grow.
+            while tasks.try_join_next().is_some() {}
+            tasks.spawn(task);
+        }
+    }
+
+    /// Stops every task for good, then closes the own pool. The tasks are asked to end and get
+    /// `BACKGROUND_STOP_WAIT` to finish the statement they are in, connection opening included,
+    /// so all its connections are back when the pool closes. Only tasks still running after that
+    /// are aborted; SQLite may then close a connection after this returns.
+    pub async fn stop(&self) {
+        self.stopping.cancel();
+        let tasks = self.lock_tasks().take();
+        if let Some(mut tasks) = tasks {
+            let ended =
+                tokio::time::timeout(BACKGROUND_STOP_WAIT, async { while tasks.join_next().await.is_some() {} }).await;
+            if ended.is_err() {
+                tracing::warn!("background writes still ran {BACKGROUND_STOP_WAIT:?} after the stop; aborting them");
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+            }
+        }
+        if self.own_pool {
+            self.db.close().await;
+        }
+    }
+
+    fn lock_tasks(&self) -> MutexGuard<'_, Option<tokio::task::JoinSet<()>>> {
+        // The set holds no invariant a panic could break.
+        self.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 fn pool_options(max_connections: u32, busy_timeout: Duration) -> AnyPoolOptions {
@@ -365,19 +462,93 @@ pub fn ambiguity(url: &str) -> Option<String> {
     })
 }
 
+/// When a recurring job runs: at the start and then every `interval`. A run that finds the
+/// database busy is tried again after each of `retries` in turn, as long as that comes before the
+/// next run.
+#[derive(Clone, Debug)]
+pub struct Schedule {
+    pub interval: Duration,
+    pub retries: Vec<Duration>,
+}
+
+impl Schedule {
+    /// Every hour; after `busy` again in 1, 2 and 4 minutes.
+    pub fn hourly() -> Self {
+        let minutes = |m: u64| Duration::from_secs(m * 60);
+        Self { interval: minutes(60), retries: vec![minutes(1), minutes(2), minutes(4)] }
+    }
+}
+
+/// Why a job run failed: `Busy` is tried again by the schedule's retries.
+pub enum JobError {
+    Busy(String),
+    Failed(String),
+}
+
+/// Runs `job` as a background task on `schedule`; `what` names it in the log.
+pub fn spawn_job<F, Fut>(background: &Background, what: &'static str, schedule: Schedule, mut job: F)
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), JobError>> + Send,
+{
+    let stopping = background.stopping();
+    background.spawn(async move {
+        let mut tick = tokio::time::interval(schedule.interval);
+        loop {
+            let due = tokio::select! {
+                () = stopping.cancelled() => return,
+                due = tick.tick() => due,
+            };
+            let next = due + schedule.interval;
+            let mut retries = schedule.retries.iter();
+            loop {
+                if stopping.is_cancelled() {
+                    return;
+                }
+                match job().await {
+                    Ok(()) => break,
+                    Err(JobError::Busy(e)) => match retries.next() {
+                        Some(&wait) if tokio::time::Instant::now() + wait < next => {
+                            tracing::debug!("{what}: the database is busy, trying again in {wait:?}: {e}");
+                            tokio::select! {
+                                () = stopping.cancelled() => return,
+                                () = tokio::time::sleep(wait) => {}
+                            }
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "{what} failed, the database stayed busy; next run in {:?}: {e}",
+                                schedule.interval
+                            );
+                            break;
+                        }
+                    },
+                    Err(JobError::Failed(e)) => {
+                        tracing::warn!("{what} failed, next run in {:?}: {e}", schedule.interval);
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Deletes sessions that have ended, every hour. Sessions are otherwise only deleted when their
 /// cookie is presented again, and most expired cookies never come back.
 pub fn spawn_session_cleanup(state: crate::app::AppState) {
-    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(INTERVAL);
-        loop {
-            tick.tick().await;
+    let background = state.background.clone();
+    spawn_job(&background, "removing ended sessions", Schedule::hourly(), move || {
+        let state = state.clone();
+        async move {
             let now = state.clock.now_ms();
-            match crate::auth::session::delete_ended(&state.db, &state.config.sessions, now).await {
-                Ok(0) => {}
-                Ok(n) => tracing::debug!("removed {n} ended sessions"),
-                Err(e) => tracing::warn!("removing ended sessions failed, will retry in an hour: {e}"),
+            match crate::auth::session::delete_ended(state.background.db(), &state.config.sessions, now).await {
+                Ok(0) => Ok(()),
+                Ok(n) => {
+                    tracing::debug!("removed {n} ended sessions");
+                    Ok(())
+                }
+                Err(e) if crate::error::is_contention(&e) => Err(JobError::Busy(e.to_string())),
+                Err(e) => Err(JobError::Failed(e.to_string())),
             }
         }
     });
