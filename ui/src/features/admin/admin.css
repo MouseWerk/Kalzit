@@ -454,6 +454,11 @@
     gap: var(--space-1);
   }
 
+  /* A picker button (the default time range) keeps its own width, like a select's text. */
+  .admin-setting__input > .button {
+    justify-self: start;
+  }
+
   .admin-setting__json {
     min-height: 6rem;
     resize: vertical;
