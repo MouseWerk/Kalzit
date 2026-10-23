@@ -212,7 +212,13 @@ interface LibraryPanel {
 
 `id`, `grid`, `rowId`, `repeat` and `libraryPanelId` in a library panel model are `422 validation`
 (field `model`): the dashboard decides where the panel goes. Saving checks `datasources:query` on
-the data sources of new or changed queries, as for dashboards. Audited as
+the data sources of new or changed queries, as for dashboards. Creating runs the panel option
+checks of a dashboard write, and saving runs them when `type`, `options` or `fieldConfig` differ
+from the stored content, so a library panel stored before a rule tightened can still be renamed,
+moved or get new queries: `422 validation` on `model`, reason `dashboards.panel_options` with
+`panel` (its title, else the library panel name) and `detail` (paths start at `model`, as in
+`model.fieldConfig.defaults.decimals`). Library panels keep no versions, so there is no restore.
+Audited as
 `library_panel.created`, `library_panel.saved`, `library_panel.deleted`.
 
 | Route | |
