@@ -21,6 +21,7 @@ import {
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
 import { formatValue, rowCount, toNumber, valueFields } from "../frame";
+import { labelWidth, useProbeFont } from "../measure";
 import { PiePreview } from "../picker/previews";
 import { Readout } from "../readout";
 import { reduceFrames } from "../reduce";
@@ -130,13 +131,43 @@ const CX = 120;
 const CY = 120;
 const RADIUS = 92;
 const HOLE = 56;
-/** The view box, with room around the circle for the labels. */
-const VIEW = { x: -40, y: -16, width: 320, height: 272 };
+/** From the circle to its labels, a label's half height, and the active slice's shift, in px. */
+const LABEL_OFFSET = 10;
+const LABEL_HALF_HEIGHT = 8;
+const ACTIVE_SHIFT = 6;
+const MIN_RADIUS = 12;
+
+/**
+ * The circle in the box's own pixels: as large as the box allows once the widest label fits
+ * beside it, so labels stay inside the panel at the text size of every other label.
+ */
+export function pieGeometry(
+  width: number,
+  height: number,
+  labelWidth: number,
+): { cx: number; cy: number; radius: number } {
+  const room = labelWidth > 0 ? LABEL_OFFSET + ACTIVE_SHIFT : ACTIVE_SHIFT;
+  const radius = Math.max(
+    Math.min(
+      width / 2 - room - labelWidth,
+      height / 2 - room - (labelWidth > 0 ? LABEL_HALF_HEIGHT * 2 : 0),
+    ),
+    MIN_RADIUS,
+  );
+  return { cx: width / 2, cy: height / 2, radius };
+}
 
 /** A slice as an SVG path between two angles (radians from twelve o'clock, clockwise). */
-export function slicePath(from: number, to: number, inner: number, outer = RADIUS): string {
+export function slicePath(
+  from: number,
+  to: number,
+  inner: number,
+  outer = RADIUS,
+  cx = CX,
+  cy = CY,
+): string {
   const at = (r: number, a: number) =>
-    `${(CX + r * Math.sin(a)).toFixed(2)} ${(CY - r * Math.cos(a)).toFixed(2)}`;
+    `${(cx + r * Math.sin(a)).toFixed(2)} ${(cy - r * Math.cos(a)).toFixed(2)}`;
   // A full circle cannot be one arc; it is drawn as two halves.
   if (to - from >= Math.PI * 2 - 1e-9) {
     const mid = from + Math.PI;
@@ -147,7 +178,7 @@ export function slicePath(from: number, to: number, inner: number, outer = RADIU
   }
   const large = to - from > Math.PI ? 1 : 0;
   if (inner <= 0) {
-    return `M${CX} ${CY}L${at(outer, from)}A${outer} ${outer} 0 ${large} 1 ${at(outer, to)}Z`;
+    return `M${cx} ${cy}L${at(outer, from)}A${outer} ${outer} 0 ${large} 1 ${at(outer, to)}Z`;
   }
   return `M${at(outer, from)}A${outer} ${outer} 0 ${large} 1 ${at(outer, to)}L${at(inner, to)}A${inner} ${inner} 0 ${large} 0 ${at(inner, from)}Z`;
 }
@@ -161,10 +192,8 @@ function PiePanel({
   const { t, language } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
-  // The view box scales with the panel; the labels are scaled back, so they keep the size of
-  // every other label instead of shrinking with a small pie.
-  const fit = Math.min(width / VIEW.width, height / VIEW.height);
-  const labelScale = fit > 0 ? 1 / fit : 1;
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const labelFont = useProbeFont(probeRef);
   const slices = pieSlices(frames, fieldConfig, options.reducer, language);
   if (slices.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
@@ -181,7 +210,22 @@ function PiePanel({
     angle += (slice.value / total) * Math.PI * 2;
     return { from, to: angle };
   });
-  const inner = options.pieType === "donut" ? HOLE : 0;
+  // Labels for slices wide enough to carry one, measured to size the circle around them.
+  const labels = slices.map((slice, index) => {
+    const arc = arcs[index] as { from: number; to: number };
+    if (options.labels === "none" || arc.to - arc.from < 0.25) return null;
+    return options.labels === "percent"
+      ? percent.format(slice.value / total)
+      : options.labels === "name"
+        ? nameOf(slice)
+        : valueText(slice);
+  });
+  const widest = Math.max(
+    0,
+    ...labels.map((text) => (text === null ? 0 : labelWidth(text, labelFont))),
+  );
+  const { cx, cy, radius } = pieGeometry(width, height, widest);
+  const inner = options.pieType === "donut" ? (radius * HOLE) / RADIUS : 0;
 
   const items = slices.map((slice, index) => ({
     label: "",
@@ -213,22 +257,19 @@ function PiePanel({
       <Readout title={title} items={items} tooltip={options.tooltip.mode} className="pie">
         {(active, hover) => (
           <div className="pie__box" ref={boxRef}>
-            <svg
-              className="pie__svg"
-              viewBox={`${VIEW.x} ${VIEW.y} ${VIEW.width} ${VIEW.height}`}
-              aria-hidden="true"
-            >
+            <span className="pie__label visually-hidden" ref={probeRef} aria-hidden="true" />
+            <svg className="pie__svg" width={width} height={height} aria-hidden="true">
               {slices.map((slice, index) => {
                 const arc = arcs[index] as { from: number; to: number };
                 // The active slice moves out a little along its middle, a quiet highlight.
                 const mid = (arc.from + arc.to) / 2;
-                const shift = active === index ? 6 : 0;
+                const shift = active === index ? ACTIVE_SHIFT : 0;
                 return (
                   <path
                     // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
                     key={index}
                     className={`pie__slice ${classOf(slice, index)}`}
-                    d={slicePath(arc.from, arc.to, inner)}
+                    d={slicePath(arc.from, arc.to, inner, radius, cx, cy)}
                     transform={
                       shift === 0
                         ? undefined
@@ -238,33 +279,26 @@ function PiePanel({
                   />
                 );
               })}
-              {options.labels === "none"
-                ? null
-                : slices.map((slice, index) => {
-                    const arc = arcs[index] as { from: number; to: number };
-                    if (arc.to - arc.from < 0.25) return null;
-                    const mid = (arc.from + arc.to) / 2;
-                    const r = RADIUS + 14;
-                    const x = CX + r * Math.sin(mid);
-                    const y = CY - r * Math.cos(mid);
-                    const text =
-                      options.labels === "percent"
-                        ? percent.format(slice.value / total)
-                        : options.labels === "name"
-                          ? nameOf(slice)
-                          : valueText(slice);
-                    return (
-                      <text
-                        // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
-                        key={index}
-                        className="pie__label"
-                        transform={`translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${labelScale.toFixed(3)})`}
-                        textAnchor={Math.abs(x - CX) < 8 ? "middle" : x > CX ? "start" : "end"}
-                      >
-                        {text}
-                      </text>
-                    );
-                  })}
+              {labels.map((text, index) => {
+                if (text === null) return null;
+                const arc = arcs[index] as { from: number; to: number };
+                const mid = (arc.from + arc.to) / 2;
+                const r = radius + LABEL_OFFSET;
+                const x = cx + r * Math.sin(mid);
+                const y = cy - r * Math.cos(mid);
+                return (
+                  <text
+                    // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
+                    key={index}
+                    className="pie__label"
+                    x={x.toFixed(2)}
+                    y={y.toFixed(2)}
+                    textAnchor={Math.abs(x - cx) < 8 ? "middle" : x > cx ? "start" : "end"}
+                  >
+                    {text}
+                  </text>
+                );
+              })}
             </svg>
           </div>
         )}
