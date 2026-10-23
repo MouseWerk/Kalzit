@@ -35,14 +35,20 @@ export function Section({
   useDocumentTitle(title);
   // The breadcrumbs end with this page's own name, such as the team's.
   usePublishCrumbTitle(heading);
-  if (allowed === undefined) {
-    return null;
-  }
-  if (!allowed) {
+  // The page keeps its heading while permissions load and when the section is not open to the
+  // user, so it never lacks an h1.
+  if (allowed === undefined || !allowed) {
     return (
-      <EmptyState icon="lock" title={t("admin.forbidden.title")}>
-        {t("admin.forbidden.section")}
-      </EmptyState>
+      <section className="admin-section" aria-labelledby={titleId}>
+        <div className="admin-section__heading">
+          <h1 id={titleId}>{heading ?? t(title)}</h1>
+        </div>
+        {allowed === false ? (
+          <EmptyState icon="lock" title={t("admin.forbidden.title")}>
+            {t("admin.forbidden.section")}
+          </EmptyState>
+        ) : null}
+      </section>
     );
   }
   return (
