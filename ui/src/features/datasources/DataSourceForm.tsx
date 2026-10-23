@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { TextField } from "../../components/TextField";
 import { catalogs, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AccessButton } from "../dashboards/accessIntegration";
@@ -23,6 +25,7 @@ import {
   deleteDatasource,
   type Health,
   kindsQuery,
+  restoreDatasource,
   type SettingSpec,
   sourceAccess,
   updateDatasource,
@@ -109,9 +112,17 @@ export function NewDataSourcePage() {
     body = <NoAccess />;
   }
   return (
-    <Page title={t("datasources.new.title")} lead={t("datasources.new.lead")}>
-      {body}
-    </Page>
+    <>
+      <Breadcrumbs
+        crumbs={[
+          { label: t("datasources.title"), link: { to: "/data-sources", search: {} } },
+          { label: t("datasources.new.title") },
+        ]}
+      />
+      <Page title={t("datasources.new.title")} lead={t("datasources.new.lead")}>
+        {body}
+      </Page>
+    </>
   );
 }
 
@@ -184,6 +195,21 @@ function NewDataSource({ orgId }: { orgId: string }) {
   );
 }
 
+/** Data sources, then the source's name once it is loaded (the form reads the same query). */
+function EditCrumbs({ orgId }: { orgId: string }) {
+  const { t } = useI18n();
+  const { datasourceId } = editRoute.useParams();
+  const source = useQuery(datasourceQuery(orgId, datasourceId));
+  return (
+    <Breadcrumbs
+      crumbs={[
+        { label: t("datasources.title"), link: { to: "/data-sources", search: {} } },
+        { label: source.data?.name ?? t("datasources.edit.title") },
+      ]}
+    />
+  );
+}
+
 export function EditDataSourcePage() {
   const { t } = useI18n();
   useDocumentTitle("datasources.edit.title");
@@ -192,9 +218,12 @@ export function EditDataSourcePage() {
   // decides: it answers 404 for a source the caller may not see and 403 for a change they may
   // not make.
   return (
-    <Page title={t("datasources.edit.title")}>
-      {org === undefined ? null : <EditDataSource orgId={org.id} />}
-    </Page>
+    <>
+      {org === undefined ? null : <EditCrumbs orgId={org.id} />}
+      <Page title={t("datasources.edit.title")}>
+        {org === undefined ? null : <EditDataSource orgId={org.id} />}
+      </Page>
+    </>
   );
 }
 
@@ -232,8 +261,25 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const remove = useMutation({
     mutationFn: () => deleteDatasource(orgId, datasourceId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
-      await navigate({ to: "/data-sources", search: { deleted: datasourceId } });
+      // The deleted source's own queries (this page, its schema) would only answer 404 now:
+      // they are dropped after leaving the page instead of being loaded again.
+      const ofThisSource = (query: { queryKey: readonly unknown[] }) =>
+        query.queryKey.includes(datasourceId);
+      await queryClient.invalidateQueries({
+        queryKey: [DATASOURCES_KEY, orgId],
+        predicate: (query) => !ofThisSource(query),
+      });
+      showToast({
+        message: t("datasources.deleted"),
+        undo: () => {
+          restoreDatasource(orgId, datasourceId).then(
+            () => queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] }),
+            (error: unknown) => showErrorToast(errorMessage(t, error)),
+          );
+        },
+      });
+      await navigate({ to: "/data-sources", search: {} });
+      queryClient.removeQueries({ queryKey: [DATASOURCES_KEY, orgId], predicate: ofThisSource });
     },
   });
 

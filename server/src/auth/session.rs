@@ -1,12 +1,11 @@
 //! Server-side sessions. The cookie holds a random token; the database holds only its SHA-256.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::http::{HeaderMap, HeaderValue, header};
 use sha2::{Digest, Sha256};
 use sqlx::AnyPool;
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 
 use crate::config::SessionConfig;
 use crate::error::ApiResult;
@@ -85,56 +84,31 @@ pub async fn lookup(
     Ok(user)
 }
 
-/// The last-seen updates in flight for one server. Each runs in its own task, so a read never
-/// waits for one, and a cancelled request cannot cut one short.
+/// The last-seen updates in flight for one server. Each runs as a `db::Background` task, so a
+/// read never waits for one, a cancelled request cannot cut one short, and a stop aborts them.
 pub struct Touches {
-    /// On SQLite a pool of its own, whose connections wait at most `db::TOUCH_BUSY_TIMEOUT` for
-    /// the write lock: SQLite goes on waiting after a touch is aborted, and closing the database
-    /// waits for that. Otherwise the server's pool.
-    db: AnyPool,
-    own_pool: bool,
+    background: Arc<crate::db::Background>,
     permits: Arc<Semaphore>,
     limit: u32,
-    tasks: Mutex<JoinSet<()>>,
 }
 
 impl Touches {
-    /// At most a quarter of the server's pool size (1 to 4) at once: on PostgreSQL each touch
-    /// holds one of the requests' connections while it runs.
-    pub fn new(db: &AnyPool, url: &str) -> Self {
-        let limit = (db.options().get_max_connections() / 4).clamp(1, 4);
-        let own = crate::db::side_pool(db, url, limit, crate::db::TOUCH_BUSY_TIMEOUT);
-        Self {
-            own_pool: own.is_some(),
-            db: own.unwrap_or_else(|| db.clone()),
-            permits: Arc::new(Semaphore::new(limit as usize)),
-            limit,
-            tasks: Mutex::default(),
-        }
+    /// At most `limit` touches at once.
+    pub fn new(background: Arc<crate::db::Background>, limit: u32) -> Self {
+        let limit = limit.max(1);
+        Self { background, permits: Arc::new(Semaphore::new(limit as usize)), limit }
+    }
+
+    /// A quarter of the server's pool size, 1 to 4: on PostgreSQL each touch holds one of the
+    /// requests' connections while it runs.
+    pub fn limit_for(db: &AnyPool) -> u32 {
+        (db.options().get_max_connections() / 4).clamp(1, 4)
     }
 
     /// Waits until no touch is in flight (tests, before they move the clock on).
     pub async fn settle(&self) {
-        // Fails only once `abort_all` closed the semaphore, and then nothing is in flight.
+        // Fails only on a closed semaphore, and this one is never closed.
         let _all = self.permits.acquire_many(self.limit).await;
-    }
-
-    /// Stops all touches for good, before the server closes the database, and waits at most
-    /// `db::TOUCH_BUSY_TIMEOUT` for one that is waiting for the write lock. A dropped touch costs
-    /// nothing; the session's next request repeats it.
-    pub async fn abort_all(&self) {
-        self.permits.close();
-        let mut tasks = std::mem::take(&mut *self.lock_tasks());
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
-        if self.own_pool {
-            self.db.close().await;
-        }
-    }
-
-    fn lock_tasks(&self) -> std::sync::MutexGuard<'_, JoinSet<()>> {
-        // The set holds no invariant a panic could break.
-        self.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Updates the session's last-seen time in the background. Skipped when the limit is
@@ -145,18 +119,19 @@ impl Touches {
             tracing::debug!("session touch skipped: {} already in flight", self.limit);
             return;
         };
-        let db = self.db.clone();
-        let mut tasks = self.lock_tasks();
-        // Finished touches leave their result in the set; drop them so it does not grow.
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn(async move {
+        let background = self.background.clone();
+        let stopping = background.stopping();
+        self.background.spawn(async move {
             let _permit = permit;
+            if stopping.is_cancelled() {
+                return;
+            }
             // A touch that waited for the lock never moves a newer one back.
             let update =
                 sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token_hash = $2 AND last_seen_at < $1")
                     .bind(now_ms)
                     .bind(&hash)
-                    .execute(&db)
+                    .execute(background.db())
                     .await;
             if let Err(e) = update {
                 tracing::debug!("session touch failed: {e}");
@@ -247,7 +222,8 @@ mod tests {
             .unwrap();
         let cfg = SessionConfig { lifetime_hours: 24, idle_timeout_hours: 24 };
         let token = create(&db, &cfg, 0, "u-1").await.unwrap();
-        let touches = Touches::new(&db, "sqlite::memory:");
+        let background = Arc::new(crate::db::Background::new(&db, "sqlite::memory:", 1));
+        let touches = Touches::new(background, 1);
         for now_ms in [20 * 60_000, 10 * 60_000] {
             touches.spawn(hash_token(&token), now_ms);
             touches.settle().await;

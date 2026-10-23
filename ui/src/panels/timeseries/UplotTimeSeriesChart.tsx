@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useI18n } from "../../i18n/i18n";
+import { zoneOption } from "../../lib/timeSettings";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { alignSeries } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
+import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
 import "../panels.css";
 
 /** The palette classes, one probe each. */
@@ -67,7 +69,7 @@ export function UplotTimeSeriesChart({
   lineWidth,
   showLegend,
 }: TimeSeriesChartProps) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
   const probesRef = useRef<HTMLDivElement>(null);
@@ -90,8 +92,14 @@ export function UplotTimeSeriesChart({
     const font = `${getComputedStyle(probes).fontSize} ${getComputedStyle(probes).fontFamily}`;
     const number = new Intl.NumberFormat(language, { maximumFractionDigits: 3 });
     // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
-    const dates = new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit" });
-    const times = new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" });
+    // Ticks and labels on the wall clock of the user's time zone.
+    const zone = zoneOption(timeZone);
+    const dates = new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit", ...zone });
+    const times = new Intl.DateTimeFormat(language, {
+      hour: "2-digit",
+      minute: "2-digit",
+      ...zone,
+    });
     const axisStyle = {
       stroke: axis,
       font,
@@ -102,13 +110,19 @@ export function UplotTimeSeriesChart({
       width: Math.max(width, 10),
       height: Math.max(height, 10),
       ms: 1,
+      ...(timeZone === null
+        ? {}
+        : { tzDate: (ts: number) => uPlot.tzDate(new Date(ts), timeZone) }),
       legend: { show: false },
       // The shell draws the cursor and the readout, the same for keyboard and pointer.
       cursor: { show: false },
+      // top, right, bottom, left; null keeps uPlot's own spacing.
+      padding: [null, TIME_LABEL_OVERHANG, null, null],
       scales: { x: { time: true, min: timeRange.from, max: timeRange.to } },
       axes: [
         {
           ...axisStyle,
+          space: PX_PER_TIME_TICK,
           values: (_u, splits, _axis, _space, step) =>
             splits.map((v) => (step >= DAY ? dates : times).format(v)),
         },
@@ -137,7 +151,7 @@ export function UplotTimeSeriesChart({
       chart.destroy();
       chartRef.current = null;
     };
-  }, [series, timeRange.from, timeRange.to, lineWidth, language, themeVersion]);
+  }, [series, timeRange.from, timeRange.to, lineWidth, language, timeZone, themeVersion]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
   useEffect(() => {

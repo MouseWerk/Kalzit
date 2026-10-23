@@ -15,6 +15,14 @@ const MAX_PATHS: usize = 2_000;
 const MAX_DEPTH: usize = 32;
 /// Elements looked at per array.
 const MAX_ELEMENTS: usize = 100;
+/// Characters of one key in a path; a longer key is cut there and ends in `KEY_CUT`.
+const MAX_KEY_CHARS: usize = 256;
+/// The marker at the end of a cut key.
+const KEY_CUT: &str = "...";
+/// Bytes of one path; a longer path (and everything below it) is left out.
+const MAX_PATH_BYTES: usize = 4 * 1024;
+/// Bytes of all paths together; once reached, no new paths are listed.
+const MAX_TOTAL_PATH_BYTES: usize = 256 * 1024;
 
 /// What the sampler sees of a value: its type name and, for containers, what is inside.
 pub enum Inner<'a, V> {
@@ -34,13 +42,14 @@ pub trait Sampled: Sized {
 #[derive(Default)]
 pub struct SchemaSampler {
     documents: usize,
-    /// In order of first appearance.
+    /// In order of first appearance; the path text lives only in `index`.
     paths: Vec<PathStats>,
     index: HashMap<String, usize>,
+    /// Bytes of all paths in `index`.
+    path_bytes: usize,
 }
 
 struct PathStats {
-    path: String,
     /// Documents that contain the path.
     documents: usize,
     /// Per type: documents in which the path has a value of that type.
@@ -70,7 +79,7 @@ impl SchemaSampler {
         self.documents += 1;
         let mut seen = Seen::new();
         for (key, value) in fields {
-            self.walk(value, key, 0, &mut seen);
+            self.walk(value, &short_key(key), 0, &mut seen);
         }
         self.count(seen);
     }
@@ -101,16 +110,18 @@ impl SchemaSampler {
         if let Some(i) = self.index.get(path) {
             return Some(*i);
         }
-        if self.paths.len() >= MAX_PATHS {
+        if self.paths.len() >= MAX_PATHS || self.path_bytes + path.len() > MAX_TOTAL_PATH_BYTES {
             return None;
         }
-        self.paths.push(PathStats { path: path.to_string(), documents: 0, types: Vec::new() });
+        self.paths.push(PathStats { documents: 0, types: Vec::new() });
         self.index.insert(path.to_string(), self.paths.len() - 1);
+        self.path_bytes += path.len();
         Some(self.paths.len() - 1)
     }
 
     fn walk<V: Sampled>(&mut self, value: &V, path: &str, depth: usize, seen: &mut Seen) {
-        if depth > MAX_DEPTH {
+        // Paths only grow below, so a path over the limit ends the walk here.
+        if depth > MAX_DEPTH || path.len() > MAX_PATH_BYTES {
             return;
         }
         let Some(i) = self.slot(path) else { return };
@@ -118,7 +129,8 @@ impl SchemaSampler {
         match value.inner() {
             Inner::Object(fields) => {
                 for (key, v) in fields {
-                    self.walk(v, &format!("{path}.{key}"), depth + 1, seen);
+                    let child = format!("{path}.{}", short_key(key));
+                    self.walk(v, &child, depth + 1, seen);
                 }
             }
             Inner::Array(items) => {
@@ -133,10 +145,14 @@ impl SchemaSampler {
 
     pub fn finish(self) -> Vec<FieldSchema> {
         let total = self.documents.max(1) as f64;
-        self.paths
+        let mut order: Vec<(usize, String)> = self.index.into_iter().map(|(path, i)| (i, path)).collect();
+        order.sort_unstable_by_key(|(i, _)| *i);
+        let mut paths: Vec<Option<PathStats>> = self.paths.into_iter().map(Some).collect();
+        order
             .into_iter()
-            .filter(|p| p.documents > 0)
-            .map(|p| {
+            .filter_map(|(i, path)| paths[i].take().map(|p| (path, p)))
+            .filter(|(_, p)| p.documents > 0)
+            .map(|(path, p)| {
                 let with = p.documents as f64;
                 let mut types: Vec<TypeShare> = p
                     .types
@@ -144,10 +160,35 @@ impl SchemaSampler {
                     .map(|(name, n)| TypeShare { name: name.to_string(), share: n as f64 / with })
                     .collect();
                 types.sort_by(|a, b| b.share.total_cmp(&a.share).then_with(|| a.name.cmp(&b.name)));
-                FieldSchema { path: p.path, coverage: with / total, types }
+                FieldSchema { path, coverage: with / total, types }
             })
             .collect()
     }
+}
+
+/// A key as a path segment: at most `MAX_KEY_CHARS` characters, a longer one cut and marked.
+fn short_key(key: &str) -> std::borrow::Cow<'_, str> {
+    match key.char_indices().nth(MAX_KEY_CHARS) {
+        None => key.into(),
+        Some((end, _)) => format!("{}{KEY_CUT}", &key[..end]).into(),
+    }
+}
+
+/// Charges the schema to the response budget, path by path; what does not fit is left out.
+/// True when paths were left out.
+pub fn charge_schema(schema: &mut Vec<FieldSchema>, budget: &super::frame::ResponseBudget) -> bool {
+    let fits = schema
+        .iter()
+        .take_while(|f| budget.take(f.path.len() + 32 + f.types.iter().map(|t| t.name.len() + 24).sum::<usize>()))
+        .count();
+    let cut = fits < schema.len();
+    schema.truncate(fits);
+    cut
+}
+
+/// The notice for a schema `charge_schema` cut.
+pub fn schema_cut() -> super::Detail {
+    super::Detail::new("documents.schema_cut", "the schema lists only the paths that fit the response size limit")
 }
 
 /// JSON values, with the JSON type names.
@@ -220,6 +261,50 @@ mod tests {
         let schema = sample(&[json!({ "b": { "c": 1 } }), json!({ "a": 1 })]);
         let paths: Vec<&str> = schema.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["b", "b.c", "a"]);
+    }
+
+    #[test]
+    fn long_keys_in_deep_documents_stay_bounded() {
+        // 33 levels of 256 KiB keys: without the caps every path repeats all keys above it.
+        let key = "k".repeat(256 * 1024);
+        let mut deep = json!(1);
+        for _ in 0..33 {
+            deep = json!({ key.clone(): deep });
+        }
+        let schema = sample(&[deep.clone(), deep]);
+        let bytes: usize = schema.iter().map(|f| f.path.len()).sum();
+        assert!(!schema.is_empty());
+        assert!(schema.iter().all(|f| f.path.len() <= MAX_PATH_BYTES), "every path is capped");
+        assert!(bytes <= MAX_TOTAL_PATH_BYTES, "{bytes} bytes of paths");
+        let first = &schema[0].path;
+        assert_eq!(first.chars().count(), MAX_KEY_CHARS + KEY_CUT.len());
+        assert!(first.ends_with(KEY_CUT));
+        assert_eq!(schema[0].coverage, 1.0);
+
+        // Many wide keys stop at the total.
+        let wide: serde_json::Map<String, Value> =
+            (0..1_500).map(|i| (format!("{i:04}{}", "w".repeat(1_000)), json!(i))).collect();
+        let schema = sample(&[Value::Object(wide)]);
+        let bytes: usize = schema.iter().map(|f| f.path.len()).sum();
+        assert!(bytes <= MAX_TOTAL_PATH_BYTES && schema.len() < 1_500, "{} paths, {bytes} bytes", schema.len());
+
+        // Multi-byte keys are cut on a character boundary.
+        let umlauts = "ä".repeat(MAX_KEY_CHARS + 5);
+        let schema = sample(&[json!({ umlauts: 1 })]);
+        assert_eq!(schema[0].path, format!("{}{KEY_CUT}", "ä".repeat(MAX_KEY_CHARS)));
+    }
+
+    #[test]
+    fn the_schema_is_charged_to_the_budget() {
+        let docs: Vec<Value> = (0..50).map(|i| json!({ format!("feld{i}"): i })).collect();
+        let mut schema = sample(&docs);
+        assert_eq!(schema.len(), 50);
+        let budget = crate::datasources::frame::ResponseBudget::new(1 << 20);
+        assert!(!charge_schema(&mut schema.clone(), &budget));
+        let small = crate::datasources::frame::ResponseBudget::new(600);
+        assert!(charge_schema(&mut schema, &small));
+        assert!(!schema.is_empty() && schema.len() < 50, "{}", schema.len());
+        assert_eq!(schema[0].path, "feld0", "the first paths are kept");
     }
 
     #[test]

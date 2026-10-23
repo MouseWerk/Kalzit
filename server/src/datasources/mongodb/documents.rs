@@ -246,12 +246,25 @@ mod tests {
         let p = get("items[].p");
         assert_eq!(p.coverage, 0.25);
         // One document holds both types: each share counts documents, so they add up to more than 1.
-        assert_eq!(p.types.len(), 2);
+        assert_eq!(p.types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["double", "int"]);
         assert!(p.types.iter().all(|t| t.share == 1.0));
         assert_eq!(get("b.c").coverage, 0.5);
         assert_eq!(get("b").types[0].name, "object");
         assert_eq!(schema[0].path, "a", "paths keep the order they first appear in");
         assert!(SchemaSampler::default().finish().is_empty());
+    }
+
+    #[test]
+    fn the_schema_looks_at_the_first_100_elements_of_an_array() {
+        let mut items: Vec<Bson> = (0..100).map(Bson::Int32).collect();
+        items.push(Bson::String("spät".into()));
+        items.push(Bson::Document(doc! { "nur_spät": true }));
+        let mut s = SchemaSampler::default();
+        sample(&mut s, &doc! { "items": items });
+        let schema = s.finish();
+        let elems = schema.iter().find(|f| f.path == "items[]").unwrap();
+        assert_eq!(elems.types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["int"]);
+        assert!(schema.iter().all(|f| f.path != "items[].nur_spät"), "{schema:?}");
     }
 
     #[test]

@@ -1,17 +1,18 @@
 import { useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { zoneOption } from "../../lib/timeSettings";
 import { useElementSize } from "../useElementSize";
 import { ChartShell, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
+import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
 import { niceTicks, type Scale, seriesPath, timeTicks, valueExtent } from "./series";
 import "../panels.css";
 
 const AXIS_LEFT = 56;
 const AXIS_BOTTOM = 22;
 const PAD_TOP = 8;
-const PAD_RIGHT = 12;
+const PAD_RIGHT = TIME_LABEL_OVERHANG;
 /** Roughly one value label per 40 px and one time label per 110 px, so labels never collide. */
 const PX_PER_VALUE_TICK = 40;
-const PX_PER_TIME_TICK = 110;
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -28,7 +29,7 @@ export function SvgTimeSeriesChart({
   lineWidth,
   showLegend,
 }: TimeSeriesChartProps) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
 
@@ -52,10 +53,13 @@ export function SvgTimeSeriesChart({
     from,
     to,
     Math.max(2, Math.floor(plotWidth / PX_PER_TIME_TICK)),
+    timeZone,
   );
   const timeLabel = new Intl.DateTimeFormat(
     language,
-    step >= DAY ? { day: "2-digit", month: "2-digit" } : { hour: "2-digit", minute: "2-digit" },
+    step >= DAY
+      ? { day: "2-digit", month: "2-digit", ...zoneOption(timeZone) }
+      : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
   const valueLabel = new Intl.NumberFormat(language, { maximumFractionDigits: 3 });
   const paths = series.map((s) => seriesPath(s, scale, AXIS_LEFT + plotWidth));

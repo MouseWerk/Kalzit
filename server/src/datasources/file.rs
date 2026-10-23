@@ -807,7 +807,10 @@ mod tests {
             panic!("documents")
         };
         assert_eq!(documents.documents, [json!({ "a": 1 }), json!({ "a": 2 })]);
-        assert_eq!(documents.truncated, Some(crate::shapes::Truncated { limit: 2 }));
+        assert_eq!(
+            documents.truncated,
+            Some(crate::shapes::Truncated { limit: 2, reason: Some("documents.limit".into()) })
+        );
 
         let path = d.write("kaputt.ndjson", b"{\"a\":1}\n{kaputt\n");
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(10, 1 << 20)).await.unwrap_err();
@@ -825,7 +828,10 @@ mod tests {
             panic!("documents")
         };
         assert_eq!(documents.documents, [json!({ "a": 1 })]);
-        assert_eq!(documents.truncated, Some(crate::shapes::Truncated { limit: 1 }));
+        assert_eq!(
+            documents.truncated,
+            Some(crate::shapes::Truncated { limit: 1, reason: Some("documents.size_limit".into()) })
+        );
         // Invalid JSON after the documents kept is still found.
         let path = d.write("kaputt.json", b"[1, 2, kaputt]");
         let e = Files.query(&d.conn(json!({ "path": path })).await, req(1, 1 << 20)).await.unwrap_err();
@@ -1115,6 +1121,9 @@ mod bounded_reads_tests {
         let plan = Plan { path, format: Format::Json, delimiter: None, decimal: Decimal::Auto, header: true };
         let docs = read_json(&plan, 10, &ResponseBudget::new(1024 * 1024), &later()).unwrap().finish();
         assert_eq!(docs.documents, [serde_json::json!(1)]);
-        assert_eq!(docs.truncated, Some(crate::shapes::Truncated { limit: 1 }));
+        assert_eq!(
+            docs.truncated,
+            Some(crate::shapes::Truncated { limit: 1, reason: Some("documents.size_limit".into()) })
+        );
     }
 }

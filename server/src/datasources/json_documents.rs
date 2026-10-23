@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use super::detail::Detail;
-use super::document_schema::{SAMPLE_DOCUMENTS, SchemaSampler};
+use super::document_schema::{SAMPLE_DOCUMENTS, SchemaSampler, charge_schema, schema_cut};
 use super::frame::{ResponseBudget, json_size};
 use crate::shapes::{DocumentSet, Notice, NoticeSeverity, OrderedJson, Truncated};
 
@@ -17,6 +17,8 @@ pub struct DocumentsBuilder {
     max: usize,
     budget: ResponseBudget,
     truncated: bool,
+    /// The notice code of the limit that cut the result.
+    cut_by: Option<&'static str>,
     notices: Vec<Notice>,
     executed_query: Option<String>,
 }
@@ -29,6 +31,7 @@ impl DocumentsBuilder {
             max: max.max(1),
             budget,
             truncated: false,
+            cut_by: None,
             notices: Vec::new(),
             executed_query: None,
         }
@@ -40,8 +43,7 @@ impl DocumentsBuilder {
             return false;
         }
         if self.docs.len() >= self.max {
-            let message = format!("only the first {} documents are shown (document limit)", self.max);
-            self.cut(Detail::new("documents.limit", message).with("limit", self.max));
+            self.mark_limit(self.max);
             return false;
         }
         if !self.budget.take(json_size(&doc) + 1) {
@@ -63,8 +65,18 @@ impl DocumentsBuilder {
         }
     }
 
+    /// Marks the result cut off at `limit` documents where the source itself stopped there (a
+    /// search whose size was lowered to the row limit, say).
+    pub fn mark_limit(&mut self, limit: usize) {
+        if !self.truncated {
+            let message = format!("only the first {limit} documents are shown (document limit)");
+            self.cut(Detail::new("documents.limit", message).with("limit", limit));
+        }
+    }
+
     fn cut(&mut self, detail: Detail) {
         self.truncated = true;
+        self.cut_by = Some(detail.reason);
         self.notice(NoticeSeverity::Warning, detail);
     }
 
@@ -93,11 +105,18 @@ impl DocumentsBuilder {
     }
 
     /// The documents with their schema. `truncated.limit` is the number of documents kept.
-    pub fn finish(self) -> DocumentSet {
-        let truncated = self.truncated.then(|| Truncated { limit: u32::try_from(self.docs.len()).unwrap_or(u32::MAX) });
+    pub fn finish(mut self) -> DocumentSet {
+        let mut schema = std::mem::take(&mut self.sampler).finish();
+        if charge_schema(&mut schema, &self.budget) {
+            self.notice(NoticeSeverity::Info, schema_cut());
+        }
+        let truncated = self.truncated.then(|| Truncated {
+            limit: u32::try_from(self.docs.len()).unwrap_or(u32::MAX),
+            reason: self.cut_by.map(str::to_string),
+        });
         DocumentSet {
             documents: self.docs,
-            schema: self.sampler.finish(),
+            schema,
             next_cursor: None,
             truncated,
             notices: self.notices,
@@ -137,7 +156,7 @@ mod tests {
         assert!(!b.push(json!({ "a": 3 })));
         let set = b.finish();
         assert_eq!(set.documents.len(), 2);
-        assert_eq!(set.truncated, Some(Truncated { limit: 2 }));
+        assert_eq!(set.truncated, Some(Truncated { limit: 2, reason: Some("documents.limit".into()) }));
         assert_eq!(set.notices.len(), 1);
         assert_eq!(set.notices[0].code, "documents.limit");
         assert_eq!(set.notices[0].params.as_ref().unwrap()["limit"], "2");
@@ -149,8 +168,11 @@ mod tests {
         assert!(b.is_full());
         b.mark_truncated();
         let set = b.finish();
-        assert_eq!(set.truncated, Some(Truncated { limit: 1 }));
-        assert_eq!(set.notices.iter().map(|n| n.code.as_str()).collect::<Vec<_>>(), ["documents.size_limit"]);
+        assert_eq!(set.truncated, Some(Truncated { limit: 1, reason: Some("documents.size_limit".into()) }));
+        // The schema is charged too: with the budget spent, it is left out and a notice says so.
+        let codes: Vec<&str> = set.notices.iter().map(|n| n.code.as_str()).collect();
+        assert_eq!(codes, ["documents.size_limit", "documents.schema_cut"]);
+        assert!(set.schema.is_empty());
 
         let untouched = DocumentsBuilder::new(10, ResponseBudget::new(1 << 20)).finish();
         assert_eq!(untouched.truncated, None);

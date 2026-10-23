@@ -733,6 +733,17 @@ struct Search {
     body: Value,
     /// The answer is the aggregation frame (the query had aggregations).
     aggs: Option<Map<String, Value>>,
+    /// The hits asked for, when the size was lowered to the row limit (or the 10,000 window).
+    lowered: Option<u64>,
+}
+
+/// Whether a search whose size was lowered to `lowered` left hits out: it answered that many
+/// and the total says there are more past them.
+fn hits_cut(answer: &Value, search: &Search, returned: usize) -> bool {
+    let Some(size) = search.lowered else { return false };
+    let total = answer["hits"]["total"]["value"].as_u64().or_else(|| answer["hits"]["total"].as_u64());
+    let from = search.body["from"].as_u64().unwrap_or(0);
+    returned as u64 >= size && total.is_some_and(|t| t > from + returned as u64)
 }
 
 fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, SourceError> {
@@ -782,10 +793,11 @@ fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, S
         None => None,
     };
     let max = (req.limits.max_rows as u64).min(MAX_WINDOW);
-    let size = if aggs.is_some() {
-        0
+    let (size, lowered) = if aggs.is_some() {
+        (0, false)
     } else {
-        body.get("size").and_then(Value::as_u64).or(q.size).unwrap_or(DEFAULT_SIZE).min(max)
+        let wanted = body.get("size").and_then(Value::as_u64).or(q.size).unwrap_or(DEFAULT_SIZE);
+        (wanted.min(max), wanted > max)
     };
     body.insert("size".into(), json!(size));
     let total = match body.get("track_total_hits") {
@@ -799,7 +811,7 @@ fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, S
     };
     body.insert("track_total_hits".into(), total);
     body.insert("timeout".into(), json!(format!("{}s", req.limits.timeout.as_secs().max(1))));
-    Ok(Search { index, body: Value::Object(body), aggs })
+    Ok(Search { index, body: Value::Object(body), aggs, lowered: lowered.then_some(size) })
 }
 
 // ---- aggregations to a frame ----
@@ -1330,6 +1342,7 @@ impl DataSourcePlugin for Elasticsearch {
                     Some(Value::Array(h)) => h,
                     _ => Vec::new(),
                 };
+                let cut = hits_cut(&answer, &search, hits.len());
                 drop(answer);
                 drop(charge);
                 let mut docs = DocumentsBuilder::new(req.limits.max_rows, budget.clone());
@@ -1338,6 +1351,9 @@ impl DataSourcePlugin for Elasticsearch {
                     if !docs.push(hit) {
                         break;
                     }
+                }
+                if cut && let Some(size) = search.lowered {
+                    docs.mark_limit(size as usize);
                 }
                 for detail in notices {
                     docs.notice(NoticeSeverity::Warning, detail);
@@ -1681,10 +1697,16 @@ mod tests {
                     if body.get("aggs").is_some() {
                         json!({ "hits": { "hits": [] }, "aggregations": { "land": { "buckets": [{ "key": "AT", "doc_count": 2 }] } } })
                     } else {
-                        json!({ "timed_out": false, "hits": { "total": { "value": 2 }, "hits": [
-                            { "_index": "logs-1", "_id": "1", "_score": 1.0, "_source": { "land": "AT" } },
-                            { "_index": "logs-1", "_id": "2", "_score": 1.0, "_source": { "land": "CH" } }
-                        ] } })
+                        // Like a cluster, answers at most `size` hits of the two it has.
+                        let size = body["size"].as_u64().unwrap_or(10) as usize;
+                        let hits: Vec<Value> = [
+                            json!({ "_index": "logs-1", "_id": "1", "_score": 1.0, "_source": { "land": "AT" } }),
+                            json!({ "_index": "logs-1", "_id": "2", "_score": 1.0, "_source": { "land": "CH" } }),
+                        ]
+                        .into_iter()
+                        .take(size)
+                        .collect();
+                        json!({ "timed_out": false, "hits": { "total": { "value": 2 }, "hits": hits } })
                     }
                 } else if path.starts_with("/_cat/indices") {
                     json!([{ "index": "logs-1" }, { "index": ".hidden" }])
@@ -1722,6 +1744,25 @@ mod tests {
         assert_eq!(documents.documents.len(), 2);
         assert_eq!(documents.documents[0].value()["_source"]["land"], "AT");
         assert!(documents.schema.iter().any(|f| f.path == "_source.land"));
+        assert!(documents.notices.is_empty() && documents.truncated.is_none(), "{:?}", documents.notices);
+        assert!(documents.executed_query.as_deref().unwrap().contains("query_string"));
+
+        // A size of its own below the row limit is no cut, even with more hits.
+        let r = Elasticsearch.query(&conn, req(json!({ "lucene": "", "size": 1 }), json!({}))).await.unwrap();
+        let QueryResult::Documents { documents } = r else { panic!("documents") };
+        assert_eq!(documents.documents.len(), 1);
+        assert!(documents.notices.is_empty() && documents.truncated.is_none(), "{:?}", documents.notices);
+
+        // A size lowered to the row limit that leaves hits out says so.
+        let mut limited = req(json!({ "lucene": "" }), json!({}));
+        limited.limits.max_rows = 1;
+        let QueryResult::Documents { documents } = Elasticsearch.query(&conn, limited).await.unwrap() else {
+            panic!("documents")
+        };
+        assert_eq!(documents.documents.len(), 1);
+        assert_eq!(documents.notices[0].code, "documents.limit", "{:?}", documents.notices);
+        assert_eq!(documents.notices[0].params.as_ref().unwrap()["limit"], "1");
+        assert_eq!(documents.truncated.unwrap().reason.as_deref(), Some("documents.limit"));
 
         let r = Elasticsearch
             .query(&conn, req(json!({ "dsl": { "aggs": { "land": { "terms": { "field": "land" } } } } }), json!({})))

@@ -69,6 +69,12 @@ mod tests {
         "server",
         "health",
         "frame",
+        "graph",
+        "cypher",
+        "gsql",
+        "bolt",
+        "memgraph",
+        "tigergraph",
         "mongodb",
         "documents",
     ];

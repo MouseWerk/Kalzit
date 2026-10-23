@@ -37,7 +37,11 @@ interface BarData {
  * Categories come from the first text field (or the time field, or the row number); every value
  * field of the first frame with values becomes one bar per category.
  */
-export function barData(frames: readonly Frame[], language: string): BarData | null {
+export function barData(
+  frames: readonly Frame[],
+  language: string,
+  timeZone: string | null = null,
+): BarData | null {
   const frame = frames.find((f) => valueFields(f).length > 0);
   if (frame === undefined) {
     return null;
@@ -46,7 +50,9 @@ export function barData(frames: readonly Frame[], language: string): BarData | n
     frame.fields.find((f) => f.type === "string") ?? frame.fields.find((f) => f.type === "time");
   const count = Math.min(rowCount(frame), MAX_BARS);
   const categories = Array.from({ length: count }, (_, row) =>
-    label === undefined ? String(row + 1) : formatValue(label.type, label.values[row], language),
+    label === undefined
+      ? String(row + 1)
+      : formatValue(label.type, label.values[row], language, timeZone),
   );
   const series = valueFields(frame).map((field) => ({
     name: seriesName(field),
@@ -56,10 +62,10 @@ export function barData(frames: readonly Frame[], language: string): BarData | n
 }
 
 function BarPanel({ frames, options, title }: PanelProps<BarOptions>) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
-  const data = barData(frames, language);
+  const data = barData(frames, language, timeZone);
   if (data === null) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }

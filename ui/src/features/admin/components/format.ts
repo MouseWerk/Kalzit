@@ -1,10 +1,14 @@
 import type { Language } from "../../../i18n/i18n";
+import { zoneOption } from "../../../lib/timeSettings";
+import { fromWall } from "../../../lib/zonedTime";
 
 /** A point in time (Unix milliseconds) as date and time in the user's language. */
-export function formatDateTime(ms: number, language: Language): string {
-  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(ms),
-  );
+export function formatDateTime(ms: number, language: Language, zone: string | null): string {
+  return new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoneOption(zone),
+  }).format(new Date(ms));
 }
 
 /** A setting value or audit summary as compact text. */
@@ -18,27 +22,33 @@ export function formatValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** `yyyy-mm-dd` from a date input, as the start of that day in local time (Unix ms). */
-export function startOfDay(date: string): number | undefined {
+const MIDNIGHT = { hour: 0, minute: 0, second: 0, millisecond: 0 };
+
+/** `yyyy-mm-dd` from a date input, as the start of that day in `zone` (Unix ms). */
+export function startOfDay(date: string, zone: string | null): number | undefined {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (match === null) {
     return undefined;
   }
-  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime();
+  return fromWall(
+    { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]), ...MIDNIGHT },
+    zone,
+  );
 }
 
 /**
- * The start of the day after, in local time: the server's `to` is exclusive, so this includes the
- * whole chosen day.
+ * The start of the day after, in `zone`: the server's `to` is exclusive, so this includes the
+ * whole chosen day (23 or 25 hours on a daylight saving change).
  */
-export function startOfNextDay(date: string): number | undefined {
-  const start = startOfDay(date);
-  if (start === undefined) {
+export function startOfNextDay(date: string, zone: string | null): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (match === null) {
     return undefined;
   }
-  const next = new Date(start);
-  next.setDate(next.getDate() + 1);
-  return next.getTime();
+  return fromWall(
+    { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) + 1, ...MIDNIGHT },
+    zone,
+  );
 }
 
 /** An audit summary (ids and changed field names) as short readable text. */

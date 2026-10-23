@@ -222,6 +222,11 @@ type QueryResult =
   Rejections answer `query_rejected` with the reason. Elasticsearch and OpenSearch sources reach
   only a fixed list of read endpoints (checked on every URL before it is sent) and refuse stored
   scripts and scripts that use `ctx`; HTTP JSON sources send only GET requests below their URL.
+  Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
+  Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
+  checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may
+  write are refused, and GSQL is parsed and refused when it writes or does not parse
+  (docs/api/datasources.md).
 - **No string interpolation of user input.** Macros (`$__timeFilter(col)`, `$__timeFrom`,
   `$__timeTo`, `$__interval`, `$__interval_ms`) and variables become bind parameters. A variable
   used as an identifier must match an allow-list from the source's schema.
@@ -409,15 +414,27 @@ type QueryResult =
   elsewhere (`clippy.toml`); the data source drivers' read-only transactions on the users'
   databases are the marked exceptions. A graceful stop (Ctrl+C, SIGTERM, and on Windows closing
   the console or shutting down, with a 3 s grace instead of 10 s) closes the database, which
-  folds the WAL back into `kalzit.db`.
+  folds the WAL back into `kalzit.db`. The close gets 5 s, on Windows at most what is left of the
+  grace; when a statement still waits for a lock another program holds, the stop goes on without
+  it and logs a warning. Nothing committed is lost, and the next start completes the checkpoint.
+  A supervisor must allow for that: stop the container with `docker stop -t 20`, or create it
+  with `docker run --stop-timeout 20` (Docker's default of 10 s is shorter than the 10 s grace
+  plus the close); systemd's default of 90 s is enough.
 - Reads never wait on writers: the one write a read request makes, the session's last-seen time,
   runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
   the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
-  tries again, since its touch is still due. An older touch never overwrites a newer one. On
-  SQLite the touches use a small pool of their own whose connections wait at most 1 s for the
-  write lock: SQLite keeps waiting even after a touch is aborted, and a stop, which aborts all
-  touches before it closes the database, would otherwise wait the full 15 s. The requests'
-  connections keep their 15 s. A failed touch is logged at debug level only.
+  tries again, since its touch is still due. An older touch never overwrites a newer one. A
+  failed touch is logged at debug level only.
+- Background writes: the touches and the hourly jobs (session cleanup, audit retention) run as
+  tasks a stop ends before it closes the database (`db::Background`). The stop signals them;
+  they start no new statement and leave their sleeps, and the stop waits up to 3 s for the
+  statement they are in, so every connection is back and closed with the pool. Only a task still
+  running after that is aborted. On SQLite they use a small pool of their own whose connections
+  wait at most 0.5 s for the write lock: SQLite keeps waiting even after a statement is aborted,
+  and closing the database would wait the full 15 s. The requests' connections keep their 15 s.
+  Each of these writes is repeated later, so a dropped one costs nothing. An hourly run that
+  finds the database busy is tried again after 1, 2 and 4 minutes, as long as that is before the
+  next run (`db::Schedule`): the audit retention is a privacy rule and must not slip by an hour.
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).
@@ -452,6 +469,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
+| 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 
 ## M1 work streams
 
@@ -491,4 +509,39 @@ through `settings::get`; new registry entries are requested from the orchestrato
   skipped with a printed notice when the variable is not set.
 - UI: Vitest per feature; guard tests for design (every CSS file), i18n and the route tree;
   generated types current.
-- E2E: Playwright against the production build of the binary, on Linux and Windows (M1 end).
+- E2E: Playwright (`ui/e2e/`) against the server binary with the embedded UI, on Linux and
+  Windows (CI job `e2e`, which builds with the `e2e` profile: release settings, less
+  optimization). Global setup starts the binary on a free port with a fresh private data
+  directory, a random setup token and `datasources.sqlite_dirs` set to a fixture folder,
+  writes the fixture SQLite database there (sales per region and time, from code, nothing
+  binary committed) and stops the server by its PID afterwards. It records that PID in the run
+  folder; the next setup removes folders of runs that crashed, stopping a recorded server only
+  if it still runs the binary copied into that folder. The first project runs the first-run
+  setup through the UI; the other tests arrange what they need through the API and run in
+  parallel on unique names. Chromium runs every scenario, Firefox and WebKit the query editor
+  under the server's CSP. Every test fails on an unexpected browser console warning or error;
+  the CSP notice for CodeMirror's refused style element passes once per page load and only
+  while CodeMirror's is the page's only `<style>` element. axe (`@axe-core/playwright`) allows
+  no serious or critical finding on the main pages (light theme in English, dark theme in
+  German), and at 360 px nothing sticks out of the viewport or of an open dialog.
+  Run locally from `ui/`:
+
+  ```
+  npm run e2e                                  # builds the UI and the release server first
+  KALZIT_E2E_BINARY=../target/release/kalzit npm run e2e   # an existing binary, no build
+  npx playwright test -c e2e/playwright.config.ts viewer   # one file
+  ```
+
+  Once per machine: `npx playwright install chromium firefox webkit` (on Linux also
+  `npx playwright install-deps`). `KALZIT_E2E_BROWSERS=chromium` limits the browsers,
+  `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
+  `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
+  `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+- Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
+  in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
+  through the same global setup, seeds a demo organization through the API (members, teams,
+  the SQLite sales fixture, a dashboard with a variable and four panels) and writes PNGs at
+  1440x900 to `docs/screenshots/`. The fixture data lies around a fixed moment and the pages run
+  on a clock fixed to it; times the server records (sessions, member since, last saved) are
+  moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
+  UI reruns `npm run screenshots` and commits the changed images.**
