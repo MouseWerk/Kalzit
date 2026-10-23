@@ -159,7 +159,8 @@ export function queryText(query: unknown): string {
     if (typeof query.lucene === "string" || isRecord(query.dsl)) {
       return searchQueryText(parseSearchQuery(query));
     }
-    if (typeof query.path === "string" || isRecord(query.params)) {
+    // HTTP JSON by its path; parameters alone could be TigerGraph's.
+    if (typeof query.path === "string" || typeof query.documentsPath === "string") {
       return httpQueryText(parseHttpQuery(query));
     }
   }
@@ -177,10 +178,14 @@ const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
 const TEXT_KEYS = ["sql", "expr", "cypher", "gsql", "installed"];
 
 /**
- * Whether a query has something to run. The text forms need text. The search, file and HTTP JSON
- * forms run as they are: `{}` reads the file or requests the source's URL, and a search without a
- * query matches every document in the time range. Without the kind (a stored panel target), the
- * form is told by its fields, so `{}` counts as a query and `{sql: ""}` does not.
+ * Whether a query has something to run, by the form of its data source's kind. The text forms
+ * need text. The search, file and HTTP JSON forms run as they are: `{}` reads the file or
+ * requests the source's URL, and a search without a query matches every document in the time
+ * range; a stored search or HTTP query with fields the server refuses does not run.
+ *
+ * Without the kind (a source the caller cannot see) the form is told by its fields, and only a
+ * query that names itself counts: text, a Lucene or DSL search, an HTTP path. `{}` does not, since
+ * it is also what an unfinished query of any other kind looks like.
  */
 export function hasQuery(query: unknown, kind?: string): boolean {
   if (!isRecord(query)) {
@@ -191,7 +196,8 @@ export function hasQuery(query: unknown, kind?: string): boolean {
     return isSearchQuery(query);
   }
   if (family === "file") {
-    return Object.keys(query).length === 0;
+    // Any other form is replaced by `{}` before it is sent (normalizeQuery).
+    return true;
   }
   if (family === "http") {
     return isHttpQuery(query);
@@ -203,5 +209,16 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   ) {
     return queryText(query).trim() !== "";
   }
-  return isSearchQuery(query) || isHttpQuery(query);
+  if (typeof query.lucene === "string" || isRecord(query.dsl)) {
+    return isSearchQuery(query);
+  }
+  return typeof query.path === "string" && isHttpQuery(query);
+}
+
+/**
+ * The query as it is sent. A file query has no fields, so whatever a target kept from another
+ * kind is sent as `{}`; the stored target is left as it is until it is saved again.
+ */
+export function normalizeQuery(query: unknown, kind: string | undefined): unknown {
+  return kind !== undefined && familyOf(kind) === "file" ? {} : query;
 }

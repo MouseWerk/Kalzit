@@ -42,7 +42,7 @@ import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasou
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
-import { emptyQuery, hasQuery } from "../datasources/queryKinds";
+import { emptyQuery, familyOf, hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
 
@@ -130,6 +130,12 @@ function Explore({ orgId }: { orgId: string }) {
   const datasource = list.find((d) => d.id === chosen) ?? list[0];
   const query =
     datasource === undefined ? null : (queries[datasource.id] ?? emptyQuery(datasource.kind));
+  // A field holding something the server would refuse keeps the query from running; a MongoDB
+  // field keeps its last valid text and runs that, as its editor says.
+  const queryBlocked =
+    datasource !== undefined &&
+    pendingText[datasource.id] === true &&
+    familyOf(datasource.kind) !== "mongo";
 
   const result = useQuery({
     queryKey: ["explore", orgId, submitted],
@@ -155,7 +161,9 @@ function Explore({ orgId }: { orgId: string }) {
   });
 
   function run(nextRange = range, nextQuery: unknown = query) {
-    if (datasource === undefined || !hasQuery(nextQuery, datasource.kind)) {
+    // A field that holds something the server would refuse keeps the query from running; the
+    // field says why.
+    if (datasource === undefined || !hasQuery(nextQuery, datasource.kind) || queryBlocked) {
       return;
     }
     // A new run leaves an old filter refusal behind.
@@ -168,7 +176,7 @@ function Explore({ orgId }: { orgId: string }) {
     setRangeError(null);
     setSubmitted((current) => ({
       datasourceId: datasource.id,
-      query: nextQuery,
+      query: normalizeQuery(nextQuery, datasource.kind),
       range: nextRange,
       ...resolved.range,
       run: (current?.run ?? 0) + 1,
@@ -297,7 +305,7 @@ function Explore({ orgId }: { orgId: string }) {
           type="button"
           className="button button--primary"
           onClick={() => run()}
-          disabled={!hasQuery(query, datasource.kind)}
+          disabled={!hasQuery(query, datasource.kind) || queryBlocked}
         >
           {result.isFetching ? t("explore.running") : t("explore.run")}
         </button>
@@ -430,6 +438,7 @@ function Explore({ orgId }: { orgId: string }) {
                       : undefined
                   }
                   stepsRun={stepsRun}
+                  kindOf={(id) => list.find((source) => source.id === id)?.kind}
                 />
               </PanelHostContext>
             ) : null}

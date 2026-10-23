@@ -5,7 +5,7 @@ import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
-import { addSourceKinds } from "../datasources/test/fakeDatasources";
+import { addSourceKinds, PG_ID } from "../datasources/test/fakeDatasources";
 import { ES_ID, FILE_ID, HTTP_ID } from "../datasources/test/fakeSources";
 
 function open(id: string, role = "editor") {
@@ -93,6 +93,7 @@ describe("Explore with an Elasticsearch source", () => {
     fireEvent.change(index, { target: { value: "_all" } });
     expect(index.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByText(/_all is not an index name or pattern/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run query" })).toHaveProperty("disabled", true);
 
     fireEvent.click(screen.getByRole("radio", { name: "Query DSL" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Query" }), {
@@ -149,10 +150,7 @@ describe("Explore with an HTTP JSON source", () => {
   it("sends path, parameters and the documents path exactly, and previews the request", async () => {
     const { server, user, ready } = open(HTTP_ID);
     await ready;
-    expect(await screen.findByRole("combobox", { name: "Method" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(await screen.findByText("Method: GET")).toBeTruthy();
     fireEvent.change(screen.getByRole("textbox", { name: "Path" }), {
       target: { value: "orders/open" },
     });
@@ -180,13 +178,21 @@ describe("Explore with an HTTP JSON source", () => {
     });
   });
 
-  it("refuses a path outside the URL at once and shows a missing variable's reason", async () => {
-    const { user, ready } = open(HTTP_ID);
+  it("does not run while the path is refused, and shows a missing variable's reason", async () => {
+    const { server, user, ready } = open(HTTP_ID);
     await ready;
+    const run = screen.getByRole("button", { name: "Run query" });
     const path = await screen.findByRole("textbox", { name: "Path" });
-    fireEvent.change(path, { target: { value: "../admin" } });
+    fireEvent.change(path, { target: { value: "orders" } });
+    fireEvent.change(path, { target: { value: "../x" } });
     expect(path.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByText(/The path must lie below the data source's URL/)).toBeTruthy();
+    // The last valid path is not run behind the user's back: Run waits for a fix.
+    expect(run).toHaveProperty("disabled", true);
+    fireEvent.keyDown(path, { key: "Enter", ctrlKey: true });
+    expect(server.areas.datasources.queries).toHaveLength(0);
+    fireEvent.change(path, { target: { value: "" } });
+    expect(run).toHaveProperty("disabled", false);
 
     await user.click(screen.getByRole("button", { name: "Add parameter" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name of parameter 1" }), {
@@ -201,6 +207,35 @@ describe("Explore with an HTTP JSON source", () => {
 });
 
 describe("dashboard panels of these sources", () => {
+  it("say a SQL target stored as {} has no query yet", async () => {
+    const server = installFakeServer({
+      signedIn: true,
+      user: {
+        ...TEST_USER,
+        isServerAdmin: false,
+        orgs: [{ id: "o1", name: "Org", role: "editor" }],
+      },
+    });
+    addDashboard(server.areas.dashboards, "d-sql", {
+      ...emptyModel("SQL"),
+      panels: [
+        {
+          id: "p-sql",
+          type: "table",
+          title: "Unfinished",
+          grid: { x: 0, y: 0, w: 12, h: 8 },
+          targets: [{ refId: "A", datasourceId: PG_ID, query: {} }],
+          transformations: [],
+          options: {},
+          fieldConfig: {},
+        },
+      ],
+    });
+    renderApp("/dashboards/d-sql");
+    expect(await screen.findByText("Unfinished")).toBeTruthy();
+    expect(await screen.findByText("This panel has no query yet.")).toBeTruthy();
+  });
+
   it("run a stored {} query instead of saying the panel has no query", async () => {
     const server = installFakeServer({
       signedIn: true,

@@ -11,28 +11,49 @@ export interface HttpQuery {
   documentsPath?: string;
 }
 
-export type ParamValue = string | number | boolean;
+export type ParamScalar = string | number | boolean;
+/** A list repeats the parameter (`land=AT&land=CH`). */
+export type ParamValue = ParamScalar | ParamScalar[];
 
 export const HTTP_QUERY_KEYS = ["path", "params", "documentsPath"] as const;
 
+const isScalar = (value: unknown): value is ParamScalar =>
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value));
+
+/** A value the server takes for a parameter: a text, number, boolean or a list of them. */
+export function isParamValue(value: unknown): value is ParamValue {
+  return isScalar(value) || (Array.isArray(value) && value.every(isScalar));
+}
+
+/** The stored parameters as written, valid or not, in a map (so no name reaches a prototype). */
+export function storedParams(query: unknown): Map<string, unknown> {
+  const params = isRecord(query) && isRecord(query.params) ? query.params : {};
+  return new Map(Object.entries(params));
+}
+
+/** Parameters as an object without a prototype, so `__proto__` is a name like any other. */
+export function paramObject(entries: Iterable<[string, ParamValue]>): Record<string, ParamValue> {
+  const params = Object.create(null) as Record<string, ParamValue>;
+  for (const [name, value] of entries) {
+    params[name] = value;
+  }
+  return params;
+}
+
+/** The query as the editor reads it; `httpQueryProblems` names what the server would refuse. */
 export function parseHttpQuery(query: unknown): HttpQuery {
   const value = isRecord(query) ? query : {};
   const parsed: HttpQuery = {};
   if (typeof value.path === "string" && value.path !== "") {
     parsed.path = value.path;
   }
-  if (isRecord(value.params)) {
-    const params = Object.fromEntries(
-      Object.entries(value.params).filter(
-        (entry): entry is [string, ParamValue] =>
-          typeof entry[1] === "string" ||
-          typeof entry[1] === "boolean" ||
-          (typeof entry[1] === "number" && Number.isFinite(entry[1])),
-      ),
-    );
-    if (Object.keys(params).length > 0) {
-      parsed.params = params;
-    }
+  const valid = [...storedParams(query)].filter((entry): entry is [string, ParamValue] =>
+    isParamValue(entry[1]),
+  );
+  if (valid.length > 0) {
+    parsed.params = paramObject(valid);
   }
   if (typeof value.documentsPath === "string" && value.documentsPath !== "") {
     parsed.documentsPath = value.documentsPath;
@@ -40,14 +61,37 @@ export function parseHttpQuery(query: unknown): HttpQuery {
   return parsed;
 }
 
-/** Whether a stored query has exactly the HTTP JSON form, so it can run as it is. */
-export function isHttpQuery(query: unknown): boolean {
-  return (
-    isRecord(query) &&
-    Object.keys(query).every((key) => (HTTP_QUERY_KEYS as readonly string[]).includes(key))
+/**
+ * The fields of a stored query the server would refuse: unknown ones, ones of the wrong type, and
+ * parameters whose value is not a text, number, boolean or list of them (`params.<name>`).
+ */
+export function httpQueryProblems(query: unknown): string[] {
+  if (!isRecord(query)) {
+    return ["query"];
+  }
+  const problems = Object.keys(query).filter(
+    (key) => !(HTTP_QUERY_KEYS as readonly string[]).includes(key),
   );
+  for (const key of ["path", "documentsPath"]) {
+    if (query[key] !== undefined && query[key] !== null && typeof query[key] !== "string") {
+      problems.push(key);
+    }
+  }
+  if (query.params !== undefined && !isRecord(query.params)) {
+    problems.push("params");
+  }
+  for (const [name, value] of storedParams(query)) {
+    if (!isParamValue(value)) {
+      problems.push(`params.${name}`);
+    }
+  }
+  return problems;
 }
 
+/** Whether a stored query has exactly the HTTP JSON form, so it can run as it is. */
+export function isHttpQuery(query: unknown): boolean {
+  return httpQueryProblems(query).length === 0;
+}
 /**
  * The server's path rule (`join_path`): relative, below the source's URL, without query or
  * fragment, without `.` segments or segments starting with `..`, backslashes, control characters,
@@ -99,7 +143,9 @@ export function requestUrl(base: string | undefined, query: HttpQuery): string |
     return undefined;
   }
   for (const [name, value] of Object.entries(query.params ?? {})) {
-    url.searchParams.append(name, String(value));
+    for (const item of Array.isArray(value) ? value : [value]) {
+      url.searchParams.append(name, String(item));
+    }
   }
   // Variables read better as written than percent-encoded.
   return url.href.replace(/%24(%7B)?(\w+)(%7D)?/g, (_, open, name, close) =>
@@ -110,7 +156,9 @@ export function requestUrl(base: string | undefined, query: HttpQuery): string |
 /** The query in one line, for summaries: the path and the parameters. */
 export function httpQueryText(query: HttpQuery): string {
   const params = Object.entries(query.params ?? {})
-    .map(([name, value]) => `${name}=${String(value)}`)
+    .flatMap(([name, value]) =>
+      (Array.isArray(value) ? value : [value]).map((item) => `${name}=${String(item)}`),
+    )
     .join("&");
   return [query.path ?? "", params === "" ? "" : `?${params}`].join("");
 }

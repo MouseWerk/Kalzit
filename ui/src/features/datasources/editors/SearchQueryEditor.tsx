@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { datasourceQuery, schemaQuery } from "../api";
 import { type Reason, reasonText } from "../reasons";
 import { CodeEditor } from "./CodeEditor";
-import { JsonField } from "./JsonField";
+import { JsonField, PendingTextContext } from "./JsonField";
 import { MacroHelp } from "./MacroHelp";
 import type { QueryEditorProps } from "./QueryEditor";
+import { StoredProblems } from "./StoredProblems";
 import { dslCompletions, luceneCompletions, SEARCH_MACROS, searchFields } from "./searchCompletion";
 import {
   DEFAULT_SIZE,
@@ -19,7 +20,8 @@ import {
   type SearchMode,
   type SearchQuery,
   searchMode,
-  sizeProblem,
+  searchQueryProblems,
+  sizeState,
 } from "./searchQuery";
 import "./editors.css";
 import "./sourceEditors.css";
@@ -34,18 +36,28 @@ interface SourceDefaults {
 /** Ready-made search bodies; each uses the fields of the chosen index where it can. */
 export const SEARCH_TEMPLATES = ["latest", "terms", "histogram", "termsOverTime"] as const;
 export type SearchTemplate = (typeof SEARCH_TEMPLATES)[number];
+/** Templates that group by a keyword field; offered only when the index has one. */
+const KEYWORD_TEMPLATES: readonly SearchTemplate[] = ["terms", "termsOverTime"];
 
 const KEYWORD_TYPES = new Set(["keyword", "constant_keyword", "ip", "boolean"]);
 const TIME_TYPES = new Set(["date", "date_nanos"]);
 
-/** The body of a template, with the time field and a keyword field of the index filled in. */
+/** The first field the terms templates can group by, or undefined. */
+export function keywordField(fields: readonly { name: string; type: string }[]) {
+  return fields.find((f) => KEYWORD_TYPES.has(f.type))?.name;
+}
+
+/**
+ * The body of a template, with the time field and a keyword field of the index filled in. The
+ * terms templates need a keyword field; without one they are not offered.
+ */
 export function searchTemplate(
   name: SearchTemplate,
   timeField: string,
   fields: readonly { name: string; type: string }[],
 ): Record<string, unknown> {
   const time = timeField === "" ? DEFAULT_TIME_FIELD : timeField;
-  const keyword = fields.find((f) => KEYWORD_TYPES.has(f.type))?.name ?? "";
+  const keyword = keywordField(fields) ?? "";
   const histogram = { date_histogram: { field: time, fixed_interval: "$__interval" } };
   const terms = { terms: { field: keyword, size: 10 } };
   switch (name) {
@@ -59,12 +71,28 @@ export function searchTemplate(
           .map((f) => f.name),
       };
     case "terms":
-      return { aggs: { [keyword || "terms"]: terms } };
+      return { aggs: { [keyword]: terms } };
     case "histogram":
       return { aggs: { time: histogram } };
     case "termsOverTime":
-      return { aggs: { time: { ...histogram, aggs: { [keyword || "terms"]: terms } } } };
+      return { aggs: { time: { ...histogram, aggs: { [keyword]: terms } } } };
   }
+}
+
+/**
+ * The body a Lucene text becomes when switching to Query DSL. Query DSL replaces only strings that
+ * are exactly one variable or macro, so a text with `$` in it would lose them inside a
+ * `query_string`: then the body starts empty and the Lucene text is kept for switching back.
+ */
+export function dslFromLucene(lucene: string): { dsl: Record<string, unknown>; kept: boolean } {
+  const text = lucene.trim();
+  if (text.includes("$")) {
+    return { dsl: { query: { match_all: {} } }, kept: true };
+  }
+  return {
+    dsl: text === "" ? { query: { match_all: {} } } : { query: { query_string: { query: text } } },
+    kept: false,
+  };
 }
 
 const pretty = (dsl: Record<string, unknown> | undefined) =>
@@ -74,7 +102,8 @@ const pretty = (dsl: Record<string, unknown> | undefined) =>
  * Elasticsearch and OpenSearch: an index (picked from the schema or typed as a pattern), then a
  * Lucene query string or a Query DSL body, the number of hits and the time field. Every field is
  * the query's own (`{index?, lucene | dsl, timeField?, size?}`); the server's checks are mirrored
- * here with its reasons, so a refusal reads the same before and after Run.
+ * here with its reasons. While a field holds something the server would refuse, the page is told
+ * (`onPendingText`) and does not run the query.
  */
 export function SearchQueryEditor({
   orgId,
@@ -83,10 +112,12 @@ export function SearchQueryEditor({
   onChange,
   onRun,
   label,
+  onPendingText,
 }: QueryEditorProps) {
   const { t } = useI18n();
   const id = useId();
   const value = parseSearchQuery(query);
+  const problems = searchQueryProblems(query);
   const mode = searchMode(value);
   const schema = useQuery(schemaQuery(orgId, datasource.id));
   const indices = schema.data?.kind === "indices" ? schema.data.indices : [];
@@ -102,23 +133,40 @@ export function SearchQueryEditor({
           timeField:
             typeof settings.timeField === "string" ? settings.timeField : DEFAULT_TIME_FIELD,
         };
-  const fields = searchFields(
-    schema.data?.kind === "indices" ? schema.data : undefined,
-    value.index ?? defaults?.index,
-  );
+  const pattern = value.index ?? defaults?.index;
+  const fields = searchFields(schema.data?.kind === "indices" ? schema.data : undefined, pattern);
 
   const [indexText, setIndexText] = useState(value.index ?? "");
   const [sizeText, setSizeText] = useState(value.size === undefined ? "" : String(value.size));
   // The text of the other mode, so switching back brings it again.
   const [aside, setAside] = useState<{ lucene?: string; dsl?: Record<string, unknown> }>({});
   const [replaced, setReplaced] = useState<SearchQuery | null>(null);
+  const [luceneKept, setLuceneKept] = useState(false);
+  // The JSON field says whether its text parses; it is part of what is pending.
+  const [dslPending, setDslPending] = useState(false);
+  const reportDsl = useCallback(
+    (_field: string, isPending: boolean) => setDslPending(isPending),
+    [],
+  );
 
-  const indexError = indexText.trim() === "" ? null : indexProblem(indexText.trim());
-  const sizeInvalid = sizeProblem(sizeText);
+  // The server checks the index as written; only a blank one falls back to the source's.
+  const indexError = indexText.trim() === "" ? null : indexProblem(indexText);
+  const size = sizeState(sizeText);
   const aggregations = hasAggregations(value.dsl);
   const sizeInBody = value.dsl !== undefined && "size" in value.dsl;
-  const effectiveTime = value.timeField ?? defaults?.timeField ?? DEFAULT_TIME_FIELD;
+  const effectiveTime =
+    value.timeField ?? (defaults === undefined ? undefined : defaults.timeField);
   const indexMissing = defaults !== undefined && defaults.index === "" && value.index === undefined;
+  const keyword = keywordField(fields);
+
+  const pending =
+    indexError !== null ||
+    size === "invalid" ||
+    problems.length > 0 ||
+    (mode === "dsl" && dslPending);
+  useEffect(() => {
+    onPendingText?.(pending);
+  }, [onPendingText, pending]);
 
   function update(patch: Partial<SearchQuery>, remove: (keyof SearchQuery)[] = []) {
     const next: SearchQuery = { ...value, ...patch };
@@ -134,15 +182,12 @@ export function SearchQueryEditor({
     }
     if (next === "dsl") {
       setAside({ ...aside, lucene: value.lucene ?? "" });
-      const lucene = (value.lucene ?? "").trim();
-      const dsl =
-        aside.dsl ??
-        (lucene === ""
-          ? { query: { match_all: {} } }
-          : { query: { query_string: { query: lucene } } });
-      update({ dsl }, ["lucene"]);
+      const converted = dslFromLucene(value.lucene ?? "");
+      setLuceneKept(aside.dsl === undefined && converted.kept);
+      update({ dsl: aside.dsl ?? converted.dsl }, ["lucene"]);
     } else {
       setAside({ ...aside, ...(value.dsl === undefined ? {} : { dsl: value.dsl }) });
+      setLuceneKept(false);
       update({ lucene: aside.lucene ?? "" }, ["dsl"]);
     }
     setReplaced(null);
@@ -155,6 +200,7 @@ export function SearchQueryEditor({
   return (
     <fieldset className="query-editor source-query">
       <legend className="visually-hidden">{label ?? t("datasources.editor.label")}</legend>
+      <StoredProblems problems={problems} onRemove={() => onChange(value)} />
       <div className="source-query__head">
         <div className="field source-query__wide">
           <label className="field__label" htmlFor={`${id}-index`}>
@@ -179,8 +225,8 @@ export function SearchQueryEditor({
               setIndexText(text);
               if (text.trim() === "") {
                 update({}, ["index"]);
-              } else if (indexProblem(text.trim()) === null) {
-                update({ index: text.trim() });
+              } else if (indexProblem(text) === null) {
+                update({ index: text });
               }
             }}
           />
@@ -232,20 +278,29 @@ export function SearchQueryEditor({
           {...(onRun === undefined ? {} : { onRun })}
         />
       ) : (
-        <DslField
-          id={id}
-          label={label ?? t("datasources.editor.label")}
-          dsl={value.dsl}
-          fields={fields}
-          hintId={hintId}
-          onRun={onRun}
-          onChange={(dsl) => update({ dsl })}
-          onTemplate={(name) => {
-            setReplaced(value);
-            update({ dsl: searchTemplate(name, effectiveTime, fields) });
-          }}
-        />
+        <PendingTextContext value={reportDsl}>
+          <DslField
+            id={id}
+            label={label ?? t("datasources.editor.label")}
+            dsl={value.dsl}
+            fields={fields}
+            hasKeyword={keyword !== undefined}
+            hintId={hintId}
+            onRun={onRun}
+            onChange={(dsl) => update({ dsl })}
+            onTemplate={(name) => {
+              setReplaced(value);
+              setLuceneKept(false);
+              update({ dsl: searchTemplate(name, effectiveTime || DEFAULT_TIME_FIELD, fields) });
+            }}
+          />
+        </PendingTextContext>
       )}
+      {luceneKept ? (
+        <p className="source-query__status" role="status">
+          {t("datasources.editor.search.luceneKept")}
+        </p>
+      ) : null}
       {replaced === null ? null : (
         <div className="source-query__status" role="status">
           <span>{t("datasources.editor.search.templateApplied")}</span>
@@ -267,7 +322,12 @@ export function SearchQueryEditor({
           mode === "lucene"
             ? "datasources.editor.search.luceneHint"
             : "datasources.editor.search.dslHint",
-        )}
+        )}{" "}
+        {fields.length > 0
+          ? t("datasources.editor.search.fieldsHint", {
+              pattern: pattern === undefined || pattern === "" ? "*" : pattern,
+            })
+          : ""}
       </p>
       <div className="query-editor__options">
         <div className="field query-editor__step">
@@ -281,26 +341,28 @@ export function SearchQueryEditor({
             value={sizeText}
             placeholder={String(DEFAULT_SIZE)}
             disabled={aggregations || sizeInBody}
-            aria-invalid={sizeInvalid ? true : undefined}
+            aria-invalid={size === "invalid" ? true : undefined}
             aria-describedby={`${id}-size-help`}
             onChange={(event) => {
               const text = event.currentTarget.value;
               setSizeText(text);
               if (text.trim() === "") {
                 update({}, ["size"]);
-              } else if (!sizeProblem(text)) {
+              } else if (sizeState(text) !== "invalid") {
                 update({ size: Number(text.trim()) });
               }
             }}
           />
-          <p className={sizeInvalid ? "field__error" : "field__hint"} id={`${id}-size-help`}>
-            {sizeInvalid
-              ? t("datasources.editor.search.sizeInvalid", { max: MAX_SIZE })
+          <p className={size === "invalid" ? "field__error" : "field__hint"} id={`${id}-size-help`}>
+            {size === "invalid"
+              ? t("datasources.editor.search.sizeInvalid")
               : aggregations
                 ? t("datasources.editor.search.sizeAggregations")
                 : sizeInBody
                   ? t("datasources.editor.search.sizeInBody")
-                  : t("datasources.editor.search.sizeHint", { max: MAX_SIZE })}
+                  : size === "capped"
+                    ? t("datasources.editor.search.sizeCapped", { max: MAX_SIZE })
+                    : t("datasources.editor.search.sizeHint", { max: MAX_SIZE })}
           </p>
         </div>
         <TimeFieldControl
@@ -341,6 +403,7 @@ function DslField({
   label,
   dsl,
   fields,
+  hasKeyword,
   hintId,
   onRun,
   onChange,
@@ -350,6 +413,7 @@ function DslField({
   label: string;
   dsl: Record<string, unknown> | undefined;
   fields: readonly { name: string; type: string }[];
+  hasKeyword: boolean;
   hintId: string;
   onRun: (() => void) | undefined;
   onChange: (dsl: Record<string, unknown>) => void;
@@ -376,6 +440,7 @@ function DslField({
           id={`${id}-template`}
           className="select"
           value=""
+          aria-describedby={hasKeyword ? undefined : `${id}-template-help`}
           onChange={(event) => {
             const name = event.currentTarget.value as SearchTemplate;
             if ((SEARCH_TEMPLATES as readonly string[]).includes(name)) {
@@ -385,11 +450,20 @@ function DslField({
         >
           <option value="">{t("datasources.editor.search.templateChoose")}</option>
           {SEARCH_TEMPLATES.map((name) => (
-            <option key={name} value={name}>
+            <option
+              key={name}
+              value={name}
+              disabled={!hasKeyword && KEYWORD_TEMPLATES.includes(name)}
+            >
               {t(templateKey(name))}
             </option>
           ))}
         </select>
+        {hasKeyword ? null : (
+          <p className="field__hint" id={`${id}-template-help`}>
+            {t("datasources.editor.search.noKeyword")}
+          </p>
+        )}
       </div>
       <JsonField
         label={label}
@@ -416,7 +490,9 @@ function DslField({
 
 /**
  * The time filter: on by default with the source's time field. A field typed here overrides it;
- * turned off, the query sends an empty time field, which adds no filter.
+ * turned off, the query sends an empty time field, which adds no filter. When the source's
+ * settings cannot be read and the query names no field, whether a filter applies is unknown, and
+ * the box says so (mixed) instead of guessing.
  */
 function TimeFieldControl({
   id,
@@ -429,12 +505,13 @@ function TimeFieldControl({
   id: string;
   value: SearchQuery;
   defaults: SourceDefaults | undefined;
-  effective: string;
+  effective: string | undefined;
   timeFields: string[];
   onChange: (timeField: string | undefined) => void;
 }) {
   const { t } = useI18n();
-  const filtered = effective !== "";
+  const unknown = effective === undefined;
+  const filtered = effective !== undefined && effective !== "";
   const sourceField = defaults?.timeField;
   return (
     <>
@@ -443,6 +520,12 @@ function TimeFieldControl({
           id={`${id}-time-filter`}
           type="checkbox"
           checked={filtered}
+          ref={(input) => {
+            if (input !== null) {
+              input.indeterminate = unknown;
+            }
+          }}
+          aria-describedby={unknown ? `${id}-time-unknown` : undefined}
           onChange={(event) => {
             if (!event.currentTarget.checked) {
               onChange("");
@@ -463,7 +546,7 @@ function TimeFieldControl({
           id={`${id}-time`}
           className="input input--mono"
           list={`${id}-time-fields`}
-          disabled={!filtered}
+          disabled={!filtered && !unknown}
           value={value.timeField ?? ""}
           autoComplete="off"
           spellCheck={false}
@@ -472,6 +555,7 @@ function TimeFieldControl({
               ? t("datasources.editor.search.timeFieldPlaceholder")
               : sourceField || DEFAULT_TIME_FIELD
           }
+          aria-describedby={unknown ? `${id}-time-unknown` : undefined}
           onChange={(event) => {
             const text = event.currentTarget.value.trim();
             onChange(text === "" ? undefined : text);
@@ -482,6 +566,11 @@ function TimeFieldControl({
             <option key={name} value={name} />
           ))}
         </datalist>
+        {unknown ? (
+          <p className="field__hint" id={`${id}-time-unknown`}>
+            {t("datasources.editor.search.timeUnknown")}
+          </p>
+        ) : null}
       </div>
     </>
   );

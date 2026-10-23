@@ -1,18 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useId } from "react";
-import { isRecord } from "../../../api/client";
+import { useId } from "react";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { useOrgPermissions } from "../../../org/useOrg";
 import { datasourceQuery, type SourceSchema, schemaQuery, sourceAccess } from "../api";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "./sourceEditors.css";
-
-/** Whether a query is the file form, which has no fields: the source names the file. */
-export function isFileQuery(query: unknown): boolean {
-  return isRecord(query) && Object.keys(query).length === 0;
-}
 
 /** The settings that decide how the file is read, in the order the form shows them. */
 const READ_SETTINGS = ["format", "delimiter", "decimal", "header"] as const;
@@ -28,9 +22,10 @@ const DEFAULTS: Record<(typeof READ_SETTINGS)[number], string | boolean> = {
  * CSV, JSON and NDJSON files. The data source names the file and how it is read (format,
  * delimiter, decimal mark, header), so the query is always `{}` and Run reads the file. The
  * editor shows what will be read: the file, its read settings and the columns or fields the
- * schema found, and leads to the source's settings for changes.
+ * schema found, and leads to the source's settings for changes. Whatever a target kept from
+ * another kind is sent as `{}` (normalizeQuery), so opening the editor changes nothing.
  */
-export function FileQueryEditor({ orgId, datasource, query, onChange, label }: QueryEditorProps) {
+export function FileQueryEditor({ orgId, datasource, label }: QueryEditorProps) {
   const { t } = useI18n();
   const id = useId();
   const permissions = useOrgPermissions();
@@ -38,15 +33,6 @@ export function FileQueryEditor({ orgId, datasource, query, onChange, label }: Q
   const detail = useQuery({ ...datasourceQuery(orgId, datasource.id), retry: false });
   const settings = detail.data?.settings;
   const mayEdit = detail.data !== undefined && sourceAccess(detail.data.access, permissions).write;
-
-  // A query of another form (a target kept from another source) would be refused; the file form
-  // has nothing to lose, so it is replaced at once.
-  const stray = !isFileQuery(query);
-  useEffect(() => {
-    if (stray) {
-      onChange({});
-    }
-  }, [stray, onChange]);
 
   const value = (name: (typeof READ_SETTINGS)[number]) => {
     const raw = settings?.[name] ?? DEFAULTS[name];

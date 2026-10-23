@@ -1,20 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
 import { datasourceQuery } from "../api";
 import { reasonText } from "../reasons";
 import {
   type HttpQuery,
+  httpQueryProblems,
+  isParamValue,
   type ParamValue,
+  paramObject,
   parseHttpQuery,
   pathProblem,
   requestUrl,
+  storedParams,
 } from "./httpQuery";
 import type { QueryEditorProps } from "./QueryEditor";
+import { StoredProblems } from "./StoredProblems";
 import "./editors.css";
 import "./sourceEditors.css";
 
-export type ParamType = "text" | "number" | "bool";
+export type ParamType = "text" | "number" | "bool" | "list";
 
 /** One row of the parameter list as typed; only complete rows reach the query. */
 export interface ParamRow {
@@ -22,56 +27,101 @@ export interface ParamRow {
   name: string;
   type: ParamType;
   value: string;
+  /** A stored value the server refuses (such as null), until the row is changed. */
+  invalid?: boolean;
 }
 
-export function rowsOf(params: Record<string, ParamValue> | undefined): ParamRow[] {
-  return Object.entries(params ?? {}).map(([name, value], key) => ({
-    key,
-    name,
-    type: typeof value === "number" ? "number" : typeof value === "boolean" ? "bool" : "text",
-    value: String(value),
-  }));
+/** The rows of the stored parameters; a value the server refuses is a row marked invalid. */
+export function rowsOf(params: Map<string, unknown>): ParamRow[] {
+  return [...params].map(([name, value], key): ParamRow => {
+    if (!isParamValue(value)) {
+      return { key, name, type: "text", value: "", invalid: true };
+    }
+    if (Array.isArray(value)) {
+      return { key, name, type: "list", value: JSON.stringify(value) };
+    }
+    const type =
+      typeof value === "number" ? "number" : typeof value === "boolean" ? "bool" : "text";
+    return { key, name, type, value: String(value) };
+  });
 }
 
-/** What is wrong with a row, or null: a name, a unique name, a number where one is asked for. */
+const NUMBER = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
+
+function listOf(text: string): ParamValue | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) && isParamValue(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What is wrong with a row, or null; a row without name and value is ignored. */
 export function rowProblem(
   row: ParamRow,
   rows: readonly ParamRow[],
-): "name" | "duplicate" | "number" | null {
+): "invalid" | "name" | "duplicate" | "number" | "list" | null {
+  if (row.invalid === true) {
+    return "invalid";
+  }
   if (row.name.trim() === "") {
     return row.value.trim() === "" ? null : "name";
   }
   if (rows.some((other) => other.key !== row.key && other.name.trim() === row.name.trim())) {
     return "duplicate";
   }
-  if (row.type === "number" && (row.value.trim() === "" || !Number.isFinite(Number(row.value)))) {
+  if (row.type === "number" && !NUMBER.test(row.value.trim())) {
     return "number";
+  }
+  if (row.type === "list" && listOf(row.value) === null) {
+    return "list";
   }
   return null;
 }
 
-/** The parameters the rows give: complete rows only, as texts, numbers and booleans. */
+/**
+ * The value of a number row. The server sends every parameter as text, so a number JSON would
+ * change (beyond 2^53, or with leading zeros such as 007) goes as the text typed.
+ */
+function numberValue(text: string): ParamValue {
+  const trimmed = text.trim();
+  const number = Number(trimmed);
+  const integer = /^-?\d+$/.test(trimmed);
+  if (/^-?0\d/.test(trimmed) || (integer && !Number.isSafeInteger(number))) {
+    return trimmed;
+  }
+  return number;
+}
+
+/** The parameters the rows give: complete rows only, typed as the server takes them. */
 export function paramsOf(rows: readonly ParamRow[]): Record<string, ParamValue> {
-  const params: Record<string, ParamValue> = {};
+  const entries: [string, ParamValue][] = [];
   for (const row of rows) {
     if (row.name.trim() === "" || rowProblem(row, rows) !== null) {
       continue;
     }
-    params[row.name.trim()] =
+    const value =
       row.type === "number"
-        ? Number(row.value)
+        ? numberValue(row.value)
         : row.type === "bool"
           ? row.value === "true"
-          : row.value;
+          : row.type === "list"
+            ? (listOf(row.value) as ParamValue)
+            : row.value;
+    entries.push([row.name.trim(), value]);
   }
-  return params;
+  return paramObject(entries);
 }
+
+const paramsKey = (query: unknown) => JSON.stringify([...storedParams(query)]);
 
 /**
  * HTTP JSON: a path below the source's URL, query parameters (a value that is exactly `$name`
- * takes the variable's value) and where the documents are in the answer. The query is
- * `{path?, params?, documentsPath?}`; Kalzit sends only GET and adds no header from the query,
- * so there is nothing to choose for either. A preview shows the address that will be requested.
+ * takes the variable's value, a list repeats the parameter) and where the documents are in the
+ * answer. The query is `{path?, params?, documentsPath?}`; Kalzit sends only GET and adds no
+ * header from the query. A preview shows the address that will be requested. While a field holds
+ * something the server would refuse, the page is told (`onPendingText`) and does not run it.
  */
 export function HttpJsonQueryEditor({
   orgId,
@@ -79,10 +129,12 @@ export function HttpJsonQueryEditor({
   query,
   onChange,
   label,
+  onPendingText,
 }: QueryEditorProps) {
   const { t } = useI18n();
   const id = useId();
   const value = parseHttpQuery(query);
+  const problems = httpQueryProblems(query).filter((p) => !p.startsWith("params."));
   const detail = useQuery({ ...datasourceQuery(orgId, datasource.id), retry: false });
   const settings = detail.data?.settings;
   const base = typeof settings?.url === "string" ? settings.url : undefined;
@@ -92,13 +144,19 @@ export function HttpJsonQueryEditor({
       : undefined;
 
   const [pathText, setPathText] = useState(value.path ?? "");
-  const [rows, setRows] = useState<ParamRow[]>(() => rowsOf(value.params));
-  const [synced, setSynced] = useState(() => JSON.stringify(value.params ?? {}));
-  if (JSON.stringify(value.params ?? {}) !== synced) {
-    setSynced(JSON.stringify(value.params ?? {}));
-    setRows(rowsOf(value.params));
+  const [documentsText, setDocumentsText] = useState(value.documentsPath ?? "");
+  const [rows, setRows] = useState<ParamRow[]>(() => rowsOf(storedParams(query)));
+  const [synced, setSynced] = useState(() => paramsKey(query));
+  if (paramsKey(query) !== synced) {
+    setSynced(paramsKey(query));
+    setRows(rowsOf(storedParams(query)));
   }
   const pathInvalid = pathProblem(pathText);
+  const rowsInvalid = rows.some((row) => rowProblem(row, rows) !== null);
+  const pending = pathInvalid || rowsInvalid || problems.length > 0;
+  useEffect(() => {
+    onPendingText?.(pending);
+  }, [onPendingText, pending]);
 
   function update(next: HttpQuery) {
     const clean: HttpQuery = {};
@@ -114,7 +172,7 @@ export function HttpJsonQueryEditor({
   function changeRows(next: ParamRow[]) {
     setRows(next);
     const params = paramsOf(next);
-    setSynced(JSON.stringify(params));
+    setSynced(JSON.stringify(Object.entries(params)));
     update({ ...value, params });
   }
 
@@ -124,42 +182,34 @@ export function HttpJsonQueryEditor({
   return (
     <fieldset className="query-editor source-query">
       <legend className="visually-hidden">{label ?? t("datasources.editor.label")}</legend>
-      <div className="source-query__head">
-        <div className="field source-query__method">
-          <label className="field__label" htmlFor={`${id}-method`}>
-            {t("datasources.editor.http.method")}
-          </label>
-          <select id={`${id}-method`} className="select" value="GET" disabled>
-            <option value="GET">GET</option>
-          </select>
-        </div>
-        <div className="field source-query__wide">
-          <label className="field__label" htmlFor={`${id}-path`}>
-            {t("datasources.editor.http.path")}
-          </label>
-          <input
-            id={`${id}-path`}
-            className="input input--mono"
-            value={pathText}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="orders/open"
-            aria-invalid={pathInvalid ? true : undefined}
-            aria-describedby={`${id}-path-help`}
-            onChange={(event) => {
-              const text = event.currentTarget.value;
-              setPathText(text);
-              if (!pathProblem(text)) {
-                update({ ...value, path: text });
-              }
-            }}
-          />
-          <p className={pathInvalid ? "field__error" : "field__hint"} id={`${id}-path-help`}>
-            {pathInvalid
-              ? (reasonText(t, { reason: "http_json.path_invalid" }) ?? "")
-              : t("datasources.editor.http.pathHint")}
-          </p>
-        </div>
+      <StoredProblems problems={problems} onRemove={() => update(value)} />
+      <p className="source-query__method">{t("datasources.editor.http.methodGet")}</p>
+      <div className="field source-query__wide">
+        <label className="field__label" htmlFor={`${id}-path`}>
+          {t("datasources.editor.http.path")}
+        </label>
+        <input
+          id={`${id}-path`}
+          className="input input--mono"
+          value={pathText}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={t("datasources.editor.http.pathPlaceholder")}
+          aria-invalid={pathInvalid ? true : undefined}
+          aria-describedby={`${id}-path-help`}
+          onChange={(event) => {
+            const text = event.currentTarget.value;
+            setPathText(text);
+            if (!pathProblem(text)) {
+              update({ ...value, path: text });
+            }
+          }}
+        />
+        <p className={pathInvalid ? "field__error" : "field__hint"} id={`${id}-path-help`}>
+          {pathInvalid
+            ? (reasonText(t, { reason: "http_json.path_invalid" }) ?? "")
+            : t("datasources.editor.http.pathHint")}
+        </p>
       </div>
       <fieldset className="source-query__params">
         <legend className="field__label">{t("datasources.editor.http.params")}</legend>
@@ -171,7 +221,9 @@ export function HttpJsonQueryEditor({
               const problem = rowProblem(row, rows);
               const errorId = `${id}-param-${row.key}-error`;
               const set = (patch: Partial<ParamRow>) =>
-                changeRows(rows.map((r) => (r.key === row.key ? { ...r, ...patch } : r)));
+                changeRows(
+                  rows.map((r) => (r.key === row.key ? { ...r, ...patch, invalid: false } : r)),
+                );
               const n = index + 1;
               return (
                 <li key={row.key} className="source-query__param">
@@ -194,7 +246,7 @@ export function HttpJsonQueryEditor({
                       set({ type, value: type === "bool" ? "true" : row.value });
                     }}
                   >
-                    {(["text", "number", "bool"] as const).map((type) => (
+                    {(["text", "number", "bool", "list"] as const).map((type) => (
                       <option key={type} value={type}>
                         {t(`datasources.editor.http.type.${type}`)}
                       </option>
@@ -207,8 +259,8 @@ export function HttpJsonQueryEditor({
                       value={row.value}
                       onChange={(event) => set({ value: event.currentTarget.value })}
                     >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
+                      <option value="true">{t("datasources.editor.http.bool.true")}</option>
+                      <option value="false">{t("datasources.editor.http.bool.false")}</option>
                     </select>
                   ) : (
                     <input
@@ -216,9 +268,18 @@ export function HttpJsonQueryEditor({
                       aria-label={t("datasources.editor.http.paramValue", { n })}
                       value={row.value}
                       inputMode={row.type === "number" ? "decimal" : undefined}
+                      placeholder={
+                        row.type === "list"
+                          ? t("datasources.editor.http.listPlaceholder")
+                          : undefined
+                      }
                       autoComplete="off"
                       spellCheck={false}
-                      aria-invalid={problem === "number" ? true : undefined}
+                      aria-invalid={
+                        problem === "number" || problem === "list" || problem === "invalid"
+                          ? true
+                          : undefined
+                      }
                       aria-describedby={problem === null ? undefined : errorId}
                       onChange={(event) => set({ value: event.currentTarget.value })}
                     />
@@ -233,7 +294,12 @@ export function HttpJsonQueryEditor({
                   </button>
                   {problem === null ? null : (
                     <p className="field__error source-query__param-error" id={errorId}>
-                      {t(`datasources.editor.http.problem.${problem}`)}
+                      {problem === "invalid"
+                        ? (reasonText(t, {
+                            reason: "http_json.param_invalid",
+                            params: { name: row.name },
+                          }) ?? "")
+                        : t(`datasources.editor.http.problem.${problem}`)}
                     </p>
                   )}
                 </li>
@@ -261,14 +327,17 @@ export function HttpJsonQueryEditor({
         <input
           id={`${id}-documents`}
           className="input input--mono"
-          value={value.documentsPath ?? ""}
+          value={documentsText}
           autoComplete="off"
           spellCheck={false}
           placeholder={sourcePath ?? t("datasources.editor.http.documentsPathPlaceholder")}
           aria-describedby={`${id}-documents-help`}
-          onChange={(event) =>
-            update({ ...value, documentsPath: event.currentTarget.value.trim() })
-          }
+          onChange={(event) => {
+            const text = event.currentTarget.value;
+            setDocumentsText(text);
+            update({ ...value, documentsPath: text.trim() });
+          }}
+          onBlur={() => setDocumentsText(documentsText.trim())}
         />
         <p className="field__hint" id={`${id}-documents-help`}>
           {t("datasources.editor.http.documentsPathHint")}

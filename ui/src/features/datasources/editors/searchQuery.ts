@@ -53,7 +53,12 @@ export const DEFAULT_SIZE = 500;
 /** What the server uses when neither the query nor the source names a time field. */
 export const DEFAULT_TIME_FIELD = "@timestamp";
 
-/** The query as the editor reads it: only the documented fields, each with its type checked. */
+/**
+ * The query as the editor reads it: the documented fields with their types checked. A field of
+ * the wrong type is left out here and named by `searchQueryProblems`, which the editor shows until
+ * it is resolved. `null` means "not set", as the server reads it; the index stays as written,
+ * since the server checks it untrimmed.
+ */
 export function parseSearchQuery(query: unknown): SearchQuery {
   const value = isRecord(query) ? query : {};
   const parsed: SearchQuery = {};
@@ -74,19 +79,45 @@ export function parseSearchQuery(query: unknown): SearchQuery {
   return parsed;
 }
 
+const set = (value: unknown) => value !== undefined && value !== null;
+
+/**
+ * The fields of a stored query the server would refuse: unknown ones, ones of the wrong type, and
+ * `lucene` and `dsl` together. Empty when the query runs as it is.
+ */
+export function searchQueryProblems(query: unknown): string[] {
+  if (!isRecord(query)) {
+    return ["query"];
+  }
+  const problems = Object.keys(query).filter(
+    (key) => !(SEARCH_QUERY_KEYS as readonly string[]).includes(key),
+  );
+  const typed: [string, (value: unknown) => boolean][] = [
+    ["index", (v) => typeof v === "string"],
+    ["lucene", (v) => typeof v === "string"],
+    ["dsl", isRecord],
+    ["timeField", (v) => typeof v === "string"],
+    ["size", (v) => typeof v === "number" && Number.isInteger(v) && v >= 0],
+  ];
+  for (const [key, ok] of typed) {
+    if (set(query[key]) && !ok(query[key])) {
+      problems.push(key);
+    }
+  }
+  if (set(query.lucene) && set(query.dsl) && !problems.includes("lucene")) {
+    problems.push("lucene");
+  }
+  return problems;
+}
+
 export function searchMode(query: SearchQuery): SearchMode {
   return query.dsl === undefined ? "lucene" : "dsl";
 }
 
 /** Whether a stored query has exactly the search form, so it can run as it is. */
 export function isSearchQuery(query: unknown): boolean {
-  return (
-    isRecord(query) &&
-    Object.keys(query).every((key) => (SEARCH_QUERY_KEYS as readonly string[]).includes(key)) &&
-    !(query.lucene !== undefined && query.dsl !== undefined)
-  );
+  return searchQueryProblems(query).length === 0;
 }
-
 /** Whether the body asks for aggregations: then the answer is a frame and no hits are fetched. */
 export function hasAggregations(dsl: Record<string, unknown> | undefined): boolean {
   return dsl !== undefined && (isRecord(dsl.aggs) || isRecord(dsl.aggregations));
@@ -136,19 +167,20 @@ export function dslProblem(value: unknown): Reason | null {
   return null;
 }
 
-/** The size as typed: a whole number from 1 to 10,000, or empty for the default. */
-export function sizeProblem(text: string): boolean {
+/**
+ * The size as typed: `invalid` unless a whole number of at least 0; `capped` above 10,000, which
+ * the server lowers (and to the row limit); null when it is sent as it is or empty (500).
+ */
+export function sizeState(text: string): "invalid" | "capped" | null {
   const trimmed = text.trim();
   if (trimmed === "") {
-    return false;
+    return null;
   }
   if (!/^\d+$/.test(trimmed)) {
-    return true;
+    return "invalid";
   }
-  const size = Number(trimmed);
-  return size < 1 || size > MAX_SIZE;
+  return Number(trimmed) > MAX_SIZE ? "capped" : null;
 }
-
 /** The query in one line, for summaries. */
 export function searchQueryText(query: SearchQuery): string {
   if (query.dsl !== undefined) {

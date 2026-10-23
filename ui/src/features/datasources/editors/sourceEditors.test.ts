@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
+import type { PanelModel } from "../../dashboards/model";
+import { exportTargets } from "../../dashboards/PanelCard";
 import type { IndicesSchema } from "../api";
-import { emptyQuery, familyOf, hasQuery, queryText } from "../queryKinds";
+import { emptyQuery, familyOf, hasQuery, normalizeQuery, queryText } from "../queryKinds";
 import { paramsOf, rowProblem, rowsOf } from "./HttpJsonQueryEditor";
-import { httpQueryText, parseHttpQuery, pathProblem, requestUrl, variableName } from "./httpQuery";
-import { searchTemplate } from "./SearchQueryEditor";
+import {
+  httpQueryProblems,
+  httpQueryText,
+  parseHttpQuery,
+  pathProblem,
+  requestUrl,
+  storedParams,
+  variableName,
+} from "./httpQuery";
+import { dslFromLucene, keywordField, searchTemplate } from "./SearchQueryEditor";
 import { dslCompletions, luceneCompletions, searchFields } from "./searchCompletion";
 import {
   dslProblem,
@@ -12,7 +22,8 @@ import {
   indexProblem,
   isSearchQuery,
   parseSearchQuery,
-  sizeProblem,
+  searchQueryProblems,
+  sizeState,
 } from "./searchQuery";
 import { tokenizeLucene } from "./syntax";
 
@@ -45,51 +56,104 @@ describe("query kinds of the search, file and HTTP JSON sources", () => {
     expect(emptyQuery("http_json")).toEqual({});
   });
 
-  it("counts {} and an empty search as runnable, and empty text forms as not", () => {
-    // With the kind: what that kind's server accepts.
+  it("decides by the kind whether a query runs", () => {
     expect(hasQuery({}, "file")).toBe(true);
-    expect(hasQuery({ sql: "" }, "file")).toBe(false);
+    // A target kept from another kind runs as {} (normalizeQuery).
+    expect(hasQuery({ sql: "" }, "file")).toBe(true);
+    expect(normalizeQuery({ sql: "x" }, "file")).toEqual({});
+    expect(normalizeQuery({ sql: "x" }, "postgres")).toEqual({ sql: "x" });
     expect(hasQuery({}, "http_json")).toBe(true);
-    expect(hasQuery({ path: "orders", params: { a: 1 } }, "http_json")).toBe(true);
+    expect(hasQuery({ path: "orders", params: { a: [1, "b"] } }, "http_json")).toBe(true);
+    expect(hasQuery({ params: { a: null } }, "http_json")).toBe(false);
     expect(hasQuery({ lucene: "" }, "elasticsearch")).toBe(true);
     expect(hasQuery({ lucene: "a", dsl: {} }, "elasticsearch")).toBe(false);
+    expect(hasQuery({ lucene: "a", dsl: null }, "elasticsearch")).toBe(true);
+    expect(hasQuery({ sql: "" }, "elasticsearch")).toBe(false);
     expect(hasQuery({}, "postgres")).toBe(false);
     expect(hasQuery({ sql: " " }, "postgres")).toBe(false);
-    // Without it (a stored panel target): told by the fields.
-    expect(hasQuery({})).toBe(true);
+  });
+
+  it("without a kind counts only queries that name their form, never {}", () => {
+    expect(hasQuery({})).toBe(false);
     expect(hasQuery({ lucene: "" })).toBe(true);
     expect(hasQuery({ dsl: { query: { match_all: {} } } })).toBe(true);
+    expect(hasQuery({ path: "orders" })).toBe(true);
+    // TigerGraph parameters alone are no HTTP query.
+    expect(hasQuery({ params: { a: 1 } })).toBe(false);
+    expect(hasQuery({ installed: "", params: { a: 1 } })).toBe(false);
     expect(hasQuery({ sql: "" })).toBe(false);
     expect(hasQuery({ expr: "up" })).toBe(true);
     expect(hasQuery({ collection: "", pipeline: "[]" })).toBe(false);
     expect(hasQuery(null)).toBe(false);
   });
 
+  it("leaves a SQL target stored as {} out of a panel export, and sends a file target as {}", () => {
+    const panel = {
+      id: "p",
+      type: "table",
+      title: "",
+      grid: { x: 0, y: 0, w: 12, h: 8 },
+      targets: [
+        { refId: "A", datasourceId: "pg", query: {} },
+        { refId: "B", datasourceId: "file", query: { sql: "old" } },
+        { refId: "C", datasourceId: "pg", query: { sql: "SELECT 1" } },
+      ],
+      transformations: [],
+      options: {},
+      fieldConfig: {},
+    } as PanelModel;
+    const kinds: Record<string, string> = { pg: "postgres", file: "file" };
+    expect(exportTargets(panel, (id) => kinds[id])).toEqual([
+      { refId: "B", datasourceId: "file", query: {} },
+      { refId: "C", datasourceId: "pg", query: { sql: "SELECT 1" } },
+    ]);
+  });
+
   it("summarizes the new forms in one line", () => {
     expect(queryText({ lucene: "status:500" })).toBe("status:500");
     expect(queryText({ dsl: { size: 1 } })).toBe('{"size":1}');
-    expect(queryText({ path: "orders", params: { land: "$land" } })).toBe("orders?land=$land");
+    expect(queryText({ path: "orders", params: { land: ["AT", "CH"] } })).toBe(
+      "orders?land=AT&land=CH",
+    );
+    expect(queryText({ params: { a: 1 } })).toBe("");
     expect(httpQueryText(parseHttpQuery({}))).toBe("");
   });
 });
 
 describe("search query", () => {
-  it("reads only the documented fields, with their types", () => {
-    expect(
-      parseSearchQuery({ index: "logs-*", lucene: "a", size: 10, timeField: "", sql: "x" }),
-    ).toEqual({ index: "logs-*", lucene: "a", size: 10, timeField: "" });
-    expect(parseSearchQuery({ dsl: { query: {} }, size: -1, index: " " })).toEqual({
-      dsl: { query: {} },
+  it("reads the documented fields and names the ones the server would refuse", () => {
+    expect(parseSearchQuery({ index: "logs-*", lucene: "a", size: 10, timeField: "" })).toEqual({
+      index: "logs-*",
+      lucene: "a",
+      size: 10,
+      timeField: "",
     });
+    expect(searchQueryProblems({ index: "logs-*", lucene: "a", size: 0, dsl: null })).toEqual([]);
+    expect(searchQueryProblems({ sql: "x", index: 3, size: -1, dsl: "q" })).toEqual([
+      "sql",
+      "index",
+      "dsl",
+      "size",
+    ]);
+    expect(searchQueryProblems({ lucene: "a", dsl: {} })).toEqual(["lucene"]);
+    // The index stays as written: the server checks it untrimmed.
+    expect(parseSearchQuery({ index: " logs" }).index).toBe(" logs");
     expect(isSearchQuery({ index: "a", lucene: "" })).toBe(true);
-    expect(isSearchQuery({ sql: "" })).toBe(false);
   });
 
   it("checks index names by the server's rule", () => {
     for (const ok of ["logs-*", "logs-*,metrics-*,-logs-alt", "remote:logs", ".hidden-ok"]) {
       expect(indexProblem(ok), ok).toBeNull();
     }
-    for (const bad of ["_all", "logs/_delete_by_query", "..", "a,,b", "remote:_x", "a b"]) {
+    for (const bad of [
+      "_all",
+      "logs/_delete_by_query",
+      "..",
+      "a,,b",
+      "remote:_x",
+      "a b",
+      " logs",
+    ]) {
       expect(indexProblem(bad)?.reason, bad).toBe("elasticsearch.index_invalid");
     }
     expect(indexProblem("x y")?.params).toEqual({ index: "x y" });
@@ -107,13 +171,25 @@ describe("search query", () => {
     expect(hasAggregations({ query: {} })).toBe(false);
   });
 
-  it("accepts sizes from 1 to 10,000", () => {
-    expect(sizeProblem("")).toBe(false);
-    expect(sizeProblem("100")).toBe(false);
-    expect(sizeProblem("10000")).toBe(false);
-    expect(sizeProblem("10001")).toBe(true);
-    expect(sizeProblem("0")).toBe(true);
-    expect(sizeProblem("1.5")).toBe(true);
+  it("takes every size the server takes and says when it is lowered", () => {
+    expect(sizeState("")).toBeNull();
+    expect(sizeState("0")).toBeNull();
+    expect(sizeState("10000")).toBeNull();
+    expect(sizeState("10001")).toBe("capped");
+    expect(sizeState("1.5")).toBe("invalid");
+    expect(sizeState("-1")).toBe("invalid");
+  });
+
+  it("moves Lucene into Query DSL only when no variable or macro would be lost", () => {
+    expect(dslFromLucene("land:AT")).toEqual({
+      dsl: { query: { query_string: { query: "land:AT" } } },
+      kept: false,
+    });
+    expect(dslFromLucene("land:$land AND ts:>$__timeFrom")).toEqual({
+      dsl: { query: { match_all: {} } },
+      kept: true,
+    });
+    expect(dslFromLucene("").kept).toBe(false);
   });
 
   it("matches index patterns as the cluster does", () => {
@@ -168,7 +244,9 @@ describe("search query", () => {
         },
       },
     });
-    // Every template passes the server's key check.
+    expect(keywordField(FIELDS)).toBe("land");
+    // Without a keyword field the terms templates are not offered.
+    expect(keywordField([{ name: "cpu", type: "float" }])).toBeUndefined();
     for (const name of ["latest", "terms", "histogram", "termsOverTime"] as const) {
       expect(dslProblem(searchTemplate(name, "", FIELDS))).toBeNull();
     }
@@ -185,10 +263,30 @@ describe("search query", () => {
 });
 
 describe("HTTP JSON query", () => {
-  it("reads only the documented fields", () => {
-    expect(
-      parseHttpQuery({ path: "a", params: { x: 1, y: null, z: true }, documentsPath: "", m: 1 }),
-    ).toEqual({ path: "a", params: { x: 1, z: true } });
+  it("reads the documented fields, keeps lists and names refused values", () => {
+    const stored = {
+      path: "a",
+      params: { x: 1, y: null, z: true, land: ["AT", "CH"] },
+      documentsPath: "",
+    };
+    expect(parseHttpQuery(stored)).toEqual({
+      path: "a",
+      params: { x: 1, z: true, land: ["AT", "CH"] },
+    });
+    expect(httpQueryProblems(stored)).toEqual(["params.y"]);
+    expect(httpQueryProblems({ method: "POST", path: 1, params: [] })).toEqual([
+      "method",
+      "path",
+      "params",
+    ]);
+    expect(httpQueryProblems({ documentsPath: null })).toEqual([]);
+  });
+
+  it("keeps __proto__ as an ordinary parameter name", () => {
+    const stored = JSON.parse('{"params": {"__proto__": "x"}}');
+    const parsed = parseHttpQuery(stored);
+    expect(Object.keys(parsed.params ?? {})).toEqual(["__proto__"]);
+    expect(Object.getPrototypeOf(parsed.params)).toBeNull();
   });
 
   it("refuses paths the server refuses", () => {
@@ -215,8 +313,8 @@ describe("HTTP JSON query", () => {
     expect(
       requestUrl("https://api.intern/v1", { path: "orders/open", params: { land: "$land" } }),
     ).toBe("https://api.intern/v1/orders/open?land=$land");
-    expect(requestUrl("https://api.intern/v1/?key=1", { params: { n: 2 } })).toBe(
-      "https://api.intern/v1/?key=1&n=2",
+    expect(requestUrl("https://api.intern/v1/?key=1", { params: { n: 2, l: ["a", "b"] } })).toBe(
+      "https://api.intern/v1/?key=1&n=2&l=a&l=b",
     );
     expect(requestUrl(undefined, {})).toBeUndefined();
     expect(variableName(`$${"{"}land}`)).toBe("land");
@@ -232,15 +330,25 @@ describe("HTTP JSON query", () => {
       { key: 3, name: "", type: "text" as const, value: "" },
       { key: 4, name: "bad", type: "number" as const, value: "ten" },
       { key: 5, name: "land", type: "text" as const, value: "AT" },
+      { key: 6, name: "zip", type: "number" as const, value: "007" },
+      { key: 7, name: "big", type: "number" as const, value: "9007199254740993" },
+      { key: 8, name: "ids", type: "list" as const, value: '[1, "b"]' },
+      { key: 9, name: "worse", type: "list" as const, value: "[[1]]" },
     ];
     expect(rowProblem(rows[3] as never, rows)).toBeNull();
     expect(rowProblem(rows[4] as never, rows)).toBe("number");
     expect(rowProblem(rows[5] as never, rows)).toBe("duplicate");
-    expect(paramsOf(rows)).toEqual({ limit: 10, open: false });
-    expect(rowsOf({ a: 1, b: true, c: "x" }).map((r) => r.type)).toEqual([
-      "number",
-      "bool",
-      "text",
-    ]);
+    expect(rowProblem(rows[9] as never, rows)).toBe("list");
+    // Numbers JSON would change go as the text typed; the server sends text anyway.
+    expect({ ...paramsOf(rows) }).toEqual({
+      limit: 10,
+      open: false,
+      zip: "007",
+      big: "9007199254740993",
+      ids: [1, "b"],
+    });
+    const stored = rowsOf(storedParams({ params: { a: 1, b: true, c: "x", d: ["y"], e: null } }));
+    expect(stored.map((r) => r.type)).toEqual(["number", "bool", "text", "list", "text"]);
+    expect(rowProblem(stored[4] as never, stored)).toBe("invalid");
   });
 });

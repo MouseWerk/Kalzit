@@ -25,7 +25,7 @@ import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
-import { emptyQuery, queryText } from "../datasources/queryKinds";
+import { emptyQuery, familyOf, queryText } from "../datasources/queryKinds";
 import {
   nextRefId,
   type PanelModel,
@@ -93,6 +93,14 @@ export function PanelEditor({
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
   const kinds = useQuery(kindsQuery(orgId));
+  // A query field holding something the server would refuse keeps the panel from running; a
+  // MongoDB field keeps its last valid text and runs that, as its editor says.
+  const queryBlocked = () =>
+    panel.targets.some(
+      (target) =>
+        pendingText[target.refId] === true &&
+        familyOf(kindOf(target.datasourceId) ?? "") !== "mongo",
+    );
   // Free queries need query rights on the source (the role or a grant); without them a panel
   // can still be renamed, rearranged and restyled, and its saved queries preview as viewers see
   // them, through the panel route.
@@ -169,6 +177,10 @@ export function PanelEditor({
 
   // A new run, or another data source, leaves an old filter refusal behind.
   const run = () => {
+    // A field that holds something the server would refuse says why; nothing runs meanwhile.
+    if (queryBlocked()) {
+      return;
+    }
     setFilterError(null);
     setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
   };
@@ -255,6 +267,7 @@ export function PanelEditor({
               }
               stepsRun={stepsRun}
               variables={variableTexts(variables)}
+              kindOf={kindOf}
             />
           </div>
         </section>
@@ -315,7 +328,12 @@ export function PanelEditor({
             <h3 className="panel-editor__heading" id={`${titleId}-queries`}>
               {t("dashboards.editor.queries")}
             </h3>
-            <button type="button" className="button button--primary" onClick={run}>
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={run}
+              disabled={queryBlocked()}
+            >
               {t("dashboards.editor.run")}
             </button>
           </div>
