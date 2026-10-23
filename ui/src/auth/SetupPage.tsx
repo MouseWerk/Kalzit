@@ -8,6 +8,8 @@ import { TextField } from "../components/TextField";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AuthLayout } from "./AuthLayout";
+import { PasswordField } from "./PasswordField";
+import "./auth.css";
 import {
   type FieldErrors,
   fieldFromServer,
@@ -119,7 +121,7 @@ export function SetupPage() {
   }
 
   return (
-    <AuthLayout title={t("setup.title")} lead={t("setup.lead")}>
+    <AuthLayout title={t("setup.title")} lead={t("setup.lead")} wide>
       <FormAlert>
         {formError === null ? null : (
           <>
@@ -134,73 +136,97 @@ export function SetupPage() {
         )}
       </FormAlert>
       <form className="form" noValidate onSubmit={onSubmit} onKeyDown={preventComposingSubmit}>
-        <TextField
-          ref={refs.token}
-          label={t("setup.token")}
-          hint={t("setup.tokenHint")}
-          name="setup-token"
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          mono
-          required
-          value={values.token}
-          onValueChange={edit("token")}
-          error={fieldError("token")}
-        />
-        <TextField
-          ref={refs.orgName}
-          label={t("setup.orgName")}
-          hint={t("setup.orgNameHint")}
-          name="organization"
-          autoComplete="organization"
-          required
-          value={values.orgName}
-          onValueChange={edit("orgName")}
-          error={fieldError("orgName")}
-        />
-        <TextField
-          ref={refs.name}
-          label={t("setup.name")}
-          name="name"
-          autoComplete="name"
-          required
-          value={values.name}
-          onValueChange={edit("name")}
-          error={fieldError("name")}
-        />
-        <TextField
-          ref={refs.email}
-          label={t("setup.email")}
-          type="email"
-          name="email"
-          autoComplete="username"
-          inputMode="email"
-          autoCapitalize="none"
-          spellCheck={false}
-          required
-          value={values.email}
-          onValueChange={edit("email")}
-          error={fieldError("email")}
-        />
-        <TextField
-          ref={refs.password}
-          label={t("setup.password")}
-          hint={t("setup.passwordHint", { count: MIN_PASSWORD_LENGTH })}
-          type="password"
-          name="new-password"
-          autoComplete="new-password"
-          required
-          value={values.password}
-          onValueChange={edit("password")}
-          error={fieldError("password")}
-        />
+        <fieldset className="auth__group">
+          <legend className="auth__legend">
+            <span className="auth__step" aria-hidden="true">
+              1
+            </span>
+            {t("setup.groupServer")}
+          </legend>
+          <TextField
+            ref={refs.token}
+            label={t("setup.token")}
+            hint={t("setup.tokenHint")}
+            name="setup-token"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            mono
+            required
+            value={values.token}
+            onValueChange={edit("token")}
+            error={fieldError("token")}
+          />
+        </fieldset>
+        <fieldset className="auth__group">
+          <legend className="auth__legend">
+            <span className="auth__step" aria-hidden="true">
+              2
+            </span>
+            {t("setup.groupOrg")}
+          </legend>
+          <TextField
+            ref={refs.orgName}
+            label={t("setup.orgName")}
+            hint={t("setup.orgNameHint")}
+            name="organization"
+            autoComplete="organization"
+            required
+            value={values.orgName}
+            onValueChange={edit("orgName")}
+            error={fieldError("orgName")}
+          />
+        </fieldset>
+        <fieldset className="auth__group">
+          <legend className="auth__legend">
+            <span className="auth__step" aria-hidden="true">
+              3
+            </span>
+            {t("setup.groupAccount")}
+          </legend>
+          <TextField
+            ref={refs.name}
+            label={t("setup.name")}
+            name="name"
+            autoComplete="name"
+            required
+            value={values.name}
+            onValueChange={edit("name")}
+            error={fieldError("name")}
+          />
+          <TextField
+            ref={refs.email}
+            label={t("setup.email")}
+            type="email"
+            name="email"
+            autoComplete="username"
+            inputMode="email"
+            autoCapitalize="none"
+            spellCheck={false}
+            required
+            value={values.email}
+            onValueChange={edit("email")}
+            error={fieldError("email")}
+          />
+          <PasswordField
+            ref={refs.password}
+            label={t("setup.password")}
+            hint={t("setup.passwordHint", { count: MIN_PASSWORD_LENGTH })}
+            name="new-password"
+            autoComplete="new-password"
+            showStrength
+            value={values.password}
+            onValueChange={edit("password")}
+            error={fieldError("password")}
+          />
+        </fieldset>
         <div className="form__actions">
           <button
             type="submit"
-            className="button button--primary button--block"
+            className="button button--primary button--block auth__submit"
             aria-disabled={setup.isPending}
           >
+            {setup.isPending ? <span className="auth__spinner" aria-hidden="true" /> : null}
             {setup.isPending ? t("setup.submitting") : t("setup.submit")}
           </button>
         </div>

@@ -108,7 +108,7 @@ release build before and after the quick wins (see the PR). Findings:
 | Data sources | Table capped; kind as plain text; picker as plain buttons with one generic icon | Full-width table with a kind mark; picker as cards with mark, name and one-line summary | Health column with status dot and last check; row hover actions |
 | Data source form | Generic icon in the header | Kind mark in the header | Two-column form on wide screens (connection left, limits right) |
 | Admin | Lists and settings in one capped column | Lists full width; settings keep the reading width | Table density (36 px rows), row actions on hover, sticky table headers |
-| Sign-in | Centered card on paper | Graphite tokens | Side illustration well in the reference's style on wide screens |
+| Sign-in | Centered card on paper | Graphite tokens | Done (ux/auth-pages): brand panel with mark, product line and a monochrome drawing of the three shapes next to the form on wide screens; password toggle, caps-lock and strength hints; setup in three steps |
 
 ## 4. Tokens
 

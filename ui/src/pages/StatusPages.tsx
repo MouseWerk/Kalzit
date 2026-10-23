@@ -1,7 +1,17 @@
 import { type ErrorComponentProps, Link, useRouter } from "@tanstack/react-router";
 import { isApiError } from "../api/client";
+import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+
+/** The Kalzit mark on a small tile, so a page without the shell still says where it is. */
+function Mark() {
+  return (
+    <span className="status-page__mark">
+      <Icon name="logo" />
+    </span>
+  );
+}
 
 export function NotFoundPage() {
   const { t } = useI18n();
@@ -9,6 +19,7 @@ export function NotFoundPage() {
   return (
     <main className="status-page">
       <div className="status-page__body">
+        <Mark />
         <h1>{t("notFound.title")}</h1>
         <p className="status-page__text">{t("notFound.text")}</p>
         <Link to="/" className="button button--secondary">
@@ -34,6 +45,7 @@ export function ErrorPage({ error, reset }: ErrorComponentProps) {
   return (
     <main className="status-page">
       <div className="status-page__body" role="alert">
+        <Mark />
         <h1>{t("errorPage.title")}</h1>
         <p className="status-page__text">{message}</p>
         <button type="button" className="button button--secondary" onClick={retry}>

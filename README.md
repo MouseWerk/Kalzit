@@ -46,7 +46,7 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | Panel editor, dark theme | Panel editor on a phone |
 | ![Adding a panel: the visualization picker and a first empty query](docs/screenshots/panel-new-dark.png) | ![Adding a panel on a phone](docs/screenshots/panel-new-phone.png) |
 | New panel, dark theme | New panel on a phone |
-| ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page](docs/screenshots/sign-in.png) |
+| ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
