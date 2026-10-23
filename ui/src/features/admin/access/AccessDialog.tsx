@@ -83,7 +83,7 @@ export function AccessDialog({ open, onClose, resource, orgId }: AccessDialogPro
     (cursor) => listGrants(org, resource.type, resource.id, cursor),
     open && org !== "",
   );
-  const notice = useNotice();
+  const notice = useNotice({ inline: true });
   const listTitleRef = useRef<HTMLHeadingElement>(null);
   const list = grants.items ?? [];
   const keys = useRowKeys(list.length);
@@ -182,7 +182,7 @@ export function AccessDialog({ open, onClose, resource, orgId }: AccessDialogPro
       }
     >
       <p className="admin-dialog__text">{t(`admin.access.lead.${resource.type}`)}</p>
-      <Notice notice={notice.notice} onDismiss={notice.clear} />
+      <Notice inline notice={notice.notice} onDismiss={notice.clear} />
       <h3 className="admin-access__title" ref={listTitleRef} tabIndex={-1}>
         {t("admin.access.listLabel")}
       </h3>

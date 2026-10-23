@@ -61,7 +61,7 @@ export function useWideLayout(): boolean {
   return useSyncExternalStore(subscribeWide, isWide);
 }
 
-function isMac(): boolean {
+export function isMac(): boolean {
   return /Mac|iPhone|iPad/.test(window.navigator.platform);
 }
 

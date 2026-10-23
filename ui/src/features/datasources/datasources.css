@@ -27,7 +27,6 @@
     font-size: var(--font-size-sm);
   }
 
-  .ds-trash-notice,
   .ds-conflict {
     display: flex;
     flex-wrap: wrap;

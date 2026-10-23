@@ -216,7 +216,11 @@ type QueryResult =
   `lo_import`, `dblink`, `OPENROWSET`, `OPENDATASOURCE`, `load_extension`). They run in a
   read-only transaction where the engine has one (PostgreSQL, MySQL/MariaDB); SQLite opens the
   file read-only with extension loading disabled. Each engine has tests for these rejections.
-  Rejections answer `query_rejected` with the reason.
+  Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
+  Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
+  checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may
+  write are refused, and GSQL is parsed and refused when it writes or does not parse
+  (docs/api/datasources.md).
 - **No string interpolation of user input.** Macros (`$__timeFilter(col)`, `$__timeFrom`,
   `$__timeTo`, `$__interval`, `$__interval_ms`) and variables become bind parameters. A variable
   used as an identifier must match an allow-list from the source's schema.
@@ -459,6 +463,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
+| 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 
 ## M1 work streams
 

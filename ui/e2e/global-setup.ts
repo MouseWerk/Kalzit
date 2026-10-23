@@ -224,6 +224,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
         KALZIT_SETUP_TOKEN: setupToken,
         KALZIT_SECRETS_KEY: randomBytes(32).toString("base64"),
         KALZIT_SETTING_DATASOURCES_SQLITE_DIRS: JSON.stringify([fixtures]),
+        // Accounts without a language of their own read English; the German runs sign in as an
+        // account whose preference is German (support/api.ts, OWNER_DE).
+        KALZIT_SETTING_APPEARANCE_DEFAULT_LANGUAGE: "en",
         KALZIT_LOG_LEVEL: "info",
       }),
       stdio: ["ignore", "pipe", "pipe"],

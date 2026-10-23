@@ -945,7 +945,7 @@ impl DataSourcePlugin for MongoDb {
             documents: docs,
             schema: sampler.finish(),
             next_cursor: cut.then(|| cursor_token(offset + count, &fp)),
-            truncated: cut.then_some(Truncated { limit: count.min(u64::from(u32::MAX)) as u32 }),
+            truncated: cut.then_some(Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: None }),
             notices,
             executed_query: Some(executed),
         };

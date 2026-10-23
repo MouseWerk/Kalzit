@@ -1,10 +1,13 @@
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useId } from "react";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { Page } from "../../components/Page";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useOrgPermissions } from "../../org/useOrg";
+import { useCrumbTitle } from "../../shell/crumbTitle";
+import { isWithin } from "../../shell/navItem";
 import "./admin.css";
 import { Notice, useNotice } from "./components/Notice";
 import { type AdminSectionLink, ORG_SECTIONS, SERVER_SECTIONS, useAdminAccess } from "./sections";
@@ -30,9 +33,36 @@ export function AdminLayout() {
     );
   }
   return (
-    <Page title={t("admin.title")} lead={t("admin.lead")}>
-      {body}
-    </Page>
+    <>
+      <AdminCrumbs />
+      <Page title={t("admin.title")} lead={t("admin.lead")}>
+        {body}
+      </Page>
+    </>
+  );
+}
+
+/** Administration, then the section the page belongs to; nothing on the overview itself. */
+function AdminCrumbs() {
+  const { t } = useI18n();
+  const { pathname } = useLocation();
+  const page = useCrumbTitle();
+  const section = [...ORG_SECTIONS, ...SERVER_SECTIONS]
+    .filter((candidate) => isWithin(pathname, candidate.to))
+    .sort((a, b) => b.to.length - a.to.length)[0];
+  if (section === undefined) {
+    return null;
+  }
+  return (
+    <Breadcrumbs
+      crumbs={[
+        { label: t("admin.title"), link: { to: "/admin" } },
+        pathname === section.to
+          ? { label: t(section.label) }
+          : { label: t(section.label), link: { to: section.to } },
+        ...(pathname === section.to ? [] : [{ label: page ?? t("shell.breadcrumbs.detail") }]),
+      ]}
+    />
   );
 }
 

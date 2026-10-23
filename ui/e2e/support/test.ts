@@ -7,7 +7,7 @@ import {
   expect,
   type Page,
 } from "@playwright/test";
-import { Api, baseUrl, fixturesDir, OWNER, regionDashboard, unique } from "./api";
+import { Api, baseUrl, fixturesDir, OWNER, OWNER_DE, regionDashboard, unique } from "./api";
 import { t } from "./i18n";
 
 interface Observed {
@@ -293,6 +293,9 @@ export async function signIn(
   await expect(page.getByRole("navigation", { name: t("nav.label", {}, language) })).toBeVisible();
 }
 
+/** Signs in as the owner, or as the owner's German twin for German runs. */
 export function signInOwner(page: Page, language: "de" | "en" = "en"): Promise<void> {
-  return signIn(page, OWNER.email, OWNER.password, language);
+  return language === "de"
+    ? signIn(page, OWNER_DE.email, OWNER_DE.password, language)
+    : signIn(page, OWNER.email, OWNER.password, language);
 }

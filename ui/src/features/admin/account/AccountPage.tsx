@@ -9,6 +9,7 @@ import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
+import { PreferencesSection } from "../../../preferences/PreferencesSection";
 import { WhyCanI } from "../access/WhyCanI";
 import "../admin.css";
 import {
@@ -39,6 +40,7 @@ export function AccountPage() {
   return (
     <Page title={t("admin.account.title")} lead={t("admin.account.lead")}>
       <ProfileSection />
+      <PreferencesSection />
       <PasswordSection />
       <SessionsSection />
       <PermissionsSection />
@@ -250,7 +252,7 @@ function PasswordSection() {
 }
 
 function SessionsSection() {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
   const notice = useNotice();
   const sessions = usePagedList(adminKeys.sessions, (cursor) => listMySessions(cursor));
@@ -285,7 +287,7 @@ function SessionsSection() {
       ) : (
         <ul className="admin-list" aria-label={t("admin.account.sessions")} {...keys.listProps}>
           {list.map((session, index) => {
-            const created = formatDateTime(session.createdAt, language);
+            const created = formatDateTime(session.createdAt, language, timeZone);
             return (
               <li key={session.id} className="admin-row" {...keys.rowProps(index)}>
                 <div className="admin-row__main">
@@ -294,8 +296,8 @@ function SessionsSection() {
                   </span>
                   <span className="admin-row__meta">
                     {t("admin.account.sessionTimes", {
-                      seen: formatDateTime(session.lastSeenAt, language),
-                      expires: formatDateTime(session.expiresAt, language),
+                      seen: formatDateTime(session.lastSeenAt, language, timeZone),
+                      expires: formatDateTime(session.expiresAt, language, timeZone),
                     })}
                   </span>
                 </div>

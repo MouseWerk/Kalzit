@@ -54,7 +54,7 @@ function nextSort(current: Sort, column: number): Sort {
 }
 
 function FrameTable({ frame, title }: { frame: Frame; title: string }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const scrollRef = useRef<HTMLElement>(null);
   const topRef = useRef<HTMLTableRowElement>(null);
   const bottomRef = useRef<HTMLTableRowElement>(null);
@@ -79,7 +79,7 @@ function FrameTable({ frame, title }: { frame: Frame; title: string }) {
         {frame.fields.map((field, column) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
           <td key={column} className={`vt__cell vt__cell--${field.type}`}>
-            {formatValue(field.type, field.values[row], language)}
+            {formatValue(field.type, field.values[row], language, timeZone)}
           </td>
         ))}
       </tr>,

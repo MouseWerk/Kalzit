@@ -24,7 +24,7 @@ import { allowedWhen, useAdminAccess } from "../sections";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
 
 export function MembersPage() {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const access = useAdminAccess();
   const orgId = access.orgId ?? "";
   const queryClient = useQueryClient();
@@ -102,7 +102,9 @@ export function MembersPage() {
                   <span className="admin-row__meta">{member.email}</span>
                 </div>
                 <span className="admin-row__meta">
-                  {t("admin.members.joined", { date: formatDateTime(member.joinedAt, language) })}
+                  {t("admin.members.joined", {
+                    date: formatDateTime(member.joinedAt, language, timeZone),
+                  })}
                 </span>
                 <div className="admin-row__actions">
                   {canChange ? (
