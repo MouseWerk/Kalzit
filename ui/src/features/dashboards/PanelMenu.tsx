@@ -1,4 +1,4 @@
-import { type PointerEvent, useLayoutEffect } from "react";
+import { type KeyboardEvent, type PointerEvent, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -41,6 +41,32 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
     list.style.setProperty("--menu-right", `${window.innerWidth - box.right}px`);
   }, [open, buttonRef, menuRef]);
 
+  // The menu stands in the window, under its button: scrolling or resizing closes it rather
+  // than leave it behind.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const close = () => closeMenu(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open, closeMenu]);
+
+  // Tab leaves the menu back at its button (the menu is drawn at the end of the page, so the
+  // browser would otherwise move on from there).
+  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      closeMenu(true);
+      return;
+    }
+    menu.onMenuKeyDown(event);
+  }
+
   // Clicks in the menu are the menu's: they neither start a panel drag nor count as outside.
   const keep = (event: PointerEvent) => {
     event.stopPropagation();
@@ -72,7 +98,7 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
               role="menu"
               aria-label={t("dashboards.panel.menuNamed", { title })}
               className="menu panel-menu"
-              onKeyDown={menu.onMenuKeyDown}
+              onKeyDown={onMenuKeyDown}
               onPointerDown={keep}
             >
               {items.map((item) =>

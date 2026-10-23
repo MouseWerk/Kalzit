@@ -198,6 +198,7 @@
   "dashboards.editor.hide": "Hide",
   "dashboards.editor.hideQuery": "Hide query {refId}",
   "dashboards.editor.hideHint": "A hidden query stays with the panel but does not run.",
+  "dashboards.editor.stepsReadHidden": "A step reads the hidden query {refIds}; it gets no data until the query is shown again.",
   "dashboards.variables.label": "Variables",
   "dashboards.variables.hint": "Variables let viewers change values in every query, such as a region. Queries use them as $name; they reach the database as parameters, never as text in the query.",
   "dashboards.variables.add": "Add variable",

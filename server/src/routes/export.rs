@@ -173,14 +173,15 @@ async fn make_panel(
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
-    if panel.targets.is_empty() {
+    // Hidden targets stay with the panel but are not run: a panel with only hidden ones has
+    // nothing to export.
+    if panel.targets.iter().all(|t| t.hide) {
         return Err(ApiError::validation("the panel has no query to export").because("export.no_queries"));
     }
     let refs: BTreeSet<&str> = panel.targets.iter().map(|t| t.ref_id.as_str()).collect();
     // Checked when the dashboard was saved; failing here means the stored model is broken.
     let steps = check_steps(&panel.transformations, &refs, "transformations")
         .map_err(|e| ApiError::internal("export", format!("stored steps of panel {panel_id}: {e}")))?;
-    // Hidden targets stay with the panel but are not run.
     let items: Vec<QueryItem> = panel
         .targets
         .iter()

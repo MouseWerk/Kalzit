@@ -198,6 +198,10 @@
     overflow: auto;
   }
 
+  .panel-editor__note {
+    margin: 0 0 var(--space-3);
+  }
+
   .panel-editor__queries {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

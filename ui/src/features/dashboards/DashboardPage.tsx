@@ -366,9 +366,13 @@ function DashboardView({
   const canAnnotate =
     !inTrash && (permissions.has("annotations:write") || (dashboard.access?.write ?? false));
 
-  // What this tab kept of unsaved work on this version (a reload): the draft and the editor's panel.
-  const [kept] = useState(() => readDraft(dashboard.id, dashboard.version));
-  const [draft, setDraft] = useState<DashboardModel | null>(kept?.model ?? null);
+  const userId = appRoute.useRouteContext().me.id;
+  // Kept drafts belong to one account in one organization.
+  const owner = useMemo(() => ({ userId, orgId }), [userId, orgId]);
+  // What this tab kept of unsaved work on this version (a reload): the draft and the editor's
+  // panel. It comes back below, once it is clear that this person may edit.
+  const [kept] = useState(() => readDraft(owner, dashboard.id, dashboard.version));
+  const [draft, setDraft] = useState<DashboardModel | null>(null);
   // The editor's panel from a reload, used once when the editor opens on it again.
   const [keptEditor, setKeptEditor] = useState(kept?.editor);
   // Edit mode is where query editors appear; start loading the editor before one opens.
@@ -398,7 +402,8 @@ function DashboardView({
   const [clock, setClock] = useState(() => ({ now: Date.now(), run: 0, manual: 0 }));
   const [dialog, setDialog] = useState<DialogState>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const userId = appRoute.useRouteContext().me.id;
+  // The panel whose menu takes focus when the editor closes.
+  const [focusAfter, setFocusAfter] = useState<string | null>(null);
   const editing = display.editPanel;
   const isNewPanel = editing === NEW_PANEL;
   // The open editor's state, read when it is left, and the panel as it was when it opened.
@@ -420,6 +425,20 @@ function DashboardView({
   useEffect(() => {
     modelRef.current = model;
   });
+
+  // A kept draft comes back for someone who may edit this dashboard; for anyone else it goes.
+  // (Before the editor's address below, which would otherwise start from the saved model.)
+  useEffect(() => {
+    if (kept === null || !permissions.loaded) {
+      return;
+    }
+    if (canEdit) {
+      setDraft((current) => current ?? kept.model);
+    } else {
+      setKeptEditor(undefined);
+      writeDraft(owner, dashboard.id, null);
+    }
+  }, [kept, permissions.loaded, canEdit, owner, dashboard.id]);
 
   // The editor's address opens edit mode (a reload, a shared link), for those who may edit;
   // everyone else goes back to the dashboard.
@@ -449,6 +468,7 @@ function DashboardView({
     const state = snapshot.current;
     const key = editingRef.current;
     writeDraft(
+      owner,
       dashboard.id,
       current === null
         ? null
@@ -460,10 +480,33 @@ function DashboardView({
     );
   }
   useEffect(() => {
-    writeDraft(dashboard.id, draft === null ? null : { version: dashboard.version, model: draft });
-  }, [dashboard.id, dashboard.version, draft]);
+    // Nothing is written before a kept draft had its chance to come back.
+    if (draft === null && kept !== null && !permissions.loaded) {
+      return;
+    }
+    writeDraft(
+      owner,
+      dashboard.id,
+      draft === null ? null : { version: dashboard.version, model: draft },
+    );
+  }, [owner, dashboard.id, dashboard.version, draft, kept, permissions.loaded]);
   const keepTimer = useRef(0);
-  useEffect(() => () => window.clearTimeout(keepTimer.current), []);
+  // Leaving the page (a reload, closing the tab) keeps the editor's latest change at once,
+  // without waiting for the pause after typing.
+  const flushDraft = useEffectEvent(() => {
+    window.clearTimeout(keepTimer.current);
+    if (draftRef.current !== null) {
+      keepDraft();
+    }
+  });
+  useEffect(() => {
+    const onPageHide = () => flushDraft();
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      window.clearTimeout(keepTimer.current);
+    };
+  }, []);
 
   // "?edit" opens edit mode once, and only for someone who may edit; it must not reopen it after
   // a save remounts the view. Permissions arrive after the first render, so this waits for them.
@@ -742,6 +785,20 @@ function DashboardView({
       }
     }
     keepDraft();
+    // Focus goes back to the panel that was edited (a new one that was applied included).
+    const back = wasNew ? (mode === "apply" ? state?.id : undefined) : left;
+    setFocusAfter(back ?? null);
+  });
+  // Focus goes to that panel's menu once the dashboard is drawn again after the editor.
+  useEffect(() => {
+    if (editing !== undefined || focusAfter === null) {
+      return;
+    }
+    const button = document.querySelector<HTMLElement>(
+      `[data-panel-id="${CSS.escape(focusAfter)}"] .panel-menu__button`,
+    );
+    button?.focus();
+    setFocusAfter(null);
   });
   const lastEditing = useRef(editing);
   useEffect(() => {
@@ -792,6 +849,13 @@ function DashboardView({
   useEffect(() => {
     dirtyRef.current = dirty;
   });
+  // Leaving the dashboard with nothing changed keeps no draft for later.
+  const forgetUnchanged = useEffectEvent(() => {
+    if (!dirtyRef.current && !(snapshot.current?.changed() ?? false)) {
+      writeDraft(owner, dashboard.id, null);
+    }
+  });
+  useEffect(() => () => forgetUnchanged(), []);
   // Leaving the dashboard with unsaved changes asks first; so does leaving the editor without
   // its buttons (the browser's back button) when that would drop a change to the panel.
   const editorChanged = () => snapshot.current?.changed() ?? false;
@@ -1373,7 +1437,7 @@ function DashboardView({
           onCancel={() => blocker.reset()}
           onConfirm={() => {
             // Left on purpose: a reload of this dashboard later starts clean.
-            writeDraft(dashboard.id, null);
+            writeDraft(owner, dashboard.id, null);
             blocker.proceed();
           }}
         >

@@ -368,6 +368,7 @@ export function PanelCard({
       <article
         ref={ref}
         className={className}
+        data-panel-id={panel.id}
         aria-labelledby={titleId}
         aria-busy={results.isFetching}
       >

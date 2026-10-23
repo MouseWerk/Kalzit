@@ -311,6 +311,21 @@ async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
     assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
     assert!(ran.body["results"].get("A").is_some(), "{}", ran.body);
     assert!(ran.body["results"].get("B").is_none(), "{}", ran.body);
+
+    // The export runs the shown query only; a panel whose queries are all hidden has nothing
+    // to export.
+    let file = json!({ "timeRange": range(), "variables": {}, "format": "json", "language": "en" });
+    let exported = t.post(&format!("~/dashboards/{id}/panels/p1/export"), file.clone(), &t.owner).await;
+    assert_eq!(exported.status, StatusCode::OK, "{}", exported.body);
+    assert!(!exported.body.to_string().contains("\"B\""), "{}", exported.body);
+    let mut all_hidden = model("Alles versteckt");
+    all_hidden["panels"][0]["targets"] = json!([
+        { "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" }, "hide": true }
+    ]);
+    let hidden_id = t.dashboard(None, all_hidden, &t.owner).await;
+    let refused = t.post(&format!("~/dashboards/{hidden_id}/panels/p1/export"), file, &t.owner).await;
+    assert_eq!(refused.code(), "validation", "{}", refused.body);
+    assert!(refused.body.to_string().contains("export.no_queries"), "{}", refused.body);
 }
 
 async fn version_1_models_read_as_the_current_version(t: TestApp) {

@@ -1,9 +1,12 @@
+import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { forgetAccountData } from "../../api/auth";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
+import { MAX_KEPT_DRAFTS, readDraft, writeDraft } from "./draftStore";
 import { EDITOR_LAYOUT_KEY, readEditorLayout } from "./editorLayout";
 import { type DashboardModel, emptyModel, type PanelModel, placePanel } from "./model";
 import { addDashboard, latest } from "./test/fakeDashboards";
@@ -420,7 +423,7 @@ describe("adding and leaving panels", () => {
     await first.user.paste("Still here");
     // Kept a moment after the last change.
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("kalzit.draft.d-main")).toContain("Still here"),
+      expect(window.sessionStorage.getItem("kalzit.draft.u1.o1.d-main")).toContain("Still here"),
     );
     first.view.unmount();
     renderApp("/dashboards/d-main/panels/p1/edit");
@@ -460,6 +463,89 @@ describe("adding and leaving panels", () => {
       { refId: "A" },
       { refId: "B", hide: true },
     ]);
+  });
+});
+
+describe("drafts kept in the tab", () => {
+  /** User u1 left an unsaved draft of d-main in this tab, renamed and with the editor open. */
+  function leftBehind() {
+    const model = { ...emptyModel("Main"), panels: [panel("p1", "Orders from u1")] };
+    window.sessionStorage.setItem(
+      "kalzit.draft.u1.o1.d-main",
+      JSON.stringify({ userId: "u1", orgId: "o1", at: 1, version: 1, model }),
+    );
+  }
+
+  it("never shows one account's draft to another in the same tab", async () => {
+    leftBehind();
+    const server = installFakeServer({
+      signedIn: true,
+      user: { ...asRole("editor"), id: "u2", email: "b@example.com", name: "Bea" },
+    });
+    addDashboard(server.areas.dashboards, "d-main", {
+      ...emptyModel("Main"),
+      panels: [panel("p1", "Orders")],
+    });
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Orders from u1" })).toBeNull();
+    expect(screen.queryByText(/^Edit mode/)).toBeNull();
+  });
+
+  it("drops a kept draft for someone who may no longer edit", async () => {
+    leftBehind();
+    setup("viewer");
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    expect(screen.queryByText(/^Edit mode/)).toBeNull();
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem("kalzit.draft.u1.o1.d-main")).toBeNull(),
+    );
+  });
+
+  it("brings a kept draft back for its own editor, and forgets every draft on sign-out", async () => {
+    leftBehind();
+    setup();
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("article", { name: "Orders from u1" })).toBeTruthy();
+    expect(screen.getByText(/^Edit mode, unsaved changes/)).toBeTruthy();
+    forgetAccountData(new QueryClient());
+    expect(window.sessionStorage.getItem("kalzit.draft.u1.o1.d-main")).toBeNull();
+  });
+
+  it("keeps only the latest few drafts", () => {
+    const owner = { userId: "u1", orgId: "o1" };
+    for (let i = 0; i < MAX_KEPT_DRAFTS + 2; i++) {
+      writeDraft(owner, `d-${i}`, { version: 1, model: emptyModel(`D${i}`) });
+    }
+    const kept = Object.keys(window.sessionStorage).filter((k) => k.startsWith("kalzit.draft."));
+    expect(kept).toHaveLength(MAX_KEPT_DRAFTS);
+    expect(readDraft(owner, `d-${MAX_KEPT_DRAFTS + 1}`, 1)).not.toBeNull();
+  });
+});
+
+describe("focus around the editor", () => {
+  it("starts on the editor's heading and comes back to the panel's menu", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(editor).getByRole("heading", { level: 1 })),
+    );
+    await user.keyboard("{Escape}");
+    const menu = await screen.findByRole("button", { name: "Panel menu of “Orders”" });
+    await waitFor(() => expect(document.activeElement).toBe(menu));
+  });
+
+  it("returns focus from the panel menu to its button on Tab", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "Panel menu of “Orders”" });
+    await user.click(button);
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    await user.keyboard("{Tab}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
 });
 

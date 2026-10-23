@@ -198,6 +198,7 @@
   "dashboards.editor.hide": "Ausblenden",
   "dashboards.editor.hideQuery": "Abfrage {refId} ausblenden",
   "dashboards.editor.hideHint": "Eine ausgeblendete Abfrage bleibt beim Panel, läuft aber nicht.",
+  "dashboards.editor.stepsReadHidden": "Ein Schritt liest die ausgeblendete Abfrage {refIds}; er bekommt keine Daten, bis sie wieder eingeblendet ist.",
   "dashboards.variables.label": "Variablen",
   "dashboards.variables.hint": "Mit Variablen ändern Betrachter Werte in allen Abfragen, etwa eine Region. Abfragen nutzen sie als $name; sie erreichen die Datenbank als Parameter, nie als Text in der Abfrage.",
   "dashboards.variables.add": "Variable hinzufügen",

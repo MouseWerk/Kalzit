@@ -15,7 +15,7 @@ import {
 } from "react";
 import { namedInputs, runPanelSteps } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
-import { asSteps, withUnknown } from "../../analysis/steps";
+import { asSteps, stepFrames, withUnknown } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
@@ -164,6 +164,11 @@ export function PanelEditor({
   const [preview, setPreview] = useState({ targets: opened.targets, run: 0 });
   const [tab, setTab] = useState<LowerTab>("queries");
   const [problem, setProblem] = useState(false);
+  // The page's heading takes focus when the editor opens, so a screen reader starts there.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
   // A click-to-filter the editor could not add, until the next run or source change.
   const [filterError, setFilterError] = useState<string | null>(null);
   // Per query: whether its editor holds text that does not parse yet.
@@ -251,6 +256,10 @@ export function PanelEditor({
   const sourceKey = targets.map((target) => target.datasourceId).join("\n");
   const refKey = targets.map((target) => target.refId).join("\n");
   const refIds = useMemo(() => (refKey === "" ? [] : refKey.split("\n")), [refKey]);
+  const hiddenKey = targets
+    .filter((target) => target.hide === true)
+    .map((target) => target.refId)
+    .join("\n");
   // What the preview returned decides which panels fit; before it ran, what the sources can return.
   // An applied projection step turns that query's documents into a frame.
   const shapes = useMemo((): Shape[] => {
@@ -477,6 +486,7 @@ export function PanelEditor({
           steps={steps}
           onChange={changeSteps}
           refIds={refIds}
+          hidden={hiddenKey}
           inputs={inputs}
           run={stepsRun}
         />
@@ -532,7 +542,7 @@ export function PanelEditor({
           <Icon name="chevron" className="panel-editor__back-icon" />
           {t("dashboards.editor.back")}
         </button>
-        <h1 className="panel-editor__title truncate" id={titleId}>
+        <h1 className="panel-editor__title truncate" id={titleId} ref={headingRef} tabIndex={-1}>
           {editorTitle}
           <span className="panel-editor__name">
             {look.title === "" ? t("dashboards.panel.untitled") : look.title}
@@ -585,7 +595,7 @@ export function PanelEditor({
 }
 
 /** The preview: the panel's drawing, memoized so typing a query or an option label skips it. */
-const EditorPreview = memo(function EditorPreview({
+function EditorPreview({
   notice,
   tableView,
   onTableView,
@@ -618,25 +628,40 @@ const EditorPreview = memo(function EditorPreview({
       </div>
     </section>
   );
-});
+}
 
 /** The steps tab, memoized: typing a query leaves the steps and their previews alone. */
-const StepsTab = memo(function StepsTab({
+function StepsTab({
   steps,
   onChange,
   refIds,
+  hidden,
   inputs,
   run,
 }: {
   steps: unknown[];
+  /** The hidden queries' refIds, one per line. */
+  hidden: string;
   onChange: (steps: ReturnType<typeof asSteps>) => void;
   refIds: readonly string[];
   inputs: ComponentProps<typeof StepsEditor>["inputs"];
   run: ComponentProps<typeof StepsEditor>["run"];
 }) {
+  const { t } = useI18n();
   const list = useMemo(() => asSteps(steps), [steps]);
-  return <StepsEditor steps={list} onChange={onChange} refIds={refIds} inputs={inputs} run={run} />;
-});
+  const hiddenRefs = hidden === "" ? [] : hidden.split("\n");
+  const reading = [...new Set(list.flatMap(stepFrames))].filter((ref) => hiddenRefs.includes(ref));
+  return (
+    <>
+      {reading.length === 0 ? null : (
+        <p className="field__hint panel-editor__note" role="status">
+          {t("dashboards.editor.stepsReadHidden", { refIds: reading.join(", ") })}
+        </p>
+      )}
+      <StepsEditor steps={list} onChange={onChange} refIds={refIds} inputs={inputs} run={run} />
+    </>
+  );
+}
 
 /** Bounds of the splits in px. */
 const OPTIONS_MIN = 240;
@@ -873,7 +898,7 @@ function OptionGroup({
   );
 }
 
-const OptionsPane = memo(function OptionsPane({
+function OptionsPane({
   titleId,
   isNew,
   look,
@@ -955,7 +980,7 @@ const OptionsPane = memo(function OptionsPane({
       </OptionGroup>
     </div>
   );
-});
+}
 
 /** The queries tab: one editor per target, the run button and adding a query. */
 function TargetList({

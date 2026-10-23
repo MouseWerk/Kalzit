@@ -7,7 +7,16 @@ import { panelAction } from "./support/ui";
 /**
  * Performance budgets for editing (docs/design/feel.md section 10, fix 5), in Chromium with the
  * CPU slowed down four times: typing 40 keys into a panel's query stays under 50 ms p95 Event
- * Timing per key, and dragging a panel across the grid makes no long task over 50 ms.
+ * Timing per key, and its longest main-thread task stays under 34 ms (the modal editor's were
+ * 38 to 45 ms, this page's 27 to 30 ms, on the machine the numbers were taken on); dragging a
+ * panel across the grid makes no long task over 50 ms.
+ *
+ * Event Timing comes in 8 ms steps and includes waiting for the next frame, so it hardly tells
+ * the two editors apart. Two checks do: the number of components React draws per key (counted
+ * through React's hook for developer tools, so it does not depend on the machine: 11 here, 36 in
+ * the modal editor), and the longest task, read from a Chrome trace, measured against the
+ * machine: a fixed piece of script is timed first, and the 34 ms grow with it on a slower
+ * machine (a CI runner), never shrink on a faster one.
  *
  * Each budget is measured in three rounds and the best round counts: other work on the machine
  * only ever adds time, so the best round is the closest to what the page itself costs. Every
@@ -18,6 +27,104 @@ const THROTTLE = 4;
 const KEYS = 40;
 const ROUNDS = 3;
 const BUDGET_MS = 50;
+/** The longest task while typing, on the reference machine. */
+const TYPING_TASK_MS = 34;
+/** The calibration script's time at 4x on the reference machine. */
+const REFERENCE_CALIBRATION_MS = 140;
+
+/** Times a fixed piece of script in the page (sorting numbers), at the current throttling. */
+async function calibrate(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const start = performance.now();
+    const values: number[] = [];
+    for (let i = 0; i < 200_000; i++) {
+      values.push((i * 7919) % 10_007);
+    }
+    values.sort((a, b) => a - b);
+    return performance.now() - start;
+  });
+}
+
+/**
+ * Components drawn per key while typing: 11 on this page (the query's editor and what it holds),
+ * 36 in the modal editor before it, which drew the whole editor on every key.
+ */
+const RENDERS_PER_KEY = 20;
+
+/** The longest task of the page's main thread in a Chrome trace, in ms. */
+function longestTask(buffer: Buffer): number {
+  const trace = JSON.parse(buffer.toString()) as { traceEvents: TraceEvent[] } | TraceEvent[];
+  const events = Array.isArray(trace) ? trace : trace.traceEvents;
+  // The renderer's main thread is the one that dispatches the page's events.
+  const dispatches = new Map<number, number>();
+  for (const event of events) {
+    if (event.name === "EventDispatch") {
+      dispatches.set(event.tid, (dispatches.get(event.tid) ?? 0) + 1);
+    }
+  }
+  const main = [...dispatches.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  let longest = 0;
+  for (const event of events) {
+    if (event.tid === main && event.name === "RunTask" && event.dur !== undefined) {
+      longest = Math.max(longest, event.dur / 1000);
+    }
+  }
+  return longest;
+}
+
+/**
+ * Counts the components React draws while `__countRenders` is set, through the hook React's
+ * production build offers to developer tools: after each commit, every function component that
+ * did work in it (a fiber with the PerformedWork flag that is new since the last commit; one
+ * React skipped stays the same object). Unlike timings, the count does not depend on the
+ * machine.
+ */
+function installRenderCounter(): void {
+  type Fiber = {
+    flags: number;
+    type: unknown;
+    child: Fiber | null;
+    sibling: Fiber | null;
+  };
+  const store = window as unknown as {
+    __countRenders: boolean;
+    __renders: number;
+    __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown;
+  };
+  store.__countRenders = false;
+  store.__renders = 0;
+  let previous = new WeakSet<Fiber>();
+  store.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+    supportsFiber: true,
+    renderers: new Map(),
+    inject: () => 1,
+    onCommitFiberRoot: (_id: number, root: { current: Fiber }) => {
+      if (!store.__countRenders) {
+        return;
+      }
+      const seen = new WeakSet<Fiber>();
+      const stack: Fiber[] = [root.current];
+      while (stack.length > 0) {
+        const fiber = stack.pop() as Fiber;
+        seen.add(fiber);
+        if (typeof fiber.type === "function" && (fiber.flags & 1) !== 0 && !previous.has(fiber)) {
+          store.__renders += 1;
+        }
+        if (fiber.sibling !== null) stack.push(fiber.sibling);
+        if (fiber.child !== null) stack.push(fiber.child);
+      }
+      previous = seen;
+    },
+    onCommitFiberUnmount: () => undefined,
+    onPostCommitFiberRoot: () => undefined,
+  };
+}
+
+interface TraceEvent {
+  name: string;
+  tid: number;
+  dur?: number;
+}
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -122,8 +229,10 @@ async function openForEditing(page: Page, sourceId: string): Promise<void> {
 
 test("typing in a panel's query stays under 50 ms p95 at 4x CPU throttling", async ({
   page,
+  browser,
   world,
 }) => {
+  await page.addInitScript(installRenderCounter);
   await openForEditing(page, world.sourceId);
   await panelAction(page, "Sales", "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
@@ -136,23 +245,53 @@ test("typing in a panel's query stays under 50 ms p95 at 4x CPU throttling", asy
   const throttle = await cpu(page);
   // Spaces and comparisons at the end of the query: no completion list takes the keys.
   const text = " AND amount >= 0 ".repeat(3).slice(0, KEYS);
+  // The machine's speed at the same throttling: the best of three timings.
+  await throttle(THROTTLE);
+  const calibration = Math.min(await calibrate(page), await calibrate(page), await calibrate(page));
+  await throttle(1);
+  const taskBudget = TYPING_TASK_MS * Math.max(1, calibration / REFERENCE_CALIBRATION_MS);
   const rounds: number[] = [];
+  const tasks: number[] = [];
   for (let round = 0; round < ROUNDS; round++) {
     await throttle(THROTTLE);
     await reset(page);
+    await browser.startTracing(page, {
+      categories: ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"],
+    });
     for (const key of text) {
       await page.keyboard.type(key);
     }
     const { interactions } = await recorded(page);
+    const task = longestTask(await browser.stopTracing());
     await throttle(1);
     const result = p95(interactions, KEYS);
     rounds.push(result);
+    tasks.push(task);
     process.stdout.write(
-      `budget: typing ${KEYS} keys at ${THROTTLE}x, round ${round + 1}: p95 ${result} ms, max ${Math.max(0, ...interactions)} ms\n`,
+      `budget: typing ${KEYS} keys at ${THROTTLE}x, round ${round + 1}: p95 ${result} ms, max ${Math.max(0, ...interactions)} ms, longest task ${task.toFixed(1)} ms (budget ${taskBudget.toFixed(1)} ms, calibration ${calibration.toFixed(1)} ms)\n`,
     );
   }
+  // A round without throttling or tracing, counting what React draws per key.
+  await page.evaluate(() => {
+    const store = window as unknown as { __countRenders: boolean; __renders: number };
+    store.__renders = 0;
+    store.__countRenders = true;
+  });
+  for (const key of text) {
+    await page.keyboard.type(key);
+  }
+  await page.waitForTimeout(300);
+  const perKey =
+    (await page.evaluate(() => {
+      const store = window as unknown as { __countRenders: boolean; __renders: number };
+      store.__countRenders = false;
+      return store.__renders;
+    })) / KEYS;
+  process.stdout.write(`budget: typing draws ${perKey.toFixed(1)} components per key\n`);
   await expect(query).toContainText(SQL.byRegion.slice(0, 20));
   expect(Math.min(...rounds)).toBeLessThan(BUDGET_MS);
+  expect(Math.min(...tasks)).toBeLessThan(taskBudget);
+  expect(perKey).toBeLessThan(RENDERS_PER_KEY);
 });
 
 test("dragging a panel makes no long task over 50 ms at 4x CPU throttling", async ({
