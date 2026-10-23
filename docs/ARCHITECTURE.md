@@ -13,6 +13,7 @@ everything else is M1.
 | `server/migrations/` | Numbered, portable SQL migrations (SQLite and PostgreSQL). |
 | `server/src/shapes.rs` | Result envelope and API wire types; the UI's TypeScript types are generated from it. |
 | `server/src/authz.rs` | Permission catalog, built-in roles, access and resource checks. |
+| `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `ui/` | React UI: `ui/src/features/<area>/` per area, `ui/src/panels/<type>/` per panel type. |
@@ -259,7 +260,7 @@ type QueryResult =
 
   ```ts
   interface DashboardModel {
-    schemaVersion: 1;
+    schemaVersion: 2;
     title: string;
     timeRange: { from: string; to: string };   // "now-6h", "now", or ISO times
     refreshSeconds?: number;
@@ -268,7 +269,8 @@ type QueryResult =
       id: string; type: string; title: string;
       grid: { x: number; y: number; w: number; h: number };   // 24 columns
       targets: { refId: string; datasourceId: string; query: unknown }[];
-      transformations: unknown[]; options: unknown; fieldConfig: unknown;
+      transformations: Step[];   // analysis steps, see "Analysis steps and export"
+      options: unknown; fieldConfig: unknown;
     }[];
   }
   ```
@@ -286,6 +288,34 @@ type QueryResult =
   card's `titlePath` are field paths of up to 500 characters without control characters. A new
   panel type (the graph panels, plugins) adds its own check there when it lands; unknown types are
   left alone.
+
+## Analysis steps and export
+
+- A panel's `transformations` are analysis steps (docs/api/settings-dashboards.md, "Analysis
+  steps"): `{id, type, disabled?, ...}`, ordered, each reading results by `refId`. Types:
+  `toFrame` (projection of documents), `calculate` (expression language, parsed and type-checked,
+  never evaluated as code), `join` (two queries by time or key, fields named `<refId>.<field>`),
+  `reduce`, `trend`, `movingAverage`, `correlate`, `compare`, `group`, `pivot`.
+- **The projection lives in the panel's `transformations`**, as a `toFrame` step, not in the
+  query (PLAN section 1 said "in der Abfrage"; decided otherwise, PLAN section 13): the query stays
+  in the data source's own form, the projection is visible, can be turned off, and steps after it
+  work on its frame.
+- Two engines with one behaviour: `ui/src/analysis/` runs the steps for what the browser shows;
+  `server/src/analysis/` runs them for exports, so a file holds what the panel shows and the
+  permission check stays on the server. Both pass `server/src/analysis/conformance.json`; numbers
+  are written as JavaScript writes them and calendar functions work in UTC in both.
+- Saving a dashboard checks the steps' form and bounds and parses expressions; fields and types are
+  checked when a step runs. Steps run on results in memory, bounded by the row limit; pushdown of
+  grouping into the database comes later.
+- Export: `POST /api/orgs/{orgId}/export` and
+  `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, both
+  `Access::Org(Permission::DataExport)` plus the rights of running the queries (free:
+  `datasources:query` per source; panel: `dashboards:read`). CSV, Excel (`rust_xlsxwriter`) and
+  JSON; written to the audit log as `data.exported` (refused ones as `data.export_refused`). At
+  most 3 exports make files at once per server; their steps and encoder run in `spawn_blocking`
+  and stop on a cancel flag (a drop guard in the handler) and the query timeout. Both engines
+  share the bounds: expression trees at most 128 high, text at most 32,767 UTF-16 units per cell
+  and 64 Mi units per run, at most 5,000,000 cells per step.
 
 ## Settings and audit
 

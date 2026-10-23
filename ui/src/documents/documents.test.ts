@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { appendPages, projectOutcomes } from "../features/dashboards/results";
+import { runPanelSteps } from "../analysis/panel";
+import { projectDocuments as runProjection } from "../analysis/projection";
+import { appendPages } from "../features/dashboards/results";
 import { jsonContext, mongoCompletions } from "../features/datasources/editors/mongoCompletion";
 import { tokenizeJson } from "../features/datasources/editors/syntax";
 import {
@@ -12,6 +14,7 @@ import {
   splitPipeline,
 } from "../features/datasources/mongoQuery";
 import { serverSchema } from "../features/datasources/test/fakeMongo";
+import { formatValue } from "../panels/frame";
 import { distribution, histogram } from "./distribution";
 import { filterable, filterablePath, toExtendedJson } from "./filter";
 import { filterPath, mongoPath, schemaPath, valueAt, valuesAt } from "./paths";
@@ -21,7 +24,6 @@ import {
   newStepId,
   PROJECTION_TYPES,
   parseProjection,
-  projectDocuments,
   projectionFor,
   projectionPaths,
   storableTransformations,
@@ -187,6 +189,12 @@ describe("distribution", () => {
   });
 });
 
+/** The shared engine's projection (analysis/projection.ts), with the step's columns. */
+const projectDocuments = (
+  set: Parameters<typeof runProjection>[0],
+  step: { columns: Parameters<typeof runProjection>[1] },
+) => runProjection(set, step.columns);
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe("projection step", () => {
@@ -228,9 +236,11 @@ describe("projection step", () => {
         documents: { documents: docs, schema: [], notices: [] },
       },
     };
-    expect(projectOutcomes([outcome], [])[0]).toBe(outcome);
+    // Without a step, documents are no frame.
+    expect(runPanelSteps([], [outcome]).frames).toEqual([]);
+    // A new projection goes first, before the steps that read its frame.
     const steps = withProjection([{ type: "other" }], "A", { columns: [{ path: "at" }] });
-    const step = steps[1] as Record<string, unknown>;
+    const step = steps[0] as Record<string, unknown>;
     expect(step).toEqual({
       id: expect.stringMatching(UUID),
       type: "toFrame",
@@ -238,27 +248,13 @@ describe("projection step", () => {
       columns: [{ path: "at" }],
     });
     expect(projectionFor(steps, "B")).toBeUndefined();
-    expect(projectOutcomes([outcome], steps)[0]).toMatchObject({ result: { shape: "frame" } });
+    expect(runPanelSteps(steps, [outcome]).frames[0]?.frame.fields[0]?.name).toBe("at");
 
     // Changed or switched off, the step keeps its id and place; off, the documents show.
     const off = withProjection(steps, "A", { columns: [{ path: "at" }], disabled: true });
-    expect(off[1]).toEqual({ ...step, disabled: true });
-    expect(projectOutcomes([outcome], off)[0]).toBe(outcome);
+    expect(off[0]).toEqual({ ...step, disabled: true });
+    expect(runPanelSteps(off, [outcome]).frames).toEqual([]);
     expect(withProjection(steps, "A", undefined)).toEqual([{ type: "other" }]);
-  });
-
-  it("reads the first drafts' shape and writes the current one when the step changes", () => {
-    const old = [{ type: "toFrame", refId: "A", columns: [{ path: "at" }] }];
-    expect(projectionFor(old, "A")).toEqual({ columns: [{ path: "at" }] });
-    const rewritten = withProjection(old, "A", { columns: [{ path: "total" }] });
-    expect(rewritten).toEqual([
-      {
-        id: expect.stringMatching(UUID),
-        type: "toFrame",
-        frame: "A",
-        columns: [{ path: "total" }],
-      },
-    ]);
   });
 
   it("makes step ids also where the browser has no randomUUID", () => {
@@ -624,7 +620,7 @@ describe("projection steps the server accepts", () => {
 });
 
 describe("after the second review", () => {
-  it("projects a time JavaScript cannot show as null, and keeps the executed query", () => {
+  it("shows a projected time JavaScript cannot show as its number, and keeps the executed query", () => {
     const frame = projectDocuments(
       {
         documents: [{ t: { $type: "date", value: "9223372036854775807" } }, { t: 1e16 }, { t: 5 }],
@@ -634,7 +630,11 @@ describe("after the second review", () => {
       },
       { columns: [{ path: "t", type: "time" }] },
     );
-    expect(frame.fields[0]?.values).toEqual([null, null, 5]);
+    // The engine reads them as the server does; formatting shows the number instead of failing.
+    const values = frame.fields[0]?.values ?? [];
+    expect(values[2]).toBe(5);
+    expect(formatValue("time", values[0], "en", "UTC")).toBe(String(values[0]));
+    expect(formatValue("time", values[1], "en", "UTC")).toBe(String(values[1]));
     expect(frame.meta?.executedQuery).toBe("orders.find(...)");
     expect(formatLeaf({ $type: "date", value: "9223372036854775807" }, "en")).toBe(
       "9223372036854775807",

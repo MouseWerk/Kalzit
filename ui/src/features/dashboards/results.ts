@@ -5,7 +5,6 @@ import type {
   QueryResult,
   Shape,
 } from "../../api/generated/shapes";
-import { projectDocuments, projectionFor } from "../../documents/projection";
 import type { PanelGraph } from "../../panels/types";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
@@ -51,36 +50,9 @@ export function documentsOf(
 }
 
 /**
- * Applies the projection steps among a panel's transformations (documents/projection.ts): the
- * documents of that query become a frame, visibly, because the panel says so. A result that
- * already arrived as a frame, and every query without a step, passes unchanged.
- */
-export function projectOutcomes(
-  outcomes: readonly TargetOutcome[],
-  transformations: readonly unknown[],
-): TargetOutcome[] {
-  return outcomes.map((outcome) => {
-    if (!("result" in outcome) || outcome.result.shape !== "documents") {
-      return outcome;
-    }
-    const projection = projectionFor(transformations, outcome.refId);
-    if (
-      projection === undefined ||
-      projection.disabled === true ||
-      projection.columns.length === 0
-    ) {
-      return outcome;
-    }
-    return {
-      refId: outcome.refId,
-      result: { shape: "frame", frame: projectDocuments(outcome.result.documents, projection) },
-    };
-  });
-}
-
-/**
  * The document set of `refId` with the pages loaded after it (`nextCursor`): the documents of
- * all pages in order, the first page's schema, and cut, cursor and notices of the last page.
+ * all pages in order, the first page's schema, cut and cursor of the last page, and the notices of
+ * every page, each once.
  */
 export function appendPages(
   outcomes: readonly TargetOutcome[],

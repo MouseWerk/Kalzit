@@ -285,8 +285,9 @@ describe("panels and shapes", () => {
       <PanelBody
         panel={panel("table", [
           {
+            id: "0199f0a0-1c2e-4a4b-9e1d-3f5a6b7c8d91",
             type: "toFrame",
-            refId: "A",
+            frame: "A",
             columns: [{ path: "customer.name", name: "Customer" }, { path: "total" }],
           },
         ])}

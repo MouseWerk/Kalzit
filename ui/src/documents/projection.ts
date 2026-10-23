@@ -1,7 +1,5 @@
 import { isRecord } from "../api/client";
-import type { DocumentSet, Field, FieldSchema, FieldType, Frame } from "../api/generated/shapes";
-import { valueAt } from "./paths";
-import { dateMs, isContainer, isTyped, showableMs, typeOf } from "./values";
+import type { FieldSchema } from "../api/generated/shapes";
 
 /**
  * The projection step (docs/PLAN.md, section 1): documents become a frame only through this
@@ -16,8 +14,9 @@ import { dateMs, isContainer, isTyped, showableMs, typeOf } from "./values";
  * The query stays in the server's form, which takes no other fields. Each column reads one field
  * path per document (array elements by index: `items.0.price`; a path through an array without an
  * index reads nothing); the type is chosen or taken from the first value. Removing or disabling
- * the step brings the documents back. Applied in `projectOutcomes` (dashboards/results.ts), never
- * implicitly: a result the server already answered as a frame passes unchanged.
+ * the step brings the documents back. The analysis engine runs it with the panel's other steps
+ * (`runPanelSteps`, analysis/panel.ts), never implicitly: a result the server already answered as
+ * a frame passes unchanged. This module reads and writes the step and checks its columns.
  */
 
 export const PROJECTION_STEP = "toFrame";
@@ -82,9 +81,9 @@ export type ColumnProblem =
   | { field: "path" | "name"; problem: "duplicate"; name: string };
 
 /**
- * What the server would refuse in each column of a step (`check_steps` on m1/analysis): control
- * characters, a path over 500 or a name over 200 characters, and two columns with one output
- * name. Columns without a path are left out when the step is stored, so they are no problem.
+ * What the server would refuse in each column of a step (`check_steps`, server/src/analysis):
+ * control characters, a path over 500 or a name over 200 characters, and two columns with one
+ * output name. Columns without a path are left out when the step is stored, so they are no problem.
  */
 export function columnProblems(columns: readonly ProjectionColumn[]): (ColumnProblem | null)[] {
   const seen = new Set<string>();
@@ -113,115 +112,6 @@ export function columnProblems(columns: readonly ProjectionColumn[]): (ColumnPro
   });
 }
 
-/** The frame type a value reads as when the column does not name one. */
-function typeFor(value: unknown): FieldType {
-  switch (typeOf(value)) {
-    case "date":
-      return "time";
-    case "number":
-    case "decimal":
-    case "double":
-      return "number";
-    case "int64":
-      return "int64";
-    case "bool":
-      return "bool";
-    case "object":
-    case "array":
-    case "binary":
-      return "json";
-    default:
-      return "string";
-  }
-}
-
-const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
-
-/**
- * Text as a number the way the analysis engine reads it (ui/src/analysis on m1/analysis, and the
- * server after it): JavaScript's `Number(text)` limited to decimal and hexadecimal notation.
- */
-function numberOf(text: string): number | null {
-  const trimmed = text.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
-  if (trimmed === "") {
-    return 0;
-  }
-  const number = /^0[xX][0-9a-fA-F]+$/.test(trimmed)
-    ? Number.parseInt(trimmed.slice(2), 16)
-    : PLAIN_NUMBER.test(trimmed)
-      ? Number(trimmed)
-      : null;
-  return number !== null && Number.isFinite(number) ? number : null;
-}
-
-/** A number as text the way the analysis engine writes it: no "-0". */
-const numberText = (x: number) => (x === 0 ? "0" : String(x));
-
-/** One value converted to a column type; null where it does not fit (and nothing is guessed). */
-function convert(value: unknown, type: FieldType): unknown {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  switch (type) {
-    case "time":
-      if (isTyped(value) && value.$type === "date") {
-        return dateMs(value);
-      }
-      // A time JavaScript cannot show (beyond MAX_DATE_MS) is no time.
-      return !isTyped(value) && typeof value === "number" && showableMs(value) ? value : null;
-    case "number": {
-      if (typeof value === "number") {
-        return Number.isFinite(value) ? value : null;
-      }
-      if (isTyped(value) && (value.$type === "decimal" || value.$type === "int64")) {
-        return numberOf(value.value ?? "");
-      }
-      return null;
-    }
-    case "int64":
-      if (isTyped(value) && value.$type === "int64") {
-        return value.value;
-      }
-      return typeof value === "number" && Number.isInteger(value) ? numberText(value) : null;
-    case "bool":
-      return typeof value === "boolean" ? value : null;
-    case "json":
-      return value;
-    default:
-      if (isTyped(value)) {
-        return value.value;
-      }
-      if (isContainer(value)) {
-        return JSON.stringify(value);
-      }
-      return typeof value === "number" ? numberText(value) : String(value);
-  }
-}
-
-export function projectDocuments(set: DocumentSet, projection: FrameProjection): Frame {
-  // A column still being filled in (no path yet) is left out rather than drawn empty.
-  const columns = projection.columns.filter((column) => column.path.trim() !== "");
-  const fields: Field[] = columns.map((column) => {
-    const raw = set.documents.map((document) => valueAt(document, column.path));
-    const first = raw.find((value) => value !== null && value !== undefined);
-    const type = column.type ?? (first === undefined ? "string" : typeFor(first));
-    return {
-      name: outputName(column),
-      type,
-      values: raw.map((value) => convert(value, type)),
-    };
-  });
-  // The source's notices (a cut, hidden values) stay with what the panel shows.
-  return {
-    fields,
-    meta: {
-      rowsTruncated: set.truncated !== undefined,
-      notices: set.notices,
-      ...(set.executedQuery === undefined ? {} : { executedQuery: set.executedQuery }),
-    },
-  };
-}
-
 /**
  * Paths a projection column can read: the schema's paths outside arrays as they are, and paths
  * into arrays through their first element (`items[].price` becomes `items.0.price`).
@@ -238,12 +128,7 @@ export function projectionPaths(schema: readonly FieldSchema[]): string[] {
 
 /** Whether a stored transformation is the projection step of query `refId`. */
 function isStepFor(value: unknown, refId: string): value is Record<string, unknown> {
-  // `refId` is the shape of the first drafts, read so they keep working.
-  return (
-    isRecord(value) &&
-    value.type === PROJECTION_STEP &&
-    (value.frame === refId || (value.frame === undefined && value.refId === refId))
-  );
+  return isRecord(value) && value.type === PROJECTION_STEP && value.frame === refId;
 }
 
 /** The projection step of the query `refId` among a panel's transformations. */
@@ -290,8 +175,9 @@ export function withProjection(
   if (projection.disabled === true) {
     step.disabled = true;
   }
+  // A new projection goes first: the analysis steps after it read the frame it makes.
   return index === -1
-    ? [...transformations, step]
+    ? [step, ...transformations]
     : transformations.map((t, i) => (i === index ? step : t));
 }
 

@@ -53,10 +53,9 @@ Regeln:
 - Panels deklarieren, welche Formen sie verstehen. Der Panel-Picker zeigt zuerst die, die zur
   Form passen.
 - **Projektionen sind sichtbar und gewollt, nie versteckt.** Wer aus Dokumenten eine Zeitreihe will
-  (z. B. `$.metrics.cpu` über `$.ts`), legt unter der Abfrage einen Schritt "Projektion" an. Er steht
-  beim Panel in dessen `transformations`, nicht in der Abfrage (die bleibt in der Form der
-  Quelle), ist abschaltbar und rückgängig zu machen, und das Original bleibt verfügbar. Es gibt keine
-  implizite Konvertierung im Backend.
+  (z. B. `$.metrics.cpu` über `$.ts`), legt im Query-Editor einen Schritt "Projektion" an. Er steht
+  als Schritt beim Panel (Entscheidung 13), ist abschaltbar und rückgängig zu machen, und das
+  Original bleibt verfügbar. Es gibt keine implizite Konvertierung im Backend.
 - Transformationen arbeiten formgerecht: Dokument-Transformationen (Feld auswählen, Array
   entfalten, gruppieren) und Graph-Transformationen (Nachbarschaft erweitern, Subgraph filtern,
   Knoten zusammenfassen) sind eigene Kataloge, nicht Tabellen-Transformationen mit anderem Namen.
@@ -383,3 +382,8 @@ Getroffen (stehen auch in `CLAUDE.md`):
 10. Öffentliches Repository auf GitHub.
 11. Produktname Kalzit (statt Arbeitstitel Granit).
 12. Website mit Astro und ausdrucksstarker Bewegung, angelehnt an die Referenz des Inhabers; Hosting wird später entschieden.
+13. Die Projektion (Abschnitt 1) steht nicht in der Abfrage, sondern als Schritt `toFrame` in den
+    `transformations` des Panels (bzw. den Schritten in Explore): Die Abfrage bleibt in der Form
+    der Datenquelle, die Projektion ist sichtbar, abschaltbar, und die Schritte danach arbeiten
+    mit ihrer Tabelle. Schritte laufen im Browser für die Anzeige und auf dem Server für den
+    Export, mit denselben Regeln (`docs/api/settings-dashboards.md`, „Analysis steps“).

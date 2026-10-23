@@ -32,6 +32,8 @@ pub struct AppState {
     pub background: Arc<db::Background>,
     /// Session last-seen updates in flight (`auth::session::Touches`).
     pub touches: Arc<crate::auth::session::Touches>,
+    /// Exports making their file at the same time (`routes::export::MAX_EXPORTS`).
+    pub exports: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -56,6 +58,7 @@ impl AppState {
             datasources,
             background,
             touches,
+            exports: Arc::new(tokio::sync::Semaphore::new(crate::routes::export::MAX_EXPORTS)),
         })
     }
 

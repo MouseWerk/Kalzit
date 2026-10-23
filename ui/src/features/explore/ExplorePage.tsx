@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { type KeyboardEvent, useId, useRef, useState } from "react";
-import type { DocumentSet, Shape } from "../../api/generated/shapes";
+import { type KeyboardEvent, useDeferredValue, useId, useRef, useState } from "react";
+import { exportQuery } from "../../analysis/api";
+import { ExportDialog } from "../../analysis/ExportDialog";
+import { namedInputs, runPanelSteps } from "../../analysis/panel";
+import { StepsEditor } from "../../analysis/StepsEditor";
+import { asSteps, type Step } from "../../analysis/steps";
+import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -22,7 +27,7 @@ import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
-import { appendPages, documentsOf, outcomesOf, projectOutcomes } from "../dashboards/results";
+import { appendPages, documentsOf, outcomesOf } from "../dashboards/results";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
@@ -94,8 +99,6 @@ function Explore({ orgId }: { orgId: string }) {
   const kinds = useQuery(kindsQuery(orgId));
   const [chosen, setChosen] = useState<string | null>(() => readPreference(LAST_DATASOURCE_KEY));
   const [queries, setQueries] = useState<Record<string, unknown>>({});
-  // The projection step per data source; it belongs to the panel, not to the query.
-  const [steps, setSteps] = useState<Record<string, unknown[]>>({});
   // Pages loaded after the first one through `nextCursor`, for the run they belong to.
   const [more, setMore] = useState<{
     of: Submitted | null;
@@ -112,6 +115,11 @@ function Explore({ orgId }: { orgId: string }) {
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
   const [adding, setAdding] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // Analysis steps on the result; they go with the panel when it is added to a dashboard.
+  const [steps, setSteps] = useState<Step[]>([]);
+  // The result and the steps editor share one run, a moment behind typing.
+  const deferredSteps = useDeferredValue(steps);
   const tabsId = useId();
 
   // Only the sources the caller may query (the role or a grant).
@@ -216,22 +224,25 @@ function Explore({ orgId }: { orgId: string }) {
       keep((pages) => ({ of: run, pages, loading: false, error: errorMessage(t, problem) }));
     }
   }
-  const projection = projectionFor(steps[datasource.id] ?? [], REF_ID);
-  const transformations = submitted === null ? [] : (steps[submitted.datasourceId] ?? []);
-  // The suggestion follows what the panel will get: documents, or the frame of a projection step.
-  const results = projectOutcomes(outcomes, transformations).flatMap((o) =>
-    "result" in o ? [o.result] : [],
-  );
   const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
   const takesDocuments = kindShapes.includes("documents");
-  const shapes: Shape[] =
-    projection === undefined || projection.disabled === true
-      ? kindShapes
-      : [...new Set<Shape>([...kindShapes, "frame"])];
   // Paths to suggest for the projection: those of the last result's documents.
   const resultFields = documentsOf(outcomes).flatMap(({ documents }) =>
     projectionPaths(schemaOf(documents)),
   );
+  // One list of steps for the result: the projection (edited under the query) and the
+  // analysis steps after it, run once for the panel and the steps editor.
+  const projection = projectionFor(steps, REF_ID);
+  const projected = projection !== undefined && projection.disabled !== true;
+  const stepsRun = runPanelSteps(deferredSteps, outcomes);
+  // The suggestion follows what the panel will get: documents, or the frame of a projection.
+  const results: QueryResult[] = [
+    ...outcomes.flatMap((o) =>
+      "result" in o && !(projected && o.result.shape === "documents") ? [o.result] : [],
+    ),
+    ...(projected ? stepsRun.frames.map((f) => ({ shape: "frame" as const, frame: f.frame })) : []),
+  ];
+  const shapes: Shape[] = projected ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
   const choices = panelsForShapes(shapes);
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
   const panel: PanelModel = {
@@ -243,7 +254,7 @@ function Explore({ orgId }: { orgId: string }) {
       submitted === null
         ? []
         : [{ refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query }],
-    transformations,
+    transformations: steps,
     options: {},
     fieldConfig: {},
   };
@@ -317,10 +328,8 @@ function Explore({ orgId }: { orgId: string }) {
           projection={projection}
           fields={[...new Set(resultFields)]}
           onChange={(next) =>
-            setSteps((all) => ({
-              ...all,
-              [datasource.id]: withProjection(all[datasource.id] ?? [], REF_ID, next),
-            }))
+            // The projection joins the one list of steps, before the analysis steps.
+            setSteps((all) => asSteps(withProjection(all, REF_ID, next)))
           }
         />
       ) : null}
@@ -349,12 +358,22 @@ function Explore({ orgId }: { orgId: string }) {
                 ))}
               </select>
             </div>
+            {permissions.has("data:export") ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setExporting(true)}
+                disabled={result.data === undefined}
+              >
+                {t("analysis.export.button")}
+              </button>
+            ) : null}
             {permissions.has("dashboards:write") ? (
               <button
                 type="button"
                 className="button button--secondary"
                 onClick={() => setAdding(true)}
-                disabled={result.data === undefined || hasProjectionProblems(transformations)}
+                disabled={result.data === undefined || hasProjectionProblems(steps)}
               >
                 {t("explore.addToDashboard")}
               </button>
@@ -400,6 +419,7 @@ function Explore({ orgId }: { orgId: string }) {
                         }
                       : undefined
                   }
+                  stepsRun={stepsRun}
                 />
               </PanelHostContext>
             ) : null}
@@ -428,13 +448,49 @@ function Explore({ orgId }: { orgId: string }) {
           {current.error === null ? null : <FormAlert>{current.error}</FormAlert>}
         </section>
       )}
+      {submitted === null ? null : (
+        <StepsEditor
+          steps={steps}
+          onChange={setSteps}
+          refIds={[REF_ID]}
+          inputs={namedInputs(outcomes)}
+          run={stepsRun}
+        />
+      )}
+      {exporting && submitted !== null ? (
+        <ExportDialog
+          frames={stepsRun.frames.map((f) => f.name)}
+          run={(choice, signal) => {
+            const timeRange = { from: submitted.from, to: submitted.to };
+            return exportQuery(
+              orgId,
+              {
+                queries: [
+                  { refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query },
+                ],
+                timeRange,
+                maxDataPoints: MAX_DATA_POINTS,
+                intervalMs: intervalFor(timeRange),
+                variables: {},
+                steps,
+                format: choice.format,
+                language: choice.language,
+                ...(choice.frame === undefined ? {} : { frame: choice.frame }),
+                title: datasource.name,
+              },
+              signal,
+            );
+          }}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
       {adding && submitted !== null ? (
         <AddToDashboardDialog
           orgId={orgId}
           panel={{
             ...panel,
             title: datasource.name,
-            transformations: storableTransformations(transformations),
+            transformations: storableTransformations(steps),
           }}
           range={submitted.range}
           onClose={() => setAdding(false)}

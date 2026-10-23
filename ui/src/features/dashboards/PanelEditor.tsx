@@ -1,5 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useDeferredValue, useId, useState } from "react";
+import { namedInputs, runPanelSteps } from "../../analysis/panel";
+import { StepsEditor } from "../../analysis/StepsEditor";
+import { asSteps, withUnknown } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
@@ -88,6 +91,10 @@ export function PanelEditor({
     source: unchanged ? "stored" : "draft",
     run: preview.run,
   });
+
+  // One run of the steps for the preview and the steps editor, a moment behind typing.
+  const deferredSteps = useDeferredValue(panel.transformations);
+  const stepsRun = runPanelSteps(deferredSteps, results.data ?? []);
 
   const kindOf = (datasourceId: string) =>
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
@@ -225,6 +232,7 @@ export function PanelEditor({
               onFilter={
                 preview.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
               }
+              stepsRun={stepsRun}
               variables={variables}
             />
           </div>
@@ -338,6 +346,15 @@ export function PanelEditor({
           ) : null}
           {mayQuery ? null : <p className="field__hint">{t("dashboards.editor.noQueryRight")}</p>}
         </section>
+        <StepsEditor
+          steps={asSteps(panel.transformations)}
+          onChange={(steps) =>
+            setPanel((p) => ({ ...p, transformations: withUnknown(p.transformations, steps) }))
+          }
+          refIds={panel.targets.map((target) => target.refId)}
+          inputs={namedInputs(results.data ?? [])}
+          run={stepsRun}
+        />
       </div>
     </Dialog>
   );

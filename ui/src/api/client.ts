@@ -241,6 +241,63 @@ export async function request(
   return parsed;
 }
 
+/** A file the server sent as an attachment. */
+export interface DownloadedFile {
+  blob: Blob;
+  /** From `Content-Disposition`; the server sends only letters, digits, `-`, `_` and the dot. */
+  filename: string;
+}
+
+/**
+ * POSTs a JSON body and returns the file the server answers with (exports). Failures are
+ * ApiErrors from the JSON error body, as with `request`.
+ */
+export async function requestFile(
+  path: string,
+  body: unknown,
+  options?: RequestOptions,
+): Promise<DownloadedFile> {
+  const init: RequestInit = {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Accept: "*/*", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  if (options?.signal !== undefined) {
+    init.signal = options.signal;
+  }
+  const cancelled = (cause: unknown) =>
+    options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch (cause) {
+    if (cancelled(cause)) {
+      throw cause;
+    }
+    throw new ApiError("network", 0, cause instanceof Error ? cause.message : String(cause));
+  }
+  if (!response.ok) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await response.text());
+    } catch {
+      parsed = undefined;
+    }
+    throw errorFromResponse(response.status, parsed, response.headers.get("Retry-After"));
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const filename = /filename="([\w.-]+)"/.exec(disposition)?.[1] ?? "kalzit-export";
+  try {
+    return { blob: await response.blob(), filename };
+  } catch (cause) {
+    if (cancelled(cause)) {
+      throw cause;
+    }
+    throw new ApiError("network", response.status, cause instanceof Error ? cause.message : "");
+  }
+}
+
 /** Narrows a parsed body or throws `invalid_response`, so a contract mismatch fails loudly. */
 export function expectShape<T>(value: unknown, guard: (v: unknown) => v is T, what: string): T {
   if (!guard(value)) {
