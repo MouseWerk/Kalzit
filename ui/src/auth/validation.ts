@@ -154,8 +154,8 @@ const CHARACTER_KINDS = [/\p{Ll}/u, /\p{Lu}/u, /\p{N}/u, /[^\p{L}\p{N}]/u];
 
 /**
  * A rough guide while a new password is typed, not a rule: the server only checks the length.
- * Length counts most; mixing lower and upper case, digits and other characters helps a shorter
- * password.
+ * Length alone reaches "fair" ("good length"); the top level also needs a mix of at least three
+ * kinds of characters (lower and upper case, digits, others), so length alone is never "strong".
  */
 export function passwordStrength(password: string): {
   level: PasswordStrengthLevel;
@@ -169,7 +169,7 @@ export function passwordStrength(password: string): {
     return { level: "short", length };
   }
   const kinds = CHARACTER_KINDS.filter((kind) => kind.test(password)).length;
-  const strong = length >= 20 || (length >= 16 && kinds >= 3);
+  const strong = length >= 16 && kinds >= 3;
   return { level: strong ? "strong" : "fair", length };
 }
 

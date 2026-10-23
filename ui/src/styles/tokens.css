@@ -444,6 +444,12 @@
     --auth-card-width-wide: 32rem;
     --size-auth-art: 28rem;
     --size-auth-step: 1.25rem;
+    /* Strokes of the drawing: grid and dim edges, thin marks, the strong path, the main series. */
+    --stroke-hairline: 1;
+    --stroke-thin: 1.25;
+    --stroke-path: 1.5;
+    --stroke-series: 1.75;
+    --dash-compare: 4 4;
     --duration-spin: 0.8s;
   }
 }

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type Ref, useId, useState } from "react";
+import { type KeyboardEvent, type Ref, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { MIN_PASSWORD_LENGTH, passwordStrength } from "./validation";
@@ -40,6 +40,27 @@ export function PasswordField({
   const strengthId = `${id}-strength`;
   const [visible, setVisible] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
+  const fieldRef = useRef<HTMLDivElement>(null);
+
+  // A shown password is hidden again once the form is sent and when the page goes away (another
+  // tab, the back-forward cache), so it never stays readable on a screen left alone.
+  useEffect(() => {
+    const form = fieldRef.current?.closest("form");
+    const hide = () => setVisible(false);
+    const hideWhenHidden = () => {
+      if (document.visibilityState === "hidden") {
+        hide();
+      }
+    };
+    form?.addEventListener("submit", hide);
+    window.addEventListener("pagehide", hide);
+    document.addEventListener("visibilitychange", hideWhenHidden);
+    return () => {
+      form?.removeEventListener("submit", hide);
+      window.removeEventListener("pagehide", hide);
+      document.removeEventListener("visibilitychange", hideWhenHidden);
+    };
+  }, []);
 
   const strength = showStrength ? passwordStrength(value) : null;
   const describedBy = [
@@ -73,7 +94,7 @@ export function PasswordField({
   const bars = strength === null ? 0 : { empty: 0, short: 1, fair: 2, strong: 3 }[strength.level];
 
   return (
-    <div className="field">
+    <div className="field" ref={fieldRef}>
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -106,9 +127,7 @@ export function PasswordField({
           type="button"
           className="password__toggle"
           aria-controls={id}
-          aria-pressed={visible}
-          aria-label={t("password.show")}
-          title={t("password.show")}
+          aria-label={visible ? t("password.hide") : t("password.show")}
           onClick={() => setVisible(!visible)}
         >
           <Icon name={visible ? "eyeOff" : "eye"} />

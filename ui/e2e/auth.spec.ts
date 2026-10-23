@@ -35,13 +35,19 @@ for (const variant of [
       const password = page.getByLabel(t("login.password", {}, variant.language), {
         exact: true,
       });
-      const toggle = page.getByRole("button", { name: t("password.show", {}, variant.language) });
+      const show = page.getByRole("button", { name: t("password.show", {}, variant.language) });
+      const hide = page.getByRole("button", { name: t("password.hide", {}, variant.language) });
       await password.fill("visible-for-a-moment");
       await expect(password).toHaveAttribute("type", "password");
-      await toggle.click();
+      await show.click();
       await expect(password).toHaveAttribute("type", "text");
-      await expect(toggle).toHaveAttribute("aria-pressed", "true");
-      await toggle.click();
+      await hide.click();
+      await expect(password).toHaveAttribute("type", "password");
+      // Sending the form hides it again.
+      await show.click();
+      await page
+        .getByRole("button", { name: t("login.submit", {}, variant.language), exact: true })
+        .click();
       await expect(password).toHaveAttribute("type", "password");
     });
 

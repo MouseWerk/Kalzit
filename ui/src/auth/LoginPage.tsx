@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { forgetAccountData, login, meQuery } from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { FormAlert } from "../components/FormAlert";
@@ -105,17 +105,24 @@ export function LoginPage() {
     // The sign-in limit counts failures over minutes, so "a moment" would undersell the wait.
     serverError = code === "rate_limited" ? "login.rateLimited" : `errors.${code}`;
   }
-  // The confirmation of a sign-out gives way to whatever the next attempt brings.
-  const signedOut = search.signedOut === true && signIn.isIdle;
+  // The status region is mounted empty and filled after the first render, so screen readers
+  // announce the confirmation; it gives way to whatever the next attempt brings.
+  const [announced, setAnnounced] = useState(false);
+  useEffect(() => {
+    setAnnounced(search.signedOut === true);
+  }, [search.signedOut]);
+  const signedOut = announced && signIn.isIdle;
 
   return (
     <AuthLayout title={t("login.title")} lead={t("login.lead")}>
-      {signedOut ? (
-        <p className="notice auth__notice" role="status">
-          <Icon name="check" />
-          <span>{t("login.signedOut")}</span>
-        </p>
-      ) : null}
+      <div className="auth__status" role="status">
+        {signedOut ? (
+          <p className="notice auth__notice">
+            <Icon name="check" />
+            <span>{t("login.signedOut")}</span>
+          </p>
+        ) : null}
+      </div>
       <FormAlert>{serverError === null ? null : t(serverError)}</FormAlert>
       <form className="form" noValidate onSubmit={onSubmit} onKeyDown={preventComposingSubmit}>
         <TextField

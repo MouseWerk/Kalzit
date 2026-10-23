@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
@@ -21,7 +21,9 @@ describe("passwordStrength", () => {
     expect(passwordStrength("a".repeat(MIN_PASSWORD_LENGTH)).level).toBe("fair");
     expect(passwordStrength("a".repeat(16)).level).toBe("fair");
     expect(passwordStrength("Abcdefghijklmn12").level).toBe("strong");
-    expect(passwordStrength("a".repeat(20)).level).toBe("strong");
+    // Length alone never makes it strong; the top level needs a mix of characters.
+    expect(passwordStrength("a".repeat(64)).level).toBe("fair");
+    expect(passwordStrength("abcdefghijklmnop12").level).toBe("fair");
   });
 
   it("counts characters as the server does", () => {
@@ -31,20 +33,46 @@ describe("passwordStrength", () => {
 });
 
 describe("sign-in page", () => {
-  it("shows and hides the password with a toggle that keeps its name", async () => {
+  it("shows and hides the password with a toggle named after what it does", async () => {
     installFakeServer();
     const { user } = renderApp("/login");
     const password = await screen.findByLabelText("Password");
     const toggle = screen.getByRole("button", { name: "Show password" });
     expect(password.getAttribute("type")).toBe("password");
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(toggle.getAttribute("aria-controls")).toBe(password.id);
+    expect(toggle.hasAttribute("title")).toBe(false);
 
     await user.click(toggle);
     expect(password.getAttribute("type")).toBe("text");
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toBe("Hide password");
     await user.click(toggle);
     expect(password.getAttribute("type")).toBe("password");
+    expect(toggle.getAttribute("aria-label")).toBe("Show password");
+  });
+
+  it("hides a shown password again when the form is sent", async () => {
+    installFakeServer();
+    const { user } = renderApp("/login");
+    await user.click(await screen.findByLabelText("Email address"));
+    await user.paste(TEST_USER.email);
+    const password = screen.getByLabelText("Password");
+    await user.click(password);
+    await user.paste("wrong password");
+    await user.click(screen.getByRole("button", { name: "Show password" }));
+    expect(password.getAttribute("type")).toBe("text");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(password.getAttribute("type")).toBe("password");
+    expect(screen.getByRole("button", { name: "Show password" })).toBeTruthy();
+  });
+
+  it("hides a shown password again when the page is hidden", async () => {
+    installFakeServer();
+    const { user } = renderApp("/login");
+    const password = await screen.findByLabelText("Password");
+    await user.click(screen.getByRole("button", { name: "Show password" }));
+    expect(password.getAttribute("type")).toBe("text");
+    fireEvent(window, new Event("pagehide"));
+    await waitFor(() => expect(password.getAttribute("type")).toBe("password"));
   });
 
   it("warns about Caps Lock while it is on, linked to the field", async () => {
@@ -66,6 +94,7 @@ describe("sign-in page", () => {
     installFakeServer();
     const { user } = renderApp("/login?signedOut=true");
     const notice = await screen.findByText("You signed out.");
+    // Inside a status region that was there before the text, so it is announced.
     expect(notice.closest('[role="status"]')).toBeTruthy();
 
     await user.click(screen.getByLabelText("Email address"));
@@ -104,8 +133,10 @@ describe("setup page", () => {
     await user.type(password, "abcde");
     expect(describedText(password)).toContain("Too short: 5 of 12 characters.");
     await user.type(password, "fghijkl");
-    expect(describedText(password)).toContain("Long enough. More length makes it stronger.");
+    expect(describedText(password)).toContain(
+      "Good length. A mix of upper and lower case, digits and symbols makes it stronger.",
+    );
     await user.type(password, "MNO-9");
-    expect(describedText(password)).toContain("Strong password.");
+    expect(describedText(password)).toContain("Good length and a mix of characters.");
   });
 });

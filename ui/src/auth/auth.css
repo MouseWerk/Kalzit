@@ -86,7 +86,7 @@
     background: var(--bg-raised);
   }
 
-  .auth__notice {
+  .auth__status:not(:empty) {
     margin-block-end: var(--space-4);
   }
 
@@ -207,13 +207,9 @@
       color var(--duration-fast) var(--easing);
   }
 
-  .password__toggle:hover,
-  .password__toggle[aria-pressed="true"] {
-    color: var(--text);
-  }
-
   .password__toggle:hover {
     background: var(--bg-hover);
+    color: var(--text);
   }
 
   .password__status:empty {
@@ -287,27 +283,27 @@
 
   .shapes__hatch {
     stroke: var(--border-strong);
-    stroke-width: 1;
+    stroke-width: var(--stroke-hairline);
   }
 
   .shapes__line {
     fill: none;
     stroke: var(--text);
-    stroke-width: 1.75;
+    stroke-width: var(--stroke-series);
     stroke-linecap: round;
   }
 
   .shapes__compare {
     fill: none;
     stroke: var(--text-muted);
-    stroke-width: 1.25;
-    stroke-dasharray: 4 4;
+    stroke-width: var(--stroke-thin);
+    stroke-dasharray: var(--dash-compare);
   }
 
   .shapes__caret {
     fill: none;
     stroke: var(--text-muted);
-    stroke-width: 1.25;
+    stroke-width: var(--stroke-thin);
     stroke-linecap: round;
     stroke-linejoin: round;
   }
@@ -319,18 +315,18 @@
 
   .shapes__edge {
     stroke: var(--border-strong);
-    stroke-width: 1;
+    stroke-width: var(--stroke-hairline);
   }
 
   .shapes__edge--path {
     stroke: var(--text);
-    stroke-width: 1.5;
+    stroke-width: var(--stroke-path);
   }
 
   .shapes__node {
     fill: var(--bg-raised);
     stroke: var(--border-strong);
-    stroke-width: 1.25;
+    stroke-width: var(--stroke-thin);
   }
 
   .shapes__node--path {
@@ -345,8 +341,7 @@
     }
 
     .auth__aside {
-      gap: var(--space-10);
-      justify-content: space-between;
+      gap: var(--space-12);
       padding: var(--space-10) var(--space-12) var(--space-8);
       border-inline-end: var(--border-width) solid var(--border);
       background: var(--bg-surface);
@@ -363,8 +358,10 @@
       max-width: var(--size-text-max);
     }
 
+    /* The story follows the mark; only the license line is pushed to the bottom. */
     .auth__fineprint {
       display: block;
+      margin-block-start: auto;
       color: var(--text-muted);
       font-size: var(--font-size-xs);
     }
