@@ -20,8 +20,8 @@ import type { GraphSet, Node, Notice } from "../../api/generated/shapes";
  * - The schema route answers `{"kind": "graph", "labels", "edgeTypes", "propertyKeys", "queries"?}`
  *   with property keys as one list for the whole source.
  * - `truncated.reason` and `notices` say which limit cut a graph (`graph.node_limit`, ...). They
- *   come with the server side of M3 and are read defensively by `graphExtras` until the generated
- *   `GraphSet` type carries them.
+ *   are part of the generated `GraphSet`; `graphExtras` still checks each notice, so one odd entry
+ *   cannot break the panel.
  */
 
 /** What the source said about a graph beyond the generated type: notices and the cut's reason. */

@@ -18,7 +18,14 @@ const PATHS = {
   lock: "M6.5 10.5h11v9.5h-11zM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5",
   chevron: "M9 6.5 14.5 12 9 17.5",
   sidebar: "M4.5 4.5h15v15h-15zM9.5 4.5v15",
+  star: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
+  starFilled: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
+  plus: "M12 5v14M5 12h14",
+  keyboard: "M3.5 6.5h17v11h-17zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8",
 } as const;
+
+/** Icons drawn filled instead of outlined (the starred state of a star). */
+const FILLED: ReadonlySet<IconName> = new Set<IconName>(["starFilled"]);
 
 export type IconName = keyof typeof PATHS;
 
@@ -27,7 +34,7 @@ export function Icon({ name, className }: { name: IconName; className?: string }
     <svg
       className={className === undefined ? "icon" : `icon ${className}`}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={FILLED.has(name) ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth="1.75"
       strokeLinecap="round"

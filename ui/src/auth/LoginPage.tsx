@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
-import { login, meQuery } from "../api/auth";
+import { forgetAccountData, login, meQuery } from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { FormAlert } from "../components/FormAlert";
 import { TextField } from "../components/TextField";
@@ -45,6 +45,8 @@ export function LoginPage() {
     // A sign-in is never repeated on its own: each attempt counts against the sign-in limit.
     retry: false,
     onSuccess: async (me) => {
+      // Whatever the previous session left (its preferences above all) is not this account's.
+      forgetAccountData(queryClient);
       queryClient.setQueryData(meQuery.queryKey, me);
       await router.navigate({ href: search.redirect ?? "/", replace: true });
     },

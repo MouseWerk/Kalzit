@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use axum::extract::Request;
@@ -29,6 +29,18 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 /// open requests get less, so the database is closed before that.
 #[cfg(windows)]
 const WINDOWS_CLOSE_GRACE: Duration = Duration::from_secs(3);
+/// How long closing the database may take at a stop, the background writes' own stop included.
+/// Normally it is quick; it waits longer for a background write that waits for a lock, which on
+/// a loaded machine takes well over its busy timeout, and only a lock another program holds for
+/// longer runs it out.
+pub const CLOSE_WAIT: Duration = Duration::from_secs(5);
+
+/// How a stop went.
+#[derive(Debug)]
+pub struct Stopped {
+    /// The database closed within its budget, so SQLite checkpointed its WAL.
+    pub closed_in_time: bool,
+}
 
 /// A started server: the bound addresses (useful with port 0) and the listener tasks.
 pub struct Running {
@@ -36,8 +48,9 @@ pub struct Running {
     pub https_addr: Option<SocketAddr>,
     handles: Vec<Handle<SocketAddr>>,
     listeners: JoinSet<Result<()>>,
-    db: sqlx::AnyPool,
-    touches: Arc<crate::auth::session::Touches>,
+    state: AppState,
+    /// When the process ends regardless of the stop (Windows console close and shutdown).
+    hard_deadline: Arc<std::sync::Mutex<Option<Instant>>>,
 }
 
 impl Running {
@@ -48,10 +61,13 @@ impl Running {
         }
     }
 
-    /// Waits until every listener has stopped, then closes the database; the first listener
-    /// error ends the wait. Closing lets SQLite checkpoint its WAL into the database file, so a
-    /// copy of `kalzit.db` taken while the server is stopped is complete on its own.
-    pub async fn wait(mut self) -> Result<()> {
+    /// Waits until every listener has stopped, then closes the state (`AppState::close`: the
+    /// background writes, the data sources' pools and the database); the first listener error
+    /// ends the wait. Closing lets SQLite checkpoint its WAL
+    /// into the database file, so a copy of `kalzit.db` taken while the server is stopped is
+    /// complete on its own. The close gets `CLOSE_WAIT`, less when the process ends sooner; past
+    /// that the stop goes on without it.
+    pub async fn wait(mut self) -> Result<Stopped> {
         let mut outcome = Ok(());
         while let Some(result) = self.listeners.join_next().await {
             if let Err(e) = result.context("listener task").and_then(|r| r) {
@@ -59,9 +75,33 @@ impl Running {
                 break;
             }
         }
-        self.touches.abort_all().await;
-        self.db.close().await;
-        outcome
+        let deadline = *self.hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let budget = close_budget(deadline, Instant::now());
+        let closed_in_time = tokio::time::timeout(budget, self.state.close()).await.is_ok();
+        if !closed_in_time {
+            tracing::warn!(
+                "the database did not close within {budget:?}; a statement still waits for a lock another \
+                 program holds. Nothing committed is lost; the next start completes the WAL checkpoint"
+            );
+        }
+        outcome.map(|()| Stopped { closed_in_time })
+    }
+
+    /// Database connections in use right now, the background pool's included (tests: with no
+    /// request open, these are background writes running or waiting for the lock).
+    #[doc(hidden)]
+    pub fn connections_in_use(&self) -> u32 {
+        let db = &self.state.db;
+        let main = db.size().saturating_sub(db.num_idle() as u32);
+        main + self.state.background.connections_in_use()
+    }
+}
+
+/// `CLOSE_WAIT`, or what is left until `hard_deadline` when that comes first.
+fn close_budget(hard_deadline: Option<Instant>, now: Instant) -> Duration {
+    match hard_deadline {
+        Some(deadline) => deadline.saturating_duration_since(now).min(CLOSE_WAIT),
+        None => CLOSE_WAIT,
     }
 }
 
@@ -75,9 +115,13 @@ pub async fn run(config: Config) -> Result<()> {
     let setup_code = std::env::var("KALZIT_SETUP_TOKEN").ok().filter(|s| !s.trim().is_empty());
     let running = start(config, setup_code).await?;
     let handles = running.handles.clone();
+    let hard_deadline = running.hard_deadline.clone();
     tokio::spawn(async move {
-        let grace = wait_for_stop_signal().await;
+        let (grace, hard) = wait_for_stop_signal().await;
         tracing::info!("stop signal received, finishing open requests");
+        if hard {
+            *hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now() + grace);
+        }
         for handle in handles {
             handle.graceful_shutdown(Some(grace));
         }
@@ -103,17 +147,38 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         db::redact(&config.database_url())
     );
 
-    let state = AppState::new(config.clone(), pool, Arc::new(SystemClock), setup_code).await?;
+    // A start that fails from here on closes its pools and stops its background jobs: on Windows
+    // the data directory's files stay locked while a pool is open. The `secrets.lock` the
+    // keyring holds is released only once the last clone of the state is gone, which the stopped
+    // jobs no longer keep.
+    let state = match AppState::new(config.clone(), pool.clone(), Arc::new(SystemClock), setup_code).await {
+        Ok(state) => state,
+        Err(e) => {
+            pool.close().await;
+            return Err(e);
+        }
+    };
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
+    match listen(&config, &state).await {
+        Ok(running) => Ok(running),
+        Err(e) => {
+            state.close().await;
+            Err(e)
+        }
+    }
+}
+
+/// Binds the listeners of a started server; on an error the ones already bound are dropped.
+async fn listen(config: &Config, state: &AppState) -> Result<Running> {
     let app = router(state.clone());
     let mut running = Running {
         http_addr: None,
         https_addr: None,
         handles: Vec::new(),
         listeners: JoinSet::new(),
-        db: state.db.clone(),
-        touches: state.touches.clone(),
+        state: state.clone(),
+        hard_deadline: Arc::default(),
     };
 
     if let Some(addr) = config.https_addr() {
@@ -206,8 +271,9 @@ fn redirect_to_https(req: &Request, https_port: u16, public_url: Option<&str>) -
     }
 }
 
-/// Waits for a request to stop and answers how long open requests get to finish.
-async fn wait_for_stop_signal() -> Duration {
+/// Waits for a request to stop and answers how long open requests get to finish, and whether the
+/// process ends when that grace is over (Windows console close and shutdown).
+async fn wait_for_stop_signal() -> (Duration, bool) {
     let ctrl_c = async {
         if let Err(e) = tokio::signal::ctrl_c().await {
             tracing::warn!("cannot listen for Ctrl+C: {e}");
@@ -225,7 +291,7 @@ async fn wait_for_stop_signal() -> Duration {
                 std::future::pending::<()>().await;
             }
         }
-        SHUTDOWN_GRACE
+        (SHUTDOWN_GRACE, false)
     };
     // Closing the console window and shutting Windows down also stop the server gracefully, so the
     // database is closed and its WAL checkpointed. Windows ends the process a few seconds after
@@ -249,12 +315,26 @@ async fn wait_for_stop_signal() -> Duration {
                 std::future::pending::<()>().await;
             }
         }
-        WINDOWS_CLOSE_GRACE
+        (WINDOWS_CLOSE_GRACE, true)
     };
     #[cfg(not(any(unix, windows)))]
-    let terminate = std::future::pending::<Duration>();
+    let terminate = std::future::pending::<(Duration, bool)>();
     tokio::select! {
-        () = ctrl_c => SHUTDOWN_GRACE,
-        grace = terminate => grace,
+        () = ctrl_c => (SHUTDOWN_GRACE, false),
+        stop = terminate => stop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_close_gets_its_wait_or_what_is_left_before_a_hard_end() {
+        let now = Instant::now();
+        assert_eq!(close_budget(None, now), CLOSE_WAIT);
+        assert_eq!(close_budget(Some(now + Duration::from_secs(10)), now), CLOSE_WAIT);
+        assert_eq!(close_budget(Some(now + Duration::from_millis(500)), now), Duration::from_millis(500));
+        assert_eq!(close_budget(Some(now), now + Duration::from_secs(1)), Duration::ZERO);
     }
 }

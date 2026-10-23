@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { cutGraph, FAKE_GRAPH, ID } from "../../features/datasources/test/fakeGraph";
+import { setLanguage } from "../../i18n/i18n";
 import { type PanelHost, PanelHostContext } from "../host";
 import { pathSteps } from "../path/PathPanel";
 import { getPanel, suggestPanel } from "../registry";
@@ -64,9 +65,30 @@ describe("network panel", () => {
   it("cuts to the node limit with a notice, and shows the source's own notices", async () => {
     await renderGraph("network", cutGraph(FAKE_GRAPH, 4), { nodeLimit: 2 });
     expect(screen.getByText(/Showing the 2 best connected of 4 nodes/)).toBeTruthy();
-    // A notice code this UI has no text for shows the server's English text.
     expect(screen.getByText("The graph was cut at 4 nodes.")).toBeTruthy();
     expect(screen.getByRole("table", { name: "Nodes of Shop: 2" })).toBeTruthy();
+  });
+
+  it("shows the source's limits in the UI's language, also for a cut without its own notice", async () => {
+    setLanguage("de");
+    // The server's notice (English text) and a cut that names only its reason.
+    const edgeCut = { ...FAKE_GRAPH, truncated: { limit: 3, reason: "graph.edge_limit" } };
+    const plugin = getPanel("network") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    render(
+      <Panel
+        frames={[]}
+        graphs={[
+          { refId: "A", datasourceId: "ds", graph: cutGraph(FAKE_GRAPH, 4) },
+          { refId: "B", datasourceId: "ds", graph: edgeCut as GraphSet },
+        ]}
+        options={plugin.options({})}
+        timeRange={RANGE}
+        title="Shop"
+      />,
+    );
+    expect(await screen.findByText("Der Graph wurde bei 4 Knoten abgeschnitten.")).toBeTruthy();
+    expect(screen.getByText("Der Graph wurde bei 3 Kanten abgeschnitten.")).toBeTruthy();
   });
 
   it("sets the dashboard variable a click names, to the chosen property", async () => {

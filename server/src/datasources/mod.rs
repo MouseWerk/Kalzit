@@ -7,16 +7,22 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod bolt;
+pub mod cypher;
 pub mod detail;
 pub mod frame;
+pub mod graph;
+pub mod gsql;
 pub mod mongodb;
 pub mod mssql;
 pub mod mysql;
+pub mod neo4j;
 pub mod postgres;
 pub mod prometheus;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
+pub mod tigergraph;
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
@@ -132,9 +138,28 @@ pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SourceSchema {
-    Tables { tables: Vec<Table> },
-    Metrics { metrics: Vec<String>, labels: Vec<String> },
-    Collections { database: String, collections: Vec<mongodb::CollectionSchema> },
+    Tables {
+        tables: Vec<Table>,
+    },
+    Metrics {
+        metrics: Vec<String>,
+        labels: Vec<String>,
+    },
+    Collections {
+        database: String,
+        collections: Vec<mongodb::CollectionSchema>,
+    },
+    /// Graph sources: node labels (TigerGraph: vertex types), relationship (edge) types, property
+    /// keys, and for TigerGraph the installed queries.
+    Graph {
+        labels: Vec<String>,
+        #[serde(rename = "edgeTypes")]
+        edge_types: Vec<String>,
+        #[serde(rename = "propertyKeys")]
+        property_keys: Vec<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        queries: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -403,6 +428,13 @@ impl Connection {
         any.clone()
             .downcast::<T>()
             .map_err(|_| SourceError::failed("internal", "internal: connection state of another kind"))
+    }
+
+    /// Closes the SQLite pool this connection keeps, if any: the other kinds hold no files.
+    async fn close(&self) {
+        if let Some(pool) = self.shared.get().and_then(|s| s.downcast_ref::<sqlx::sqlite::SqlitePool>()) {
+            pool.close().await;
+        }
     }
 
     /// The text without this source's secrets.
@@ -858,6 +890,9 @@ impl DataSources {
                 mssql::kind(),
                 prometheus::kind(),
                 mongodb::kind(),
+                neo4j::neo4j(),
+                neo4j::memgraph(),
+                tigergraph::kind(),
             ],
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
@@ -885,9 +920,22 @@ impl DataSources {
         &self.keyring
     }
 
+    /// Closes and drops every cached connection (see `AppState::close`).
+    pub async fn close(&self) {
+        let cached: Vec<Arc<Connection>> =
+            self.connections.lock().expect("connection cache lock").drain().map(|(_, c)| c.conn).collect();
+        for conn in cached {
+            conn.close().await;
+        }
+    }
+
     /// Drops the cached connection after the source changed or went to the trash.
     pub fn forget(&self, datasource_id: &str) {
-        self.connections.lock().expect("connection cache lock").remove(datasource_id);
+        let removed = self.connections.lock().expect("connection cache lock").remove(datasource_id);
+        // A SQLite pool closes its file now, not whenever the last query holding it ends.
+        if let (Some(cached), Ok(rt)) = (removed, tokio::runtime::Handle::try_current()) {
+            rt.spawn(async move { cached.conn.close().await });
+        }
     }
 
     async fn setting(&self, state: &AppState, key: &str) -> ApiResult<Value> {
@@ -1274,13 +1322,15 @@ pub fn precheck_targets(
     for host in settings.get("hosts").and_then(Value::as_str).map(mongodb::host_names).unwrap_or_default() {
         policy.precheck_host(&host).map_err(|b| (b, "hosts"))?;
     }
-    let url_host = settings
-        .get("url")
-        .and_then(Value::as_str)
-        .and_then(|u| reqwest::Url::parse(u).ok())
-        .and_then(|u| u.host_str().map(String::from));
-    if let Some(host) = url_host {
-        policy.precheck_host(&host).map_err(|b| (b, "url"))?;
+    for field in ["url", "restppUrl"] {
+        let url_host = settings
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(|u| reqwest::Url::parse(u).ok())
+            .and_then(|u| u.host_str().map(String::from));
+        if let Some(host) = url_host {
+            policy.precheck_host(&host).map_err(|b| (b, field))?;
+        }
     }
     Ok(())
 }
@@ -1518,6 +1568,17 @@ mod tests {
         let secrets: crate::secrets::SecretPatch =
             [("token".to_string(), Some(zeroize::Zeroizing::new("x".to_string())))].into();
         assert_eq!(kind.validate_secrets(&secrets).unwrap_err().field, "secrets");
+    }
+
+    #[test]
+    fn every_url_setting_is_prechecked() {
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
+        let kind = tigergraph::kind();
+        let ok = serde_json::json!({ "url": "http://tg.intern:14240", "graph": "g", "user": "u" });
+        assert!(precheck_targets(&policy, &kind, &ok).is_ok());
+        let mut restpp = ok.clone();
+        restpp["restppUrl"] = serde_json::json!("http://169.254.169.254/restpp");
+        assert_eq!(precheck_targets(&policy, &kind, &restpp).unwrap_err().1, "restppUrl");
     }
 
     #[test]

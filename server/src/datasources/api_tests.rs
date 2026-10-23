@@ -43,6 +43,13 @@ impl Reply {
 }
 
 impl T {
+    /// Closes the app and deletes its directory (`app::finish_test_app`).
+    async fn finish(self) {
+        let T { app, state, dir, .. } = self;
+        drop(app);
+        crate::app::finish_test_app(state, dir).await;
+    }
+
     async fn new() -> T {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
@@ -190,7 +197,10 @@ async fn kinds_describe_their_settings_forms() {
     let r = t.get("/datasource-kinds").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let kinds: Vec<&str> = r.body["items"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus", "mongodb"]);
+    assert_eq!(
+        kinds,
+        ["postgres", "mysql", "sqlite", "mssql", "prometheus", "mongodb", "neo4j", "memgraph", "tigergraph"]
+    );
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");
@@ -201,6 +211,7 @@ async fn kinds_describe_their_settings_forms() {
     assert!(ssl["options"].as_array().unwrap().contains(&json!("verify-full")));
     assert!(pg["settings"].as_array().unwrap().iter().any(|f| f["name"] == "maxRows"));
     assert!(r.body["nextCursor"].is_null());
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -275,6 +286,7 @@ async fn create_read_update_trash_and_restore() {
             "datasource.restored"
         ]
     );
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -295,6 +307,7 @@ async fn pages_are_bounded_and_continue_with_the_cursor() {
         let r = t.get(&format!("/datasources{bad}")).await;
         assert_eq!(r.code(), "validation", "{bad}: {}", r.text);
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -361,6 +374,7 @@ async fn secrets_are_never_returned_and_follow_patch_semantics() {
     let stored: Vec<(String,)> =
         sqlx::query_as("SELECT settings FROM datasources").fetch_all(&t.state.db).await.unwrap();
     assert!(!stored[0].0.contains("Geheim"));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -422,6 +436,7 @@ async fn settings_and_secrets_are_validated() {
         .await;
     assert_eq!(r.body["error"]["reason"], "settings.expected_option", "{}", r.text);
     assert_eq!(r.body["error"]["params"]["options"], "disable, prefer, require, verify-ca, verify-full", "{}", r.text);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -462,6 +477,7 @@ async fn blocked_targets_are_refused_when_saving_and_querying() {
     let h = t.post(&format!("/datasources/{id}/health"), json!({})).await;
     assert_eq!((h.body["ok"].as_bool(), h.body["code"].as_str()), (Some(false), Some("datasource_target_blocked")));
     assert_eq!(h.body["reason"], "target.sqlite_path_refused", "{}", h.text);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -488,6 +504,7 @@ async fn sqlite_queries_answer_typed_frames() {
     assert_eq!(frame["fields"][3]["values"], json!([1_735_725_600_000_i64, 1_767_261_600_000_i64, null]));
     assert_eq!(frame["fields"][4]["values"], json!([true, false, null]));
     assert_eq!(frame["meta"]["executedQuery"], "SELECT id, land, betrag, am, bezahlt FROM verkauf ORDER BY id");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -521,6 +538,7 @@ async fn macros_and_variables_are_bound() {
     evil["variables"]["spalte"] = json!("sqlite_version()");
     let r = t.send(Method::POST, &t.path("/query"), Some(evil), Some(&t.owner)).await;
     assert_eq!(r.body["results"]["A"]["error"]["code"], "query_rejected");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -579,6 +597,7 @@ async fn writes_are_rejected_and_each_query_answers_on_its_own() {
             assert_eq!(r.body["error"]["reason"], reason, "{bad}: {}", r.text);
         }
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -606,6 +625,7 @@ async fn row_limits_truncate_with_a_notice() {
         .query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT land FROM verkauf" } }]))
         .await;
     assert_eq!(r.body["results"]["A"]["result"]["frame"]["meta"]["rowsTruncated"], true, "{}", r.text);
+    t.finish().await;
 }
 
 const SLOW: &str = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT COUNT(*) FROM n";
@@ -625,6 +645,7 @@ async fn slow_queries_time_out_and_the_source_stays_usable() {
     let r =
         t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT 1 AS eins" } }])).await;
     assert_eq!(r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["1"]), "{}", r.text);
+    t.finish().await;
 }
 
 /// A request that goes away drops its queries: the user's query slots are free again at once
@@ -663,6 +684,7 @@ async fn a_dropped_request_cancels_its_queries() {
     let r = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "sql": "SELECT 2" } }])).await;
     assert!(r.body["results"]["A"]["result"].is_object(), "{}", r.text);
     assert!(started.elapsed() < Duration::from_secs(5));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -684,6 +706,7 @@ async fn empty_sqlite_tables_keep_their_declared_types() {
     // documented default, string.
     assert_eq!(types, ["int64", "number", "string", "time", "bool", "string", "number", "string", "string"]);
     assert_eq!(frame["fields"][1]["values"], json!([]));
+    t.finish().await;
 }
 
 /// Values are converted to the column's type where nothing is lost: a whole REAL in an int64
@@ -757,6 +780,7 @@ async fn sqlite_values_keep_to_their_column_type() {
     let frame = limited(3).await;
     assert_eq!(frame["fields"][0]["values"], json!(["1", "3", null]));
     assert_eq!(mismatch(&frame).unwrap()["params"]["count"], "1");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -773,6 +797,7 @@ async fn a_recreated_sqlite_table_answers_with_its_new_types() {
     let after = t.query(&t.owner, q).await;
     assert_eq!(field(&after)["type"], "number", "{}", after.text);
     assert_eq!(field(&after)["values"], json!([1.5]));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -793,6 +818,7 @@ async fn health_and_schema_of_a_sqlite_file() {
     assert_eq!(s.body["kind"], "tables", "{}", s.text);
     assert_eq!(s.body["tables"][0]["name"], "verkauf");
     assert_eq!(s.body["tables"][0]["columns"][1], json!({ "name": "land", "type": "TEXT" }));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -816,6 +842,7 @@ async fn changed_settings_rebuild_the_connection() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     assert_eq!(t.query(&t.owner, q).await.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["b"]));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -884,6 +911,7 @@ async fn roles_and_organizations_are_enforced() {
     let r = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": foreign, "query": { "sql": "SELECT 1" } }])).await;
     assert_eq!(r.body["results"]["A"]["error"]["code"], "not_found");
     assert_eq!(t.get("/datasources/not-a-uuid").await.status, StatusCode::NOT_FOUND);
+    t.finish().await;
 }
 
 // ---- Prometheus against a fake server ----
@@ -1012,6 +1040,7 @@ async fn prometheus_through_the_client_factory() {
     t.set("datasources.allowed_targets", json!(["10.0.0.0/8"]));
     let blocked = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "up" } }])).await;
     assert_eq!(blocked.body["results"]["A"]["error"]["code"], "datasource_target_blocked", "{}", blocked.text);
+    t.finish().await;
 }
 
 // ---- a dashboard's stored queries ----
@@ -1106,6 +1135,7 @@ async fn viewers_run_the_stored_queries_of_dashboards_they_may_read() {
     let r =
         t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": { "land": "Schweiz" } })).await;
     assert_eq!(r.body["results"]["A"]["error"]["code"], "not_found", "{}", r.text);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1134,6 +1164,7 @@ async fn dashboards_the_caller_cannot_read_do_not_exist() {
     // A trashed dashboard runs nothing.
     t.send(Method::DELETE, &t.path(&format!("/dashboards/{open}")), None, Some(&t.owner)).await;
     assert_eq!(t.panel(&viewer, &open, "p1", body).await.status, StatusCode::NOT_FOUND);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1170,6 +1201,7 @@ async fn dashboard_query_requests_are_bounded() {
     assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("intervalMs")));
     let r = t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "intervalMs": u64::MAX })).await;
     assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("intervalMs")));
+    t.finish().await;
 }
 
 /// A grant on a data source gives a member what the role does not, on that source only, and
@@ -1218,6 +1250,7 @@ async fn data_source_grants_extend_and_revoke_access() {
     assert_eq!(health.status, StatusCode::NOT_FOUND);
     let list = t.send(Method::GET, &t.path("/datasources"), None, Some(&viewer)).await;
     assert!(list.body["items"].as_array().unwrap().is_empty());
+    t.finish().await;
 }
 
 /// Someone allowed to edit a dashboard may rename it although they could not write its queries:
@@ -1247,6 +1280,7 @@ async fn unchanged_queries_need_no_query_rights_when_saving() {
     model["panels"][0]["targets"][0]["datasourceId"] = json!(uuid::Uuid::now_v7().to_string());
     let r = t.send(Method::PUT, &path, Some(json!({ "model": model, "version": 2 })), Some(&t.owner)).await;
     assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("model")), "{}", r.text);
+    t.finish().await;
 }
 
 /// Request values cannot replace what the dashboard fixes: constants, and custom variables
@@ -1314,6 +1348,7 @@ async fn dashboard_variables_keep_to_the_dashboard() {
             r.text
         );
     }
+    t.finish().await;
 }
 
 /// A constant, a custom and a textbox variable in one statement each bind their own value, on
@@ -1359,6 +1394,7 @@ async fn constant_and_custom_variables_share_a_statement() {
     });
     let r = t.send(Method::POST, &t.path("/query"), Some(free), Some(&t.owner)).await;
     assert_eq!(r.body["results"]["A"]["result"]["frame"], frame, "the same answer through /query: {}", r.text);
+    t.finish().await;
 }
 
 /// The same rules hold for a Prometheus panel: a custom variable keeps to its options.
@@ -1389,6 +1425,7 @@ async fn prometheus_panels_keep_variables_to_the_dashboard() {
     let bad = json!({ "timeRange": range(), "variables": { "job": "api\"} or vector(1) or up{job=\"x" } });
     let r = t.panel(&viewer, &dashboard, "p", bad).await;
     assert_eq!((r.code(), r.body["error"]["field"].as_str()), ("validation", Some("variables")), "{}", r.text);
+    t.finish().await;
 }
 
 /// Any change to a variable definition makes every stored query count as changed, so an editor
@@ -1435,6 +1472,7 @@ async fn variable_changes_recheck_every_stored_query() {
     m["title"] = json!("Neu");
     let r = t.send(Method::PUT, &path, Some(json!({ "model": m, "version": 2 })), Some(&viewer)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    t.finish().await;
 }
 
 /// List and detail answers say what the caller may do, from role and grants, and the routes
@@ -1521,6 +1559,7 @@ async fn answers_carry_the_callers_access() {
     t.send(Method::DELETE, &t.path(&format!("/datasources/{ds}")), None, Some(&viewer)).await;
     let trash = t.send(Method::GET, &t.path("/datasources?trash=true"), None, Some(&viewer)).await;
     assert_eq!(trash.body["items"][0]["access"], access(true, true, true, true, true), "{}", trash.text);
+    t.finish().await;
 }
 
 /// `access` against what each route allows, for every combination of data source permissions on
@@ -1731,6 +1770,7 @@ async fn access_matches_what_the_routes_allow() {
     }
     assert!(restored > 0 && restored < n, "restore works for {restored} of {n} principals");
     assert!(bad.is_empty(), "{} of {n} principals disagree:\n{}", bad.len(), bad.join("\n"));
+    t.finish().await;
 }
 
 /// An edit grant on a data source renames it and changes its limits, but where it connects is
@@ -1782,4 +1822,5 @@ async fn an_edit_grant_cannot_repoint_a_data_source() {
     assert_eq!(ids, [ds.as_str()], "{}", trash.text);
     let restored = t.post(&format!("/datasources/{ds}/restore"), json!({})).await;
     assert_eq!(restored.status, StatusCode::OK);
+    t.finish().await;
 }
