@@ -42,6 +42,8 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | Dashboards | Your account: sessions |
 | ![Data source kinds as cards with their logos](docs/screenshots/data-source-kinds-light.png) | ![Data source kinds in the dark theme](docs/screenshots/data-source-kinds-dark.png) |
 | Adding a data source | Adding a data source, dark theme |
+| ![The panel editor with the preview, the query and the options](docs/screenshots/panel-editor-dark.png) | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) |
+| Panel editor, dark theme | Panel editor on a phone |
 | ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
 

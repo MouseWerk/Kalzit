@@ -197,12 +197,12 @@ describe("repeats", () => {
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(within(article("Orders")).getByRole("button", { name: "Edit “Orders”" }));
-    const dialog = screen.getByRole("dialog", { name: "Edit panel" });
+    const dialog = await screen.findByRole("region", { name: "Edit panel" });
     const repeat = within(dialog).getByRole("combobox", { name: "Repeat for each value of" });
     expect(within(repeat).queryByRole("option", { name: "one" })).toBeNull();
     await user.selectOptions(repeat, "land");
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Copies" }), "vertical");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await user.click(within(dialog).getByRole("button", { name: "Back to dashboard" }));
     await saveDashboard(user);
     await waitFor(() => expect(stored.versions).toHaveLength(2));
     expect(latest(stored).model.panels[0]?.repeat).toEqual({
@@ -582,10 +582,10 @@ describe("panel time options", () => {
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(within(article("Orders")).getByRole("button", { name: "Edit “Orders”" }));
-    const dialog = screen.getByRole("dialog", { name: "Edit panel" });
+    const dialog = await screen.findByRole("region", { name: "Edit panel" });
     await fill(user, within(dialog).getByRole("textbox", { name: /Own time range/ }), "yesterday");
     expect(within(dialog).getByText(/Enter a range relative to now/)).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: "Apply" })).toHaveProperty("disabled", true);
+    expect(within(dialog).getByRole("button", { name: "Save…" })).toHaveProperty("disabled", true);
   });
 });
 
@@ -777,7 +777,7 @@ describe("library panels", () => {
         name: "Edit “Revenue”",
       }),
     );
-    const editor = screen.getByRole("dialog", { name: "Edit panel" });
+    const editor = await screen.findByRole("region", { name: "Edit panel" });
     expect(
       within(editor).getByText(/This panel shows the library panel “Revenue per day”/),
     ).toBeTruthy();
@@ -786,7 +786,7 @@ describe("library panels", () => {
       within(editor).getByRole("textbox", { name: "Panel title" }),
       "Revenue net",
     );
-    await user.click(within(editor).getByRole("button", { name: "Apply" }));
+    await user.click(within(editor).getByRole("button", { name: "Back to dashboard" }));
     const warning = await screen.findByRole("dialog", { name: "Change library panel?" });
     expect(
       await within(warning).findByText(
@@ -819,7 +819,7 @@ describe("library panels", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(within(article("Orders")).getByRole("button", { name: "Edit “Orders”" }));
     await user.click(
-      within(screen.getByRole("dialog", { name: "Edit panel" })).getByRole("button", {
+      within(await screen.findByRole("region", { name: "Edit panel" })).getByRole("button", {
         name: "Make library panel…",
       }),
     );

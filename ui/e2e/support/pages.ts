@@ -43,8 +43,12 @@ export const MAIN_PAGES: readonly MainPage[] = [
           name: t("dashboards.panel.editNamed", { title: "Sales" }, language),
         })
         .click();
-      await dialog(page, "dashboards.editor.title", language);
-      await expect(page.getByRole("dialog").locator(".cm-editor")).toBeVisible();
+      // A page of its own, at its own address.
+      const editor = page.getByRole("region", {
+        name: t("dashboards.editor.title", {}, language),
+      });
+      await expect(editor.locator(".cm-editor")).toBeVisible();
+      await expect(page).toHaveURL(/\/panels\/p1\/edit$/);
     },
   },
   {

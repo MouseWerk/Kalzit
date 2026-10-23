@@ -1,0 +1,392 @@
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { installFakeServer, TEST_USER } from "../../test/fakeServer";
+import { renderApp } from "../../test/renderApp";
+import { PG_ID } from "../datasources/test/fakeDatasources";
+import { EDITOR_LAYOUT_KEY, readEditorLayout } from "./editorLayout";
+import { type DashboardModel, emptyModel, type PanelModel, placePanel } from "./model";
+import { addDashboard, latest } from "./test/fakeDashboards";
+
+/**
+ * The full-page panel editor (docs/design/feel.md sections 5 and 10): its route, leaving it with
+ * and without the change, the guard for unsaved changes, the remembered splits, and that typing
+ * in one query draws that query's editor only.
+ */
+
+// Render counts per query editor and of the preview. The query editor is replaced by a plain
+// text field (CodeMirror needs a layout jsdom does not have); the preview is the real one.
+const renders = vi.hoisted(() => ({
+  editors: new Map<string, number>(),
+  preview: 0,
+  bodies: new Map<string, number>(),
+}));
+
+vi.mock("../datasources/editors/QueryEditor", () => ({
+  QueryEditor: (props: {
+    label?: string;
+    query: unknown;
+    onChange: (query: unknown) => void;
+    onRun?: () => void;
+  }) => {
+    const label = props.label ?? "Query";
+    renders.editors.set(label, (renders.editors.get(label) ?? 0) + 1);
+    const sql = (props.query as { sql?: string } | undefined)?.sql ?? "";
+    return (
+      <textarea
+        aria-label={label}
+        value={sql}
+        onChange={(event) => props.onChange({ sql: event.currentTarget.value })}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && event.ctrlKey) props.onRun?.();
+        }}
+      />
+    );
+  },
+}));
+
+vi.mock("./PanelCard", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./PanelCard")>();
+  return {
+    ...real,
+    PanelBody: (props: ComponentProps<typeof real.PanelBody>) => {
+      renders.preview += 1;
+      return <real.PanelBody {...props} />;
+    },
+  };
+});
+
+// Each drawn visualization, by panel title: the card's body calls it through the registry.
+vi.mock("../../panels/registry", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../panels/registry")>();
+  const wrapped = new Map<string, ReturnType<typeof real.getPanel>>();
+  return {
+    ...real,
+    getPanel: (type: string) => {
+      const plugin = real.getPanel(type);
+      if (plugin === undefined) return plugin;
+      let counted = wrapped.get(type);
+      if (counted === undefined) {
+        const Real = plugin.Panel;
+        counted = {
+          ...plugin,
+          Panel: (props: ComponentProps<typeof Real>) => {
+            renders.bodies.set(props.title, (renders.bodies.get(props.title) ?? 0) + 1);
+            return <Real {...props} />;
+          },
+        } as typeof plugin;
+        wrapped.set(type, counted);
+      }
+      return counted;
+    },
+  };
+});
+
+function asRole(role: string) {
+  return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
+}
+
+function panel(id: string, title: string, extra: Partial<PanelModel> = {}): PanelModel {
+  return {
+    id,
+    type: "table",
+    title,
+    grid: { x: 0, y: 0, w: 12, h: 8 },
+    targets: [{ refId: "A", datasourceId: PG_ID, query: { sql: "SELECT * FROM orders" } }],
+    transformations: [],
+    options: {},
+    fieldConfig: {},
+    ...extra,
+  };
+}
+
+function setup(role = "editor", model?: DashboardModel) {
+  const server = installFakeServer({ signedIn: true, user: asRole(role) });
+  const stored = addDashboard(
+    server.areas.dashboards,
+    "d-main",
+    model ?? { ...emptyModel("Main"), panels: [panel("p1", "Orders")] },
+  );
+  return { server, stored };
+}
+
+const crumb = (name: string) =>
+  within(screen.getByRole("navigation", { name: "Breadcrumbs" })).getByRole("link", { name });
+
+const editorRegion = () => screen.findByRole("region", { name: "Edit panel" });
+
+async function openEditor(user: ReturnType<typeof renderApp>["user"], title: string) {
+  await user.click(await screen.findByRole("button", { name: "Edit" }));
+  await user.click(
+    within(await screen.findByRole("article", { name: title })).getByRole("button", {
+      name: `Edit “${title}”`,
+    }),
+  );
+  return editorRegion();
+}
+
+describe("the panel editor page", () => {
+  it("has its own address and goes back with Esc, keeping the change unsaved", async () => {
+    const { stored } = setup();
+    const { user, location } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    expect(location().pathname).toBe("/dashboards/d-main/panels/p1/edit");
+    // A page of its own, not a dialog; the dashboard's grid is not drawn behind it.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("article", { name: "Orders" })).toBeNull();
+    const title = within(editor).getByRole("textbox", { name: "Panel title" });
+    await user.clear(title);
+    await user.paste("Orders per day");
+    await user.click(document.body);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+    expect(await screen.findByRole("article", { name: "Orders per day" })).toBeTruthy();
+    expect(screen.getByText(/^Edit mode, unsaved changes/)).toBeTruthy();
+    expect(stored.versions).toHaveLength(1);
+  });
+
+  it("puts the panel back as it was on Discard, and takes a new panel off again", async () => {
+    setup();
+    const { user, location } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const title = within(editor).getByRole("textbox", { name: "Panel title" });
+    await user.clear(title);
+    await user.paste("Renamed");
+    await user.click(within(editor).getByRole("button", { name: "Discard" }));
+    const confirm = screen.getByRole("dialog", { name: "Discard the changes to this panel?" });
+    await user.click(within(confirm).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    expect(screen.getByText(/^Edit mode\. /)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Add panel" }));
+    const added = await editorRegion();
+    expect(location().pathname).toMatch(/^\/dashboards\/d-main\/panels\/[^/]+\/edit$/);
+    await user.click(within(added).getByRole("button", { name: "Discard" }));
+    const drop = screen.getByRole("dialog", { name: "Discard the changes to this panel?" });
+    expect(within(drop).getByText("The new panel is taken off the dashboard again.")).toBeTruthy();
+    await user.click(within(drop).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText(/^Edit mode\. /)).toBeTruthy();
+  });
+
+  it("opens from its address in edit mode, and sends viewers back to the dashboard", async () => {
+    setup();
+    const first = renderApp("/dashboards/d-main/panels/p1/edit");
+    const editor = await editorRegion();
+    expect(within(editor).getByRole("textbox", { name: "Panel title" })).toHaveProperty(
+      "value",
+      "Orders",
+    );
+    first.view.unmount();
+
+    setup("viewer");
+    const { location } = renderApp("/dashboards/d-main/panels/p1/edit");
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Edit panel" })).toBeNull();
+  });
+
+  it("says so when the panel is not on the dashboard", async () => {
+    setup();
+    const { user, location } = renderApp("/dashboards/d-main/panels/gone/edit");
+    expect(await screen.findByText("This panel is not on the dashboard")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Back to dashboard" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+  });
+
+  it("asks before leaving the dashboard with unsaved changes, from the editor too", async () => {
+    setup();
+    const { user, location } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const title = within(editor).getByRole("textbox", { name: "Panel title" });
+    await user.clear(title);
+    await user.paste("Changed");
+    // The breadcrumb to the list leaves the dashboard.
+    await user.click(crumb("Dashboards"));
+    const ask = await screen.findByRole("dialog", { name: "Leave without saving?" });
+    await user.click(within(ask).getByRole("button", { name: "Cancel" }));
+    expect(location().pathname).toBe("/dashboards/d-main/panels/p1/edit");
+    expect(within(editor).getByRole("textbox", { name: "Panel title" })).toHaveProperty(
+      "value",
+      "Changed",
+    );
+    await user.click(crumb("Dashboards"));
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "Leave without saving?" })).getByRole(
+        "button",
+        { name: "Leave" },
+      ),
+    );
+    await waitFor(() => expect(location().pathname).toBe("/dashboards"));
+  });
+
+  it("saves the dashboard from the editor and stays in it", async () => {
+    const { stored } = setup();
+    const { user, location } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const title = within(editor).getByRole("textbox", { name: "Panel title" });
+    await user.clear(title);
+    await user.paste("Saved title");
+    await user.click(within(editor).getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.panels[0]?.title).toBe("Saved title");
+    expect(location().pathname).toBe("/dashboards/d-main/panels/p1/edit");
+    const again = await editorRegion();
+    expect(within(again).getByRole("textbox", { name: "Panel title" })).toHaveProperty(
+      "value",
+      "Saved title",
+    );
+  });
+
+  it("shows queries and steps as tabs with their counts", async () => {
+    setup("editor", {
+      ...emptyModel("Main"),
+      panels: [
+        panel("p1", "Orders", {
+          targets: [
+            { refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1" } },
+            { refId: "B", datasourceId: PG_ID, query: { sql: "SELECT 2" } },
+          ],
+        }),
+      ],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const queries = within(editor).getByRole("tab", { name: "Queries 2" });
+    const steps = within(editor).getByRole("tab", { name: "Steps 0" });
+    expect(queries.getAttribute("aria-selected")).toBe("true");
+    queries.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(steps.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(steps);
+    // The queries stay mounted behind their tab, so switching back keeps them as they were.
+    expect(within(editor).getByLabelText("Query A", { selector: "textarea" })).toBeTruthy();
+  });
+
+  it("moves the splits with the keyboard and remembers them per account", async () => {
+    setup();
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const options = within(editor).getByRole("separator", { name: "Width of the options" });
+    expect(options.getAttribute("aria-valuenow")).toBe("330");
+    options.focus();
+    // The pane is on the right: the separator moving left makes it wider.
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(options.getAttribute("aria-valuenow")).toBe("362");
+    await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    expect(options.getAttribute("aria-valuenow")).toBe("298");
+    await user.keyboard("{End}");
+    expect(options.getAttribute("aria-valuenow")).toBe("640");
+    expect(readEditorLayout("u1").options).toBe(640);
+    expect(readEditorLayout("someone else")).toEqual({});
+
+    const preview = within(editor).getByRole("separator", { name: "Height of the preview" });
+    preview.focus();
+    await user.keyboard("{Home}");
+    expect(preview.getAttribute("aria-valuenow")).toBe("160");
+    await user.click(within(editor).getByRole("button", { name: "Hide options" }));
+    expect(readEditorLayout("u1")).toEqual({ options: 640, preview: 160, collapsed: true });
+    expect(within(editor).queryByRole("separator", { name: "Width of the options" })).toBeNull();
+    expect(within(editor).getByRole("button", { name: "Show options" })).toBeTruthy();
+  });
+
+  it("ignores a layout in the storage that is not its own shape", () => {
+    window.localStorage.setItem(
+      EDITOR_LAYOUT_KEY,
+      JSON.stringify({ u1: { options: "wide", preview: -3, collapsed: "yes" } }),
+    );
+    expect(readEditorLayout("u1")).toEqual({});
+    window.localStorage.setItem(EDITOR_LAYOUT_KEY, "{not json");
+    expect(readEditorLayout("u1")).toEqual({});
+  });
+
+  it("draws only the query being typed in, and runs it on Ctrl+Enter or when focus leaves", async () => {
+    const { server } = setup("editor", {
+      ...emptyModel("Main"),
+      panels: [
+        panel("p1", "Orders", {
+          targets: [
+            { refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1" } },
+            { refId: "B", datasourceId: PG_ID, query: { sql: "SELECT 2" } },
+          ],
+        }),
+      ],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const a = within(editor).getByLabelText("Query A", { selector: "textarea" });
+    await waitFor(() => expect(renders.editors.get("Query A")).toBeGreaterThan(0));
+    // Let the first run settle, then count from here.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const before = {
+      a: renders.editors.get("Query A") ?? 0,
+      b: renders.editors.get("Query B") ?? 0,
+      preview: renders.preview,
+      queries: server.areas.datasources.queries.length,
+    };
+    a.focus();
+    await user.keyboard(" WHERE");
+    expect((renders.editors.get("Query A") ?? 0) - before.a).toBe(6);
+    expect(renders.editors.get("Query B")).toBe(before.b);
+    expect(renders.preview).toBe(before.preview);
+    // No query per key.
+    expect(server.areas.datasources.queries.length).toBe(before.queries);
+
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() =>
+      expect(server.areas.datasources.queries.length).toBeGreaterThan(before.queries),
+    );
+    const afterRun = server.areas.datasources.queries.length;
+    await user.keyboard(" 1");
+    fireEvent.blur(a, {
+      relatedTarget: within(editor).getByRole("textbox", { name: "Panel title" }),
+    });
+    await waitFor(() => expect(server.areas.datasources.queries.length).toBeGreaterThan(afterRun));
+  });
+});
+
+describe("placing a panel", () => {
+  it("draws again only the panel that moved", async () => {
+    setup("editor", {
+      ...emptyModel("Main"),
+      panels: [
+        panel("p1", "Left", { grid: { x: 0, y: 0, w: 12, h: 8 } }),
+        panel("p2", "Right", { grid: { x: 12, y: 0, w: 12, h: 8 } }),
+        panel("p3", "Below", { grid: { x: 0, y: 8, w: 12, h: 8 } }),
+      ],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const below = await screen.findByRole("article", { name: "Below" });
+    await waitFor(() => expect(within(below).getAllByText("Grace").length).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const before = new Map(renders.bodies);
+    within(below).getByRole("button", { name: "Arrange “Below”" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(renders.bodies.get("Below")).toBeGreaterThan(before.get("Below") ?? 0);
+    expect(renders.bodies.get("Left")).toBe(before.get("Left"));
+    expect(renders.bodies.get("Right")).toBe(before.get("Right"));
+  });
+
+  it("keeps every panel that does not move as the same object", () => {
+    const a = panel("a", "A", { grid: { x: 0, y: 0, w: 12, h: 4 } });
+    const b = panel("b", "B", { grid: { x: 12, y: 0, w: 12, h: 4 } });
+    const c = panel("c", "C", { grid: { x: 0, y: 4, w: 12, h: 4 } });
+    const placed = placePanel([a, b, c], "a", { x: 0, y: 2, w: 12, h: 4 });
+    // The moved panel and the one it pushed down are new; the one beside them is untouched.
+    expect(placed[0]).not.toBe(a);
+    expect(placed[1]).toBe(b);
+    expect(placed[2]).not.toBe(c);
+    expect(placed[2]?.grid.y).toBe(6);
+    // Placing a panel where it already is changes nothing.
+    const same = placePanel([a, b, c], "b", b.grid);
+    expect(same.every((p, i) => p === [a, b, c][i])).toBe(true);
+  });
+});

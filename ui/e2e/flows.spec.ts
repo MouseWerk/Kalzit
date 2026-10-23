@@ -127,14 +127,16 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
     .getByRole("button", { name: t("dashboards.addPanel") })
     .first()
     .click();
-  const editorDialog = page.getByRole("dialog", { name: t("dashboards.editor.title") });
-  await editorDialog.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
-  await editorDialog.getByRole("button", { name: t("dashboards.editor.addQuery") }).click();
-  await editorDialog.getByLabel(t("dashboards.editor.datasource")).selectOption({ label: name });
-  await fillQuery(editorDialog, SQL.series);
-  await editorDialog.getByRole("button", { name: t("dashboards.editor.run") }).click();
-  await expect(editorDialog.locator(".ts__plot")).toBeVisible();
-  await editorDialog.getByRole("button", { name: t("dashboards.editor.apply") }).click();
+  const panelEditor = page.getByRole("region", { name: t("dashboards.editor.title") });
+  await panelEditor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
+  await panelEditor.getByRole("button", { name: t("dashboards.editor.addQuery") }).click();
+  await panelEditor.getByLabel(t("dashboards.editor.datasource")).selectOption({ label: name });
+  await fillQuery(panelEditor, SQL.series);
+  await panelEditor.getByRole("button", { name: t("dashboards.editor.run") }).click();
+  await expect(panelEditor.locator(".ts__plot")).toBeVisible();
+  // Back to the dashboard with the new panel in it, then saved from there.
+  await panelEditor.getByRole("button", { name: t("dashboards.editor.back") }).click();
+  await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();
   await page.getByRole("button", { name: t("dashboards.save") }).click();
   const save = page.getByRole("dialog", { name: t("dashboards.save.title") });
   await save.getByRole("button", { name: t("dashboards.save.submit") }).click();

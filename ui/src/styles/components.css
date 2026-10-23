@@ -997,4 +997,89 @@
       animation: none;
     }
   }
+
+  /* Tabs (Explore's result, the panel editor's queries and steps) */
+
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .tabs__tab {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .tabs__tab:hover {
+    background: var(--bg-hover);
+  }
+
+  /* Selected tab: neutral tint and weight, no underline in the accent color. */
+  .tabs__tab[aria-selected="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* A count in a tab: muted digits, no colored badge. */
+  .tabs__count {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-regular);
+  }
+
+  /*
+   * A separator between two panes that can be dragged or moved with the arrow keys. The grab
+   * area is wider than the hairline it shows; hover and keyboard focus show the line stronger,
+   * in the neutral border color.
+   */
+  .splitter {
+    position: relative;
+    flex: none;
+    touch-action: none;
+  }
+
+  .splitter--vertical {
+    width: var(--size-splitter);
+    cursor: col-resize;
+  }
+
+  .splitter--horizontal {
+    height: var(--size-splitter);
+    cursor: row-resize;
+  }
+
+  .splitter::after {
+    position: absolute;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    content: "";
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .splitter--vertical::after {
+    inset: 30% calc(50% - var(--border-width));
+  }
+
+  .splitter--horizontal::after {
+    inset: calc(50% - var(--border-width)) 30%;
+  }
+
+  .splitter:hover::after,
+  .splitter:focus-visible::after {
+    background: var(--border-strong);
+  }
+
+  .splitter:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
 }

@@ -225,6 +225,30 @@
     cursor: move;
   }
 
+  /*
+   * Dragging: the card follows the pointer through `translate` (set per frame by the drag), above
+   * the others; the placeholder shows the cell it lands in on release. Resizing grows the
+   * placeholder only.
+   */
+  .panel-card--dragging {
+    z-index: var(--z-sticky);
+    box-shadow: var(--shadow-menu);
+    will-change: translate;
+  }
+
+  .panel-card--resizing {
+    box-shadow: var(--shadow-menu);
+  }
+
+  .dash-placeholder {
+    grid-column: var(--col, 1) / span var(--w, 12);
+    grid-row: var(--row, 1) / span var(--h, 8);
+    border: var(--border-width) dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-hover);
+    pointer-events: none;
+  }
+
   .panel-card__body {
     flex: 1;
     min-height: 0;
@@ -243,36 +267,7 @@
     touch-action: none;
   }
 
-  /* Panel editor */
-
-  .panel-editor {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(var(--size-column), 1fr);
-    gap: var(--space-4);
-  }
-
-  .panel-editor__preview {
-    display: grid;
-    align-content: start;
-    gap: var(--space-2);
-  }
-
-  .panel-editor__viz {
-    height: var(--size-preview);
-    padding: var(--space-2);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-  }
-
-  .panel-editor__heading {
-    font-size: var(--font-size-md);
-  }
-
-  .panel-editor__settings {
-    display: grid;
-    align-content: start;
-    gap: var(--space-4);
-  }
+  /* Option groups of the panel editor and the dashboard settings */
 
   .panel-editor__types,
   .panel-editor__options,
@@ -283,65 +278,6 @@
     min-inline-size: 0;
     padding: 0;
     border: 0;
-  }
-
-  .panel-editor__queries {
-    display: grid;
-    grid-column: 1 / -1;
-    gap: var(--space-3);
-  }
-
-  .panel-editor__queries-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-  }
-
-  /*
-   * The query editor does not wrap long lines; without a zero minimum the column took the width
-   * of the longest line and pushed the panel editor past a phone's width.
-   */
-  .panel-editor__preview,
-  .panel-editor__settings,
-  .panel-editor__queries,
-  .target {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .target {
-    display: grid;
-    gap: var(--space-2);
-    padding: var(--space-3);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-  }
-
-  .target__header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .target__ref {
-    font-family: var(--font-mono);
-    font-variant-ligatures: none;
-    font-weight: var(--font-weight-semibold);
-  }
-
-  /* A stored query the caller may not change, shown as text. */
-  .target__stored {
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--bg-raised);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    font-variant-ligatures: none;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
 
   .variable-editor {
@@ -478,8 +414,7 @@
   }
 
   @media (max-width: 48rem) {
-    .browser,
-    .panel-editor {
+    .browser {
       grid-template-columns: minmax(0, 1fr);
     }
 

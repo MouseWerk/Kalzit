@@ -1,18 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
-import { useDeferredValue, useId, useState } from "react";
+import {
+  type ComponentProps,
+  type FocusEvent,
+  memo,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { namedInputs, runPanelSteps } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, withUnknown } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
+import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
+import { Icon } from "../../components/Icon";
+import { Splitter } from "../../components/Splitter";
 import { useI18n } from "../../i18n/i18n";
+import { openLayerCount } from "../../lib/layers";
 import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel } from "../../panels/registry";
+import { useStyleVars } from "../../panels/styleVars";
+import { useElementSize } from "../../panels/useElementSize";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
+import { type EditorLayout, readEditorLayout, writeEditorLayout } from "./editorLayout";
 import {
   nextRefId,
   type PanelModel,
@@ -24,12 +44,23 @@ import {
 } from "./model";
 import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
-import { Dialog } from "./ui/Dialog";
 import { usePanelResults } from "./usePanelResults";
+import "./panelEditor.css";
+
+/** What the dashboard reads from the open editor when it is left another way than Discard. */
+export interface EditorSnapshot {
+  id: string;
+  /** The panel as edited: look, queries and steps together. */
+  panel: () => PanelModel;
+  /** Whether anything differs from the panel the editor opened with. */
+  changed: () => boolean;
+}
 
 interface PanelEditorProps {
   orgId: string;
   dashboardId: string;
+  /** Splits are remembered per account. */
+  userId: string;
   panel: PanelModel;
   range: TimeRange;
   variables: VariableValues;
@@ -37,8 +68,16 @@ interface PanelEditorProps {
   stored?: PanelModel | undefined;
   /** The saved dashboard's variables, for the panel route. */
   savedVariables?: readonly VariableModel[];
-  onApply: (panel: PanelModel) => void;
-  onClose: () => void;
+  /** The trail up to the dashboard; the editor adds itself as the last crumb. */
+  crumbs: readonly Crumb[];
+  /** Called with the editor's state as it changes, so leaving by any route keeps the change. */
+  onSnapshot: (snapshot: EditorSnapshot) => void;
+  /** Back to the dashboard with the change in the draft (Esc does the same). */
+  onBack: () => void;
+  /** Back to the dashboard with the panel as it was. */
+  onDiscard: () => void;
+  /** Puts the change into the draft and asks for the save message. */
+  onSave: (panel: PanelModel) => void;
   /** The dashboard's rows and variables, for the panel's place and repeat. */
   rows?: readonly RowModel[];
   dashboardVariables?: readonly VariableModel[];
@@ -48,17 +87,31 @@ interface PanelEditorProps {
   onMakeLibrary?: ((panel: PanelModel) => void) | undefined;
 }
 
-/** Edits one panel: its queries, the visualization and its options, with a live preview. */
+type LowerTab = "queries" | "steps";
+const LOWER_TABS: readonly LowerTab[] = ["queries", "steps"];
+
+/**
+ * Edits one panel on a page of its own: the preview on top, its queries and steps in tabs below,
+ * the options on the right. State is split so typing stays cheap (docs/design/feel.md section
+ * 10): the look (title, type, options and the rest), the queries and the steps are kept apart;
+ * the preview draws a memoized panel made of the look and the queries last run; each query
+ * editor gets callbacks that never change, so a key press renders that editor only. Queries run
+ * on Ctrl+Enter, the run button, or when focus leaves a changed query.
+ */
 export function PanelEditor({
   orgId,
   dashboardId,
+  userId,
   panel: initial,
   range,
   variables,
   stored,
   savedVariables = [],
-  onApply,
-  onClose,
+  crumbs,
+  onSnapshot,
+  onBack,
+  onDiscard,
+  onSave,
   rows = [],
   dashboardVariables = [],
   libraryName,
@@ -68,227 +121,665 @@ export function PanelEditor({
   const titleId = useId();
   const permissions = useOrgPermissions();
   // Panels saved before the field options existed move their old options to the new place.
-  const [panel, setPanel] = useState(() => upgradePanel(initial));
+  const [opened] = useState(() => upgradePanel(initial));
+  // The look: everything but the queries and steps, whose copies in it are not read.
+  const [look, setLook] = useState(opened);
+  const [targets, setTargets] = useState(opened.targets);
+  const [steps, setSteps] = useState(opened.transformations);
   // Options per panel type seen in this editor, so arrowing through the picker and back to a
   // type keeps what was set for it.
-  const [optionsByType, setOptionsByType] = useState<Record<string, unknown>>({});
+  const optionsByType = useRef<Record<string, unknown>>({});
   // The preview runs what was last run, not every keystroke.
-  const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
+  const [preview, setPreview] = useState({ targets: opened.targets, run: 0 });
+  const [tab, setTab] = useState<LowerTab>("queries");
+  const [problem, setProblem] = useState(false);
+  const targetsRef = useRef(targets);
+  const previewRef = useRef(preview.targets);
+
+  const compose = useCallback(
+    (): PanelModel => ({ ...look, targets, transformations: steps }),
+    [look, targets, steps],
+  );
+  const latest = useRef(compose);
+  useEffect(() => {
+    targetsRef.current = targets;
+    previewRef.current = preview.targets;
+    latest.current = compose;
+    onSnapshot({
+      id: opened.id,
+      panel: compose,
+      changed: () => JSON.stringify(compose()) !== JSON.stringify(opened),
+    });
+  }, [onSnapshot, opened, compose, targets, preview.targets]);
+
   const datasources = useQuery(datasourcesQuery(orgId));
   const kinds = useQuery(kindsQuery(orgId));
   // Free queries need query rights on the source (the role or a grant); without them a panel
   // can still be renamed, rearranged and restyled, and its saved queries preview as viewers see
   // them, through the panel route.
-  const queryable = (datasources.data ?? []).filter(
-    (source) => sourceAccess(source.access, permissions).query,
+  const queryable = useMemo(
+    () =>
+      (datasources.data ?? []).filter((source) => sourceAccess(source.access, permissions).query),
+    [datasources.data, permissions],
   );
   const mayQuery = permissions.has("datasources:query") || queryable.length > 0;
-  const unchanged =
-    stored !== undefined && JSON.stringify(preview.targets) === JSON.stringify(stored.targets);
+  const unchanged = useMemo(
+    () =>
+      stored !== undefined && JSON.stringify(preview.targets) === JSON.stringify(stored.targets),
+    [stored, preview.targets],
+  );
+
+  // The steps run a moment behind typing; the preview and the steps editor share one run.
+  const deferredSteps = useDeferredValue(steps);
+  // Only what the drawing reads: typing a title or a link leaves the preview alone.
+  const { id, type, options, fieldConfig, grid } = look;
+  const previewPanel = useMemo(
+    (): PanelModel => ({
+      id,
+      type,
+      title: "",
+      grid,
+      targets: preview.targets,
+      transformations: deferredSteps,
+      options,
+      fieldConfig,
+    }),
+    [id, type, grid, preview.targets, deferredSteps, options, fieldConfig],
+  );
   const results = usePanelResults({
     orgId,
     dashboardId,
-    panel: { ...panel, targets: preview.targets },
+    panel: previewPanel,
     range,
     variables,
     saved: savedVariables,
     source: unchanged ? "stored" : "draft",
     run: preview.run,
   });
+  const outcomes = useMemo(() => results.data ?? [], [results.data]);
+  const stepsRun = useMemo(() => runPanelSteps(deferredSteps, outcomes), [deferredSteps, outcomes]);
+  const inputs = useMemo(() => namedInputs(outcomes), [outcomes]);
+  const texts = useMemo(() => variableTexts(variables), [variables]);
 
-  // One run of the steps for the preview and the steps editor, a moment behind typing.
-  const deferredSteps = useDeferredValue(panel.transformations);
-  const stepsRun = runPanelSteps(deferredSteps, results.data ?? []);
-
-  const kindOf = (datasourceId: string) =>
-    datasources.data?.find((d) => d.id === datasourceId)?.kind;
+  // Which sources the queries use, as one string: typing a query leaves it equal.
+  const sourceKey = targets.map((target) => target.datasourceId).join("\n");
+  const refKey = targets.map((target) => target.refId).join("\n");
+  const refIds = useMemo(() => (refKey === "" ? [] : refKey.split("\n")), [refKey]);
   // What the preview returned decides which panels fit; before it ran, what the sources can return.
-  const returned = (results.data ?? []).flatMap((o) => ("result" in o ? [o.result.shape] : []));
-  const shapes: Shape[] = [
-    ...new Set(
-      returned.length > 0
-        ? returned
-        : panel.targets.flatMap(
-            (target) =>
-              kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [],
-          ),
-    ),
-  ];
-
-  const updateTarget = (refId: string, patch: Partial<Target>) =>
-    setPanel((p) => ({
-      ...p,
-      targets: p.targets.map((target) =>
-        target.refId === refId ? { ...target, ...patch } : target,
+  const shapes = useMemo((): Shape[] => {
+    const returned = outcomes.flatMap((o) => ("result" in o ? [o.result.shape] : []));
+    const kindOf = (datasourceId: string) =>
+      datasources.data?.find((d) => d.id === datasourceId)?.kind;
+    return [
+      ...new Set(
+        returned.length > 0
+          ? returned
+          : sourceKey
+              .split("\n")
+              .flatMap(
+                (source) => kinds.data?.find((k) => k.kind === kindOf(source))?.shapes ?? [],
+              ),
       ),
-    }));
+    ];
+  }, [outcomes, sourceKey, datasources.data, kinds.data]);
 
-  function addTarget() {
+  const run = useCallback(
+    () => setPreview((current) => ({ targets: targetsRef.current, run: current.run + 1 })),
+    [],
+  );
+  const changeTarget = useCallback(
+    (refId: string, patch: Partial<Target>) =>
+      setTargets((list) =>
+        list.map((target) => (target.refId === refId ? { ...target, ...patch } : target)),
+      ),
+    [],
+  );
+  const removeTarget = useCallback(
+    (refId: string) => setTargets((list) => list.filter((x) => x.refId !== refId)),
+    [],
+  );
+  // Leaving a query that changed since the last run runs it, as Ctrl+Enter would.
+  const runIfChanged = useCallback(() => {
+    if (JSON.stringify(targetsRef.current) !== JSON.stringify(previewRef.current)) {
+      run();
+    }
+  }, [run]);
+
+  const addTarget = useCallback(() => {
     const first = queryable[0];
-    setPanel((p) => ({
-      ...p,
-      targets: [
-        ...p.targets,
-        {
-          refId: nextRefId(p.targets),
-          datasourceId: p.targets.at(-1)?.datasourceId ?? first?.id ?? "",
-          query: emptyQuery(kindOf(p.targets.at(-1)?.datasourceId ?? "") ?? first?.kind ?? ""),
-        },
-      ],
-    }));
+    const kindOf = (datasourceId: string) =>
+      datasources.data?.find((d) => d.id === datasourceId)?.kind;
+    setTargets((list) => [
+      ...list,
+      {
+        refId: nextRefId(list),
+        datasourceId: list.at(-1)?.datasourceId ?? first?.id ?? "",
+        query: emptyQuery(kindOf(list.at(-1)?.datasourceId ?? "") ?? first?.kind ?? ""),
+      },
+    ]);
+  }, [queryable, datasources.data]);
+  const changeSteps = useCallback(
+    (next: ReturnType<typeof asSteps>) => setSteps((current) => withUnknown(current, next)),
+    [],
+  );
+  // Switching the type keeps the old type's options for a way back.
+  const changeType = useCallback(
+    (next: string) =>
+      setLook((p) => {
+        optionsByType.current = { ...optionsByType.current, [p.type]: p.options };
+        return { ...p, type: next, options: optionsByType.current[next] ?? {} };
+      }),
+    [],
+  );
+  const makeLibrary = useMemo(
+    () => (onMakeLibrary === undefined ? undefined : () => onMakeLibrary(latest.current())),
+    [onMakeLibrary],
+  );
+  const pending = results.isPending && results.fetchStatus !== "idle";
+
+  function back() {
+    if (panelExtrasProblem(look) !== null) {
+      setProblem(true);
+      return;
+    }
+    onBack();
   }
+  const backRef = useRef(back);
+  useEffect(() => {
+    backRef.current = back;
+  });
+  // Esc goes back, unless something inside took it first (a completion list, a menu, a dialog,
+  // the chart's readout): those stop the event or hold an escape layer.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        openLayerCount() === 0
+      ) {
+        event.preventDefault();
+        backRef.current();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
-  const run = () => setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
-  const plugin = getPanel(panel.type);
-  const Editor = plugin?.Editor;
+  const stepCount = asSteps(steps).length;
+  const lower = (
+    <LowerPane
+      idPrefix={titleId}
+      tab={tab}
+      onTab={setTab}
+      counts={{ queries: targets.length, steps: stepCount }}
+      queries={
+        <TargetList
+          orgId={orgId}
+          targets={targets}
+          queryable={queryable}
+          mayQuery={mayQuery}
+          noSources={mayQuery && datasources.data?.length === 0}
+          canAdd={datasources.data !== undefined && queryable.length > 0}
+          onAdd={addTarget}
+          onChange={changeTarget}
+          onRemove={removeTarget}
+          onRun={run}
+          onLeave={runIfChanged}
+        />
+      }
+      steps={
+        <StepsTab
+          steps={steps}
+          onChange={changeSteps}
+          refIds={refIds}
+          inputs={inputs}
+          run={stepsRun}
+        />
+      }
+    />
+  );
 
+  const previewSection = (
+    <EditorPreview
+      panel={previewPanel}
+      title={look.title}
+      range={range}
+      pending={pending}
+      error={results.error}
+      outcomes={outcomes}
+      stepsRun={stepsRun}
+      variables={texts}
+    />
+  );
+
+  const optionsPane = (
+    <OptionsPane
+      titleId={titleId}
+      look={look}
+      shapes={shapes}
+      rows={rows}
+      variables={dashboardVariables}
+      libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
+      onLook={setLook}
+      onType={changeType}
+      onMakeLibrary={makeLibrary}
+    />
+  );
+
+  const editorTitle = t("dashboards.editor.title");
   return (
-    <Dialog
-      title={t("dashboards.editor.title")}
-      onClose={onClose}
-      size="large"
-      actions={
-        <>
-          <button type="button" className="button button--secondary" onClick={onClose}>
-            {t("dashboards.dialog.cancel")}
+    <section className="panel-editor" aria-label={editorTitle}>
+      <Breadcrumbs crumbs={[...crumbs, { label: editorTitle }]} />
+      <div className="panel-editor__bar">
+        <button
+          type="button"
+          className="button button--secondary panel-editor__back"
+          onClick={back}
+          title={t("dashboards.editor.backHint")}
+        >
+          <Icon name="chevron" className="panel-editor__back-icon" />
+          {t("dashboards.editor.back")}
+        </button>
+        <h1 className="panel-editor__title truncate" id={titleId}>
+          {editorTitle}
+          <span className="panel-editor__name">
+            {look.title === "" ? t("dashboards.panel.untitled") : look.title}
+          </span>
+        </h1>
+        <div className="panel-editor__actions">
+          <button type="button" className="button button--secondary" onClick={onDiscard}>
+            {t("dashboards.editor.discard")}
           </button>
           <button
             type="button"
             className="button button--primary"
-            onClick={() => onApply(panel)}
-            disabled={panelExtrasProblem(panel) !== null}
+            onClick={() => onSave(compose())}
+            disabled={panelExtrasProblem(look) !== null}
           >
-            {t("dashboards.editor.apply")}
+            {t("dashboards.save")}
           </button>
-        </>
-      }
-    >
-      <div className="panel-editor">
-        <section className="panel-editor__preview" aria-labelledby={titleId}>
-          <h3 className="panel-editor__heading" id={titleId}>
-            {t("dashboards.editor.preview")}
-          </h3>
-          <div className="panel-editor__viz">
-            <PanelBody
-              panel={{ ...panel, targets: preview.targets }}
-              title={panel.title}
-              range={range}
-              pending={results.isPending && results.fetchStatus !== "idle"}
-              error={results.error}
-              outcomes={results.data ?? []}
-              stepsRun={stepsRun}
-              variables={variableTexts(variables)}
-            />
-          </div>
-        </section>
-        <div className="panel-editor__settings">
-          <div className="field">
-            <label className="field__label" htmlFor={`${titleId}-title`}>
-              {t("dashboards.editor.panelTitle")}
-            </label>
-            <input
-              id={`${titleId}-title`}
-              className="input"
-              value={panel.title}
-              onChange={(event) => {
-                const title = event.currentTarget.value;
-                setPanel((p) => ({ ...p, title }));
-              }}
-              data-autofocus
-            />
-          </div>
-          <PanelPicker
-            value={panel.type}
-            shapes={shapes}
-            onChange={(type) => {
-              setOptionsByType((kept) => ({ ...kept, [panel.type]: panel.options }));
-              setPanel((p) => ({ ...p, type, options: optionsByType[type] ?? {} }));
-            }}
-          />
-          {plugin === undefined || Editor === undefined ? null : (
-            <fieldset className="panel-editor__options">
-              <legend className="field__label">{t("dashboards.editor.options")}</legend>
-              <Editor
-                options={plugin.options(panel.options)}
-                onChange={(options: unknown) => setPanel((p) => ({ ...p, options }))}
-              />
-            </fieldset>
-          )}
-          {plugin?.fieldOptions === undefined ? null : (
-            <fieldset className="panel-editor__options">
-              <legend className="field__label">{t("panels.fieldOptions")}</legend>
-              <FieldConfigEditor
-                value={panel.fieldConfig}
-                groups={plugin.fieldOptions}
-                onChange={(fieldConfig) => setPanel((p) => ({ ...p, fieldConfig }))}
-              />
-            </fieldset>
-          )}
-          <PanelExtras
-            panel={panel}
-            onChange={setPanel}
-            rows={rows}
-            variables={dashboardVariables}
-            libraryName={panel.libraryPanelId === undefined ? undefined : libraryName}
-            onMakeLibrary={onMakeLibrary === undefined ? undefined : () => onMakeLibrary(panel)}
-          />
         </div>
-        <section className="panel-editor__queries" aria-labelledby={`${titleId}-queries`}>
-          <div className="panel-editor__queries-header">
-            <h3 className="panel-editor__heading" id={`${titleId}-queries`}>
-              {t("dashboards.editor.queries")}
-            </h3>
-            <button type="button" className="button button--primary" onClick={run}>
-              {t("dashboards.editor.run")}
-            </button>
-          </div>
-          {panel.targets.map((target) => (
-            <TargetEditor
-              key={target.refId}
-              orgId={orgId}
-              target={target}
-              datasources={queryable}
-              readOnly={!queryable.some((source) => source.id === target.datasourceId)}
-              onChange={(patch) => updateTarget(target.refId, patch)}
-              onRemove={() =>
-                setPanel((p) => ({
-                  ...p,
-                  targets: p.targets.filter((x) => x.refId !== target.refId),
-                }))
-              }
-              onRun={run}
-            />
-          ))}
-          {mayQuery ? (
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={addTarget}
-              disabled={datasources.data === undefined || queryable.length === 0}
-            >
-              {t("dashboards.editor.addQuery")}
-            </button>
-          ) : null}
-          {mayQuery && datasources.data?.length === 0 ? (
-            <p className="field__hint">{t("dashboards.editor.noDatasources")}</p>
-          ) : null}
-          {mayQuery ? null : <p className="field__hint">{t("dashboards.editor.noQueryRight")}</p>}
-        </section>
-        <StepsEditor
-          steps={asSteps(panel.transformations)}
-          onChange={(steps) =>
-            setPanel((p) => ({ ...p, transformations: withUnknown(p.transformations, steps) }))
-          }
-          refIds={panel.targets.map((target) => target.refId)}
-          inputs={namedInputs(results.data ?? [])}
-          run={stepsRun}
-        />
       </div>
-    </Dialog>
+      {problem && panelExtrasProblem(look) !== null ? (
+        <p className="field__error" role="alert">
+          {t("dashboards.editor.problem")}
+        </p>
+      ) : null}
+      <EditorSplits
+        userId={userId}
+        idPrefix={titleId}
+        preview={previewSection}
+        lower={lower}
+        options={optionsPane}
+      />
+    </section>
   );
 }
 
-function TargetEditor({
+/** The preview: the panel's drawing, memoized so typing a query or an option label skips it. */
+const EditorPreview = memo(function EditorPreview(props: ComponentProps<typeof PanelBody>) {
+  const { t } = useI18n();
+  return (
+    <section className="panel-editor__preview" aria-label={t("dashboards.editor.preview")}>
+      <div className="panel-editor__viz">
+        <PanelBody {...props} />
+      </div>
+    </section>
+  );
+});
+
+/** The steps tab, memoized: typing a query leaves the steps and their previews alone. */
+const StepsTab = memo(function StepsTab({
+  steps,
+  onChange,
+  refIds,
+  inputs,
+  run,
+}: {
+  steps: unknown[];
+  onChange: (steps: ReturnType<typeof asSteps>) => void;
+  refIds: readonly string[];
+  inputs: ComponentProps<typeof StepsEditor>["inputs"];
+  run: ComponentProps<typeof StepsEditor>["run"];
+}) {
+  const list = useMemo(() => asSteps(steps), [steps]);
+  return <StepsEditor steps={list} onChange={onChange} refIds={refIds} inputs={inputs} run={run} />;
+});
+
+/** Bounds of the splits in px. */
+const OPTIONS_MIN = 240;
+const OPTIONS_MAX = 640;
+const OPTIONS_DEFAULT = 330;
+const PREVIEW_MIN = 160;
+const LOWER_MIN = 160;
+
+/**
+ * The editor's three panes with their separators. Sizes live here, apart from the editor's
+ * state, so dragging a separator renders this frame only; the panes are passed in as elements
+ * that keep their identity and are skipped.
+ */
+function EditorSplits({
+  userId,
+  idPrefix,
+  preview,
+  lower,
+  options,
+}: {
+  userId: string;
+  idPrefix: string;
+  preview: ReactNode;
+  lower: ReactNode;
+  options: ReactNode;
+}) {
+  const { t } = useI18n();
+  const ref = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<EditorLayout>(() => readEditorLayout(userId));
+  const { height } = useElementSize(mainRef);
+  const previewMax = Math.max(PREVIEW_MIN, height - LOWER_MIN);
+  const previewHeight = Math.min(Math.max(layout.preview ?? height / 2, PREVIEW_MIN), previewMax);
+  const optionsWidth = layout.options ?? OPTIONS_DEFAULT;
+  const collapsed = layout.collapsed === true;
+  const vars: Record<string, string> = { "--editor-options": `${optionsWidth}px` };
+  if (layout.preview !== undefined) vars["--editor-preview"] = `${previewHeight}px`;
+  useStyleVars(ref, vars);
+
+  function keep(next: EditorLayout) {
+    setLayout(next);
+    writeEditorLayout(userId, next);
+  }
+  const set = (name: string, px: number) => ref.current?.style.setProperty(name, `${px}px`);
+
+  return (
+    <div
+      ref={ref}
+      className={collapsed ? "editor-splits editor-splits--collapsed" : "editor-splits"}
+    >
+      <div className="editor-splits__main" ref={mainRef}>
+        <div className="editor-splits__preview" id={`${idPrefix}-preview`}>
+          {preview}
+        </div>
+        <Splitter
+          orientation="horizontal"
+          label={t("dashboards.editor.resizePreview")}
+          controls={`${idPrefix}-preview`}
+          value={previewHeight}
+          min={PREVIEW_MIN}
+          max={previewMax}
+          onPreview={(px) => set("--editor-preview", px)}
+          onChange={(px) => keep({ ...layout, preview: px })}
+        />
+        <div className="editor-splits__lower">{lower}</div>
+      </div>
+      {collapsed ? null : (
+        <Splitter
+          orientation="vertical"
+          label={t("dashboards.editor.resizeOptions")}
+          controls={`${idPrefix}-options`}
+          value={optionsWidth}
+          min={OPTIONS_MIN}
+          max={OPTIONS_MAX}
+          direction={-1}
+          onPreview={(px) => set("--editor-options", px)}
+          onChange={(px) => keep({ ...layout, options: px })}
+        />
+      )}
+      <section
+        className="editor-splits__options"
+        id={`${idPrefix}-options`}
+        aria-labelledby={`${idPrefix}-options-heading`}
+      >
+        <div className="options-pane__header">
+          <h2 className="options-pane__heading" id={`${idPrefix}-options-heading`}>
+            {t("dashboards.editor.options")}
+          </h2>
+          <button
+            type="button"
+            className="button button--ghost button--small options-pane__toggle"
+            aria-expanded={!collapsed}
+            aria-controls={`${idPrefix}-options-body`}
+            onClick={() => keep({ ...layout, collapsed: !collapsed })}
+            title={
+              collapsed ? t("dashboards.editor.showOptions") : t("dashboards.editor.hideOptions")
+            }
+            aria-label={
+              collapsed ? t("dashboards.editor.showOptions") : t("dashboards.editor.hideOptions")
+            }
+          >
+            <Icon name="sidebar" />
+          </button>
+        </div>
+        <div className="options-pane__body" id={`${idPrefix}-options-body`} hidden={collapsed}>
+          {options}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/** The lower pane: tabs for the queries and the steps, each with its count. */
+function LowerPane({
+  idPrefix,
+  tab,
+  onTab,
+  counts,
+  queries,
+  steps,
+}: {
+  idPrefix: string;
+  tab: LowerTab;
+  onTab: (tab: LowerTab) => void;
+  counts: Record<LowerTab, number>;
+  queries: ReactNode;
+  steps: ReactNode;
+}) {
+  const { t } = useI18n();
+  const labels: Record<LowerTab, string> = {
+    queries: t("dashboards.editor.queries"),
+    steps: t("analysis.steps.title"),
+  };
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    const index = LOWER_TABS.indexOf(tab);
+    const next =
+      LOWER_TABS[(index + (event.key === "ArrowRight" ? 1 : LOWER_TABS.length - 1)) % 2] ??
+      "queries";
+    onTab(next);
+    document.getElementById(`${idPrefix}-${next}-tab`)?.focus();
+  }
+  return (
+    <div className="lower-pane">
+      <div
+        className="tabs lower-pane__tabs"
+        role="tablist"
+        aria-label={t("dashboards.editor.dataTabs")}
+        onKeyDown={onKeyDown}
+      >
+        {LOWER_TABS.map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            id={`${idPrefix}-${name}-tab`}
+            className="tabs__tab"
+            aria-selected={tab === name}
+            aria-controls={`${idPrefix}-${name}`}
+            tabIndex={tab === name ? 0 : -1}
+            onClick={() => onTab(name)}
+          >
+            {labels[name]} <span className="tabs__count">{counts[name]}</span>
+          </button>
+        ))}
+      </div>
+      {/* Both stay mounted, so switching tabs keeps the query editors and their undo history. */}
+      <div
+        className="lower-pane__panel"
+        role="tabpanel"
+        id={`${idPrefix}-queries`}
+        aria-labelledby={`${idPrefix}-queries-tab`}
+        hidden={tab !== "queries"}
+      >
+        {queries}
+      </div>
+      <div
+        className="lower-pane__panel"
+        role="tabpanel"
+        id={`${idPrefix}-steps`}
+        aria-labelledby={`${idPrefix}-steps-tab`}
+        hidden={tab !== "steps"}
+      >
+        {steps}
+      </div>
+    </div>
+  );
+}
+
+/** The options pane: title, visualization, the panel's and the fields' options, the rest. */
+const OptionsPane = memo(function OptionsPane({
+  titleId,
+  look,
+  shapes,
+  rows,
+  variables,
+  libraryName,
+  onLook,
+  onType,
+  onMakeLibrary,
+}: {
+  titleId: string;
+  look: PanelModel;
+  shapes: readonly Shape[];
+  rows: readonly RowModel[];
+  variables: readonly VariableModel[];
+  libraryName: string | undefined;
+  onLook: (change: (panel: PanelModel) => PanelModel) => void;
+  onType: (type: string) => void;
+  onMakeLibrary: (() => void) | undefined;
+}) {
+  const { t } = useI18n();
+  const plugin = getPanel(look.type);
+  const Editor = plugin?.Editor;
+  return (
+    <div className="options-pane">
+      <div className="field">
+        <label className="field__label" htmlFor={`${titleId}-title`}>
+          {t("dashboards.editor.panelTitle")}
+        </label>
+        <input
+          id={`${titleId}-title`}
+          className="input"
+          value={look.title}
+          onChange={(event) => {
+            const title = event.currentTarget.value;
+            onLook((p) => ({ ...p, title }));
+          }}
+        />
+      </div>
+      <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
+      {plugin === undefined || Editor === undefined ? null : (
+        <fieldset className="panel-editor__options">
+          <legend className="field__label">{t("dashboards.editor.panelOptions")}</legend>
+          <Editor
+            options={plugin.options(look.options)}
+            onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
+          />
+        </fieldset>
+      )}
+      {plugin?.fieldOptions === undefined ? null : (
+        <fieldset className="panel-editor__options">
+          <legend className="field__label">{t("panels.fieldOptions")}</legend>
+          <FieldConfigEditor
+            value={look.fieldConfig}
+            groups={plugin.fieldOptions}
+            onChange={(fieldConfig) => onLook((p) => ({ ...p, fieldConfig }))}
+          />
+        </fieldset>
+      )}
+      <PanelExtras
+        panel={look}
+        onChange={onLook}
+        rows={rows}
+        variables={variables}
+        libraryName={libraryName}
+        onMakeLibrary={onMakeLibrary}
+      />
+    </div>
+  );
+});
+
+/** The queries tab: one editor per target, the run button and adding a query. */
+function TargetList({
+  orgId,
+  targets,
+  queryable,
+  mayQuery,
+  noSources,
+  canAdd,
+  onAdd,
+  onChange,
+  onRemove,
+  onRun,
+  onLeave,
+}: {
+  orgId: string;
+  targets: readonly Target[];
+  queryable: readonly { id: string; name: string; kind: string }[];
+  mayQuery: boolean;
+  noSources: boolean;
+  canAdd: boolean;
+  onAdd: () => void;
+  onChange: (refId: string, patch: Partial<Target>) => void;
+  onRemove: (refId: string) => void;
+  onRun: () => void;
+  onLeave: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="panel-editor__queries">
+      <div className="panel-editor__queries-header">
+        {mayQuery ? (
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            onClick={onAdd}
+            disabled={!canAdd}
+          >
+            <Icon name="plus" />
+            {t("dashboards.editor.addQuery")}
+          </button>
+        ) : null}
+        <button type="button" className="button button--secondary button--small" onClick={onRun}>
+          {t("dashboards.editor.run")}
+        </button>
+      </div>
+      {targets.map((target) => (
+        <TargetEditor
+          key={target.refId}
+          orgId={orgId}
+          target={target}
+          datasources={queryable}
+          readOnly={!queryable.some((source) => source.id === target.datasourceId)}
+          onChange={onChange}
+          onRemove={onRemove}
+          onRun={onRun}
+          onLeave={onLeave}
+        />
+      ))}
+      {noSources ? <p className="field__hint">{t("dashboards.editor.noDatasources")}</p> : null}
+      {mayQuery ? null : <p className="field__hint">{t("dashboards.editor.noQueryRight")}</p>}
+    </div>
+  );
+}
+
+/**
+ * One query. Memoized with callbacks that take the refId, so typing in one query renders that
+ * query's editor and nothing else.
+ */
+const TargetEditor = memo(function TargetEditor({
   orgId,
   target,
   datasources,
@@ -296,6 +787,7 @@ function TargetEditor({
   onChange,
   onRemove,
   onRun,
+  onLeave,
 }: {
   orgId: string;
   target: Target;
@@ -303,26 +795,26 @@ function TargetEditor({
   datasources: readonly { id: string; name: string; kind: string }[];
   /** The target's source is not one of them: the query shows as stored and stays as it is. */
   readOnly: boolean;
-  onChange: (patch: Partial<Target>) => void;
-  onRemove: () => void;
+  onChange: (refId: string, patch: Partial<Target>) => void;
+  onRemove: (refId: string) => void;
   onRun: () => void;
+  /** Focus left the query. */
+  onLeave: () => void;
 }) {
   const { t } = useI18n();
   const id = useId();
   const datasource = datasources.find((d) => d.id === target.datasourceId);
+  const { refId } = target;
   if (readOnly && target.datasourceId !== "") {
     return (
-      <section
-        className="target"
-        aria-label={t("dashboards.inspect.query", { refId: target.refId })}
-      >
+      <section className="target" aria-label={t("dashboards.inspect.query", { refId })}>
         <div className="target__header">
-          <span className="target__ref">{target.refId}</span>
+          <span className="target__ref">{refId}</span>
           <button
             type="button"
-            className="button button--ghost"
-            onClick={onRemove}
-            aria-label={t("dashboards.editor.removeQuery", { refId: target.refId })}
+            className="button button--ghost button--small"
+            onClick={() => onRemove(refId)}
+            aria-label={t("dashboards.editor.removeQuery", { refId })}
           >
             {t("dashboards.editor.remove")}
           </button>
@@ -332,10 +824,20 @@ function TargetEditor({
       </section>
     );
   }
+  const onBlur = (event: FocusEvent<HTMLElement>) => {
+    const next = event.relatedTarget;
+    if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+      onLeave();
+    }
+  };
   return (
-    <section className="target" aria-label={t("dashboards.inspect.query", { refId: target.refId })}>
+    <section
+      className="target"
+      aria-label={t("dashboards.inspect.query", { refId })}
+      onBlur={onBlur}
+    >
       <div className="target__header">
-        <span className="target__ref">{target.refId}</span>
+        <span className="target__ref">{refId}</span>
         <label className="visually-hidden" htmlFor={id}>
           {t("dashboards.editor.datasource")}
         </label>
@@ -347,6 +849,7 @@ function TargetEditor({
             const next = datasources.find((d) => d.id === event.currentTarget.value);
             // Another kind means another query form; the old text would not fit it.
             onChange(
+              refId,
               next !== undefined && next.kind !== datasource?.kind
                 ? { datasourceId: next.id, query: emptyQuery(next.kind) }
                 : { datasourceId: event.currentTarget.value },
@@ -364,9 +867,9 @@ function TargetEditor({
         </select>
         <button
           type="button"
-          className="button button--ghost"
-          onClick={onRemove}
-          aria-label={t("dashboards.editor.removeQuery", { refId: target.refId })}
+          className="button button--ghost button--small"
+          onClick={() => onRemove(refId)}
+          aria-label={t("dashboards.editor.removeQuery", { refId })}
         >
           {t("dashboards.editor.remove")}
         </button>
@@ -376,11 +879,11 @@ function TargetEditor({
           orgId={orgId}
           datasource={datasource}
           query={target.query}
-          onChange={(query) => onChange({ query })}
+          onChange={(query) => onChange(refId, { query })}
           onRun={onRun}
-          label={t("dashboards.inspect.query", { refId: target.refId })}
+          label={t("dashboards.inspect.query", { refId })}
         />
       )}
     </section>
   );
-}
+});

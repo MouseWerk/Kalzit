@@ -486,3 +486,15 @@
     --space-kiosk-top: calc(var(--control-height) + var(--space-4));
   }
 }
+
+/* The full-page panel editor (docs/design/feel.md section 5). */
+@layer tokens {
+  :root {
+    /* The options pane on the right, until the user drags it wider or narrower. */
+    --size-editor-options: 20.625rem;
+    /* The least height of the preview and of the queries below it. */
+    --size-editor-pane-min: 10rem;
+    /* The grab area of a separator between two panes. */
+    --size-splitter: 0.75rem;
+  }
+}

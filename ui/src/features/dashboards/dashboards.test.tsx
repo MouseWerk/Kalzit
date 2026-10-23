@@ -604,7 +604,7 @@ describe("editing a dashboard", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
     await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
-    const dialog = screen.getByRole("dialog", { name: "Edit panel" });
+    const dialog = await screen.findByRole("region", { name: "Edit panel" });
     await user.type(within(dialog).getByRole("textbox", { name: "Panel title" }), "Revenue");
     await user.click(await within(dialog).findByRole("button", { name: "Add query" }));
     const editor = within(dialog).getByRole("textbox", { name: "Query A" });
@@ -613,7 +613,7 @@ describe("editing a dashboard", () => {
     await user.click(within(dialog).getByRole("radio", { name: "Table" }));
     await user.click(within(dialog).getByRole("button", { name: "Run queries" }));
     expect(await within(dialog).findByText("Grace")).toBeTruthy();
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await user.click(within(dialog).getByRole("button", { name: "Back to dashboard" }));
 
     expect(await screen.findByRole("article", { name: "Revenue" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Save…" }));
@@ -644,7 +644,7 @@ describe("editing a dashboard", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
     await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
-    const dialog = screen.getByRole("dialog", { name: "Edit panel" });
+    const dialog = await screen.findByRole("region", { name: "Edit panel" });
     await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Color" }), "background");
     // Arrow keys in the radio group pass through other types; coming back restores the options.
@@ -802,7 +802,7 @@ describe("rights and refusals", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(within(panelOf("Orders")).getByRole("button", { name: "Edit “Orders”" }));
-    const editor = await screen.findByRole("dialog", { name: "Edit panel" });
+    const editor = await screen.findByRole("region", { name: "Edit panel" });
     // The stored query shows as text, with what changing it would need.
     expect(within(editor).getByText("SELECT * FROM orders")).toBeTruthy();
     expect(within(editor).getByText(/needs query rights on its data source/)).toBeTruthy();

@@ -249,6 +249,18 @@ Fixes (phase 2, in the files the open PRs rewrite):
 5. A performance budget test in e2e: typing 40 keys in the panel editor with 4x throttling must
    stay under 50 ms p95 Event Timing; dragging must not produce long tasks over 50 ms.
 
+Done in P1-1a (`ui/e2e/budget.spec.ts`, best of three rounds, run last and alone): fixes 1 to 5,
+plus what the measurements turned up on the way: The dashboard's range, the cards' query input,
+the view actions and the annotation marks keep their identity while they stay the same (the
+marks were new on every render, which drew every card again); a card's steps, options and field
+options are memoized, so a moved panel hands its chart the same series and uPlot does not draw
+again; the drag sets `translate` on the card, not a custom property, which would restyle the
+whole card on every frame; the editor's panes use `contain: strict`. Measured on the same machine
+with the same test, before and after: typing 40 keys at 4x, p95 40 to 48 ms (max 56) before and
+40 ms (max 48) after, the longest task while typing 38 to 45 ms before and 27 to 30 ms after,
+React's share of the main thread down by a third; dragging a panel at 4x, 2 to 3 long tasks of
+56 to 78 ms per drag before, none after (the drop is one task of about 35 ms).
+
 ## 11. Data source logos
 
 The owner decided to show the real vendor logos, in nominative use (to identify the data source,
