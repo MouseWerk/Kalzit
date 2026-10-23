@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Frame, GraphSet, Shape } from "../api/generated/shapes";
 import type { MessageKey } from "../i18n/i18n";
+import type { FieldConfig } from "./fieldConfig/fieldConfig";
 
 /**
  * The contract of a panel type (docs/ARCHITECTURE.md, "UI structure"): each folder in
@@ -10,13 +11,34 @@ export interface PanelPlugin<Options = Record<string, unknown>> {
   type: string;
   /** Catalog key of the name shown in the panel picker. */
   name: MessageKey;
+  /** Catalog key of the one-line description in the panel picker. */
+  description?: MessageKey;
   /** Result shapes the panel can show; the picker offers matching panels first. */
   shapes: readonly Shape[];
   /** Fills in defaults for options stored by an older version or by hand. */
   options: (stored: unknown) => Options;
   Panel: (props: PanelProps<Options>) => ReactNode;
   Editor: (props: PanelEditorProps<Options>) => ReactNode;
+  /**
+   * Which of the shared field options (`fieldConfig`) the panel uses; the panel editor shows
+   * those under the panel's own options. Absent: the panel uses none.
+   */
+  fieldOptions?: readonly FieldOptionGroup[];
+  /** The panel draws without a query (text); it gets no frames. */
+  standalone?: boolean;
+  /** A small drawing for the panel picker, made of palette classes only. */
+  Preview?: () => ReactNode;
 }
+
+/** Groups of the field options editor, so each panel shows only what it uses. */
+export type FieldOptionGroup =
+  | "standard"
+  | "range"
+  | "thresholds"
+  | "mappings"
+  | "color"
+  | "table"
+  | "overrides";
 
 /**
  * A panel of any options type, as the registry holds them. Callers keep the pairing intact by
@@ -33,6 +55,10 @@ export interface PanelProps<Options> {
   timeRange: { from: number; to: number };
   /** Accessible name of the visualization: the panel title. */
   title: string;
+  /** The panel's field options, parsed; absent means none are set. */
+  fieldConfig?: FieldConfig;
+  /** Current values of the dashboard variables, for panels that show text. */
+  variables?: Readonly<Record<string, string>>;
   /** Graphs of every target that answered with one, in target order (graph panels). */
   graphs?: readonly PanelGraph[] | undefined;
 }

@@ -1,0 +1,1506 @@
+[
+  {
+    "pattern": "^err",
+    "valid": true
+  },
+  {
+    "pattern": "a|b",
+    "valid": true
+  },
+  {
+    "pattern": "(a+)+$",
+    "valid": true
+  },
+  {
+    "pattern": "[a-z]+",
+    "valid": true
+  },
+  {
+    "pattern": "\\d{2,4}",
+    "valid": true
+  },
+  {
+    "pattern": "(?i)abc",
+    "valid": true
+  },
+  {
+    "pattern": "(?P<n>a)",
+    "valid": true
+  },
+  {
+    "pattern": "(?<n>a)",
+    "valid": true
+  },
+  {
+    "pattern": "(?'n'a)",
+    "valid": false
+  },
+  {
+    "pattern": "\\bword\\b",
+    "valid": true
+  },
+  {
+    "pattern": "a{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "\\pL",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{L}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Greek}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Han}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lu}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Uppercase_Letter}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Letter}",
+    "valid": false
+  },
+  {
+    "pattern": "\\P{L}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{^L}",
+    "valid": false
+  },
+  {
+    "pattern": "[[:alpha:]]",
+    "valid": true
+  },
+  {
+    "pattern": "[[:^alpha:]]",
+    "valid": true
+  },
+  {
+    "pattern": "\\x41",
+    "valid": true
+  },
+  {
+    "pattern": "\\x{41}",
+    "valid": true
+  },
+  {
+    "pattern": "\\x{110000}",
+    "valid": false
+  },
+  {
+    "pattern": "\\u0041",
+    "valid": false
+  },
+  {
+    "pattern": "\\u{41}",
+    "valid": false
+  },
+  {
+    "pattern": ".*?",
+    "valid": true
+  },
+  {
+    "pattern": "a{2}",
+    "valid": true
+  },
+  {
+    "pattern": "a{0}",
+    "valid": true
+  },
+  {
+    "pattern": "a{0,0}",
+    "valid": true
+  },
+  {
+    "pattern": "(?s).",
+    "valid": true
+  },
+  {
+    "pattern": "(?m)^a$",
+    "valid": true
+  },
+  {
+    "pattern": "(?U)a+",
+    "valid": true
+  },
+  {
+    "pattern": "(?-i)a",
+    "valid": true
+  },
+  {
+    "pattern": "(?i:a)",
+    "valid": true
+  },
+  {
+    "pattern": "(?i)(?-i)",
+    "valid": true
+  },
+  {
+    "pattern": "\\Aa\\z",
+    "valid": true
+  },
+  {
+    "pattern": "\\Z",
+    "valid": false
+  },
+  {
+    "pattern": "\\G",
+    "valid": false
+  },
+  {
+    "pattern": "[^a]",
+    "valid": true
+  },
+  {
+    "pattern": "\\.",
+    "valid": true
+  },
+  {
+    "pattern": "\\$",
+    "valid": true
+  },
+  {
+    "pattern": "",
+    "valid": true
+  },
+  {
+    "pattern": "a{,5}",
+    "valid": false
+  },
+  {
+    "pattern": "\\Q.*\\E",
+    "valid": false
+  },
+  {
+    "pattern": "\\0",
+    "valid": false
+  },
+  {
+    "pattern": "\\101",
+    "valid": false
+  },
+  {
+    "pattern": "(?)",
+    "valid": false
+  },
+  {
+    "pattern": "[a--b]",
+    "valid": false
+  },
+  {
+    "pattern": "[a&&b]",
+    "valid": false
+  },
+  {
+    "pattern": "[a~~b]",
+    "valid": false
+  },
+  {
+    "pattern": "[[a]]",
+    "valid": false
+  },
+  {
+    "pattern": "(?x) a",
+    "valid": false
+  },
+  {
+    "pattern": "(?R)",
+    "valid": false
+  },
+  {
+    "pattern": "a**",
+    "valid": false
+  },
+  {
+    "pattern": "x++",
+    "valid": false
+  },
+  {
+    "pattern": "x?+",
+    "valid": false
+  },
+  {
+    "pattern": "a*?+",
+    "valid": false
+  },
+  {
+    "pattern": "a{3}{3}",
+    "valid": false
+  },
+  {
+    "pattern": "a{1001}",
+    "valid": false
+  },
+  {
+    "pattern": "a{1,1001}",
+    "valid": false
+  },
+  {
+    "pattern": "\\<",
+    "valid": false
+  },
+  {
+    "pattern": "\\>",
+    "valid": false
+  },
+  {
+    "pattern": "\\b{start}",
+    "valid": false
+  },
+  {
+    "pattern": "(a)\\1",
+    "valid": false
+  },
+  {
+    "pattern": "\\k<n>",
+    "valid": false
+  },
+  {
+    "pattern": "(?=a)",
+    "valid": false
+  },
+  {
+    "pattern": "(?<=a)b",
+    "valid": false
+  },
+  {
+    "pattern": "(?!a)",
+    "valid": false
+  },
+  {
+    "pattern": "a{2,1}",
+    "valid": false
+  },
+  {
+    "pattern": "*a",
+    "valid": false
+  },
+  {
+    "pattern": "[z-a]",
+    "valid": false
+  },
+  {
+    "pattern": "(unclosed",
+    "valid": false
+  },
+  {
+    "pattern": "\\e",
+    "valid": false
+  },
+  {
+    "pattern": "\\cA",
+    "valid": false
+  },
+  {
+    "pattern": "\\a",
+    "valid": true
+  },
+  {
+    "pattern": "\\f\\t\\n\\r\\v",
+    "valid": true
+  },
+  {
+    "pattern": "\\z",
+    "valid": true
+  },
+  {
+    "pattern": "\\W\\S\\D",
+    "valid": true
+  },
+  {
+    "pattern": "[\\d-z]",
+    "valid": false
+  },
+  {
+    "pattern": "[a-\\d]",
+    "valid": false
+  },
+  {
+    "pattern": "\\N",
+    "valid": false
+  },
+  {
+    "pattern": "\\h",
+    "valid": false
+  },
+  {
+    "pattern": "\\pN",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nd}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Decimal_Number}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Greek}+",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Script=Greek}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{sc=Greek}",
+    "valid": false
+  },
+  {
+    "pattern": "[\\p{L}\\d]",
+    "valid": true
+  },
+  {
+    "pattern": "(?:a)",
+    "valid": true
+  },
+  {
+    "pattern": "(?P=n)",
+    "valid": false
+  },
+  {
+    "pattern": "a{,}",
+    "valid": false
+  },
+  {
+    "pattern": "a{1,}",
+    "valid": true
+  },
+  {
+    "pattern": "[]a]",
+    "valid": true
+  },
+  {
+    "pattern": "[^]a]",
+    "valid": true
+  },
+  {
+    "pattern": "[a-]",
+    "valid": true
+  },
+  {
+    "pattern": "\\-",
+    "valid": true
+  },
+  {
+    "pattern": "\\/",
+    "valid": true
+  },
+  {
+    "pattern": "\\_",
+    "valid": true
+  },
+  {
+    "pattern": "\\ ",
+    "valid": true
+  },
+  {
+    "pattern": "\\#",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{ASCII_Hex_Digit}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Adlam}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ahom}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Alphabetic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Anatolian_Hieroglyphs}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Any}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Arabic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Armenian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Avestan}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Balinese}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Bamum}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Bassa_Vah}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Batak}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Bengali}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Bhaiksuki}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Bopomofo}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Brahmi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Braille}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Buginese}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Buhid}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{C}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Canadian_Aboriginal}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Carian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Caucasian_Albanian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cc}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cf}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Chakma}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cham}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cherokee}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Chorasmian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cn}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Co}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Common}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Coptic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cuneiform}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cypriot}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cypro_Minoan}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Cyrillic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Dash}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Deseret}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Devanagari}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Dives_Akuru}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Dogra}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Duployan}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Egyptian_Hieroglyphs}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Elbasan}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Elymaic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Emoji}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Emoji_Component}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Emoji_Modifier}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Emoji_Modifier_Base}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Emoji_Presentation}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ethiopic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Extended_Pictographic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Garay}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Georgian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Glagolitic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Gothic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Grantha}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Gujarati}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Gunjala_Gondi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Gurmukhi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Gurung_Khema}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hangul}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hanifi_Rohingya}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hanunoo}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hatran}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hebrew}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hex_Digit}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Hiragana}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Imperial_Aramaic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Inherited}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Inscriptional_Pahlavi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Inscriptional_Parthian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Javanese}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Kaithi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Kannada}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Katakana}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Kawi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Kayah_Li}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Kharoshthi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Khitan_Small_Script}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Khmer}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Khojki}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Khudawadi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Kirat_Rai}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{LC}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lao}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Latin}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lepcha}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Limbu}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Linear_A}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Linear_B}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lisu}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ll}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lm}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lo}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lowercase}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lt}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lycian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Lydian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{M}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mahajani}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Makasar}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Malayalam}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mandaic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Manichaean}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Marchen}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Masaram_Gondi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Math}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mc}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Me}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Medefaidrin}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Meetei_Mayek}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mende_Kikakui}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Meroitic_Cursive}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Meroitic_Hieroglyphs}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Miao}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mn}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Modi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mongolian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Mro}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Multani}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Myanmar}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{N}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nabataean}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nag_Mundari}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nandinagari}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{New_Tai_Lue}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Newa}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nko}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nl}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{No}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nushu}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Nyiakeng_Puachue_Hmong}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ogham}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ol_Chiki}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ol_Onal}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Hungarian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Italic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_North_Arabian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Permic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Persian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Sogdian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_South_Arabian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Turkic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Old_Uyghur}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Oriya}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Osage}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Osmanya}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{P}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pahawh_Hmong}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Palmyrene}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pau_Cin_Hau}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pc}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pd}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pe}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pf}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Phags_Pa}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Phoenician}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Pi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Po}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ps}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Psalter_Pahlavi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Quotation_Mark}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Rejang}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Runic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{S}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Samaritan}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Saurashtra}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sc}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sharada}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Shavian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Siddham}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{SignWriting}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sinhala}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sk}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sm}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{So}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sogdian}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sora_Sompeng}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Soyombo}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sundanese}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Sunuwar}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Syloti_Nagri}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Syriac}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tagalog}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tagbanwa}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tai_Le}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tai_Tham}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tai_Viet}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Takri}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tamil}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tangsa}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tangut}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Telugu}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Terminal_Punctuation}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Thaana}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Thai}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tibetan}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tifinagh}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tirhuta}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Todhri}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Toto}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Tulu_Tigalari}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Ugaritic}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Uppercase}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Vai}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Vithkuqi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Wancho}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Warang_Citi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{White_Space}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Yezidi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Yi}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Z}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Zanabazar_Square}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Zl}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Zp}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Zs}",
+    "valid": true
+  },
+  {
+    "pattern": "[\\p{Greek}\\d]+",
+    "valid": true
+  },
+  {
+    "pattern": "(?i:\\pL{2,3})",
+    "valid": true
+  },
+  {
+    "pattern": "a{1000}?",
+    "valid": true
+  },
+  {
+    "pattern": "x*?y+?",
+    "valid": true
+  },
+  {
+    "pattern": "(?P<host>web)-\\d+",
+    "valid": true
+  },
+  {
+    "pattern": "Grüße\\s+\\x{1F600}",
+    "valid": true
+  },
+  {
+    "pattern": "[[:digit:]-]",
+    "valid": true
+  },
+  {
+    "pattern": "a{0,1000}",
+    "valid": true
+  },
+  {
+    "pattern": "\\p{Beria_Erfe}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Cs}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Sidetic}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Tai_Yo}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Tolong_Siki}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Unknown}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{greek}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{Any}x\\p{Lettre}",
+    "valid": false
+  },
+  {
+    "pattern": "\\pX",
+    "valid": false
+  },
+  {
+    "pattern": "a{1000}{2}",
+    "valid": false
+  },
+  {
+    "pattern": "a+*",
+    "valid": false
+  },
+  {
+    "pattern": "a??",
+    "valid": true
+  },
+  {
+    "pattern": "(a)**",
+    "valid": false
+  },
+  {
+    "pattern": "[\\w-z]",
+    "valid": false
+  },
+  {
+    "pattern": "[a&&[b]]",
+    "valid": false
+  },
+  {
+    "pattern": "(?X)",
+    "valid": false
+  },
+  {
+    "pattern": "(?im-sx)",
+    "valid": false
+  },
+  {
+    "pattern": "\\Bx{2}\\B{end}",
+    "valid": false
+  },
+  {
+    "pattern": "\\d{100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\w{100}",
+    "valid": true
+  },
+  {
+    "pattern": ".{100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\pL{50}\\d{50}",
+    "valid": true
+  },
+  {
+    "pattern": "(\\w\\w){50}",
+    "valid": true
+  },
+  {
+    "pattern": "[\\w\\d]{100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\P{L}{100}",
+    "valid": true
+  },
+  {
+    "pattern": "(a{100}){10}",
+    "valid": true
+  },
+  {
+    "pattern": "[a-z]{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "(?i)[a-z]{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "\\w+\\w+",
+    "valid": true
+  },
+  {
+    "pattern": "(\\d{10}){10}",
+    "valid": true
+  },
+  {
+    "pattern": "[^a]{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "\\w{0,100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\d{101}",
+    "valid": false
+  },
+  {
+    "pattern": "\\d{1,1000}",
+    "valid": false
+  },
+  {
+    "pattern": "\\w{0,1000}",
+    "valid": false
+  },
+  {
+    "pattern": ".{101}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{L}{1000}",
+    "valid": false
+  },
+  {
+    "pattern": "(\\w\\w){51}",
+    "valid": false
+  },
+  {
+    "pattern": "\\d{50}\\w{51}",
+    "valid": false
+  },
+  {
+    "pattern": "[\\w]{101}",
+    "valid": false
+  },
+  {
+    "pattern": "(a{100}){11}",
+    "valid": false
+  },
+  {
+    "pattern": "(a{1000}){2}",
+    "valid": false
+  },
+  {
+    "pattern": "(\\d{10}){11}",
+    "valid": false
+  },
+  {
+    "pattern": "\\w{100}\\w",
+    "valid": false
+  },
+  {
+    "pattern": "(?:\\d{2}){60}",
+    "valid": false
+  },
+  {
+    "pattern": "[\\p{Greek}x]{200}",
+    "valid": false
+  }
+]

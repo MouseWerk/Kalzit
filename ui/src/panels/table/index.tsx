@@ -1,13 +1,50 @@
-import { useId, useRef, useState } from "react";
-import type { Frame } from "../../api/generated/shapes";
+import { type ReactNode, useId, useRef, useState } from "react";
+import { isRecord } from "../../api/client";
+import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { compareValues, formatValue, int64Key, rowCount } from "../frame";
-import { EmptyPanel } from "../shared";
+import {
+  cellLink,
+  type DisplayValue,
+  displayNameOf,
+  displayText,
+  displayValue,
+  EMPTY_FIELD_CONFIG,
+  type FieldConfig,
+  type FieldOptions,
+  fieldExtent,
+  fieldOptionsFor,
+  findMapping,
+  toneClass,
+} from "../fieldConfig/fieldConfig";
+import { compareValues, formatValue, int64Key, rowCount, toNumber } from "../frame";
+import { TablePreview } from "../picker/previews";
+import { fraction, toneName } from "../reduce";
+import { CheckboxField, EmptyPanel, NumberField } from "../shared";
 import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
+import "../viz.css";
 
-export type TableOptions = Record<string, never>;
+export interface TableOptions {
+  /** A filter field under every column header. */
+  columnFilters: boolean;
+  /** Pages instead of one scrolled list. */
+  pagination: boolean;
+  pageSize: number;
+}
+
+export const MIN_PAGE_SIZE = 5;
+export const MAX_PAGE_SIZE = 1000;
+
+function parseOptions(stored: unknown): TableOptions {
+  const value = isRecord(stored) ? stored : {};
+  const size = typeof value.pageSize === "number" ? Math.round(value.pageSize) : 50;
+  return {
+    columnFilters: value.columnFilters === true,
+    pagination: value.pagination === true,
+    pageSize: Math.min(Math.max(size, MIN_PAGE_SIZE), MAX_PAGE_SIZE),
+  };
+}
 
 /** Fixed row height in px, which is what lets the table render only the rows in view. */
 export const ROW_HEIGHT = 32;
@@ -46,6 +83,84 @@ export function sortedRows(frame: Frame, sort: Sort): Uint32Array {
   });
 }
 
+/** A column filter: a comparison for number columns (`>5`, `<=2.5`, `=0`, `!=3`), else text. */
+export type ColumnFilter = (raw: unknown) => boolean;
+
+const COMPARISON = /^(>=|<=|!=|>|<|=)\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)$/i;
+
+/**
+ * Turns what was typed into a filter, or null for an empty one. Number columns accept a
+ * comparison; everything else, and numbers without an operator, matches as text without case,
+ * against the value and its mapped text.
+ */
+export function parseFilter(
+  text: string,
+  field: Field,
+  options: FieldOptions,
+): ColumnFilter | null {
+  const wanted = text.trim();
+  if (wanted === "") {
+    return null;
+  }
+  const numeric = field.type === "number" || field.type === "int64";
+  const comparison = numeric ? COMPARISON.exec(wanted) : null;
+  if (comparison !== null) {
+    const operator = comparison[1];
+    const bound = Number(comparison[2]);
+    return (raw) => {
+      const value = toNumber(raw);
+      if (value === null) return false;
+      switch (operator) {
+        case ">":
+          return value > bound;
+        case ">=":
+          return value >= bound;
+        case "<":
+          return value < bound;
+        case "<=":
+          return value <= bound;
+        case "!=":
+          return value !== bound;
+        default:
+          return value === bound;
+      }
+    };
+  }
+  const needle = wanted.toLocaleLowerCase();
+  const mappings = options.mappings;
+  return (raw) => {
+    if (raw === null || raw === undefined) return false;
+    const text =
+      typeof raw === "string" ? raw : field.type === "json" ? JSON.stringify(raw) : String(raw);
+    if (text.toLocaleLowerCase().includes(needle)) return true;
+    const mapped = mappings === undefined ? undefined : findMapping(raw, mappings)?.text;
+    return mapped?.toLocaleLowerCase().includes(needle) === true;
+  };
+}
+
+/** The rows in `order` that pass every filter, keeping the order. */
+export function filterRows(
+  frame: Frame,
+  order: Uint32Array,
+  filters: readonly (ColumnFilter | null)[],
+): Uint32Array {
+  const active = filters
+    .map((filter, column) => ({ filter, values: frame.fields[column]?.values ?? [] }))
+    .filter((f): f is { filter: ColumnFilter; values: unknown[] } => f.filter !== null);
+  if (active.length === 0) {
+    return order;
+  }
+  const kept = new Uint32Array(order.length);
+  let count = 0;
+  for (let i = 0; i < order.length; i++) {
+    const row = order[i] as number;
+    if (active.every(({ filter, values }) => filter(values[row]))) {
+      kept[count++] = row;
+    }
+  }
+  return kept.slice(0, count);
+}
+
 function nextSort(current: Sort, column: number): Sort {
   if (current === null || current.column !== column) {
     return { column, direction: "ascending" };
@@ -53,95 +168,311 @@ function nextSort(current: Sort, column: number): Sort {
   return current.direction === "ascending" ? { column, direction: "descending" } : null;
 }
 
-function FrameTable({ frame, title }: { frame: Frame; title: string }) {
+interface Column {
+  field: Field;
+  options: FieldOptions;
+  name: string;
+  /** Min and max for gauge cells and percentage thresholds; computed only when needed. */
+  range: { min: number; max: number } | undefined;
+}
+
+function columnsOf(frame: Frame, config: FieldConfig): Column[] {
+  return frame.fields.map((field) => {
+    const options = fieldOptionsFor(field, config);
+    const needsRange = options.cellDisplay === "gauge" || options.thresholds?.mode === "percentage";
+    const extent = needsRange ? fieldExtent(field) : null;
+    return {
+      field,
+      options,
+      name: displayNameOf(field, options),
+      range:
+        extent === null
+          ? undefined
+          : { min: options.min ?? Math.min(0, extent.min), max: options.max ?? extent.max },
+    };
+  });
+}
+
+/** One cell as its column's options say: plain, colored text or background, gauge or link. */
+function Cell({
+  column,
+  raw,
+  language,
+  timeZone,
+}: {
+  column: Column;
+  raw: unknown;
+  language: string;
+  timeZone: string | null;
+}) {
+  const { t } = useI18n();
+  const { field, options } = column;
+  const plain = Object.keys(options).length === 0;
+  // Without options a cell is its value as it came; this is the fast path for big tables.
+  const display: DisplayValue | null = plain
+    ? null
+    : displayValue(raw, field.type, options, language, column.range, timeZone);
+  const text =
+    display === null ? formatValue(field.type, raw, language, timeZone) : displayText(display);
+  const mode = options.cellDisplay ?? "auto";
+  const tone = display?.tone;
+  const state = toneName(tone);
+  const typeClass = `vt__cell vt__cell--${field.type}`;
+  const spokenState =
+    state === undefined ? null : <span className="visually-hidden">{` (${t(state)})`}</span>;
+  if (mode === "color-text" && tone !== undefined) {
+    return (
+      <td className={`${typeClass} vt__cell--tone ${toneClass(tone)}`}>
+        <span className="vt__swatch" aria-hidden="true" />
+        {text}
+        {spokenState}
+      </td>
+    );
+  }
+  if (mode === "color-background" && tone !== undefined) {
+    return (
+      <td className={`${typeClass} vt__cell--fill ${toneClass(tone)}`}>
+        {text}
+        {spokenState}
+      </td>
+    );
+  }
+  if (mode === "gauge" && display !== null && display.numeric !== null) {
+    const share = fraction(display.numeric, column.range ?? { min: 0, max: 100 });
+    return (
+      <td className={`${typeClass} vt__cell--gauge`}>
+        <svg className="vt__gauge" aria-hidden="true" preserveAspectRatio="none">
+          <rect className="vt__gauge-track" x="0" y="0" width="100%" height="100%" />
+          <rect
+            className={`vt__gauge-bar ${toneClass(tone ?? options.color, 0)}`}
+            x="0"
+            y="0"
+            width={`${(share * 100).toFixed(2)}%`}
+            height="100%"
+          />
+        </svg>
+        <span className="vt__gauge-text">{text}</span>
+        {spokenState}
+      </td>
+    );
+  }
+  if (mode === "link" && options.link !== undefined && raw !== null && raw !== undefined) {
+    const href = cellLink(options.link, typeof raw === "string" ? raw : String(raw), field.name);
+    if (href !== null) {
+      return (
+        <td className={typeClass}>
+          <a className="vt__link" href={href} rel="noopener noreferrer">
+            {text}
+          </a>
+        </td>
+      );
+    }
+  }
+  return (
+    <td className={typeClass}>
+      {text}
+      {spokenState}
+    </td>
+  );
+}
+
+function ColWidth({ width }: { width: number | undefined }) {
+  const ref = useRef<HTMLTableColElement>(null);
+  useStyleVars(ref, width === undefined ? {} : { "--col-width": `${width}px` });
+  return <col ref={ref} className={width === undefined ? undefined : "vt__col--fixed"} />;
+}
+
+function FrameTable({
+  frame,
+  title,
+  config,
+  options,
+}: {
+  frame: Frame;
+  title: string;
+  config: FieldConfig;
+  options: TableOptions;
+}) {
   const { t, language, timeZone } = useI18n();
+  const filterId = useId();
   const scrollRef = useRef<HTMLElement>(null);
   const topRef = useRef<HTMLTableRowElement>(null);
   const bottomRef = useRef<HTMLTableRowElement>(null);
   const { height } = useElementSize(scrollRef);
   const [scrollTop, setScrollTop] = useState(0);
   const [sort, setSort] = useState<Sort>(null);
-  const order = sortedRows(frame, sort);
+  const [filterTexts, setFilterTexts] = useState<string[]>([]);
+  const [page, setPage] = useState(0);
+  const columns = columnsOf(frame, config);
+  const filters = options.columnFilters
+    ? columns.map((c, i) => parseFilter(filterTexts[i] ?? "", c.field, c.options))
+    : [];
+  const order = filterRows(frame, sortedRows(frame, sort), filters);
   const total = order.length;
-  const visible = Math.ceil(height / ROW_HEIGHT);
-  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const end = Math.min(total, start + visible + 2 * OVERSCAN);
+  const headerRows = options.columnFilters ? 2 : 1;
+
+  let start: number;
+  let end: number;
+  const pages = Math.max(1, Math.ceil(total / options.pageSize));
+  const currentPage = Math.min(page, pages - 1);
+  if (options.pagination) {
+    start = currentPage * options.pageSize;
+    end = Math.min(total, start + options.pageSize);
+  } else {
+    const visible = Math.ceil(height / ROW_HEIGHT);
+    start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    end = Math.min(total, start + visible + 2 * OVERSCAN);
+  }
 
   useStyleVars(scrollRef, { "--vt-row-height": `${ROW_HEIGHT}px` });
-  useStyleVars(topRef, { "--vt-spacer": `${start * ROW_HEIGHT}px` });
-  useStyleVars(bottomRef, { "--vt-spacer": `${(total - end) * ROW_HEIGHT}px` });
+  useStyleVars(topRef, { "--vt-spacer": `${options.pagination ? 0 : start * ROW_HEIGHT}px` });
+  useStyleVars(bottomRef, {
+    "--vt-spacer": `${options.pagination ? 0 : (total - end) * ROW_HEIGHT}px`,
+  });
 
-  const rows = [];
+  const rows: ReactNode[] = [];
   for (let position = start; position < end; position++) {
     const row = order[position] as number;
     rows.push(
-      <tr key={row} className="vt__row" aria-rowindex={position + 2}>
-        {frame.fields.map((field, column) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
-          <td key={column} className={`vt__cell vt__cell--${field.type}`}>
-            {formatValue(field.type, field.values[row], language, timeZone)}
-          </td>
+      <tr key={row} className="vt__row" aria-rowindex={position + headerRows + 1}>
+        {columns.map((column, index) => (
+          <Cell
+            // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
+            key={index}
+            column={column}
+            raw={column.field.values[row]}
+            language={language}
+            timeZone={timeZone}
+          />
         ))}
       </tr>,
     );
   }
 
   return (
-    <section
-      className="vt"
-      ref={scrollRef}
-      // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs focus to scroll by keyboard
-      tabIndex={0}
-      aria-label={title}
-      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-    >
-      <table className="vt__table" aria-rowcount={total + 1}>
-        <thead>
-          <tr aria-rowindex={1}>
-            {frame.fields.map((field, column) => {
-              const direction = sort?.column === column ? sort.direction : undefined;
-              return (
-                <th
-                  // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
-                  key={column}
-                  scope="col"
-                  className={`vt__head vt__cell--${field.type}`}
-                  aria-sort={direction ?? "none"}
-                >
-                  <button
-                    type="button"
-                    className="vt__sort"
-                    onClick={() => setSort(nextSort(sort, column))}
-                    title={t("dashboards.panels.sortBy", { column: field.name })}
+    <div className="table-panel__body">
+      <section
+        className="vt"
+        ref={scrollRef}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs focus to scroll by keyboard
+        tabIndex={0}
+        aria-label={title}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
+        <table className="vt__table" aria-rowcount={total + headerRows}>
+          <colgroup>
+            {columns.map((column, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: one per column, in order
+              <ColWidth key={index} width={column.options.width} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr aria-rowindex={1}>
+              {columns.map((column, index) => {
+                const direction = sort?.column === index ? sort.direction : undefined;
+                return (
+                  <th
+                    // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
+                    key={index}
+                    scope="col"
+                    className={`vt__head vt__cell--${column.field.type}`}
+                    aria-sort={direction ?? "none"}
                   >
-                    <span className="truncate">{field.name}</span>
-                    <span className="vt__sort-mark" aria-hidden="true">
-                      {direction === "ascending" ? "▲" : direction === "descending" ? "▼" : ""}
-                    </span>
-                  </button>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {/* Spacers hold the height of the rows out of view; they are not rows to read. */}
-          {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
-          <tr className="vt__spacer" ref={topRef} role="presentation">
-            <td colSpan={frame.fields.length} />
-          </tr>
-          {rows}
-          {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
-          <tr className="vt__spacer" ref={bottomRef} role="presentation">
-            <td colSpan={frame.fields.length} />
-          </tr>
-        </tbody>
-      </table>
-    </section>
+                    <button
+                      type="button"
+                      className="vt__sort"
+                      onClick={() => setSort(nextSort(sort, index))}
+                      title={t("dashboards.panels.sortBy", { column: column.name })}
+                    >
+                      <span className="truncate">{column.name}</span>
+                      <span className="vt__sort-mark" aria-hidden="true">
+                        {direction === "ascending" ? "▲" : direction === "descending" ? "▼" : ""}
+                      </span>
+                    </button>
+                  </th>
+                );
+              })}
+            </tr>
+            {options.columnFilters ? (
+              <tr aria-rowindex={2}>
+                {columns.map((column, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
+                  <td key={index} className="vt__filter">
+                    <label className="visually-hidden" htmlFor={`${filterId}-${index}`}>
+                      {t("panels.table.filterColumn", { column: column.name })}
+                    </label>
+                    <input
+                      id={`${filterId}-${index}`}
+                      className="input vt__filter-input"
+                      value={filterTexts[index] ?? ""}
+                      placeholder={t("panels.table.filterPlaceholder")}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        setFilterTexts((texts) => {
+                          const next = [...texts];
+                          next[index] = value;
+                          return next;
+                        });
+                        setPage(0);
+                      }}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ) : null}
+          </thead>
+          <tbody>
+            {/* Spacers hold the height of the rows out of view; they are not rows to read. */}
+            {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
+            <tr className="vt__spacer" ref={topRef} role="presentation">
+              <td colSpan={columns.length} />
+            </tr>
+            {rows}
+            {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
+            <tr className="vt__spacer" ref={bottomRef} role="presentation">
+              <td colSpan={columns.length} />
+            </tr>
+          </tbody>
+        </table>
+      </section>
+      {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
+        <p className="panel-note" role="status">
+          {t("panels.table.noMatch")}
+        </p>
+      ) : null}
+      {options.pagination && total > 0 ? (
+        <nav className="vt__pages" aria-label={t("panels.table.pages")}>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            disabled={currentPage === 0}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            {t("panels.table.previous")}
+          </button>
+          <span className="vt__page" aria-live="polite">
+            {t("panels.table.pageOf", { page: currentPage + 1, pages })}
+          </span>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            disabled={currentPage >= pages - 1}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            {t("panels.table.next")}
+          </button>
+        </nav>
+      ) : null}
+    </div>
   );
 }
 
-function TablePanel({ frames, title }: PanelProps<TableOptions>) {
+function TablePanel({
+  frames,
+  title,
+  options,
+  fieldConfig = EMPTY_FIELD_CONFIG,
+}: PanelProps<TableOptions>) {
   const { t } = useI18n();
   const selectId = useId();
   const [index, setIndex] = useState(0);
@@ -169,21 +500,52 @@ function TablePanel({ frames, title }: PanelProps<TableOptions>) {
           </select>
         </div>
       ) : null}
-      <FrameTable key={index} frame={frame} title={title} />
+      <FrameTable key={index} frame={frame} title={title} config={fieldConfig} options={options} />
     </div>
   );
 }
 
-function TableEditor(_: PanelEditorProps<TableOptions>) {
+function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
   const { t } = useI18n();
-  return <p className="field__hint">{t("dashboards.panels.tableHint")}</p>;
+  return (
+    <>
+      <p className="field__hint">{t("dashboards.panels.tableHint")}</p>
+      <CheckboxField
+        label={t("panels.table.columnFilters")}
+        checked={options.columnFilters}
+        onChange={(columnFilters) => onChange({ ...options, columnFilters })}
+      />
+      <CheckboxField
+        label={t("panels.table.pagination")}
+        checked={options.pagination}
+        onChange={(pagination) => onChange({ ...options, pagination })}
+      />
+      {options.pagination ? (
+        <NumberField
+          label={t("panels.table.pageSize")}
+          value={options.pageSize}
+          min={MIN_PAGE_SIZE}
+          max={MAX_PAGE_SIZE}
+          step={1}
+          onChange={(pageSize) =>
+            pageSize !== undefined && Number.isInteger(pageSize)
+              ? onChange({ ...options, pageSize })
+              : undefined
+          }
+        />
+      ) : null}
+    </>
+  );
 }
 
 export const tablePanel: PanelPlugin<TableOptions> = {
   type: "table",
   name: "dashboards.panels.table",
+  description: "panels.describe.table",
   shapes: ["frame"],
-  options: () => ({}),
+  options: parseOptions,
   Panel: TablePanel,
   Editor: TableEditor,
+  fieldOptions: ["standard", "range", "thresholds", "mappings", "color", "table", "overrides"],
+  Preview: TablePreview,
 };

@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { setLanguage } from "../../i18n/i18n";
+import { DEFAULT_LEGEND } from "../fieldConfig/legendOptions";
 import { alignSeries } from "./align";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import type { Series } from "./series";
@@ -38,6 +39,14 @@ vi.mock("uplot", () => {
     }
   }
   return { default: FakeUplot };
+});
+
+/** Legend, tooltip and formatting as the panel passes them, with a plain unit suffix. */
+const display = (unit: string, showLegend: boolean) => ({
+  legend: showLegend ? DEFAULT_LEGEND : { ...DEFAULT_LEGEND, mode: "hidden" as const },
+  tooltip: "all" as const,
+  format: (_index: number, value: number) => (unit === "" ? String(value) : `${value} ${unit}`),
+  axisFormat: String,
 });
 
 const series = (name: string, times: Float64Array, values: number[]): Series => ({
@@ -97,9 +106,8 @@ describe("uPlot chart sizing and labels", () => {
         series={[series("load", times, [1, 2])]}
         timeRange={{ from: 0, to: 100_000 }}
         title="CPU"
-        unit=""
         lineWidth={1}
-        showLegend={false}
+        {...display("", false)}
       />,
     );
     const chart = created.at(-1) as unknown as { setSizeCalls: unknown[] };
@@ -123,9 +131,8 @@ describe("uPlot chart sizing and labels", () => {
         series={[series("load", times, [1, 2])]}
         timeRange={{ from: 0, to: 100_000 }}
         title="CPU"
-        unit=""
         lineWidth={1}
-        showLegend={false}
+        {...display("", false)}
       />,
     );
     const options = created.at(-1)?.options as
@@ -149,9 +156,8 @@ describe("uPlot chart sizing and labels", () => {
         series={[series("load", times, [1, 2])]}
         timeRange={{ from: 0, to: 100_000 }}
         title="CPU"
-        unit=""
         lineWidth={1}
-        showLegend={false}
+        {...display("", false)}
       />,
     );
     const options = created.at(-1)?.options as {
@@ -173,9 +179,8 @@ describe("uPlot chart sizing and labels", () => {
         series={[series("load", Float64Array.from([from, to]), [1, 2])]}
         timeRange={{ from, to }}
         title="CPU"
-        unit=""
         lineWidth={1}
-        showLegend={false}
+        {...display("", false)}
       />,
     );
     const svg = container.querySelector("svg");
@@ -198,9 +203,8 @@ describe("uPlot chart", () => {
         series={[series("load", times, [1, 2, 3]), series("rate", times, [7, 8, 9])]}
         timeRange={{ from: 0, to: 100_000 }}
         title="CPU"
-        unit="%"
         lineWidth={2}
-        showLegend
+        {...display("%", true)}
       />,
     );
     const chart = created.at(-1);

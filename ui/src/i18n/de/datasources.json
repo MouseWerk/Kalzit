@@ -384,5 +384,6 @@
   "datasources.editor.gsql.graphUnknown": "Ersetze {gap} durch den Namen des Graphen der Datenquelle: Deine Rolle kann ihre Einstellungen nicht lesen, und andere Graphen werden abgelehnt.",
   "datasources.kinds.neo4j.summary": "Graphdatenbank, abgefragt in Cypher; Ergebnisse bleiben Graphen aus Knoten und Kanten.",
   "datasources.kinds.memgraph.summary": "Graphdatenbank im Arbeitsspeicher, abgefragt in Cypher; Ergebnisse bleiben Graphen aus Knoten und Kanten.",
-  "datasources.kinds.tigergraph.summary": "Graphdatenbank, abgefragt in GSQL, selbst geschrieben oder installiert; Ergebnisse bleiben Graphen aus Knoten und Kanten."
+  "datasources.kinds.tigergraph.summary": "Graphdatenbank, abgefragt in GSQL, selbst geschrieben oder installiert; Ergebnisse bleiben Graphen aus Knoten und Kanten.",
+  "datasources.reason.dashboards.panel_options": "Panel „{panel}“ hat eine Option, die der Server nicht annimmt: {detail}"
 }

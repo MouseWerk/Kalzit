@@ -400,3 +400,46 @@
     --size-graph-min: 12rem;
   }
 }
+
+/*
+ * Visualization tokens (one block, appended by the visualization pack, after every other block).
+ * Threshold tones are the marks of the states the status tokens name (ok = success, warn =
+ * warning, critical = danger), on the same hues but tuned as chart fills: 3:1 against the panel
+ * backgrounds and apart for every color vision. Their tints are the status backgrounds; the
+ * chart tints are the chart palette mixed into the surface. styles.test.ts checks all of them.
+ */
+@layer tokens {
+  :root {
+    --tone-ok: light-dark(oklch(47% 0.115 160), oklch(74% 0.13 160));
+    --tone-warn: light-dark(oklch(64% 0.14 74), oklch(92% 0.13 95));
+    --tone-critical: light-dark(oklch(33% 0.14 27), oklch(60% 0.21 27));
+
+    /* The status backgrounds, so tints follow every theme the status colors follow. */
+    --tone-ok-bg: var(--success-bg);
+    --tone-warn-bg: var(--warning-bg);
+    --tone-critical-bg: var(--danger-bg);
+
+    --chart-1-bg: light-dark(oklch(93% 0.035 241), oklch(31% 0.045 262));
+    --chart-2-bg: light-dark(oklch(93% 0.035 69), oklch(31% 0.04 74));
+    --chart-3-bg: light-dark(oklch(92% 0.04 249), oklch(30% 0.06 249));
+    --chart-4-bg: light-dark(oklch(93% 0.035 35), oklch(31% 0.06 28));
+    --chart-5-bg: light-dark(oklch(93% 0.03 161), oklch(31% 0.04 156));
+    --chart-6-bg: light-dark(oklch(93% 0.035 326), oklch(31% 0.06 349));
+    --chart-7-bg: light-dark(oklch(94% 0.04 88), oklch(31% 0.045 105));
+    --chart-8-bg: light-dark(oklch(92% 0.004 60), oklch(33% 0.004 60));
+
+    --heat-1: light-dark(oklch(88% 0.045 245), oklch(36% 0.07 250));
+    --heat-2: light-dark(oklch(80% 0.065 245), oklch(43% 0.09 250));
+    --heat-3: light-dark(oklch(72% 0.085 245), oklch(50% 0.11 248));
+    --heat-4: light-dark(oklch(64% 0.1 245), oklch(57% 0.12 246));
+    --heat-5: light-dark(oklch(56% 0.115 246), oklch(64% 0.12 244));
+    --heat-6: light-dark(oklch(48% 0.12 248), oklch(71% 0.11 242));
+    --heat-7: light-dark(oklch(41% 0.12 250), oklch(79% 0.1 240));
+    --heat-8: light-dark(oklch(34% 0.11 252), oklch(87% 0.08 238));
+
+    --font-size-display: 2rem;
+    --size-gauge: 12rem;
+    --size-picker-card: 7rem;
+    --size-bar-gauge: 1.5rem;
+  }
+}

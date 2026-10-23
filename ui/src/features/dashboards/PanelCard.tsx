@@ -2,6 +2,8 @@ import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useSta
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
+import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
@@ -218,6 +220,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           pending={results.isPending && results.fetchStatus !== "idle"}
           error={results.error}
           outcomes={outcomes}
+          variables={query.variables}
         />
       </div>
       {edit === undefined ? null : (
@@ -247,17 +250,44 @@ interface PanelBodyProps {
   pending: boolean;
   error: Error | null;
   outcomes: readonly TargetOutcome[];
+  /** Dashboard variables, for panels that show text. */
+  variables?: Readonly<Record<string, string>>;
 }
 
 /**
  * Loading, failure and data of one panel. Errors are mapped per query: one failing query shows
  * its message while the others still draw.
  */
-export function PanelBody({ panel, title, range, pending, error, outcomes }: PanelBodyProps) {
+export function PanelBody({
+  panel,
+  title,
+  range,
+  pending,
+  error,
+  outcomes,
+  variables,
+}: PanelBodyProps) {
   const { t } = useI18n();
+  // Field option patterns need re2js, which loads with the first panel that uses one. The panel
+  // is drawn again once it is there: until then its patterns matched nothing.
+  const patterns = usePatternEngine(usesPatterns(panel.fieldConfig)) ? "patterns" : "waiting";
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
+  }
+  // A panel that needs no query (text) draws right away, whatever the queries do.
+  if (plugin.standalone === true) {
+    const { Panel } = plugin;
+    return (
+      <Panel
+        key={patterns}
+        frames={[]}
+        options={plugin.options(panel.options)}
+        timeRange={range}
+        title={title}
+        {...(variables === undefined ? {} : { variables })}
+      />
+    );
   }
   // A failed request comes first: it must never read as "no query yet".
   if (error !== null) {
@@ -315,14 +345,23 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
       ) : (
         <div className="panel-content__viz">
           <PanelErrorBoundary
-            resetKeys={[outcomes, panel.type, JSON.stringify(panel.options ?? null)]}
+            resetKeys={[
+              outcomes,
+              panel.type,
+              JSON.stringify(panel.options ?? null),
+              JSON.stringify(panel.fieldConfig ?? null),
+              patterns,
+            ]}
           >
             <Panel
+              key={patterns}
               frames={frames}
               graphs={graphs}
               options={plugin.options(panel.options)}
+              fieldConfig={parseFieldConfig(panel.fieldConfig)}
               timeRange={range}
               title={title}
+              {...(variables === undefined ? {} : { variables })}
             />
           </PanelErrorBoundary>
         </div>

@@ -384,5 +384,6 @@
   "datasources.editor.gsql.graphUnknown": "Replace {gap} with the name of the data source's graph: your role cannot read its settings, and other graphs are refused.",
   "datasources.kinds.neo4j.summary": "Graph database queried in Cypher; results stay graphs of nodes and edges.",
   "datasources.kinds.memgraph.summary": "In-memory graph database queried in Cypher; results stay graphs of nodes and edges.",
-  "datasources.kinds.tigergraph.summary": "Graph database queried in GSQL, written or installed; results stay graphs of nodes and edges."
+  "datasources.kinds.tigergraph.summary": "Graph database queried in GSQL, written or installed; results stay graphs of nodes and edges.",
+  "datasources.reason.dashboards.panel_options": "Panel “{panel}” has an option the server does not accept: {detail}"
 }
