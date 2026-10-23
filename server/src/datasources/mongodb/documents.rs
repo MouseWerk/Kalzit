@@ -1,19 +1,15 @@
 //! BSON documents as the `documents` shape: values JSON has no type for keep their BSON type as
-//! `{"$type", "value"}` (docs/api/datasources.md, "The documents shape"), and the schema sample
-//! gives every field path with its types and coverage.
+//! `{"$type", "value"}` (docs/api/datasources.md, "The documents shape"), and the shared schema
+//! sample sees them with their BSON type aliases.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use bson::spec::BinarySubtype;
 use bson::{Bson, Document};
 use serde_json::{Value, json};
 
-use crate::shapes::{FieldSchema, TypeShare, typed};
-
-/// Paths the schema sample lists at most; deeper or wider documents are cut there.
-const MAX_SCHEMA_PATHS: usize = 2_000;
-/// Nesting levels the schema sample descends.
-const MAX_SCHEMA_DEPTH: usize = 32;
+use crate::datasources::document_schema::{Inner, Sampled, SchemaSampler};
+use crate::shapes::typed;
 
 /// A converted value that keeps the field order of the stored document (`serde_json::Map` sorts
 /// its keys). Serializes as plain JSON.
@@ -170,106 +166,24 @@ pub fn type_name(value: &Bson) -> &'static str {
     }
 }
 
-/// Counts field paths and their types over a sample of documents.
-#[derive(Default)]
-pub struct SchemaSampler {
-    documents: usize,
-    /// In order of first appearance.
-    paths: Vec<PathStats>,
-    index: HashMap<String, usize>,
+/// BSON values for the shared schema sample, with MongoDB's type aliases.
+impl Sampled for Bson {
+    fn type_name(&self) -> &'static str {
+        type_name(self)
+    }
+
+    fn inner(&self) -> Inner<'_, Self> {
+        match self {
+            Bson::Document(d) => Inner::Object(Box::new(d.iter().map(|(k, v)| (k.as_str(), v)))),
+            Bson::Array(items) => Inner::Array(items),
+            _ => Inner::Leaf,
+        }
+    }
 }
 
-struct PathStats {
-    path: String,
-    /// Documents that contain the path.
-    documents: usize,
-    /// Per type: documents in which the path has a value of that type.
-    types: Vec<(&'static str, usize)>,
-}
-
-impl SchemaSampler {
-    pub fn add(&mut self, doc: &Document) {
-        self.documents += 1;
-        let mut seen: HashMap<usize, BTreeSet<&'static str>> = HashMap::new();
-        self.walk_doc(doc, "", 0, &mut seen);
-        for (i, types) in seen {
-            let stats = &mut self.paths[i];
-            stats.documents += 1;
-            for t in types {
-                match stats.types.iter_mut().find(|(name, _)| *name == t) {
-                    Some((_, n)) => *n += 1,
-                    None => stats.types.push((t, 1)),
-                }
-            }
-        }
-    }
-
-    fn slot(&mut self, path: &str) -> Option<usize> {
-        if let Some(i) = self.index.get(path) {
-            return Some(*i);
-        }
-        if self.paths.len() >= MAX_SCHEMA_PATHS {
-            return None;
-        }
-        self.paths.push(PathStats { path: path.to_string(), documents: 0, types: Vec::new() });
-        self.index.insert(path.to_string(), self.paths.len() - 1);
-        Some(self.paths.len() - 1)
-    }
-
-    fn walk_doc(
-        &mut self,
-        doc: &Document,
-        path: &str,
-        depth: usize,
-        seen: &mut HashMap<usize, BTreeSet<&'static str>>,
-    ) {
-        for (key, value) in doc {
-            let child = join(path, key);
-            self.walk_value(value, &child, depth, seen);
-        }
-    }
-
-    fn walk_value(
-        &mut self,
-        value: &Bson,
-        path: &str,
-        depth: usize,
-        seen: &mut HashMap<usize, BTreeSet<&'static str>>,
-    ) {
-        if depth > MAX_SCHEMA_DEPTH {
-            return;
-        }
-        let Some(i) = self.slot(path) else { return };
-        seen.entry(i).or_default().insert(type_name(value));
-        match value {
-            Bson::Document(d) => self.walk_doc(d, path, depth + 1, seen),
-            Bson::Array(items) => {
-                let child = format!("{path}[]");
-                for item in items {
-                    self.walk_value(item, &child, depth + 1, seen);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    pub fn finish(self) -> Vec<FieldSchema> {
-        let total = self.documents.max(1) as f64;
-        self.paths
-            .into_iter()
-            .filter(|p| p.documents > 0)
-            .map(|p| {
-                let with = p.documents as f64;
-                let mut types: Vec<TypeShare> = p
-                    .types
-                    .into_iter()
-                    .map(|(name, n)| TypeShare { name: name.to_string(), share: n as f64 / with })
-                    .collect();
-                types.sort_by(|a, b| b.share.total_cmp(&a.share).then_with(|| a.name.cmp(&b.name)));
-                FieldSchema { path: p.path, coverage: with / total, types }
-            })
-            .collect()
-    }
+/// Adds a stored document to the schema sample.
+pub fn sample(sampler: &mut SchemaSampler, doc: &Document) {
+    sampler.add_fields(doc.iter().map(|(k, v)| (k.as_str(), v)));
 }
 
 #[cfg(test)]
@@ -315,10 +229,10 @@ mod tests {
     #[test]
     fn the_schema_counts_paths_types_and_coverage() {
         let mut s = SchemaSampler::default();
-        s.add(&doc! { "a": 1_i32, "tags": ["x", "y"], "items": [{ "p": 1.5 }, { "p": 2_i32 }] });
-        s.add(&doc! { "a": "eins", "items": [] });
-        s.add(&doc! { "a": 2_i32, "b": { "c": true } });
-        s.add(&doc! { "b": { "c": false } });
+        sample(&mut s, &doc! { "a": 1_i32, "tags": ["x", "y"], "items": [{ "p": 1.5 }, { "p": 2_i32 }] });
+        sample(&mut s, &doc! { "a": "eins", "items": [] });
+        sample(&mut s, &doc! { "a": 2_i32, "b": { "c": true } });
+        sample(&mut s, &doc! { "b": { "c": false } });
         let schema = s.finish();
         let get = |p: &str| schema.iter().find(|f| f.path == p).unwrap_or_else(|| panic!("{p}: {schema:?}"));
         let a = get("a");
@@ -332,12 +246,25 @@ mod tests {
         let p = get("items[].p");
         assert_eq!(p.coverage, 0.25);
         // One document holds both types: each share counts documents, so they add up to more than 1.
-        assert_eq!(p.types.len(), 2);
+        assert_eq!(p.types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["double", "int"]);
         assert!(p.types.iter().all(|t| t.share == 1.0));
         assert_eq!(get("b.c").coverage, 0.5);
         assert_eq!(get("b").types[0].name, "object");
         assert_eq!(schema[0].path, "a", "paths keep the order they first appear in");
         assert!(SchemaSampler::default().finish().is_empty());
+    }
+
+    #[test]
+    fn the_schema_looks_at_the_first_100_elements_of_an_array() {
+        let mut items: Vec<Bson> = (0..100).map(Bson::Int32).collect();
+        items.push(Bson::String("spät".into()));
+        items.push(Bson::Document(doc! { "nur_spät": true }));
+        let mut s = SchemaSampler::default();
+        sample(&mut s, &doc! { "items": items });
+        let schema = s.finish();
+        let elems = schema.iter().find(|f| f.path == "items[]").unwrap();
+        assert_eq!(elems.types.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["int"]);
+        assert!(schema.iter().all(|f| f.path != "items[].nur_spät"), "{schema:?}");
     }
 
     #[test]

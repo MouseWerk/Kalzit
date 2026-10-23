@@ -1,8 +1,9 @@
-//! Checks of the options and field options of the built-in frame panels (`ui/src/panels/`). Each
-//! panel type's `options` and the shared `fieldConfig` are parsed into closed shapes with bounds,
-//! so a saved dashboard cannot carry unknown keys, oversized lists or unsafe links. The UI keeps
-//! the same limits (`ui/src/panels/fieldConfig/fieldConfig.ts`). Panel types this module does not
-//! know (document and graph panels, plugins) are left to their own checks.
+//! Checks of the options and field options of the built-in frame and graph panels
+//! (`ui/src/panels/`). Each panel type's `options` and the shared `fieldConfig` are parsed into
+//! closed shapes with bounds, so a saved dashboard cannot carry unknown keys, oversized lists or
+//! unsafe links. The UI keeps the same limits (`ui/src/panels/fieldConfig/fieldConfig.ts`,
+//! `ui/src/panels/graph/options.ts`). Panel types this module does not know (document panels,
+//! plugins) are left to their own checks.
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -22,6 +23,12 @@ pub const MIN_COLUMN_WIDTH: u32 = 40;
 pub const MAX_COLUMN_WIDTH: u32 = 1000;
 /// The text panel's content.
 pub const MAX_CONTENT_CHARS: usize = 20_000;
+/// Property keys, captions and variable names of the graph panels.
+pub const MAX_GRAPH_TEXT_CHARS: usize = 100;
+/// The hard cap on drawn nodes per graph panel (`MAX_NODE_LIMIT` in the UI).
+pub const MAX_NODE_LIMIT: u32 = 20_000;
+/// Neighbours one expand step of the explorer adds at most (`MAX_EXPAND_LIMIT` in the UI).
+pub const MAX_EXPAND_LIMIT: u32 = 200;
 
 /// The panel types whose options this module checks.
 pub const PANEL_TYPES: &[&str] = &[
@@ -37,6 +44,9 @@ pub const PANEL_TYPES: &[&str] = &[
     "state-timeline",
     "status-history",
     "text",
+    "network",
+    "hierarchy",
+    "path",
 ];
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -184,6 +194,8 @@ choice!(PieLabels { None = "none", Percent = "percent", Name = "name", Value = "
 choice!(HeatmapMode { Calculate = "calculate", Buckets = "buckets" });
 choice!(HeatmapScale { Linear = "linear", Sqrt = "sqrt" });
 choice!(TextFormat { Markdown = "markdown", Plain = "plain" });
+choice!(ColorBy { Label = "label", Community = "community", Component = "component" });
+choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -318,6 +330,33 @@ struct StateOptions {
 struct TextOptions {
     mode: Option<TextFormat>,
     content: Option<String>,
+}
+
+/// The network and hierarchy panels (`GraphPanelOptions`). The hierarchy panel never clusters
+/// but stores `cluster` like the network, as its editor writes it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct GraphOptions {
+    caption: Option<String>,
+    color_by: Option<ColorBy>,
+    size_by: Option<String>,
+    edge_width_by: Option<String>,
+    node_limit: Option<u32>,
+    cluster: Option<ClusterMode>,
+    time_property: Option<String>,
+    explorer: Option<bool>,
+    expand_limit: Option<u32>,
+    variable: Option<String>,
+    variable_property: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PathOptions {
+    caption: Option<String>,
+    variable: Option<String>,
+    variable_property: Option<String>,
 }
 
 fn parse<T: DeserializeOwned>(what: &str, value: &Value) -> Result<T, String> {
@@ -462,6 +501,16 @@ fn check_field_config(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// The one-line texts of a graph panel, by their option name.
+fn check_graph_texts(texts: &[(&str, &Option<String>)]) -> Result<(), String> {
+    for (name, text) in texts {
+        if let Some(text) = text {
+            check_text(&format!("options.{name}"), text, MAX_GRAPH_TEXT_CHARS, false)?;
+        }
+    }
+    Ok(())
+}
+
 fn check_legend(legend: Option<&Legend>) -> Result<(), String> {
     if let Some(legend) = legend
         && legend.values.len() > 4
@@ -477,7 +526,8 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
     if !PANEL_TYPES.contains(&kind) {
         return Ok(());
     }
-    // The text panel uses no field options, but whatever it stores is checked like the others.
+    // The text and graph panels use no field options, but whatever they store (kept when a panel
+    // changes type) is checked like the others.
     check_field_config(field_config)?;
     let unit = |unit: &Option<String>| match unit {
         Some(u) => check_text("options.unit", u, MAX_UNIT_CHARS, false),
@@ -546,6 +596,27 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             }
             Ok(())
         }
+        "network" | "hierarchy" => {
+            let o: GraphOptions = parse("options", options)?;
+            check_graph_texts(&[
+                ("caption", &o.caption),
+                ("sizeBy", &o.size_by),
+                ("edgeWidthBy", &o.edge_width_by),
+                ("timeProperty", &o.time_property),
+                ("variable", &o.variable),
+                ("variableProperty", &o.variable_property),
+            ])?;
+            check_range("options.nodeLimit", o.node_limit, 1, MAX_NODE_LIMIT)?;
+            check_range("options.expandLimit", o.expand_limit, 1, MAX_EXPAND_LIMIT)
+        }
+        "path" => {
+            let o: PathOptions = parse("options", options)?;
+            check_graph_texts(&[
+                ("caption", &o.caption),
+                ("variable", &o.variable),
+                ("variableProperty", &o.variable_property),
+            ])
+        }
         _ => Ok(()),
     }
 }
@@ -603,6 +674,19 @@ mod tests {
             ("state-timeline", json!({ "legend": legend, "tooltip": tooltip })),
             ("status-history", json!({})),
             ("text", json!({ "mode": "markdown", "content": "# Umsatz\n\n$region <b>bleibt Text</b>" })),
+            (
+                "network",
+                json!({
+                    "caption": "name", "colorBy": "community", "sizeBy": "degree", "edgeWidthBy": "weight",
+                    "nodeLimit": MAX_NODE_LIMIT, "cluster": "label", "timeProperty": "since", "explorer": true,
+                    "expandLimit": MAX_EXPAND_LIMIT, "variable": "kunde", "variableProperty": "id"
+                }),
+            ),
+            ("network", json!({ "sizeBy": "", "nodeLimit": 1, "expandLimit": 1, "cluster": "off" })),
+            ("hierarchy", json!({ "colorBy": "component", "cluster": "auto", "caption": "x".repeat(100) })),
+            ("hierarchy", json!({})),
+            ("path", json!({ "caption": "title", "variable": "", "variableProperty": "" })),
+            ("path", json!({})),
         ] {
             check(kind, &options, &field_config()).unwrap_or_else(|e| panic!("{kind}: {e}"));
         }
@@ -611,6 +695,42 @@ mod tests {
     #[test]
     fn unknown_panel_types_are_left_alone() {
         assert!(check("documents", &json!({ "anything": 1 }), &json!({ "free": true })).is_ok());
+    }
+
+    #[test]
+    fn invalid_graph_options_are_refused_with_the_place() {
+        let long = "x".repeat(MAX_GRAPH_TEXT_CHARS + 1);
+        for (kind, options, expect) in [
+            ("network", json!({ "nodeLimit": 0 }), "options.nodeLimit"),
+            ("network", json!({ "nodeLimit": MAX_NODE_LIMIT + 1 }), "options.nodeLimit"),
+            ("network", json!({ "nodeLimit": 2.5 }), "options"),
+            ("network", json!({ "nodeLimit": -1 }), "options"),
+            ("network", json!({ "expandLimit": 0 }), "options.expandLimit"),
+            ("hierarchy", json!({ "expandLimit": MAX_EXPAND_LIMIT + 1 }), "options.expandLimit"),
+            ("network", json!({ "colorBy": "degree" }), "options"),
+            ("network", json!({ "cluster": "always" }), "options"),
+            ("network", json!({ "explorer": "yes" }), "options"),
+            ("network", json!({ "caption": long }), "options.caption"),
+            ("hierarchy", json!({ "sizeBy": long }), "options.sizeBy"),
+            ("hierarchy", json!({ "edgeWidthBy": long }), "options.edgeWidthBy"),
+            ("network", json!({ "timeProperty": "a\u{0}b" }), "control characters"),
+            ("network", json!({ "variable": long }), "options.variable"),
+            ("network", json!({ "variableProperty": long }), "options.variableProperty"),
+            ("hierarchy", json!({ "layout": "radial" }), "unknown field"),
+            ("path", json!({ "caption": long }), "options.caption"),
+            ("path", json!({ "variable": long }), "options.variable"),
+            ("path", json!({ "variableProperty": "a\nb" }), "control characters"),
+            ("path", json!({ "nodeLimit": 10 }), "unknown field"),
+            ("path", json!("caption"), "options"),
+        ] {
+            let err = check(kind, &options, &json!({})).unwrap_err();
+            assert!(err.contains(expect), "{kind} {options}: {err}");
+        }
+        // Their field options are checked like those of every other panel.
+        let odd = json!({ "defaults": { "decimals": 99 } });
+        for kind in ["network", "hierarchy", "path"] {
+            assert!(check(kind, &json!({}), &odd).unwrap_err().contains("fieldConfig"), "{kind}");
+        }
     }
 
     #[test]

@@ -142,7 +142,7 @@ function DataSourceList({
     <div className="ds-list">
       <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
       {toolbar}
-      <table className="data-table">
+      <table className="data-table data-table--stack">
         <thead>
           <tr>
             <th scope="col">{t("datasources.column.name")}</th>

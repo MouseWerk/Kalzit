@@ -120,24 +120,140 @@
     text-align: center;
   }
 
-  /* The search entry of the sidebar, which opens the command palette. */
+  /*
+   * The workspace card on top of the sidebar: the mark in a tile, the organization's name and
+   * role, a chevron that opens the organization menu. Neutral like the nav pill.
+   */
 
-  .shell__search {
+  .org-switcher__anchor {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .org-switcher {
     display: flex;
+    flex: 1;
     align-items: center;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--size-switcher);
     gap: var(--space-2);
-    min-height: var(--control-height);
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg);
+    color: var(--text);
+    text-align: start;
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  button.org-switcher:hover,
+  .org-switcher[aria-expanded="true"] {
+    background: var(--bg-hover);
+  }
+
+  .org-switcher__mark {
+    display: grid;
+    flex: none;
+    width: var(--size-switcher-mark);
+    height: var(--size-switcher-mark);
+    place-items: center;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-raised);
+  }
+
+  .org-switcher__text {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .org-switcher__name {
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
+  }
+
+  .org-switcher__role {
     color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-tight);
+  }
+
+  .org-switcher__chevron {
+    color: var(--text-muted);
+  }
+
+  /* The organization menu opens below its card, from the card's start. */
+  .menu.menu--down {
+    inset-block: calc(100% + var(--space-1)) auto;
+    inset-inline: 0 auto;
+  }
+
+  /* The rail keeps the mark alone; the name stays the button's accessible name. */
+  .shell[data-sidebar="collapsed"] .org-switcher {
+    justify-content: center;
+    min-height: var(--nav-row-height);
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .shell[data-sidebar="collapsed"] .org-switcher__text,
+  .shell[data-sidebar="collapsed"] .org-switcher__chevron {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Thin dividers between the groups of the navigation. */
+  .shell__divider {
+    flex: none;
+    height: var(--border-width);
+    margin: var(--space-2) var(--space-2);
+    border: 0;
+    background: var(--border);
+  }
+
+  /*
+   * The search entry of the sidebar, which opens the command palette: a row like the nav links,
+   * with "/" as its keycap.
+   */
+
+  .shell__search {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--nav-row-height);
+    padding: 0 var(--space-1) 0 var(--space-2);
+    border: var(--border-width) solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
     text-align: start;
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      color var(--duration-fast) var(--easing);
   }
 
   .shell__search:hover {
     background: var(--bg-hover);
     color: var(--text);
+  }
+
+  .shell__search:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .shell__search-key .kbd {
+    min-width: var(--space-5);
+    background: var(--bg);
   }
 
   .shell__search-label {
@@ -151,8 +267,6 @@
   .shell[data-sidebar="collapsed"] .shell__search {
     justify-content: center;
     padding-inline: 0;
-    border-color: transparent;
-    background: transparent;
   }
 
   .shell[data-sidebar="collapsed"] .shell__search-label,
@@ -168,6 +282,17 @@
   @media (max-width: 48rem) {
     .shell__search {
       order: 1;
+    }
+
+    /* The bar on top: the groups run on in one wrapping row, without dividers. */
+    .shell__nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-1);
+    }
+
+    .shell__divider {
+      display: none;
     }
 
     .shell__search-label,
@@ -361,11 +486,178 @@
     font-size: var(--font-size-sm);
   }
 
-  /* Start page */
+  /* Phones: the navigation's groups spread over the bar like one list. */
+  @media (max-width: 25rem) {
+    .shell__nav {
+      justify-content: space-between;
+    }
+  }
+
+  /*
+   * Setup checklist: a quiet card at the bottom of the sidebar (or on the start page where the
+   * sidebar is a bar on top), a step above the sidebar's surface.
+   */
+
+  .setup {
+    display: grid;
+    flex: none;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg);
+  }
+
+  .setup--page {
+    padding: var(--space-card);
+    background: var(--bg-raised);
+  }
+
+  .setup__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-block-end: var(--space-1);
+  }
+
+  .setup__tile {
+    display: grid;
+    width: var(--size-setup-tile);
+    height: var(--size-setup-tile);
+    place-items: center;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+  }
+
+  .setup__close {
+    display: grid;
+    width: var(--space-6);
+    height: var(--space-6);
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      color var(--duration-fast) var(--easing);
+  }
+
+  .setup__close:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .setup__title {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .setup__progress {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .setup__steps {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .setup__step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-tight);
+  }
+
+  .setup__step[data-done] {
+    color: var(--text-muted);
+  }
+
+  /* An open circle for a step to do; a check on a quiet fill once it is done. */
+  .setup__mark {
+    display: grid;
+    flex: none;
+    width: var(--space-4);
+    height: var(--space-4);
+    place-items: center;
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-pill);
+  }
+
+  .setup__step[data-done] .setup__mark {
+    border-color: var(--border);
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .setup__mark .icon {
+    width: var(--space-3);
+    height: var(--space-3);
+  }
+
+  .setup__action {
+    width: 100%;
+    margin-block-start: var(--space-2);
+  }
+
+  /* Start page: a greeting, the organization in numbers, dashboards as cards. */
 
   .start {
     display: grid;
-    gap: var(--space-6);
+    gap: var(--space-8);
+  }
+
+  .start__header {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  /* The content header: the sidebar toggle, then the page's breadcrumbs. */
+  .shell__header {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: var(--space-6);
+    gap: var(--space-2);
+    margin-block-end: var(--space-4);
+  }
+
+  .shell__crumbs {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .shell__crumbs .breadcrumbs {
+    margin-block-end: 0;
+  }
+
+  /* Without a toggle (the bar on top) and without breadcrumbs, the header takes no room. */
+  @media (max-width: 48rem) {
+    .shell__header:not(:has(.breadcrumbs)) {
+      display: none;
+    }
+  }
+
+  .start__heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-6);
+  }
+
+  .start__greeting {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-medium);
   }
 
   .start__actions {
@@ -374,54 +666,146 @@
     gap: var(--space-2);
   }
 
-  .start__columns {
+  .start__stats,
+  .start__cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-column), 100%), 1fr));
-    gap: var(--space-6);
-  }
-
-  .start__section {
-    display: grid;
-    align-content: start;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-
-  .start__title {
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-  }
-
-  .start__list {
-    display: grid;
+    gap: var(--space-cards);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
-  .start__entry {
+  .start__stats {
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-stat-min), 100%), 1fr));
+  }
+
+  .start__cards {
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-column), 100%), 1fr));
+  }
+
+  /*
+   * A stat tile: label and number on the left, an illustration well on the right. The tile's
+   * fill is the border color and shows through a 1 px gap, so the hairline between the two
+   * parts is the card's own border, not a bar.
+   */
+  .stat-tile {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: var(--control-height);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-md);
+    height: 100%;
+    min-height: var(--size-stat-height);
+    gap: var(--space-px);
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--border);
     color: var(--text);
     text-decoration: none;
   }
 
-  .start__entry:hover {
+  .stat-tile__text {
+    display: grid;
+    flex: 1;
+    align-content: space-between;
+    min-width: 0;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-raised);
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .stat-tile:hover .stat-tile__text {
     background: var(--bg-hover);
   }
 
-  .start__entry-text {
+  /* One line: a long label is cut, never pushes the number down. */
+  .stat-tile__label {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stat-tile__value {
+    font-size: var(--font-size-display);
+    font-weight: var(--font-weight-regular);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+  }
+
+  .stat-tile__value--none {
+    color: var(--text-muted);
+    font-size: var(--font-size-md);
+  }
+
+  .stat-tile__skeleton {
+    width: var(--space-12);
+    min-height: var(--size-switcher-mark);
+  }
+
+  .stat-tile__well {
     display: grid;
+    flex: none;
+    width: var(--size-stat-well);
+    place-items: center;
+    background: var(--bg-surface);
+  }
+
+  /* Illustrations in the wells: surfaces, hairlines and muted strokes, never a color. */
+  .art {
+    width: var(--space-16);
+    height: var(--space-12);
+    overflow: visible;
+  }
+
+  .art__sheet {
+    fill: var(--bg-hover);
+    stroke: var(--border-strong);
+    stroke-width: var(--border-width);
+  }
+
+  .art__sheet--front {
+    fill: var(--bg-raised);
+  }
+
+  .art__panel {
+    fill: var(--bg-active);
+  }
+
+  .art__line {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: var(--icon-stroke);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .art--spark {
+    height: var(--space-10);
+  }
+
+  .art__grid {
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .art__spark {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: var(--icon-stroke);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .start__section {
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
     min-width: 0;
   }
 
-  .start__entry-path {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+  .start__title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
   }
 
   .start__muted {
@@ -429,33 +813,81 @@
     font-size: var(--font-size-sm);
   }
 
-  .start__onboarding {
+  /* A dashboard card: a thumbnail tile, the title, the folder and two quick actions. */
+  .dash-card {
     display: grid;
-    gap: var(--space-3);
-    padding: var(--space-4);
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--space-1);
+    padding: var(--space-card);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
-    background: var(--bg-surface);
+    background: var(--bg-raised);
   }
 
-  .start__steps {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
-    gap: var(--space-4);
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  /* A small sheet of panels, drawn from the surface tokens. */
+  .dash-card__thumb {
+    width: var(--size-thumb-width);
+    height: var(--size-thumb-height);
+    margin-block-end: var(--space-4);
   }
 
-  .start__step {
-    display: grid;
-    align-content: start;
-    gap: var(--space-2);
+  .thumb__tab {
+    fill: var(--bg-active);
   }
 
-  .start__step-title {
+  .thumb__sheet {
+    fill: var(--bg-hover);
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .thumb__panel {
+    fill: var(--bg-raised);
+  }
+
+  .thumb__line {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: var(--icon-stroke);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .dash-card__title {
+    min-width: 0;
     font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .dash-card__link {
+    display: block;
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .dash-card__link:hover {
+    text-decoration: underline;
+  }
+
+  .dash-card__path {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .dash-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-block-start: var(--space-4);
+  }
+
+  .dash-card__actions > .button {
+    flex: 1 1 auto;
   }
 
   /* Preferences on the account page */

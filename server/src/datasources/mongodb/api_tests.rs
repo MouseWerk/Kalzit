@@ -328,7 +328,7 @@ async fn limits_cut_the_set_and_the_cursor_continues_it() {
     let first = t.query(&id, q.clone()).await;
     let set = &first["result"]["documents"];
     assert_eq!(set["documents"].as_array().unwrap().len(), 2, "{first}");
-    assert_eq!(set["truncated"], json!({ "limit": 2 }));
+    assert_eq!(set["truncated"], json!({ "limit": 2, "reason": "documents.limit" }));
     assert_eq!(set["notices"][0]["code"], "documents.limit");
     assert_eq!(set["notices"][0]["params"]["limit"], "2");
     let cursor = set["nextCursor"].as_str().unwrap().to_string();

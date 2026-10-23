@@ -37,7 +37,14 @@ pub enum HttpError {
     TooLarge(usize),
     #[error("{0}")]
     Other(String),
+    /// The caller's hop check refused a request (the first or a redirect), with its reason.
+    #[error("{0}")]
+    Refused(crate::datasources::Detail),
 }
+
+/// Asked before every hop, the first request and each redirect, with the method and URL that
+/// would be sent; an error stops the request before anything is sent there.
+pub type HopCheck<'a> = &'a (dyn Fn(&Method, &Url) -> Result<(), crate::datasources::Detail> + Send + Sync);
 
 impl HttpError {
     /// The reason code, parameters and text for the API.
@@ -45,6 +52,7 @@ impl HttpError {
         use crate::datasources::Detail;
         match self {
             HttpError::Blocked(b) => b.0.clone(),
+            HttpError::Refused(d) => d.clone(),
             HttpError::Timeout => Detail::new("http.timeout", self.to_string()),
             HttpError::TooLarge(max) => Detail::new("http.too_large", self.to_string()).with("bytes", max),
             HttpError::Other(message) => Detail::new("http.failed", message.clone()).with("detail", message),
@@ -136,15 +144,50 @@ pub fn client(opts: HttpOptions) -> Result<HttpClient, HttpError> {
 }
 
 impl HttpClient {
-    /// Sends a request and follows redirects, checking every target. Authorization is dropped
-    /// when a redirect leaves the origin, so credentials are not handed to another host.
+    /// Sends a request and follows redirects, checking every target. Authorization and every
+    /// header marked sensitive are dropped when a redirect leaves the origin, so credentials are
+    /// not handed to another host.
     pub async fn send(&self, method: Method, url: Url, headers: HeaderMap) -> Result<reqwest::Response, HttpError> {
+        self.send_with_body(method, url, headers, None).await
+    }
+
+    /// `send` with a request body. A redirect keeps the method and body only for 307 and 308;
+    /// any other redirect continues as a GET without body, as browsers do.
+    pub async fn send_with_body(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, HttpError> {
+        self.send_checked(method, url, headers, body, None).await
+    }
+
+    /// `send_with_body` where `hop` is asked before every request, the first and each redirect,
+    /// so a redirect cannot take the request where the caller would never send it (a write
+    /// endpoint, another path).
+    pub async fn send_checked(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+        hop: Option<HopCheck<'_>>,
+    ) -> Result<reqwest::Response, HttpError> {
         let mut url = url;
         let mut method = method;
         let mut headers = headers;
+        let mut body = body;
         for _ in 0..=MAX_REDIRECTS {
             self.check_url(&url).await?;
-            let response = self.client.request(method.clone(), url.clone()).headers(headers.clone()).send().await?;
+            if let Some(check) = hop {
+                check(&method, &url).map_err(HttpError::Refused)?;
+            }
+            let mut request = self.client.request(method.clone(), url.clone()).headers(headers.clone());
+            if let Some(b) = &body {
+                request = request.body(b.clone());
+            }
+            let response = request.send().await?;
             if !response.status().is_redirection() {
                 return Ok(response);
             }
@@ -154,9 +197,18 @@ impl HttpClient {
             let next = url.join(location).map_err(|e| HttpError::Other(format!("invalid redirect target: {e}")))?;
             if next.origin() != url.origin() {
                 headers.remove(AUTHORIZATION);
+                let sensitive: Vec<_> =
+                    headers.iter().filter(|(_, v)| v.is_sensitive()).map(|(k, _)| k.clone()).collect();
+                for name in sensitive {
+                    headers.remove(name);
+                }
             }
-            if response.status() == StatusCode::SEE_OTHER {
+            let keeps_method =
+                matches!(response.status(), StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT);
+            if response.status() == StatusCode::SEE_OTHER || (!keeps_method && body.is_some()) {
                 method = Method::GET;
+                body = None;
+                headers.remove(reqwest::header::CONTENT_TYPE);
             }
             url = next;
         }
@@ -189,6 +241,15 @@ impl HttpClient {
                 format!("{} URLs are not allowed", url.scheme()),
             )
             .with("scheme", url.scheme());
+            return Err(Blocked(detail).into());
+        }
+        // Credentials in a URL (a redirect's above all) would be sent as basic auth to wherever
+        // it points; sources carry theirs in their own fields.
+        if !url.username().is_empty() || url.password().is_some() {
+            let detail = crate::datasources::Detail::new(
+                "target.url_credentials",
+                "the URL contains credentials, which Kalzit does not send",
+            );
             return Err(Blocked(detail).into());
         }
         let host = url.host_str().ok_or_else(|| HttpError::Other("the URL has no host".into()))?;
@@ -369,6 +430,56 @@ mod tests {
         assert_eq!(r.text().await.unwrap(), "");
     }
 
+    #[expect(clippy::disallowed_methods, reason = "a fake upstream server, not an API route")]
+    async fn echo_key() -> std::net::SocketAddr {
+        let app = Router::new().route(
+            "/key",
+            axum::routing::any(|method: Method, headers: axum::http::HeaderMap, body: String| async move {
+                let key = headers.get("x-api-key").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+                format!("{method} {key} {body}")
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        addr
+    }
+
+    #[tokio::test]
+    async fn sensitive_headers_and_bodies_follow_redirects_only_where_safe() {
+        let addr = echo_key().await;
+        let c = test_client(&[]);
+        let mut headers = HeaderMap::new();
+        let mut key = reqwest::header::HeaderValue::from_static("geheim");
+        key.set_sensitive(true);
+        headers.insert("x-api-key", key);
+        let same = Url::parse(&format!("http://{addr}/key")).unwrap();
+        let r = c.send_with_body(Method::POST, same, headers.clone(), Some(b"{}".to_vec())).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "POST geheim {}");
+        // A 307 to another origin keeps the method and body, but not the sensitive header.
+        let hop = redirector(format!("http://{addr}/key")).await;
+        let url = Url::parse(&format!("http://{hop}/")).unwrap();
+        let r = c.send_with_body(Method::POST, url, headers, Some(b"{}".to_vec())).await.unwrap();
+        assert_eq!(r.text().await.unwrap(), "POST  {}");
+    }
+
+    #[tokio::test]
+    async fn the_hop_check_sees_every_redirect() {
+        let addr = echo_key().await;
+        let c = test_client(&[]);
+        let hop = redirector(format!("http://{addr}/key")).await;
+        let seen = std::sync::Mutex::new(Vec::new());
+        let check = |m: &Method, u: &Url| {
+            seen.lock().unwrap().push(format!("{m} {}", u.path()));
+            if u.path() == "/key" { Err(crate::datasources::Detail::new("http.failed", "refused")) } else { Ok(()) }
+        };
+        let url = Url::parse(&format!("http://{hop}/")).unwrap();
+        let e =
+            c.send_checked(Method::POST, url, HeaderMap::new(), Some(b"{}".to_vec()), Some(&check)).await.unwrap_err();
+        assert!(matches!(e, HttpError::Refused(_)), "{e}");
+        assert_eq!(*seen.lock().unwrap(), ["POST /", "POST /key"]);
+    }
+
     #[tokio::test]
     async fn send_once_does_not_follow_redirects() {
         let addr = upstream().await;
@@ -378,5 +489,21 @@ mod tests {
         assert_eq!(once.status(), StatusCode::TEMPORARY_REDIRECT, "not followed");
         let blocked = Url::parse("http://169.254.169.254/").unwrap();
         assert!(matches!(c.send_once(Method::POST, blocked, HeaderMap::new(), None).await, Err(HttpError::Blocked(_))));
+    }
+
+    #[tokio::test]
+    async fn urls_with_credentials_are_refused_also_as_redirect_targets() {
+        let addr = echo_key().await;
+        let c = test_client(&[]);
+        for raw in [format!("http://fremd@{addr}/key"), format!("http://fremd:geheim@{addr}/key")] {
+            let e = c.send(Method::GET, Url::parse(&raw).unwrap(), HeaderMap::new()).await.unwrap_err();
+            assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
+            let e = c.send_once(Method::GET, Url::parse(&raw).unwrap(), HeaderMap::new(), None).await.unwrap_err();
+            assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
+        }
+        let hop = redirector(format!("http://fremd:geheim@{addr}/key")).await;
+        let url = Url::parse(&format!("http://{hop}/")).unwrap();
+        let e = c.send(Method::GET, url, HeaderMap::new()).await.unwrap_err();
+        assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
     }
 }

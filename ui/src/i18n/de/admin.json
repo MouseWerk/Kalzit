@@ -396,6 +396,8 @@
   "admin.users.cannotLock": "Dieses Konto lässt sich nicht sperren: Es ist der letzte Server-Admin oder der letzte Eigentümer einer Organisation, der sich anmelden kann. Gib die Rolle zuerst jemand anderem.",
   "admin.settings.datasources.sqlite_dirs.label": "SQLite-Ordner",
   "admin.settings.datasources.sqlite_dirs.description": "Ordner auf dem Server, aus denen SQLite-Datenquellen Datenbankdateien öffnen dürfen. Der Datenordner bleibt immer ausgeschlossen. Ist die Liste leer, sind keine SQLite-Dateien erlaubt.",
+  "admin.settings.datasources.file_dirs.label": "Ordner für CSV- und JSON-Dateien",
+  "admin.settings.datasources.file_dirs.description": "Ordner auf dem Server, aus denen Datei-Datenquellen CSV-, JSON- und NDJSON-Dateien lesen dürfen. Der Datenordner bleibt immer ausgeschlossen. Ist die Liste leer, sind keine Dateien erlaubt.",
   "admin.settings.datasources.allowed_targets.label": "Erlaubte Verbindungsziele",
   "admin.settings.datasources.allowed_targets.description": "Wenn diese Liste nicht leer ist, dürfen sich Datenquellen nur mit diesen Hosts und Netzen verbinden.",
   "admin.settings.datasources.query_timeout_secs.label": "Zeitlimit für Abfragen (Sekunden)",

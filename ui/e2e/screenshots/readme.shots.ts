@@ -47,7 +47,7 @@ async function openPage(browser: Browser, colorScheme: "light" | "dark" = "light
   // pictures show them at the screenshot moment instead.
   for (const pattern of [
     /\/api\/me\/sessions(\?|$)/,
-    /\/api\/orgs\/[^/]+\/(members|dashboards)(\?|$)/,
+    /\/api\/orgs\/[^/]+\/(members|dashboards|audit)(\?|$)/,
   ]) {
     await context.route(pattern, async (route) => {
       const response = await route.fetch();
@@ -125,8 +125,23 @@ test("sign-in", async ({ browser }) => {
   await page.context().close();
 });
 
-// The start page is still the placeholder in this version (always the empty state, whatever
-// exists); the list of dashboards stands in for it until the start page shows content.
+test("start page", async ({ browser }) => {
+  const page = await openPage(browser);
+  await signIn(page);
+  // The demo dashboard starred and opened once, so both card rows show it.
+  const dashboard = `/api/orgs/${demo.owner.orgId}/dashboards/${demo.dashboardId}`;
+  expect((await page.request.put(`${dashboard}/star`)).ok()).toBe(true);
+  expect((await page.request.post(`${dashboard}/views`)).ok()).toBe(true);
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: t("home.welcome", { name: DEMO_OWNER.name }) }),
+  ).toBeVisible();
+  await expect(page.locator(".stat-tile__skeleton")).toHaveCount(0);
+  await expect(page.locator(".dash-card")).toHaveCount(2);
+  await shoot(page, "start");
+  await page.context().close();
+});
+
 test("dashboards", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);

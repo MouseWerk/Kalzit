@@ -77,6 +77,5 @@
   "notFound.text": "This address does not exist. It may have moved or been mistyped.",
   "notFound.home": "Go to home",
   "home.title": "Home",
-  "home.welcome": "Welcome, {name}",
-  "home.lead": "Your starred and recently opened dashboards, and what to do next."
+  "home.welcome": "Welcome, {name}"
 }

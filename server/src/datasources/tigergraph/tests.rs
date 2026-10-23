@@ -390,8 +390,38 @@ async fn token_requests_do_not_follow_redirects() {
     let (addr, fake) = fake_with(Fake { redirect_tokens: true, ..Fake::default() }).await;
     let conn = connection(addr, "leser", json!({})).await;
     let r = TigerGraph.query(&conn, req(json!({ "installed": "nachbarn", "params": { "p": "1" } }), json!({}))).await;
-    assert_eq!(reason(r), "tigergraph.error");
+    assert_eq!(reason(r), "tigergraph.redirect_refused");
     assert_eq!(*fake.tokens_issued.lock().unwrap(), 0, "the redirect was not followed");
+}
+
+#[test]
+fn no_redirect_is_followed() {
+    let restpp = Url::parse("http://tg.intern:14240/restpp/").unwrap();
+    let first = restpp.join("query/g/genehmigt?x=1").unwrap();
+    // The first request goes out (the target checks still apply to it).
+    assert!(check_hop(0, &first).is_ok());
+    // Every redirect is refused: other installed queries, user management, look-alike paths,
+    // encoded or resolved dots, other origins, credentials, and the same URL again.
+    for loc in [
+        "andere",
+        "/restpp/query/g/schreibt",
+        "/gsql/v1/users/",
+        "/restppx/query",
+        "https://tg.intern:14240/restpp/query/g/genehmigt",
+        "http://tg.intern:9000/query/g/x",
+        "http://fremd@tg.intern:14240/restpp/query/g/genehmigt",
+        "http://xn--tg-intern-9ya.example/restpp/",
+        "/restpp/%252e%252e/x",
+        "/restpp/%2e%2e/gsql",
+        "//evil.example/restpp/",
+        "/restpp/query/g/genehmigt;/../../gsql",
+        "/restpp/query/g/genehmigt?x=1",
+    ] {
+        let url = first.join(loc).unwrap();
+        let e = check_hop(1, &url).expect_err(loc);
+        assert_eq!(e.reason, "tigergraph.redirect_refused");
+        assert_eq!(e.params["path"], url.path());
+    }
 }
 
 #[tokio::test]

@@ -129,8 +129,11 @@ describe("route guards", () => {
 
   it("notices a session that ended on the server at the next navigation", async () => {
     const server = installFakeServer({ signedIn: true });
-    const { user, location } = renderApp("/dashboards");
+    const { app, user, location } = renderApp("/dashboards");
     await screen.findByRole("heading", { level: 1, name: "Dashboards" });
+    // The shell loads data of its own (the setup checklist); a request of it still on its way
+    // would meet the ended session before the navigation does.
+    await waitFor(() => expect(app.queryClient.isFetching()).toBe(0));
 
     server.state.signedIn = false;
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
