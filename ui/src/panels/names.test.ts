@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Field, Frame } from "../api/generated/shapes";
+import type { FieldConfig } from "./fieldConfig/fieldConfig";
 import { distinctSeriesNames, nameFrame } from "./frame";
-import { stateTone } from "./state/stateData";
+import { stateData, stateTone } from "./state/stateData";
 import { buildSeries } from "./timeseries/series";
 
 const field = (name: string, labels?: Record<string, string>): Field => ({
@@ -61,13 +62,37 @@ describe("series names", () => {
 });
 
 describe("state tones", () => {
-  it("colors state words by what they mean, in English and German", () => {
+  it("colors whole state words by what they mean, in English and German", () => {
     expect(stateTone("OK")).toBe("ok");
-    expect(stateTone("up")).toBe("ok");
+    expect(stateTone(" up ")).toBe("ok");
     expect(stateTone("degraded")).toBe("warn");
     expect(stateTone("down")).toBe("critical");
     expect(stateTone("Fehler")).toBe("critical");
     expect(stateTone("unknown")).toBe("neutral");
-    expect(stateTone("Nord")).toBeUndefined();
+  });
+
+  it("leaves values alone that only contain a state word, or are no clear state", () => {
+    for (const text of ["Down Under", "error_budget_ok", "up-to-date", "Nord", "red", "running"]) {
+      expect(stateTone(text), text).toBeUndefined();
+    }
+  });
+
+  const states = frame({ name: "status", type: "string", values: ["down", "ok"] });
+  const colorOf = (config: FieldConfig, words = true) =>
+    stateData([states], config, "en", words)?.rows[0]?.values.map((v) => v?.colorClass);
+
+  it("puts mappings and the field color before state words, and state words before the palette", () => {
+    expect(colorOf({ defaults: {}, overrides: [] })).toEqual(["tone--critical", "tone--ok"]);
+    const mapped: FieldConfig = {
+      defaults: { mappings: [{ type: "value", value: "down", tone: "warn" }] },
+      overrides: [],
+    };
+    expect(colorOf(mapped)).toEqual(["tone--warn", "tone--ok"]);
+    const colored: FieldConfig = { defaults: { color: "chart-3" }, overrides: [] };
+    expect(colorOf(colored)).toEqual(["tone--chart-3", "tone--chart-3"]);
+  });
+
+  it("uses the palette when known state words are switched off", () => {
+    expect(colorOf({ defaults: {}, overrides: [] }, false)).toEqual(["series-1", "series-2"]);
   });
 });

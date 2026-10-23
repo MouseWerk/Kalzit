@@ -33,62 +33,33 @@ export interface StateData {
   legend: StateValue[];
 }
 
-/** Words that name a state, in English and German, by the tone that means it. */
-const STATE_WORDS: Record<"ok" | "warn" | "critical" | "neutral", readonly string[]> = {
-  ok: [
-    "ok",
-    "up",
-    "healthy",
-    "success",
-    "succeeded",
-    "online",
-    "running",
-    "pass",
-    "passed",
-    "ready",
-    "active",
-    "green",
-    "gesund",
-    "erfolgreich",
-    "läuft",
-    "bereit",
-    "aktiv",
-  ],
-  warn: [
-    "warn",
-    "warning",
-    "degraded",
-    "pending",
-    "slow",
-    "unstable",
-    "yellow",
-    "warnung",
-    "eingeschränkt",
-    "ausstehend",
-    "langsam",
-  ],
+/**
+ * The words that name a state unambiguously, in English and German, by the tone that means them.
+ * Only whole values match ("down", not "Down Under" or "up-to-date"); words that are often plain
+ * values (red, active, running, idle ...) are left out on purpose. docs/ARCHITECTURE.md lists them.
+ */
+export const STATE_WORDS: Record<"ok" | "warn" | "critical" | "neutral", readonly string[]> = {
+  ok: ["ok", "up", "healthy", "success", "passed", "gesund", "erfolgreich", "bestanden"],
+  warn: ["warning", "degraded", "pending", "warnung", "eingeschränkt", "ausstehend"],
   critical: [
     "down",
     "error",
     "failed",
-    "fail",
     "failure",
     "critical",
     "offline",
-    "crashed",
-    "red",
     "fehler",
     "fehlgeschlagen",
     "ausgefallen",
     "kritisch",
   ],
-  neutral: ["unknown", "none", "n/a", "skipped", "stopped", "idle", "paused", "unbekannt"],
+  neutral: ["unknown", "unbekannt"],
 };
 
 /**
  * The tone a state's own word stands for ("ok" good, "down" danger, "degraded" warning,
- * "unknown" neutral), so a status column reads at a glance without value mappings. Mappings,
- * thresholds and a field color the author set win.
+ * "unknown" neutral), so a status column reads at a glance without value mappings. The whole
+ * value must be the word, in any case and with surrounding spaces.
  */
 export function stateTone(text: string): "ok" | "warn" | "critical" | "neutral" | undefined {
   const word = text.trim().toLowerCase();
@@ -99,17 +70,17 @@ export function stateTone(text: string): "ok" | "warn" | "critical" | "neutral" 
   }
   return undefined;
 }
-
 /**
  * Every field except time becomes a row of states over the frame's time points. A value's color
- * comes from its mapping or the thresholds, else from a state word it is (stateTone); other
- * values take palette colors in the order they first appear, the same color for the same text
- * in every row.
+ * comes, in this order, from its mapping, the thresholds, the field's color, the state word it is
+ * (stateTone, unless `stateWords` is off), and else the palette in the order values first appear,
+ * the same color for the same text in every row.
  */
 export function stateData(
   frames: readonly Frame[],
   config: FieldConfig,
   language: string,
+  stateWords = true,
 ): StateData | null {
   const frame = frames.find(
     (f) => timeField(f) !== undefined && f.fields.some((field) => field.type !== "time"),
@@ -151,7 +122,7 @@ export function stateData(
         const display = displayValue(raw, field.type, options, language);
         const text = displayText(display);
         let colorClass: string;
-        const known = options.color === undefined ? stateTone(text) : undefined;
+        const known = stateWords && options.color === undefined ? stateTone(text) : undefined;
         if (display.tone !== undefined) {
           colorClass = toneClass(display.tone);
         } else if (known !== undefined) {

@@ -323,11 +323,13 @@ struct HistogramOptions {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[allow(dead_code)]
 struct StateOptions {
     legend: Option<Legend>,
     tooltip: Option<Tooltip>,
+    /// Colour known state words (ok, down, ...) by their meaning; the UI defaults it to true.
+    color_state_words: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -711,6 +713,7 @@ mod tests {
             ("histogram", json!({ "bucketCount": 20, "bucketSize": 2.5, "combine": true })),
             ("state-timeline", json!({ "legend": legend, "tooltip": tooltip })),
             ("status-history", json!({})),
+            ("status-history", json!({ "colorStateWords": false })),
             ("text", json!({ "mode": "markdown", "content": "# Umsatz\n\n$region <b>bleibt Text</b>" })),
             (
                 "network",
@@ -807,6 +810,7 @@ mod tests {
             ("timeseries", json!({ "legend": { "mode": "grid", "placement": "bottom" } }), "options"),
             ("stat", json!({ "colorMode": "rainbow" }), "options"),
             ("heatmap", json!({ "xBuckets": 1 }), "options.xBuckets"),
+            ("state-timeline", json!({ "colorStateWords": "yes" }), "options"),
             ("heatmap", json!({ "yBuckets": 500 }), "options.yBuckets"),
             ("histogram", json!({ "bucketSize": 0 }), "options.bucketSize"),
             ("histogram", json!({ "bucketCount": 1000 }), "options.bucketCount"),
