@@ -19,7 +19,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
-use crate::dashboards::{check_dashboard_sources, model};
+use crate::dashboards::{check_dashboard_sources, library, model};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders::{self, Tree};
@@ -34,6 +34,7 @@ pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/orgs/{orgId}/dashboards", Access::Org(Permission::DashboardsRead), list),
         route(Method::POST, "/orgs/{orgId}/dashboards", OrgMember, create),
+        route(Method::POST, "/orgs/{orgId}/dashboards/validate", OrgMember, validate),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, save),
         route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash),
@@ -61,9 +62,11 @@ struct DashboardRow {
     updated_by: Option<String>,
     updated_at: i64,
     deleted_at: Option<i64>,
+    /// The current version's tags, as a JSON array.
+    tags: String,
 }
 
-const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at";
+const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at, tags";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +81,7 @@ pub struct DashboardSummary {
     updated_at: i64,
     updated_by: Option<String>,
     deleted_at: Option<i64>,
+    tags: Vec<String>,
     access: ResourceAccess,
 }
 
@@ -92,6 +96,8 @@ impl DashboardSummary {
             updated_at: r.updated_at,
             updated_by: r.updated_by.clone(),
             deleted_at: r.deleted_at,
+            // Written by the server from a validated model; an unreadable value shows no tags.
+            tags: serde_json::from_str(&r.tags).unwrap_or_default(),
             access: ResourceAccess::dashboard(index.dashboard(&r.id, r.folder_id.as_deref())),
         }
     }
@@ -105,6 +111,8 @@ pub struct Dashboard {
     /// Migrated to the current `schemaVersion`.
     model: Value,
     created_by: Option<String>,
+    /// The library panels the model references, by id; a deleted one is missing.
+    library_panels: std::collections::BTreeMap<String, library::LinkedPanel>,
 }
 
 /// The folder as the caller sees it: `None` when it is hidden from them.
@@ -212,11 +220,11 @@ async fn view(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: DashboardRow) -
         ApiError::internal("dashboards", format!("dashboard {} lacks its version {}", row.id, row.version))
     })?;
     let index = AccessIndex::load(conn, ctx).await?;
-    Ok(Dashboard {
-        summary: DashboardSummary::new(&row, &index),
-        model: stored_model(&raw)?,
-        created_by: row.created_by,
-    })
+    let model = stored_model(&raw)?;
+    let ids: std::collections::BTreeSet<&str> =
+        model["panels"].as_array().into_iter().flatten().filter_map(|p| p["libraryPanelId"].as_str()).collect();
+    let library_panels = library::linked_panels(conn, &ctx.org_id, &ids).await?;
+    Ok(Dashboard { summary: DashboardSummary::new(&row, &index), model, created_by: row.created_by, library_panels })
 }
 
 /// `view` on a pooled connection, where no change is involved.
@@ -249,6 +257,18 @@ struct NewVersion<'a> {
     message: &'a str,
     /// The version this one brings back, for a restore.
     restored_from: Option<i64>,
+    /// Library panels this version references and the stored one did not; checked again under
+    /// the organization's lock, so a library panel deleted meanwhile is not referenced.
+    added_library: std::collections::BTreeSet<&'a str>,
+}
+
+/// The library panels `model` references that `previous` did not.
+fn added_library<'a>(
+    model: &'a model::DashboardModel,
+    previous: Option<&model::DashboardModel>,
+) -> std::collections::BTreeSet<&'a str> {
+    let known = previous.map(model::DashboardModel::library_panel_ids).unwrap_or_default();
+    model.library_panel_ids().into_iter().filter(|id| !known.contains(id)).collect()
 }
 
 /// How many versions to keep per dashboard (0: all). Read before the transaction opens, so the
@@ -313,6 +333,21 @@ pub(super) async fn purge_in_folder(conn: &mut sqlx::AnyConnection, org_id: &str
     .bind(folder_id)
     .execute(&mut *conn)
     .await?;
+    library::purge_dashboard_rows(conn, org_id, "d.folder_id = $2", folder_id).await?;
+    // Library panels go with their folder; dashboards elsewhere that showed one say it is gone.
+    sqlx::query(
+        "DELETE FROM library_panel_uses WHERE library_panel_id IN \
+         (SELECT id FROM library_panels WHERE org_id = $1 AND folder_id = $2)",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM library_panels WHERE org_id = $1 AND folder_id = $2")
+        .bind(org_id)
+        .bind(folder_id)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query(
         "DELETE FROM dashboard_versions WHERE dashboard_id IN \
          (SELECT id FROM dashboards WHERE org_id = $1 AND folder_id = $2)",
@@ -338,6 +373,8 @@ pub struct ListQuery {
     q: Option<String>,
     /// `true` lists the trash instead.
     trashed: Option<bool>,
+    /// Only dashboards with this tag, any case.
+    tag: Option<String>,
     limit: Option<u32>,
     cursor: Option<String>,
 }
@@ -377,6 +414,8 @@ async fn list(
          AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders) \
               OR id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')) \
          AND (CAST($8 AS TEXT) IS NULL OR title > $8 OR (title = $8 AND id > $9)) \
+         AND (CAST($11 AS TEXT) IS NULL OR id IN \
+              (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key = $11)) \
          ORDER BY title, id LIMIT $10",
         folders::VISIBILITY_CTE
     )))
@@ -390,6 +429,7 @@ async fn list(
     .bind(after_title.as_deref())
     .bind(after_id.as_deref())
     .bind(limit as i64 + 1)
+    .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase))
     .fetch_all(&mut *conn)
     .await?;
     let mut items: Vec<DashboardSummary> = rows.iter().map(|r| DashboardSummary::new(r, &index)).collect();
@@ -431,6 +471,7 @@ async fn create(
     let message = clean_message(body.message.as_deref())?;
     authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
     check_dashboard_sources(&state.db, &ctx, &model, None).await?;
+    library::check_references(&state.db, &ctx, &model, None).await?;
 
     let id = new_id();
     let keep = version_retention(&state).await?;
@@ -450,14 +491,37 @@ async fn create(
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    let new = NewVersion { model: &model, message: &message, restored_from: None };
+    // `lock_place` took the organization's lock; a library panel deleted since the check above
+    // is refused here rather than referenced.
+    library::recheck_added(&mut tx, &ctx.org_id, &model.library_panel_ids()).await?;
+    let new = NewVersion {
+        model: &model,
+        message: &message,
+        restored_from: None,
+        added_library: added_library(&model, None),
+    };
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
+    library::sync_references(&mut tx, &ctx.org_id, &id, &model).await?;
     let summary = json!({ "folderId": body.folder_id, "version": 1 });
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.created", &id, summary, now)).await?;
     let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut tx, &ctx, row).await?;
     crate::db::commit(tx).await?;
     Ok((StatusCode::CREATED, Json(answer)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateModel {
+    model: Value,
+}
+
+/// Checks a model as a save would (migrations, rules, size) without storing anything, for the
+/// JSON editor and imports. Answers the model as it would be stored. Data sources and library
+/// panels are checked on save, where the caller's rights on them count.
+async fn validate(JsonBody(body): JsonBody<ValidateModel>) -> ApiResult<Json<Value>> {
+    let model = parse_model(body.model)?;
+    Ok(Json(json!({ "model": model })))
 }
 
 async fn get_one(
@@ -496,6 +560,11 @@ async fn write_version(
     let next = row.version + 1;
     let moved = folder_id != row.folder_id.as_deref();
     let mut tx = crate::db::begin(&state.db).await?;
+    // New library panel references take the organization's lock first, as a library panel's
+    // delete does, so a reference never outlives the panel it names.
+    if !moved && !new.added_library.is_empty() {
+        authz::lock_org(&mut tx, &ctx.org_id).await?;
+    }
     if moved {
         lock_place(&mut tx, &ctx.org_id, folder_id).await?;
         // Leaving a restricted folder is remembered, so the purge still hides its old events.
@@ -533,7 +602,9 @@ async fn write_version(
         }
         return Err(ApiError::version_conflict(json!(pool_view(state, ctx, stored).await?)));
     }
+    library::recheck_added(&mut tx, &ctx.org_id, &new.added_library).await?;
     insert_version(&mut tx, &row.id, next, &ctx.user.id, &new, keep, now).await?;
+    library::sync_references(&mut tx, &ctx.org_id, &row.id, new.model).await?;
     let (action, summary) = match new.restored_from {
         Some(from) => ("dashboard.version_restored", json!({ "version": next, "restoredFrom": from })),
         None => ("dashboard.saved", json!({ "version": next, "moved": moved })),
@@ -593,7 +664,13 @@ async fn save(
     let stored = current_model(&state, &row).await?;
     check_panels(&model, Some(&stored))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&stored)).await?;
-    let new = NewVersion { model: &model, message: &message, restored_from: None };
+    library::check_references(&state.db, &ctx, &model, Some(&stored)).await?;
+    let new = NewVersion {
+        model: &model,
+        message: &message,
+        restored_from: None,
+        added_library: added_library(&model, Some(&stored)),
+    };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
 }
 
@@ -609,6 +686,9 @@ async fn trash(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    // Ordered against annotation changes, which check under the same lock that the dashboard is
+    // outside the trash.
+    authz::lock_org(&mut tx, &ctx.org_id).await?;
     sqlx::query(
         "UPDATE dashboards SET deleted_at = $1, trash_batch = $2 WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL",
     )
@@ -707,6 +787,7 @@ async fn purge(
         // Restricted content keeps its audit events hidden once it is gone.
         folders::tombstone_dashboard(&mut tx, &ctx.org_id, &id).await?;
     }
+    library::purge_dashboard_rows(&mut tx, &ctx.org_id, "d.id = $2", &id).await?;
     sqlx::query("DELETE FROM dashboard_versions WHERE dashboard_id = $1").bind(&id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id = $2")
         .bind(&ctx.org_id)
@@ -836,7 +917,13 @@ async fn restore_version(
     let current = current_model(&state, &row).await?;
     check_panels(&model, Some(&current))?;
     check_dashboard_sources(&state.db, &ctx, &model, Some(&current)).await?;
-    let new = NewVersion { model: &model, message: "", restored_from: Some(summary.version) };
+    library::check_references(&state.db, &ctx, &model, Some(&current)).await?;
+    let new = NewVersion {
+        model: &model,
+        message: "",
+        restored_from: Some(summary.version),
+        added_library: added_library(&model, Some(&current)),
+    };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
 }
 

@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import type { Me } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
+import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 import { shellFake } from "../shell/test/fakeShell";
@@ -92,6 +93,8 @@ export interface FakeArea<State> {
  */
 const AREA_FAKES = {
   datasources: datasourcesFake,
+  // Before dashboards: it answers /dashboards/validate and the annotation routes.
+  dashboardFeatures: dashboardFeaturesFake,
   dashboards: dashboardsFake,
   shell: shellFake,
 };

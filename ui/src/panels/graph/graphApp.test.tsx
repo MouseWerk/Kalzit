@@ -150,6 +150,32 @@ describe("graph panels on a dashboard", () => {
   });
 });
 
+describe("a graph panel shown alone", () => {
+  it("still sets a dashboard variable from a node", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    addNeo4jSource(server.areas.datasources);
+    addDashboard(server.areas.dashboards, "d-shop", {
+      ...emptyModel("Shop"),
+      variables: [{ name: "customerId", type: "custom", options: ["42", "43"] }],
+      panels: [graphPanel({ variable: "customerId", variableProperty: "customerId" })],
+    });
+    const { user } = renderApp("/dashboards/d-shop?viewPanel=p-graph");
+    const panel = await screen.findByRole("article", { name: "Purchases" });
+    await user.click(await within(panel).findByRole("button", { name: "Grace" }));
+    // The panel queries again with the value the node set.
+    await waitFor(() =>
+      expect(
+        server.areas.dashboards.panelQueries.some((q) => q.body.variables.customerId === "43"),
+      ).toBe(true),
+    );
+    await user.click(screen.getByRole("button", { name: "Back to the dashboard" }));
+    expect(await screen.findByRole("combobox", { name: "customerId" })).toHaveProperty(
+      "value",
+      "43",
+    );
+  });
+});
+
 describe("a custom variable", () => {
   it("is set only to one of its options", async () => {
     const server = installFakeServer({ signedIn: true, user: asRole("viewer") });

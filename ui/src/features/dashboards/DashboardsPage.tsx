@@ -33,6 +33,7 @@ import {
 import "./dashboards.css";
 import { zoneOption } from "../../lib/timeSettings";
 import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
+import { ImportDialog } from "./ImportDialog";
 import { emptyModel } from "./model";
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
@@ -66,7 +67,7 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   const navigate = listRoute.useNavigate();
   const searchId = useId();
   const folders = useQuery(foldersQuery(orgId));
-  const [creating, setCreating] = useState<"dashboard" | "folder" | null>(null);
+  const [creating, setCreating] = useState<"dashboard" | "folder" | "import" | null>(null);
   // A link with `create=dashboard` opens the dialog once; the parameter is dropped right away.
   useEffect(() => {
     if (search.create === "dashboard") {
@@ -126,6 +127,12 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             {t("dashboards.trash.link")}
           </Link>
         ) : null}
+        <Link to="/dashboards/playlists" className="browser__trash">
+          {t("playlists.title")}
+        </Link>
+        <Link to="/dashboards/library" className="browser__trash">
+          {t("libraryPanels.title")}
+        </Link>
       </aside>
       <section className="browser__main" aria-labelledby={`${searchId}-title`}>
         {folder === undefined ? null : (
@@ -153,13 +160,22 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             ) : null}
           </h2>
           {canWrite ? (
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={() => setCreating("dashboard")}
-            >
-              {t("dashboards.new")}
-            </button>
+            <div className="dashboard__tools">
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setCreating("import")}
+              >
+                {t("dashboardTools.import.button")}
+              </button>
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => setCreating("dashboard")}
+              >
+                {t("dashboards.new")}
+              </button>
+            </div>
           ) : null}
         </div>
         <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
@@ -202,6 +218,13 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
           orgId={orgId}
           folders={folders.data ?? []}
           folderId={search.folder}
+          onClose={() => setCreating(null)}
+        />
+      ) : null}
+      {creating === "import" ? (
+        <ImportDialog
+          orgId={orgId}
+          folderId={search.folder ?? null}
           onClose={() => setCreating(null)}
         />
       ) : null}

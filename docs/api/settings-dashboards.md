@@ -327,9 +327,11 @@ become version 2 steps (`id` `projection-<refId>`, `refId` renamed to `frame`), 
 columns version 2 accepts (a path, a known type, a name not used before); a projection with no
 column left, one of a query the panel does not have, an earlier one of the same query (the last
 stays, as the documents UI applied it) and every other entry are dropped. Version 2 is one
-combined version: the dashboard features of rows, repeat, links, annotations and library panels
-add their fields under it. A library panel (`libraryPanelId`) has no steps of its own:
-`transformations` must be empty there.
+combined version: the dashboard features (rows, repeats, links, tags, annotation queries, panel
+time options, library panels and multi-value variables, docs/api/dashboard-features.md) add their
+fields under it, optional and empty by default. A library panel slot (`libraryPanelId`) has no
+targets, steps or links of its own: `targets`, `transformations` and `links` must be empty there,
+and the library panel's own steps are checked against its own queries.
 
 Saving (create, save, restoring a version) checks `datasources:query` on every `datasourceId` of the
 panels and query variables: a data source the caller cannot see is `422 validation` field `model`

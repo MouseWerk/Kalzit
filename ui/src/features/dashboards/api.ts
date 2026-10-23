@@ -8,7 +8,7 @@ import type {
   VariableOptionsResponse,
 } from "../../api/generated/shapes";
 import { orgPath, send } from "../datasources/api";
-import { type DashboardModel, parseModel } from "./model";
+import { type DashboardModel, type PanelModel, parseModel } from "./model";
 
 /*
  * Folders and dashboards as docs/api/settings-dashboards.md specifies them. Request bodies carry
@@ -55,10 +55,62 @@ export interface DashboardSummary {
   updatedAt: number;
   deletedAt: number | null;
   access?: Access;
+  /** The current version's tags; absent when it has none. */
+  tags?: string[];
+}
+
+/** A library panel as a dashboard shows it (docs/api/dashboard-features.md). */
+export interface LinkedPanel {
+  id: string;
+  name: string;
+  version: number;
+  /** The panel content: a panel without id and grid. */
+  model: PanelModel;
 }
 
 export interface Dashboard extends DashboardSummary {
   model: DashboardModel;
+  /** The library panels the model references, by id; a deleted one is missing. */
+  libraryPanels: Record<string, LinkedPanel>;
+}
+
+/** Library panel content (no place) as a panel, for drawing and editing. */
+export function parseLibraryContent(value: unknown, id = "library"): PanelModel {
+  const content = isRecord(value) ? value : {};
+  const [panel] = parseModel(
+    { panels: [{ ...content, id, grid: { x: 0, y: 0, w: 12, h: 8 } }] },
+    "",
+  ).panels;
+  return (
+    panel ?? {
+      id,
+      type: "table",
+      title: "",
+      grid: { x: 0, y: 0, w: 12, h: 8 },
+      targets: [],
+      transformations: [],
+      options: {},
+      fieldConfig: {},
+    }
+  );
+}
+
+function parseLinkedPanels(value: unknown): Record<string, LinkedPanel> {
+  const out: Record<string, LinkedPanel> = {};
+  if (!isRecord(value)) {
+    return out;
+  }
+  for (const [id, entry] of Object.entries(value)) {
+    if (isRecord(entry)) {
+      out[id] = {
+        id,
+        name: str(entry.name),
+        version: num(entry.version),
+        model: parseLibraryContent(entry.model, id),
+      };
+    }
+  }
+  return out;
 }
 
 export interface DashboardVersion {
@@ -126,6 +178,10 @@ function parseSummary(value: unknown): DashboardSummary | null {
   if (access !== undefined) {
     summary.access = access;
   }
+  const tags = Array.isArray(value.tags) ? value.tags.filter((t) => typeof t === "string") : [];
+  if (tags.length > 0) {
+    summary.tags = tags;
+  }
   return summary;
 }
 
@@ -134,7 +190,11 @@ function parseDashboard(value: unknown): Dashboard {
   if (summary === null || !isRecord(value) || typeof value.version !== "number") {
     return invalid("dashboard");
   }
-  return { ...summary, model: parseModel(value.model, summary.title) };
+  return {
+    ...summary,
+    model: parseModel(value.model, summary.title),
+    libraryPanels: parseLinkedPanels(value.libraryPanels),
+  };
 }
 
 /** The stored dashboard of a `version_conflict` answer, or null when it is not one. */
@@ -211,6 +271,8 @@ export interface DashboardFilter {
   q?: string | undefined;
   /** The trash: dashboards deleted and not yet purged. */
   trashed?: boolean;
+  /** Only dashboards with this tag. */
+  tag?: string | undefined;
   cursor?: string | undefined;
 }
 
@@ -223,6 +285,7 @@ export async function fetchDashboards(
   if (filter.folderId !== undefined) params.set("folderId", filter.folderId);
   if (filter.q !== undefined && filter.q !== "") params.set("q", filter.q);
   if (filter.trashed === true) params.set("trashed", "true");
+  if (filter.tag !== undefined && filter.tag !== "") params.set("tag", filter.tag);
   if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "dashboards") + (query === "" ? "" : `?${query}`);

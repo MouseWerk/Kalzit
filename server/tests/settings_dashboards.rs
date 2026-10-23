@@ -1219,8 +1219,7 @@ async fn dashboards_save_versions_and_refuse_stale_writes(t: TestApp) {
     let got = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
     assert_eq!(
         (got.status, &got.body["model"]["schemaVersion"]),
-        (StatusCode::OK, &json!(2)),
-        "migrated to the current version"
+        (StatusCode::OK, &json!(kalzit::dashboards::model::SCHEMA_VERSION))
     );
 
     let saved = t
@@ -1244,7 +1243,7 @@ async fn dashboards_save_versions_and_refuse_stale_writes(t: TestApp) {
     assert_eq!((invalid.code(), invalid.field()), ("validation", "model"));
     assert!(invalid.body["error"]["message"].as_str().unwrap().contains("panels[0].grid"));
     let mut future = model("x");
-    future["schemaVersion"] = json!(3);
+    future["schemaVersion"] = json!(kalzit::dashboards::model::SCHEMA_VERSION + 1);
     let newer = t.post("~/dashboards", json!({ "model": future }), &t.owner).await;
     assert!(newer.body["error"]["message"].as_str().unwrap().contains("newer Kalzit"), "{}", newer.body);
     let long = t
