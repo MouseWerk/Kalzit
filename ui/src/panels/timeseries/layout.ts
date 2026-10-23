@@ -1,3 +1,5 @@
+import { textWidth } from "../measure";
+
 /**
  * Room right of the plot area, in px. The last time label is centered on the plot's right edge;
  * with less room half of it ("04:00 P") was cut off. Half the width of the widest label,
@@ -16,23 +18,6 @@ export const VALUE_AXIS_SIZE = 56;
 
 /** Tick length, the gap before the label and a little air, as uPlot draws a value axis. */
 const VALUE_AXIS_CHROME = 18;
-
-let measureContext: CanvasRenderingContext2D | null | undefined;
-
-function textWidth(text: string, font: string): number | undefined {
-  if (measureContext === undefined) {
-    try {
-      measureContext = document.createElement("canvas").getContext("2d");
-    } catch {
-      measureContext = null;
-    }
-  }
-  if (measureContext === null) {
-    return undefined;
-  }
-  measureContext.font = font;
-  return measureContext.measureText(text).width;
-}
 
 /**
  * Width of the value axis that fits its longest label at the axis font: a fixed width cut long
