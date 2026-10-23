@@ -20,8 +20,8 @@ test("the owner connects a CSV file and explores it with the file query editor",
   const path = join(filesDir(), "regions.csv");
 
   await page.goto("/data-sources/new?kind=file");
-  await page.getByLabel(t("datasources.form.name")).fill(source);
-  await page.getByLabel(t("datasources.settings.path")).fill(path);
+  await page.getByLabel(t("datasources.form.name"), { exact: true }).fill(source);
+  await page.getByLabel(t("datasources.settings.path"), { exact: true }).fill(path);
   await page.getByRole("button", { name: t("datasources.form.create") }).click();
   await expect(page.getByRole("heading", { name: t("datasources.edit.title") })).toBeVisible();
 
