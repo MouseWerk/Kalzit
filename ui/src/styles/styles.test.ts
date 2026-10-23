@@ -184,7 +184,35 @@ describe("no accent frames for states", () => {
     /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
   const FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow)$/;
   const ACCENT =
-    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?)\b/;
+    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?|brand-[\w-]+)\b/;
+  // Brand colors belong inside data source logos only: never in a state, frame or not.
+  const BRAND = /--brand-[\w-]+\b/;
+
+  /** Every declaration that colors a hovered, focused, selected or current element by brand. */
+  function brandInStates(rules: (StyleRule & { file?: string })[]): string[] {
+    return rules.flatMap((rule) =>
+      STATE.test(rule.selector)
+        ? rule.declarations
+            .filter(({ value }) => BRAND.test(value))
+            .map(({ property, value }) => `${rule.selector} { ${property}: ${value} }`)
+        : [],
+    );
+  }
+
+  it("uses no brand color for any state", () => {
+    expect(brandInStates(allRules())).toEqual([]);
+  });
+
+  it("catches brand colors in state rules, frames and fills alike", () => {
+    const sample = parseCss(
+      '@layer components { .a:hover { background: var(--brand-mongodb); } .b[aria-current="page"] { border-color: var(--brand-neo4j); } .kind-logo[data-logo="x"] { color: var(--brand-x); } }',
+    );
+    expect(brandInStates(sample)).toEqual([
+      ".a:hover { background: var(--brand-mongodb) }",
+      '.b[aria-current="page"] { border-color: var(--brand-neo4j) }',
+    ]);
+    expect(ACCENT.test("var(--brand-postgresql)")).toBe(true);
+  });
 
   it("frames no hovered, focused, selected or current element in an accent or status color", () => {
     for (const rule of allRules()) {

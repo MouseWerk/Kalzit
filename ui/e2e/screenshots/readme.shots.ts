@@ -167,6 +167,17 @@ test("explore", async ({ browser }) => {
   await page.context().close();
 });
 
+for (const scheme of ["light", "dark"] as const) {
+  test(`data source kinds, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto("/data-sources/new");
+    await expect(page.getByRole("link", { name: "PostgreSQL", exact: true })).toBeVisible();
+    await shoot(page, `data-source-kinds-${scheme}`);
+    await page.context().close();
+  });
+}
+
 test("data source form", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);

@@ -19,6 +19,7 @@ import {
   sourceAccess,
 } from "./api";
 import { HealthResult } from "./DataSourceForm";
+import { KindLabel } from "./kindMarks";
 import "./datasources.css";
 import { zoneOption } from "../../lib/timeSettings";
 
@@ -219,7 +220,9 @@ function DataSourceRow({
         )}
         {canTest ? <HealthResult health={health} error={test.error} /> : null}
       </td>
-      <td>{kindName}</td>
+      <td>
+        <KindLabel kind={source.kind} name={kindName} />
+      </td>
       <td>{date}</td>
       <td className="data-table__actions">
         {canTest ? (
