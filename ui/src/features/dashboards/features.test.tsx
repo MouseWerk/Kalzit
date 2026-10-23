@@ -401,7 +401,9 @@ describe("annotations", () => {
       server.areas.dashboardFeatures.annotations.push({
         id: `old-${String(i).padStart(4, "0")}`,
         dashboardId: "d-main",
-        panelId: "p2",
+        // For a panel not on this dashboard: fetched like the others, but drawn by no panel, so
+        // the test does not render a thousand marks.
+        panelId: "p-elsewhere",
         time: old + i,
         timeEnd: null,
         text: `Alt ${i}`,
@@ -424,12 +426,14 @@ describe("annotations", () => {
     expect(
       await within(load).findByRole("button", { name: /Annotation at .*: Neueste/ }),
     ).toBeTruthy();
-    // The wide panel's own range was read on its own, and found its old marks too.
-    expect(
-      await within(screen.getByRole("article", { name: "Monat" })).findAllByRole("button", {
-        name: /Annotation at .*: Alt/,
-      }),
-    ).not.toHaveLength(0);
+    // The wide panel's own range was read on its own, page by page up to the limit.
+    await waitFor(() =>
+      expect(
+        server.areas.dashboardFeatures.annotationListRequests.filter(
+          (r) => r.to - r.from > 7 * 24 * 3_600_000,
+        ),
+      ).toHaveLength(5),
+    );
     const ranges = new Set(
       server.areas.dashboardFeatures.annotationListRequests.map((r) => r.to - r.from),
     );
@@ -958,7 +962,9 @@ describe("copy and save as", () => {
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(
-      within(article("Orders")).getByRole("button", { name: "Copy to another dashboard: “Orders”" }),
+      within(article("Orders")).getByRole("button", {
+        name: "Copy to another dashboard: “Orders”",
+      }),
     );
     const dialog = screen.getByRole("dialog", { name: "Copy panel to another dashboard" });
     expect(within(dialog).queryByRole("radio", { name: "Main" })).toBeNull();
