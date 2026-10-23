@@ -125,7 +125,9 @@ describe("network panel", () => {
     // Dragging: the slider follows each step, the graph only once it rests.
     fireEvent.change(slider, { target: { value: "1" } });
     fireEvent.change(slider, { target: { value: "0" } });
-    expect(slider.getAttribute("aria-valuetext")).toMatch(/2026/);
+    // The first purchase's time, in the reader's time zone (a runner west of UTC sees 2025).
+    const first = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
+    expect(slider.getAttribute("aria-valuetext")).toBe(first.format(Date.UTC(2026, 0, 1)));
     expect(screen.getByRole("table", { name: "Edges of Shop: 3" })).toBeTruthy();
     // Only the first purchase: Grace and the desk come later.
     expect(await screen.findByRole("table", { name: "Edges of Shop: 1" })).toBeTruthy();
