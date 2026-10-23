@@ -8,10 +8,9 @@ use std::sync::Arc;
 use kalzit::app::AppState;
 
 /// How long a test waits for something that happens by itself (a background job, a reload)
-/// before it calls it a hang. It only guards against hangs: slow CI runners need a long time
-/// for a start (migrations, fsync), and a start job that finds the database busy is tried
-/// again after a minute, so the bound lies above that. The test asserts the behaviour itself.
-pub const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(120);
+/// before it calls it a hang. It only guards against hangs on slow CI runners; the test asserts
+/// the behaviour itself.
+pub const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// A temporary directory that passes the data directory check: closed to group and others on
 /// Unix (`tempfile` creates it with the umask's mode, often 0755). On Windows it keeps the ACL of
