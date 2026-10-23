@@ -89,7 +89,7 @@ several times the controls Kalzit has. The fifteen largest gaps, in the order th
 | Unit catalog with hundreds of units in groups, plus custom prefix, suffix and SI | Partial: 31 units in 8 groups and a custom suffix (`ui/src/panels/fieldConfig/units.ts`) | M | Grow to the common set (data and data rate in IEC and SI, time and duration formats, throughput, length, mass, area, volume, pressure, speed, energy, currencies by ISO code, percent forms, date formats). Add a custom prefix and an SI-scaled custom unit. Keep Intl formatting |
 | Min, max, per-field min and max | Partial: min and max (`fieldConfig.ts`); no per-field range | S | A "range per field" switch, so gauges and colors scale each field to its own extent |
 | Decimals, display name, no value text | Yes (`fieldConfig.ts` `parseFieldOptions`) | none | Add templates to the display name (`${__field.name}`, labels, refId), checked like the series name template |
-| Color scheme: fixed color, palette, single-hue shades, by value as continuous gradients or from thresholds | Partial: a fixed tone from 12 tokens (`TONES`) | M | Schemes: palette (default), fixed tone, shades of one tone, from thresholds, continuous sequential and diverging (validated ramps from `--chart-*`, 3:1 against the panel). Keep tokens as the only source of color; no free hex input, so every theme and the contrast theme stay correct. This deliberately differs |
+| Color scheme: fixed color, palette, single-hue shades, by value as continuous gradients or from thresholds | Partial: a fixed tone from 12 tokens (`TONES`) | M | Schemes: palette (default), fixed tone, shades of one tone, from thresholds, continuous sequential and diverging (validated ramps from `--chart-*`, 3:1 against the panel). The palette stays the default; a color picker allows any color per series, threshold step or override, stored as hex (decision 1, section 6) |
 | Thresholds: absolute and percentage, any number of steps, shown on charts as lines, areas or dashed | Partial: modes and up to 20 steps (`fieldConfig.ts`); not drawn on time series | S | "Show thresholds" on time series and bars: off, lines, dashed lines, areas, lines and areas. Areas use the tone's low-alpha fill token |
 | Value mappings: value, range, regex, special values (null, NaN, true, false, empty) | Partial: value, range, regex (`fieldConfig.ts` `ValueMapping`) | S | Add the special matcher, and an icon per mapping for state panels |
 | Data links per field with variables (`${__value}`, field, series, time range); several links; open in new tab | Partial: one table cell link with `${__value}` and `${__field}` (`fieldConfig.ts` `cellLink`) | M | Links on every panel that shows fields, nodes or documents, with typed placeholders (value, field, series labels, time from and to, dashboard variables, document path, node property). `isSafeHref` stays the gate. See P2-4 |
@@ -189,7 +189,7 @@ The reference catalog (about forty entries) next to Kalzit's steps (`ui/src/anal
 |---|---|---|---|
 | Several queries, mixed sources | No: one query (`ui/src/features/explore/ExplorePage.tsx`, `REF_ID`) | S | Reuse the editor's target list |
 | Split view with two panes, linked time ranges | No | M | Two panes side by side on wide screens, a link toggle for time. Round 3 places it in the toolbar row |
-| Query history: per user, search, filter by source, star, comment, retention | No | M | Server-side history per user and organization (holds query text, so it follows the audit retention rules and is never shown to others), starred entries pinned |
+| Query history: per user, search, filter by source, star, comment, retention | No | M | Server-side history per user and organization, private to its owner, kept 30 days by default (a server setting), starred entries kept beyond that (decision 2, section 6) |
 | Result tabs and outline: graph, table, logs, traces, raw | Partial: one panel chosen from the result, steps available | S | Tabs by shape: Chart and Table for frames, Tree and Schema for documents (#27), Network and Tables for graphs |
 | Add to dashboard, create a panel from the result | Yes (`AddToDashboardDialog.tsx`) | none | |
 | Logs UI: volume histogram, level filter, dedup, wrap, prettify, details with field links, live tail | No | L | M5 with Loki. Logs arrive as frames with log lines; the logs view is a panel, so it works in dashboards too |
@@ -238,8 +238,10 @@ The full-page editor reserves a third lower tab for rules.
   from the default, with reset. It answers "why does this panel look like this" in one place.
 - **No actions that write.** Read-only sources hold everywhere; panel buttons that post to an API
   are not built.
-- **Colors from tokens only.** Schemes are validated ramps and tones, so the contrast theme and both
-  schemes stay readable. No free color input.
+- **Accessible colors by default.** Schemes are validated, color-vision-safe ramps and tones, so
+  the contrast theme and both schemes stay readable out of the box. A free color is possible per
+  series, threshold or override (decision 1); then contrast and dark mode are the author's
+  responsibility, and the picker warns where it cheaply can.
 - **Permissions explained.** The "why can I" dialog stays ahead of the reference; extend it to
   variables and library panels.
 
@@ -301,11 +303,15 @@ secrets never appear in the Query tab (test).
 
 **P2-2 Overrides and color schemes.** Matchers by type, refId, value condition, document path
 pattern, node label, edge type; per-field visualization options declared by each panel; color
-schemes (palette, fixed, shades, thresholds, continuous sequential and diverging); special value
+schemes (palette, fixed, shades, thresholds, continuous sequential and diverging); a color picker
+for any color per series, threshold step and override, stored as hex (decision 1); special value
 mappings; per-field range; display name templates; the unit catalog grown to the common set.
-Acceptance: matchers are checked on the server; RE2 everywhere; continuous schemes meet 3:1 in
-both themes and the contrast theme (styles test); overrides on graph panels apply by label and
-edge type.
+Acceptance: matchers are checked on the server; RE2 everywhere; the default palette and continuous
+schemes stay color-vision-safe and meet 3:1 in both themes and the contrast theme (styles test);
+the server accepts only `#rrggbb` (or `#rrggbbaa`) for free colors; the picker shows a contrast
+warning against the panel background of the current theme when a color falls below 3:1; a free
+color is drawn as stored in every theme (the author's responsibility, said in the picker's hint);
+overrides on graph panels apply by label and edge type.
 
 **P2-3 Variables depth.** Interval and data source variables in the UI, multi-value, include all
 with custom all value, regex filter and capture (RE2), sort, refresh on load or time change, hide,
@@ -323,8 +329,10 @@ Acceptance: `isSafeHref` gates every link; placeholders are URL-encoded; a test 
 
 **P2-5 Explore depth.** Several queries with mixed sources, split view with linked time, server
 query history per user (search, filter by source, star), result tabs by shape.
-Acceptance: history is visible only to its owner, follows a retention setting and is deleted with
-the user; split state lives in the URL; both panes keep the editor responsive under the P1-1
+Acceptance: history is visible only to its owner, and no route lets an admin read another user's
+history (API test); unstarred entries are deleted after the retention in the server setting
+(default 30 days, decision 2), starred entries are kept; history is deleted with the user; the
+audit log is unaffected; split state lives in the URL; both panes keep the editor responsive under the P1-1
 budget.
 
 **P2-6 Analysis step catalog, round 2.** Fields (rename, reorder, hide), filter rows, pick fields,
@@ -343,11 +351,13 @@ Acceptance: rules are evaluated identically for viewers and editors and checked 
 outline navigation works by keyboard; the model migration has a test.
 
 **P3-2 Sharing and export.** Share link with time and variables, short links, image export of a
-panel or dashboard (server-side rendering is out of scope; client-side rasterizing of the canvas),
+panel or dashboard as PNG or SVG in the browser (decision 3; a server renderer follows in M6 with
+reports and alerting),
 embed code for org-internal embedding within `frame-ancestors`, snapshots with data frozen and
 stored under the dashboard's permissions. Public links stay M6.
 Acceptance: snapshots respect `dashboards:share` and the org boundary; a snapshot never contains
-secrets or queries the viewer could not run; image export works in both schemes.
+secrets or queries the viewer could not run; PNG and SVG export work in both schemes and need no
+server dependency.
 
 **P3-3 Further panels.** XY chart, dashboard list, logs (with M5 Loki), geo (with #27).
 Acceptance: each with server option checks, contract fixture, picker preview and both themes.
@@ -358,10 +368,14 @@ preferences, server stats; service accounts with tokens and scopes (M5).
 **P3-5 Query builders.** SQL builder writing visible SQL, PromQL metric and label browser, Cypher
 pattern builder.
 
-## 6. Questions for the owner
+## 6. Owner decisions (2026-10-23)
 
-- Color: should users ever pick a free color, or do token tones and validated schemes suffice?
-  This file recommends tokens only.
-- Query history on the server: retention default (30 days suggested) and whether admins may ever
-  see another user's history (suggested: no).
-- Image export: client-side only, or a server renderer later (adds a headless browser dependency)?
+1. **Colors: palette plus free color.** The color-vision-safe palette stays the default. A color
+   picker allows any color per series, threshold step and override, stored as hex. With a free
+   color, contrast and dark mode are the author's responsibility; the picker shows a contrast
+   warning where that is cheap to compute. (P2-2)
+2. **Query history: 30 days on the server, private.** Each user sees only their own history; the
+   retention is a server setting with 30 days as default; starred queries are kept beyond it.
+   Admins cannot see other users' history. The audit log is unaffected. (P2-5)
+3. **Image export: in the browser now.** PNG and SVG are rendered in the browser. A server
+   renderer comes later together with reports and alerting (M6). (P3-2)
