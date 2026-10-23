@@ -970,4 +970,11 @@
     stroke: var(--series-color);
     stroke-width: 6;
   }
+
+  /* Edges of the graph drawings: neutral, so the nodes carry the color. */
+  .preview__edge {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
 }
