@@ -21,12 +21,20 @@ import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
 import { withEditorStyles } from "./editorStyles";
-import { type Token, tokenizeCypher, tokenizeGsql, tokenizePromql, tokenizeSql } from "./syntax";
+import {
+  type Token,
+  tokenizeCypher,
+  tokenizeGsql,
+  tokenizeJson,
+  tokenizePromql,
+  tokenizeSql,
+} from "./syntax";
 import "./editors.css";
 
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,
   promql: tokenizePromql,
+  json: tokenizeJson,
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,
 };

@@ -54,8 +54,8 @@ Regeln:
   Form passen.
 - **Projektionen sind sichtbar und gewollt, nie versteckt.** Wer aus Dokumenten eine Zeitreihe will
   (z. B. `$.metrics.cpu` über `$.ts`), legt im Query-Editor einen Schritt "Projektion" an. Er steht
-  als Schritt beim Panel (Entscheidung 13), ist rückgängig zu machen, und das Original bleibt verfügbar. Es gibt keine
-  implizite Konvertierung im Backend.
+  als Schritt beim Panel (Entscheidung 13), ist abschaltbar und rückgängig zu machen, und das
+  Original bleibt verfügbar. Es gibt keine implizite Konvertierung im Backend.
 - Transformationen arbeiten formgerecht: Dokument-Transformationen (Feld auswählen, Array
   entfalten, gruppieren) und Graph-Transformationen (Nachbarschaft erweitern, Subgraph filtern,
   Knoten zusammenfassen) sind eigene Kataloge, nicht Tabellen-Transformationen mit anderem Namen.

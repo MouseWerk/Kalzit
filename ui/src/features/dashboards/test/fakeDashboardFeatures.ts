@@ -296,6 +296,34 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
         if (typeof m.type !== "string" || m.type === "") return validation("model", "model.type");
         return null;
       };
+      // One of the server's panel option rules (`panel_options`), run like the server: on create,
+      // and on a save only when type, options or field options changed.
+      const optionsProblem = (
+        model: unknown,
+        name: string,
+        stored?: StoredLibraryPanel,
+      ): Response | null => {
+        const m = model as Record<string, unknown>;
+        const old = stored?.model;
+        const same = (key: string) => JSON.stringify(m[key]) === JSON.stringify(old?.[key]);
+        if (old !== undefined && same("type") && same("options") && same("fieldConfig")) {
+          return null;
+        }
+        const field = m.fieldConfig as { defaults?: { decimals?: unknown } } | undefined;
+        const decimals = field?.defaults?.decimals;
+        if (typeof decimals !== "number" || decimals <= 10) return null;
+        const detail = "model.fieldConfig.defaults.decimals must be at most 10";
+        const panel = typeof m.title === "string" && m.title.trim() !== "" ? m.title : name;
+        return json(422, {
+          error: {
+            code: "validation",
+            message: detail,
+            field: "model",
+            reason: "dashboards.panel_options",
+            params: { panel, detail },
+          },
+        });
+      };
       if (parts.length === 1 && method === "GET") {
         if (!can("dashboards:read")) return error(403, "forbidden");
         const q = (search.get("q") ?? "").toLowerCase();
@@ -310,7 +338,7 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
         const folderId = (body.folderId as string | null | undefined) ?? null;
         if (!writeIn(folderId)) return error(403, "forbidden");
         if (typeof body.name !== "string" || body.name.trim() === "") return validation("name");
-        const refused = contentProblem(body.model);
+        const refused = contentProblem(body.model) ?? optionsProblem(body.model, body.name.trim());
         if (refused !== null) return refused;
         const created: StoredLibraryPanel = {
           id: `lib-${nextId++}`,
@@ -345,6 +373,8 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
             current: view(panel),
           });
         }
+        const refusedOptions = optionsProblem(body.model, String(body.name), panel);
+        if (refusedOptions !== null) return refusedOptions;
         panel.name = String(body.name);
         panel.model = body.model as Record<string, unknown>;
         panel.version++;

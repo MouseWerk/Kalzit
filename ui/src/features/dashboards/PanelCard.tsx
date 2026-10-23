@@ -11,7 +11,7 @@ import {
 import { exportPanel, exportQuery } from "../../analysis/api";
 import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
 import { runPanelSteps } from "../../analysis/panel";
-import { asSteps, type StepsRun, stepFrames } from "../../analysis/steps";
+import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -21,10 +21,12 @@ import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { projectionApplies } from "../../documents/projection";
 import { type PanelAnnotations, PanelAnnotationsContext } from "../../panels/annotations";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
+import type { DocumentFilter } from "../../panels/types";
 import { queryText } from "../datasources/queryKinds";
 import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
@@ -40,7 +42,14 @@ import {
   variableTexts,
 } from "./model";
 import { TIME_PANELS, timeNote } from "./panelTime";
-import { errorsOf, graphsOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import {
+  documentsOf,
+  errorsOf,
+  graphsOf,
+  isTruncated,
+  otherShapes,
+  type TargetOutcome,
+} from "./results";
 import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
@@ -413,6 +422,7 @@ export function PanelCard({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={outcomes}
+              revision={results.dataUpdatedAt}
               variables={variableTexts(query.variables)}
             />
           </PanelAnnotationsContext.Provider>
@@ -515,6 +525,13 @@ interface PanelBodyProps {
   pending: boolean;
   error: Error | null;
   outcomes: readonly TargetOutcome[];
+  /**
+   * Click-to-filter on a document value of the target `refId`. Explore and the panel editor
+   * turn it into a `$match` stage; dashboards leave it out, so viewers only read.
+   */
+  onFilter?: ((refId: string, path: string, value: unknown) => void) | undefined;
+  /** Changes with every new result: a run, or a page loaded after it. */
+  revision?: string | number | undefined;
   /** The steps' run when the caller already has it (the panel editor shares it with its steps). */
   stepsRun?: StepsRun | undefined;
   /** Dashboard variables, for panels that show text. */
@@ -532,6 +549,8 @@ export function PanelBody({
   pending,
   error,
   outcomes,
+  onFilter,
+  revision,
   stepsRun: given,
   variables,
 }: PanelBodyProps) {
@@ -588,11 +607,18 @@ export function PanelBody({
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
   const graphs = graphsOf(outcomes, panel.targets);
+  // Documents an enabled projection step turns into a frame are that frame now; the others stay
+  // documents for the document panels.
+  const projected = new Set(
+    asSteps(panel.transformations).flatMap((step) =>
+      isProjection(step) && projectionApplies(step) ? [step.frame] : [],
+    ),
+  );
+  const documents = documentsOf(outcomes).filter((d) => !projected.has(d.refId));
   const errors = errorsOf(outcomes);
   const shapes = otherShapes(outcomes, plugin.shapes);
-  // A graph panel draws graphs, every other panel frames.
-  const drawable = plugin.shapes.includes("graph") ? graphs.length > 0 : frames.length > 0;
-  const failedAll = frames.length === 0 && graphs.length === 0 && errors.length > 0;
+  const failedAll =
+    frames.length === 0 && graphs.length === 0 && documents.length === 0 && errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
       <ul className={failedAll ? "panel-error" : "panel-error panel-error--partial"} role="alert">
@@ -613,6 +639,21 @@ export function PanelBody({
     return errorList;
   }
   const { Panel } = plugin;
+  // A graph panel draws graphs; every other panel documents (when it takes them) or frames.
+  const graphPanel = plugin.shapes.includes("graph");
+  const takesDocuments = plugin.shapes.includes("documents") && documents.length > 0;
+  const takesFrames = plugin.shapes.includes("frame") && frames.length > 0;
+  const drawable = graphPanel ? graphs.length > 0 : takesDocuments || takesFrames;
+  let note: string | null = null;
+  if (!drawable) {
+    if (!graphPanel && documents.length > 0) {
+      note = t("documents.panel.needsProjection");
+    } else if (plugin.shapes.includes("documents") && frames.length > 0) {
+      note = t("documents.panel.needsDocuments");
+    } else if (shapes.length > 0) {
+      note = t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" });
+    }
+  }
   const failed = stepsRun.failed;
   return (
     <div className="panel-content">
@@ -633,22 +674,16 @@ export function PanelBody({
           </span>
         </p>
       )}
-      {!drawable ? (
-        shapes.length > 0 ? (
-          <p className="panel-empty">
-            {t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" })}
-          </p>
-        ) : (
-          <EmptyPanel reason="noData" />
-        )
-      ) : (
+      {drawable ? (
         <div className="panel-content__viz">
           <PanelErrorBoundary
             resetKeys={[
               outcomes,
+              revision,
               panel.type,
               JSON.stringify(panel.options ?? null),
               JSON.stringify(panel.fieldConfig ?? null),
+              JSON.stringify(panel.transformations ?? null),
               patterns,
             ]}
           >
@@ -656,14 +691,30 @@ export function PanelBody({
               key={patterns}
               frames={frames}
               graphs={graphs}
+              documents={documents.map((d) => d.documents)}
+              onFilter={
+                onFilter === undefined
+                  ? undefined
+                  : (filter: DocumentFilter) => {
+                      const refId = documents[filter.index]?.refId;
+                      if (refId !== undefined) {
+                        onFilter(refId, filter.path, filter.value);
+                      }
+                    }
+              }
               options={options}
               fieldConfig={fieldConfig}
               timeRange={range}
               title={title}
+              revision={revision}
               {...(variables === undefined ? {} : { variables })}
             />
           </PanelErrorBoundary>
         </div>
+      ) : note === null ? (
+        <EmptyPanel reason="noData" />
+      ) : (
+        <p className="panel-empty">{note}</p>
       )}
       {isTruncated(outcomes) ? (
         <p className="panel-note">{t("dashboards.panel.truncated")}</p>

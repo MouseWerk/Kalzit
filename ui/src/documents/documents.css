@@ -1,0 +1,494 @@
+@layer components {
+  /* Document panels share one frame: a bar of controls, then the content filling the rest. */
+
+  .doc-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .doc-panel__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .doc-panel__summary {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .doc-panel__trail ol {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .doc-panel__trail li + li::before {
+    content: "/";
+    padding-inline-end: var(--space-1);
+    color: var(--text-muted);
+  }
+
+  .doc-panel__trail [aria-current] {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Document tree: fixed row height, only the rows in view are drawn. */
+
+  .doc-tree {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-height: 0;
+  }
+
+  .doc-tree__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    min-height: var(--control-height);
+    font-size: var(--font-size-sm);
+  }
+
+  .doc-tree__hint {
+    color: var(--text-muted);
+  }
+
+  .doc-tree__path {
+    min-width: 0;
+    max-width: 100%;
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .doc-tree__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .doc-tree__list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    font-size: var(--font-size-sm);
+  }
+
+  .doc-tree__list:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .doc-tree__spacer {
+    height: var(--tree-spacer, 0);
+  }
+
+  .doc-tree__row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: var(--tree-row-height);
+    padding-inline: var(--space-1) var(--space-2);
+    border-bottom: var(--border-width) solid var(--border);
+    white-space: nowrap;
+    cursor: default;
+  }
+
+  .doc-tree__row:hover {
+    background: var(--bg-hover);
+  }
+
+  /* The active row: a neutral tint and weight, no accent frame. */
+  .doc-tree__row--active,
+  .doc-tree__row--active:hover {
+    background: var(--bg-active);
+  }
+
+  /* Nesting depth as width, so the row's own padding stays a plain token. */
+  .doc-tree__indent {
+    flex: none;
+    width: calc(var(--tree-level, 0) * var(--space-4));
+  }
+
+  .doc-tree__toggle {
+    flex: none;
+    width: var(--space-3);
+    color: var(--text-muted);
+  }
+
+  .doc-tree__key {
+    flex: none;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .doc-tree__row--active .doc-tree__key {
+    font-weight: var(--font-weight-semibold);
+  }
+  .doc-tree__type {
+    flex: none;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+  }
+
+  .doc-tree__value {
+    flex: 1;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .doc-tree__more {
+    color: var(--accent-text);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  /* Schema */
+
+  .schema__head {
+    padding: 0 var(--space-2);
+    height: var(--vt-row-height);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .schema__path {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .schema__row--outlier .schema__path {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .schema__coverage {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .schema__coverage > span:last-child {
+    padding-inline-start: var(--space-2);
+  }
+
+  .schema__meter {
+    display: inline-block;
+    width: var(--size-meter);
+    height: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-active);
+    overflow: hidden;
+    vertical-align: middle;
+  }
+
+  .schema__meter-fill {
+    display: block;
+    width: var(--share, 0);
+    height: 100%;
+    background: var(--chart-1);
+  }
+
+  /* Field distribution */
+
+  .dist {
+    display: grid;
+    flex: 1;
+    align-content: start;
+    gap: var(--space-3);
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .dist__stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-label), 1fr));
+    gap: var(--space-2) var(--space-4);
+    font-size: var(--font-size-sm);
+  }
+
+  .dist__stats dt {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .dist__stats dd {
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .dist__histogram {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .dist__svg {
+    display: block;
+    width: 100%;
+    height: var(--size-histogram);
+  }
+
+  .dist__bar {
+    fill: var(--chart-1);
+  }
+
+  .dist__axis {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .dist__heading {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dist__top {
+    display: grid;
+    gap: var(--space-1);
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .dist__entry {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .dist__count {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* Document card */
+
+  .doc-card {
+    container-type: inline-size;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    font-size: var(--font-size-sm);
+  }
+
+  .doc-card__pager {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .doc-card__title {
+    padding-block-end: var(--space-2);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  .doc-card__fields {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .doc-card__field {
+    display: grid;
+    grid-template-columns: minmax(var(--size-label), max-content) minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .doc-card__key {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .doc-card__value {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    overflow-wrap: anywhere;
+  }
+
+  .doc-card__list {
+    display: grid;
+    gap: var(--space-1);
+    padding-inline-start: var(--space-5);
+  }
+
+  .doc-card__field .doc-card__fields {
+    padding-inline-start: var(--space-3);
+  }
+
+  @container (max-width: 30rem) {
+    .doc-card__field {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+  }
+
+  /* MongoDB query editor */
+
+  .pipeline {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .pipeline__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3) var(--space-6);
+  }
+
+  .pipeline__collection {
+    flex: 1;
+    min-width: min(var(--size-field), 100%);
+    max-width: var(--size-form);
+  }
+
+  .pipeline__mode,
+  .pipeline__view {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-4);
+    padding: 0;
+    border: 0;
+  }
+
+  .pipeline__mode legend {
+    padding-block-end: var(--space-1);
+  }
+
+  .pipeline__set-aside {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  .pipeline__body {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .pipeline__stages {
+    display: grid;
+    gap: var(--space-3);
+    list-style: none;
+  }
+
+  .pipeline__stage {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .pipeline__stage-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .pipeline__stage-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* A disabled stage reads as set aside: muted text, no dimming that would drop below AA. */
+  .pipeline__stage--off .pipeline__stage-title {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+  .pipeline__stage-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .pipeline__preview {
+    display: grid;
+    gap: var(--space-1);
+    padding-block-start: var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .pipeline__preview-tree {
+    display: flex;
+    height: var(--size-stage-preview);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+  }
+
+  .pipeline__add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .pipeline__limit {
+    max-width: var(--size-field);
+  }
+
+  .pipeline__projection {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .pipeline__columns {
+    display: grid;
+    gap: var(--space-3);
+    list-style: none;
+  }
+
+  .pipeline__column {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-card-min), 1fr));
+    align-items: end;
+    gap: var(--space-2);
+  }
+
+  .pipeline__column-error {
+    grid-column: 1 / -1;
+  }
+
+  .json-field {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+}

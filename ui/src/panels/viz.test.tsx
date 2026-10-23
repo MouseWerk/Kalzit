@@ -2,7 +2,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { Frame, GraphSet } from "../api/generated/shapes";
+import type { DocumentSet, Frame, GraphSet } from "../api/generated/shapes";
+import { sampleSchema } from "../documents/schema";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
@@ -666,13 +667,17 @@ describe("panel picker", () => {
     render(
       <PanelPicker value="timeseries" shapes={["documents"]} onChange={(t) => (picked = t)} />,
     );
-    // Nothing for frames fits documents: text fits anything, the current type stays shown.
+    // The document panels fit documents, text fits anything, the current type stays shown.
     expect(screen.getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual([
+      "documents",
+      "schema",
+      "distribution",
+      "document",
       "text",
       "timeseries",
     ]);
     await user.click(
-      screen.getByRole("checkbox", { name: new RegExp(`Show ${PANELS.length - 1} more`) }),
+      screen.getByRole("checkbox", { name: new RegExp(`Show ${PANELS.length - 5} more`) }),
     );
     expect(screen.getAllByRole("radio")).toHaveLength(PANELS.length);
     await user.click(screen.getByRole("radio", { name: "Heatmap" }));
@@ -832,6 +837,15 @@ describe("performance budget", () => {
     const types = PANELS.map((p) => p.type);
     // A realistic dashboard: a few hundred rows per panel, with field options in use.
     const frame = bigSeries(500);
+    // The document panels get a few hundred documents of their own.
+    const isDocumentPanel = (plugin: AnyPanelPlugin) => plugin.shapes.includes("documents");
+    const docs = Array.from({ length: 500 }, (_, i) => ({
+      _id: `d${i}`,
+      at: { $type: "date", value: String(1_790_000_000_000 + i * 60_000) },
+      total: i * 1.5,
+      status: i % 3 === 0 ? "open" : "paid",
+    }));
+    const documents: DocumentSet = { documents: docs, schema: sampleSchema(docs), notices: [] };
     const options: FieldConfig = {
       defaults: { unit: "percent", decimals: 1, thresholds: DEFAULT_THRESHOLDS, min: 0, max: 100 },
       overrides: [
@@ -854,6 +868,7 @@ describe("performance budget", () => {
             <div key={i}>
               <Panel
                 frames={isGraphPanel(plugin) ? [] : [frame]}
+                documents={isDocumentPanel(plugin) ? [documents] : undefined}
                 graphs={
                   isGraphPanel(plugin) ? [{ refId: "A", datasourceId: "ds", graph }] : undefined
                 }

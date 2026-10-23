@@ -841,6 +841,61 @@ describe("library panels", () => {
       libraryPanelId: "lib-1",
     });
   });
+
+  it("shows why the server refuses a library panel's options and keeps the panel as it was", async () => {
+    // Stored before a rule the server now runs on every library panel write.
+    const { server, stored } = setup("editor", {
+      ...emptyModel("Main"),
+      panels: [panel("p1", "Orders", { fieldConfig: { defaults: { decimals: 99 } } })],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(within(article("Orders")).getByRole("button", { name: "Edit “Orders”" }));
+    await user.click(
+      within(await screen.findByRole("region", { name: "Edit panel" })).getByRole("button", {
+        name: "Make library panel…",
+      }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Make library panel" });
+    await user.click(within(dialog).getByRole("button", { name: "Make library panel" }));
+    expect(
+      await within(dialog).findByText(
+        "Panel “Orders” has an option the server does not accept: model.fieldConfig.defaults.decimals must be at most 10",
+      ),
+    ).toBeTruthy();
+    expect(server.areas.dashboardFeatures.libraryPanels).toHaveLength(0);
+    expect(stored.versions).toHaveLength(1);
+  });
+
+  it("saves a library panel whose stored options predate a rule while they stay unchanged", async () => {
+    const { server } = setup("editor", {
+      ...emptyModel("Main"),
+      panels: [{ ...panel("lp", "Revenue"), targets: [], libraryPanelId: "lib-1" }],
+    });
+    withLibrary(server);
+    const lib = server.areas.dashboardFeatures.libraryPanels[0];
+    if (lib !== undefined) {
+      lib.model.options = {};
+      lib.model.fieldConfig = { defaults: { decimals: 99 } };
+    }
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(
+      within(await screen.findByRole("article", { name: "Revenue" })).getByRole("button", {
+        name: "Edit “Revenue”",
+      }),
+    );
+    const editor = await screen.findByRole("region", { name: "Edit panel" });
+    await replace(
+      user,
+      within(editor).getByRole("textbox", { name: "Panel title" }),
+      "Revenue net",
+    );
+    await user.click(within(editor).getByRole("button", { name: "Back to dashboard" }));
+    const warning = await screen.findByRole("dialog", { name: "Change library panel?" });
+    await user.click(within(warning).getByRole("button", { name: "Change everywhere" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.libraryPanels[0]?.version).toBe(2));
+  });
 });
 
 describe("JSON, import and export", () => {

@@ -338,6 +338,46 @@ export function tokenizePromql(text: string): Token[] {
   });
 }
 
+const JSON_RULES: Rule[] = [
+  { kind: "string", pattern: /"(?:[^"\\\n]|\\.)*"?/y },
+  { kind: "number", pattern: /-?\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_$][\w$]*/y },
+  { kind: "operator", pattern: /[{}[\]:,]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+/**
+ * JSON for MongoDB stages and filters: keys are labels, `$` operators among them keywords,
+ * `true`, `false` and `null` keywords too. Bare words other than those are left plain, so a typo
+ * looks like text rather than like a keyword.
+ */
+export function tokenizeJson(text: string): Token[] {
+  const tokens = tokenize(text, JSON_RULES, (word) =>
+    word === "true" || word === "false" || word === "null" ? "keyword" : "plain",
+  );
+  // A string followed by a colon is a key. Tokens of one kind are merged, so keys are split off
+  // the strings again here, one per quoted run.
+  const result: Token[] = [];
+  let offset = 0;
+  for (const token of tokens) {
+    offset += token.text.length;
+    if (token.kind !== "string") {
+      result.push(token);
+      continue;
+    }
+    const strings = token.text.match(/"(?:[^"\\\n]|\\.)*"?/g) ?? [token.text];
+    const keyFollows = /^\s*:/.test(text.slice(offset));
+    strings.forEach((text, i) => {
+      const isKey = keyFollows && i === strings.length - 1;
+      result.push({
+        kind: isKey ? (text.startsWith('"$') ? "keyword" : "label") : "string",
+        text,
+      });
+    });
+  }
+  return result;
+}
+
 export function tokenizeCypher(text: string): Token[] {
   return tokenize(text, CYPHER_RULES, (word, rest) => {
     const lower = word.toLowerCase();

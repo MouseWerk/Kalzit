@@ -1,4 +1,5 @@
 import { isRecord } from "../../api/client";
+import { emptyMongoQuery, isMongoQuery, mongoQueryText } from "./mongoQuery";
 
 /**
  * The query forms of the M1 data source kinds (docs/api/datasources.md): SQL sources take exactly
@@ -10,7 +11,9 @@ import { isRecord } from "../../api/client";
 export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite"] as const;
 /** Graph sources queried in Cypher; their query form is `{cypher}` (panels/graph/adapter.ts). */
 export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
-export type EditorFamily = "sql" | "promql" | "cypher" | "gsql";
+/** Kinds whose results are documents and whose queries are pipelines (mongoQuery.ts). */
+export const MONGO_KINDS = ["mongodb"] as const;
+export type EditorFamily = "sql" | "promql" | "mongo" | "cypher" | "gsql";
 
 export interface SqlQuery {
   sql: string;
@@ -38,6 +41,9 @@ export type GsqlQuery =
 export function familyOf(kind: string): EditorFamily | undefined {
   if ((SQL_KINDS as readonly string[]).includes(kind)) {
     return "sql";
+  }
+  if ((MONGO_KINDS as readonly string[]).includes(kind)) {
+    return "mongo";
   }
   if ((CYPHER_KINDS as readonly string[]).includes(kind)) {
     return "cypher";
@@ -88,6 +94,8 @@ export function emptyQuery(kind: string): unknown {
   switch (familyOf(kind)) {
     case "promql":
       return { expr: "" };
+    case "mongo":
+      return emptyMongoQuery();
     case "cypher":
       return { cypher: "" };
     case "gsql":
@@ -105,6 +113,9 @@ export function queryText(query: unknown): string {
     }
     if (typeof query.expr === "string") {
       return query.expr;
+    }
+    if (isMongoQuery(query)) {
+      return mongoQueryText(query);
     }
     if (typeof query.cypher === "string") {
       return query.cypher;

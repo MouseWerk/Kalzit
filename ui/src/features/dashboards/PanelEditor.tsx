@@ -20,6 +20,17 @@ import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { Splitter } from "../../components/Splitter";
+import { ProjectionEditor } from "../../documents/ProjectionEditor";
+import {
+  type FrameProjection,
+  hasProjectionProblems,
+  projectionApplies,
+  projectionFor,
+  projectionPaths,
+  storableTransformations,
+  withProjection,
+} from "../../documents/projection";
+import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { openLayerCount } from "../../lib/layers";
 import { useOrgPermissions } from "../../org/useOrg";
@@ -30,7 +41,9 @@ import { getPanel } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
+import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
+import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import { type EditorLayout, readEditorLayout, writeEditorLayout } from "./editorLayout";
 import {
@@ -44,6 +57,7 @@ import {
 } from "./model";
 import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
+import { documentsOf } from "./results";
 import { usePanelResults } from "./usePanelResults";
 import "./panelEditor.css";
 
@@ -133,11 +147,21 @@ export function PanelEditor({
   const [preview, setPreview] = useState({ targets: opened.targets, run: 0 });
   const [tab, setTab] = useState<LowerTab>("queries");
   const [problem, setProblem] = useState(false);
+  // A click-to-filter the editor could not add, until the next run or source change.
+  const [filterError, setFilterError] = useState<string | null>(null);
+  // Per query: whether its editor holds text that does not parse yet.
+  const pendingText = useRef<Record<string, boolean>>({});
   const targetsRef = useRef(targets);
   const previewRef = useRef(preview.targets);
+  // The range and values a pipeline stage previews with, read when a preview runs.
+  const runInput = useRef<PreviewRun>({ range, variables });
+  useEffect(() => {
+    runInput.current = { range, variables };
+  });
 
+  // As the dashboard stores it: projection steps that would change nothing are left out.
   const compose = useCallback(
-    (): PanelModel => ({ ...look, targets, transformations: steps }),
+    (): PanelModel => ({ ...look, targets, transformations: storableTransformations(steps) }),
     [look, targets, steps],
   );
   const latest = useRef(compose);
@@ -148,7 +172,12 @@ export function PanelEditor({
     onSnapshot({
       id: opened.id,
       panel: compose,
-      changed: () => JSON.stringify(compose()) !== JSON.stringify(opened),
+      changed: () =>
+        JSON.stringify(compose()) !==
+        JSON.stringify({
+          ...opened,
+          transformations: storableTransformations(opened.transformations),
+        }),
     });
   }, [onSnapshot, opened, compose, targets, preview.targets]);
 
@@ -206,38 +235,102 @@ export function PanelEditor({
   const refKey = targets.map((target) => target.refId).join("\n");
   const refIds = useMemo(() => (refKey === "" ? [] : refKey.split("\n")), [refKey]);
   // What the preview returned decides which panels fit; before it ran, what the sources can return.
+  // An applied projection step turns that query's documents into a frame.
   const shapes = useMemo((): Shape[] => {
-    const returned = outcomes.flatMap((o) => ("result" in o ? [o.result.shape] : []));
+    const projected = (refId: string) => {
+      const step = projectionFor(steps, refId);
+      return step !== undefined && projectionApplies(step);
+    };
+    const returned = outcomes.flatMap((o): Shape[] =>
+      "result" in o
+        ? o.result.shape === "documents" && projected(o.refId)
+          ? ["documents", "frame"]
+          : [o.result.shape]
+        : [],
+    );
     const kindOf = (datasourceId: string) =>
       datasources.data?.find((d) => d.id === datasourceId)?.kind;
+    const sources = sourceKey.split("\n");
     return [
       ...new Set(
         returned.length > 0
           ? returned
-          : sourceKey
-              .split("\n")
-              .flatMap(
-                (source) => kinds.data?.find((k) => k.kind === kindOf(source))?.shapes ?? [],
-              ),
+          : refKey.split("\n").flatMap((refId, index): Shape[] => {
+              const kindShapes =
+                kinds.data?.find((k) => k.kind === kindOf(sources[index] ?? ""))?.shapes ?? [];
+              return projected(refId) ? [...kindShapes, "frame"] : kindShapes;
+            }),
       ),
     ];
-  }, [outcomes, sourceKey, datasources.data, kinds.data]);
+  }, [outcomes, sourceKey, refKey, steps, datasources.data, kinds.data]);
+  // Field paths per query from the last preview, suggested for its projection.
+  const fieldsByRef = useMemo(() => {
+    const byRef = new Map<string, string[]>();
+    for (const d of documentsOf(outcomes)) {
+      const paths = projectionPaths(schemaOf(d.documents));
+      byRef.set(d.refId, [...new Set([...(byRef.get(d.refId) ?? []), ...paths])]);
+    }
+    return byRef;
+  }, [outcomes]);
 
-  const run = useCallback(
-    () => setPreview((current) => ({ targets: targetsRef.current, run: current.run + 1 })),
+  // A new run, or another data source, leaves an old filter refusal behind.
+  const run = useCallback(() => {
+    setFilterError(null);
+    setPreview((current) => ({ targets: targetsRef.current, run: current.run + 1 }));
+  }, []);
+  const changeTarget = useCallback((refId: string, patch: Partial<Target>) => {
+    if (patch.datasourceId !== undefined) {
+      setFilterError(null);
+    }
+    setTargets((list) =>
+      list.map((target) => (target.refId === refId ? { ...target, ...patch } : target)),
+    );
+  }, []);
+  const removeTarget = useCallback((refId: string) => {
+    setTargets((list) => list.filter((x) => x.refId !== refId));
+    setSteps((current) => withProjection(current, refId, undefined));
+  }, []);
+  const changeProjection = useCallback(
+    (refId: string, projection: FrameProjection | undefined) =>
+      setSteps((current) => withProjection(current, refId, projection)),
     [],
   );
-  const changeTarget = useCallback(
-    (refId: string, patch: Partial<Target>) =>
-      setTargets((list) =>
-        list.map((target) => (target.refId === refId ? { ...target, ...patch } : target)),
-      ),
-    [],
+  const markPending = useCallback((refId: string, pending: boolean) => {
+    pendingText.current = { ...pendingText.current, [refId]: pending };
+  }, []);
+  const previewRun = useCallback(() => runInput.current, []);
+
+  /** Click-to-filter in the preview: a `$match` stage on that query, run at once. */
+  const filterBy = useCallback(
+    (refId: string, path: string, value: unknown) => {
+      // The filter joins the query in the editor, the draft typed since included; text that
+      // does not parse, in the query or still in a field, is never replaced.
+      const draft = targetsRef.current.find((target) => target.refId === refId);
+      if (draft === undefined || !isMongoQuery(draft.query)) {
+        return;
+      }
+      if (pendingText.current[refId] === true) {
+        setFilterError(t("documents.filter.refused.draft"));
+        return;
+      }
+      const added = addMatch(parseMongoQuery(draft.query), path, value);
+      if ("refused" in added) {
+        setFilterError(t(`documents.filter.refused.${added.refused}`));
+        return;
+      }
+      setFilterError(null);
+      const next = targetsRef.current.map((target) =>
+        target.refId === refId ? { ...target, query: added.query } : target,
+      );
+      targetsRef.current = next;
+      setTargets(next);
+      setPreview((current) => ({ targets: next, run: current.run + 1 }));
+    },
+    [t],
   );
-  const removeTarget = useCallback(
-    (refId: string) => setTargets((list) => list.filter((x) => x.refId !== refId)),
-    [],
-  );
+  const filterable = preview.targets.some((target) => isMongoQuery(target.query));
+  // A projection step the server would refuse is fixed here before the panel goes back.
+  const blocked = hasProjectionProblems(steps);
   // Leaving a query that changed since the last run runs it, as Ctrl+Enter would.
   const runIfChanged = useCallback(() => {
     if (JSON.stringify(targetsRef.current) !== JSON.stringify(previewRef.current)) {
@@ -278,7 +371,7 @@ export function PanelEditor({
   const pending = results.isPending && results.fetchStatus !== "idle";
 
   function back() {
-    if (panelExtrasProblem(look) !== null) {
+    if (blocked || panelExtrasProblem(look) !== null) {
       setProblem(true);
       return;
     }
@@ -326,6 +419,11 @@ export function PanelEditor({
           onRemove={removeTarget}
           onRun={run}
           onLeave={runIfChanged}
+          steps={steps}
+          fields={fieldsByRef}
+          onProjection={changeProjection}
+          onPendingText={markPending}
+          previewRun={previewRun}
         />
       }
       steps={
@@ -342,6 +440,9 @@ export function PanelEditor({
 
   const previewSection = (
     <EditorPreview
+      notice={filterError}
+      revision={results.dataUpdatedAt}
+      onFilter={filterable ? filterBy : undefined}
       panel={previewPanel}
       title={look.title}
       range={range}
@@ -395,12 +496,18 @@ export function PanelEditor({
             type="button"
             className="button button--primary"
             onClick={() => onSave(compose())}
-            disabled={panelExtrasProblem(look) !== null}
+            disabled={blocked || panelExtrasProblem(look) !== null}
+            aria-describedby={blocked ? `${titleId}-blocked` : undefined}
           >
             {t("dashboards.save")}
           </button>
         </div>
       </div>
+      {blocked ? (
+        <p className="field__error" id={`${titleId}-blocked`}>
+          {t("documents.projection.blocked")}
+        </p>
+      ) : null}
       {problem && panelExtrasProblem(look) !== null ? (
         <p className="field__error" role="alert">
           {t("dashboards.editor.problem")}
@@ -418,10 +525,18 @@ export function PanelEditor({
 }
 
 /** The preview: the panel's drawing, memoized so typing a query or an option label skips it. */
-const EditorPreview = memo(function EditorPreview(props: ComponentProps<typeof PanelBody>) {
+const EditorPreview = memo(function EditorPreview({
+  notice,
+  ...props
+}: ComponentProps<typeof PanelBody> & { notice: string | null }) {
   const { t } = useI18n();
   return (
     <section className="panel-editor__preview" aria-label={t("dashboards.editor.preview")}>
+      {notice === null ? null : (
+        <p className="field__error" role="alert">
+          {notice}
+        </p>
+      )}
       <div className="panel-editor__viz">
         <PanelBody {...props} />
       </div>
@@ -724,6 +839,11 @@ function TargetList({
   onRemove,
   onRun,
   onLeave,
+  steps,
+  fields,
+  onProjection,
+  onPendingText,
+  previewRun,
 }: {
   orgId: string;
   targets: readonly Target[];
@@ -736,6 +856,13 @@ function TargetList({
   onRemove: (refId: string) => void;
   onRun: () => void;
   onLeave: () => void;
+  /** The panel's steps, for each document query's projection step. */
+  steps: readonly unknown[];
+  /** Field paths of the last preview per query, to suggest for its projection. */
+  fields: ReadonlyMap<string, readonly string[]>;
+  onProjection: (refId: string, projection: FrameProjection | undefined) => void;
+  onPendingText: (refId: string, pending: boolean) => void;
+  previewRun: () => PreviewRun;
 }) {
   const { t } = useI18n();
   return (
@@ -767,6 +894,11 @@ function TargetList({
           onRemove={onRemove}
           onRun={onRun}
           onLeave={onLeave}
+          projection={projectionFor(steps, target.refId)}
+          fields={fields.get(target.refId) ?? NO_FIELDS}
+          onProjection={onProjection}
+          onPendingText={onPendingText}
+          previewRun={previewRun}
         />
       ))}
       {noSources ? <p className="field__hint">{t("dashboards.editor.noDatasources")}</p> : null}
@@ -774,6 +906,8 @@ function TargetList({
     </div>
   );
 }
+
+const NO_FIELDS: readonly string[] = [];
 
 /**
  * One query. Memoized with callbacks that take the refId, so typing in one query renders that
@@ -788,9 +922,22 @@ const TargetEditor = memo(function TargetEditor({
   onRemove,
   onRun,
   onLeave,
+  projection,
+  fields,
+  onProjection,
+  onPendingText,
+  previewRun,
 }: {
   orgId: string;
   target: Target;
+  /** The projection step of this query, stored with the panel. */
+  projection: FrameProjection | undefined;
+  /** Field paths of the last preview, to suggest for the projection. */
+  fields: readonly string[];
+  onProjection: (refId: string, projection: FrameProjection | undefined) => void;
+  onPendingText: (refId: string, pending: boolean) => void;
+  /** The dashboard's time range and variables, for stage previews. */
+  previewRun: () => PreviewRun;
   /** The sources the caller may query, to pick from. */
   datasources: readonly { id: string; name: string; kind: string }[];
   /** The target's source is not one of them: the query shows as stored and stays as it is. */
@@ -881,9 +1028,18 @@ const TargetEditor = memo(function TargetEditor({
           query={target.query}
           onChange={(query) => onChange(refId, { query })}
           onRun={onRun}
+          previewRun={previewRun}
+          onPendingText={(pending) => onPendingText(refId, pending)}
           label={t("dashboards.inspect.query", { refId })}
         />
       )}
+      {datasource !== undefined && isMongoQuery(target.query) ? (
+        <ProjectionEditor
+          projection={projection}
+          fields={fields}
+          onChange={(next) => onProjection(refId, next)}
+        />
+      ) : null}
     </section>
   );
 });

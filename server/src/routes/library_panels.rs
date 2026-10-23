@@ -129,6 +129,25 @@ fn as_dashboard(content: &Value) -> ApiResult<model::DashboardModel> {
     })
 }
 
+/// The panel option checks dashboards run, for the content a write stores: always on create, and
+/// on a save only when type, options or field options differ from the `previous` content, so a
+/// stored library panel that predates a rule can still be renamed, moved or have its queries
+/// changed. The refusal names the panel (its title, else the library panel name).
+fn check_options(content: &Value, previous: Option<&Value>, name: &str) -> ApiResult<()> {
+    let model = as_dashboard(content)?;
+    let previous = previous.map(as_dashboard).transpose()?;
+    model::check_panel_options(&model, previous.as_ref()).map_err(|(_, detail)| {
+        let detail = detail.replacen("model.panels[0]", "model", 1);
+        let panel = model.panels[0].title.trim();
+        let panel = if panel.is_empty() { name } else { panel };
+        ApiError::validation(detail.clone())
+            .with_field("model")
+            .because("dashboards.panel_options")
+            .param("panel", panel)
+            .param("detail", detail)
+    })
+}
+
 fn parse_content(raw: Value) -> ApiResult<Value> {
     model::parse_library_panel(raw).map_err(|e| ApiError::validation(e).with_field("model"))
 }
@@ -243,6 +262,7 @@ async fn create(
 ) -> ApiResult<impl IntoResponse> {
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     let content = parse_content(body.model)?;
+    check_options(&content, None, &name)?;
     check_place(&state.db, &ctx, Permission::DashboardsWrite, body.folder_id.as_deref()).await?;
     check_dashboard_sources(&state.db, &ctx, &as_dashboard(&content)?, None).await?;
     let id = new_id();
@@ -335,6 +355,7 @@ async fn save(
         return Err(ApiError::version_conflict(json!(current)));
     }
     let previous = library::stored_content(&row.model)?;
+    check_options(&content, Some(&previous), &name)?;
     check_dashboard_sources(&state.db, &ctx, &as_dashboard(&content)?, Some(&as_dashboard(&previous)?)).await?;
     let text = serde_json::to_string(&content).map_err(|e| ApiError::internal("library panels", e))?;
     let now = state.clock.now_ms();
