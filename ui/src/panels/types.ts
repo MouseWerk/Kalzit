@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Frame, Shape } from "../api/generated/shapes";
+import type { Frame, GraphSet, Shape } from "../api/generated/shapes";
 import type { MessageKey } from "../i18n/i18n";
 
 /**
@@ -33,6 +33,15 @@ export interface PanelProps<Options> {
   timeRange: { from: number; to: number };
   /** Accessible name of the visualization: the panel title. */
   title: string;
+  /** Graphs of every target that answered with one, in target order (graph panels). */
+  graphs?: readonly PanelGraph[] | undefined;
+}
+
+/** One target's graph, with the source it came from (explorer mode queries it again). */
+export interface PanelGraph {
+  refId: string;
+  datasourceId: string;
+  graph: GraphSet;
 }
 
 export interface PanelEditorProps<Options> {

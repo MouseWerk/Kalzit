@@ -2,9 +2,23 @@ import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { schemaQuery } from "../api";
-import { familyOf, type PromQuery, parsePromQuery, parseSqlQuery } from "../queryKinds";
+import {
+  familyOf,
+  type PromQuery,
+  parseCypherQuery,
+  parsePromQuery,
+  parseSqlQuery,
+} from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
-import { PROMQL_MACROS, promqlCompletions, SQL_MACROS, sqlCompletions } from "./completion";
+import {
+  CYPHER_MACROS,
+  cypherCompletions,
+  PROMQL_MACROS,
+  promqlCompletions,
+  SQL_MACROS,
+  sqlCompletions,
+} from "./completion";
+import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -26,6 +40,10 @@ export function QueryEditor(props: QueryEditorProps) {
       return <SqlQueryEditor {...props} />;
     case "promql":
       return <PromqlQueryEditor {...props} />;
+    case "cypher":
+      return <CypherQueryEditor {...props} />;
+    case "gsql":
+      return <GsqlQueryEditor {...props} />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }
@@ -88,6 +106,36 @@ function SqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: Qu
         macros={SQL_MACROS.map((m) => ({ name: m.detail, help: m.help }))}
         lead="datasources.editor.macrosLead"
       />
+    </div>
+  );
+}
+
+/** Cypher for Neo4j and Memgraph, completed from the labels, edge types and keys of the source. */
+function CypherQueryEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {
+  const { t } = useI18n();
+  const hintId = useId();
+  const { schema, failed } = useSchema(orgId, datasource.id);
+  const graphSchema = schema?.kind === "graph" ? schema : undefined;
+  const value = parseCypherQuery(query);
+
+  return (
+    <div className="query-editor">
+      <CodeEditor
+        language="cypher"
+        label={label ?? t("datasources.editor.label")}
+        describedBy={hintId}
+        value={value.cypher}
+        onChange={(cypher) => onChange({ cypher })}
+        complete={(text, cursor, explicit) =>
+          cypherCompletions(text, cursor, graphSchema, explicit)
+        }
+        {...(onRun === undefined ? {} : { onRun })}
+      />
+      <p className="field__hint" id={hintId}>
+        {t("datasources.editor.shortcuts")} {t("datasources.editor.cypherHint")}
+        {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
+      </p>
+      <MacroHelp macros={CYPHER_MACROS} lead="datasources.editor.cypherMacrosLead" />
     </div>
   );
 }

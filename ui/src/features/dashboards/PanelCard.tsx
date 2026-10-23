@@ -5,12 +5,20 @@ import { useI18n } from "../../i18n/i18n";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
 import "./dashboards.css";
 import type { GridPos, PanelModel } from "./model";
-import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import {
+  errorsOf,
+  framesOf,
+  graphsOf,
+  isTruncated,
+  otherShapes,
+  type TargetOutcome,
+} from "./results";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -267,9 +275,12 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
   const frames = framesOf(outcomes);
+  const graphs = graphsOf(outcomes, panel.targets);
   const errors = errorsOf(outcomes);
-  const shapes = otherShapes(outcomes);
-  const failedAll = frames.length === 0 && errors.length > 0;
+  const shapes = otherShapes(outcomes, plugin.shapes);
+  // A graph panel draws graphs, every other panel frames.
+  const drawable = plugin.shapes.includes("graph") ? graphs.length > 0 : frames.length > 0;
+  const failedAll = frames.length === 0 && graphs.length === 0 && errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
       <ul className={failedAll ? "panel-error" : "panel-error panel-error--partial"} role="alert">
@@ -293,7 +304,7 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
   return (
     <div className="panel-content">
       {errorList}
-      {frames.length === 0 ? (
+      {!drawable ? (
         shapes.length > 0 ? (
           <p className="panel-empty">
             {t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" })}
@@ -303,12 +314,17 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
         )
       ) : (
         <div className="panel-content__viz">
-          <Panel
-            frames={frames}
-            options={plugin.options(panel.options)}
-            timeRange={range}
-            title={title}
-          />
+          <PanelErrorBoundary
+            resetKeys={[outcomes, panel.type, JSON.stringify(panel.options ?? null)]}
+          >
+            <Panel
+              frames={frames}
+              graphs={graphs}
+              options={plugin.options(panel.options)}
+              timeRange={range}
+              title={title}
+            />
+          </PanelErrorBoundary>
         </div>
       )}
       {isTruncated(outcomes) ? (

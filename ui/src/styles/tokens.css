@@ -393,3 +393,10 @@
     }
   }
 }
+
+/* Graph panels: the smallest drawing area, so a graph stays usable in a short panel. */
+@layer tokens {
+  :root {
+    --size-graph-min: 12rem;
+  }
+}
