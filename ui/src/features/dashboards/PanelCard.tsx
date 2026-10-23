@@ -3,6 +3,7 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
+import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
@@ -259,6 +260,8 @@ export function PanelBody({
   variables,
 }: PanelBodyProps) {
   const { t } = useI18n();
+  // Field option patterns need re2js, which loads with the first panel that uses one.
+  usePatternEngine(usesPatterns(panel.fieldConfig));
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;

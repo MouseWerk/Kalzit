@@ -1,11 +1,12 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: link placeholders such as ${__value} are typed by users, not template literals
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Frame } from "../api/generated/shapes";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
+import { loadPatternEngine } from "./fieldConfig/pattern";
 import { compareBounds, heatLevel, heatmapData } from "./heatmap";
 import { histogram } from "./histogram";
 import { PanelPicker } from "./picker/PanelPicker";
@@ -17,6 +18,11 @@ import { interpolate, markdown } from "./text/markdown";
 import type { AnyPanelPlugin } from "./types";
 
 const RANGE = { from: 0, to: 100_000 };
+
+// re2js loads on first use; the table tests use patterns right away.
+beforeAll(async () => {
+  await loadPatternEngine();
+});
 const NONE: FieldConfig = { defaults: {}, overrides: [] };
 
 function renderPanel(
@@ -479,6 +485,15 @@ describe("text panel", () => {
     const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(links).toEqual(["https://kalzit.dev/a_(b)"]);
     expect(container.textContent).toContain("Hallo [Login](https://evil.example), see docs and x");
+  });
+
+  it("parses long runs of unclosed marks in linear time", () => {
+    const start = performance.now();
+    const { container } = render(
+      <div>{markdown(`${"[".repeat(20_000)} ${"*".repeat(20_000)} ${"`".repeat(5_000)}`)}</div>,
+    );
+    expect(container.textContent?.length).toBeGreaterThan(40_000);
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 
   it("fills in dashboard variables and needs no query", () => {

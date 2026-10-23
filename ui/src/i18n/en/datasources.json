@@ -287,5 +287,6 @@
   "datasources.reason.documents.limit": "The result was cut at {limit} documents.",
   "datasources.reason.documents.size_limit": "The result was cut at the response size limit.",
   "datasources.reason.documents.binary_hidden": "Binary values of {path} are not shown.",
-  "datasources.form.atLeast": "Enter a value of at least {min}."
+  "datasources.form.atLeast": "Enter a value of at least {min}.",
+  "datasources.reason.dashboards.panel_options": "Panel “{panel}” has an option the server does not accept: {detail}"
 }

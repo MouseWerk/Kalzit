@@ -357,10 +357,13 @@ fn is_safe_link(link: &str) -> bool {
 const MAX_PATTERN_BYTES: usize = 256 * 1024;
 
 /// Patterns use RE2 syntax, which the UI runs with a linear-time engine (re2js): no
-/// backreferences or lookaround, so no pattern can make a page hang. One that does not compile
-/// here is not stored.
+/// backreferences or lookaround, so no pattern can make a page hang. Only syntax both engines
+/// read alike passes (`pattern_syntax`), and one that does not compile here is not stored.
 fn check_pattern(what: &str, pattern: &str) -> Result<(), String> {
     check_text(what, pattern, MAX_TEXT_CHARS, false)?;
+    if super::pattern_syntax::refused_syntax(pattern) {
+        return Err(format!("{what} is not a valid regular expression (RE2 syntax, no lookaround or backreferences)"));
+    }
     regex::RegexBuilder::new(pattern)
         .size_limit(MAX_PATTERN_BYTES)
         .build()
@@ -725,6 +728,23 @@ mod tests {
             assert!(PANEL_TYPES.contains(&kind), "{kind} has no server check");
             check(kind, &entry["options"], &entry["fieldConfig"]).unwrap_or_else(|e| panic!("{kind}: {e}"));
         }
+    }
+
+    /// The shared pattern cases, also checked against re2js by
+    /// `ui/src/panels/fieldConfig/patternSyntax.test.ts`.
+    #[test]
+    fn patterns_agree_with_the_ui() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!("pattern_fixture.json")).unwrap();
+        assert!(cases.len() > 300);
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter_map(|case| {
+                let pattern = case["pattern"].as_str().unwrap();
+                let valid = case["valid"].as_bool().unwrap();
+                (check_pattern("p", pattern).is_ok() != valid).then(|| format!("{pattern}: expected {valid}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]

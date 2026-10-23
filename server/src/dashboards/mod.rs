@@ -3,6 +3,7 @@
 
 pub mod model;
 pub mod panel_options;
+pub mod pattern_syntax;
 
 use sqlx::AnyPool;
 

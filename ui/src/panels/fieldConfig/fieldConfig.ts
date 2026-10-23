@@ -472,7 +472,24 @@ const SAFE_LINK = /^(https?:\/\/|mailto:|\/(?!\/)|\.\/|\?|#)/i;
  * refused anywhere, since browsers read `/\\host` as `//host`, another site.
  */
 export function isSafeHref(href: string): boolean {
-  return !href.includes("\\") && SAFE_LINK.test(href);
+  // Browsers drop tabs and line breaks from addresses, so "/\t/evil.example" would become
+  // "//evil.example"; no control character may appear at all.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it looks for
+  if (href.includes("\\") || /[\u0000-\u001f\u007f]/.test(href) || !SAFE_LINK.test(href)) {
+    return false;
+  }
+  // What the browser makes of it decides: a web or mail address, or a page of this server.
+  const origin = globalThis.location?.origin ?? "http://kalzit.invalid";
+  let url: URL;
+  try {
+    url = new URL(href, origin);
+  } catch {
+    return false;
+  }
+  if (/^(https?:|mailto:)/i.test(href)) {
+    return ["http:", "https:", "mailto:"].includes(url.protocol);
+  }
+  return url.origin === new URL(origin).origin;
 }
 
 // biome-ignore lint/suspicious/noTemplateCurlyInString: a placeholder users type

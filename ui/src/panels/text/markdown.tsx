@@ -33,8 +33,10 @@ export function interpolate(text: string, variables: Readonly<Record<string, str
   );
 }
 
+// Every part has an upper length, so a long run of "[", "*" or "`" without a closing mark costs
+// a bounded scan per position instead of one to the end of the text: parsing stays linear.
 const INLINE =
-  /(`+)([\s\S]*?)\1|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/;
+  /(`{1,10})([\s\S]{0,2000}?)\1|\*\*([^*]{1,500})\*\*|__([^_]{1,500})__|\*([^*\s][^*]{0,499})\*|_([^_\s][^_]{0,499})_|\[([^\]]{1,500})\]\(((?:[^()\s]|\([^()\s]{0,200}\)){1,2000})\)/;
 
 /** Inline Markdown: code, strong, emphasis and links; the rest is text. */
 export function inline(text: string, key = "i", variables: Variables = NONE): ReactNode[] {

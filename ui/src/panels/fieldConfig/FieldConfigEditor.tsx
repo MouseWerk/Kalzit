@@ -17,7 +17,7 @@ import {
   type Tone,
   type ValueMapping,
 } from "./fieldConfig";
-import { isInvalidPattern } from "./pattern";
+import { isInvalidPattern, usePatternEngine } from "./pattern";
 import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
 
@@ -629,6 +629,8 @@ export function FieldConfigEditor({
   onChange: (config: FieldConfig) => void;
 }) {
   const { t } = useI18n();
+  // The editor checks patterns as they are typed, so it loads re2js right away.
+  usePatternEngine(true);
   const config = parseFieldConfig(value);
   const overrides = config.overrides;
   return (

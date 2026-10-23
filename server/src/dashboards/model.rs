@@ -148,14 +148,18 @@ impl DashboardModel {
 /// from the `previous` model's panel with the same id. Only writes run it, so a stored dashboard
 /// that predates a rule keeps loading and querying, and can still be saved while that panel is
 /// left as it is.
-pub fn check_panel_options(model: &DashboardModel, previous: Option<&DashboardModel>) -> Result<(), String> {
+///
+/// The error names the panel (its title, else its id) and what is wrong with it.
+pub fn check_panel_options(model: &DashboardModel, previous: Option<&DashboardModel>) -> Result<(), (String, String)> {
     for (i, p) in model.panels.iter().enumerate() {
         let unchanged = previous
             .and_then(|m| m.panels.iter().find(|old| old.id == p.id))
             .is_some_and(|old| old.kind == p.kind && old.options == p.options && old.field_config == p.field_config);
         if !unchanged {
-            super::panel_options::check(&p.kind, &p.options, &p.field_config)
-                .map_err(|e| format!("model.panels[{i}].{e}"))?;
+            super::panel_options::check(&p.kind, &p.options, &p.field_config).map_err(|e| {
+                let name = if p.title.trim().is_empty() { p.id.clone() } else { p.title.clone() };
+                (name, format!("model.panels[{i}].{e}"))
+            })?;
         }
     }
     Ok(())
@@ -495,9 +499,10 @@ mod tests {
             check_panel_options(&model, previous)
         };
         let odd = with(sample(), &["panels", "0", "options"], json!({ "lineWidth": 9 }));
-        let err = checked(odd.clone(), None).unwrap_err();
+        let (panel, err) = checked(odd.clone(), None).unwrap_err();
+        assert_eq!(panel, "Bestellungen", "panels are named by their title");
         assert!(err.contains("model.panels[0].options.lineWidth"), "{err}");
-        let err =
+        let (_, err) =
             checked(with(sample(), &["panels", "0", "fieldConfig"], json!({ "defaults": { "decimals": 99 } })), None)
                 .unwrap_err();
         assert!(err.contains("model.panels[0].fieldConfig"), "{err}");

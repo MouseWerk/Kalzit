@@ -230,7 +230,13 @@ fn parse_model(raw: Value) -> ApiResult<model::DashboardModel> {
 
 /// The panel option checks of a write, against the stored model it replaces (none for a new one).
 fn check_panels(model: &model::DashboardModel, previous: Option<&model::DashboardModel>) -> ApiResult<()> {
-    model::check_panel_options(model, previous).map_err(|e| ApiError::validation(e).with_field("model"))
+    model::check_panel_options(model, previous).map_err(|(panel, detail)| {
+        ApiError::validation(detail.clone())
+            .with_field("model")
+            .because("dashboards.panel_options")
+            .param("panel", panel)
+            .param("detail", detail)
+    })
 }
 
 fn clean_message(raw: Option<&str>) -> ApiResult<String> {

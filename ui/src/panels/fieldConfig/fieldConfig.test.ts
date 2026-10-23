@@ -1,5 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: link placeholders such as ${__value} are typed by users, not template literals
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Field } from "../../api/generated/shapes";
 import {
   cellLink,
@@ -14,11 +14,16 @@ import {
   thresholdTone,
 } from "./fieldConfig";
 import { parseLegend } from "./legendOptions";
-import { compilePattern, MAX_TESTED_CHARS } from "./pattern";
+import { compilePattern, loadPatternEngine, MAX_TESTED_CHARS } from "./pattern";
 import { formatUnit, fromNow, joinFormatted, UNITS } from "./units";
 import { legacyUnit, upgradePanel } from "./upgrade";
 
 const NBSP = "\u00a0";
+
+// re2js loads on first use; these tests use patterns right away.
+beforeAll(async () => {
+  await loadPatternEngine();
+});
 const shown = (value: number, unit: string, language: string, decimals?: number) =>
   joinFormatted(formatUnit(value, unit, decimals, language));
 
@@ -252,6 +257,20 @@ describe("field options", () => {
     expect(cellLink("/\\evil.example", "1", "f")).toBeNull();
     expect(cellLink("${__value}", "/\\evil.example", "f")).toBeNull();
     expect(isSafeHref("https://a.example\\@evil.example")).toBe(false);
+    // Browsers drop tabs and line breaks, so these would lead to //evil.example.
+    for (const sneaky of [
+      "/\t/evil.example",
+      "/\n/evil.example",
+      "/\r\n/evil.example",
+      "/\u0000x",
+    ]) {
+      expect(isSafeHref(sneaky), JSON.stringify(sneaky)).toBe(false);
+      expect(cellLink("${__value}", sneaky, "f"), JSON.stringify(sneaky)).toBeNull();
+    }
+    expect(cellLink("/d/${__value}", "a\tb", "f")).toBe("/d/a%09b");
+    expect(isSafeHref("mailto:team@kalzit.dev")).toBe(true);
+    expect(isSafeHref("?var-host=web-1")).toBe(true);
+    expect(isSafeHref("https:evil.example")).toBe(false);
   });
 
   it("runs patterns in linear time, so (a+)+$ cannot hang a page", () => {

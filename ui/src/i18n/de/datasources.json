@@ -287,5 +287,6 @@
   "datasources.reason.documents.limit": "Das Ergebnis wurde bei {limit} Dokumenten abgeschnitten.",
   "datasources.reason.documents.size_limit": "Das Ergebnis wurde bei der Größengrenze einer Antwort abgeschnitten.",
   "datasources.reason.documents.binary_hidden": "Binäre Werte von {path} werden nicht angezeigt.",
-  "datasources.form.atLeast": "Gib einen Wert von mindestens {min} ein."
+  "datasources.form.atLeast": "Gib einen Wert von mindestens {min} ein.",
+  "datasources.reason.dashboards.panel_options": "Panel „{panel}“ hat eine Option, die der Server nicht annimmt: {detail}"
 }

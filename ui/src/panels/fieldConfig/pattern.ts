@@ -1,9 +1,12 @@
-import { RE2JS } from "re2js";
+import type { RE2JS } from "re2js";
+import { useEffect, useSyncExternalStore } from "react";
+import { refusedSyntax } from "./patternSyntax";
 
 /**
  * Patterns users type (override matchers, regex mappings) run on re2js, a linear-time engine
  * with RE2 syntax: no backreferences or lookaround, so no pattern can hang a page however long
- * the value. The server checks the same syntax with the Rust `regex` crate before storing one.
+ * the value. Only syntax both re2js and the server's Rust `regex` crate read alike is accepted
+ * (`patternSyntax.ts`). re2js loads on first use, so dashboards without patterns never fetch it.
  */
 
 /** Values are tested on their first characters only; longer cells add nothing a pattern needs. */
@@ -16,12 +19,52 @@ export interface Pattern {
   test: (text: string) => boolean;
 }
 
+type Engine = typeof RE2JS;
+
+let engine: Engine | null = null;
+let loading: Promise<Engine> | null = null;
+const listeners = new Set<() => void>();
 const compiled = new Map<string, Pattern | null>();
 
-function build(pattern: string): Pattern | null {
+/** Loads re2js once; everyone waiting is told when it is there. */
+export function loadPatternEngine(): Promise<Engine> {
+  loading ??= import("re2js").then((module) => {
+    engine = module.RE2JS;
+    compiled.clear();
+    for (const listener of listeners) listener();
+    return module.RE2JS;
+  });
+  return loading;
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/**
+ * Starts loading re2js when `needed` and re-renders the caller once it is there. Until then
+ * patterns match nothing, so a panel shows its values unmapped for that moment.
+ */
+export function usePatternEngine(needed: boolean): boolean {
+  const ready = useSyncExternalStore(
+    subscribe,
+    () => engine !== null,
+    () => engine !== null,
+  );
+  useEffect(() => {
+    if (needed) void loadPatternEngine();
+  }, [needed]);
+  return ready;
+}
+
+/** Matches nothing: a pattern whose engine is still loading. */
+const WAITING: Pattern = { test: () => false };
+
+function build(pattern: string, re2: Engine): Pattern | null {
   let regex: RE2JS;
   try {
-    regex = RE2JS.compile(pattern);
+    regex = re2.compile(pattern);
   } catch {
     return null;
   }
@@ -42,18 +85,33 @@ function build(pattern: string): Pattern | null {
   };
 }
 
-/** A pattern typed by a user, compiled once; null when it is not valid RE2 syntax. */
+/**
+ * A pattern typed by a user, compiled once; null when it is outside the shared syntax. While
+ * re2js loads, a pattern with valid syntax matches nothing.
+ */
 export function compilePattern(pattern: string): Pattern | null {
+  if (refusedSyntax(pattern)) {
+    return null;
+  }
+  if (engine === null) {
+    void loadPatternEngine();
+    return WAITING;
+  }
   if (!compiled.has(pattern)) {
     if (compiled.size >= MAX_PATTERNS) {
       compiled.clear();
     }
-    compiled.set(pattern, build(pattern));
+    compiled.set(pattern, build(pattern, engine));
   }
   return compiled.get(pattern) ?? null;
 }
 
-/** Whether a non-empty pattern fails to compile, for the editor's error message. */
+/** Whether a non-empty pattern is refused, for the editor's error message. */
 export function isInvalidPattern(pattern: string): boolean {
   return pattern !== "" && compilePattern(pattern) === null;
+}
+
+/** Whether field options use patterns, so their panel needs re2js. */
+export function usesPatterns(fieldConfig: unknown): boolean {
+  return JSON.stringify(fieldConfig ?? null).includes('"regex"');
 }
