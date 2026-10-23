@@ -16,12 +16,13 @@ import {
   tokenizeCypher,
   tokenizeGsql,
   tokenizeJson,
+  tokenizeLucene,
   tokenizePromql,
   tokenizeSql,
 } from "./syntax";
 import "./editors.css";
 
-export type CodeLanguage = "sql" | "promql" | "json" | "cypher" | "gsql";
+export type CodeLanguage = "sql" | "promql" | "json" | "cypher" | "gsql" | "lucene";
 
 /**
  * The contract every query text editor implements. Query editors depend on this, not on an
@@ -48,6 +49,7 @@ const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   json: tokenizeJson,
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,
+  lucene: tokenizeLucene,
 };
 
 /**

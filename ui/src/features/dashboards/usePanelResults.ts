@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
-import { queryText } from "../datasources/queryKinds";
+import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
+import { useSourceKinds } from "../datasources/useSourceKinds";
 import { runPanelQuery } from "./api";
 import {
   type PanelModel,
@@ -40,6 +41,7 @@ export interface PanelQueryInput {
  */
 export function usePanelResults(input: PanelQueryInput) {
   const { orgId, dashboardId, panel, range, source, run } = input;
+  const kindOf = useSourceKinds(orgId);
   const variables =
     source === "stored"
       ? storedQueryVariables(input.variables, input.saved ?? [])
@@ -51,7 +53,9 @@ export function usePanelResults(input: PanelQueryInput) {
   const targets =
     source === "stored"
       ? shown
-      : shown.filter((t) => t.datasourceId !== "" && queryText(t.query).trim() !== "");
+      : shown
+          .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
+          .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
   const refIds = targets.map((t) => t.refId);
   return useQuery({
     queryKey: [
