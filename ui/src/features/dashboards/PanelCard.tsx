@@ -28,7 +28,8 @@ import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import type { DocumentFilter } from "../../panels/types";
-import { queryText } from "../datasources/queryKinds";
+import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
+import { useSourceKinds } from "../datasources/useSourceKinds";
 import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
 import "./dashboardTools.css";
@@ -132,6 +133,7 @@ export function PanelCard({
     keepHandleFocus.current = false;
   });
   const results = usePanelResults({ ...query, panel });
+  const kindOf = useSourceKinds(query.orgId);
   const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
   const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
   const note = timeNote(panel);
@@ -420,6 +422,7 @@ export function PanelCard({
               outcomes={outcomes}
               revision={results.dataUpdatedAt}
               variables={variableTexts(query.variables)}
+              kindOf={kindOf}
             />
           </PanelAnnotationsContext.Provider>
         </div>
@@ -447,7 +450,7 @@ export function PanelCard({
                 ? t("analysis.export.stored")
                 : undefined
             }
-            run={(choice, signal) => exportPanelData(query, panel, choice, signal)}
+            run={(choice, signal) => exportPanelData(query, panel, choice, signal, kindOf)}
             onClose={() => setExporting(false)}
           />
         ) : null}
@@ -476,6 +479,7 @@ function exportPanelData(
   panel: PanelModel,
   choice: ExportChoice,
   signal: AbortSignal,
+  kindOf: (datasourceId: string) => string | undefined,
 ) {
   const common = {
     timeRange: query.range,
@@ -489,29 +493,40 @@ function exportPanelData(
     const variables = storedQueryVariables(query.variables, query.saved ?? []);
     return exportPanel(query.orgId, query.dashboardId, panel.id, { ...common, variables }, signal);
   }
-  // Queries still being written are left out, unless a step reads them: then the server says
-  // what is wrong with them instead of refusing the steps.
-  const read = new Set(asSteps(panel.transformations).flatMap(stepFrames));
-  const targets = panel.targets.filter(
-    (target) =>
-      read.has(target.refId) ||
-      (target.datasourceId !== "" && queryText(target.query).trim() !== ""),
-  );
   return exportQuery(
     query.orgId,
     {
       ...common,
       variables: query.variables,
-      queries: targets.map((t) => ({
-        refId: t.refId,
-        datasourceId: t.datasourceId,
-        query: t.query,
-      })),
+      queries: exportTargets(panel, kindOf),
       steps: panel.transformations,
       title: panel.title,
     },
     signal,
   );
+}
+
+/**
+ * The queries a draft export sends. Queries still being written are left out, unless a step reads
+ * them: then the server says what is wrong with them instead of refusing the steps. Whether a
+ * query is written is decided by its source's kind.
+ */
+export function exportTargets(
+  panel: PanelModel,
+  kindOf: (datasourceId: string) => string | undefined,
+) {
+  const read = new Set(asSteps(panel.transformations).flatMap(stepFrames));
+  return panel.targets
+    .filter(
+      (target) =>
+        read.has(target.refId) ||
+        (target.datasourceId !== "" && hasQuery(target.query, kindOf(target.datasourceId))),
+    )
+    .map((t) => ({
+      refId: t.refId,
+      datasourceId: t.datasourceId,
+      query: normalizeQuery(t.query, kindOf(t.datasourceId)),
+    }));
 }
 
 interface PanelBodyProps {
@@ -532,6 +547,11 @@ interface PanelBodyProps {
   stepsRun?: StepsRun | undefined;
   /** Dashboard variables, for panels that show text. */
   variables?: Readonly<Record<string, string>>;
+  /**
+   * The kind of a target's data source, which decides whether its query can run. Without it (or
+   * for a source the caller cannot see) the query's own fields decide.
+   */
+  kindOf?: ((datasourceId: string) => string | undefined) | undefined;
 }
 
 /**
@@ -549,6 +569,7 @@ export function PanelBody({
   revision,
   stepsRun: given,
   variables,
+  kindOf = () => undefined,
 }: PanelBodyProps) {
   const { t } = useI18n();
   // Field option patterns need re2js, which loads with the first panel that uses one. The panel
@@ -596,7 +617,14 @@ export function PanelBody({
       </div>
     );
   }
-  if (!panel.targets.some((target) => queryText(target.query).trim() !== "")) {
+  // A query counts when its source's kind says it can run, or when the server answered it (a
+  // viewer may not see the source, and the panel route runs every stored query).
+  const answered = new Set(outcomes.flatMap((o) => ("result" in o ? [o.refId] : [])));
+  if (
+    !panel.targets.some(
+      (target) => answered.has(target.refId) || hasQuery(target.query, kindOf(target.datasourceId)),
+    )
+  ) {
     return <p className="panel-empty">{t("dashboards.panel.noQuery")}</p>;
   }
   if (pending) {

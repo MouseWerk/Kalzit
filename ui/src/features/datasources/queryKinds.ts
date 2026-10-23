@@ -1,4 +1,6 @@
 import { isRecord } from "../../api/client";
+import { httpQueryText, isHttpQuery, parseHttpQuery } from "./editors/httpQuery";
+import { isSearchQuery, parseSearchQuery, searchQueryText } from "./editors/searchQuery";
 import { emptyMongoQuery, isMongoQuery, mongoQueryText } from "./mongoQuery";
 
 /**
@@ -13,7 +15,20 @@ export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite"] as const;
 export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
 /** Kinds whose results are documents and whose queries are pipelines (mongoQuery.ts). */
 export const MONGO_KINDS = ["mongodb"] as const;
-export type EditorFamily = "sql" | "promql" | "mongo" | "cypher" | "gsql";
+/**
+ * Elasticsearch and OpenSearch (`{lucene}` or `{dsl}`), CSV and JSON files (`{}`: the source names
+ * the file) and HTTP JSON (`{path?, params?, documentsPath?}`).
+ */
+export const SEARCH_KINDS = ["elasticsearch"] as const;
+export type EditorFamily =
+  | "sql"
+  | "promql"
+  | "mongo"
+  | "cypher"
+  | "gsql"
+  | "search"
+  | "file"
+  | "http";
 
 export interface SqlQuery {
   sql: string;
@@ -50,6 +65,15 @@ export function familyOf(kind: string): EditorFamily | undefined {
   }
   if (kind === "tigergraph") {
     return "gsql";
+  }
+  if ((SEARCH_KINDS as readonly string[]).includes(kind)) {
+    return "search";
+  }
+  if (kind === "file") {
+    return "file";
+  }
+  if (kind === "http_json") {
+    return "http";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -100,6 +124,11 @@ export function emptyQuery(kind: string): unknown {
       return { cypher: "" };
     case "gsql":
       return { gsql: "" };
+    case "search":
+      return { lucene: "" };
+    case "file":
+    case "http":
+      return {};
     default:
       return { sql: "" };
   }
@@ -127,6 +156,69 @@ export function queryText(query: unknown): string {
     if (typeof query.installed === "string") {
       return query.installed;
     }
+    if (typeof query.lucene === "string" || isRecord(query.dsl)) {
+      return searchQueryText(parseSearchQuery(query));
+    }
+    // HTTP JSON by its path; parameters alone could be TigerGraph's.
+    if (typeof query.path === "string" || typeof query.documentsPath === "string") {
+      return httpQueryText(parseHttpQuery(query));
+    }
   }
   return "";
+}
+
+/** The text forms: a query of these runs only with text in it. */
+const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
+  "sql",
+  "promql",
+  "mongo",
+  "cypher",
+  "gsql",
+];
+const TEXT_KEYS = ["sql", "expr", "cypher", "gsql", "installed"];
+
+/**
+ * Whether a query has something to run, by the form of its data source's kind. The text forms
+ * need text. The search, file and HTTP JSON forms run as they are: `{}` reads the file or
+ * requests the source's URL, and a search without a query matches every document in the time
+ * range; a stored search or HTTP query with fields the server refuses does not run.
+ *
+ * Without the kind (a source the caller cannot see) the form is told by its fields, and only a
+ * query that names itself counts: text, a Lucene or DSL search, an HTTP path. `{}` does not, since
+ * it is also what an unfinished query of any other kind looks like.
+ */
+export function hasQuery(query: unknown, kind?: string): boolean {
+  if (!isRecord(query)) {
+    return false;
+  }
+  const family = kind === undefined ? undefined : familyOf(kind);
+  if (family === "search") {
+    return isSearchQuery(query);
+  }
+  if (family === "file") {
+    // Any other form is replaced by `{}` before it is sent (normalizeQuery).
+    return true;
+  }
+  if (family === "http") {
+    return isHttpQuery(query);
+  }
+  if (
+    (family !== undefined && TEXT_FAMILIES.includes(family)) ||
+    TEXT_KEYS.some((key) => key in query) ||
+    isMongoQuery(query)
+  ) {
+    return queryText(query).trim() !== "";
+  }
+  if (typeof query.lucene === "string" || isRecord(query.dsl)) {
+    return isSearchQuery(query);
+  }
+  return typeof query.path === "string" && isHttpQuery(query);
+}
+
+/**
+ * The query as it is sent. A file query has no fields, so whatever a target kept from another
+ * kind is sent as `{}`; the stored target is left as it is until it is saved again.
+ */
+export function normalizeQuery(query: unknown, kind: string | undefined): unknown {
+  return kind !== undefined && familyOf(kind) === "file" ? {} : query;
 }

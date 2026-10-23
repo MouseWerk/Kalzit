@@ -419,6 +419,8 @@ jobs:
           name: e2e-${{ matrix.os }}
           path: ui/e2e/.output
           if-no-files-found: ignore
+          # .output starts with a dot; without this the traces and screenshots are left out.
+          include-hidden-files: true
           retention-days: 14
 
   audit:

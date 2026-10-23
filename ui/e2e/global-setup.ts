@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeSalesDatabase } from "./support/fixture-db";
+import { writeRegionsCsv, writeSalesDatabase } from "./support/fixture-db";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_DIR = resolve(UI_DIR, "..");
@@ -214,6 +214,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       join(fixtures, "sales.db"),
       Number.isFinite(fixedNow) && fixedNow > 0 ? fixedNow : Date.now(),
     );
+    // CSV and JSON files live in a folder of their own: the server keeps the SQLite and the file
+    // folders apart, so a folder allowed for one does not open the other.
+    const files = join(run, "files");
+    mkdirSync(files, { mode: 0o700 });
+    writeRegionsCsv(join(files, "regions.csv"));
 
     const setupToken = randomBytes(12).toString("hex");
     child = spawn(exe, ["serve"], {
@@ -224,6 +229,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
         KALZIT_SETUP_TOKEN: setupToken,
         KALZIT_SECRETS_KEY: randomBytes(32).toString("base64"),
         KALZIT_SETTING_DATASOURCES_SQLITE_DIRS: JSON.stringify([fixtures]),
+        KALZIT_SETTING_DATASOURCES_FILE_DIRS: JSON.stringify([files]),
         // Accounts without a language of their own read English; the German runs sign in as an
         // account whose preference is German (support/api.ts, OWNER_DE).
         KALZIT_SETTING_APPEARANCE_DEFAULT_LANGUAGE: "en",
@@ -243,6 +249,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     process.env.KALZIT_E2E_URL = url;
     process.env.KALZIT_E2E_SETUP_TOKEN = setupToken;
     process.env.KALZIT_E2E_FIXTURES = fixtures;
+    process.env.KALZIT_E2E_FILES = files;
     process.env.KALZIT_E2E_DATA_DIR = join(run, "data");
     process.stdout.write(`kalzit e2e server on ${url}, run folder ${run}\n`);
   } catch (error) {
