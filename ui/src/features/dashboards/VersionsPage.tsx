@@ -3,6 +3,7 @@ import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
+import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
@@ -83,8 +84,9 @@ function VersionList({ orgId }: { orgId: string }) {
         to="/dashboards/$dashboardId"
         params={{ dashboardId }}
         search={{}}
-        className="versions__back"
+        className="back-link"
       >
+        <Icon name="back" />
         {t("dashboards.history.back", { title: dashboard.data?.title ?? "" })}
       </Link>
       {items.length === 0 ? (
