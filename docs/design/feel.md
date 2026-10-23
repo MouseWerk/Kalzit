@@ -259,7 +259,8 @@ whole card on every frame; the editor's panes use `contain: strict`. Measured on
 with the same test, before and after: typing 40 keys at 4x, p95 40 to 48 ms (max 56) before and
 40 ms (max 48) after, the longest task while typing 38 to 45 ms before and 27 to 30 ms after,
 React's share of the main thread down by a third; dragging a panel at 4x, 2 to 3 long tasks of
-56 to 78 ms per drag before, none after (the drop is one task of about 35 ms).
+56 to 78 ms per drag before, none after (the drop renders as a transition, in slices, and the
+card keeps its offset until it stands in its new cell).
 
 ## 11. Data source logos
 

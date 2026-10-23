@@ -190,6 +190,36 @@ test("panel editor, dark", async ({ browser }) => {
   await page.context().close();
 });
 
+/** A new panel: the visualization picker open, the first query ready. */
+async function newPanel(page: Page): Promise<void> {
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await page
+    .getByRole("button", { name: t("dashboards.addPanel") })
+    .first()
+    .click();
+  const editor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });
+  await expect(editor.locator(".cm-content").first()).toBeVisible();
+  await expect(editor.getByRole("radio").first()).toBeVisible();
+}
+
+test("new panel, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await newPanel(page);
+  await shoot(page, "panel-new-dark");
+  await page.context().close();
+});
+
+test("new panel, phone", async ({ browser }) => {
+  const page = await openPage(browser, "light", { width: 360, height: 780 });
+  await signIn(page);
+  await newPanel(page);
+  await shoot(page, "panel-new-phone");
+  await page.context().close();
+});
+
 test("panel editor, phone", async ({ browser }) => {
   const page = await openPage(browser, "light", { width: 360, height: 780 });
   await signIn(page);

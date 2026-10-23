@@ -28,6 +28,8 @@ export interface Target {
   refId: string;
   datasourceId: string;
   query: unknown;
+  /** Kept with the panel but not run (the editor's Hide). */
+  hide?: boolean | undefined;
 }
 
 export interface PanelModel {

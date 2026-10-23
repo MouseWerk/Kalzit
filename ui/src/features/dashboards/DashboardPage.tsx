@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link, useBlocker, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  getRouteApi,
+  Link,
+  useBlocker,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "@tanstack/react-router";
 import { type ReactNode, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import { Breadcrumbs, type Crumb, folderTrail } from "../../components/Breadcrumbs";
@@ -33,6 +40,7 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardLinks } from "./DashboardLinks";
+import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
@@ -104,9 +112,14 @@ export interface DisplayState {
   mode: ViewMode;
   /** A panel shown alone, full screen. */
   viewPanel?: string | undefined;
-  /** The panel open in the full-page editor (its own route). */
+  /** The panel open in the full-page editor (its own route), or `NEW_PANEL` for one being added. */
   editPanel?: string | undefined;
+  /** Opening the editor replaces the current history entry instead of adding one. */
+  replace?: boolean | undefined;
 }
+
+/** `editPanel` for a panel being added: the editor at `/dashboards/$id/panels/new`. */
+export const NEW_PANEL = "new";
 
 export function DashboardPage() {
   const { t } = useI18n();
@@ -114,8 +127,9 @@ export function DashboardPage() {
   const { dashboardId } = dashboardRoute.useParams();
   const search = dashboardRoute.useSearch();
   const navigate = dashboardRoute.useNavigate();
-  // Set on the editor's child route only.
+  // Set on the editor's child routes only.
   const { panelId } = useParams({ strict: false });
+  const adding = useLocation({ select: (location) => location.pathname.endsWith("/panels/new") });
   if (org === undefined) {
     return (
       <EmptyState icon="dashboards" title={t("dashboards.noOrg.title")}>
@@ -133,20 +147,29 @@ export function DashboardPage() {
         edit: search.edit,
         mode: search.kiosk ?? "normal",
         viewPanel: search.viewPanel,
-        editPanel: panelId,
+        editPanel: panelId ?? (adding ? NEW_PANEL : undefined),
       }}
       onDisplay={(patch) => {
         if ("editPanel" in patch) {
-          // Into the editor and back are entries in the history, so the browser's back button
-          // leaves the editor as the Back button does.
+          // Into the editor and back are entries in the history; the browser's back button
+          // leaves the editor as Discard does, after asking when something changed.
           const keep = (prev: DashboardSearch) => ({ ...prev, edit: undefined });
+          const replace = patch.replace === true;
           void (patch.editPanel === undefined
             ? navigate({ to: "/dashboards/$dashboardId", params: { dashboardId }, search: keep })
-            : navigate({
-                to: "/dashboards/$dashboardId/panels/$panelId/edit",
-                params: { dashboardId, panelId: patch.editPanel },
-                search: keep,
-              }));
+            : patch.editPanel === NEW_PANEL
+              ? navigate({
+                  to: "/dashboards/$dashboardId/panels/new",
+                  params: { dashboardId },
+                  search: keep,
+                  replace,
+                })
+              : navigate({
+                  to: "/dashboards/$dashboardId/panels/$panelId/edit",
+                  params: { dashboardId, panelId: patch.editPanel },
+                  search: keep,
+                  replace,
+                }));
           return;
         }
         void navigate({
@@ -250,9 +273,10 @@ type DialogState =
   | null;
 
 /**
- * How the open panel editor is being left: with its change put into the draft (Back, Esc, the
- * browser's back button, a breadcrumb), with the panel put back as it was (Discard), or as it
- * stands because the change already went elsewhere (made into a library panel).
+ * How the open panel editor is being left: with its change put into the draft (Back, Apply,
+ * Esc), with the panel put back as it was (Discard; also the browser's back button or a link,
+ * after asking when something changed), or as it stands because the change already went
+ * elsewhere (made into a library panel, or a new panel saved and opened at its own address).
  */
 type LeaveMode = "apply" | "discard" | "keep";
 
@@ -342,7 +366,11 @@ function DashboardView({
   const canAnnotate =
     !inTrash && (permissions.has("annotations:write") || (dashboard.access?.write ?? false));
 
-  const [draft, setDraft] = useState<DashboardModel | null>(null);
+  // What this tab kept of unsaved work on this version (a reload): the draft and the editor's panel.
+  const [kept] = useState(() => readDraft(dashboard.id, dashboard.version));
+  const [draft, setDraft] = useState<DashboardModel | null>(kept?.model ?? null);
+  // The editor's panel from a reload, used once when the editor opens on it again.
+  const [keptEditor, setKeptEditor] = useState(kept?.editor);
   // Edit mode is where query editors appear; start loading the editor before one opens.
   useEffect(() => {
     if (draft !== null) {
@@ -372,10 +400,20 @@ function DashboardView({
   const [notice, setNotice] = useState<string | null>(null);
   const userId = appRoute.useRouteContext().me.id;
   const editing = display.editPanel;
+  const isNewPanel = editing === NEW_PANEL;
   // The open editor's state, read when it is left, and the panel as it was when it opened.
   const snapshot = useRef<EditorSnapshot | null>(null);
   const opened = useRef<OpenedPanel | null>(null);
-  const leaveMode = useRef<LeaveMode>("apply");
+  // Set by the editor's buttons just before they leave it; unset, leaving discards.
+  const leaveMode = useRef<LeaveMode | null>(null);
+  // A panel being added: it joins the dashboard only when it is applied.
+  const [fresh, setFresh] = useState<PanelModel | null>(null);
+  const draftRef = useRef(draft);
+  const editingRef = useRef(editing);
+  useEffect(() => {
+    draftRef.current = draft;
+    editingRef.current = editing;
+  });
   // The model as last drawn, for actions that look a panel or row up: reading it from a ref
   // keeps those actions the same objects while the draft changes, so cards are not drawn again.
   const modelRef = useRef(model);
@@ -396,14 +434,36 @@ function DashboardView({
     setDraft((current) => current ?? dashboard.model);
   }, [editing, permissions.loaded, canEdit, dashboard.model, onDisplay]);
   useEffect(() => {
-    if (editing !== undefined && draft !== null && opened.current?.id !== editing) {
+    if (editing !== undefined && !isNewPanel && draft !== null && opened.current?.id !== editing) {
       opened.current = {
         id: editing,
         panel: draft.panels.find((p) => p.id === editing),
         fresh: false,
       };
     }
-  }, [editing, draft]);
+  }, [editing, isNewPanel, draft]);
+
+  // Unsaved work survives a reload of this tab: the draft, and what the open editor holds.
+  function keepDraft() {
+    const current = draftRef.current;
+    const state = snapshot.current;
+    const key = editingRef.current;
+    writeDraft(
+      dashboard.id,
+      current === null
+        ? null
+        : {
+            version: dashboard.version,
+            model: current,
+            editor: state === null || key === undefined ? undefined : { key, panel: state.panel() },
+          },
+    );
+  }
+  useEffect(() => {
+    writeDraft(dashboard.id, draft === null ? null : { version: dashboard.version, model: draft });
+  }, [dashboard.id, dashboard.version, draft]);
+  const keepTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(keepTimer.current), []);
 
   // "?edit" opens edit mode once, and only for someone who may edit; it must not reopen it after
   // a save remounts the view. Permissions arrive after the first render, so this waits for them.
@@ -597,28 +657,33 @@ function DashboardView({
     };
   }
 
-  /** A new panel goes into the draft at once and opens in the editor; Discard takes it out. */
-  function addPanel() {
-    const panel = newPanel();
-    changeDraft((m) => ({ ...m, panels: [...m.panels, panel] }));
+  // Adding a panel: one made now (or the one kept from a reload), outside the draft.
+  const startFresh = useEffectEvent(() => {
+    const panel = keptEditor?.key === NEW_PANEL ? keptEditor.panel : newPanel();
+    setFresh(panel);
     opened.current = { id: panel.id, panel: undefined, fresh: true };
-    onDisplay({ editPanel: panel.id });
+  });
+  useEffect(() => {
+    if (isNewPanel && draft !== null && fresh === null) {
+      startFresh();
+    }
+  }, [isNewPanel, draft, fresh]);
+
+  /** A new panel opens in the editor at its own address; it joins the dashboard on Apply. */
+  function addPanel() {
+    onDisplay({ editPanel: NEW_PANEL });
   }
 
-  /** Puts the panel the editor opened back as it was; a panel added just now goes again. */
+  /** Puts the panel the editor opened back as it was (a new one never joined the draft). */
   function restorePanel(before: OpenedPanel | null) {
-    if (before === null) {
+    const panel = before?.panel;
+    if (before === null || before.fresh || panel === undefined) {
       return;
     }
-    changeDraft((m) => {
-      if (before.fresh) {
-        return { ...m, panels: m.panels.filter((p) => p.id !== before.id) };
-      }
-      const panel = before.panel;
-      return panel === undefined
-        ? m
-        : { ...m, panels: m.panels.map((p) => (p.id === before.id ? panel : p)) };
-    });
+    changeDraft((m) => ({
+      ...m,
+      panels: m.panels.map((p) => (p.id === before.id && p !== panel ? panel : p)),
+    }));
   }
 
   function leaveEditor(mode: LeaveMode) {
@@ -654,20 +719,29 @@ function DashboardView({
     applyPanel(linked === undefined ? panel : linkedPlace(panel), isNew);
   }
 
-  // Leaving the editor by any route (Back, Esc, the browser's back button, a breadcrumb) puts
-  // its change into the draft, unless it was discarded.
+  // Leaving the editor: Back, Apply and Esc put its change into the draft (a new panel joins
+  // it); Discard, the browser's back button and links leave the panel as it was.
   const onEditorLeft = useEffectEvent((left: string) => {
     const state = snapshot.current;
     const before = opened.current;
-    const mode = leaveMode.current;
+    const mode = leaveMode.current ?? "discard";
+    const wasNew = left === NEW_PANEL;
     snapshot.current = null;
     opened.current = null;
-    leaveMode.current = "apply";
+    leaveMode.current = null;
+    window.clearTimeout(keepTimer.current);
+    setKeptEditor(undefined);
+    if (wasNew) {
+      setFresh(null);
+    }
     if (mode === "discard") {
       restorePanel(before);
-    } else if (mode === "apply" && state !== null && state.id === left && state.changed()) {
-      onPanelApply(state.panel(), false);
+    } else if (mode === "apply" && state !== null && (wasNew || state.id === left)) {
+      if (wasNew || state.changed()) {
+        onPanelApply(state.panel(), wasNew);
+      }
     }
+    keepDraft();
   });
   const lastEditing = useRef(editing);
   useEffect(() => {
@@ -718,18 +792,26 @@ function DashboardView({
   useEffect(() => {
     dirtyRef.current = dirty;
   });
-  // Leaving the dashboard with unsaved changes asks first; the editor and back do not.
-  const unsaved = () => dirtyRef.current || (snapshot.current?.changed() ?? false);
+  // Leaving the dashboard with unsaved changes asks first; so does leaving the editor without
+  // its buttons (the browser's back button) when that would drop a change to the panel.
+  const editorChanged = () => snapshot.current?.changed() ?? false;
+  const unsaved = () => dirtyRef.current || editorChanged();
+  const here = `/dashboards/${dashboard.id}`;
+  const staysHere = (pathname: string) =>
+    pathname === here || pathname.startsWith(`${here}/panels/`);
   const blocker = useBlocker({
-    shouldBlockFn: ({ next }) => {
-      const here = `/dashboards/${dashboard.id}`;
-      const staying = next.pathname === here || next.pathname.startsWith(`${here}/panels/`);
-      return !staying && unsaved();
+    shouldBlockFn: ({ current, next }) => {
+      if (staysHere(next.pathname)) {
+        const fromEditor = current.pathname.startsWith(`${here}/panels/`);
+        return fromEditor && leaveMode.current === null && editorChanged();
+      }
+      return unsaved();
     },
     enableBeforeUnload: unsaved,
     withResolver: true,
     disabled: draft === null,
   });
+  const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
   const inEditMode = draft !== null;
   const editActions = !inEditMode
     ? undefined
@@ -841,13 +923,18 @@ function DashboardView({
   const edited =
     editing === undefined || draft === null
       ? undefined
-      : draft.panels.find((p) => p.id === editing);
+      : isNewPanel
+        ? (fresh ?? undefined)
+        : draft.panels.find((p) => p.id === editing);
+  const editorTitle = isNewPanel ? t("dashboards.editor.newTitle") : t("dashboards.editor.title");
   const editorView =
-    editing === undefined ? null : draft === null || !resolved.ok ? (
+    editing === undefined ? null : draft === null ||
+      !resolved.ok ||
+      (isNewPanel && fresh === null) ? (
       <p className="loading">{t("common.loading")}</p>
     ) : edited === undefined ? (
       <>
-        <Breadcrumbs crumbs={[...editorTrail, { label: t("dashboards.editor.title") }]} />
+        <Breadcrumbs crumbs={[...editorTrail, { label: editorTitle }]} />
         <EmptyState
           icon="dashboards"
           title={t("dashboards.editor.notFound.title")}
@@ -871,7 +958,22 @@ function DashboardView({
           orgId={orgId}
           dashboardId={dashboard.id}
           userId={userId}
-          panel={resolvePanel(edited, library)}
+          isNew={isNewPanel}
+          panel={
+            keptEditor !== undefined && keptEditor.key === editing
+              ? keptEditor.panel
+              : resolvePanel(edited, library)
+          }
+          original={isNewPanel ? undefined : resolvePanel(edited, library)}
+          refresh={clock.run}
+          toolbar={
+            <>
+              <TimeRangePicker value={textRange} onChange={onRangeChange} />
+              <button type="button" className="button button--secondary" onClick={tick}>
+                {t("dashboards.refresh")}
+              </button>
+            </>
+          }
           range={resolved.range}
           variables={editorValues(edited, rows, values)}
           stored={(() => {
@@ -882,6 +984,9 @@ function DashboardView({
           crumbs={editorTrail}
           onSnapshot={(state) => {
             snapshot.current = state;
+            // Kept for a reload a moment after the last change, not on every key.
+            window.clearTimeout(keepTimer.current);
+            keepTimer.current = window.setTimeout(keepDraft, 400);
           }}
           rows={rows}
           dashboardVariables={model.variables}
@@ -891,11 +996,10 @@ function DashboardView({
               : (library[edited.libraryPanelId]?.name ?? t("libraryPanels.missing"))
           }
           onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
-          onBack={() => leaveEditor("apply")}
+          onApply={() => leaveEditor("apply")}
           onDiscard={() => {
-            const fresh = opened.current?.fresh === true;
-            if (snapshot.current?.changed() === true || fresh) {
-              setDialog({ kind: "discardPanel", fresh });
+            if (snapshot.current?.changed() === true) {
+              setDialog({ kind: "discardPanel", fresh: isNewPanel });
             } else {
               leaveEditor("discard");
             }
@@ -907,7 +1011,12 @@ function DashboardView({
               onPanelApply(panel, false);
               return;
             }
-            applyPanel(linked === undefined ? panel : linkedPlace(panel), false);
+            applyPanel(linked === undefined ? panel : linkedPlace(panel), isNewPanel);
+            if (isNewPanel) {
+              // Part of the dashboard now: the editor goes on at the panel's own address.
+              leaveMode.current = "keep";
+              onDisplay({ editPanel: panel.id, replace: true });
+            }
             setDialog({ kind: "save" });
           }}
         />
@@ -1245,12 +1354,26 @@ function DashboardView({
             : t("dashboards.editor.discardText")}
         </ConfirmDialog>
       ) : null}
-      {blocker.status === "blocked" ? (
+      {blocker.status === "blocked" && droppingPanel ? (
+        <ConfirmDialog
+          title={t("dashboards.editor.discardTitle")}
+          confirmLabel={t("dashboards.discard.confirm")}
+          onCancel={() => blocker.reset()}
+          onConfirm={() => blocker.proceed()}
+        >
+          {isNewPanel ? t("dashboards.editor.discardNewText") : t("dashboards.editor.discardText")}
+        </ConfirmDialog>
+      ) : null}
+      {blocker.status === "blocked" && !droppingPanel ? (
         <ConfirmDialog
           title={t("dashboards.leave.title")}
           confirmLabel={t("dashboards.leave.confirm")}
           onCancel={() => blocker.reset()}
-          onConfirm={() => blocker.proceed()}
+          onConfirm={() => {
+            // Left on purpose: a reload of this dashboard later starts clean.
+            writeDraft(dashboard.id, null);
+            blocker.proceed();
+          }}
         >
           {t("dashboards.discard.text")}
         </ConfirmDialog>

@@ -145,7 +145,7 @@ describe("the panel editor page", () => {
     expect(stored.versions).toHaveLength(1);
   });
 
-  it("puts the panel back as it was on Discard, and takes a new panel off again", async () => {
+  it("puts the panel back as it was on Discard, and leaves no trace of a new one", async () => {
     setup();
     const { user, location } = renderApp("/dashboards/d-main");
     const editor = await openEditor(user, "Orders");
@@ -160,11 +160,11 @@ describe("the panel editor page", () => {
     expect(screen.getByText(/^Edit mode\. /)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Add panel" }));
-    const added = await editorRegion();
-    expect(location().pathname).toMatch(/^\/dashboards\/d-main\/panels\/[^/]+\/edit$/);
+    const added = await screen.findByRole("region", { name: "New panel" });
+    expect(location().pathname).toBe("/dashboards/d-main/panels/new");
     await user.click(within(added).getByRole("button", { name: "Discard" }));
     const drop = screen.getByRole("dialog", { name: "Discard the changes to this panel?" });
-    expect(within(drop).getByText("The new panel is taken off the dashboard again.")).toBeTruthy();
+    expect(within(drop).getByText("The new panel is not added to the dashboard.")).toBeTruthy();
     await user.click(within(drop).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
     expect(screen.getAllByRole("article")).toHaveLength(1);
@@ -229,7 +229,7 @@ describe("the panel editor page", () => {
     const title = within(editor).getByRole("textbox", { name: "Panel title" });
     await user.clear(title);
     await user.paste("Saved title");
-    await user.click(within(editor).getByRole("button", { name: "Save…" }));
+    await user.click(within(editor).getByRole("button", { name: "Save dashboard…" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
         name: "Save",
@@ -349,6 +349,113 @@ describe("the panel editor page", () => {
       relatedTarget: within(editor).getByRole("textbox", { name: "Panel title" }),
     });
     await waitFor(() => expect(server.areas.datasources.queries.length).toBeGreaterThan(afterRun));
+  });
+});
+
+describe("adding and leaving panels", () => {
+  it("adds a panel on its own page and to the dashboard only on Apply", async () => {
+    const { stored } = setup();
+    const { user, location } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Add panel" }));
+    const editor = await screen.findByRole("region", { name: "New panel" });
+    expect(location().pathname).toBe("/dashboards/d-main/panels/new");
+    // The visualization comes first, open; a first query is ready on the first source.
+    expect(
+      within(editor).getByRole("button", { name: "Visualization" }).getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(await within(editor).findByLabelText("Query A", { selector: "textarea" })).toBeTruthy();
+    // The time range and refresh of the dashboard are in the editor's bar.
+    expect(within(editor).getByRole("button", { name: "Refresh" })).toBeTruthy();
+    await user.type(within(editor).getByRole("textbox", { name: "Panel title" }), "Fresh");
+    await user.click(within(editor).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+    expect(await screen.findByRole("article", { name: "Fresh" })).toBeTruthy();
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    expect(stored.versions).toHaveLength(1);
+  });
+
+  it("folds the visualization of a panel that has one, and shows the preview as a table", async () => {
+    setup("editor", {
+      ...emptyModel("Main"),
+      panels: [panel("p1", "Orders", { type: "timeseries" })],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const viz = within(editor).getByRole("button", { name: "Visualization Time series" });
+    expect(viz.getAttribute("aria-expanded")).toBe("false");
+    expect(viz.textContent).toContain("Time series");
+    const table = within(editor).getByRole("button", { name: "Table view" });
+    expect(table.getAttribute("aria-pressed")).toBe("false");
+    await user.click(table);
+    expect(table.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("treats leaving by a link (as the browser's back button) as Discard, after asking", async () => {
+    setup();
+    const { user, location } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const title = within(editor).getByRole("textbox", { name: "Panel title" });
+    await user.clear(title);
+    await user.paste("Not kept");
+    // The dashboard's crumb, like the browser's back button, does not take the change along.
+    await user.click(crumb("Main"));
+    const ask = await screen.findByRole("dialog", { name: "Discard the changes to this panel?" });
+    await user.click(within(ask).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Not kept" })).toBeNull();
+  });
+
+  it("keeps the draft and the editor's panel across a reload of the tab", async () => {
+    setup();
+    const first = renderApp("/dashboards/d-main");
+    const editor = await openEditor(first.user, "Orders");
+    const title = within(editor).getByRole("textbox", { name: "Panel title" });
+    await first.user.clear(title);
+    await first.user.paste("Still here");
+    // Kept a moment after the last change.
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem("kalzit.draft.d-main")).toContain("Still here"),
+    );
+    first.view.unmount();
+    renderApp("/dashboards/d-main/panels/p1/edit");
+    const again = await editorRegion();
+    expect(within(again).getByRole("textbox", { name: "Panel title" })).toHaveProperty(
+      "value",
+      "Still here",
+    );
+  });
+
+  it("duplicates, hides and folds queries; a hidden query is stored but does not run", async () => {
+    const { server, stored } = setup();
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    await user.click(within(editor).getByRole("button", { name: "Duplicate query A" }));
+    expect(await within(editor).findByLabelText("Query B", { selector: "textarea" })).toBeTruthy();
+    const hide = within(editor).getByRole("button", { name: "Hide query B" });
+    await user.click(hide);
+    expect(hide.getAttribute("aria-pressed")).toBe("true");
+    expect(within(editor).getByText("Hidden")).toBeTruthy();
+    const fold = within(editor).getByRole("button", { name: "Fold query A" });
+    await user.click(fold);
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    const before = server.areas.datasources.queries.length;
+    await user.click(within(editor).getByRole("button", { name: "Run queries" }));
+    await waitFor(() => expect(server.areas.datasources.queries.length).toBeGreaterThan(before));
+    const sent = server.areas.datasources.queries.at(-1) as { queries: { refId: string }[] };
+    expect(sent.queries.map((q) => q.refId)).toEqual(["A"]);
+    await user.click(within(editor).getByRole("button", { name: "Save dashboard…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.panels[0]?.targets).toMatchObject([
+      { refId: "A" },
+      { refId: "B", hide: true },
+    ]);
   });
 });
 

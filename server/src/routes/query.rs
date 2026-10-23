@@ -273,9 +273,11 @@ async fn panel_query(
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
+    // Hidden targets stay with the panel but are not run.
     let items: Vec<QueryItem> = panel
         .targets
         .iter()
+        .filter(|t| !t.hide)
         .map(|t| QueryItem {
             ref_id: t.ref_id.clone(),
             datasource_id: t.datasource_id.clone(),

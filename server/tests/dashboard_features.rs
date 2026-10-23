@@ -257,6 +257,7 @@ on_both_databases! {
     library_panels_are_shared_by_dashboards,
     library_panels_in_restricted_folders,
     library_panels_check_panel_options,
+    hidden_targets_are_kept_but_not_run,
 }
 
 fn model(title: &str) -> Value {
@@ -291,6 +292,25 @@ fn showing(title: &str, library: &str) -> Value {
 
 fn range() -> Value {
     json!({ "from": T0 - 6 * HOUR, "to": T0 })
+}
+
+async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
+    let source = t.working_source().await;
+    let mut m = model("Versteckt");
+    m["panels"][0]["targets"] = json!([
+        { "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } },
+        { "refId": "B", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" }, "hide": true }
+    ]);
+    let id = t.dashboard(None, m, &t.owner).await;
+    // Stored as sent; a target that runs carries no `hide`.
+    let read = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
+    let targets = &read.body["model"]["panels"][0]["targets"];
+    assert_eq!((targets[0].get("hide"), &targets[1]["hide"]), (None, &json!(true)), "{}", read.body);
+    let q = json!({ "timeRange": range(), "variables": {} });
+    let ran = t.post(&format!("~/dashboards/{id}/panels/p1/query"), q, &t.owner).await;
+    assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
+    assert!(ran.body["results"].get("A").is_some(), "{}", ran.body);
+    assert!(ran.body["results"].get("B").is_none(), "{}", ran.body);
 }
 
 async fn version_1_models_read_as_the_current_version(t: TestApp) {

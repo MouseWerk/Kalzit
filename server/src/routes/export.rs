@@ -180,9 +180,11 @@ async fn make_panel(
     // Checked when the dashboard was saved; failing here means the stored model is broken.
     let steps = check_steps(&panel.transformations, &refs, "transformations")
         .map_err(|e| ApiError::internal("export", format!("stored steps of panel {panel_id}: {e}")))?;
+    // Hidden targets stay with the panel but are not run.
     let items: Vec<QueryItem> = panel
         .targets
         .iter()
+        .filter(|t| !t.hide)
         .map(|t| QueryItem {
             ref_id: t.ref_id.clone(),
             datasource_id: t.datasource_id.clone(),

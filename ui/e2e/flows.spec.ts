@@ -127,9 +127,10 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
     .getByRole("button", { name: t("dashboards.addPanel") })
     .first()
     .click();
-  const panelEditor = page.getByRole("region", { name: t("dashboards.editor.title") });
+  const panelEditor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });
+  await expect(page).toHaveURL(/\/panels\/new$/);
   await panelEditor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
-  await panelEditor.getByRole("button", { name: t("dashboards.editor.addQuery") }).click();
+  // A new panel comes with a first query; it gets this editor's source.
   await panelEditor.getByLabel(t("dashboards.editor.datasource")).selectOption({ label: name });
   await fillQuery(panelEditor, SQL.series);
   await panelEditor.getByRole("button", { name: t("dashboards.editor.run") }).click();
@@ -143,4 +144,32 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   await expect(save).toBeHidden();
   await page.reload();
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();
+});
+
+test("the panel editor keeps its changes over a reload and asks before the back button drops them", async ({
+  page,
+  world,
+}) => {
+  const owner = await Api.owner();
+  const id = await owner.createDashboard(regionDashboard(unique("Zurück"), world.sourceId));
+  await owner.dispose();
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await page
+    .getByRole("button", { name: t("dashboards.panel.editNamed", { title: "Sales" }) })
+    .click();
+  const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
+  await editor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz neu");
+  // The reload asks first (unsaved changes); accepted, the editor comes back with the change.
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.waitForTimeout(600);
+  await page.reload();
+  await expect(editor.getByLabel(t("dashboards.editor.panelTitle"))).toHaveValue("Umsatz neu");
+  // The browser's back button discards the panel's change, after asking.
+  await page.goBack();
+  const ask = page.getByRole("dialog", { name: t("dashboards.editor.discardTitle") });
+  await ask.getByRole("button", { name: t("dashboards.discard.confirm") }).click();
+  await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Umsatz neu" })).toHaveCount(0);
 });

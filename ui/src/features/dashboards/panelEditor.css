@@ -44,10 +44,88 @@
     white-space: nowrap;
   }
 
+  /* The dashboard's time range and refresh, then the editor's own actions. */
+  .panel-editor__tools,
   .panel-editor__actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-2);
+  }
+
+  .panel-editor__preview-bar {
+    display: flex;
+    flex: none;
+    justify-content: flex-end;
+    margin-block-end: var(--space-1);
+  }
+
+  /* A toggle in the bar: pressed is a neutral tint and weight. */
+  .panel-editor__preview-bar [aria-pressed="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Option groups: a heading that folds its options, a hairline between groups. */
+  .option-group {
+    display: grid;
+    gap: var(--space-3);
+    padding-block-end: var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .option-group:last-child {
+    padding-block-end: 0;
+    border-bottom: 0;
+  }
+
+  .option-group__heading {
+    margin: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .option-group__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-width: 0;
+    padding: var(--space-1) 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-weight: var(--font-weight-semibold);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .option-group__chevron,
+  .target__chevron {
+    flex: none;
+    transform: rotate(90deg);
+    transition: transform var(--duration-fast) var(--easing);
+  }
+
+  .option-group__toggle[aria-expanded="false"] .option-group__chevron,
+  .target__toggle[aria-expanded="false"] .target__chevron {
+    transform: none;
+  }
+
+  .option-group__title {
+    flex: none;
+  }
+
+  .option-group__summary {
+    min-width: 0;
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .option-group__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
   }
 
   .editor-splits {
@@ -153,6 +231,33 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+  }
+
+  .target__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-inline-start: auto;
+  }
+
+  .target__badge {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .target__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  /* Folded: the display above would otherwise win over the hidden attribute. */
+  .option-group__body[hidden],
+  .target__body[hidden] {
+    display: none;
   }
 
   .target__ref {

@@ -46,7 +46,7 @@ describe("the panel editor and the projection step", () => {
 
     expect(within(dialog).getByText(/Another column is already named “total”/)).toBeTruthy();
     // Saving waits for the fix; so does going back (it stays in the editor and says why).
-    const apply = within(dialog).getByRole("button", { name: "Save…" });
+    const apply = within(dialog).getByRole("button", { name: "Save dashboard…" });
     expect(apply).toHaveProperty("disabled", true);
     expect(within(dialog).getByText(/Fix the projection step before applying/)).toBeTruthy();
 

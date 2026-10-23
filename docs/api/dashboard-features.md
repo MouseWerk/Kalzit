@@ -34,6 +34,9 @@ interface Panel {                                // in addition to version 1
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
 }
+interface Target {                               // in addition to version 1
+  hide?: boolean;                                // kept with the panel but not run; true or absent
+}
 interface Variable {                             // in addition to version 1
   multi?: boolean;                               // custom and query variables only
 }

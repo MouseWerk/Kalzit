@@ -1,6 +1,7 @@
 import {
   type KeyboardEvent,
   type PointerEvent,
+  startTransition,
   useEffect,
   useId,
   useLayoutEffect,
@@ -118,6 +119,8 @@ export function PanelCard({
   // shows the cell it will land in; both are styled through the CSSOM, without a render per move.
   const [dragging, setDragging] = useState<"move" | "resize" | null>(null);
   const placeholderRef = useRef<HTMLDivElement>(null);
+  // Set between a drop and the render that puts the card into its new cell.
+  const settling = useRef(false);
 
   // A keyboard move can change the panel's place in reading order, and moving a focused element
   // in the document drops its focus; the handle takes it back so arrow keys keep working.
@@ -164,6 +167,15 @@ export function PanelCard({
       placeAt(placeholderRef.current, panel.grid);
     }
   }, [dragging, panel.grid]);
+  // A dropped card stands in its new cell now: the drag's offset goes in the same frame.
+  const { x: gridX, y: gridY, w: gridW, h: gridH } = panel.grid;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the cell's values stand for its move
+  useLayoutEffect(() => {
+    if (settling.current) {
+      settling.current = false;
+      ref.current?.style.removeProperty("translate");
+    }
+  }, [gridX, gridY, gridW, gridH]);
 
   function onHandleKey(event: KeyboardEvent<HTMLButtonElement>) {
     if (edit === undefined) {
@@ -248,11 +260,15 @@ export function PanelCard({
       } else {
         next = start.grid;
       }
-      card?.style.removeProperty("translate");
       setDragging(null);
-      if (key(next) !== key(start.grid)) {
-        edit.onGrid(next, false);
+      if (key(next) === key(start.grid)) {
+        card?.style.removeProperty("translate");
+        return;
       }
+      // The drop renders as a transition, in slices that leave the main thread free between
+      // them, so it makes no long task; the card keeps its offset until it stands in its cell.
+      settling.current = true;
+      startTransition(() => edit.onGrid(next, false));
     };
     target.addEventListener("pointermove", onMove);
     target.addEventListener("pointerup", onUp);

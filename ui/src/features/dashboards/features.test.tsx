@@ -585,7 +585,10 @@ describe("panel time options", () => {
     const dialog = await screen.findByRole("region", { name: "Edit panel" });
     await fill(user, within(dialog).getByRole("textbox", { name: /Own time range/ }), "yesterday");
     expect(within(dialog).getByText(/Enter a range relative to now/)).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: "Save…" })).toHaveProperty("disabled", true);
+    expect(within(dialog).getByRole("button", { name: "Save dashboard…" })).toHaveProperty(
+      "disabled",
+      true,
+    );
   });
 });
 

@@ -75,7 +75,16 @@ interface PanelEditorProps {
   dashboardId: string;
   /** Splits are remembered per account. */
   userId: string;
+  /** A panel being added: the visualization picker opens first and a first query is ready. */
+  isNew?: boolean;
+  /** The panel to start from: the dashboard's, or the one kept from a reload. */
   panel: PanelModel;
+  /** The dashboard's panel, when `panel` was kept from a reload; changes count against it. */
+  original?: PanelModel | undefined;
+  /** Bumped by the dashboard's Refresh: the preview runs again. */
+  refresh?: number;
+  /** The dashboard's time range and refresh controls, shown in the editor's bar. */
+  toolbar?: ReactNode;
   range: TimeRange;
   variables: VariableValues;
   /** The panel as saved, absent for a new one; unchanged targets preview through its route. */
@@ -86,8 +95,8 @@ interface PanelEditorProps {
   crumbs: readonly Crumb[];
   /** Called with the editor's state as it changes, so leaving by any route keeps the change. */
   onSnapshot: (snapshot: EditorSnapshot) => void;
-  /** Back to the dashboard with the change in the draft (Esc does the same). */
-  onBack: () => void;
+  /** Back to the dashboard with the change in the draft (Back, Apply and Esc). */
+  onApply: () => void;
   /** Back to the dashboard with the panel as it was. */
   onDiscard: () => void;
   /** Puts the change into the draft and asks for the save message. */
@@ -116,14 +125,18 @@ export function PanelEditor({
   orgId,
   dashboardId,
   userId,
+  isNew = false,
   panel: initial,
+  original,
+  refresh = 0,
+  toolbar,
   range,
   variables,
   stored,
   savedVariables = [],
   crumbs,
   onSnapshot,
-  onBack,
+  onApply,
   onDiscard,
   onSave,
   rows = [],
@@ -136,6 +149,10 @@ export function PanelEditor({
   const permissions = useOrgPermissions();
   // Panels saved before the field options existed move their old options to the new place.
   const [opened] = useState(() => upgradePanel(initial));
+  // What "changed" is measured against: the dashboard's panel, also after a reload.
+  const [baseline] = useState(() => (original === undefined ? opened : upgradePanel(original)));
+  // The preview as a plain table of what the queries return.
+  const [tableView, setTableView] = useState(false);
   // The look: everything but the queries and steps, whose copies in it are not read.
   const [look, setLook] = useState(opened);
   const [targets, setTargets] = useState(opened.targets);
@@ -175,11 +192,11 @@ export function PanelEditor({
       changed: () =>
         JSON.stringify(compose()) !==
         JSON.stringify({
-          ...opened,
-          transformations: storableTransformations(opened.transformations),
+          ...baseline,
+          transformations: storableTransformations(baseline.transformations),
         }),
     });
-  }, [onSnapshot, opened, compose, targets, preview.targets]);
+  }, [onSnapshot, opened, baseline, compose, targets, preview.targets]);
 
   const datasources = useQuery(datasourcesQuery(orgId));
   const kinds = useQuery(kindsQuery(orgId));
@@ -205,15 +222,15 @@ export function PanelEditor({
   const previewPanel = useMemo(
     (): PanelModel => ({
       id,
-      type,
+      type: tableView ? "table" : type,
       title: "",
       grid,
       targets: preview.targets,
       transformations: deferredSteps,
-      options,
-      fieldConfig,
+      options: tableView ? {} : options,
+      fieldConfig: tableView ? {} : fieldConfig,
     }),
-    [id, type, grid, preview.targets, deferredSteps, options, fieldConfig],
+    [id, type, tableView, grid, preview.targets, deferredSteps, options, fieldConfig],
   );
   const results = usePanelResults({
     orgId,
@@ -223,7 +240,7 @@ export function PanelEditor({
     variables,
     saved: savedVariables,
     source: unchanged ? "stored" : "draft",
-    run: preview.run,
+    run: preview.run + refresh,
   });
   const outcomes = useMemo(() => results.data ?? [], [results.data]);
   const stepsRun = useMemo(() => runPanelSteps(deferredSteps, outcomes), [deferredSteps, outcomes]);
@@ -364,6 +381,34 @@ export function PanelEditor({
       }),
     [],
   );
+  const duplicateTarget = useCallback(
+    (refId: string) =>
+      setTargets((list) => {
+        const index = list.findIndex((target) => target.refId === refId);
+        const source = list[index];
+        if (source === undefined) {
+          return list;
+        }
+        const { hide: _hide, ...copy } = structuredClone(source);
+        return [
+          ...list.slice(0, index + 1),
+          { ...copy, refId: nextRefId(list) },
+          ...list.slice(index + 1),
+        ];
+      }),
+    [],
+  );
+  // A new panel starts with an empty query on the first source, so the preview fills as soon as
+  // it runs.
+  const seeded = useRef(!isNew);
+  useEffect(() => {
+    if (!seeded.current && queryable.length > 0) {
+      seeded.current = true;
+      if (targetsRef.current.length === 0) {
+        addTarget();
+      }
+    }
+  }, [queryable, addTarget]);
   const makeLibrary = useMemo(
     () => (onMakeLibrary === undefined ? undefined : () => onMakeLibrary(latest.current())),
     [onMakeLibrary],
@@ -375,7 +420,7 @@ export function PanelEditor({
       setProblem(true);
       return;
     }
-    onBack();
+    onApply();
   }
   const backRef = useRef(back);
   useEffect(() => {
@@ -419,6 +464,7 @@ export function PanelEditor({
           onRemove={removeTarget}
           onRun={run}
           onLeave={runIfChanged}
+          onDuplicate={duplicateTarget}
           steps={steps}
           fields={fieldsByRef}
           onProjection={changeProjection}
@@ -441,6 +487,8 @@ export function PanelEditor({
   const previewSection = (
     <EditorPreview
       notice={filterError}
+      tableView={tableView}
+      onTableView={setTableView}
       revision={results.dataUpdatedAt}
       onFilter={filterable ? filterBy : undefined}
       panel={previewPanel}
@@ -457,6 +505,7 @@ export function PanelEditor({
   const optionsPane = (
     <OptionsPane
       titleId={titleId}
+      isNew={isNew}
       look={look}
       shapes={shapes}
       rows={rows}
@@ -468,7 +517,8 @@ export function PanelEditor({
     />
   );
 
-  const editorTitle = t("dashboards.editor.title");
+  const editorTitle = isNew ? t("dashboards.editor.newTitle") : t("dashboards.editor.title");
+  const cannotApply = blocked || panelExtrasProblem(look) !== null;
   return (
     <section className="panel-editor" aria-label={editorTitle}>
       <Breadcrumbs crumbs={[...crumbs, { label: editorTitle }]} />
@@ -488,18 +538,28 @@ export function PanelEditor({
             {look.title === "" ? t("dashboards.panel.untitled") : look.title}
           </span>
         </h1>
+        <div className="panel-editor__tools">{toolbar}</div>
         <div className="panel-editor__actions">
           <button type="button" className="button button--secondary" onClick={onDiscard}>
             {t("dashboards.editor.discard")}
           </button>
           <button
             type="button"
+            className="button button--secondary"
+            onClick={back}
+            disabled={cannotApply}
+            title={t("dashboards.editor.applyHint")}
+          >
+            {t("dashboards.editor.apply")}
+          </button>
+          <button
+            type="button"
             className="button button--primary"
             onClick={() => onSave(compose())}
-            disabled={blocked || panelExtrasProblem(look) !== null}
+            disabled={cannotApply}
             aria-describedby={blocked ? `${titleId}-blocked` : undefined}
           >
-            {t("dashboards.save")}
+            {t("dashboards.editor.saveDashboard")}
           </button>
         </div>
       </div>
@@ -527,11 +587,27 @@ export function PanelEditor({
 /** The preview: the panel's drawing, memoized so typing a query or an option label skips it. */
 const EditorPreview = memo(function EditorPreview({
   notice,
+  tableView,
+  onTableView,
   ...props
-}: ComponentProps<typeof PanelBody> & { notice: string | null }) {
+}: ComponentProps<typeof PanelBody> & {
+  notice: string | null;
+  tableView: boolean;
+  onTableView: (on: boolean) => void;
+}) {
   const { t } = useI18n();
   return (
     <section className="panel-editor__preview" aria-label={t("dashboards.editor.preview")}>
+      <div className="panel-editor__preview-bar">
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          aria-pressed={tableView}
+          onClick={() => onTableView(!tableView)}
+        >
+          {t("dashboards.editor.tableView")}
+        </button>
+      </div>
       {notice === null ? null : (
         <p className="field__error" role="alert">
           {notice}
@@ -754,8 +830,52 @@ function LowerPane({
 }
 
 /** The options pane: title, visualization, the panel's and the fields' options, the rest. */
+/**
+ * A collapsible group of the options pane, opened and closed by its heading. P1-1b gives every
+ * option its own group and a search across them; the groups here are the coarse ones.
+ */
+function OptionGroup({
+  id,
+  title,
+  summary,
+  open: initiallyOpen = true,
+  children,
+}: {
+  id: string;
+  title: string;
+  /** Shown next to the title while the group is closed (the chosen visualization). */
+  summary?: string | undefined;
+  open?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(initiallyOpen);
+  return (
+    <section className="option-group" aria-labelledby={`${id}-heading`}>
+      <h3 className="option-group__heading" id={`${id}-heading`}>
+        <button
+          type="button"
+          className="option-group__toggle"
+          aria-expanded={open}
+          aria-controls={`${id}-body`}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <Icon name="chevron" className="option-group__chevron" />
+          <span className="option-group__title">{title}</span>{" "}
+          {summary === undefined || open ? null : (
+            <span className="option-group__summary truncate">{summary}</span>
+          )}
+        </button>
+      </h3>
+      <div className="option-group__body" id={`${id}-body`} hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
 const OptionsPane = memo(function OptionsPane({
   titleId,
+  isNew,
   look,
   shapes,
   rows,
@@ -766,6 +886,7 @@ const OptionsPane = memo(function OptionsPane({
   onMakeLibrary,
 }: {
   titleId: string;
+  isNew: boolean;
   look: PanelModel;
   shapes: readonly Shape[];
   rows: readonly RowModel[];
@@ -780,48 +901,58 @@ const OptionsPane = memo(function OptionsPane({
   const Editor = plugin?.Editor;
   return (
     <div className="options-pane">
-      <div className="field">
-        <label className="field__label" htmlFor={`${titleId}-title`}>
-          {t("dashboards.editor.panelTitle")}
-        </label>
-        <input
-          id={`${titleId}-title`}
-          className="input"
-          value={look.title}
-          onChange={(event) => {
-            const title = event.currentTarget.value;
-            onLook((p) => ({ ...p, title }));
-          }}
-        />
-      </div>
-      <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
+      {/* The visualization first: open for a new panel, folded to its name for one that has it. */}
+      <OptionGroup
+        id={`${titleId}-viz`}
+        title={t("dashboards.editor.visualization")}
+        summary={plugin === undefined ? look.type : t(plugin.name)}
+        open={isNew}
+      >
+        <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
+      </OptionGroup>
+      <OptionGroup id={`${titleId}-panel`} title={t("dashboards.editor.group.panel")}>
+        <div className="field">
+          <label className="field__label" htmlFor={`${titleId}-title`}>
+            {t("dashboards.editor.panelTitle")}
+          </label>
+          <input
+            id={`${titleId}-title`}
+            className="input"
+            value={look.title}
+            onChange={(event) => {
+              const title = event.currentTarget.value;
+              onLook((p) => ({ ...p, title }));
+            }}
+          />
+        </div>
+      </OptionGroup>
       {plugin === undefined || Editor === undefined ? null : (
-        <fieldset className="panel-editor__options">
-          <legend className="field__label">{t("dashboards.editor.panelOptions")}</legend>
+        <OptionGroup id={`${titleId}-options`} title={t("dashboards.editor.panelOptions")}>
           <Editor
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
           />
-        </fieldset>
+        </OptionGroup>
       )}
       {plugin?.fieldOptions === undefined ? null : (
-        <fieldset className="panel-editor__options">
-          <legend className="field__label">{t("panels.fieldOptions")}</legend>
+        <OptionGroup id={`${titleId}-fields`} title={t("panels.fieldOptions")}>
           <FieldConfigEditor
             value={look.fieldConfig}
             groups={plugin.fieldOptions}
             onChange={(fieldConfig) => onLook((p) => ({ ...p, fieldConfig }))}
           />
-        </fieldset>
+        </OptionGroup>
       )}
-      <PanelExtras
-        panel={look}
-        onChange={onLook}
-        rows={rows}
-        variables={variables}
-        libraryName={libraryName}
-        onMakeLibrary={onMakeLibrary}
-      />
+      <OptionGroup id={`${titleId}-extras`} title={t("dashboards.editor.group.extras")}>
+        <PanelExtras
+          panel={look}
+          onChange={onLook}
+          rows={rows}
+          variables={variables}
+          libraryName={libraryName}
+          onMakeLibrary={onMakeLibrary}
+        />
+      </OptionGroup>
     </div>
   );
 });
@@ -839,6 +970,7 @@ function TargetList({
   onRemove,
   onRun,
   onLeave,
+  onDuplicate,
   steps,
   fields,
   onProjection,
@@ -856,6 +988,7 @@ function TargetList({
   onRemove: (refId: string) => void;
   onRun: () => void;
   onLeave: () => void;
+  onDuplicate: (refId: string) => void;
   /** The panel's steps, for each document query's projection step. */
   steps: readonly unknown[];
   /** Field paths of the last preview per query, to suggest for its projection. */
@@ -894,6 +1027,7 @@ function TargetList({
           onRemove={onRemove}
           onRun={onRun}
           onLeave={onLeave}
+          onDuplicate={onDuplicate}
           projection={projectionFor(steps, target.refId)}
           fields={fields.get(target.refId) ?? NO_FIELDS}
           onProjection={onProjection}
@@ -922,6 +1056,7 @@ const TargetEditor = memo(function TargetEditor({
   onRemove,
   onRun,
   onLeave,
+  onDuplicate,
   projection,
   fields,
   onProjection,
@@ -930,6 +1065,7 @@ const TargetEditor = memo(function TargetEditor({
 }: {
   orgId: string;
   target: Target;
+  onDuplicate: (refId: string) => void;
   /** The projection step of this query, stored with the panel. */
   projection: FrameProjection | undefined;
   /** Field paths of the last preview, to suggest for the projection. */
@@ -950,8 +1086,11 @@ const TargetEditor = memo(function TargetEditor({
 }) {
   const { t } = useI18n();
   const id = useId();
+  // Folded to its header; the editor stays mounted below, with its text and undo history.
+  const [collapsed, setCollapsed] = useState(false);
   const datasource = datasources.find((d) => d.id === target.datasourceId);
   const { refId } = target;
+  const hidden = target.hide === true;
   if (readOnly && target.datasourceId !== "") {
     return (
       <section className="target" aria-label={t("dashboards.inspect.query", { refId })}>
@@ -984,6 +1123,16 @@ const TargetEditor = memo(function TargetEditor({
       onBlur={onBlur}
     >
       <div className="target__header">
+        <button
+          type="button"
+          className="button button--ghost button--small target__toggle"
+          aria-expanded={!collapsed}
+          aria-controls={`${id}-body`}
+          aria-label={t("dashboards.editor.foldQuery", { refId })}
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          <Icon name="chevron" className="target__chevron" />
+        </button>
         <span className="target__ref">{refId}</span>
         <label className="visually-hidden" htmlFor={id}>
           {t("dashboards.editor.datasource")}
@@ -1012,34 +1161,57 @@ const TargetEditor = memo(function TargetEditor({
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          className="button button--ghost button--small"
-          onClick={() => onRemove(refId)}
-          aria-label={t("dashboards.editor.removeQuery", { refId })}
-        >
-          {t("dashboards.editor.remove")}
-        </button>
+        {hidden ? <span className="target__badge">{t("dashboards.editor.hidden")}</span> : null}
+        <span className="target__actions">
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={() => onDuplicate(refId)}
+            aria-label={t("dashboards.editor.duplicateQuery", { refId })}
+          >
+            {t("dashboards.editor.duplicate")}
+          </button>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            aria-pressed={hidden}
+            onClick={() => onChange(refId, hidden ? { hide: undefined } : { hide: true })}
+            aria-label={t("dashboards.editor.hideQuery", { refId })}
+            title={t("dashboards.editor.hideHint")}
+          >
+            {t("dashboards.editor.hide")}
+          </button>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={() => onRemove(refId)}
+            aria-label={t("dashboards.editor.removeQuery", { refId })}
+          >
+            {t("dashboards.editor.remove")}
+          </button>
+        </span>
       </div>
-      {datasource === undefined ? null : (
-        <QueryEditor
-          orgId={orgId}
-          datasource={datasource}
-          query={target.query}
-          onChange={(query) => onChange(refId, { query })}
-          onRun={onRun}
-          previewRun={previewRun}
-          onPendingText={(pending) => onPendingText(refId, pending)}
-          label={t("dashboards.inspect.query", { refId })}
-        />
-      )}
-      {datasource !== undefined && isMongoQuery(target.query) ? (
-        <ProjectionEditor
-          projection={projection}
-          fields={fields}
-          onChange={(next) => onProjection(refId, next)}
-        />
-      ) : null}
+      <div className="target__body" id={`${id}-body`} hidden={collapsed}>
+        {datasource === undefined ? null : (
+          <QueryEditor
+            orgId={orgId}
+            datasource={datasource}
+            query={target.query}
+            onChange={(query) => onChange(refId, { query })}
+            onRun={onRun}
+            previewRun={previewRun}
+            onPendingText={(pending) => onPendingText(refId, pending)}
+            label={t("dashboards.inspect.query", { refId })}
+          />
+        )}
+        {datasource !== undefined && isMongoQuery(target.query) ? (
+          <ProjectionEditor
+            projection={projection}
+            fields={fields}
+            onChange={(next) => onProjection(refId, next)}
+          />
+        ) : null}
+      </div>
     </section>
   );
 });

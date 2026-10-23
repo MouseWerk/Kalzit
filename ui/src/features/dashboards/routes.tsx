@@ -67,6 +67,13 @@ const panelEditRoute = createRoute({
   component: () => null,
 });
 
+// A panel being added: the same editor, the panel joins the dashboard when it is applied.
+const panelNewRoute = createRoute({
+  getParentRoute: () => dashboardRoute,
+  path: "panels/new",
+  component: () => null,
+});
+
 const playlistsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/dashboards/playlists",
@@ -94,7 +101,7 @@ const versionsRoute = createRoute({
 export const dashboardsRoutes = [
   dashboardsRoute,
   trashRoute,
-  dashboardRoute.addChildren([panelEditRoute]),
+  dashboardRoute.addChildren([panelEditRoute, panelNewRoute]),
   versionsRoute,
   playlistsRoute,
   playlistPlayRoute,

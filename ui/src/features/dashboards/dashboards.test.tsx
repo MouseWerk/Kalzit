@@ -604,10 +604,10 @@ describe("editing a dashboard", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
     await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
-    const dialog = await screen.findByRole("region", { name: "Edit panel" });
+    const dialog = await screen.findByRole("region", { name: "New panel" });
     await user.type(within(dialog).getByRole("textbox", { name: "Panel title" }), "Revenue");
-    await user.click(await within(dialog).findByRole("button", { name: "Add query" }));
-    const editor = within(dialog).getByRole("textbox", { name: "Query A" });
+    // A new panel comes with a first query on the first source.
+    const editor = await within(dialog).findByRole("textbox", { name: "Query A" });
     // Typed with fireEvent: the completion list would otherwise take Enter and Tab.
     fireEvent.change(editor, { target: { value: "SELECT amount FROM orders" } });
     await user.click(within(dialog).getByRole("radio", { name: "Table" }));
@@ -644,7 +644,7 @@ describe("editing a dashboard", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
     await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
-    const dialog = await screen.findByRole("region", { name: "Edit panel" });
+    const dialog = await screen.findByRole("region", { name: "New panel" });
     await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Color" }), "background");
     // Arrow keys in the radio group pass through other types; coming back restores the options.
