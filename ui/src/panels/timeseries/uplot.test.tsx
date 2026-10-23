@@ -71,15 +71,21 @@ describe("uPlot data", () => {
 
 describe("uPlot chart sizing and labels", () => {
   it("follows the box width even while the box has no height yet", async () => {
-    let report: ((entries: { contentRect: { width: number; height: number } }[]) => void) | null =
-      null;
+    let report:
+      | ((entries: { target: Element; contentRect: { width: number; height: number } }[]) => void)
+      | null = null;
+    // Entries name the element they measure, as a real observer's do.
+    let observed: Element | null = null;
     vi.stubGlobal(
       "ResizeObserver",
       class {
         constructor(callback: typeof report) {
           report = callback;
         }
-        observe() {}
+        observe(element: Element) {
+          observed = element;
+        }
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -100,7 +106,11 @@ describe("uPlot chart sizing and labels", () => {
     expect(chart).toBeDefined();
     resized.push(...chart.setSizeCalls);
     // A phone-width box whose height is still 0: the width must not stay at 640 px.
-    act(() => report?.([{ contentRect: { width: 360, height: 0 } }]));
+    act(() => {
+      if (observed !== null) {
+        report?.([{ target: observed, contentRect: { width: 360, height: 0 } }]);
+      }
+    });
     expect(chart.setSizeCalls.at(-1)).toEqual({ width: 360, height: 220 });
   });
 

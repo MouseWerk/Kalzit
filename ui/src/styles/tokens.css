@@ -11,20 +11,22 @@
     color-scheme: light dark;
 
     /*
-     * Neutral surfaces in the website's warm stone (hue 60 to 80, almost no chroma): paper for
-     * light, a warm near-black for dark, a step less deep than the website so long sessions stay
-     * calm.
+     * Neutral graphite, almost without chroma (a hint of cool, hue 286), so data and the few
+     * primary actions carry the color. Three layers close in value: the sidebar and sunken wells
+     * (surface) a step below the canvas (bg), cards and inputs (raised) a step above it, joined by
+     * hairline borders instead of shadows. Light is the same idea inverted: soft greys, white
+     * cards.
      */
-    --bg: light-dark(oklch(97.6% 0.004 80), oklch(17% 0.004 60));
-    --bg-surface: light-dark(oklch(95.6% 0.006 78), oklch(19.5% 0.005 60));
-    --bg-raised: light-dark(oklch(99.5% 0.002 80), oklch(21.5% 0.006 60));
-    --bg-hover: light-dark(oklch(92.8% 0.008 78), oklch(25% 0.007 60));
-    --bg-active: light-dark(oklch(89.8% 0.01 76), oklch(28.5% 0.008 60));
-    --border: light-dark(oklch(88% 0.008 76), oklch(29% 0.007 60));
-    --border-strong: light-dark(oklch(59% 0.012 70), oklch(56% 0.01 65));
+    --bg: light-dark(oklch(97.8% 0.0015 286), oklch(19.7% 0.004 286));
+    --bg-surface: light-dark(oklch(95.8% 0.002 286), oklch(16.9% 0.003 286));
+    --bg-raised: light-dark(oklch(100% 0 0), oklch(22.8% 0.006 286));
+    --bg-hover: light-dark(oklch(94% 0.003 286), oklch(25.5% 0.006 286));
+    --bg-active: light-dark(oklch(91.5% 0.004 286), oklch(28% 0.007 286));
+    --border: light-dark(oklch(91% 0.004 286), oklch(30% 0.007 286));
+    --border-strong: light-dark(oklch(58% 0.01 286), oklch(56% 0.008 286));
 
-    --text: light-dark(oklch(21% 0.008 60), oklch(94.5% 0.007 80));
-    --text-muted: light-dark(oklch(44% 0.01 60), oklch(76% 0.01 75));
+    --text: light-dark(oklch(20.5% 0.006 286), oklch(96% 0.002 286));
+    --text-muted: light-dark(oklch(46% 0.012 286), oklch(72% 0.008 286));
 
     /*
      * Accent: sunstone, the warm copper of calcite in low light. Primary actions and links only,
@@ -46,7 +48,7 @@
        bluish green, reddish purple, yellow, gray). Lightness and chroma alternate so series stay
        apart for protanopia, deuteranopia and tritanopia too, and each reaches 3:1 on the panel
        surfaces; styles.test.ts pins both. The orange sits on the sunstone amber, the blues lean
-       toward the website's frame blue and the gray is the warm stone of the surfaces. */
+       toward the website's frame blue and the gray is the graphite of the surfaces. */
     --chart-1: light-dark(oklch(57.6% 0.103 241), oklch(74.4% 0.114 262));
     --chart-2: light-dark(oklch(41.7% 0.09 69), oklch(87.6% 0.097 74));
     --chart-3: light-dark(oklch(48.2% 0.116 249), oklch(58% 0.154 249));
@@ -54,14 +56,14 @@
     --chart-5: light-dark(oklch(41.6% 0.08 161), oklch(93.4% 0.091 156));
     --chart-6: light-dark(oklch(31.2% 0.119 326), oklch(69.7% 0.159 349));
     --chart-7: light-dark(oklch(49.9% 0.095 88), oklch(77.3% 0.133 105));
-    --chart-8: light-dark(oklch(28% 0.008 60), oklch(58% 0.008 60));
+    --chart-8: light-dark(oklch(28% 0.006 286), oklch(58% 0.006 286));
 
-    /* Shadows: soft and low, as on the website's popovers; borders carry the structure. */
-    --shadow-color: light-dark(oklch(21% 0.008 60 / 0.14), oklch(0% 0 0 / 0.55));
+    /* Shadows only for what floats (menus, popovers); cards stand on hairline borders. */
+    --shadow-color: light-dark(oklch(21% 0.006 286 / 0.14), oklch(0% 0 0 / 0.55));
     --shadow-menu: 0 0.5rem 1.5rem -0.5rem var(--shadow-color), 0 1px 2px var(--shadow-color);
 
     /* Focus: neutral, from one token, only on :focus-visible. */
-    --focus-ring: light-dark(oklch(36% 0.01 60), oklch(85% 0.008 75));
+    --focus-ring: light-dark(oklch(36% 0.008 286), oklch(85% 0.004 286));
     --focus-ring-width: 2px;
     --focus-ring-offset: 2px;
     --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
@@ -107,10 +109,10 @@
 
     --border-width: 1px;
 
-    /* Crisp corners as on the website: calcite breaks into clean facets. */
-    --radius-sm: 3px;
-    --radius-md: 4px;
-    --radius-lg: 8px;
+    /* Soft corners: controls and nav items a little round, cards and panels more so. */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
     --radius-pill: 999px;
 
     /* Layers, lowest first. */
@@ -125,7 +127,37 @@
     --sidebar-width: 14.5rem;
     --sidebar-rail-width: 3.5rem;
     --nav-row-height: 1.875rem;
+    /*
+     * Reading width, for forms, settings and running text only. Dashboards, Explore and lists
+     * use the whole width of the window.
+     */
     --content-max-width: 72rem;
+    /* The gutter around the content, the gap of the dashboard grid and a panel's inner padding. */
+    --space-gutter: var(--space-6);
+    --space-grid: var(--space-2);
+    --space-panel: var(--space-2);
+    /* One dashboard row and a panel's title bar. */
+    --size-grid-row: 2rem;
+    --size-panel-header: 2rem;
+    /* A data source kind's mark: in the picker's cards, and next to a name in lists. */
+    --size-kind-mark: 2.5rem;
+    --size-kind-mark-small: 1.5rem;
+    /*
+     * Data source logos are content: the marks keep their brand colors (from Simple Icons) on a
+     * light tile in both schemes, as several are dark blue. Never used for states.
+     */
+    --logo-tile: light-dark(oklch(100% 0 0), oklch(94% 0.004 286));
+    /* The glyph of a kind without a logo, on the same light tile, so the picker looks even. */
+    --logo-glyph: oklch(28% 0.006 286);
+    --brand-postgresql: #4169e1;
+    --brand-mysql: #4479a1;
+    --brand-mariadb: #003545;
+    --brand-sqlite: #003b57;
+    --brand-prometheus: #e6522c;
+    --brand-mongodb: #47a248;
+    --brand-elasticsearch: #005571;
+    --brand-opensearch: #005eb8;
+    --brand-neo4j: #4581c3;
     --auth-card-width: 26rem;
     --control-height: 2rem;
     --icon-size: 1rem;
