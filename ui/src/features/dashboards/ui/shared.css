@@ -145,6 +145,11 @@
       overflow-wrap: break-word;
     }
 
+    /* A cell without a value (a dashboard outside any folder) leaves no empty line. */
+    .data-table--stack td:empty {
+      display: none;
+    }
+
     .data-table--stack .data-table__actions {
       white-space: normal;
       text-align: start;

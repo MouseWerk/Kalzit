@@ -289,7 +289,7 @@ function DashboardList({
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? "";
   return (
     <>
-      <table className="data-table">
+      <table className="data-table data-table--stack">
         <thead>
           <tr>
             <th scope="col">{t("dashboards.column.title")}</th>
@@ -305,8 +305,10 @@ function DashboardList({
                   {item.title === "" ? t("dashboards.untitled") : item.title}
                 </Link>
               </td>
-              <td>{folderName(item.folderId)}</td>
-              <td>{item.updatedAt > 0 ? dateFormat.format(item.updatedAt) : ""}</td>
+              <td className="data-table__muted">{folderName(item.folderId)}</td>
+              <td className="data-table__muted">
+                {item.updatedAt > 0 ? dateFormat.format(item.updatedAt) : ""}
+              </td>
             </tr>
           ))}
         </tbody>

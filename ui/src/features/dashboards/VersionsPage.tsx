@@ -91,7 +91,7 @@ function VersionList({ orgId }: { orgId: string }) {
           {t("dashboards.history.emptyText")}
         </EmptyState>
       ) : (
-        <table className="data-table">
+        <table className="data-table data-table--stack">
           <thead>
             <tr>
               <th scope="col">{t("dashboards.history.version")}</th>

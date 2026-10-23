@@ -152,7 +152,7 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
     <div className="versions">
       {back}
       <FormAlert>{failed === null ? null : errorMessage(t, failed)}</FormAlert>
-      <table className="data-table">
+      <table className="data-table data-table--stack">
         <thead>
           <tr>
             <th scope="col">{t("dashboards.trash.name")}</th>
