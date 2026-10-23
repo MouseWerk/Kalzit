@@ -425,5 +425,6 @@
   "datasources.kinds.opensearch.summary": "Search and aggregate the indices of an OpenSearch cluster.",
   "datasources.kinds.file.summary": "Read a CSV, JSON or NDJSON file from a folder on the server.",
   "datasources.kinds.http_json.summary": "Read JSON documents from an HTTP API with GET requests.",
-  "datasources.reason.documents.schema_cut": "The field list shows only the paths that fit the response size limit."
+  "datasources.reason.documents.schema_cut": "The field list shows only the paths that fit the response size limit.",
+  "datasources.reason.target.url_credentials": "The address contains a user name or password. Kalzit does not send credentials that way."
 }

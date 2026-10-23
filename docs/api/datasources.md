@@ -240,10 +240,12 @@ on every connect.
   separate TLS name). There the name is resolved and checked again right before every new pooled
   connection; an address change between that check and the driver's own lookup could only reach
   a server holding a valid certificate for the name.
-- Data source HTTP traffic (Prometheus, Elasticsearch/OpenSearch, HTTP JSON) never uses a proxy;
-  `HTTP_PROXY` and similar variables are ignored. A proxy would resolve names itself, past the
-  target check. Redirects are followed up to five times, each target checked like the first
-  (Elasticsearch/OpenSearch and HTTP JSON also check each against their own rules, see below); a
+- Data source HTTP traffic (Prometheus, Elasticsearch/OpenSearch, HTTP JSON, TigerGraph) never
+  uses a proxy; `HTTP_PROXY` and similar variables are ignored. A proxy would resolve names
+  itself, past the target check. A URL with a user name or password, also as a redirect target,
+  is refused (`target.url_credentials`). Redirects are followed up to five times, each target
+  checked like the first (Elasticsearch/OpenSearch and HTTP JSON also check each against their
+  own rules, see below; TigerGraph follows none); a
   redirect to another origin drops the `Authorization` header and every other credential header
   (the HTTP JSON API key). A 307 or 308 redirect repeats a search with its body; any other
   redirect continues as a GET without body.
@@ -719,10 +721,10 @@ dashboard variable of the same name.
   `POST /gsql/v1/queries/interpret?graph=<graph>`, 3.x `POST /gsqlserver/interpreted_query`. The
   text is one `INTERPRET QUERY (...) FOR GRAPH <graph> { ... }`; `FOR GRAPH` is required (3.x
   takes the graph from it), and another graph than the source's is refused. Every request and
-  redirect passes the target checks. Requests with a body (interpreted queries, `SHOW USER`,
-  token requests) do not follow redirects: a redirect answers `tigergraph.redirect_refused`
-  (`path`), so a body or secret never reaches another URL. Requests without one follow a
-  redirect only as a GET on the origin of the GSQL or REST++ URL, at or below it.
+  passes the target checks, and no TigerGraph request follows a redirect: a redirect answers
+  `tigergraph.redirect_refused` (`path`), so a body or secret never reaches another URL and a
+  query never another endpoint on the same server (an installed query outside
+  `approvedQueries`, user management).
 - Installed queries go to REST++ `GET /query/<graph>/<name>` with a token. With `secret`, the
   token comes from it (4.x `POST /gsql/v1/tokens`, 3.x `POST <restppUrl>/requesttoken`); without
   it, 4.x issues one for the user and password, and 3.x calls REST++ without a token (for servers
@@ -1092,6 +1094,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 |---|---|---|
 | `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
 | `target.sqlite_path_relative` | | the SQLite path is not absolute |
+| `target.url_credentials` | | an HTTP request or redirect URL contains a user name or password |
 | `target.file_path_refused` | | the CSV or JSON file is outside `datasources.file_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all) |
 | `target.file_path_relative` | | the file path is not absolute |
 | `target.metadata_address` | `address` or `host` | a link-local or cloud metadata address (also when a name resolves to one) |
@@ -1293,7 +1296,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `tigergraph.not_an_api_response` | `status` | the server answered without a TigerGraph API response |
 | `tigergraph.error` | `status`, `detail` | TigerGraph answered an error |
 | `tigergraph.no_token` | | the token endpoint answered without a token |
-| `tigergraph.redirect_refused` | `path` | TigerGraph redirected a request with a body, or away from the source's URLs |
+| `tigergraph.redirect_refused` | `path` | TigerGraph answered a request with a redirect |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |
 | `http.failed` | `detail` | the HTTP request failed |

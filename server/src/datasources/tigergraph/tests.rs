@@ -395,30 +395,33 @@ async fn token_requests_do_not_follow_redirects() {
 }
 
 #[test]
-fn redirects_stay_below_the_source_and_never_carry_a_body() {
-    let gsql = Url::parse("http://tg.intern:14240/").unwrap();
+fn no_redirect_is_followed() {
     let restpp = Url::parse("http://tg.intern:14240/restpp/").unwrap();
-    let bases = [&gsql, &restpp];
-    let first = Url::parse("http://tg.intern:14240/gsql/v1/tokens").unwrap();
-    let same = |u: &str| Url::parse(u).unwrap();
-    // The first request always goes out; the target checks still apply to it.
-    assert!(check_hop(&first, true, &bases, &Method::POST, &first).is_ok());
-    // With a body, no redirect is followed, not even to the same origin.
-    let twin = same("http://tg.intern:14240/gsql/v1/tokens2");
-    let e = check_hop(&first, true, &bases, &Method::POST, &twin).unwrap_err();
-    assert_eq!(e.reason, "tigergraph.redirect_refused");
-    assert_eq!(e.params["path"], "/gsql/v1/tokens2");
-    // Without one, a GET may move below the source's URLs, but not to another origin.
-    assert!(check_hop(&first, false, &bases, &Method::GET, &twin).is_ok());
-    assert!(check_hop(&first, false, &bases, &Method::GET, &same("http://andere.intern:14240/gsql/v1/x")).is_err());
-    assert!(check_hop(&first, false, &bases, &Method::GET, &same("https://tg.intern:14240/gsql/v1/x")).is_err());
-    assert!(check_hop(&first, false, &bases, &Method::POST, &twin).is_err());
-    let narrow = Url::parse("http://tg.intern:9000/restpp/").unwrap();
-    let only_rest = [&narrow];
-    let get = Url::parse("http://tg.intern:9000/restpp/graph/social").unwrap();
-    assert!(check_hop(&get, false, &only_rest, &Method::GET, &same("http://tg.intern:9000/restpp/echo")).is_ok());
-    assert!(check_hop(&get, false, &only_rest, &Method::GET, &same("http://tg.intern:9000/admin")).is_err());
-    assert!(check_hop(&get, false, &only_rest, &Method::GET, &same("http://tg.intern:9000/restpp/%2e%2e/x")).is_err());
+    let first = restpp.join("query/g/genehmigt?x=1").unwrap();
+    // The first request goes out (the target checks still apply to it).
+    assert!(check_hop(0, &first).is_ok());
+    // Every redirect is refused: other installed queries, user management, look-alike paths,
+    // encoded or resolved dots, other origins, credentials, and the same URL again.
+    for loc in [
+        "andere",
+        "/restpp/query/g/schreibt",
+        "/gsql/v1/users/",
+        "/restppx/query",
+        "https://tg.intern:14240/restpp/query/g/genehmigt",
+        "http://tg.intern:9000/query/g/x",
+        "http://fremd@tg.intern:14240/restpp/query/g/genehmigt",
+        "http://xn--tg-intern-9ya.example/restpp/",
+        "/restpp/%252e%252e/x",
+        "/restpp/%2e%2e/gsql",
+        "//evil.example/restpp/",
+        "/restpp/query/g/genehmigt;/../../gsql",
+        "/restpp/query/g/genehmigt?x=1",
+    ] {
+        let url = first.join(loc).unwrap();
+        let e = check_hop(1, &url).expect_err(loc);
+        assert_eq!(e.reason, "tigergraph.redirect_refused");
+        assert_eq!(e.params["path"], url.path());
+    }
 }
 
 #[tokio::test]

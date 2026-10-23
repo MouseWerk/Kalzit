@@ -425,5 +425,6 @@
   "datasources.kinds.opensearch.summary": "Durchsuche und aggregiere die Indizes eines OpenSearch-Clusters.",
   "datasources.kinds.file.summary": "Lies eine CSV-, JSON- oder NDJSON-Datei aus einem Ordner auf dem Server.",
   "datasources.kinds.http_json.summary": "Lies JSON-Dokumente per GET-Anfrage aus einer HTTP-API.",
-  "datasources.reason.documents.schema_cut": "Die Feldliste zeigt nur die Pfade, die in das Größenlimit der Antwort passen."
+  "datasources.reason.documents.schema_cut": "Die Feldliste zeigt nur die Pfade, die in das Größenlimit der Antwort passen.",
+  "datasources.reason.target.url_credentials": "Die Adresse enthält einen Benutzernamen oder ein Passwort. So sendet Kalzit keine Zugangsdaten."
 }

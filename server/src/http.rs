@@ -243,6 +243,15 @@ impl HttpClient {
             .with("scheme", url.scheme());
             return Err(Blocked(detail).into());
         }
+        // Credentials in a URL (a redirect's above all) would be sent as basic auth to wherever
+        // it points; sources carry theirs in their own fields.
+        if !url.username().is_empty() || url.password().is_some() {
+            let detail = crate::datasources::Detail::new(
+                "target.url_credentials",
+                "the URL contains credentials, which Kalzit does not send",
+            );
+            return Err(Blocked(detail).into());
+        }
         let host = url.host_str().ok_or_else(|| HttpError::Other("the URL has no host".into()))?;
         if let Some(ip) = parse_ip_literal(host) {
             self.policy.check_ip(host, ip)?;
@@ -480,5 +489,21 @@ mod tests {
         assert_eq!(once.status(), StatusCode::TEMPORARY_REDIRECT, "not followed");
         let blocked = Url::parse("http://169.254.169.254/").unwrap();
         assert!(matches!(c.send_once(Method::POST, blocked, HeaderMap::new(), None).await, Err(HttpError::Blocked(_))));
+    }
+
+    #[tokio::test]
+    async fn urls_with_credentials_are_refused_also_as_redirect_targets() {
+        let addr = echo_key().await;
+        let c = test_client(&[]);
+        for raw in [format!("http://fremd@{addr}/key"), format!("http://fremd:geheim@{addr}/key")] {
+            let e = c.send(Method::GET, Url::parse(&raw).unwrap(), HeaderMap::new()).await.unwrap_err();
+            assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
+            let e = c.send_once(Method::GET, Url::parse(&raw).unwrap(), HeaderMap::new(), None).await.unwrap_err();
+            assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
+        }
+        let hop = redirector(format!("http://fremd:geheim@{addr}/key")).await;
+        let url = Url::parse(&format!("http://{hop}/")).unwrap();
+        let e = c.send(Method::GET, url, HeaderMap::new()).await.unwrap_err();
+        assert!(matches!(&e, HttpError::Blocked(b) if b.0.reason == "target.url_credentials"), "{e}");
     }
 }

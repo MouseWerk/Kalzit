@@ -177,16 +177,12 @@ fn approved_list(raw: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-/// A request (the first or a redirect): the first goes where the caller sent it; a redirect is
-/// refused for a request with a body, and otherwise must be a GET on the origin of one of
-/// `bases`, at or below it.
-fn check_hop(first: &Url, with_body: bool, bases: &[&Url], method: &Method, url: &Url) -> Result<(), Detail> {
-    if url == first {
-        return Ok(());
-    }
-    let below = |base: &Url| url.origin() == base.origin() && url.path().starts_with(base.path());
-    let dots = url.path().split('/').any(|s| s == "." || s == ".." || s.starts_with("..") || s.contains('%'));
-    if !with_body && *method == Method::GET && !dots && bases.iter().any(|b| below(b)) {
+/// A request: the first goes where the caller sent it, a redirect is never followed. The GSQL
+/// server and REST++ share one origin with every endpoint, including installed queries outside
+/// `approvedQueries` and user management, so no redirect target is safe to follow, not even the
+/// same URL again (it would resend a body).
+fn check_hop(hop: usize, url: &Url) -> Result<(), Detail> {
+    if hop == 0 {
         return Ok(());
     }
     Err(Detail::new(
@@ -299,12 +295,10 @@ impl Client {
                 headers.insert(*k, v);
             }
         }
-        // Every hop passes the target checks. A request with a body (a query text, a command)
-        // goes to this URL only, so the body never reaches another place; one without may be
-        // redirected as a GET below the source's GSQL or REST++ URL.
-        let first = url.clone();
-        let with_body = body.is_some();
-        let hop = |m: &Method, u: &Url| check_hop(&first, with_body, &[&self.gsql, &self.restpp], m, u);
+        // The request passes the target checks and goes to this URL only: no redirect is
+        // followed, so a body never reaches another place and a query never another endpoint.
+        let hops = std::sync::atomic::AtomicUsize::new(0);
+        let hop = |_: &Method, u: &Url| check_hop(hops.fetch_add(1, std::sync::atomic::Ordering::Relaxed), u);
         let response = self
             .http
             .send_checked(method, url, headers, body.map(|(b, _)| b), Some(&hop))
@@ -314,7 +308,7 @@ impl Client {
         if status.is_redirection() {
             return Err(SourceError::failed(
                 "tigergraph.error",
-                format!("TigerGraph answered {status} to a request with a body; Kalzit does not follow it"),
+                format!("TigerGraph answered {status} without a target; Kalzit does not follow redirects"),
             )
             .with("status", status.as_u16())
             .with("detail", "redirect"));
