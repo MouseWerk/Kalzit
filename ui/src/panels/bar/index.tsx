@@ -24,6 +24,7 @@ import {
 import { formatUnit, joinFormatted } from "../fieldConfig/units";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { formatValue, rowCount, toNumber, valueFields } from "../frame";
+import { labelWidth, useProbeFont } from "../measure";
 import { BarPreview } from "../picker/previews";
 import { Readout, type ReadoutItem } from "../readout";
 import { CheckboxField, EmptyPanel, emptyReason } from "../shared";
@@ -58,6 +59,8 @@ const MAX_BARS = 500;
 const AXIS_LEFT = 56;
 const AXIS_BOTTOM = 24;
 const PAD = 8;
+/** The room kept between two category labels, in px. */
+const LABEL_GAP = 12;
 
 interface BarSeries {
   name: string;
@@ -114,6 +117,8 @@ function BarPanel({
   const { t, language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const labelFont = useProbeFont(probeRef);
   const config = legacyUnit(fieldConfig, options.unit);
   const data = barData(frames, language, config, timeZone);
   if (data === null) {
@@ -138,7 +143,10 @@ function BarPanel({
     top + plotHeight - ((clampY(v) - yMin) / (yMax - yMin || 1)) * plotHeight;
   const group = plotWidth / data.categories.length;
   const barWidth = Math.max((group * 0.8) / data.series.length, 1);
-  const labelEvery = Math.ceil(data.categories.length / Math.max(plotWidth / 80, 1));
+  // Every category gets its label when the longest one fits under its bars; otherwise every
+  // second, third, ... so neighbours never touch.
+  const longest = Math.max(...data.categories.map((category) => labelWidth(category, labelFont)));
+  const labelEvery = Math.max(Math.ceil((longest + LABEL_GAP) / group), 1);
   const axisOptions = data.series[0]?.options ?? config.defaults;
   const axisUnit = axisOptions.unit === "none" ? undefined : axisOptions.unit;
   const truncated = frames.some((f) => rowCount(f) > MAX_BARS);
@@ -176,6 +184,7 @@ function BarPanel({
 
   return (
     <div className="bar">
+      <span className="ts__label visually-hidden" ref={probeRef} aria-hidden="true" />
       <WithLegend placement={options.legend.placement} legend={legend}>
         <Readout title={title} items={items} tooltip={options.tooltip.mode} className="bar__plot">
           {(active, hover) => (

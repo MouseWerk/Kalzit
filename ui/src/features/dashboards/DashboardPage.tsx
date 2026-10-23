@@ -787,12 +787,14 @@ function DashboardView({
             ) : draft === null ? (
               <>
                 <StarButton orgId={orgId} dashboardId={dashboard.id} />
+                {/* Secondary: copper is for Save, the one main action while editing. */}
                 {canEdit ? (
                   <button
                     type="button"
-                    className="button button--primary"
+                    className="button button--secondary"
                     onClick={() => setDraft(dashboard.model)}
                   >
+                    <Icon name="edit" />
                     {t("dashboards.edit")}
                   </button>
                 ) : null}

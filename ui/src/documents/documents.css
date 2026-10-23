@@ -381,6 +381,11 @@
     padding-block-end: var(--space-1);
   }
 
+  /* The choices are as tall as the collection field beside them, so both labels line up. */
+  .pipeline__mode > .radio {
+    min-height: var(--control-height);
+  }
+
   .pipeline__set-aside {
     display: flex;
     flex-wrap: wrap;

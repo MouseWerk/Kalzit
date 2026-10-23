@@ -14,7 +14,7 @@ import {
   seriesClass,
   type TimeSeriesChartProps,
 } from "./ChartShell";
-import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
+import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG, VALUE_AXIS_SIZE, valueAxisSize } from "./layout";
 import "../panels.css";
 
 /** The palette and tone classes, one probe each. */
@@ -24,9 +24,6 @@ const SERIES_CLASSES = [
 ];
 
 const DAY = 24 * 60 * 60 * 1000;
-
-/** Width of the value axis in CSS pixels, enough for labels such as "-12.5k". */
-const VALUE_AXIS_SIZE = 56;
 
 /**
  * Re-reads theme colors when the theme changes: the data-theme attribute or the system's light
@@ -151,7 +148,7 @@ export function UplotTimeSeriesChart({
         },
         {
           ...axisStyle,
-          size: VALUE_AXIS_SIZE,
+          size: (_u, values) => valueAxisSize(values, font),
           values: (_u, values) => values.map((v) => axisFormat(v)),
         },
       ],

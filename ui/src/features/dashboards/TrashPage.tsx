@@ -4,6 +4,7 @@ import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
+import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -152,28 +153,36 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
     <div className="versions">
       {back}
       <FormAlert>{failed === null ? null : errorMessage(t, failed)}</FormAlert>
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th scope="col">{t("dashboards.trash.name")}</th>
-            <th scope="col">{t("dashboards.trash.kind")}</th>
-            <th scope="col">{t("dashboards.trash.deletedAt")}</th>
-            <th scope="col">
+      <table className="data-table data-table--stack" {...STACK_ROLES.table}>
+        <thead {...STACK_ROLES.rowgroup}>
+          <tr {...STACK_ROLES.row}>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("dashboards.trash.name")}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("dashboards.trash.kind")}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("dashboards.trash.deletedAt")}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
               <span className="visually-hidden">{t("dashboards.history.actions")}</span>
             </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody {...STACK_ROLES.rowgroup}>
           {items.map((item) => (
-            <tr key={`${item.kind}:${item.id}`}>
-              <td>{item.name}</td>
-              <td>
+            <tr key={`${item.kind}:${item.id}`} {...STACK_ROLES.row}>
+              <td {...STACK_ROLES.cell}>{item.name}</td>
+              <td {...STACK_ROLES.cell} data-label={t("dashboards.trash.kind")}>
                 {item.kind === "folder"
                   ? t("dashboards.trash.kindFolder")
                   : t("dashboards.trash.kindDashboard")}
               </td>
-              <td>{item.deletedAt === null ? "" : format.format(item.deletedAt)}</td>
-              <td className="data-table__actions">
+              <td {...STACK_ROLES.cell} data-label={t("dashboards.trash.deletedAt")}>
+                {item.deletedAt === null ? "" : format.format(item.deletedAt)}
+              </td>
+              <td {...STACK_ROLES.cell} className="data-table__actions">
                 <button
                   type="button"
                   className="button button--secondary button--small"

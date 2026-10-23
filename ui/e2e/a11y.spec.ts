@@ -1,5 +1,6 @@
 import { baseUrl } from "./support/api";
 import { seriousViolations } from "./support/axe";
+import { t } from "./support/i18n";
 import { MAIN_PAGES } from "./support/pages";
 import { expect, signInOwner, test } from "./support/test";
 
@@ -33,3 +34,28 @@ for (const variant of VARIANTS) {
     }
   });
 }
+
+test.describe("stacked list on a phone", () => {
+  test.use({ viewport: { width: 360, height: 780 } });
+
+  test("data sources keep table roles and name each value's column", async ({ page, world }) => {
+    await signInOwner(page, "en");
+    await page.goto("/data-sources");
+    const table = page.getByRole("table");
+    await expect(table.getByRole("link", { name: world.sourceName })).toBeVisible();
+    // The rows are stacked, so the header row is hidden; the roles keep the table a table.
+    await expect(
+      table.getByRole("columnheader", { name: t("datasources.column.kind") }),
+    ).toHaveCount(1);
+    const kindCell = table
+      .getByRole("row")
+      .filter({ hasText: world.sourceName })
+      .getByRole("cell")
+      .nth(1);
+    await expect(kindCell).toHaveAttribute("data-label", t("datasources.column.kind"));
+    // The label is drawn in front of the value, in the header's words.
+    const label = await kindCell.evaluate((cell) => getComputedStyle(cell, "::before").content);
+    expect(label).toContain(t("datasources.column.kind"));
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+});
