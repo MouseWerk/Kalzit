@@ -10,7 +10,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request replaces its run; runs on main and in the queue all finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -34,8 +35,6 @@ jobs:
       ui: ${{ steps.areas.outputs.ui }}
       e2e: ${{ steps.areas.outputs.e2e }}
       audit: ${{ steps.areas.outputs.audit }}
-      workflows: ${{ steps.areas.outputs.workflows }}
-      docs_only: ${{ steps.areas.outputs.docs_only }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@v7
@@ -43,6 +42,7 @@ jobs:
           fetch-depth: 2
       - name: Test the change detection
         run: .github/scripts/changes.test.sh
+      # The log also shows the informational flags workflows and docs_only.
       - name: Changed areas
         id: areas
         shell: bash
@@ -50,14 +50,12 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
             echo "Changed files:"
-            sed 's/^/  /' "$RUNNER_TEMP/changed.txt"
+            .github/scripts/changes.sh HEAD^1 HEAD | tee -a "$GITHUB_OUTPUT"
           else
             echo "Event $EVENT: everything runs."
-            : > "$RUNNER_TEMP/changed.txt"
+            .github/scripts/changes.sh < /dev/null | tee -a "$GITHUB_OUTPUT"
           fi
-          .github/scripts/changes.sh < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
 
   server:
     name: server (${{ matrix.os }})
@@ -265,17 +263,18 @@ jobs:
       run:
         working-directory: ui
     steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        working-directory: .
+        run: echo "No UI change in this pull request; the checks are skipped."
       - uses: actions/checkout@v7
-      # Runs only for a UI change, and only once the UI exists.
+        if: env.RUN_JOB == 'true'
       - name: Check for the UI
+        if: env.RUN_JOB == 'true'
         id: has_ui
         shell: bash
         working-directory: .
-        run: |
-          present=false
-          if [ "$RUN_JOB" = true ] && [ -f ui/package.json ]; then present=true; fi
-          [ "$RUN_JOB" = true ] || echo "No UI change in this pull request; the checks are skipped."
-          echo "present=$present" >> "$GITHUB_OUTPUT"
+        run: echo "present=$([ -f ui/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         if: steps.has_ui.outputs.present == 'true'
         with:
@@ -355,10 +354,11 @@ jobs:
         working-directory: ui
         shell: bash
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - name: Cache Playwright browsers
+      # A merge queue run restores the browsers but does not save, since its cache would be its own.
+      - name: Restore Playwright browsers
         if: env.RUN_JOB == 'true'
         id: browsers
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: .playwright-browsers
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
@@ -373,6 +373,14 @@ jobs:
             echo "::warning::installing the browsers failed (attempt $attempt of 3)"
           done
           exit 1
+      - name: Save Playwright browsers
+        if: >-
+          env.RUN_JOB == 'true' && steps.browsers.outputs.cache-hit != 'true'
+          && github.event_name != 'merge_group'
+        uses: actions/cache/save@v6
+        with:
+          path: .playwright-browsers
+          key: ${{ steps.browsers.outputs.cache-primary-key }}
       # The system packages (about 190, 140 MB, most of them WebKit's and Firefox's media
       # libraries) come from the runner's package mirror, which sometimes slows to a few kB/s
       # without failing. They are kept between runs per runner image, so apt downloads only what

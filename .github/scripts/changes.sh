@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Decides which CI areas a change touches. Reads the changed paths (one per line, relative to
-# the repository root) on stdin and prints the flags as key=value lines for $GITHUB_OUTPUT:
+# Decides which CI areas a change touches and prints the flags as key=value lines for
+# $GITHUB_OUTPUT:
 #
 #   server     Rust code, manifests, toolchain and lint settings
 #   ui         the UI, including the e2e tests in ui/e2e
@@ -9,8 +9,13 @@
 #   workflows  anything under .github/ (then every other flag is true as well)
 #   docs_only  only documentation changed (docs/, Markdown files, LICENSE)
 #
+# changes.sh BASE HEAD   compares two commits (renames count as a deletion and an addition, so
+#                        the old path counts too)
+# changes.sh             reads NUL-separated paths, relative to the repository root, on stdin
+#
 # A path that fits no known area turns every flag on, so a new top-level file or folder runs
-# the full check until this script learns about it. No input at all also runs everything.
+# the full check until this script learns about it. No paths at all also runs everything.
+# The changed paths are listed on stderr.
 set -euo pipefail
 
 server=false
@@ -21,13 +26,16 @@ docs=false
 unknown=false
 count=0
 
-while IFS= read -r path || [ -n "$path" ]; do
-  path=${path%$'\r'}
-  [ -n "$path" ] || continue
-  count=$((count + 1))
+classify() {
+  local path=$1
   case "$path" in
     .github/*)
       workflows=true ;;
+    # The UI's conformance test runs server/src/analysis/conformance.json, which the Rust
+    # engine there must also pass.
+    server/src/analysis/*)
+      server=true
+      ui=true ;;
     server/* | Cargo.toml | Cargo.lock | rust-toolchain | rust-toolchain.toml | clippy.toml \
       | .clippy.toml | rustfmt.toml | .rustfmt.toml | .cargo/*)
       server=true ;;
@@ -52,7 +60,24 @@ while IFS= read -r path || [ -n "$path" ]; do
     *)
       unknown=true ;;
   esac
-done
+}
+
+paths() {
+  if [ $# -eq 2 ]; then
+    git diff --no-renames --name-only -z "$1" "$2"
+  else
+    cat
+  fi
+}
+
+while IFS= read -r -d '' path; do
+  [ -n "$path" ] || continue
+  count=$((count + 1))
+  echo "  $path" >&2
+  classify "$path"
+done < <(paths "$@")
+# A failed git diff must not look like "no changes"; wait reports the substitution's status.
+wait $! || exit 1
 
 if [ "$workflows" = true ] || [ "$unknown" = true ] || [ "$count" -eq 0 ]; then
   server=true
