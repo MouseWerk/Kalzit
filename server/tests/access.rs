@@ -983,12 +983,13 @@ async fn disabling_an_owner_races_member_changes_cleanly() {
 /// Handlers that hold the organization lock must not need a second connection: with more
 /// parallel writes than pool connections, every one still succeeds.
 ///
-/// Such a handler cannot finish until a timeout fires: with one connection it waits for the
-/// pool's acquire timeout (`500`); with several, the writers holding the others give up after
-/// SQLite's busy timeout (`503 busy`). Nothing on this path retries, so every delete answering
-/// `204` shows that none of them waited for a timeout, however slow the machine is. One
-/// connection shows the mistake on every run, several also when other writers hold the rest.
-/// The time limit only stops a hang and lies far above both timeouts.
+/// Such a handler cannot finish until a timeout fires: with one connection it waits out the
+/// pool's acquire timeout and answers `500`; with several, the writers holding the others give
+/// up after SQLite's busy timeout and answer `503 busy`. Nothing on this path retries, so every
+/// delete answering `204` shows that none of them waited for a timeout, however slow the machine
+/// is. One connection shows the mistake on every run; four show it only when the other writers
+/// happen to hold the rest of the pool at that moment, so that round adds coverage of real
+/// contention, not certainty. The time limit only stops a hang and lies far above both timeouts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_grant_deletes_do_not_drain_the_pool() {
     for pool_size in [1, POOL_SIZE] {

@@ -252,8 +252,9 @@ jobs:
           done
           exit 1
       # Usually 20 s, but the runner's package mirror sometimes slows to a few kB/s without
-      # failing. Each attempt gets 3 minutes; later attempts use the main Ubuntu archive. Run as
-      # root so `timeout` can stop apt and the downloads it started.
+      # failing. Each attempt gets 3 minutes; from the second on, the main Ubuntu archive. Run as
+      # root so `timeout` can stop apt and the downloads it started. An attempt stopped while
+      # dpkg was unpacking leaves it half done, so the next one finishes that first.
       - name: Install browser system packages
         if: runner.os == 'Linux'
         timeout-minutes: 12
@@ -261,13 +262,20 @@ jobs:
         run: |
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' |
             sudo tee /etc/apt/apt.conf.d/80-kalzit-ci > /dev/null
+          mirror=azure.archive.ubuntu.com
           for attempt in 1 2 3; do
             if [ "$attempt" -gt 1 ]; then
               echo "::warning::installing the browser system packages failed or stalled (attempt $((attempt - 1)) of 3)"
-              for list in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-                if [ -f "$list" ]; then
-                  sudo sed -i 's#://azure\.archive\.ubuntu\.com/#://archive.ubuntu.com/#g' "$list"
-                fi
+              sudo dpkg --configure -a || true
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              lists=$(sudo grep -l -F "://$mirror/" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true)
+              if [ -z "$lists" ]; then
+                echo "::notice::no apt source names $mirror; retrying with the configured sources"
+              fi
+              for list in $lists; do
+                sudo sed -i "s#://$mirror/#://archive.ubuntu.com/#g" "$list"
+                echo "switched $list to archive.ubuntu.com"
               done
             fi
             sudo env "PATH=$PATH" timeout --kill-after=15 180 \
