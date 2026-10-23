@@ -68,8 +68,13 @@ folder to create the first organization and its owner.
 - [docs/api/](docs/api/): the HTTP API (access, data sources and queries, settings and
   dashboards).
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface.
+- [docs/design/feel.md](docs/design/feel.md): how the interface should look and feel, and the plan
+  to get there.
 - [ui/README.md](ui/README.md): the web interface and its scripts.
 
 ## License
 
 AGPL-3.0, see [LICENSE](LICENSE).
+
+Product names and logos are trademarks of their owners; Kalzit uses the names only to identify
+the data source it connects to (see [ui/src/assets/logos/NOTICE.md](ui/src/assets/logos/NOTICE.md)).

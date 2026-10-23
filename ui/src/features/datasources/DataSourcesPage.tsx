@@ -20,6 +20,7 @@ import {
   sourceAccess,
 } from "./api";
 import { HealthResult } from "./DataSourceForm";
+import { KindLabel } from "./kindMarks";
 import "./datasources.css";
 
 const listRoute = getRouteApi("/_app/data-sources");
@@ -239,7 +240,9 @@ function DataSourceRow({
         )}
         {canTest ? <HealthResult health={health} error={test.error} /> : null}
       </td>
-      <td>{kindName}</td>
+      <td>
+        <KindLabel kind={source.kind} name={kindName} />
+      </td>
       <td>{date}</td>
       <td className="data-table__actions">
         {canTest ? (

@@ -393,6 +393,7 @@
     gap: var(--space-2);
     min-height: var(--nav-row-height);
     padding: 0 var(--space-2);
+    border: var(--border-width) solid transparent;
     border-radius: var(--radius-md);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
@@ -426,10 +427,14 @@
     outline-offset: calc(var(--focus-ring-width) * -1);
   }
 
-  /* Current page: neutral tint and weight, no frame or bar. */
+  /*
+   * Current page: a raised pill in the neutral hairline, with weight; never an accent frame or
+   * bar.
+   */
   .nav-link[aria-current="page"],
   .nav-sublink[aria-current="page"] {
-    background: var(--bg-active);
+    border-color: var(--border);
+    background: var(--bg-raised);
     color: var(--text);
     font-weight: var(--font-weight-semibold);
   }
@@ -442,7 +447,8 @@
 
   /* ... and while they are hidden (rail, collapsed group): it stands for the page. */
   .nav-link[aria-current="true"] {
-    background: var(--bg-active);
+    border-color: var(--border);
+    background: var(--bg-raised);
     color: var(--text);
     font-weight: var(--font-weight-semibold);
   }
@@ -586,12 +592,15 @@
 
   .shell__main {
     min-width: 0;
-    padding: var(--space-6) var(--space-8) var(--space-10);
+    padding: var(--space-5) var(--space-gutter) var(--space-10);
   }
 
+  /*
+   * The content uses the whole width: dashboards, Explore and lists are canvases. Forms,
+   * settings and running text keep the reading width themselves (--content-max-width).
+   */
   .shell__content {
-    max-width: var(--content-max-width);
-    margin-inline: auto;
+    min-width: 0;
   }
 
   @media (max-width: 48rem) {
@@ -701,6 +710,7 @@
   }
 
   .page__lead {
+    max-width: var(--content-max-width);
     color: var(--text-muted);
   }
 

@@ -24,8 +24,10 @@ type Server = ReturnType<typeof installFakeServer>;
 const lastCall = (server: Server, method: string, part: string) =>
   server.calls.filter((call) => call.method === method && call.path.includes(part)).at(-1);
 
+/** A kind's card is named by the kind's name followed by its one-line summary. */
 async function pickKind(user: ReturnType<typeof open>["user"], name: string) {
-  await user.click(await screen.findByRole("link", { name }));
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  await user.click(await screen.findByRole("link", { name: new RegExp(`^${escaped}( |$)`) }));
   await screen.findByRole("textbox", { name: "Name" });
 }
 

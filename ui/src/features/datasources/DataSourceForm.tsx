@@ -27,6 +27,7 @@ import {
   sourceAccess,
   updateDatasource,
 } from "./api";
+import { KindMark, kindSummary } from "./kindMarks";
 import { errorReason, reasonText } from "./reasons";
 import "./datasources.css";
 
@@ -163,8 +164,9 @@ function NewDataSource({ orgId }: { orgId: string }) {
                 search={{ kind: option.kind }}
                 className="ds-kinds__item"
               >
-                <Icon name="dataSources" />
-                <span>{option.name}</span>
+                <KindMark kind={option.kind} />
+                <span className="ds-kinds__name">{option.name}</span>{" "}
+                <span className="ds-kinds__summary">{kindSummary(t, option.kind)}</span>
               </Link>
             </li>
           ))}
@@ -618,7 +620,7 @@ function SettingsForm({
       }}
     >
       <p className="ds-form__kind">
-        <Icon name="dataSources" />
+        <KindMark kind={kind.kind} small />
         <span>{kind.name}</span>
       </p>
       <div className="notice">

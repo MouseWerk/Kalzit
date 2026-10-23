@@ -1,8 +1,12 @@
 @layer components {
+  /* The list uses the whole width; the form keeps the reading width. */
   .ds-list,
   .ds-edit {
     display: grid;
     gap: var(--space-4);
+  }
+
+  .ds-edit {
     max-width: var(--content-max-width);
   }
 
@@ -36,28 +40,77 @@
     gap: var(--space-3);
   }
 
+  /* The kinds as cards: the kind's mark in a tile, its name and one line on what it is. */
   .ds-kinds__list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--size-field), 1fr));
-    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--size-column)), 1fr));
+    gap: var(--space-3);
+    padding: 0;
     list-style: none;
   }
 
   .ds-kinds__item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-1) var(--space-3);
+    height: 100%;
+    padding: var(--space-4);
     border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background: var(--bg-raised);
     color: var(--text);
-    font-weight: var(--font-weight-medium);
     text-decoration: none;
+    transition: background-color var(--duration-fast) var(--easing);
   }
 
   .ds-kinds__item:hover {
     background: var(--bg-hover);
+  }
+
+  .ds-kinds__name {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ds-kinds__summary {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-tight);
+  }
+
+  /* A kind next to its name, in the list and the form's header. */
+  .kind-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  /* The kind's mark: a neutral line glyph in a tile, in the text color. */
+  .kind-mark {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--size-kind-mark);
+    height: var(--size-kind-mark);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text);
+  }
+
+  .kind-mark--small {
+    width: var(--size-kind-mark-small);
+    height: var(--size-kind-mark-small);
+    border-radius: var(--radius-sm);
+  }
+
+  .kind-mark .icon {
+    width: 60%;
+    height: 60%;
+  }
+
+  .ds-kinds__item .kind-mark {
+    grid-row: span 2;
   }
 
   .ds-secret {

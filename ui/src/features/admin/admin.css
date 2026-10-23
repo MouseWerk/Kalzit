@@ -214,6 +214,11 @@
     align-items: start;
   }
 
+  /* Settings are a form: they keep the reading width while lists use the whole window. */
+  .admin-list:has(> .admin-row--setting) {
+    max-width: var(--content-max-width);
+  }
+
   @media (max-width: 48rem) {
     .admin-row--setting {
       grid-template-columns: minmax(0, 1fr);
