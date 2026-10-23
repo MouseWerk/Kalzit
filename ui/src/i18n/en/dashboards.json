@@ -144,6 +144,7 @@
   "dashboards.inspect.empty": "There is nothing to inspect yet. Run the query first.",
   "dashboards.inspect.query": "Query {refId}",
   "dashboards.inspect.size": "{rows} rows, {fields} fields",
+  "dashboards.inspect.documents": "{count} documents, {paths} field paths",
   "dashboards.inspect.truncated": "Cut off at the row limit of the data source. Narrow the query to see everything.",
   "dashboards.inspect.info": "Note:",
   "dashboards.inspect.warning": "Warning:",

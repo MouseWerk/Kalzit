@@ -30,12 +30,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 
+use super::document_schema::{SAMPLE_DOCUMENTS, SchemaSampler, charge_schema, schema_cut};
 use super::{
     Connection, DataSourcePlugin, DefaultValue, Detail, FieldError, Health, Kind, SettingField, SettingType,
     SourceError, SourceQuery, SourceSchema,
 };
 use crate::shapes::{DocumentSet, FieldSchema, Notice, NoticeSeverity, QueryResult, Shape, Truncated};
-use documents::{Converter, SchemaSampler};
+use documents::Converter;
 use pipeline::Binder;
 use relay::{Refusal, Relay};
 
@@ -64,8 +65,6 @@ const SERVER_SELECTION_TIMEOUT: Duration = Duration::from_secs(10);
 /// the save (the check runs again on every connect).
 const SAVE_SELECTION_TIMEOUT: Duration = Duration::from_secs(4);
 const POOL_SIZE: u32 = 4;
-/// Documents of a result that the schema sample reads.
-const RESULT_SAMPLE: usize = 1_000;
 /// Paths named in `documents.binary_hidden` notices.
 const MAX_BINARY_NOTICES: usize = 20;
 /// The schema route: collections listed, sampled (with indexes), documents sampled per
@@ -598,8 +597,7 @@ fn cursor_offset(cursor: Option<&str>, fp: &str) -> Result<u64, SourceError> {
 }
 
 fn notice(severity: NoticeSeverity, detail: Detail) -> Notice {
-    let params = (!detail.params.is_empty()).then_some(detail.params);
-    Notice { severity, code: detail.reason.to_string(), params, text: detail.message }
+    detail.notice(severity)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -674,7 +672,7 @@ async fn collection_schema(
         let mut sampler = SchemaSampler::default();
         let mut n = 0u32;
         while let Some(d) = cursor.try_next().await? {
-            sampler.add(&d);
+            documents::sample(&mut sampler, &d);
             n += 1;
         }
         Ok::<_, mongodb::error::Error>((sampler.finish(), n))
@@ -908,10 +906,10 @@ impl DataSourcePlugin for MongoDb {
         let mut docs = Vec::new();
         let mut notices = Vec::new();
         let mut bytes = 0usize;
-        let mut cut = false;
+        let mut cut: Option<&str> = None;
         while let Some(raw) = cursor.try_next().await.map_err(fail)? {
             if docs.len() as u64 >= max {
-                cut = true;
+                cut = Some("documents.limit");
                 let message = format!("only the first {max} documents are shown (document limit)");
                 notices
                     .push(notice(NoticeSeverity::Warning, Detail::new("documents.limit", message).with("limit", max)));
@@ -922,14 +920,14 @@ impl DataSourcePlugin for MongoDb {
             let value = converter.document(&doc).to_json();
             let size = value.get().len() + 1;
             if own_limit.is_some_and(|l| bytes + size > l) || !req.limits.budget.take(size) {
-                cut = true;
+                cut = Some("documents.size_limit");
                 let detail = Detail::new("documents.size_limit", "the result was cut off at the response size limit");
                 notices.push(notice(NoticeSeverity::Warning, detail));
                 break;
             }
             bytes += size;
-            if docs.len() < RESULT_SAMPLE {
-                sampler.add(&doc);
+            if docs.len() < SAMPLE_DOCUMENTS {
+                documents::sample(&mut sampler, &doc);
             }
             docs.push(value);
         }
@@ -940,12 +938,16 @@ impl DataSourcePlugin for MongoDb {
                 .with("path", path);
             notices.push(notice(NoticeSeverity::Info, detail));
         }
+        let mut schema = sampler.finish();
+        if charge_schema(&mut schema, &req.limits.budget) {
+            notices.push(notice(NoticeSeverity::Info, schema_cut()));
+        }
         let count = docs.len() as u64;
         let set = DocumentSet {
             documents: docs,
-            schema: sampler.finish(),
-            next_cursor: cut.then(|| cursor_token(offset + count, &fp)),
-            truncated: cut.then_some(Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: None }),
+            schema,
+            next_cursor: cut.map(|_| cursor_token(offset + count, &fp)),
+            truncated: cut.map(|r| Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: Some(r.into()) }),
             notices,
             executed_query: Some(executed),
         };

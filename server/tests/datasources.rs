@@ -7,6 +7,7 @@
 //! - `KALZIT_TEST_MYSQL_URL`, `KALZIT_TEST_MARIADB_URL`: `mysql://user[:password]@host:port/database`
 //! - `KALZIT_TEST_MSSQL_URL`: `mssql://user:password@host:port/database` (self-signed certificate)
 //! - `KALZIT_TEST_PROMETHEUS_URL`: `http://host:port`
+//! - `KALZIT_TEST_ELASTICSEARCH_URL`, `KALZIT_TEST_OPENSEARCH_URL`: `http://[user:password@]host:port`
 //! - `KALZIT_TEST_NEO4J_URL`, `KALZIT_TEST_MEMGRAPH_URL`: `bolt://[user:password@]host:port`
 //!
 //! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run, and
@@ -681,4 +682,141 @@ async fn neo4j_reads_glued_numbers_as_number_and_word() {
         eprintln!("{glued}: server accepts glued {server_glued}, spaced {server_spaced}");
         assert!(!server_glued || server_spaced, "Neo4j reads {glued:?} in a way Kalzit does not know");
     }
+}
+
+/// Sends a request straight to a search cluster, to set up and check test data.
+async fn cluster(
+    http: &kalzit::http::HttpClient,
+    auth: &Option<String>,
+    method: reqwest::Method,
+    url: String,
+    body: Option<(&str, String)>,
+) -> Value {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(a) = auth {
+        headers.insert(reqwest::header::AUTHORIZATION, a.parse().unwrap());
+    }
+    let body = body.map(|(content_type, text)| {
+        headers.insert(reqwest::header::CONTENT_TYPE, content_type.parse().unwrap());
+        text.into_bytes()
+    });
+    let res = http.send_with_body(method, reqwest::Url::parse(&url).unwrap(), headers, body).await.unwrap();
+    let status = res.status();
+    let bytes = res.bytes().await.unwrap();
+    assert!(status.is_success(), "{status}: {}", String::from_utf8_lossy(&bytes));
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// Elasticsearch or OpenSearch: hits as documents, aggregations as frames, nothing written.
+async fn search_cluster(env_name: &str, engine: &str) {
+    use base64::Engine as _;
+    let Some(url) = env(env_name) else { return };
+    let (host, port, user, password, _) = parts(&url);
+    let base = format!("http://{host}:{port}");
+    let auth = (!user.is_empty()).then(|| {
+        let pair = format!("{user}:{}", password.clone().unwrap_or_default());
+        format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(pair))
+    });
+    let policy = kalzit::datasources::targets::TargetPolicy::new(
+        &std::env::temp_dir().join("kalzit-none"),
+        "sqlite::memory:",
+        &[],
+        &[],
+    );
+    let http = kalzit::http::client(kalzit::http::HttpOptions {
+        timeout: std::time::Duration::from_secs(60),
+        extra_root_pem: None,
+        policy: Arc::new(policy),
+    })
+    .unwrap();
+    let index = format!("kalzit-test-{}", uuid::Uuid::now_v7().simple());
+    let json = "application/json";
+    let mapping = json!({ "mappings": { "properties": {
+        "@timestamp": { "type": "date" }, "land": { "type": "keyword" }, "betrag": { "type": "double" } } } });
+    cluster(&http, &auth, reqwest::Method::PUT, format!("{base}/{index}"), Some((json, mapping.to_string()))).await;
+    let docs = [
+        json!({ "@timestamp": 1_750_000_000_000_i64, "land": "Österreich", "betrag": 12.5 }),
+        json!({ "@timestamp": 1_760_000_000_000_i64, "land": "Österreich", "betrag": 7.5 }),
+        json!({ "@timestamp": 1_770_000_000_000_i64, "land": "Schweiz", "betrag": 3.0 }),
+        // Outside the queried range.
+        json!({ "@timestamp": 1_900_000_000_000_i64, "land": "Schweiz", "betrag": 99.0 }),
+    ];
+    let bulk: String = docs.iter().map(|d| format!("{{\"index\":{{}}}}\n{d}\n")).collect();
+    let r = cluster(
+        &http,
+        &auth,
+        reqwest::Method::POST,
+        format!("{base}/{index}/_bulk?refresh=true"),
+        Some(("application/x-ndjson", bulk)),
+    )
+    .await;
+    assert_eq!(r["errors"], false, "{r}");
+
+    let t = T::new(None).await;
+    let mut settings = json!({ "url": base, "index": index });
+    if !user.is_empty() {
+        settings["basicAuthUser"] = json!(user);
+    }
+    let secrets = password.map_or(json!({}), |p| json!({ "basicAuthPassword": p }));
+    let id = t.create("elasticsearch", settings, secrets).await;
+    let h = t.health(&id).await;
+    assert_eq!((h["ok"].as_bool(), h["params"]["engine"].as_str()), (Some(true), Some(engine)), "{h}");
+
+    let hits = t.query(&id, json!({ "lucene": "land:$land" })).await;
+    let found = &hits["result"]["documents"]["documents"];
+    assert_eq!(found.as_array().map(Vec::len), Some(2), "{hits}");
+    assert_eq!(found[0]["_index"], index.as_str());
+    let all = t.query(&id, json!({})).await;
+    assert_eq!(all["result"]["documents"]["documents"].as_array().map(Vec::len), Some(3), "the time filter: {all}");
+
+    let aggs = t
+        .query(
+            &id,
+            json!({ "dsl": { "aggs": { "land": { "terms": { "field": "land" }, "aggs": { "summe": { "sum": { "field": "betrag" } } } } } } }),
+        )
+        .await;
+    let fields = &aggs["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["name"], "land", "{aggs}");
+    assert_eq!(fields[0]["values"], json!(["Österreich", "Schweiz"]), "{aggs}");
+    assert_eq!(fields[1]["name"], "summe", "{aggs}");
+    assert_eq!(fields[1]["values"], json!([20.0, 3.0]), "{aggs}");
+    let years = t
+        .query(&id, json!({ "dsl": { "aggs": { "jahr": { "date_histogram": { "field": "@timestamp", "calendar_interval": "year" } } } } }))
+        .await;
+    assert_eq!(years["result"]["frame"]["fields"][0]["type"], "time", "{years}");
+
+    let doubled = t
+        .query(&id, json!({ "dsl": { "script_fields": { "doppelt": { "script": "doc['betrag'].value * 2" } } } }))
+        .await;
+    assert!(doubled["result"]["documents"].is_object(), "a read-only script runs: {doubled}");
+    for refused in [
+        json!({ "dsl": { "script_fields": { "x": { "script": "ctx._source.betrag = 0" } } } }),
+        json!({ "lucene": "*", "index": format!("{index}/_delete_by_query") }),
+        json!({ "dsl": { "aggs": { "m": { "scripted_metric": { "map_script": "1" } } } } }),
+    ] {
+        let r = t.query(&id, refused.clone()).await;
+        assert_eq!(r["error"]["code"], "query_rejected", "{refused}: {r}");
+    }
+
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert_eq!(schema["kind"], "indices", "{schema}");
+    let ours = schema["indices"].as_array().unwrap().iter().find(|i| i["name"] == index.as_str()).unwrap();
+    assert!(
+        ours["columns"].as_array().unwrap().iter().any(|c| c["name"] == "land" && c["type"] == "keyword"),
+        "{schema}"
+    );
+
+    let count = cluster(&http, &auth, reqwest::Method::GET, format!("{base}/{index}/_count"), None).await;
+    assert_eq!(count["count"], 4, "nothing was written or deleted");
+    cluster(&http, &auth, reqwest::Method::DELETE, format!("{base}/{index}"), None).await;
+}
+
+#[tokio::test]
+async fn elasticsearch_hits_aggregations_and_refusals() {
+    search_cluster("KALZIT_TEST_ELASTICSEARCH_URL", "Elasticsearch").await;
+}
+
+#[tokio::test]
+async fn opensearch_hits_aggregations_and_refusals() {
+    search_cluster("KALZIT_TEST_OPENSEARCH_URL", "OpenSearch").await;
 }

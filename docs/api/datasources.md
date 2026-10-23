@@ -34,7 +34,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
-`sqlite`, `mssql`, `prometheus`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
+`sqlite`, `mssql`, `prometheus`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`,
+`memgraph`, `tigergraph`.
 
 ```json
 {
@@ -69,6 +70,11 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `sqlite`: "The file is opened read-only. It must lie in a directory a server administrator
     allowed."
   - `prometheus`: "Use a token or account that can only query."
+  - `elasticsearch`: "Use an account or API key with only the read privilege on the indices
+    (and `monitor` on the cluster for the version check). Kalzit sends only searches, counts and
+    mapping reads, but only the cluster's permissions are a real boundary."
+  - `file`: "The file is only read. It must lie in a directory a server administrator allowed."
+  - `http_json`: "Kalzit sends only GET requests. Use a token that can only read."
   - `mongodb`: "Use a login with only the read role on this database. Kalzit refuses logins that
     may do more, and servers without access control."
   - `neo4j`: "Use a user with only read rights (the reader role). Kalzit also runs every query in a
@@ -91,6 +97,9 @@ Fields per kind (common fields omitted):
 | `sqlite` | `path`* (absolute path of the file) |
 | `mssql` | `host`*, `port` (1433), `database`*, `user`*, `password` S, `encrypt` (bool, default true), `trustServerCertificate` (bool, default false), `caCert` |
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
+| `elasticsearch` | `url`* (`http(s)://host[:port][/path]`, no query), `basicAuthUser`, `basicAuthPassword` S, `apiKey` S (sent as `ApiKey <key>`), `bearerToken` S, `caCert`, `index` (default index or pattern), `timeField` (default `@timestamp`; empty: no time filter) |
+| `file` | `path`* (absolute path of a CSV, JSON or NDJSON file), `format` (`auto` default, `csv`, `json`, `ndjson`), `delimiter` (`auto` default, `comma`, `semicolon`, `tab`, `pipe`), `decimal` (`auto` default, `point`, `comma`), `header` (bool, default true) |
+| `http_json` | `url`* (`http(s)://host[:port][/path][?query]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `apiKeyHeader` (a header name such as `X-Api-Key`), `apiKey` S (sent in that header), `caCert`, `documentsPath` (where the documents are in the answer, see below) |
 | `mongodb` | `hosts`* (`host`, `host:port` or `[v6]:port`, comma-separated, at most 50), `port` (27017, for hosts without one), `srv` (bool, default false: `mongodb+srv`, `hosts` is one name without port), `replicaSet`, `database`*, `user`, `password` S, `authSource` (default: `database`; with SRV the TXT record's, else `admin`), `tls` (bool; default false, true with SRV), `caCert` (needs TLS), `maxResponseBytes` (at least 1, within the server's limit) |
 | `neo4j` | `host`*, `port` (7687), `database` (the server's default database when empty), `user`, `password` S, `encrypt` (bool, default false: Bolt with TLS), `trustServerCertificate` (bool, default false), `caCert`, `maxNodes` (10,000), `maxEdges` (50,000) |
 | `memgraph` | as `neo4j`, plus `allowWriteCapableUser` (bool, default false, a target field) |
@@ -100,6 +109,14 @@ Fields per kind (common fields omitted):
 (`maxRows` and the server's `datasources.max_rows`). `allowWriteCapableUser` and
 `approvedQueries` are target fields although they name no address: they decide what runs with the
 stored secrets, so only a data source admin may change them, and only with the secrets again.
+
+`elasticsearch` covers OpenSearch too; "Test connection" tells which one answered. With several
+credentials set, `basicAuthUser` wins, then `apiKey`, then `bearerToken` (`http_json`: basic, then
+bearer; the API key header is sent in addition). `file` with `format: auto` reads the file name:
+`.csv`, `.tsv` (tab-separated), `.txt` as CSV, `.json` as JSON, `.ndjson` and `.jsonl` as NDJSON;
+any other name needs a format (`settings.file_format_unknown`). `apiKeyHeader` may not be
+`Authorization`, `Host`, `Accept`, `Content-Type`, `Content-Length`, `Connection` or
+`Transfer-Encoding` (`settings.header_name_invalid`).
 
 i18n keys the UI needs: `datasources.settings.<name>` for every field name above plus
 `queryTimeoutSecs` and `maxRows`, and `datasources.kinds.<kind>.hint` for each kind. For
@@ -203,7 +220,7 @@ Each row's `reason` is in [Reasons](#reasons) (`settings.*`, `secrets.*`, `targe
 | Status, code | When | `field` |
 |---|---|---|
 | `422 validation` | name empty or longer than 100 characters, unknown kind, unknown setting, wrong type, missing required field, secret sent in `settings`, unknown secret, port outside 1..65535, host with credentials, SQLite path not absolute, URL with credentials, query or fragment, `caCert` without a PEM certificate | the field name: `name`, `kind`, a settings field name such as `host`, `settings` (unknown setting), `secrets` (unknown secret) |
-| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a link-local or metadata address (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
+| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or metadata address (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
 | `409 conflict` | another data source in use has this name (also when restoring) | `name` |
 | `422 validation` | MongoDB: the login may do more than read, or the server has no access control (see [MongoDB](#mongodb-a-pipeline-or-find)) | `user` |
 | `422 datasource_target_blocked` | MongoDB: a host the SRV records or the driver name is refused | `hosts` |
@@ -223,8 +240,21 @@ on every connect.
   separate TLS name). There the name is resolved and checked again right before every new pooled
   connection; an address change between that check and the driver's own lookup could only reach
   a server holding a valid certificate for the name.
-- Data source HTTP traffic (Prometheus) never uses a proxy; `HTTP_PROXY` and similar variables are
-  ignored. A proxy would resolve names itself, past the target check.
+- Data source HTTP traffic (Prometheus, Elasticsearch/OpenSearch, HTTP JSON, TigerGraph) never
+  uses a proxy; `HTTP_PROXY` and similar variables are ignored. A proxy would resolve names
+  itself, past the target check. A URL with a user name or password, also as a redirect target,
+  is refused (`target.url_credentials`). Redirects are followed up to five times, each target
+  checked like the first (Elasticsearch/OpenSearch and HTTP JSON also check each against their
+  own rules, see below; TigerGraph follows none); a
+  redirect to another origin drops the `Authorization` header and every other credential header
+  (the HTTP JSON API key). A 307 or 308 redirect repeats a search with its body; any other
+  redirect continues as a GET without body.
+- File sources (`file`) follow the SQLite rules within their own directories
+  (`datasources.file_dirs`, empty by default): the path is checked as written and again after
+  symlinks and junctions are resolved, Kalzit's data directory and database are always refused,
+  network paths only when an allowed directory is one, and a missing file answers like a refused
+  one. The SQLite and file directory lists are separate: a directory allowed for SQLite does not
+  open CSV files.
 - When Kalzit itself runs on PostgreSQL, every PostgreSQL source is checked after connecting to make
   sure it is not Kalzit's own database (`pg_control_system()` and `current_database()`). Servers
   that speak the PostgreSQL protocol but lack `pg_control_system()` (several compatible engines)
@@ -265,6 +295,11 @@ Body: none or `{}`. Always `200`, also when the source fails:
   `health.connected_read_only` (SQLite: the file is opened read-only), `health.prometheus_answered`
   (`engine`) or `health.connected_admin_login` (`engine`, `version`: the login has administrator
   rights, PostgreSQL superuser or SQL Server sysadmin; the text should advise a read-only login).
+  Elasticsearch and OpenSearch answer `health.connected` with `engine` `Elasticsearch` or
+  `OpenSearch` and the cluster's version, read from `GET /`; a login that may not read that (403)
+  but may count the default index answers `health.search_answered`. Files answer
+  `health.file_readable` (`format`: `CSV`, `JSON` or `NDJSON`, `bytes`), HTTP JSON
+  `health.http_json_answered` (`status`) after a GET of the source's URL that answered JSON.
   MongoDB answers `health.connected` (`engine` `MongoDB`) after the privilege check (run again on
   every test, also with a client built earlier) and a read of
   the database's collections; a login that may do more than read answers `ok: false` with
@@ -287,6 +322,22 @@ SQL kinds:
 { "kind": "metrics", "metrics": ["up", "http_requests_total"], "labels": ["instance", "job"] }
 ```
 
+Elasticsearch and OpenSearch: the indices matching the source's `index` (all when it is empty),
+by name, without hidden ones (starting with `.`), at most 1,000, with their mapped fields (object
+fields as dotted paths, multi-fields as `name.sub`, at most 5,000 per index) and the mapping type:
+
+```json
+{ "kind": "indices", "indices": [{ "name": "logs-2026.03", "columns": [{ "name": "@timestamp", "type": "date" }, { "name": "land", "type": "keyword" }] }] }
+```
+
+CSV files answer `tables` with one table named like the file and the column types inferred from
+the first 1,000 rows (`int64`, `number`, `time`, `bool`, `string`). JSON and NDJSON files and
+HTTP JSON answer the sampled document schema of the first 1,000 documents (see
+[The documents shape](#the-documents-shape)):
+
+```json
+{ "kind": "fields", "fields": [{ "path": "kunde.name", "coverage": 1.0, "types": [{ "name": "string", "share": 1.0 }] }] }
+```
 MongoDB lists the database's collections (up to 1,000, by name, without `system.*`). The first
 100 also get their indexes (keys in index order) and the field paths of a random sample of up to
 100 documents (`$sample`, 2 seconds each; `sampled` is 0 where the sample did not run or failed).
@@ -425,6 +476,173 @@ Macros: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at 
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
 
+### Elasticsearch and OpenSearch: `{"lucene": "..."}` or `{"dsl": {...}}`
+
+```json
+{ "lucene": "status:500 AND land:$land", "index": "logs-*", "size": 100 }
+{ "dsl": { "query": { "term": { "land": "$land" } }, "aggs": { "zeit": { "date_histogram": { "field": "@timestamp", "fixed_interval": "$__interval" } } } } }
+```
+
+- `lucene` is a Lucene query string (`query_string`); `dsl` a search body. Send one of them
+  (`elasticsearch.query_form`); with neither, every document matches. `index` (an index name or
+  pattern list such as `logs-*,metrics-*,-logs-alt`) overrides the source's `index`; one of the
+  two is needed (`elasticsearch.index_missing`). `timeField` overrides the source's.
+- The time range is always added as a filter on the time field (`range` with `gte`/`lte` in
+  epoch milliseconds) next to the query (`bool` with `must` and `filter`); an empty time field
+  adds none. `meta.executedQuery` of an aggregation frame is the body as sent.
+- Variables in `lucene`: `$name` or `${name}` outside a phrase becomes a quoted phrase
+  (`"Öster\"reich"`), a list `("a" OR "b")`; inside a phrase the value is escaped into it (a list
+  there is refused). `$__timeFrom` and `$__timeTo` become Unix milliseconds. A `\$` stays as
+  written. Variables in `dsl`: a string that is exactly `$name` or `${name}` is replaced by the
+  variable's JSON value (a list stays a list, so `{"terms": {"id": "$ids"}}` works); the macros
+  `$__timeFrom`, `$__timeTo` (Unix ms), `$__interval` (such as `30s`) and `$__interval_ms` work
+  the same way. Values are placed as JSON, never spliced into text, and must be texts, numbers,
+  booleans or lists of them, so a variable cannot bring in a script.
+- Without aggregations the answer is `documents`: each hit as the server sends it (`_index`,
+  `_id`, `_score`, `_source`, and `fields`, `highlight` or `sort` when asked for), with the
+  search body as `executedQuery`, the notices `elasticsearch.timed_out` and
+  `elasticsearch.shard_failures` as for aggregations, and `documents.limit` when the size was
+  lowered to the row limit and the total counts more hits. With aggregations it is a `frame` (see
+  [Aggregations](#aggregations)) and no hits are fetched (`size` is 0).
+
+**Read-only.** Kalzit builds every request itself and checks every URL right before sending it,
+and again for every redirect the server answers with (a 307 to `_delete_by_query` is refused
+before anything is sent there); only these are possible, below the source's URL: `GET /` (cluster
+info), `POST /{index}/_search`, `POST /{index}/_count`, `GET /{index}/_mapping`,
+`GET /{index}/_field_caps?fields=*` and `GET /_cat/indices[/{index}]?format=json&h=index`, with no
+other query parameters (no `scroll`, `pipeline` or `request_cache`). Every other endpoint,
+`_update_by_query`, `_delete_by_query`, `_bulk`, `_doc`, scroll, templates, PIT, SQL, EQL and any
+method other than these, is refused (`elasticsearch.endpoint_not_allowed`). Index names are
+letters, digits and `. _ - * :` per comma-separated part; a part may not start with `_` or be `.`
+or `..` (`elasticsearch.index_invalid`), so an index cannot add a path or name an endpoint; date
+math names (`<logs-{now/d}>`) are not supported. The search body is checked:
+
+- Top-level keys only from: `query`, `aggs`/`aggregations`, `sort`, `_source`, `fields`,
+  `docvalue_fields`, `stored_fields`, `size`, `from`, `track_total_hits`, `search_after`,
+  `highlight`, `post_filter`, `min_score`, `script_fields`, `runtime_mappings`, `collapse`,
+  `terminate_after`, `track_scores`, `version`, `seq_no_primary_term`, `indices_boost`,
+  `rescore` (`elasticsearch.dsl_key_not_allowed`). `timeout` is always set to the query's time
+  limit.
+- Scripts, anywhere a `script` key appears, must be inline (`"script": "..."` or
+  `{"source", "lang", "params", "options"}`), in `painless` (the default) or `expression`, at most
+  16 KiB, and must not use the identifier `ctx`. Search scripts read through `doc`, `params` and
+  `_source` and cannot change documents; `ctx` is how update and ingest scripts change them, so
+  a script that names it is refused whatever it does (`elasticsearch.script_writes`). Stored
+  scripts (`"id"`) are refused because their text is not visible to the check
+  (`elasticsearch.stored_script`), and so are `scripted_metric` and every `*_script` key
+  (`elasticsearch.script_not_allowed`), whose scripts keep state across shards or that sort or
+  compute buckets by script (`_script` sorts, `bucket_script`, `bucket_selector`).
+- A `wrapper` query (a query in base64, padding optional) is decoded and checked by the same
+  rules wherever Elasticsearch reads a query (`query`, `bool` clauses, `post_filter`, `filter`,
+  the `filters` of the `filters` and `adjacency_matrix` aggregations, `positive`, `negative`,
+  `queries`, `rescore_query`, `highlight_query`, ...). There it must carry JSON (Elasticsearch
+  would also read YAML, CBOR or SMILE, which the check cannot): anything else is
+  `elasticsearch.wrapper_invalid`. Elsewhere `wrapper` is an ordinary field name, so
+  `{"match": {"wrapper": {"query": "abc"}}}` works; should such a value still decode to a JSON
+  query, that query is checked too.
+- At most 256 KiB and 64 levels of nesting.
+
+**Limits.** `size` (in the query or the body; default 500) is at most the row limit and 10,000.
+`track_total_hits` is at most 100,000: `true` means 100,000, a larger number is lowered, without
+it 10,000 is sent. The answer is read within the response size limit and the query timeout.
+
+#### Aggregations
+
+Each row of the frame is one path from the top through the bucket aggregations to a deepest
+bucket. At most one bucket aggregation per level (`elasticsearch.sibling_buckets`); metric and
+pipeline aggregations may sit at any level. `top_hits` is refused
+(`elasticsearch.aggregation_not_supported`): query the hits instead. Aggregations of one level
+are read in name order.
+
+| Aggregation | Columns |
+|---|---|
+| `date_histogram`, `auto_date_histogram` | the aggregation's name: the bucket key, `time` (Unix ms) |
+| `composite` | `name.source` per source of the key |
+| keyed buckets (`filters`, `keyed: true`) | the name: the bucket's name, `string` |
+| other bucket aggregations (`terms`, `histogram`, `range`, ...) | the name: `key_as_string` when sent, otherwise `key`; `number` when every key is a number, otherwise `string` |
+| single-bucket aggregations (`filter`, `nested`, `reverse_nested`, `global`, `missing`, `sampler`, `children`, `parent`) | none; they only narrow the documents |
+| the deepest bucket | `doc_count` (`number`) |
+| metrics with `value` (`avg`, `sum`, `min`, `max`, `cardinality`, `value_count`, pipelines) | the name (`number`) |
+| `percentiles`, `percentile_ranks` (`values`) | `name.key` per value, such as `p.95.0` |
+| other multi-value metrics (`stats`, `extended_stats`, ...) | `name.field` per numeric field, `name.field.sub` one level deeper |
+
+A metric at an outer level repeats on every row below it. A bucket without buckets below it adds
+no row. Without bucket aggregations the frame has one row of metrics. A metric that answers no
+number (`geo_bounds`) is left out with the notice `elasticsearch.aggregation_skipped`. Rows stop
+at the row limit (`frame.row_limit`). `timed_out` and failed shards add the notices
+`elasticsearch.timed_out` and `elasticsearch.shard_failures`.
+
+### Files: `{}`
+
+The source names the file, so the query is `{}` (`query.invalid_form` for anything else). The
+file is read on every query within the row limit, the response size limit and the timeout: a
+huge file costs only what the answer may hold. The time limit is checked before every record and
+line (and every megabyte while a JSON file is parsed), and a read whose query went away (time
+limit, client gone) stops at the next check. Blank lines count against the response size limit.
+A UTF-8 byte order mark is skipped.
+
+- CSV becomes a `frame`. RFC 4180: fields in `"..."` may hold the delimiter, line breaks and `""`
+  for a quote; `\n` and `\r\n` end a record; empty lines are skipped; a `"` inside an unquoted
+  field is text. A quote that is never closed is `csv.unclosed_quote` (`line`). The delimiter,
+  when `auto`, is whichever of `,` `;` tab `|` occurs most often outside quotes in the first line
+  (`,` when none). With `header` the first record names the columns (blank names become
+  `column_<n>`, repeats get `_2`, `_3`); without it columns are `column_1` ... A row with fewer
+  fields has `null` for the rest; extra fields are left out with the notice `csv.extra_fields`
+  (`count`). At most 10,000 columns (`csv.too_many_columns`, `max`; the reader stops at the
+  field past the cap, before the record is held whole); the header counts against the
+  response size limit like the rows. A file with a UTF-16 byte order mark (Excel's "Unicode
+  text") is read as UTF-16. A record that is not UTF-8 is read as Windows-1252 (what Excel writes
+  on German Windows) with the notice `csv.legacy_encoding`.
+- JSON becomes `documents`: the elements of a top-level array, or the value itself as one
+  document. The file may be at most 256 MiB (`file.too_large`, `bytes`). An array is read element
+  by element, and an element may take at most the bytes the answer has left: the reader counts
+  them while the element is read and stops it as soon as it passes them, before it is held whole.
+  The first element that does not fit the limits cuts the answer; once the row limit is reached,
+  the rest is only checked to be valid JSON. Any other value is parsed whole,
+  so it must fit the response size limit (`file.too_large`). Invalid JSON is `file.json_invalid`
+  (`detail`). The schema samples the first 1,000 elements, so it works for large arrays too.
+- NDJSON becomes `documents`, one per non-empty line, read line by line; an invalid line is
+  `file.ndjson_line_invalid` (`line`, `detail`).
+
+#### CSV columns
+
+A column's type comes from all its values that are not blank, in this order:
+
+| Type | When every value is | Value |
+|---|---|---|
+| `bool` | `true` or `false` (any case) | `true`, `false` |
+| `int64` | a whole number, optional sign, no leading zero (`01067` is text, so postal codes stay text), within 64 bits | decimal text, as for SQL |
+| `number` | a decimal number: with `decimal: point` `-12.5`, `.5`, `1e3`; with `decimal: comma` `12,5`, `-0,25`, `1.234.567,89` (points group thousands in threes); `auto` reads a column with a comma when any of its values has one, otherwise with a point (so `1.234` is 1.234 unless the column has a comma somewhere) | the number |
+| `time` | an ISO 8601 date or date and time (`2026-03-01`, `2026-03-01 10:15`, `2026-03-01T10:15:30.5Z`, `2026-03-01T10:15:30+01:00`) or a German date (`01.03.2026`, `01.03.2026 10:15[:30]`), years 1 to 9999; without an offset UTC | Unix ms |
+| `string` | anything else, and a column without values | the text as written |
+
+Blank cells are `null`. Values are trimmed for typing; text keeps its spaces.
+
+### HTTP JSON: `{"path": "...", "params": {...}, "documentsPath": "..."}`
+
+All fields optional (`{}` requests the source's URL as it is).
+
+- `path` is added below the source's URL (`orders/open` on `https://api.intern/v1/` requests
+  `https://api.intern/v1/orders/open`, keeping the URL's own query). It must be relative and
+  stay below the URL: no leading `/` or `\`, no `.` segments, no segments starting with `..`, no
+  percent-encoded dots, slashes, backslashes or percent signs, no scheme, query or fragment
+  (`http_json.path_invalid`).
+- `params` are added as query parameters: texts, numbers and booleans
+  (`http_json.param_invalid`). A value that is exactly `$name` or `${name}` takes the variable's
+  value; a list repeats the parameter (`land=AT&land=CH`). A missing variable is
+  `http_json.variable_missing`.
+- The answer must be JSON (`http_json.not_json`, `status`) with a success status
+  (`http_json.status`: `status` and the first 300 characters of the body as `detail`, with the
+  source's secrets removed before it is cut).
+- `documentsPath` (or the source's) is a dotted path into the answer (`data.items`, numbers
+  index arrays: `results.0.rows`); nothing there is `http_json.path_missing` (`path`). The array
+  there (or the answer itself) gives one document per element; any other value is one document.
+- Only `GET` is sent; the target checks apply to the address and to every redirect (see
+  [Connections and targets](#connections-and-targets)). A redirect is followed only when it stays
+  on the source's origin at or below its URL, with the same segment rules as `path` (no segment
+  starting with `..`, since some servers read `..;` as `..`, no encoded dots, slashes, backslashes or
+  percent signs); any other is refused before it is followed (`http_json.redirect_refused`,
+  `path`), so an open redirect of the API cannot reach other hosts or paths.
 ### Neo4j and Memgraph: `{"cypher": "MATCH ..."}`
 
 Over Bolt (4.4 and 5.0 to 5.8), with TLS when `encrypt` is set. Kalzit opens the connection to the
@@ -502,9 +720,11 @@ dashboard variable of the same name.
 - Interpreted queries go to the GSQL server with the user and password: 4.x
   `POST /gsql/v1/queries/interpret?graph=<graph>`, 3.x `POST /gsqlserver/interpreted_query`. The
   text is one `INTERPRET QUERY (...) FOR GRAPH <graph> { ... }`; `FOR GRAPH` is required (3.x
-  takes the graph from it), and another graph than the source's is refused. Requests with a body
-  (interpreted queries, `SHOW USER`, token requests) do not follow redirects: a redirect answers
-  `tigergraph.error`, so a body or secret never reaches another URL.
+  takes the graph from it), and another graph than the source's is refused. Every request and
+  passes the target checks, and no TigerGraph request follows a redirect: a redirect answers
+  `tigergraph.redirect_refused` (`path`), so a body or secret never reaches another URL and a
+  query never another endpoint on the same server (an installed query outside
+  `approvedQueries`, user management).
 - Installed queries go to REST++ `GET /query/<graph>/<name>` with a token. With `secret`, the
   token comes from it (4.x `POST /gsql/v1/tokens`, 3.x `POST <restppUrl>/requesttoken`); without
   it, 4.x issues one for the user and password, and 3.x calls REST++ without a token (for servers
@@ -586,9 +806,6 @@ Graph kinds answer `graph` when the result holds graph elements and `frame` othe
 - Hitting `maxNodes`, `maxEdges` or the response size limit stops reading: `truncated` is
   `{"limit", "reason"}` with `graph.node_limit`, `graph.edge_limit` or `graph.size_limit`, and a
   notice says the same.
-
-`cursor` on a query (and `cursors` on the panel route) continues document results; SQL,
-Prometheus and graph sources ignore it.
 
 ### MongoDB: a pipeline or `find`
 
@@ -681,7 +898,7 @@ database stored. A cursor belongs to its query, time range and variables; with a
   "documents": [{ "_id": { "$type": "objectId", "value": "65f0c1a2b3c4d5e6f7a8b9c0" }, "menge": 3,
                   "betrag": { "$type": "decimal", "value": "12.50" }, "ts": { "$type": "date", "value": "1800000000000" } }],
   "schema": [{ "path": "menge", "coverage": 1, "types": [{ "name": "int", "share": 1 }] }],
-  "nextCursor": "MjAwOmFiY2Q", "truncated": { "limit": 200 },
+  "nextCursor": "MjAwOmFiY2Q", "truncated": { "limit": 200, "reason": "documents.limit" },
   "notices": [{ "severity": "warning", "code": "documents.limit", "params": { "limit": "200" }, "text": "..." }],
   "executedQuery": "bestellungen.aggregate([...])" } }
 ```
@@ -708,14 +925,30 @@ Values JSON has no type for keep their BSON type as `{"$type", "value"}`:
 A stored document with its own `$type` key is wrapped as `{"$type": "document", "value": {...}}`,
 so it cannot be mistaken for a typed value.
 
-`schema` is sampled from the first 1,000 documents of the result: every field path (`a.b`, array
-elements as `items[]`, fields of documents in arrays as `items[].preis`, at most 2,000 paths, 32
-levels) in the order it first appears, `coverage` (share of documents with the path, 0 to 1) and
-`types` (per MongoDB type alias, as `$type` queries name them: `double`, `string`, `object`,
-`array`, `binData`, `objectId`, `bool`, `date`, `null`, `regex`, `javascript`, `int`, `long`,
-`decimal`, `timestamp`, ...: the share of the documents with the path where it has that type,
-most common first; a path with several types in one document counts for each, so shares may add
-up to more than 1).
+Every document source (MongoDB, Elasticsearch and OpenSearch hits, JSON and NDJSON files, HTTP
+JSON) answers this shape. Documents come in the order the source answered. The row limit counts
+documents and the response size limit their size: the first document that does not fit ends the
+set, `truncated.limit` is the number of documents kept, and `truncated.reason` and a notice say
+which limit cut it (`documents.limit` with `limit`, or `documents.size_limit`). A search whose
+`size` was lowered to the row limit (or 10,000) and whose total counts more hits than it answered
+is cut the same way (`documents.limit`). `executedQuery` is the query as sent
+(MongoDB, Elasticsearch). `nextCursor` is set where the source can continue the set (MongoDB);
+`cursor` on a query (and `cursors` on the panel route) continues it. Other kinds ignore it.
+
+`schema` is sampled from the first 1,000 documents of the result, the same way for every source:
+every field path (`a.b`, array elements as `items[]`, fields of documents in arrays as
+`items[].preis`; a document that is not an object as `$`; at most 2,000 paths, 32 levels and the
+first 100 elements of each array; a key longer than 256 characters is cut there and ends in
+`...`, a path longer than 4 KiB is left out with everything below it, and once the paths add up
+to 256 KiB no new ones are listed) in the order it first appears, `coverage` (share of documents
+with the path, 0 to 1; a path counts once per document however often it occurs in its arrays)
+and `types` (the share of the documents with the path where it has that type, most common first;
+a path with several types in one document counts for each, so shares may add up to more than 1).
+MongoDB names types by their alias, as `$type` queries do (`double`, `string`, `object`, `array`,
+`binData`, `objectId`, `bool`, `date`, `null`, `regex`, `javascript`, `int`, `long`, `decimal`,
+`timestamp`, ...); the JSON sources by the JSON type (`string`, `number`, `bool`, `null`,
+`object`, `array`). The schema counts against the response size limit like the documents: the
+paths that no longer fit are left out, with the notice `documents.schema_cut`.
 
 ## A dashboard's stored queries
 
@@ -896,7 +1129,9 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.url_invalid` | `detail` | the URL cannot be parsed |
 | `settings.url_scheme` | | the URL is not `http://` or `https://` |
 | `settings.url_credentials` | | the URL contains credentials |
-| `settings.url_query` | | the URL contains a query or fragment |
+| `settings.url_query` | | the URL contains a query or fragment (`http_json`: a fragment) |
+| `settings.file_format_unknown` | | `file`: the format is `auto` and the file name has no known extension |
+| `settings.header_name_invalid` | | `http_json`: `apiKeyHeader` is not a header name or is a reserved one |
 | `settings.url_no_host` | | the URL has no host |
 | `settings.name_invalid` | | TigerGraph: the graph, user or an approved query name has characters other than letters, digits and `_` (users also `-`, `.`, `@`) |
 | `settings.invalid` | `detail` | the settings do not fit the kind (other cases) |
@@ -915,6 +1150,9 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 |---|---|---|
 | `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
 | `target.sqlite_path_relative` | | the SQLite path is not absolute |
+| `target.url_credentials` | | an HTTP request or redirect URL contains a user name or password |
+| `target.file_path_refused` | | the CSV or JSON file is outside `datasources.file_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all) |
+| `target.file_path_relative` | | the file path is not absolute |
 | `target.metadata_address` | `address` or `host` | a link-local or cloud metadata address (also when a name resolves to one) |
 | `target.not_allowed` | `host` | the host is outside `datasources.allowed_targets` |
 | `target.scheme_not_allowed` | `scheme` | a URL scheme other than http(s) |
@@ -929,7 +1167,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 
 | Reason | Params | When |
 |---|---|---|
-| `query.invalid_form` | `detail` | the query object does not fit the kind (`{"sql"}`, `{"expr", ...}`) |
+| `query.invalid_form` | `detail` | the query object does not fit the kind (`{"sql"}`, `{"expr", ...}`, `{"lucene"}` or `{"dsl"}`, `{}` for files, `{"path", "params", "documentsPath"}`) |
 | `query.count` | `max` | `422 validation`: not 1 to `max` queries |
 | `query.ref_id` | | `422 validation`: a `refId` is empty, longer than 64 characters or repeated |
 | `query.range_out_of_bounds` | | `422 validation`: `timeRange` outside the years 1 to 9999 |
@@ -971,6 +1209,32 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `promql.variable_missing` | `name` | a variable without a value |
 | `promql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
 | `promql.backtick` | `name` | a value with a backtick inside a `raw` string |
+| `elasticsearch.query_form` | | both `lucene` and `dsl` |
+| `elasticsearch.index_missing` | | neither the query nor the source names an index |
+| `elasticsearch.index_invalid` | `index` | not an index name or pattern list (see above) |
+| `elasticsearch.endpoint_not_allowed` | `path` | a request to anything but the read endpoints |
+| `elasticsearch.query_too_large` | | the query text or body is over 256 KiB |
+| `elasticsearch.dsl_not_object` | | `dsl` is not an object |
+| `elasticsearch.dsl_key_not_allowed` | `key` | a top-level key of the body that is not allowed |
+| `elasticsearch.dsl_too_deep` | | more than 64 levels of nesting |
+| `elasticsearch.script_writes` | | a script uses `ctx` |
+| `elasticsearch.stored_script` | | a stored script (`"id"`) |
+| `elasticsearch.script_not_allowed` | `context` | `scripted_metric` or a `*_script` key |
+| `elasticsearch.script_invalid` | `key` | a script with another key than `source`, `lang`, `params`, `options`, or without `source` |
+| `elasticsearch.script_lang` | `lang` | a script language other than `painless` or `expression` |
+| `elasticsearch.script_too_large` | | a script over 16 KiB |
+| `elasticsearch.wrapper_invalid` | | a `wrapper` query that is not base64 of a JSON query |
+| `elasticsearch.aggregation_invalid` | `name` (when known) | an aggregation that is not an object or has no type |
+| `elasticsearch.aggregation_not_supported` | `name`, `type` | `top_hits` |
+| `elasticsearch.sibling_buckets` | `names` | more than one bucket aggregation on one level |
+| `elasticsearch.track_total_hits` | | `track_total_hits` is not true, false or a number |
+| `elasticsearch.variable_missing` | `name` | a variable without a value |
+| `elasticsearch.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
+| `elasticsearch.variable_list_in_phrase` | `name` | a list variable inside a quoted Lucene phrase |
+| `elasticsearch.macro_unknown` | `name` | an unknown `$__` macro |
+| `http_json.path_invalid` | | a `path` that would leave the source's URL |
+| `http_json.param_invalid` | `name` | a parameter that is not a text, number or boolean |
+| `http_json.variable_missing` | `name` | a variable without a value |
 | `mongodb.json_invalid` | `field`, `detail` | `pipeline`, `filter`, `projection` or `sort` is not valid Extended JSON |
 | `mongodb.not_a_document` | `field` | `filter`, `projection` or `sort` is not a JSON object |
 | `mongodb.pipeline_not_array` | | the pipeline (or a nested one) is not an array |
@@ -1126,6 +1390,20 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
 | `prometheus.result_type` | `type` | an unexpected result type |
+| `elasticsearch.error` | `status`, `detail` | Elasticsearch or OpenSearch answered an error (`detail`: its type and reason) |
+| `elasticsearch.not_an_api_response` | `status` | the server answered without a search API response |
+| `elasticsearch.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `file.read_failed` | `detail` | the file cannot be read |
+| `file.too_large` | `bytes` | a JSON file is larger than `bytes` |
+| `file.json_invalid` | `detail` | the JSON file is not valid JSON |
+| `file.ndjson_line_invalid` | `line`, `detail` | a line of an NDJSON file is not valid JSON |
+| `csv.unclosed_quote` | `line` | a quoted field from `line` is never closed |
+| `csv.too_many_columns` | `max` | the CSV file has more than `max` columns |
+| `http_json.status` | `status`, `detail` | the server answered an error status |
+| `http_json.not_json` | `status`, `detail` | the answer is not JSON |
+| `http_json.path_missing` | `path` | the answer has nothing at `documentsPath` |
+| `http_json.redirect_refused` | `path` | the server redirected outside the source's URL |
+| `http_json.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `bolt.protocol` | `detail` | the server broke the Bolt protocol (or speaks no version Kalzit does) |
 | `bolt.tls` | `detail` (when known) | TLS could not be set up or failed |
 | `bolt.login_timeout` | | the server did not complete the login in time |
@@ -1138,6 +1416,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `tigergraph.not_an_api_response` | `status` | the server answered without a TigerGraph API response |
 | `tigergraph.error` | `status`, `detail` | TigerGraph answered an error |
 | `tigergraph.no_token` | | the token endpoint answered without a token |
+| `tigergraph.redirect_refused` | `path` | TigerGraph answered a request with a redirect |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |
 | `http.failed` | `detail` | the HTTP request failed |
@@ -1155,6 +1434,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `health.connected_admin_login` | `engine`, `version` | connected, but the login has administrator rights |
 | `health.connected_read_only` | `engine`, `version` | SQLite: connected, the file is opened read-only |
 | `health.prometheus_answered` | `engine` | the Prometheus API answered |
+| `health.search_answered` | | Elasticsearch/OpenSearch: searching works, but the login may not read the cluster version |
+| `health.file_readable` | `format`, `bytes` | the file can be read |
+| `health.http_json_answered` | `status` | the URL answered JSON |
 | `health.connected_write_capable` | `engine`, `version`, `privileges`, `edition` | Memgraph: connected, but the user may write (`allowWriteCapableUser` is on) |
 | `frame.row_limit` | `rows` | notice: the result was cut at `rows` rows |
 | `frame.size_limit` | | notice: the result was cut at the response size limit |
@@ -1162,9 +1444,15 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.type_unsupported` | `column`, `type` | notice: a column type the server cannot show |
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
+| `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
+| `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |
+| `elasticsearch.shard_failures` | `count` | notice: `count` shards failed; the result may be incomplete |
+| `csv.extra_fields` | `count` | notice: `count` rows have more fields than the header |
+| `csv.legacy_encoding` | | notice: the file is not UTF-8 and was read as Windows-1252 |
 | `documents.limit` | `limit` | notice: the set was cut at `limit` documents |
 | `documents.size_limit` | | notice: the set was cut at the response size limit |
 | `documents.binary_hidden` | `path` | notice: binary values at `path` are not shown |
+| `documents.schema_cut` | | notice: the schema lists only the paths that fit the response size limit |
 | `graph.node_limit` | `limit` | notice: the graph was cut at `limit` nodes |
 | `graph.edge_limit` | `limit` | notice: the graph was cut at `limit` edges |
 | `graph.size_limit` | | notice: the graph was cut at the response size limit |
@@ -1174,3 +1462,5 @@ The browser shows these at the step; the export routes answer them as `422 valid
 ## Not here yet
 
 - Purging data sources from the trash, testing settings before saving.
+- Continuing document results with `cursor`; Elasticsearch date math index names; HTTP JSON
+  methods other than GET.

@@ -115,6 +115,7 @@ Server settings:
 | Key | Default | Accepts |
 |---|---|---|
 | `datasources.sqlite_dirs` | `[]` | up to 100 texts of 1 to 1024 characters |
+| `datasources.file_dirs` | `[]` | up to 100 texts of 1 to 1024 characters |
 | `datasources.allowed_targets` | `[]` | up to 100 texts of 1 to 1024 characters |
 | `datasources.query_timeout_secs` | `30` | whole number 1 to 3600 |
 | `datasources.max_rows` | `100000` | whole number 1 to 10,000,000 |

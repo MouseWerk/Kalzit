@@ -223,6 +223,21 @@ impl PartialEq for OrderedJson {
     }
 }
 
+#[cfg(test)]
+impl OrderedJson {
+    /// As a `Value`, for assertions (key order is not kept).
+    pub fn value(&self) -> Value {
+        serde_json::from_str(self.get()).expect("an OrderedJson holds valid JSON")
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<Value> for OrderedJson {
+    fn eq(&self, other: &Value) -> bool {
+        self.value() == *other
+    }
+}
+
 /// Deserializing goes through `Value`, so it works with any deserializer (a raw value needs
 /// serde_json's own), but the key order is **not** kept there. No response path deserializes it:
 /// the server only builds and serializes document sets; deserializing is for tests and clients.

@@ -152,7 +152,9 @@ type QueryResult =
 - Documents keep database types JSON lacks as `{"$type": "objectId" | "date" | "decimal" |
   "binary" | "int64" | "uuid" | ..., "value": string}` (all of them, and binary values hidden as
   `null`, in docs/api/datasources.md, "The documents shape"). The schema sample gives every path
-  with coverage and type shares (finite numbers 0 to 1).
+  with coverage and type shares (finite numbers 0 to 1); every document source samples through
+  one shared walker (`datasources/document_schema.rs`) with its own type names, and cut sets
+  carry `documents.*` notices like frames.
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
 - Projections (documents or graph to a frame) are explicit query steps stored in the query,
   never applied by the backend on its own.
@@ -196,7 +198,8 @@ type QueryResult =
   Kalzit's own data directory and database (also through a PostgreSQL source at the same server
   and database), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`,
   `fd00:ec2::254`), and SQLite files outside the directories a server admin allowed
-  (`datasources.sqlite_dirs`, empty by default, never including the data directory). A server
+  (`datasources.sqlite_dirs`, empty by default, never including the data directory); CSV and
+  JSON files of file sources follow the same rules within `datasources.file_dirs`. A server
   admin can additionally restrict sources to a list of allowed hosts and networks
   (`datasources.allowed_targets`). Rules that make this hold:
   - Names are resolved once per connect, the resolved address is checked, and the driver connects
@@ -217,6 +220,9 @@ type QueryResult =
   `lo_import`, `dblink`, `OPENROWSET`, `OPENDATASOURCE`, `load_extension`). They run in a
   read-only transaction where the engine has one (PostgreSQL, MySQL/MariaDB); SQLite opens the
   file read-only with extension loading disabled. Each engine has tests for these rejections.
+  Rejections answer `query_rejected` with the reason. Elasticsearch and OpenSearch sources reach
+  only a fixed list of read endpoints (checked on every URL before it is sent) and refuse stored
+  scripts and scripts that use `ctx`; HTTP JSON sources send only GET requests below their URL.
   Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
   Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
   checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may
