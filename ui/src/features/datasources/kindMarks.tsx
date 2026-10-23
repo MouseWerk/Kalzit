@@ -1,12 +1,21 @@
+import elasticsearch from "../../assets/logos/elasticsearch.svg?raw";
+import mariadb from "../../assets/logos/mariadb.svg?raw";
+import mongodb from "../../assets/logos/mongodb.svg?raw";
+import mysql from "../../assets/logos/mysql.svg?raw";
+import neo4j from "../../assets/logos/neo4j.svg?raw";
+import opensearch from "../../assets/logos/opensearch.svg?raw";
+import postgresql from "../../assets/logos/postgresql.svg?raw";
+import prometheus from "../../assets/logos/prometheus.svg?raw";
+import sqlite from "../../assets/logos/sqlite.svg?raw";
 import { catalogs, type MessageKey, type Translate } from "../../i18n/i18n";
 import "./datasources.css";
 
 /**
- * How a data source kind is shown: a neutral line glyph for its family of data, never a vendor
- * logo. Most vendors allow their names to identify a compatible product but not their logos in
- * another product (see ui/src/assets/logos/NOTICE.md), so the name carries the identity and the
- * glyph the kind of data. A kind added later only needs an entry in KIND_FAMILIES; one without an
- * entry gets the generic glyph.
+ * How a data source kind is shown: the product's logo where there is one (Simple Icons files in
+ * ui/src/assets/logos, see NOTICE.md there), used only to identify the data source, next to the
+ * product name; otherwise a neutral line glyph for its family of data. A kind added later only
+ * needs an entry in KIND_FAMILIES and, with a logo, in KIND_LOGOS; one without an entry gets the
+ * generic glyph.
  */
 export type KindFamily =
   | "sql"
@@ -34,6 +43,49 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   memgraph: "graph",
   tigergraph: "graph",
 };
+
+/** The files as bundled: one filled path each on a 24 px box, read once at load. */
+const LOGO_FILES = {
+  elasticsearch,
+  mariadb,
+  mongodb,
+  mysql,
+  neo4j,
+  opensearch,
+  postgresql,
+  prometheus,
+  sqlite,
+} as const;
+
+export type LogoName = keyof typeof LOGO_FILES;
+
+function pathOf(svg: string): string {
+  return /<path d="([^"]+)"/.exec(svg)?.[1] ?? "";
+}
+
+export const LOGO_PATHS = Object.fromEntries(
+  Object.entries(LOGO_FILES).map(([name, svg]) => [name, pathOf(svg)]),
+) as Record<LogoName, string>;
+
+/**
+ * The logos per kind. A kind that serves two products (MySQL and MariaDB, Elasticsearch and
+ * OpenSearch) shows both. SQL Server, Memgraph and TigerGraph have no file their owners allow to
+ * be copied into another product, so they keep the glyph (NOTICE.md).
+ */
+export const KIND_LOGOS: Readonly<Record<string, readonly LogoName[]>> = {
+  postgres: ["postgresql"],
+  mysql: ["mysql", "mariadb"],
+  sqlite: ["sqlite"],
+  prometheus: ["prometheus"],
+  mongodb: ["mongodb"],
+  elasticsearch: ["elasticsearch", "opensearch"],
+  opensearch: ["opensearch"],
+  neo4j: ["neo4j"],
+};
+
+export function kindLogos(kind: string): readonly LogoName[] {
+  return Object.hasOwn(KIND_LOGOS, kind) ? (KIND_LOGOS[kind] ?? []) : [];
+}
 
 /** Paths on a 24 px grid, drawn like the other line icons (round caps, current color). */
 const GLYPHS: Record<KindFamily, string> = {
@@ -71,10 +123,37 @@ export function kindSummary(t: Translate, kind: string): string | null {
 }
 
 /**
- * The kind's glyph in a tile. Decorative: the kind's name always stands next to it, so screen
- * readers skip the mark. It follows the text color, so it works in every theme and at any size.
+ * The kind's logo, or its glyph, in a tile. Decorative: the kind's name always stands next to it,
+ * so screen readers skip the mark. Logos keep their brand color on a light tile in every scheme
+ * (several are dark blue and would vanish on dark); the contrast theme draws them in the text
+ * color. Glyphs follow the text color.
  */
 export function KindMark({ kind, small = false }: { kind: string; small?: boolean }) {
+  const logos = kindLogos(kind);
+  const size = small ? " kind-mark--small" : "";
+  if (logos.length > 0) {
+    return (
+      <span
+        className={`kind-mark kind-mark--logo${size}`}
+        data-logos={logos.length}
+        aria-hidden="true"
+      >
+        {logos.map((name) => (
+          <svg
+            key={name}
+            className="kind-logo"
+            data-logo={name}
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d={LOGO_PATHS[name]} />
+          </svg>
+        ))}
+      </span>
+    );
+  }
   return (
     <span
       className={small ? "kind-mark kind-mark--small" : "kind-mark"}

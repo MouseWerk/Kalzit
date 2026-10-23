@@ -24,10 +24,8 @@ type Server = ReturnType<typeof installFakeServer>;
 const lastCall = (server: Server, method: string, part: string) =>
   server.calls.filter((call) => call.method === method && call.path.includes(part)).at(-1);
 
-/** A kind's card is named by the kind's name followed by its one-line summary. */
 async function pickKind(user: ReturnType<typeof open>["user"], name: string) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  await user.click(await screen.findByRole("link", { name: new RegExp(`^${escaped}( |$)`) }));
+  await user.click(await screen.findByRole("link", { name }));
   await screen.findByRole("textbox", { name: "Name" });
 }
 
@@ -152,6 +150,14 @@ describe("data source list", () => {
 });
 
 describe("adding a data source", () => {
+  it("names each kind card by the product and describes it with its summary", async () => {
+    open("/data-sources/new");
+    const card = await screen.findByRole("link", { name: "PostgreSQL" });
+    const description = document.getElementById(card.getAttribute("aria-describedby") ?? "");
+    expect(description?.textContent).toBe("Relational database, TimescaleDB included.");
+    expect(card.querySelector(".kind-logo")?.getAttribute("data-logo")).toBe("postgresql");
+  });
+
   it("starts from the kind's defaults and sends them, with secrets only in secrets", async () => {
     const { server, user, location } = open("/data-sources/new");
     await pickKind(user, "PostgreSQL");

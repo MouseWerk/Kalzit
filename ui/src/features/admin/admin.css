@@ -126,6 +126,11 @@
     font-size: var(--font-size-sm);
   }
 
+  /* The account page is a form page: it keeps the reading width. */
+  .admin-account__section {
+    max-width: var(--content-max-width);
+  }
+
   .admin-account__section + .admin-account__section {
     padding-block-start: var(--space-6);
     border-block-start: var(--border-width) solid var(--border);

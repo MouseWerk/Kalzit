@@ -49,13 +49,25 @@
     list-style: none;
   }
 
+  /*
+   * The link covers the whole card and is named by the product alone; the summary lies over it
+   * in the same grid (clicks pass through to the link) and describes it. The outer tracks are
+   * the card's padding: with the gaps they add up to 16 px on every side.
+   */
   .ds-kinds__item {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
+    grid-template-columns: var(--space-1) auto minmax(0, 1fr) var(--space-1);
+    grid-template-rows: var(--space-3) auto 1fr var(--space-3);
     gap: var(--space-1) var(--space-3);
     height: 100%;
-    padding: var(--space-4);
+  }
+
+  .ds-kinds__link {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-template-rows: subgrid;
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
@@ -64,18 +76,24 @@
     transition: background-color var(--duration-fast) var(--easing);
   }
 
-  .ds-kinds__item:hover {
+  .ds-kinds__link:hover {
     background: var(--bg-hover);
   }
 
   .ds-kinds__name {
+    grid-column: 3;
+    grid-row: 2;
     font-weight: var(--font-weight-medium);
   }
 
   .ds-kinds__summary {
+    position: relative;
+    grid-column: 3;
+    grid-row: 3;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
     line-height: var(--line-height-tight);
+    pointer-events: none;
   }
 
   /* A kind next to its name, in the list and the form's header. */
@@ -109,8 +127,78 @@
     height: 60%;
   }
 
-  .ds-kinds__item .kind-mark {
-    grid-row: span 2;
+  /* A logo on its light tile; a kind for two products shows both marks side by side. */
+  .kind-mark--logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-px);
+    background: var(--logo-tile);
+  }
+
+  .kind-logo {
+    width: auto;
+    height: 70%;
+    aspect-ratio: 1;
+  }
+
+  /* Two marks get a wider tile, so neither shrinks. */
+  .kind-mark--logo[data-logos="2"] {
+    width: calc(var(--size-kind-mark) * 1.75);
+  }
+
+  .kind-mark--logo.kind-mark--small[data-logos="2"] {
+    width: calc(var(--size-kind-mark-small) * 1.75);
+  }
+
+  .kind-logo[data-logo="postgresql"] {
+    color: var(--brand-postgresql);
+  }
+
+  .kind-logo[data-logo="mysql"] {
+    color: var(--brand-mysql);
+  }
+
+  .kind-logo[data-logo="mariadb"] {
+    color: var(--brand-mariadb);
+  }
+
+  .kind-logo[data-logo="sqlite"] {
+    color: var(--brand-sqlite);
+  }
+
+  .kind-logo[data-logo="prometheus"] {
+    color: var(--brand-prometheus);
+  }
+
+  .kind-logo[data-logo="mongodb"] {
+    color: var(--brand-mongodb);
+  }
+
+  .kind-logo[data-logo="elasticsearch"] {
+    color: var(--brand-elasticsearch);
+  }
+
+  .kind-logo[data-logo="opensearch"] {
+    color: var(--brand-opensearch);
+  }
+
+  .kind-logo[data-logo="neo4j"] {
+    color: var(--brand-neo4j);
+  }
+
+  /* High contrast: the marks in the text color on the usual tile, as one-color shapes. */
+  :root[data-theme="contrast"] .kind-mark--logo {
+    background: var(--bg-surface);
+  }
+
+  :root[data-theme="contrast"] .kind-logo {
+    color: var(--text);
+  }
+
+  .ds-kinds__link .kind-mark {
+    grid-column: 2;
+    grid-row: 2 / 4;
   }
 
   .ds-secret {

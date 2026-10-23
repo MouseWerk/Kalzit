@@ -1,42 +1,52 @@
-# Data source marks
+# Data source logos
 
-Kalzit names every data source kind with its product name and shows a neutral line glyph for the
-kind of data it holds (table, file, metrics, documents, search index, graph, HTTP service). The
-glyphs are Kalzit's own drawings in `ui/src/features/datasources/kindMarks.tsx`; this folder holds
-no vendor artwork.
+Product names and logos are trademarks of their owners. Kalzit shows them only to identify the
+data source a connection is made to (nominative use, as other dashboard tools do), always next to
+the product's name and never as Kalzit's own branding. No endorsement by, sponsorship by or
+affiliation with their owners is implied.
 
-Product names and logos are trademarks of their owners. Kalzit uses the names only to identify
-the data source a connection is made to; this implies no endorsement by or affiliation with their
-owners.
+## Files
 
-## Why no vendor logos
+The SVG files in this folder are copied unchanged from Simple Icons, version **16.35.0** (npm
+package `simple-icons@16.35.0`, https://simpleicons.org, https://github.com/simple-icons/simple-icons).
+The Simple Icons collection is released under CC0 1.0 (public domain dedication); that license
+covers the drawings, not the trademarks they show. Simple Icons states in its `DISCLAIMER.md` that
+users must follow each brand's own guidelines. Kalzit bundles the files with the web interface
+(no runtime dependency, no remote loading) and draws each one as a single path in the brand color
+given by Simple Icons, on a light tile so that the dark marks stay visible in the dark theme, and
+in the text color in the high-contrast theme.
 
-Most vendors allow their names to identify a compatible product, but restrict their logos to
-licensees or require written permission, and several forbid showing their logo next to other
-logos or in another color. Reviewed on 2026-10-22:
+| File | Kind | Brand color | Source named by Simple Icons | Owner's guidelines |
+|---|---|---|---|---|
+| `postgresql.svg` | PostgreSQL | `#4169E1` | https://wiki.postgresql.org/wiki/Logo | https://www.postgresql.org/about/policies/trademarks/ |
+| `mysql.svg` | MySQL / MariaDB | `#4479A1` | https://www.mysql.com/about/legal/logos.html | https://www.mysql.com/about/legal/logos.html |
+| `mariadb.svg` | MySQL / MariaDB | `#003545` | https://mariadb.com/about-us/logos/ | https://mariadb.com/about-us/logos/ |
+| `sqlite.svg` | SQLite | `#003B57` | https://github.com/sqlite/sqlite (art/sqlite370.eps) | none published; https://sqlite.org/copyright.html for the code |
+| `prometheus.svg` | Prometheus | `#E6522C` | https://prometheus.io | https://www.linuxfoundation.org/legal/trademark-usage, https://cncf.io/brand-guidelines |
+| `mongodb.svg` | MongoDB | `#47A248` | https://www.mongodb.com/pressroom | https://www.mongodb.com/legal/trademark-usage-guidelines |
+| `elasticsearch.svg` | Elasticsearch / OpenSearch (prepared) | `#005571` | https://www.elastic.co/brand | https://www.elastic.co/legal/trademarks |
+| `opensearch.svg` | Elasticsearch / OpenSearch (prepared) | `#005EB8` | https://opensearch.org/trademark-brand-policy.html | https://opensearch.org/trademark-brand-policy.html |
+| `neo4j.svg` | Neo4j (prepared) | `#4581C3` | https://neo4j.com/brand/#logo | https://neo4j.com/brand/ |
 
-| Kind | Owner | Guidelines | Logo in Kalzit |
-|---|---|---|---|
-| PostgreSQL | PostgreSQL Community Association | https://www.postgresql.org/about/policies/trademarks/ | No: the marks may not be modified or shown with other logos without approval |
-| MySQL | Oracle | https://www.mysql.com/about/legal/logos.html | No: logo use in a product needs a written agreement |
-| MariaDB | MariaDB plc / Foundation | https://mariadb.com/about-us/logos/ | No: shares the kind with MySQL, which may not show a logo |
-| Microsoft SQL Server | Microsoft | https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general | No: Microsoft's logos may not be used by third parties |
-| SQLite | Hipp, Wyrick & Company | no published logo policy found | No: no permission on record |
-| Prometheus | Linux Foundation (CNCF) | https://www.linuxfoundation.org/legal/trademark-usage, https://cncf.io/brand-guidelines | No: logo use needs written permission |
-| MongoDB | MongoDB, Inc. | https://www.mongodb.com/legal/trademark-usage-guidelines | No: logo use for integrations is not covered |
-| Elasticsearch | Elastic N.V. | https://www.elastic.co/legal/trademarks | No: logos are reserved for resellers, distributors and licensees |
-| OpenSearch | Linux Foundation | https://opensearch.org/trademark-brand-policy.html | No: allowed for integrations, but shares the kind with Elasticsearch |
-| Neo4j | Neo4j, Inc. | Neo4j Trademark Guidelines, https://neo4j.com/?p=49003 | No: use needs a written agreement or express permission |
-| Memgraph | Memgraph Ltd. | no published logo policy found | No: no permission on record |
-| TigerGraph | TigerGraph, Inc. | https://www.tigergraph.com/tigergraph-brand-center/ | No: no permission for third-party use stated |
+"Prepared" kinds arrive with later changes; their logos are mapped in
+`ui/src/features/datasources/kindMarks.tsx` already.
 
-## Adding a logo later
+## Kinds without a logo
 
-A vendor logo may only be added with the owner's permission on record. Then:
+These keep Kalzit's neutral line glyph for their family of data:
 
-1. Put the unaltered official SVG here, with a light and a dark variant where the mark needs one,
-   and a one-color variant that follows `currentColor` for the contrast theme and small sizes.
-2. Add a row above with the source URL, the license or permission and the guideline link.
-3. Show it through `KindMark` (inline SVG or a same-origin asset only, never a remote URL; the
-   content security policy blocks those), decorative (`aria-hidden`) next to the product name.
-   Brand colors stay inside the mark; selection and focus styling stay neutral.
+| Kind | Why |
+|---|---|
+| Microsoft SQL Server | Not in Simple Icons (Microsoft brands were removed in Simple Icons 13.0.0 at Microsoft's request); Microsoft offers its product icons only for architecture diagrams and documentation, and its trademark guidelines (https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general) do not allow its logos in other products |
+| Memgraph | Not in Simple Icons; no official press kit found |
+| TigerGraph | Not in Simple Icons; the brand center (https://www.tigergraph.com/tigergraph-brand-center/) offers no file for third-party use |
+| File, HTTP JSON | Not products: Kalzit's own glyphs |
+
+## Adding a logo
+
+1. Copy the unaltered SVG from the Simple Icons version above (or, where Simple Icons has none, the
+   vendor's official press-kit file, unaltered) into this folder.
+2. Add a row above: file, kind, color, source and the owner's guideline link.
+3. Map it in `KIND_LOGOS` (`kindMarks.tsx`), add its `--brand-*` color to `tokens.css` and its
+   color rule to `datasources.css`. Logos are content: no brand color in selection, focus or
+   current-state styling.

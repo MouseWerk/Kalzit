@@ -142,6 +142,20 @@
     /* A data source kind's mark: in the picker's cards, and next to a name in lists. */
     --size-kind-mark: 2.5rem;
     --size-kind-mark-small: 1.5rem;
+    /*
+     * Data source logos are content: the marks keep their brand colors (from Simple Icons) on a
+     * light tile in both schemes, as several are dark blue. Never used for states.
+     */
+    --logo-tile: light-dark(oklch(100% 0 0), oklch(94% 0.004 286));
+    --brand-postgresql: #4169e1;
+    --brand-mysql: #4479a1;
+    --brand-mariadb: #003545;
+    --brand-sqlite: #003b57;
+    --brand-prometheus: #e6522c;
+    --brand-mongodb: #47a248;
+    --brand-elasticsearch: #005571;
+    --brand-opensearch: #005eb8;
+    --brand-neo4j: #4581c3;
     --auth-card-width: 26rem;
     --control-height: 2rem;
     --icon-size: 1rem;

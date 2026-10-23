@@ -213,9 +213,9 @@
   /*
    * While viewing, a panel's actions appear on hover or keyboard focus, so the canvas shows
    * titles and data, not rows of buttons. Hidden visually only: Tab still reaches them, and
-   * touch screens (no hover) always show them.
+   * touch screens (no hover, or any coarse pointer) always show them.
    */
-  @media (hover: hover) {
+  @media (hover: hover) and (not (any-pointer: coarse)) {
     .panel-card:not(.panel-card--editing, :hover, :focus-within) .panel-card__actions {
       clip-path: inset(50%);
     }

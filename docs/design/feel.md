@@ -249,21 +249,26 @@ Fixes (phase 2, in the files the open PRs rewrite):
 5. A performance budget test in e2e: typing 40 keys in the panel editor with 4x throttling must
    stay under 50 ms p95 Event Timing; dragging must not produce long tasks over 50 ms.
 
-## 11. Data source marks
+## 11. Data source logos
 
-The owner asked for official logos. Most vendors restrict logo use by other products (Oracle for
-MySQL, Microsoft, Elastic and Neo4j need a written agreement; PostgreSQL forbids showing its mark
-with other logos without approval; the CNCF needs written permission for Prometheus). Kalzit
-therefore shows a neutral line glyph per family of data (table, file, metrics, documents, search,
-HTTP, graph) next to the product name, which every vendor allows. The registry
-(`ui/src/features/datasources/kindMarks.tsx`) already maps the kinds of the open source PRs
-(#22 graph sources, #24 search and files), so they only add their one-line summaries to the
-catalogs. `ui/src/assets/logos/NOTICE.md` records the guideline per vendor and how to add a logo
-once permission is on record. Marks follow `currentColor`, so they work in every theme.
+The owner decided to show the real vendor logos, in nominative use (to identify the data source,
+next to its name, no endorsement implied), as other dashboard tools do. The marks come unchanged
+from Simple Icons 16.35.0 (CC0), copied into `ui/src/assets/logos/` (no runtime dependency) and
+bundled as inline SVG paths, so the content security policy stays strict. Each logo is drawn in
+its brand color on a light tile in both schemes, because several marks are dark blue and would
+vanish on dark; the contrast theme draws them in the text color. A kind for two products (MySQL
+and MariaDB, Elasticsearch and OpenSearch) shows both marks. SQL Server, Memgraph and TigerGraph
+have no file their owners allow to be copied, and file and HTTP JSON are no products: they keep
+Kalzit's neutral glyph for their family of data. Logos are content: no brand color in any
+selection, focus or current-state styling. `ui/src/assets/logos/NOTICE.md` records source,
+version, license and guideline per logo; the README carries the trademark notice.
 
-Places: the kind picker (cards with mark, name and summary), the list rows and the form header
-(done); the Explore source picker and the query editor header (phase 2, files owned by #27, #29,
-#30).
+The registry (`ui/src/features/datasources/kindMarks.tsx`) already maps the kinds of the open
+source PRs (#22 graph sources, #24 search and files), so they only add their one-line summaries.
+
+Places: the kind picker (cards named by the product, described by the summary), the list rows and
+the form header (done); the Explore source picker and the query editor header (phase 2, files
+owned by #27, #29, #30).
 
 ## 12. Collisions with the open PRs
 
@@ -286,3 +291,16 @@ Places: the kind picker (cards with mark, name and summary), the list rows and t
    the full-page panel editor, panel menu, loading bar, toolbar row, monochrome charts, start page
    and sidebar after the reference.
 3. After #27, #29 and #30: Explore layout, kind marks in the source pickers and editor headers.
+
+## 14. Phase 2 targets from the review of the quick wins
+
+- Page header as breadcrumbs plus quiet icon buttons with an overflow menu; Edit in view mode as a
+  secondary button, not the copper primary (copper stays for Save and the one main action).
+- Stat tiles as in the reference: small label, large number, a sparkline in a well behind a
+  vertical hairline.
+- Radii and spacing a little closer to the reference: cards 12 px, card padding 16 to 20 px,
+  12 to 16 px gaps on the start page and lists (the dashboard grid stays at 8 px).
+- Monochrome chart defaults: near-white or near-black main line, dashed grey comparison series,
+  faint horizontal grid only.
+- Sidebar: workspace switcher card, thin dividers between nav groups, keyboard hints (`/` for
+  search, the palette shortcut) shown as keycaps.
