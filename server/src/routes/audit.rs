@@ -322,5 +322,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(ids(list(&state, viewer(), query()).await.unwrap().0), ["6", "5", "4", "3", "2"]);
+        crate::app::finish_test_app(state, dir).await;
     }
 }
