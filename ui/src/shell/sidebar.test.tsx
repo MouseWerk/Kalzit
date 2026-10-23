@@ -16,7 +16,8 @@ async function openShell(path = "/", user = TEST_USER) {
   installFakeServer({ signedIn: true, user });
   const rendered = renderApp(path);
   const nav = await screen.findByRole("navigation", { name: "Main navigation" });
-  const toggle = screen.getByRole("button", { name: "Sidebar" });
+  // In the content header; left out where the sidebar is a bar on top.
+  const toggle = screen.queryByRole("button", { name: "Sidebar" }) as HTMLElement;
   const shell = document.querySelector<HTMLElement>(".shell");
   if (shell === null) {
     throw new Error("no shell");
@@ -126,11 +127,32 @@ describe("collapsible sidebar", () => {
     expect(shell.dataset.sidebar).toBe("collapsed");
   });
 
+  it("puts the toggle at the top left of the content, before the breadcrumbs", async () => {
+    const { toggle, user, shell } = await openShell("/admin/members");
+    const header = toggle.closest(".shell__header");
+    expect(header?.closest("main")).not.toBeNull();
+    const crumbs = await within(header as HTMLElement).findByRole("navigation", {
+      name: "Breadcrumbs",
+    });
+    expect(toggle.compareDocumentPosition(crumbs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggle.getAttribute("aria-controls")).toBe(document.querySelector("header")?.id);
+    expect(toggle.getAttribute("aria-keyshortcuts")).toBe("Control+B");
+    expect(toggle.getAttribute("title")).toContain("Ctrl+B");
+    // It stays in the header with the rail, and brings the column back.
+    await user.click(toggle);
+    expect(shell.dataset.sidebar).toBe("collapsed");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.closest("main")).not.toBeNull();
+    await user.click(toggle);
+    expect(shell.dataset.sidebar).toBe("expanded");
+  });
+
   it("has no rail on narrow screens, and Ctrl+B does nothing there", async () => {
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
     const layout = stubMatchMedia(false);
-    const { user, shell } = await openShell();
+    const { user, shell, toggle } = await openShell();
     expect(shell.dataset.sidebar).toBe("expanded");
+    expect(toggle).toBeNull();
     await user.keyboard("{Control>}b{/Control}");
     expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe("true");
     // Wide again, the remembered rail comes back.

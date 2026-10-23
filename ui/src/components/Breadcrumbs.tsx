@@ -1,5 +1,7 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
+import { createPortal } from "react-dom";
 import { useI18n } from "../i18n/i18n";
+import { useCrumbSlot } from "../shell/shellContext";
 import "../shell/shellUx.css";
 
 export interface Crumb {
@@ -10,14 +12,16 @@ export interface Crumb {
 
 /**
  * Where the page lies: a trail of links up to the current page, which is named last and marked
- * with `aria-current`. The page's own heading stays the h1.
+ * with `aria-current`. The page's own heading stays the h1. Inside the app shell the trail sits
+ * in the content header, right after the sidebar toggle; elsewhere where it is rendered.
  */
 export function Breadcrumbs({ crumbs }: { crumbs: readonly Crumb[] }) {
   const { t } = useI18n();
+  const slot = useCrumbSlot();
   if (crumbs.length === 0) {
     return null;
   }
-  return (
+  const trail = (
     <nav className="breadcrumbs" aria-label={t("shell.breadcrumbs")}>
       <ol className="breadcrumbs__list">
         {crumbs.map((crumb, index) => {
@@ -44,6 +48,7 @@ export function Breadcrumbs({ crumbs }: { crumbs: readonly Crumb[] }) {
       </ol>
     </nav>
   );
+  return slot === null ? trail : createPortal(trail, slot);
 }
 
 /** Folder names from the top down to `folderId`, from a flat folder list. */

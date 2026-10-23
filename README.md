@@ -18,6 +18,10 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
   a query) reach the database as parameters, never as text in the query.
 - **Explore**: write a query, see the result in a matching visualization, inspect it and add it
   to a dashboard.
+- **Start page and navigation**: a greeting with the organization in numbers (dashboards, data
+  sources, members, changes of the last days), starred and recently opened dashboards as cards,
+  a first-steps checklist built from real data, search with `/` or Ctrl+K, and a sidebar that
+  collapses to an icon rail.
 - **Data sources**: PostgreSQL, MySQL/MariaDB, SQL Server, SQLite and Prometheus, and MongoDB on
   the server side (its results keep their document shape; the query editor and document views
   in the interface follow). Read-only by default (queries that change data are refused on the server), secrets stored encrypted, and
@@ -30,16 +34,16 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 
 | | |
 |---|---|
-| ![Dashboard in the dark theme](docs/screenshots/dashboard-dark.png) | ![Explore with a time series](docs/screenshots/explore.png) |
-| Dashboard, dark theme | Explore |
+| ![Start page with the organization in numbers and dashboards as cards](docs/screenshots/start.png) | ![Dashboard in the dark theme](docs/screenshots/dashboard-dark.png) |
+| Start page | Dashboard, dark theme |
 | ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
 | Dashboards | Your account: sessions |
 | ![Data source kinds as cards with their logos](docs/screenshots/data-source-kinds-light.png) | ![Data source kinds in the dark theme](docs/screenshots/data-source-kinds-dark.png) |
 | Adding a data source | Adding a data source, dark theme |
-| ![Sign-in page](docs/screenshots/sign-in.png) | |
-| Sign in | |
+| ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page](docs/screenshots/sign-in.png) |
+| Explore | Sign in |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
 

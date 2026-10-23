@@ -1,28 +1,9 @@
 @layer components {
   /*
-   * Pieces the data areas share (dialogs, small buttons, tables, check boxes). Every module that
+   * Pieces the data areas share (dialogs, tables, check boxes). Every module that
    * renders them imports this sheet, so they are styled on any page that loads first; they move
    * to styles/components.css unchanged once that file takes them.
    */
-
-  .button--ghost {
-    background: transparent;
-    color: var(--text);
-  }
-
-  .button--ghost:hover:not(:disabled, [aria-disabled="true"]) {
-    background: var(--bg-hover);
-  }
-
-  .button--ghost:disabled {
-    color: var(--text-muted);
-  }
-
-  .button--small {
-    min-height: calc(var(--control-height) - var(--space-2));
-    padding: var(--space-1) var(--space-2);
-    font-size: var(--font-size-sm);
-  }
 
   .button--danger {
     background: var(--danger-bg);
@@ -69,22 +50,41 @@
     color: var(--success-text);
   }
 
+  /*
+   * Lists as a card: one hairline frame with soft corners on the raised surface, a quiet header
+   * row on the sunken one, 36 px rows with hairlines between them and a neutral tint on hover.
+   */
   .data-table {
     width: 100%;
-    border-collapse: collapse;
+    border: var(--border-width) solid var(--border);
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--bg-raised);
     font-size: var(--font-size-sm);
   }
 
   .data-table th,
   .data-table td {
-    padding: var(--space-2) var(--space-3);
+    height: var(--size-row);
+    padding: var(--space-1) var(--space-3);
     border-bottom: var(--border-width) solid var(--border);
     text-align: start;
     vertical-align: middle;
     overflow-wrap: anywhere;
   }
 
+  .data-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .data-table tbody tr:hover td {
+    background: var(--bg-hover);
+  }
+
   .data-table th {
+    background: var(--bg-surface);
     color: var(--text-muted);
     font-weight: var(--font-weight-medium);
   }
@@ -101,6 +101,54 @@
   .data-table a {
     color: var(--text);
     font-weight: var(--font-weight-medium);
+  }
+
+  /*
+   * On phones a stacking table shows each row as a small card of lines (name, then the other
+   * cells), instead of columns so narrow that words break letter by letter.
+   */
+  @media (max-width: 40rem) {
+    .data-table--stack,
+    .data-table--stack tbody {
+      display: block;
+    }
+
+    .data-table--stack thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .data-table--stack tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-1);
+      padding: var(--space-2) var(--space-3);
+      border-bottom: var(--border-width) solid var(--border);
+    }
+
+    .data-table--stack tbody tr:last-child {
+      border-bottom: 0;
+    }
+
+    .data-table--stack tbody tr:hover {
+      background: var(--bg-hover);
+    }
+
+    .data-table--stack td {
+      height: auto;
+      padding: 0;
+      border-bottom: 0;
+      overflow-wrap: break-word;
+    }
+
+    .data-table--stack .data-table__actions {
+      white-space: normal;
+      text-align: start;
+    }
   }
 
   /* Dialogs */

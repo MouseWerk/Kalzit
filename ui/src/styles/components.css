@@ -99,6 +99,27 @@
     width: 100%;
   }
 
+  /* Quiet buttons: no fill until hovered; and a smaller size for rows and cards. */
+
+  .button--ghost {
+    background: transparent;
+    color: var(--text);
+  }
+
+  .button--ghost:hover:not(:disabled, [aria-disabled="true"]) {
+    background: var(--bg-hover);
+  }
+
+  .button--ghost:disabled {
+    color: var(--text-muted);
+  }
+
+  .button--small {
+    min-height: calc(var(--control-height) - var(--space-2));
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
   /* Forms */
 
   .form {
@@ -309,8 +330,8 @@
     flex-direction: column;
     min-width: 0;
     height: 100dvh;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-2);
+    gap: var(--space-2);
+    padding: var(--space-3);
     border-inline-end: var(--border-width) solid var(--border);
     background: var(--bg-surface);
   }
@@ -320,29 +341,6 @@
     align-items: center;
     gap: var(--space-1);
     min-width: 0;
-  }
-
-  .shell__brand {
-    display: grid;
-    flex: 1;
-    min-width: 0;
-    padding-inline: var(--space-2);
-    color: var(--text);
-    text-decoration: none;
-  }
-
-  .shell__brand-name {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: var(--nav-row-height);
-    font-weight: var(--font-weight-semibold);
-    white-space: nowrap;
-  }
-
-  .shell__org {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
 
   /* Icon buttons in the sidebar: the collapse toggle and the disclosure chevrons. */
@@ -381,7 +379,7 @@
   .shell__nav-list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-px);
+    gap: var(--space-half);
     padding: 0;
     list-style: none;
   }
@@ -396,7 +394,7 @@
     border: var(--border-width) solid transparent;
     border-radius: var(--radius-md);
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-md);
     font-weight: var(--font-weight-medium);
     text-decoration: none;
     white-space: nowrap;
@@ -408,6 +406,7 @@
   /* Sub-pages have no icon to fall back on, so a long name wraps instead of being cut. */
   .nav-sublink {
     padding-block: var(--space-1);
+    font-size: var(--font-size-sm);
     line-height: var(--line-height-tight);
     white-space: normal;
     overflow-wrap: anywhere;
@@ -574,12 +573,6 @@
     gap: var(--space-2);
   }
 
-  .shell[data-sidebar="collapsed"] .shell__brand {
-    flex: none;
-    padding-inline: 0;
-  }
-
-  .shell[data-sidebar="collapsed"] .shell__brand-text,
   .shell[data-sidebar="collapsed"] .nav-link__label {
     position: absolute;
     width: 1px;
@@ -587,10 +580,6 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  .shell[data-sidebar="collapsed"] .shell__org {
-    display: none;
   }
 
   .shell[data-sidebar="collapsed"] .nav-link {

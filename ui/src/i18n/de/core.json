@@ -77,6 +77,5 @@
   "notFound.text": "Diese Adresse gibt es nicht. Vielleicht wurde sie verschoben oder falsch eingegeben.",
   "notFound.home": "Zur Startseite",
   "home.title": "Start",
-  "home.welcome": "Willkommen, {name}",
-  "home.lead": "Deine markierten und zuletzt geöffneten Dashboards und was du als Nächstes tun kannst."
+  "home.welcome": "Willkommen, {name}"
 }
