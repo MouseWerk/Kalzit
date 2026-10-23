@@ -590,6 +590,9 @@ mod tests {
         };
         assert_eq!(request_scope(nothing_saved).await, "busy");
         assert!(!committed(), "outside a request scope nothing is marked");
+        holder.close().await.unwrap();
+        pool.close().await;
+        dir.close().unwrap();
     }
 
     #[tokio::test]
@@ -602,6 +605,9 @@ mod tests {
         // busy; a deferred BEGIN would have succeeded and failed only at a later write.
         let e = begin(&pool).await.unwrap_err();
         assert_eq!(crate::error::ApiError::from(e).code, "busy");
+        drop(_first);
+        pool.close().await;
+        dir.close().unwrap();
     }
 
     #[tokio::test]
@@ -625,6 +631,7 @@ mod tests {
         }
         drop((a, b));
         pool.close().await;
+        dir.close().unwrap();
         // In memory there is no WAL; that is no error.
         connect_with("sqlite::memory:", 1, Duration::from_millis(10)).await.unwrap();
     }

@@ -45,7 +45,22 @@ struct T {
     app: Router,
     org: String,
     cookie: String,
-    _dir: tempfile::TempDir,
+    state: AppState,
+    dir: Arc<tempfile::TempDir>,
+}
+
+impl T {
+    /// Stops the app and deletes its data directory (`common::Finish`).
+    async fn finish(self) {
+        let finish = self.finisher();
+        drop(self);
+        finish.finish().await;
+    }
+
+    /// What `finish` does, for a test that hands the app on by value.
+    fn finisher(&self) -> common::Finish {
+        common::Finish::new(self.state.clone(), self.dir.clone())
+    }
 }
 
 impl T {
@@ -57,7 +72,7 @@ impl T {
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let state = AppState::new(config, pool, clock, Some(SETUP_CODE.into())).await.unwrap();
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-        let app = router(state).layer(MockConnectInfo(peer));
+        let app = router(state.clone()).layer(MockConnectInfo(peer));
         let body = json!({ "token": SETUP_CODE, "orgName": "Test", "name": "Jörg", "email": "joerg@example.de",
                            "password": "Grün und sicher 2026" });
         let req = Request::builder()
@@ -73,7 +88,7 @@ impl T {
             res.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         let me: Value = serde_json::from_slice(&bytes).unwrap();
-        T { app, org: me["orgs"][0]["id"].as_str().unwrap().to_string(), cookie, _dir: dir }
+        T { app, org: me["orgs"][0]["id"].as_str().unwrap().to_string(), cookie, state, dir: Arc::new(dir) }
     }
 
     async fn send(&self, method: Method, rest: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -346,4 +361,5 @@ async fn mongodb_reads_with_a_read_only_login_and_refuses_more() {
     assert!(!h.to_string().contains("falsch-pw-ci"), "{h}");
 
     f.cleanup().await;
+    t.finish().await;
 }

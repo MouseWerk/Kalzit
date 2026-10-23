@@ -25,10 +25,17 @@ struct T {
     state: AppState,
     org: String,
     cookie: String,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 impl T {
+    /// Closes the app and deletes its directory (`app::finish_test_app`).
+    async fn finish(self) {
+        let T { app, state, dir, .. } = self;
+        drop(app);
+        crate::app::finish_test_app(state, dir).await;
+    }
+
     async fn new() -> T {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
@@ -54,7 +61,7 @@ impl T {
             res.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         let me: Value = serde_json::from_slice(&bytes).unwrap();
-        T { app, state, org: me["orgs"][0]["id"].as_str().unwrap().to_string(), cookie, _dir: dir }
+        T { app, state, org: me["orgs"][0]["id"].as_str().unwrap().to_string(), cookie, dir }
     }
 
     async fn send(&self, method: Method, rest: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -162,6 +169,7 @@ async fn the_kind_is_listed_with_its_form() {
     assert_eq!(field("password")["secret"], true);
     assert_eq!(field("port")["default"], 27017);
     assert_eq!(field("maxResponseBytes")["target"], false);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -176,6 +184,7 @@ async fn saving_refuses_blocked_targets_and_bad_settings() {
         t.create("Srv", json!({ "hosts": "a.example.com,b.example.com", "srv": true, "database": "shop" })).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["reason"], "mongodb.srv_host", "{body}");
+    t.finish().await;
 }
 
 /// The driver's connections, also to names it resolves itself, pass the target rules: with only
@@ -210,6 +219,7 @@ async fn every_connection_of_the_driver_passes_the_target_rules() {
     let r = t.query(&id, json!({ "collection": "orders", "pipeline": "[]" })).await;
     assert_eq!(r["error"]["code"], "datasource_target_blocked", "{r}");
     assert_eq!(r["error"]["reason"], "target.not_allowed");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -268,6 +278,7 @@ async fn a_read_only_login_queries_documents_with_their_types() {
     assert_eq!(schema["kind"], "collections");
     assert_eq!(schema["database"], "shop");
     assert_eq!(schema["collections"], json!([]), "no collections listed by the fake yet");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -303,6 +314,7 @@ async fn the_schema_lists_collections_indexes_and_sampled_fields() {
     );
     assert_eq!(schema["collections"][0]["type"], "view");
     assert_eq!(schema["collections"][0]["indexes"], json!([]));
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -350,6 +362,7 @@ async fn limits_cut_the_set_and_the_cursor_continues_it() {
     assert!(set["documents"].as_array().unwrap().len() < 5, "{r}");
     assert!(set["notices"].as_array().unwrap().iter().any(|n| n["code"] == "documents.size_limit"), "{r}");
     assert!(set["nextCursor"].is_string());
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -390,6 +403,7 @@ async fn refused_queries_never_reach_the_server() {
     let after: Vec<String> =
         fake.commands.lock().unwrap()[before..].iter().filter_map(|c| c.keys().next().cloned()).collect();
     assert!(!after.iter().any(|c| c == "aggregate" || c == "find"), "{after:?}");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -425,6 +439,7 @@ async fn logins_that_may_do_more_than_read_are_refused() {
     let (_, h) = t.send(Method::POST, &format!("/datasources/{id}/health"), Some(json!({}))).await;
     assert_eq!(h["ok"], false, "{h}");
     assert_eq!(h["reason"], "mongodb.login_not_read_only");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -438,6 +453,7 @@ async fn an_unreachable_server_does_not_stop_the_save() {
     let (_, h) = t.send(Method::POST, &format!("/datasources/{id}/health"), Some(json!({}))).await;
     assert_eq!(h["ok"], false, "{h}");
     assert_eq!(h["code"], "datasource_error", "{h}");
+    t.finish().await;
 }
 
 /// "Test connection" checks the login again, also with a client built before its rights grew.
@@ -457,6 +473,7 @@ async fn test_connection_checks_the_privileges_again() {
     assert_eq!(h["ok"], false, "{h}");
     assert_eq!(h["reason"], "mongodb.login_not_read_only");
     assert_eq!(h["params"]["action"], "remove");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -489,6 +506,7 @@ async fn a_find_limit_of_zero_is_no_limit_and_documents_keep_their_order() {
         at("_id") < at("n") && at("n") < at("gross") && at("gross") < at("betrag") && at("ts") < at("bild"),
         "{text}"
     );
+    t.finish().await;
 }
 
 /// A replica set member announced as a Unix socket path refuses the whole source, also for the
@@ -506,4 +524,5 @@ async fn a_member_named_as_a_unix_socket_refuses_the_source() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["error"]["code"], "datasource_target_blocked");
     assert_eq!(body["error"]["reason"], "mongodb.socket_member");
+    t.finish().await;
 }
