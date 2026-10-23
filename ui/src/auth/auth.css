@@ -1,0 +1,391 @@
+/*
+ * The pages before the app shell: sign-in and setup. Wide screens split into a quiet brand panel
+ * (one layer below the canvas, as the sidebar) and the form column; narrow screens keep only the
+ * mark above the form. Graphite and hairlines as in the app, the copper only on the one primary
+ * button.
+ */
+@layer components {
+  .auth {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 100dvh;
+    background: var(--bg);
+  }
+
+  .auth__aside {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-4) var(--space-4) 0;
+  }
+
+  .auth__story,
+  .auth__fineprint {
+    display: none;
+  }
+
+  .auth__brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* The mark on a tile, as in the workspace card of the sidebar. */
+  .auth__mark {
+    display: grid;
+    width: var(--size-switcher-mark);
+    height: var(--size-switcher-mark);
+    place-items: center;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .auth__main {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    justify-items: center;
+    gap: var(--space-8);
+    padding: var(--space-8) var(--space-4) var(--space-4);
+  }
+
+  .auth__column {
+    display: grid;
+    align-self: center;
+    width: 100%;
+    max-width: var(--auth-card-width);
+    gap: var(--space-5);
+  }
+
+  .auth__column--wide {
+    max-width: var(--auth-card-width-wide);
+  }
+
+  .auth__header {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .auth__header h1 {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
+    letter-spacing: var(--letter-spacing-display);
+  }
+
+  .auth__lead {
+    color: var(--text-muted);
+  }
+
+  .auth__panel {
+    padding: var(--space-6);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .auth__notice {
+    margin-block-end: var(--space-4);
+  }
+
+  .auth__notice .icon {
+    color: var(--success-text);
+  }
+
+  /* A field the server or the check refused: the danger tint as a fill, never a frame. */
+  .auth .input[aria-invalid="true"] {
+    background: var(--danger-bg);
+  }
+
+  .auth__submit {
+    min-height: calc(var(--control-height) + var(--space-2));
+  }
+
+  .auth__spinner {
+    width: var(--icon-size);
+    height: var(--icon-size);
+    border: calc(var(--border-width) * 2) solid currentColor;
+    border-block-start-color: transparent;
+    border-radius: var(--radius-pill);
+    animation: auth-spin var(--duration-spin) linear infinite;
+  }
+
+  @keyframes auth-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  /* Setup: three numbered groups, divided by hairlines. */
+  .auth__group {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .auth__group + .auth__group {
+    padding-block-start: var(--space-5);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  /* Floated, so the legend is a plain row of the group and not drawn into its top edge. */
+  .auth__legend {
+    float: inline-start;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .auth__step {
+    display: inline-grid;
+    width: var(--size-auth-step);
+    height: var(--size-auth-step);
+    place-items: center;
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text);
+    font-size: var(--font-size-2xs);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Language and theme: one compact row under the form. */
+  .auth__footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    justify-content: center;
+    max-width: 100%;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .auth__select {
+    min-height: calc(var(--control-height) - var(--space-1));
+    padding-block: 0;
+    padding-inline-start: var(--space-2);
+    background: transparent;
+    border-color: var(--border);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Password fields: a show/hide toggle inside the input, caps-lock warning and strength below. */
+  .password {
+    position: relative;
+    display: grid;
+  }
+
+  .password__input {
+    padding-inline-end: var(--space-10);
+  }
+
+  /* Edge draws its own reveal button; the toggle next to the input replaces it. */
+  .password__input::-ms-reveal {
+    display: none;
+  }
+
+  .password__toggle {
+    position: absolute;
+    inset-block: var(--space-px);
+    inset-inline-end: var(--space-px);
+    display: grid;
+    width: calc(var(--control-height) - var(--space-1));
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      color var(--duration-fast) var(--easing);
+  }
+
+  .password__toggle:hover,
+  .password__toggle[aria-pressed="true"] {
+    color: var(--text);
+  }
+
+  .password__toggle:hover {
+    background: var(--bg-hover);
+  }
+
+  .password__status:empty {
+    display: none;
+  }
+
+  .password__caps {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--warning-text);
+    font-size: var(--font-size-sm);
+  }
+
+  .strength {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .strength__bars {
+    display: inline-flex;
+    flex: none;
+    gap: var(--space-1);
+  }
+
+  .strength__bar {
+    width: var(--space-5);
+    height: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+  }
+
+  .strength__bar--on {
+    background: var(--text-muted);
+  }
+
+  /* The drawing of the three shapes, in the monochrome chart style. */
+  .shapes {
+    width: 100%;
+    max-width: var(--size-auth-art);
+    height: auto;
+    overflow: visible;
+  }
+
+  .shapes__card {
+    rx: var(--radius-lg);
+    fill: var(--bg-raised);
+    stroke: var(--border);
+  }
+
+  .shapes__label {
+    fill: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-2xs);
+    font-variant-ligatures: none;
+  }
+
+  .shapes__key {
+    fill: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-2xs);
+    font-variant-ligatures: none;
+  }
+
+  .shapes__grid {
+    stroke: var(--border);
+  }
+
+  .shapes__hatch {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .shapes__line {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: 1.75;
+    stroke-linecap: round;
+  }
+
+  .shapes__compare {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.25;
+    stroke-dasharray: 4 4;
+  }
+
+  .shapes__caret {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .shapes__bar {
+    rx: var(--radius-sm);
+    fill: var(--bg-active);
+  }
+
+  .shapes__edge {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .shapes__edge--path {
+    stroke: var(--text);
+    stroke-width: 1.5;
+  }
+
+  .shapes__node {
+    fill: var(--bg-raised);
+    stroke: var(--border-strong);
+    stroke-width: 1.25;
+  }
+
+  .shapes__node--path {
+    fill: var(--text);
+    stroke: var(--text);
+  }
+
+  @media (min-width: 64rem) {
+    .auth {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      grid-template-rows: none;
+    }
+
+    .auth__aside {
+      gap: var(--space-10);
+      justify-content: space-between;
+      padding: var(--space-10) var(--space-12) var(--space-8);
+      border-inline-end: var(--border-width) solid var(--border);
+      background: var(--bg-surface);
+    }
+
+    .auth__story {
+      display: grid;
+      gap: var(--space-10);
+    }
+
+    .auth__pitch {
+      display: grid;
+      gap: var(--space-3);
+      max-width: var(--size-text-max);
+    }
+
+    .auth__fineprint {
+      display: block;
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+    }
+
+    /* The website's display serif carries the product line, as its headlines do there. */
+    .auth__tagline {
+      color: var(--text);
+      font-family: var(--font-display);
+      font-size: var(--font-size-display);
+      font-weight: var(--font-weight-display);
+      line-height: var(--line-height-tight);
+      letter-spacing: var(--letter-spacing-display);
+      text-wrap: balance;
+    }
+
+    .auth__pitch-lead {
+      color: var(--text-muted);
+    }
+
+    .auth__main {
+      padding: var(--space-10) var(--space-8) var(--space-8);
+    }
+  }
+}

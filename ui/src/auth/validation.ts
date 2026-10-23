@@ -148,6 +148,31 @@ export function validateSetup(values: SetupValues): FieldErrors<SetupField> {
   });
 }
 
+export type PasswordStrengthLevel = "empty" | "short" | "fair" | "strong";
+
+const CHARACTER_KINDS = [/\p{Ll}/u, /\p{Lu}/u, /\p{N}/u, /[^\p{L}\p{N}]/u];
+
+/**
+ * A rough guide while a new password is typed, not a rule: the server only checks the length.
+ * Length counts most; mixing lower and upper case, digits and other characters helps a shorter
+ * password.
+ */
+export function passwordStrength(password: string): {
+  level: PasswordStrengthLevel;
+  length: number;
+} {
+  const length = characterCount(password);
+  if (length === 0) {
+    return { level: "empty", length };
+  }
+  if (length < MIN_PASSWORD_LENGTH) {
+    return { level: "short", length };
+  }
+  const kinds = CHARACTER_KINDS.filter((kind) => kind.test(password)).length;
+  const strong = length >= 20 || (length >= 16 && kinds >= 3);
+  return { level: strong ? "strong" : "fair", length };
+}
+
 /** The form field a server `validation` error names, if it is one of this form's fields. */
 export function fieldFromServer<Field extends string>(
   order: readonly Field[],

@@ -424,6 +424,7 @@ describe("motion and typography", () => {
       "--duration-fast: 0ms",
       "--duration-normal: 0ms",
       "--duration-pulse: 0ms",
+      "--duration-spin: 0ms",
     ]);
     // Each zeroing block must come after the block that declares the duration, or it loses.
     const tokenRules = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];

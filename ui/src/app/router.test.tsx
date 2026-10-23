@@ -194,9 +194,16 @@ describe("parseLoginSearch", () => {
     expect(parseLoginSearch({ redirect: "/explore?q=1" })).toEqual({ redirect: "/explore?q=1" });
   });
 
+  it("keeps the signed-out marker only as true", () => {
+    expect(parseLoginSearch({ signedOut: true }).signedOut).toBe(true);
+    expect(parseLoginSearch({ signedOut: "true" }).signedOut).toBe(true);
+    expect(parseLoginSearch({ signedOut: "yes" }).signedOut).toBeUndefined();
+    expect(parseLoginSearch({ signedOut: 1 }).signedOut).toBeUndefined();
+  });
+
   it("overrides absolute, protocol-relative and non-string targets with undefined", () => {
     // The key must be present: the router merges this result over the raw search.
-    const dropped = { redirect: undefined };
+    const dropped = { redirect: undefined, signedOut: undefined };
     expect(parseLoginSearch({ redirect: "https://evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: "//evil.example/" })).toStrictEqual(dropped);
     expect(parseLoginSearch({ redirect: 42 })).toStrictEqual(dropped);
@@ -368,7 +375,7 @@ describe("login", () => {
     const { user } = renderApp("/login");
     await signIn(user);
     expect(
-      await screen.findByText("Too many attempts. Wait a moment, then try again."),
+      await screen.findByText("Too many failed sign-ins. Wait a few minutes, then try again."),
     ).toBeTruthy();
     expect(screen.queryByText(/server message/)).toBeNull();
   });

@@ -16,6 +16,8 @@ export interface RouterContext {
 
 export interface LoginSearch {
   redirect?: string | undefined;
+  /** Set by signing out, so the sign-in page confirms it. */
+  signedOut?: true | undefined;
 }
 
 /**
@@ -24,7 +26,10 @@ export interface LoginSearch {
  * unchecked value from the URL.
  */
 export function parseLoginSearch(search: Record<string, unknown>): LoginSearch {
-  return { redirect: safeRedirect(search.redirect) };
+  return {
+    redirect: safeRedirect(search.redirect),
+    signedOut: search.signedOut === true || search.signedOut === "true" ? true : undefined,
+  };
 }
 
 async function isSetupNeeded(queryClient: QueryClient): Promise<boolean> {

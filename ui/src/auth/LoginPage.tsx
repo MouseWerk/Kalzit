@@ -4,10 +4,13 @@ import { type FormEvent, useRef, useState } from "react";
 import { forgetAccountData, login, meQuery } from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { FormAlert } from "../components/FormAlert";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AuthLayout } from "./AuthLayout";
+import { PasswordField } from "./PasswordField";
+import "./auth.css";
 import {
   type FieldErrors,
   fieldFromServer,
@@ -96,13 +99,23 @@ export function LoginPage() {
     const error = errors[field];
     return error === undefined ? undefined : t(error.key, error.params);
   };
-  const serverError: MessageKey | null =
-    signIn.error === null || fieldFromServer(FIELD_ORDER, signIn.error) !== undefined
-      ? null
-      : `errors.${errorCode(signIn.error)}`;
+  let serverError: MessageKey | null = null;
+  if (signIn.error !== null && fieldFromServer(FIELD_ORDER, signIn.error) === undefined) {
+    const code = errorCode(signIn.error);
+    // The sign-in limit counts failures over minutes, so "a moment" would undersell the wait.
+    serverError = code === "rate_limited" ? "login.rateLimited" : `errors.${code}`;
+  }
+  // The confirmation of a sign-out gives way to whatever the next attempt brings.
+  const signedOut = search.signedOut === true && signIn.isIdle;
 
   return (
     <AuthLayout title={t("login.title")} lead={t("login.lead")}>
+      {signedOut ? (
+        <p className="notice auth__notice" role="status">
+          <Icon name="check" />
+          <span>{t("login.signedOut")}</span>
+        </p>
+      ) : null}
       <FormAlert>{serverError === null ? null : t(serverError)}</FormAlert>
       <form className="form" noValidate onSubmit={onSubmit} onKeyDown={preventComposingSubmit}>
         <TextField
@@ -119,13 +132,11 @@ export function LoginPage() {
           onValueChange={edit("email", setEmail)}
           error={fieldError("email")}
         />
-        <TextField
+        <PasswordField
           ref={refs.password}
           label={t("login.password")}
-          type="password"
           name="password"
           autoComplete="current-password"
-          required
           value={password}
           onValueChange={edit("password", setPassword)}
           error={fieldError("password")}
@@ -133,9 +144,10 @@ export function LoginPage() {
         <div className="form__actions">
           <button
             type="submit"
-            className="button button--primary button--block"
+            className="button button--primary button--block auth__submit"
             aria-disabled={signIn.isPending}
           >
+            {signIn.isPending ? <span className="auth__spinner" aria-hidden="true" /> : null}
             {signIn.isPending ? t("login.submitting") : t("login.submit")}
           </button>
         </div>
