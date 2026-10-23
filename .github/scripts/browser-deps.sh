@@ -66,35 +66,45 @@ restore_cache() {
   if [ -z "$cache" ] || [ ! -d "$cache" ]; then
     return
   fi
-  count=$(find "$cache" -maxdepth 1 -name '*.deb' | wc -l)
+  count=$(find "$cache" -maxdepth 1 -name '*.deb' | wc -l) || return 1
   if [ "$count" -gt 0 ]; then
-    as_root cp "$cache"/*.deb "$archives/"
+    as_root cp "$cache"/*.deb "$archives/" || return 1
   fi
   echo "handed $count cached packages to apt"
 }
 
-# Keeps the downloaded packages whose version is the one installed now.
+# Keeps the downloaded packages that are installed now, in that version and architecture: one
+# package can be installed for several architectures (multiarch), each a line of its own.
+# Called only where a failure is reported and ignored, so every step returns on an error.
 save_cache() {
-  local deb package version kept=0
+  local deb entry installed kept=0
   if [ -z "$cache" ]; then
-    return
+    return 0
   fi
-  mkdir -p "$cache"
-  find "$cache" -maxdepth 1 -name '*.deb' -delete
+  installed=$(dpkg-query -W -f='${Package} ${Architecture} ${Version}\n') || return 1
+  mkdir -p "$cache" || return 1
+  find "$cache" -maxdepth 1 -name '*.deb' -delete || return 1
   for deb in "$archives"/*.deb; do
     [ -f "$deb" ] || continue
-    package=$(dpkg-deb -f "$deb" Package)
-    version=$(dpkg-deb -f "$deb" Version)
-    if [ "$(dpkg-query -W -f='${Version}' "$package" 2> /dev/null || true)" = "$version" ]; then
-      cp "$deb" "$cache/"
+    entry="$(dpkg-deb -f "$deb" Package) $(dpkg-deb -f "$deb" Architecture) $(dpkg-deb -f "$deb" Version)" ||
+      return 1
+    if grep -q -x -F -- "$entry" <<< "$installed"; then
+      cp "$deb" "$cache/" || return 1
       kept=$((kept + 1))
     fi
   done
   echo "kept $kept downloaded packages for the next run"
 }
 
+# One limit for every attempt, or one per attempt ("20 180"): the last one repeats. Empty or
+# blank means the default.
+read -r -a limits <<< "$seconds"
+if [ "${#limits[@]}" -eq 0 ]; then
+  limits=(180)
+fi
+
 configure_apt
-restore_cache
+restore_cache || echo "::warning::could not hand the cached packages to apt; downloading them all"
 for attempt in $(seq 1 "$attempts"); do
   if [ "$attempt" -gt 1 ]; then
     echo "::warning::installing the browser system packages failed or stalled (attempt $((attempt - 1)) of $attempts)"
@@ -104,11 +114,10 @@ for attempt in $(seq 1 "$attempts"); do
   if [ "$attempt" -eq 2 ]; then
     switch_mirror
   fi
-  # One limit for every attempt, or one per attempt ("20 180"): the last one repeats.
-  read -r -a limits <<< "$seconds"
   limit=${limits[$((attempt - 1))]:-${limits[-1]}}
   if as_root env "PATH=$PATH" timeout --kill-after=15 "$limit" "$@"; then
-    save_cache
+    # The packages are installed; a cache that cannot be written only costs the next run time.
+    save_cache || echo "::warning::could not keep the downloaded packages for the next run"
     exit 0
   fi
 done

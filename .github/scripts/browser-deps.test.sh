@@ -42,15 +42,19 @@ EOF
 #!/usr/bin/env bash
 echo "dpkg $*" >> "$(dirname "$(dirname "$0")")/calls"
 EOF
-  # A fake package is a text file "name version"; installed versions are listed in `installed`.
+  # A fake package is a text file "name architecture version"; `installed` lists what is
+  # installed in the same form, one line per package and architecture, as dpkg-query prints it.
   cat > "$dir/bin/dpkg-deb" << 'EOF'
 #!/usr/bin/env bash
-case "$3" in Package) cut -d' ' -f1 "$2" ;; Version) cut -d' ' -f2 "$2" ;; esac
+case "$3" in
+  Package) cut -d' ' -f1 "$2" ;;
+  Architecture) cut -d' ' -f2 "$2" ;;
+  Version) cut -d' ' -f3 "$2" ;;
+esac
 EOF
   cat > "$dir/bin/dpkg-query" << 'EOF'
 #!/usr/bin/env bash
-dir=$(dirname "$(dirname "$0")")
-awk -v p="${@: -1}" '$1 == p { printf "%s", $2; found = 1 } END { exit !found }' "$dir/installed"
+cat "$(dirname "$(dirname "$0")")/installed"
 EOF
   : > "$dir/installed"
   chmod +x "$dir"/bin/*
@@ -59,7 +63,7 @@ EOF
 run() {
   status=0
   PATH="$dir/bin:$PATH" DEPS_SUDO="" DEPS_APT_ETC="$dir/etc" DEPS_APT_ARCHIVES="$dir/archives" \
-    DEPS_ATTEMPT_SECONDS="${limits:-2}" DEPS_CACHE="${cache:-}" "$script" fake-install > "$dir/out" 2>&1 || status=$?
+    DEPS_ATTEMPT_SECONDS="${limits-2}" DEPS_CACHE="${cache:-}" "$script" fake-install > "$dir/out" 2>&1 || status=$?
 }
 
 count() {
@@ -108,25 +112,51 @@ grep -q 'azure' "$dir/etc/apt-mirrors.txt" || fail "first ok: the mirror list wa
 setup per-attempt slow slow
 limits="1 10"
 run
-limits=""
+unset limits
 [ "$status" -eq 0 ] || fail "per attempt: exit $status, $(cat "$dir/out")"
 [ "$(count install)" -eq 2 ] || fail "per attempt: $(count install) attempts, expected 2"
 
-# 6. The package cache: cached packages reach apt first, and afterwards the cache holds exactly
-#    the installed versions (the outdated cached one goes, the new download stays).
+# 6. An empty or blank limit means the default (180 s), not an error: the slow install finishes.
+for blank in "" "  "; do
+  setup "blank-limit-${#blank}" slow
+  limits=$blank
+  run
+  unset limits
+  [ "$status" -eq 0 ] || fail "limit '$blank': exit $status, $(cat "$dir/out")"
+  [ "$(count install)" -eq 1 ] || fail "limit '$blank': $(count install) attempts, expected 1"
+done
+
+# 7. The package cache: cached packages reach apt first, and afterwards the cache holds exactly
+#    what is installed, by version and architecture: the outdated cached one goes, the new
+#    download stays, and of a multiarch package only the installed architecture's version stays.
 setup cache ok
 cache="$dir/cache"
 mkdir -p "$cache" "$dir/downloads"
-echo "libold 1.0" > "$cache/libold_1.0.deb"
-echo "libkept 2.0" > "$cache/libkept_2.0.deb"
-echo "libnew 3.0" > "$dir/downloads/libnew_3.0.deb"
-printf 'libold 1.1\nlibkept 2.0\nlibnew 3.0\n' > "$dir/installed"
+echo "libold amd64 1.0" > "$cache/libold_1.0_amd64.deb"
+echo "libkept all 2.0" > "$cache/libkept_2.0_all.deb"
+echo "libnew amd64 3.0" > "$dir/downloads/libnew_3.0_amd64.deb"
+echo "libmulti amd64 4.0" > "$dir/downloads/libmulti_4.0_amd64.deb"
+echo "libmulti i386 4.0" > "$dir/downloads/libmulti_4.0_i386.deb"
+echo "libmulti i386 3.9" > "$dir/downloads/libmulti_3.9_i386.deb"
+echo "libnew i386 3.0" > "$dir/downloads/libnew_3.0_i386.deb"
+printf '%s\n' "libold amd64 1.1" "libkept all 2.0" "libnew amd64 3.0" "libmulti amd64 4.0" "libmulti i386 4.0" \
+  > "$dir/installed"
 run
-cache=""
+unset cache
 [ "$status" -eq 0 ] || fail "cache: exit $status, $(cat "$dir/out")"
-[ -f "$dir/archives/libkept_2.0.deb" ] || fail "cache: cached packages were not handed to apt"
-kept=$(cd "$dir/cache" && ls)
-[ "$kept" = "$(printf 'libkept_2.0.deb\nlibnew_3.0.deb')" ] || fail "cache: kept $(echo "$kept" | tr '\n' ' ')"
+[ -f "$dir/archives/libkept_2.0_all.deb" ] || fail "cache: cached packages were not handed to apt"
+kept=$(cd "$dir/cache" && ls | tr '\n' ' ')
+[ "$kept" = "libkept_2.0_all.deb libmulti_4.0_amd64.deb libmulti_4.0_i386.deb libnew_3.0_amd64.deb " ] ||
+  fail "cache: kept $kept"
+
+# 8. A cache that cannot be written does not fail an install that succeeded.
+setup cache-broken ok
+echo "not a folder" > "$dir/file"
+cache="$dir/file/cache"
+run
+unset cache
+[ "$status" -eq 0 ] || fail "broken cache: exit $status, $(cat "$dir/out")"
+grep -q '::warning::could not keep the downloaded packages' "$dir/out" || fail "broken cache: no warning"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
