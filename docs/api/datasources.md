@@ -1022,6 +1022,62 @@ that is not of type `query` is `422 validation`.
 - A failing query answers with its code: `422 query_rejected` or `datasource_target_blocked`,
   `504 query_timeout`, `502 datasource_error`, `404 not_found` (data source gone).
 
+## Export
+
+A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
+file. The server runs the queries and the steps itself, so the file is made only after the same
+checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
+browser-side export would need the data in the browser first and could not be refused.
+
+- `POST /orgs/{orgId}/export`, body `ExportRequest`: the fields of `QueryRequest` (`queries`,
+  `timeRange`, `intervalMs`, `maxDataPoints`, `variables`), plus `steps` (default none),
+  `format`, `language`, `frame` (the `refId` to export after the steps; the first frame when
+  absent) and `title` (the file name's base). Every data source needs `datasources:query` (role
+  or grant); one the caller may not query refuses the whole export (`403` or `404`).
+- `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, body
+  `PanelExportRequest` (`timeRange`, `intervalMs`, `maxDataPoints`, `variables`, `format`,
+  `language`, `frame`): the panel's stored queries and stored steps, with the rules of the panel
+  query route (`dashboards:read` on the dashboard, variables checked against it). Named after the
+  panel's title, or the dashboard's.
+
+The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
+`-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
+the format, the time range, the frame, the number of rows and the panel or the data sources,
+never the data; an export refused inside the route writes `data.export_refused` with the code and
+reason as well.
+
+Resources: a server makes at most 3 export files at once (`503 busy`, reason `export.busy`, for
+more). The steps and the encoder stop when the client goes away and when the query time limit
+(`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`). The
+steps' bounds hold here as in the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16
+units of made text per run), and a file is at most 256 MiB (`export.too_large`): CSV and JSON
+are written in chunks that the answer sends as they are, and stop at the first byte past the
+limit; an Excel file holds every cell until it is done, so it takes at most 1,000,000 cells
+(`export.too_many_cells`, checked before it is built). An export's slot is given back only when
+its work has stopped, also when the client went away. The statement as sent to the database
+(`meta.executedQuery`) is not in the file.
+
+- `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
+  `language` `de` separates with `;` and writes a decimal comma, `en` uses `,` and a decimal
+  point. Numbers keep every digit (`1e+21` from 10^21 on), `int64` its digits, times ISO 8601 in
+  UTC (a fraction of a millisecond cut), booleans `true`/`false`, `json` compact JSON. Text that
+  starts with `=`, `+`, `-`, `@` (also full-width, and after leading spaces, line breaks or
+  invisible characters), tab or carriage return gets a leading `'`, field names and `int64` cells
+  that are not plain digits too, so a spreadsheet never runs it as a formula (DDE included).
+- `xlsx`: one sheet, bold frozen header row, typed cells: numbers, booleans and times (UTC, shown
+  as `yyyy-mm-dd hh:mm:ss.000`). `int64` beyond 2^53 and times before 1900-03-01 are text; text is
+  cut at Excel's 32,767 UTF-16 units, never inside a character; at most 1,048,575 rows and 16,384
+  columns. The sheet is named after the table, never Excel's reserved "History". Written with
+  `rust_xlsxwriter` (maintained, no default features, writes cells and never formulas).
+- `json`: the result envelope of the frame, `{"shape": "frame", "frame": {...}}`.
+
+Documents become exportable through a projection step (`toFrame`); their own formats (JSON,
+NDJSON) and graphs (GraphML, JSON) follow with M2 and M3, until then such a result answers
+`export.shape_unsupported`. Steps that are not valid answer `422 validation` with reason
+`steps.invalid` and `field: steps`; a step that fails answers its own reason with `field: steps`
+and a message naming the step. A failing query answers its error as the variable options route
+does: a file never holds less than was asked for.
+
 ## Reasons
 
 Errors carry `error.reason` and `error.params` next to `error.code` and `error.message`; health
@@ -1251,6 +1307,70 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.self_dependency` | `name` | the options request sends the variable's own value |
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table (no `field`) |
+
+### Analysis steps and expressions
+
+The browser shows these at the step; the export routes answer them as `422 validation` with
+`field: steps` (docs/api/settings-dashboards.md, "Analysis steps"). `type` params are field types (`time`, `number`, `int64`,
+`string`, `bool`, `json`), `left`, `right`, `expected`, `found`, `first` and `second` in
+`expression.*` are expression types (`number`, `text`, `bool`, `time`, `null`).
+
+| Reason | Params | When |
+|---|---|---|
+| `steps.invalid` | `detail` | the steps sent with an export are not valid steps |
+| `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
+| `steps.field_missing` | `field` | the table has no such field |
+| `steps.field_ambiguous` | `field` | several fields have this name |
+| `steps.field_type` | `field`, `type` | the field's type does not fit the step (a sum of text) |
+| `steps.name_taken` | `name` | the step's result field has the name of an existing field |
+| `steps.no_time_field` | `frame` | a join or comparison by time on a table without a time field |
+| `steps.key_types` | `left`, `right` | join key fields of types that cannot be matched |
+| `steps.too_many_rows` | `max` | the join would make more than `max` rows |
+| `steps.too_many_columns` | `max` | the pivot would make more than `max` fields |
+| `steps.too_many_cells` | `max` | the step would make more than `max` cells (rows times fields); checked before it builds them |
+| `steps.too_much_text` | `max` | the steps of one run would make more than `max` UTF-16 units of text (calculated text and the copies a join makes) |
+| `steps.timeout` | `seconds` | `504 query_timeout`: an export's steps and file took longer than the query time limit |
+| `steps.cancelled` | | the client went away while its export was made (nobody receives this answer) |
+| `expression.empty` | | the expression is empty |
+| `expression.too_long` | `max` | longer than `max` characters |
+| `expression.too_deep` | `max` | nested deeper than `max` levels |
+| `expression.syntax` | `at` | unexpected input at character `at` |
+| `expression.unclosed` | `at` | a parenthesis, quote or bracket opened at `at` is not closed |
+| `expression.number` | `at` | the number at `at` is too large |
+| `expression.unknown_function` | `name` | no such function |
+| `expression.arguments_exact` | `name`, `count` | the function takes `count` values |
+| `expression.arguments_range` | `name`, `min`, `max` | the function takes `min` to `max` values |
+| `expression.arguments_min` | `name`, `min` | the function takes at least `min` values |
+| `expression.unit` | | `startOf` needs a unit in quotes |
+| `expression.unknown_field` | `field` | the table has no such field |
+| `expression.ambiguous_field` | `field` | several fields have this name |
+| `expression.field_type` | `field`, `type` | a JSON field cannot be used in an expression |
+| `expression.operand_types` | `operator`, `left`, `right` | the operator cannot combine these types |
+| `expression.argument_type` | `name`, `position`, `expected`, `found` | a function's value of the wrong type |
+| `expression.mixed_types` | `name`, `first`, `second` | `if`, `coalesce`, `min` or `max` mix types |
+| `expression.null_compare` | | a comparison with `null`; `isnull(...)` is meant |
+| `expression.no_type` | | the expression is always empty |
+| `expression.text_too_long` | `max` | a row's text would be longer than `max` UTF-16 units (Excel's limit for a cell) |
+
+### Export (`422 validation`)
+
+| Reason | Params | When |
+|---|---|---|
+| `export.no_queries` | | the panel has no query |
+| `export.frame_missing` | `frame` | no table with this reference id after the steps (`field: frame`) |
+| `export.shape_unsupported` | `shape` | documents and graphs cannot be exported yet |
+| `export.too_many_rows` | `max` | Excel takes at most `max` rows |
+| `export.too_many_columns` | `max` | Excel takes at most `max` columns |
+| `export.failed` | `detail` | the file could not be written |
+| `export.too_large` | `max` | the file would be larger than `max` bytes |
+| `export.too_many_cells` | `max` | an Excel file takes at most `max` cells (rows times fields); refused before it is built |
+| `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
+
+### Dashboards (`422 validation`, `field: model`)
+
+| Reason | Params | When |
+|---|---|---|
+| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes has options or field options the server refuses: `panel` is its title (else its id), `detail` names the option |
 
 ### Sources and the server (`datasource_error` unless noted)
 

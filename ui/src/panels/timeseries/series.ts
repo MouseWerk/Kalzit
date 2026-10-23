@@ -1,17 +1,34 @@
-import type { Frame } from "../../api/generated/shapes";
+import type { Field, Frame } from "../../api/generated/shapes";
 import { getTimeZone } from "../../lib/timeSettings";
 import { fromWall, normalizeWall, wallOf } from "../../lib/zonedTime";
-import { seriesName, timeField, toNumber, valueFields } from "../frame";
+import {
+  displayNameOf,
+  EMPTY_FIELD_CONFIG,
+  type FieldConfig,
+  type FieldOptions,
+  fieldOptionsFor,
+} from "../fieldConfig/fieldConfig";
+import { timeField, toNumber, valueFields } from "../frame";
 
 /** One line: times ascending (Unix ms) and values, NaN where the row has no value. */
 export interface Series {
   name: string;
   times: Float64Array;
   values: Float64Array;
+  /** The field the series comes from and the field options in effect for it. */
+  field?: Field;
+  options?: FieldOptions;
 }
 
-/** Every number or int64 field of every frame with a time field becomes one series. */
-export function buildSeries(frames: readonly Frame[], legend = ""): Series[] {
+/**
+ * Every number or int64 field of every frame with a time field becomes one series, named by its
+ * display name, else the template, else its name with labels.
+ */
+export function buildSeries(
+  frames: readonly Frame[],
+  legend = "",
+  config: FieldConfig = EMPTY_FIELD_CONFIG,
+): Series[] {
   const series: Series[] = [];
   for (const frame of frames) {
     const time = timeField(frame);
@@ -28,7 +45,8 @@ export function buildSeries(frames: readonly Frame[], legend = ""): Series[] {
       for (let i = 0; i < count; i++) {
         values[i] = toNumber(field.values[i]) ?? Number.NaN;
       }
-      series.push({ name: seriesName(field, legend), times, values });
+      const options = fieldOptionsFor(field, config);
+      series.push({ name: displayNameOf(field, options, legend), times, values, field, options });
     }
   }
   return series;

@@ -1,16 +1,26 @@
 import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from "react";
+import { exportPanel, exportQuery } from "../../analysis/api";
+import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
+import { runPanelSteps } from "../../analysis/panel";
+import { asSteps, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { useOrgPermissions } from "../../org/useOrg";
+import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
+import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
 import "./dashboards.css";
-import type { GridPos, PanelModel } from "./model";
-import { errorsOf, framesOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import { reasonText } from "../datasources/reasons";
+import { type GridPos, type PanelModel, storedQueryVariables } from "./model";
+import { errorsOf, graphsOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
+import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
@@ -43,6 +53,9 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
   const titleId = useId();
   const hintId = useId();
   const [inspecting, setInspecting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // The server checks data:export on the export routes; without it the action is not offered.
+  const mayExport = useOrgPermissions().has("data:export");
   const handleRef = useRef<HTMLButtonElement>(null);
   const keepHandleFocus = useRef(false);
 
@@ -169,6 +182,18 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           >
             {t("dashboards.panel.inspect")}
           </button>
+          {mayExport ? (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => setExporting(true)}
+              aria-label={t("analysis.export.buttonNamed", { title })}
+              disabled={results.data === undefined}
+            >
+              {t("analysis.export.button")}
+            </button>
+          ) : null}
           {edit === undefined ? null : (
             <>
               <button
@@ -210,6 +235,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           pending={results.isPending && results.fetchStatus !== "idle"}
           error={results.error}
           outcomes={outcomes}
+          variables={query.variables}
         />
       </div>
       {edit === undefined ? null : (
@@ -228,7 +254,66 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           <Inspect outcomes={outcomes} />
         </Dialog>
       ) : null}
+      {exporting ? (
+        <ExportDialog
+          frames={runPanelSteps(panel.transformations, outcomes).frames.map((f) => f.name)}
+          note={
+            query.source === "stored" && edit !== undefined
+              ? t("analysis.export.stored")
+              : undefined
+          }
+          run={(choice, signal) => exportPanelData(query, panel, choice, signal)}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
     </article>
+  );
+}
+
+/**
+ * The file of one panel: the saved panel through its export route, as viewers see it, or the
+ * panel being edited through the free export route, as editors run it.
+ */
+function exportPanelData(
+  query: Omit<PanelQueryInput, "panel">,
+  panel: PanelModel,
+  choice: ExportChoice,
+  signal: AbortSignal,
+) {
+  const common = {
+    timeRange: query.range,
+    maxDataPoints: MAX_DATA_POINTS,
+    intervalMs: intervalFor(query.range),
+    format: choice.format,
+    language: choice.language,
+    ...(choice.frame === undefined ? {} : { frame: choice.frame }),
+  };
+  if (query.source === "stored") {
+    const variables = storedQueryVariables(query.variables, query.saved ?? []);
+    return exportPanel(query.orgId, query.dashboardId, panel.id, { ...common, variables }, signal);
+  }
+  // Queries still being written are left out, unless a step reads them: then the server says
+  // what is wrong with them instead of refusing the steps.
+  const read = new Set(asSteps(panel.transformations).flatMap(stepFrames));
+  const targets = panel.targets.filter(
+    (target) =>
+      read.has(target.refId) ||
+      (target.datasourceId !== "" && queryText(target.query).trim() !== ""),
+  );
+  return exportQuery(
+    query.orgId,
+    {
+      ...common,
+      variables: query.variables,
+      queries: targets.map((t) => ({
+        refId: t.refId,
+        datasourceId: t.datasourceId,
+        query: t.query,
+      })),
+      steps: panel.transformations,
+      title: panel.title,
+    },
+    signal,
   );
 }
 
@@ -239,17 +324,47 @@ interface PanelBodyProps {
   pending: boolean;
   error: Error | null;
   outcomes: readonly TargetOutcome[];
+  /** The steps' run when the caller already has it (the panel editor shares it with its steps). */
+  stepsRun?: StepsRun | undefined;
+  /** Dashboard variables, for panels that show text. */
+  variables?: Readonly<Record<string, string>>;
 }
 
 /**
  * Loading, failure and data of one panel. Errors are mapped per query: one failing query shows
  * its message while the others still draw.
  */
-export function PanelBody({ panel, title, range, pending, error, outcomes }: PanelBodyProps) {
+export function PanelBody({
+  panel,
+  title,
+  range,
+  pending,
+  error,
+  outcomes,
+  stepsRun: given,
+  variables,
+}: PanelBodyProps) {
   const { t } = useI18n();
+  // Field option patterns need re2js, which loads with the first panel that uses one. The panel
+  // is drawn again once it is there: until then its patterns matched nothing.
+  const patterns = usePatternEngine(usesPatterns(panel.fieldConfig)) ? "patterns" : "waiting";
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
+  }
+  // A panel that needs no query (text) draws right away, whatever the queries do.
+  if (plugin.standalone === true) {
+    const { Panel } = plugin;
+    return (
+      <Panel
+        key={patterns}
+        frames={[]}
+        options={plugin.options(panel.options)}
+        timeRange={range}
+        title={title}
+        {...(variables === undefined ? {} : { variables })}
+      />
+    );
   }
   // A failed request comes first: it must never read as "no query yet".
   if (error !== null) {
@@ -266,10 +381,16 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
-  const frames = framesOf(outcomes);
+  // The panel's steps run here, on what the queries answered; a failing step shows its reason
+  // and the panel draws what the steps before it made.
+  const stepsRun = given ?? runPanelSteps(panel.transformations, outcomes);
+  const frames = stepsRun.frames.map((f) => f.frame);
+  const graphs = graphsOf(outcomes, panel.targets);
   const errors = errorsOf(outcomes);
-  const shapes = otherShapes(outcomes);
-  const failedAll = frames.length === 0 && errors.length > 0;
+  const shapes = otherShapes(outcomes, plugin.shapes);
+  // A graph panel draws graphs, every other panel frames.
+  const drawable = plugin.shapes.includes("graph") ? graphs.length > 0 : frames.length > 0;
+  const failedAll = frames.length === 0 && graphs.length === 0 && errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
       <ul className={failedAll ? "panel-error" : "panel-error panel-error--partial"} role="alert">
@@ -290,10 +411,27 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
     return errorList;
   }
   const { Panel } = plugin;
+  const failed = stepsRun.failed;
   return (
     <div className="panel-content">
       {errorList}
-      {frames.length === 0 ? (
+      {failed === undefined ? null : (
+        <p className="panel-error panel-error--partial">
+          <Icon name="alert" />
+          <span>
+            {t("analysis.steps.failed", {
+              n: failed.index + 1,
+              message:
+                reasonText(t, {
+                  reason: failed.error.reason,
+                  params: failed.error.params,
+                  fallback: failed.error.message,
+                }) ?? failed.error.message,
+            })}
+          </span>
+        </p>
+      )}
+      {!drawable ? (
         shapes.length > 0 ? (
           <p className="panel-empty">
             {t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" })}
@@ -303,12 +441,26 @@ export function PanelBody({ panel, title, range, pending, error, outcomes }: Pan
         )
       ) : (
         <div className="panel-content__viz">
-          <Panel
-            frames={frames}
-            options={plugin.options(panel.options)}
-            timeRange={range}
-            title={title}
-          />
+          <PanelErrorBoundary
+            resetKeys={[
+              outcomes,
+              panel.type,
+              JSON.stringify(panel.options ?? null),
+              JSON.stringify(panel.fieldConfig ?? null),
+              patterns,
+            ]}
+          >
+            <Panel
+              key={patterns}
+              frames={frames}
+              graphs={graphs}
+              options={plugin.options(panel.options)}
+              fieldConfig={parseFieldConfig(panel.fieldConfig)}
+              timeRange={range}
+              title={title}
+              {...(variables === undefined ? {} : { variables })}
+            />
+          </PanelErrorBoundary>
         </div>
       )}
       {isTruncated(outcomes) ? (

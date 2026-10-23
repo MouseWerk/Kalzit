@@ -1,7 +1,7 @@
 import { isRecord } from "../../api/client";
 
 /**
- * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"), schemaVersion 1. The server migrates
+ * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"), schemaVersion 2. The server migrates
  * older models on read; the UI still parses defensively, so one odd panel cannot break the page.
  */
 
@@ -112,6 +112,31 @@ export function optionValues(variable: VariableModel): string[] {
   return optionChoices(variable).map((choice) => choice.value);
 }
 
+/**
+ * The variables a panel click may set (a node setting `$customerId`), and which values each
+ * takes: free text (`textbox`) and query results (`query`) take any value, `custom` only one of
+ * its options. A variable stored with several values (a list) is left alone, so a click never
+ * turns it into one string; constants and intervals are not set by clicks.
+ */
+export function clickTargets(variables: readonly VariableModel[]): {
+  names: string[];
+  accepts: (name: string, value: string) => boolean;
+} {
+  const settable = variables.filter(
+    (v) =>
+      (v.type === "textbox" || v.type === "query" || v.type === "custom") &&
+      !Array.isArray(v.current),
+  );
+  return {
+    names: settable.map((v) => v.name),
+    accepts: (name, value) => {
+      const variable = settable.find((v) => v.name === name);
+      if (variable === undefined) return false;
+      return variable.type === "custom" ? optionValues(variable).includes(value) : true;
+    },
+  };
+}
+
 /** The value a variable opens with, as text; a stored list opens with its first entry. */
 export function currentValue(variable: VariableModel): string | undefined {
   const current = Array.isArray(variable.current) ? variable.current[0] : variable.current;
@@ -119,7 +144,7 @@ export function currentValue(variable: VariableModel): string | undefined {
 }
 
 export interface DashboardModel {
-  schemaVersion: 1;
+  schemaVersion: 2;
   title: string;
   /** Text as typed: "now-6h", "now", or ISO times; resolved to milliseconds per run. */
   timeRange: { from: string; to: string };
@@ -132,7 +157,7 @@ export const DEFAULT_TIME_RANGE = { from: "now-6h", to: "now" };
 
 export function emptyModel(title: string): DashboardModel {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     title,
     timeRange: { ...DEFAULT_TIME_RANGE },
     variables: [],
@@ -224,7 +249,7 @@ export function parseModel(value: unknown, fallbackTitle: string): DashboardMode
   const model = isRecord(value) ? value : {};
   const range = isRecord(model.timeRange) ? model.timeRange : {};
   const parsed: DashboardModel = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     title: typeof model.title === "string" ? model.title : fallbackTitle,
     timeRange: {
       from: typeof range.from === "string" ? range.from : DEFAULT_TIME_RANGE.from,

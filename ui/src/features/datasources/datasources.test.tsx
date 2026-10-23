@@ -150,6 +150,14 @@ describe("data source list", () => {
 });
 
 describe("adding a data source", () => {
+  it("names each kind card by the product and describes it with its summary", async () => {
+    open("/data-sources/new");
+    const card = await screen.findByRole("link", { name: "PostgreSQL" });
+    const description = document.getElementById(card.getAttribute("aria-describedby") ?? "");
+    expect(description?.textContent).toBe("Relational database, TimescaleDB included.");
+    expect(card.querySelector(".kind-logo")?.getAttribute("data-logo")).toBe("postgresql");
+  });
+
   it("starts from the kind's defaults and sends them, with secrets only in secrets", async () => {
     const { server, user, location } = open("/data-sources/new");
     await pickKind(user, "PostgreSQL");

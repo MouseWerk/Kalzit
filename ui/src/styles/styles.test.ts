@@ -181,10 +181,40 @@ describe("tokens only", () => {
 describe("no accent frames for states", () => {
   // From design/guard-tests.md.
   const STATE =
-    /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
+    /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|--(active|selected|current|checked)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
   const FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow)$/;
+  // The outline of an SVG mark (a cell, a slice) is its stroke; a state must not color it either.
+  const STATE_FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow|stroke)$/;
   const ACCENT =
-    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?)\b/;
+    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?|tone(-[\w-]+)?|brand-[\w-]+)\b/;
+  // Brand colors belong inside data source logos only: never in a state, frame or not.
+  const BRAND = /--brand-[\w-]+\b/;
+
+  /** Every declaration that colors a hovered, focused, selected or current element by brand. */
+  function brandInStates(rules: (StyleRule & { file?: string })[]): string[] {
+    return rules.flatMap((rule) =>
+      STATE.test(rule.selector)
+        ? rule.declarations
+            .filter(({ value }) => BRAND.test(value))
+            .map(({ property, value }) => `${rule.selector} { ${property}: ${value} }`)
+        : [],
+    );
+  }
+
+  it("uses no brand color for any state", () => {
+    expect(brandInStates(allRules())).toEqual([]);
+  });
+
+  it("catches brand colors in state rules, frames and fills alike", () => {
+    const sample = parseCss(
+      '@layer components { .a:hover { background: var(--brand-mongodb); } .b[aria-current="page"] { border-color: var(--brand-neo4j); } .kind-logo[data-logo="x"] { color: var(--brand-x); } }',
+    );
+    expect(brandInStates(sample)).toEqual([
+      ".a:hover { background: var(--brand-mongodb) }",
+      '.b[aria-current="page"] { border-color: var(--brand-neo4j) }',
+    ]);
+    expect(ACCENT.test("var(--brand-postgresql)")).toBe(true);
+  });
 
   it("frames no hovered, focused, selected or current element in an accent or status color", () => {
     for (const rule of allRules()) {
@@ -192,18 +222,29 @@ describe("no accent frames for states", () => {
         continue;
       }
       for (const { property, value } of rule.declarations) {
-        if (FRAME.test(property)) {
+        if (STATE_FRAME.test(property)) {
           expect(ACCENT.test(value), where(rule, `${property}: ${value}`)).toBe(false);
         }
       }
     }
   });
 
+  it("counts BEM state modifiers and SVG strokes", () => {
+    expect(STATE.test(".heatmap__cell--active")).toBe(true);
+    expect(STATE.test(".picker__card--current .picker__name")).toBe(true);
+    expect(STATE.test(".gauge__track")).toBe(false);
+    expect(STATE_FRAME.test("stroke")).toBe(true);
+    expect(ACCENT.test("var(--tone-critical)")).toBe(true);
+  });
+
   it("puts status colors into text, icons and fills, never frames", () => {
     for (const rule of allRules({ exceptTokens: true })) {
       for (const { property, value } of rule.declarations) {
         if (FRAME.test(property) && property !== "box-shadow") {
-          expect(/--(success|warning|danger|info)/.test(value), where(rule, property)).toBe(false);
+          // Threshold tones (--tone, --tone-ok, ...) are status colors as well.
+          expect(/--(success|warning|danger|info|tone)\b/.test(value), where(rule, property)).toBe(
+            false,
+          );
         }
       }
     }
@@ -764,6 +805,24 @@ describe("contrast in every theme", () => {
     ["--border-strong", ["--bg", "--bg-surface", "--bg-raised"], UI],
     ["--focus-ring", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], UI],
     ["--accent", ["--bg", "--bg-surface", "--bg-raised"], UI],
+    // Threshold states are marks on the panel surfaces (gauge arcs, bars, cells, large values).
+    ...["--tone-ok", "--tone-warn", "--tone-critical"].map(
+      (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
+    ),
+    // Text sits on the tinted fills of colored stats and table cells.
+    ...["--text", "--text-muted"].map(
+      (name) =>
+        [
+          name,
+          [
+            "--tone-ok-bg",
+            "--tone-warn-bg",
+            "--tone-critical-bg",
+            ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `--chart-${n}-bg`),
+          ],
+          TEXT,
+        ] as [string, string[], number],
+    ),
     // Chart series are meaningful marks on the panel surfaces.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map(
       (n) =>
@@ -796,6 +855,49 @@ describe("contrast in every theme", () => {
         }
       }
       expect(tooClose).toEqual([]);
+    });
+  }
+
+  // Threshold states must be told apart without color vision too; they also carry a name for
+  // screen readers, but on the screen the color is what shows the state.
+  for (const scheme of ["light", "dark"] as const) {
+    it(`keeps threshold states distinguishable for every color vision (${scheme})`, () => {
+      const states = ["ok", "warn", "critical"].map((name) =>
+        resolveColor(base, scheme, `--tone-${name}`),
+      );
+      const tooClose: string[] = [];
+      for (const vision of VISIONS) {
+        for (let i = 0; i < states.length; i++) {
+          for (let j = i + 1; j < states.length; j++) {
+            const distance = perceivedDistance(states[i] ?? "", states[j] ?? "", vision);
+            if (distance < NEIGHBOURS_APART) {
+              tooClose.push(`${vision} ${i}/${j}: ${distance.toFixed(1)}`);
+            }
+          }
+        }
+      }
+      expect(tooClose).toEqual([]);
+    });
+
+    it(`grows the heat ramp steadily away from the surface (${scheme})`, () => {
+      const surface = resolveColor(base, scheme, "--bg-surface");
+      const ramp = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => resolveColor(base, scheme, `--heat-${n}`));
+      const contrast = ramp.map((color) => contrastRatio(color, surface));
+      for (let i = 1; i < contrast.length; i++) {
+        expect(contrast[i] ?? 0, `heat-${i + 1} after heat-${i}`).toBeGreaterThan(
+          contrast[i - 1] ?? 0,
+        );
+      }
+      // The strongest step is a mark that must stand out like a series color.
+      expect(contrast.at(-1) ?? 0).toBeGreaterThanOrEqual(UI);
+      for (const vision of VISIONS) {
+        for (let i = 1; i < ramp.length; i++) {
+          expect(
+            perceivedDistance(ramp[i] ?? "", ramp[i - 1] ?? "", vision),
+            `${vision} heat-${i}/heat-${i + 1}`,
+          ).toBeGreaterThanOrEqual(SERIES_APART);
+        }
+      }
     });
   }
 

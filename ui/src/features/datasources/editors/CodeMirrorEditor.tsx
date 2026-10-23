@@ -21,12 +21,14 @@ import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
 import { withEditorStyles } from "./editorStyles";
-import { type Token, tokenizePromql, tokenizeSql } from "./syntax";
+import { type Token, tokenizeCypher, tokenizeGsql, tokenizePromql, tokenizeSql } from "./syntax";
 import "./editors.css";
 
 const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,
   promql: tokenizePromql,
+  cypher: tokenizeCypher,
+  gsql: tokenizeGsql,
 };
 
 /** Completion kinds as CodeMirror names its option icons. */
@@ -39,6 +41,9 @@ const OPTION_TYPES: Record<CompletionKind, string> = {
   metric: "constant",
   label: "property",
   duration: "text",
+  nodeLabel: "class",
+  edgeType: "type",
+  property: "property",
 };
 
 const marks = new Map<string, Decoration>();

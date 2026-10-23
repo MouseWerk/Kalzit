@@ -30,6 +30,7 @@ import {
   sourceAccess,
   updateDatasource,
 } from "./api";
+import { KindMark, kindSummary } from "./kindMarks";
 import { errorReason, reasonText } from "./reasons";
 import "./datasources.css";
 
@@ -131,6 +132,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { kind: chosen } = newRoute.useSearch();
+  const pickerId = useId();
   const kinds = useQuery(kindsQuery(orgId));
   const create = useMutation({
     mutationFn: (input: FormOutput) =>
@@ -168,15 +170,20 @@ function NewDataSource({ orgId }: { orgId: string }) {
         </h2>
         <ul className="ds-kinds__list">
           {kinds.data.map((option) => (
-            <li key={option.kind}>
+            <li key={option.kind} className="ds-kinds__item">
+              {/* Named by the product alone; the summary next to it describes the link. */}
               <Link
                 to="/data-sources/new"
                 search={{ kind: option.kind }}
-                className="ds-kinds__item"
+                className="ds-kinds__link"
+                aria-describedby={`${pickerId}-${option.kind}`}
               >
-                <Icon name="dataSources" />
-                <span>{option.name}</span>
+                <KindMark kind={option.kind} />
+                <span className="ds-kinds__name">{option.name}</span>
               </Link>
+              <span className="ds-kinds__summary" id={`${pickerId}-${option.kind}`}>
+                {kindSummary(t, option.kind)}
+              </span>
             </li>
           ))}
         </ul>
@@ -656,7 +663,7 @@ function SettingsForm({
       }}
     >
       <p className="ds-form__kind">
-        <Icon name="dataSources" />
+        <KindMark kind={kind.kind} small />
         <span>{kind.name}</span>
       </p>
       <div className="notice">
