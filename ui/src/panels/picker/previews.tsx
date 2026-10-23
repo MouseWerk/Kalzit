@@ -188,6 +188,115 @@ export function TextPreview() {
   );
 }
 
+/** Nodes as dots of their label's color, joined by neutral edges. */
+function Nodes({ nodes, edges }: { nodes: [number, number, number][]; edges: [number, number][] }) {
+  return (
+    <>
+      {edges.map(([from, to]) => {
+        const a = nodes[from] as [number, number, number];
+        const b = nodes[to] as [number, number, number];
+        return (
+          <line
+            key={`${from}-${to}`}
+            className="preview__edge"
+            x1={a[0]}
+            y1={a[1]}
+            x2={b[0]}
+            y2={b[1]}
+          />
+        );
+      })}
+      {nodes.map(([x, y, series]) => (
+        <circle
+          key={`${x}-${y}`}
+          className={`preview__fill series-${series}`}
+          cx={x}
+          cy={y}
+          r="3.5"
+        />
+      ))}
+    </>
+  );
+}
+
+export function NetworkPreview() {
+  return (
+    <Frame>
+      <Nodes
+        nodes={[
+          [10, 12, 1],
+          [24, 26, 1],
+          [8, 32, 2],
+          [36, 10, 3],
+          [42, 28, 2],
+          [56, 16, 1],
+          [54, 34, 3],
+        ]}
+        edges={[
+          [0, 1],
+          [1, 2],
+          [1, 3],
+          [1, 4],
+          [3, 5],
+          [4, 5],
+          [4, 6],
+        ]}
+      />
+    </Frame>
+  );
+}
+
+export function HierarchyPreview() {
+  return (
+    <Frame>
+      <Nodes
+        nodes={[
+          [32, 6, 1],
+          [18, 20, 2],
+          [46, 20, 2],
+          [8, 34, 3],
+          [24, 34, 3],
+          [40, 34, 3],
+          [56, 34, 3],
+        ]}
+        edges={[
+          [0, 1],
+          [0, 2],
+          [1, 3],
+          [1, 4],
+          [2, 5],
+          [2, 6],
+        ]}
+      />
+    </Frame>
+  );
+}
+
+export function PathPreview() {
+  return (
+    <Frame>
+      {[12, 28].map((y, row) => (
+        <g key={y}>
+          {[0, 1, 2].map((i) => (
+            <rect
+              key={i}
+              className={row === 0 ? "preview__block" : "preview__muted"}
+              x={4 + i * 22}
+              y={y - 4}
+              width="12"
+              height="8"
+              rx="2"
+            />
+          ))}
+          {[0, 1].map((i) => (
+            <path key={i} className="preview__edge" d={`M${17 + i * 22} ${y}H${25 + i * 22}`} />
+          ))}
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
 /** For panel types without a drawing of their own. */
 export function GenericPreview() {
   return (

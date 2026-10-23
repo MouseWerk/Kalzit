@@ -517,6 +517,24 @@ mod tests {
     }
 
     #[test]
+    fn graph_panels_stored_before_their_check_keep_saving_while_unchanged() {
+        let checked = |model: Value, previous: Option<&DashboardModel>| {
+            let model = parse(model).expect("reading never checks panel options");
+            check_panel_options(&model, previous)
+        };
+        let network = with(sample(), &["panels", "1", "type"], json!("network"));
+        let odd = with(network, &["panels", "1", "options"], json!({ "nodeLimit": 50_000, "layout": "radial" }));
+        let (_, err) = checked(odd.clone(), None).unwrap_err();
+        assert!(err.contains("model.panels[1].options"), "{err}");
+        let stored = parse(odd.clone()).unwrap();
+        assert!(checked(with(odd.clone(), &["title"], json!("Neu")), Some(&stored)).is_ok());
+        let changed = with(odd.clone(), &["panels", "1", "options"], json!({ "nodeLimit": 40_000 }));
+        assert!(checked(changed, Some(&stored)).unwrap_err().1.contains("options.nodeLimit"));
+        let fixed = with(odd, &["panels", "1", "options"], json!({ "nodeLimit": 5_000, "cluster": "off" }));
+        assert!(checked(fixed, Some(&stored)).is_ok());
+    }
+
+    #[test]
     fn huge_grid_numbers_are_refused_without_overflow() {
         for (x, w) in [(u32::MAX, 1), (1, u32::MAX), (u32::MAX, u32::MAX), (u32::MAX, 0)] {
             let mut model = with(sample(), &["panels", "0", "grid", "x"], json!(x));

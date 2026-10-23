@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import { lazyPanel } from "../lazy";
+import { PathPreview } from "../picker/previews";
 import type { PanelPlugin } from "../types";
 
 export interface PathOptions {
@@ -22,8 +23,10 @@ function parseOptions(stored: unknown): PathOptions {
 export const pathPanel: PanelPlugin<PathOptions> = {
   type: "path",
   name: "graph.panels.path",
+  description: "panels.describe.path",
   shapes: ["graph"],
   options: parseOptions,
   Panel: lazyPanel(() => import("./PathPanel").then((m) => m.PathPanel)),
   Editor: lazyPanel(() => import("./PathPanel").then((m) => m.PathEditor)),
+  Preview: PathPreview,
 };

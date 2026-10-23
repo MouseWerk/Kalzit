@@ -1039,6 +1039,471 @@
     }
   },
   {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "colorBy": "label",
+      "sizeBy": "size",
+      "edgeWidthBy": "weight",
+      "nodeLimit": 20000,
+      "cluster": "auto",
+      "timeProperty": "since",
+      "explorer": true,
+      "expandLimit": 200,
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "colorBy": "community",
+      "sizeBy": "size",
+      "edgeWidthBy": "weight",
+      "nodeLimit": 20000,
+      "cluster": "label",
+      "timeProperty": "since",
+      "explorer": true,
+      "expandLimit": 200,
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "colorBy": "component",
+      "sizeBy": "size",
+      "edgeWidthBy": "weight",
+      "nodeLimit": 20000,
+      "cluster": "off",
+      "timeProperty": "since",
+      "explorer": true,
+      "expandLimit": 200,
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "",
+      "edgeWidthBy": "",
+      "nodeLimit": 1,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 1,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "off",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "off",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "colorBy": "label",
+      "sizeBy": "size",
+      "edgeWidthBy": "weight",
+      "nodeLimit": 20000,
+      "cluster": "auto",
+      "timeProperty": "since",
+      "explorer": true,
+      "expandLimit": 200,
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "colorBy": "community",
+      "sizeBy": "size",
+      "edgeWidthBy": "weight",
+      "nodeLimit": 20000,
+      "cluster": "label",
+      "timeProperty": "since",
+      "explorer": true,
+      "expandLimit": 200,
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "colorBy": "component",
+      "sizeBy": "size",
+      "edgeWidthBy": "weight",
+      "nodeLimit": 20000,
+      "cluster": "off",
+      "timeProperty": "since",
+      "explorer": true,
+      "expandLimit": 200,
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "",
+      "edgeWidthBy": "",
+      "nodeLimit": 1,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 1,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "variable": "customer",
+      "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
     "type": "text",
     "options": {
       "mode": "markdown",
