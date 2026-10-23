@@ -256,6 +256,7 @@ on_both_databases! {
     library_panels_follow_their_folder,
     library_panels_are_shared_by_dashboards,
     library_panels_in_restricted_folders,
+    library_panels_check_panel_options,
 }
 
 fn model(title: &str) -> Value {
@@ -629,6 +630,87 @@ async fn library_panels_follow_their_folder(t: TestApp) {
     assert_eq!(t.delete(&format!("~/library-panels/{id}"), &viewer).await.status, StatusCode::FORBIDDEN);
     assert_eq!(t.delete(&format!("~/library-panels/{id}"), &editor).await.status, StatusCode::NO_CONTENT);
     assert_eq!(t.get(&format!("~/library-panels/{id}"), &editor).await.status, StatusCode::NOT_FOUND);
+}
+
+/// Creating and saving a library panel run the panel option checks of a dashboard write; a save
+/// that leaves the stored options as they are keeps working.
+async fn library_panels_check_panel_options(t: TestApp) {
+    let editor = t.member("Emil", "editor").await;
+    let mut odd = library_model("");
+    odd["fieldConfig"] = json!({ "defaults": { "decimals": 99 }, "overrides": [] });
+    let refused = t.post("~/library-panels", json!({ "name": "Umsatz", "model": odd.clone() }), &editor).await;
+    assert_eq!(
+        (refused.status, refused.code(), refused.field()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "validation", "model")
+    );
+    let reason = &refused.body["error"]["reason"];
+    assert_eq!(reason, "dashboards.panel_options", "{}", refused.body);
+    assert_eq!(refused.body["error"]["params"]["panel"], "Umsatz", "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["params"]["detail"].as_str().unwrap().split(' ').next(),
+        Some("model.fieldConfig.defaults.decimals"),
+        "{}",
+        refused.body
+    );
+
+    // Stored with options from before a rule.
+    let id =
+        t.post("~/library-panels", json!({ "name": "Umsatz", "model": library_model("Umsatz") }), &editor).await.id();
+    let mut stored = odd.clone();
+    stored["title"] = json!("Umsatz");
+    sqlx::query("UPDATE library_panels SET model = $1 WHERE id = $2")
+        .bind(stored.to_string())
+        .bind(&id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let path = format!("~/library-panels/{id}");
+    let mut renamed = stored.clone();
+    renamed["title"] = json!("Umsatz neu");
+    let kept = t.put(&path, json!({ "version": 1, "name": "Umsatz neu", "model": renamed }), &editor).await;
+    assert_eq!((kept.status, kept.body["version"].as_i64()), (StatusCode::OK, Some(2)), "{}", kept.body);
+
+    let mut worse = stored.clone();
+    worse["fieldConfig"]["defaults"]["decimals"] = json!(98);
+    let refused = t.put(&path, json!({ "version": 2, "name": "Umsatz", "model": worse }), &editor).await;
+    assert_eq!((refused.status, refused.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", refused.body);
+    assert_eq!(refused.body["error"]["reason"], "dashboards.panel_options", "{}", refused.body);
+    assert_eq!(refused.body["error"]["params"]["panel"], "Umsatz", "{}", refused.body);
+
+    let mut fixed = stored;
+    fixed["fieldConfig"]["defaults"]["decimals"] = json!(2);
+    let saved = t.put(&path, json!({ "version": 2, "name": "Umsatz", "model": fixed.clone() }), &editor).await;
+    assert_eq!((saved.status, saved.body["version"].as_i64()), (StatusCode::OK, Some(3)), "{}", saved.body);
+    assert_eq!(saved.body["model"]["fieldConfig"]["defaults"]["decimals"], 2);
+
+    // A change to the overrides alone is checked; without a title the library panel name is named.
+    let detail = |r: &Reply| r.body["error"]["params"]["detail"].as_str().unwrap_or("").to_string();
+    let mut overridden = fixed;
+    overridden["title"] = json!("");
+    overridden["fieldConfig"]["overrides"] =
+        json!([{ "matcher": { "type": "name", "value": "url" }, "properties": { "width": 10 } }]);
+    let body = json!({ "version": 3, "name": "Umsatz je Tag", "model": overridden.clone() });
+    let refused = t.put(&path, body, &editor).await;
+    assert_eq!((refused.status, refused.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", refused.body);
+    assert_eq!(refused.body["error"]["reason"], "dashboards.panel_options", "{}", refused.body);
+    assert_eq!(refused.body["error"]["params"]["panel"], "Umsatz je Tag", "{}", refused.body);
+    assert!(detail(&refused).starts_with("model.fieldConfig.overrides[0]"), "{}", refused.body);
+    overridden["fieldConfig"]["overrides"][0]["properties"]["width"] = json!(120);
+    let body = json!({ "version": 3, "name": "Umsatz je Tag", "model": overridden });
+    let saved = t.put(&path, body, &editor).await;
+    assert_eq!((saved.status, saved.body["version"].as_i64()), (StatusCode::OK, Some(4)), "{}", saved.body);
+
+    // A change of the type alone is checked against the new type's options.
+    let mut lines = library_model("Linien");
+    lines["options"] = json!({ "lineWidth": 2 });
+    let other = t.post("~/library-panels", json!({ "name": "Linien", "model": lines.clone() }), &editor).await.id();
+    lines["type"] = json!("table");
+    let body = json!({ "version": 1, "name": "Linien", "model": lines });
+    let refused = t.put(&format!("~/library-panels/{other}"), body, &editor).await;
+    assert_eq!((refused.status, refused.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", refused.body);
+    assert_eq!(refused.body["error"]["reason"], "dashboards.panel_options", "{}", refused.body);
+    assert_eq!(refused.body["error"]["params"]["panel"], "Linien", "{}", refused.body);
+    assert!(detail(&refused).starts_with("model.options"), "{}", refused.body);
 }
 
 async fn library_panels_are_shared_by_dashboards(t: TestApp) {
