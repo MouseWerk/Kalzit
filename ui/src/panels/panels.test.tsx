@@ -49,17 +49,27 @@ describe("registry", () => {
       ["state-timeline", true],
       ["status-history", true],
       ["text", true],
-      // The graph panels follow, offered but not as fitting.
+      // The document and graph panels follow, offered but not as fitting.
+      ["documents", false],
+      ["schema", false],
+      ["distribution", false],
+      ["document", false],
       ["network", false],
       ["hierarchy", false],
       ["path", false],
     ]);
-    // Documents fit no frame panel; only text, which needs no query, is offered as fitting.
+    // Documents: the document panels fit, and text, which needs no query; frame panels need a
+    // projection step first.
     expect(
       panelsForShapes(["documents"])
         .filter((e) => e.accepts)
         .map((e) => e.panel.type),
-    ).toEqual(["text"]);
+    ).toEqual(["documents", "schema", "distribution", "document", "text"]);
+    expect(
+      suggestPanel([
+        { shape: "documents", documents: { documents: [{ a: 1 }], schema: [], notices: [] } },
+      ]),
+    ).toBe("documents");
     expect(suggestPanel([{ shape: "frame", frame: tableFrame }])).toBe("table");
     const series: Frame = {
       fields: [

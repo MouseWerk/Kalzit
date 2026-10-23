@@ -19,6 +19,7 @@ import {
   sqlCompletions,
 } from "./completion";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
+import { MongoQueryEditor, type PreviewRun } from "./MongoQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -30,6 +31,16 @@ export interface QueryEditorProps {
   onRun?: () => void;
   /** Accessible name of the text field; "Query" by default, "Query A" for a panel target. */
   label?: string;
+  /**
+   * The time range and variable values the page runs its queries with, read when a stage
+   * preview is asked for; without it a preview runs over the last hour.
+   */
+  previewRun?: (() => PreviewRun) | undefined;
+  /**
+   * Whether a field holds text that does not parse yet, so it is not in the query: a change from
+   * outside (a filter by click) would replace that text, and waits instead.
+   */
+  onPendingText?: ((pending: boolean) => void) | undefined;
 }
 
 /** The editor for a data source's query form, chosen by the data source kind. */
@@ -40,6 +51,8 @@ export function QueryEditor(props: QueryEditorProps) {
       return <SqlQueryEditor {...props} />;
     case "promql":
       return <PromqlQueryEditor {...props} />;
+    case "mongo":
+      return <MongoQueryEditor {...props} />;
     case "cypher":
       return <CypherQueryEditor {...props} />;
     case "gsql":

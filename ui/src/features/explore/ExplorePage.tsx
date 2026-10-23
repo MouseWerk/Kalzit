@@ -4,11 +4,22 @@ import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
 import { namedInputs, runPanelSteps } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
-import type { Step } from "../../analysis/steps";
+import { asSteps, type Step } from "../../analysis/steps";
+import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
+import { ProjectionEditor } from "../../documents/ProjectionEditor";
+import {
+  hasProjectionProblems,
+  projectionApplies,
+  projectionFor,
+  projectionPaths,
+  storableTransformations,
+  withProjection,
+} from "../../documents/projection";
+import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
@@ -17,7 +28,7 @@ import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
-import { outcomesOf } from "../dashboards/results";
+import { appendPages, documentsOf, outcomesOf } from "../dashboards/results";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
@@ -25,11 +36,12 @@ import {
   resolveRange,
   type TextRange,
 } from "../dashboards/timeRange";
-import { errorMessage } from "../dashboards/ui/errors";
+import { errorBodyMessage, errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
 import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
+import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
@@ -88,9 +100,19 @@ function Explore({ orgId }: { orgId: string }) {
   const kinds = useQuery(kindsQuery(orgId));
   const [chosen, setChosen] = useState<string | null>(() => readPreference(LAST_DATASOURCE_KEY));
   const [queries, setQueries] = useState<Record<string, unknown>>({});
+  // Pages loaded after the first one through `nextCursor`, for the run they belong to.
+  const [more, setMore] = useState<{
+    of: Submitted | null;
+    pages: DocumentSet[];
+    loading: boolean;
+    error: string | null;
+  }>({ of: null, pages: [], loading: false, error: null });
   const [range, setRange] = useState<TextRange>({ from: "now-1h", to: "now" });
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
   const [rangeError, setRangeError] = useState<string | null>(null);
+  const [filterError, setFilterError] = useState<string | null>(null);
+  // Per data source: whether its editor holds text that does not parse yet.
+  const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
   const [adding, setAdding] = useState(false);
@@ -132,10 +154,12 @@ function Explore({ orgId }: { orgId: string }) {
     },
   });
 
-  function run(nextRange = range) {
-    if (datasource === undefined || query === null || queryText(query).trim() === "") {
+  function run(nextRange = range, nextQuery: unknown = query) {
+    if (datasource === undefined || nextQuery === null || queryText(nextQuery).trim() === "") {
       return;
     }
+    // A new run leaves an old filter refusal behind.
+    setFilterError(null);
     const resolved = resolveRange(nextRange, Date.now());
     if (!resolved.ok) {
       setRangeError(t(`dashboards.time.error.${resolved.error}`));
@@ -144,7 +168,7 @@ function Explore({ orgId }: { orgId: string }) {
     setRangeError(null);
     setSubmitted((current) => ({
       datasourceId: datasource.id,
-      query,
+      query: nextQuery,
       range: nextRange,
       ...resolved.range,
       run: (current?.run ?? 0) + 1,
@@ -165,10 +189,63 @@ function Explore({ orgId }: { orgId: string }) {
     );
   }
 
-  const outcomes = result.data ?? [];
+  const current = more.of === submitted ? more : { pages: [], loading: false, error: null };
+  const outcomes = appendPages(result.data ?? [], REF_ID, current.pages);
+  const nextCursor = documentsOf(outcomes)[0]?.documents.nextCursor;
+
+  async function loadMore(cursor: string) {
+    const run = submitted;
+    if (run === null) {
+      return;
+    }
+    setMore({ of: run, pages: current.pages, loading: true, error: null });
+    const keep = (update: (pages: DocumentSet[]) => typeof more) =>
+      setMore((state) => (state.of === run ? update(state.pages) : state));
+    try {
+      const timeRange = { from: run.from, to: run.to };
+      const response = await runQuery(orgId, {
+        queries: [{ refId: REF_ID, datasourceId: run.datasourceId, query: run.query, cursor }],
+        timeRange,
+        maxDataPoints: MAX_DATA_POINTS,
+        intervalMs: intervalFor(timeRange),
+        variables: {},
+      });
+      const [outcome] = outcomesOf(response, [REF_ID]);
+      if (outcome !== undefined && "result" in outcome && outcome.result.shape === "documents") {
+        const page = outcome.result.documents;
+        keep((pages) => ({ of: run, pages: [...pages, page], loading: false, error: null }));
+      } else {
+        const message =
+          outcome !== undefined && "error" in outcome
+            ? errorBodyMessage(t, outcome.error)
+            : t("documents.more.failed");
+        keep((pages) => ({ of: run, pages, loading: false, error: message }));
+      }
+    } catch (problem) {
+      keep((pages) => ({ of: run, pages, loading: false, error: errorMessage(t, problem) }));
+    }
+  }
+  const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
+  const takesDocuments = kindShapes.includes("documents");
+  // Paths to suggest for the projection: those of the last result's documents.
+  const resultFields = documentsOf(outcomes).flatMap(({ documents }) =>
+    projectionPaths(schemaOf(documents)),
+  );
+  // One list of steps for the result: the projection (edited under the query) and the
+  // analysis steps after it, run once for the panel and the steps editor.
+  const projection = projectionFor(steps, REF_ID);
+  const projected = projection !== undefined && projectionApplies(projection);
+  // A projection step the server would refuse waits for a fix before it leaves the page.
+  const blocked = hasProjectionProblems(steps);
   const stepsRun = runPanelSteps(deferredSteps, outcomes);
-  const results = outcomes.flatMap((o) => ("result" in o ? [o.result] : []));
-  const shapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
+  // The suggestion follows what the panel will get: documents, or the frame of a projection.
+  const results: QueryResult[] = [
+    ...outcomes.flatMap((o) =>
+      "result" in o && !(projected && o.result.shape === "documents") ? [o.result] : [],
+    ),
+    ...(projected ? stepsRun.frames.map((f) => ({ shape: "frame" as const, frame: f.frame })) : []),
+  ];
+  const shapes: Shape[] = projected ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
   const choices = panelsForShapes(shapes);
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
   const panel: PanelModel = {
@@ -196,6 +273,7 @@ function Explore({ orgId }: { orgId: string }) {
             value={datasource.id}
             onChange={(event) => {
               setChosen(event.currentTarget.value);
+              setFilterError(null);
               writePreference(LAST_DATASOURCE_KEY, event.currentTarget.value);
             }}
           >
@@ -225,6 +303,7 @@ function Explore({ orgId }: { orgId: string }) {
         </button>
       </div>
       {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
+      {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
       <QueryEditor
         key={datasource.id}
         orgId={orgId}
@@ -232,7 +311,31 @@ function Explore({ orgId }: { orgId: string }) {
         query={query}
         onChange={(next) => setQueries((current) => ({ ...current, [datasource.id]: next }))}
         onRun={() => run()}
+        onPendingText={(pending) =>
+          setPendingText((current) =>
+            current[datasource.id] === pending ? current : { ...current, [datasource.id]: pending },
+          )
+        }
+        previewRun={() => {
+          // Previews run over the range Explore shows, resolved when asked; Explore has no variables.
+          const resolved = resolveRange(range, Date.now());
+          const now = Date.now();
+          return {
+            range: resolved.ok ? resolved.range : { from: now - 3_600_000, to: now },
+            variables: {},
+          };
+        }}
       />
+      {takesDocuments ? (
+        <ProjectionEditor
+          projection={projection}
+          fields={[...new Set(resultFields)]}
+          onChange={(next) =>
+            // The projection joins the one list of steps, before the analysis steps.
+            setSteps((all) => asSteps(withProjection(all, REF_ID, next)))
+          }
+        />
+      ) : null}
       {submitted === null ? (
         <p className="explore__hint">{t("explore.hint")}</p>
       ) : (
@@ -263,7 +366,8 @@ function Explore({ orgId }: { orgId: string }) {
                 type="button"
                 className="button button--secondary"
                 onClick={() => setExporting(true)}
-                disabled={result.data === undefined}
+                disabled={result.data === undefined || blocked}
+                aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
               >
                 {t("analysis.export.button")}
               </button>
@@ -273,10 +377,16 @@ function Explore({ orgId }: { orgId: string }) {
                 type="button"
                 className="button button--secondary"
                 onClick={() => setAdding(true)}
-                disabled={result.data === undefined}
+                disabled={result.data === undefined || blocked}
+                aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
               >
                 {t("explore.addToDashboard")}
               </button>
+            ) : null}
+            {blocked ? (
+              <p className="field__error" id={`${tabsId}-blocked`}>
+                {t("documents.projection.blockedExplore")}
+              </p>
             ) : null}
           </div>
           {/* Both panels exist, so every tab's aria-controls points at an element. */}
@@ -296,6 +406,29 @@ function Explore({ orgId }: { orgId: string }) {
                   pending={result.isPending}
                   error={result.error}
                   outcomes={outcomes}
+                  revision={`${submitted.run}:${current.pages.length}`}
+                  onFilter={
+                    isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
+                      ? (_refId, path, value) => {
+                          // The filter joins the query in the editor (the one that gave this
+                          // result, or the draft typed since) as a visible $match stage, and runs.
+                          // Text that does not parse, in the query or still in a field, is never
+                          // replaced: the filter waits for it.
+                          if (pendingText[datasource.id] === true) {
+                            setFilterError(t("documents.filter.refused.draft"));
+                            return;
+                          }
+                          const added = addMatch(parseMongoQuery(query), path, value);
+                          if ("refused" in added) {
+                            setFilterError(t(`documents.filter.refused.${added.refused}`));
+                            return;
+                          }
+                          setFilterError(null);
+                          setQueries((current) => ({ ...current, [datasource.id]: added.query }));
+                          run(range, added.query);
+                        }
+                      : undefined
+                  }
                   stepsRun={stepsRun}
                 />
               </PanelHostContext>
@@ -310,6 +443,19 @@ function Explore({ orgId }: { orgId: string }) {
           >
             {tab === "inspect" ? <Inspect outcomes={outcomes} /> : null}
           </div>
+          {nextCursor === undefined ? null : (
+            <div className="explore__more">
+              <button
+                type="button"
+                className="button button--secondary"
+                disabled={current.loading}
+                onClick={() => void loadMore(nextCursor)}
+              >
+                {current.loading ? t("common.loading") : t("documents.more.load")}
+              </button>
+            </div>
+          )}
+          {current.error === null ? null : <FormAlert>{current.error}</FormAlert>}
         </section>
       )}
       {submitted === null ? null : (
@@ -336,7 +482,8 @@ function Explore({ orgId }: { orgId: string }) {
                 maxDataPoints: MAX_DATA_POINTS,
                 intervalMs: intervalFor(timeRange),
                 variables: {},
-                steps,
+                // As stored: without the columns that still wait for a path.
+                steps: storableTransformations(steps),
                 format: choice.format,
                 language: choice.language,
                 ...(choice.frame === undefined ? {} : { frame: choice.frame }),
@@ -351,7 +498,11 @@ function Explore({ orgId }: { orgId: string }) {
       {adding && submitted !== null ? (
         <AddToDashboardDialog
           orgId={orgId}
-          panel={{ ...panel, title: datasource.name }}
+          panel={{
+            ...panel,
+            title: datasource.name,
+            transformations: storableTransformations(steps),
+          }}
           range={submitted.range}
           onClose={() => setAdding(false)}
         />

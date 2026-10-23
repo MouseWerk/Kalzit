@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { ApiError, expectShape, isRecord, request } from "../../api/client";
 import type {
   DatasourceAccess,
+  FieldSchema,
   Page,
   Permission,
   QueryRequest,
@@ -160,6 +161,25 @@ export interface PromSchema {
 }
 
 /**
+ * MongoDB's schema answer (docs/api/datasources.md, "Schema"): the database's collections by name,
+ * up to 1,000; the first 100 with their indexes and the field paths of a sample of up to 100
+ * documents in the result envelope's `FieldSchema` form (`sampled` is 0 where no sample ran).
+ */
+export interface CollectionsSchema {
+  kind: "collections";
+  database: string;
+  collections: CollectionInfo[];
+}
+
+export interface CollectionInfo {
+  name: string;
+  type: "collection" | "view" | "timeseries";
+  indexes: { name: string; keys: { field: string; kind: unknown }[]; unique: boolean }[];
+  fields: FieldSchema[];
+  sampled: number;
+}
+
+/**
  * Graph sources (Neo4j, Memgraph, TigerGraph): labels, edge types and the property keys of the
  * whole source; TigerGraph also its installed and approved queries.
  */
@@ -171,7 +191,7 @@ export interface GraphSourceSchema {
   queries: string[];
 }
 
-export type SourceSchema = SqlSchema | PromSchema | GraphSourceSchema;
+export type SourceSchema = SqlSchema | PromSchema | CollectionsSchema | GraphSourceSchema;
 
 export interface DatasourceInput {
   name: string;
@@ -404,6 +424,13 @@ export async function fetchSchema(
   if (isRecord(value) && value.kind === "metrics") {
     return { kind: "metrics", metrics: strings(value.metrics), labels: strings(value.labels) };
   }
+  if (isRecord(value) && value.kind === "collections" && Array.isArray(value.collections)) {
+    return {
+      kind: "collections",
+      database: typeof value.database === "string" ? value.database : "",
+      collections: value.collections.flatMap(parseCollection),
+    };
+  }
   if (isRecord(value) && value.kind === "graph") {
     return {
       kind: "graph",
@@ -417,6 +444,58 @@ export async function fetchSchema(
     return { kind: "tables", tables: value.tables as SqlSchema["tables"] };
   }
   return invalid("schema");
+}
+
+const COLLECTION_TYPES = ["collection", "view", "timeseries"] as const;
+
+function parseFieldSchema(value: unknown): FieldSchema[] {
+  if (!isRecord(value) || typeof value.path !== "string" || typeof value.coverage !== "number") {
+    return [];
+  }
+  const types = Array.isArray(value.types)
+    ? value.types.flatMap((type) =>
+        isRecord(type) && typeof type.name === "string" && typeof type.share === "number"
+          ? [{ name: type.name, share: type.share }]
+          : [],
+      )
+    : [];
+  return [{ path: value.path, coverage: value.coverage, types }];
+}
+
+/** One collection of the schema answer, every documented field read with its type checked. */
+function parseCollection(item: unknown): CollectionInfo[] {
+  if (!isRecord(item) || typeof item.name !== "string") {
+    return [];
+  }
+  const type = (COLLECTION_TYPES as readonly unknown[]).includes(item.type)
+    ? (item.type as CollectionInfo["type"])
+    : "collection";
+  const indexes = Array.isArray(item.indexes)
+    ? item.indexes.flatMap((index) =>
+        isRecord(index) && typeof index.name === "string" && Array.isArray(index.keys)
+          ? [
+              {
+                name: index.name,
+                keys: index.keys.flatMap((key) =>
+                  isRecord(key) && typeof key.field === "string"
+                    ? [{ field: key.field, kind: key.kind }]
+                    : [],
+                ),
+                unique: index.unique === true,
+              },
+            ]
+          : [],
+      )
+    : [];
+  return [
+    {
+      name: item.name,
+      type,
+      indexes,
+      fields: Array.isArray(item.fields) ? item.fields.flatMap(parseFieldSchema) : [],
+      sampled: typeof item.sampled === "number" ? item.sampled : 0,
+    },
+  ];
 }
 
 /** `POST /query`: free queries for members with `datasources:query`. */

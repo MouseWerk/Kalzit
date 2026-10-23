@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Frame, GraphSet, Shape } from "../api/generated/shapes";
+import type { DocumentSet, Frame, GraphSet, Shape } from "../api/generated/shapes";
 import type { MessageKey } from "../i18n/i18n";
 import type { FieldConfig } from "./fieldConfig/fieldConfig";
 
@@ -61,6 +61,18 @@ export interface PanelProps<Options> {
   variables?: Readonly<Record<string, string>>;
   /** Graphs of every target that answered with one, in target order (graph panels). */
   graphs?: readonly PanelGraph[] | undefined;
+  /** Document sets of every target that answered with documents, in target order. */
+  documents?: readonly DocumentSet[] | undefined;
+  /**
+   * Click-to-filter on a value of document set `index`: there where the query can change
+   * (Explore, the panel editor), absent on dashboards, where viewers only read.
+   */
+  onFilter?: ((filter: DocumentFilter) => void) | undefined;
+  /**
+   * Changes when another result arrives (a run, a page loaded after it); panels that keep a place
+   * in the result, such as a drilldown, start over then.
+   */
+  revision?: string | number | undefined;
 }
 
 /** One target's graph, with the source it came from (explorer mode queries it again). */
@@ -68,6 +80,14 @@ export interface PanelGraph {
   refId: string;
   datasourceId: string;
   graph: GraphSet;
+}
+
+export interface DocumentFilter {
+  /** Index into `documents`. */
+  index: number;
+  /** A filter path without array indexes (`items.price`). */
+  path: string;
+  value: unknown;
 }
 
 export interface PanelEditorProps<Options> {

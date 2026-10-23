@@ -104,7 +104,8 @@ export function formatValue(
     case "number":
       return typeof value === "number" ? numberFormat(language).format(value) : String(value);
     case "time":
-      return typeof value === "number"
+      // Beyond 8.64e15 ms (a "never expires" sentinel) JavaScript has no date: the number shows.
+      return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 8.64e15
         ? dateTimeFormat(language, zone).format(value)
         : String(value);
     case "json":

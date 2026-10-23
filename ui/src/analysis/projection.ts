@@ -197,5 +197,14 @@ export function projectDocuments(set: DocumentSet, columns: readonly ProjectionC
         values: raw.map((v) => convert(v, type)),
       };
     });
-  return { fields, meta: { rowsTruncated: set.truncated !== undefined, notices: [] } };
+  // The source's notices (a cut, hidden values) and the query as it ran stay with the frame, so
+  // the panel and the inspector still show them.
+  return {
+    fields,
+    meta: {
+      rowsTruncated: set.truncated !== undefined,
+      notices: set.notices,
+      ...(set.executedQuery === undefined ? {} : { executedQuery: set.executedQuery }),
+    },
+  };
 }

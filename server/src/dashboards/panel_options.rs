@@ -1,9 +1,9 @@
-//! Checks of the options and field options of the built-in frame and graph panels
+//! Checks of the options and field options of the built-in frame, document and graph panels
 //! (`ui/src/panels/`). Each panel type's `options` and the shared `fieldConfig` are parsed into
 //! closed shapes with bounds, so a saved dashboard cannot carry unknown keys, oversized lists or
 //! unsafe links. The UI keeps the same limits (`ui/src/panels/fieldConfig/fieldConfig.ts`,
-//! `ui/src/panels/graph/options.ts`). Panel types this module does not know (document panels,
-//! plugins) are left to their own checks.
+//! `ui/src/panels/graph/options.ts`, `ui/src/documents/projection.ts` for field paths). Panel
+//! types this module does not know (plugins) are left to their own checks.
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -23,6 +23,8 @@ pub const MIN_COLUMN_WIDTH: u32 = 40;
 pub const MAX_COLUMN_WIDTH: u32 = 1000;
 /// The text panel's content.
 pub const MAX_CONTENT_CHARS: usize = 20_000;
+/// A dotted field path of the document panels, as for projection columns.
+pub const MAX_FIELD_PATH_CHARS: usize = 500;
 /// Property keys, captions and variable names of the graph panels.
 pub const MAX_GRAPH_TEXT_CHARS: usize = 100;
 /// The hard cap on drawn nodes per graph panel (`MAX_NODE_LIMIT` in the UI).
@@ -44,6 +46,10 @@ pub const PANEL_TYPES: &[&str] = &[
     "state-timeline",
     "status-history",
     "text",
+    "documents",
+    "schema",
+    "distribution",
+    "document",
     "network",
     "hierarchy",
     "path",
@@ -332,6 +338,17 @@ struct TextOptions {
     content: Option<String>,
 }
 
+/// The document explorer and the schema panel have no options of their own.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoOptions {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DistributionOptions {
+    path: Option<String>,
+}
+
 /// The network and hierarchy panels (`GraphPanelOptions`). The hierarchy panel never clusters
 /// but stores `cluster` like the network, as its editor writes it.
 #[derive(Debug, Deserialize)]
@@ -349,6 +366,12 @@ struct GraphOptions {
     expand_limit: Option<u32>,
     variable: Option<String>,
     variable_property: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CardOptions {
+    title_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -526,8 +549,8 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
     if !PANEL_TYPES.contains(&kind) {
         return Ok(());
     }
-    // The text and graph panels use no field options, but whatever they store (kept when a panel
-    // changes type) is checked like the others.
+    // The text, document and graph panels use no field options, but whatever they store (kept
+    // when a panel changes type) is checked like the others.
     check_field_config(field_config)?;
     let unit = |unit: &Option<String>| match unit {
         Some(u) => check_text("options.unit", u, MAX_UNIT_CHARS, false),
@@ -595,6 +618,21 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 check_text("options.content", content, MAX_CONTENT_CHARS, true)?;
             }
             Ok(())
+        }
+        "documents" | "schema" => parse::<NoOptions>("options", options).map(|_| ()),
+        "distribution" => {
+            let o: DistributionOptions = parse("options", options)?;
+            match &o.path {
+                Some(path) => check_text("options.path", path, MAX_FIELD_PATH_CHARS, false),
+                None => Ok(()),
+            }
+        }
+        "document" => {
+            let o: CardOptions = parse("options", options)?;
+            match &o.title_path {
+                Some(path) => check_text("options.titlePath", path, MAX_FIELD_PATH_CHARS, false),
+                None => Ok(()),
+            }
         }
         "network" | "hierarchy" => {
             let o: GraphOptions = parse("options", options)?;
@@ -694,7 +732,33 @@ mod tests {
 
     #[test]
     fn unknown_panel_types_are_left_alone() {
-        assert!(check("documents", &json!({ "anything": 1 }), &json!({ "free": true })).is_ok());
+        assert!(check("plugin-chart", &json!({ "anything": 1 }), &json!({ "free": true })).is_ok());
+    }
+
+    #[test]
+    fn document_panels_check_their_options() {
+        for (kind, options) in [
+            ("documents", json!({})),
+            ("schema", json!({})),
+            ("distribution", json!({ "path": "items[].price" })),
+            ("distribution", json!({})),
+            ("document", json!({ "titlePath": "customer.name" })),
+        ] {
+            check(kind, &options, &json!({})).unwrap_or_else(|e| panic!("{kind}: {e}"));
+        }
+        for (kind, options, expect) in [
+            ("documents", json!({ "columns": 3 }), "unknown field"),
+            ("schema", json!({ "x": 1 }), "unknown field"),
+            ("distribution", json!({ "path": "p".repeat(MAX_FIELD_PATH_CHARS + 1) }), "options.path"),
+            ("distribution", json!({ "path": "a\nb" }), "options.path"),
+            ("distribution", json!({ "path": 3 }), "options"),
+            ("document", json!({ "titlePath": "t".repeat(MAX_FIELD_PATH_CHARS + 1) }), "options.titlePath"),
+            ("document", json!({ "title": "x" }), "unknown field"),
+        ] {
+            let err = check(kind, &options, &json!({})).unwrap_err();
+            assert!(err.contains(expect), "{kind} {options}: {err}");
+        }
+        assert!(check("documents", &json!({}), &json!({ "anything": 1 })).unwrap_err().contains("fieldConfig"));
     }
 
     #[test]

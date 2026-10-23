@@ -1,6 +1,9 @@
 import type { QueryResult, Shape } from "../api/generated/shapes";
 import { barPanel } from "./bar";
 import { barGaugePanel } from "./bargauge";
+import { distributionPanel } from "./distribution";
+import { documentCardPanel } from "./document";
+import { documentsPanel } from "./documents";
 import { timeField, valueFields } from "./frame";
 import { gaugePanel } from "./gauge";
 import { heatmapPanel } from "./heatmap";
@@ -9,6 +12,7 @@ import { histogramPanel } from "./histogram";
 import { networkPanel } from "./network";
 import { pathPanel } from "./path";
 import { pieChartPanel } from "./piechart";
+import { schemaPanel } from "./schema";
 import { statPanel } from "./stat";
 import { stateTimelinePanel, statusHistoryPanel } from "./state";
 import { tablePanel } from "./table";
@@ -17,8 +21,8 @@ import { timeseriesPanel } from "./timeseries";
 import type { AnyPanelPlugin } from "./types";
 
 /**
- * Every panel type, in the order the picker offers them when several accept a shape. Document
- * and graph panels (M2, M3) are added here with the shapes they accept.
+ * Every panel type, in the order the picker offers them when several accept a shape. Graph
+ * panels (M3) are added here with the shapes they accept.
  */
 export const PANELS: readonly AnyPanelPlugin[] = [
   timeseriesPanel,
@@ -32,6 +36,10 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   heatmapPanel,
   stateTimelinePanel,
   statusHistoryPanel,
+  documentsPanel,
+  schemaPanel,
+  distributionPanel,
+  documentCardPanel,
   networkPanel,
   hierarchyPanel,
   pathPanel,
@@ -58,7 +66,8 @@ export function panelsForShapes(
 
 /**
  * The panel that fits a set of results best: for graphs the network (the path panel when every
- * graph is made of paths), for frames a time series when there is time, else a table.
+ * graph is made of paths), for frames a time series when there is time, else a table; documents
+ * open in the document explorer.
  */
 export function suggestPanel(results: readonly QueryResult[]): string {
   const graphs = results.flatMap((r) => (r.shape === "graph" ? [r.graph] : []));
@@ -68,6 +77,9 @@ export function suggestPanel(results: readonly QueryResult[]): string {
   const frames = results.flatMap((r) => (r.shape === "frame" ? [r.frame] : []));
   if (frames.some((f) => timeField(f) !== undefined && valueFields(f).length > 0)) {
     return timeseriesPanel.type;
+  }
+  if (frames.length === 0 && results.some((r) => r.shape === "documents")) {
+    return documentsPanel.type;
   }
   return tablePanel.type;
 }
