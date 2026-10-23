@@ -1,0 +1,39 @@
+@layer components {
+  /* Annotations on a time axis: a line or a band from the top to the axis. */
+  .ann-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .ann {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: var(--ann-x, 0);
+    width: var(--border-width);
+    background: var(--series-color, var(--text-muted));
+  }
+
+  .ann--span {
+    width: max(var(--ann-w, 0), var(--border-width));
+    background: var(--annotation-fill);
+  }
+
+  .ann__handle {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: calc(var(--annotation-handle) / -2);
+    width: var(--annotation-handle);
+    height: var(--annotation-handle);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--series-color, var(--text-muted));
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .ann--span .ann__handle {
+    inset-inline-start: 0;
+  }
+}
