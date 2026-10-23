@@ -1,0 +1,125 @@
+import { useEffect, useState } from "react";
+import { GRAPH_COLORS } from "./model";
+
+/**
+ * Theme colors for the WebGL renderer, which cannot read CSS variables: hidden probe elements
+ * carry the tokens (graph.css), their computed colors are turned into `#rrggbb` through a 2D
+ * canvas (the renderer parses hex and rgb, not oklch), and everything is read again when the
+ * theme changes.
+ */
+
+export interface GraphPalette {
+  /** `--chart-1` ... `--chart-8`. */
+  series: string[];
+  /** The same, mixed most of the way into the background, for what selection leaves out. */
+  dimmed: string[];
+  neutral: string;
+  neutralDimmed: string;
+  edge: string;
+  edgeDimmed: string;
+  text: string;
+  background: string;
+  font: string;
+  boldWeight: string;
+}
+
+/** How far a dimmed color moves toward the background. */
+const DIM = 0.78;
+
+type Rgb = [number, number, number];
+
+let scratch: CanvasRenderingContext2D | null | undefined;
+
+/** A CSS color as RGB, through a 1x1 canvas; null where there is no canvas. */
+export function toRgb(color: string): Rgb | null {
+  if (scratch === undefined) {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      scratch = canvas.getContext("2d", { willReadFrequently: true });
+    } catch {
+      scratch = null;
+    }
+  }
+  if (scratch === null || color === "") {
+    return null;
+  }
+  scratch.clearRect(0, 0, 1, 1);
+  scratch.fillStyle = "#000";
+  scratch.fillStyle = color;
+  scratch.fillRect(0, 0, 1, 1);
+  const [r, g, b] = scratch.getImageData(0, 0, 1, 1).data;
+  return [r ?? 0, g ?? 0, b ?? 0];
+}
+
+export function hex([r, g, b]: Rgb): string {
+  return `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** `color` moved `amount` of the way toward `toward`. */
+export function mix(color: Rgb, toward: Rgb, amount: number): Rgb {
+  return [0, 1, 2].map(
+    (i) => (color[i] as number) + ((toward[i] as number) - (color[i] as number)) * amount,
+  ) as Rgb;
+}
+
+/** Reads the palette from the probes inside `root`. */
+export function readPalette(root: HTMLElement): GraphPalette {
+  const probe = (name: string) => {
+    const element = root.querySelector<HTMLElement>(`.graph__probe--${name}`);
+    return element === null ? "" : getComputedStyle(element).color;
+  };
+  const rgb = (name: string, fallback: Rgb): Rgb => toRgb(probe(name)) ?? fallback;
+  const background = rgb("bg", [255, 255, 255]);
+  const series = Array.from({ length: GRAPH_COLORS }, (_, i) => rgb(`${i + 1}`, [102, 102, 102]));
+  const neutral = rgb("neutral", [120, 120, 120]);
+  const edge = rgb("edge", [170, 170, 170]);
+  const style = getComputedStyle(root);
+  return {
+    series: series.map(hex),
+    dimmed: series.map((c) => hex(mix(c, background, DIM))),
+    neutral: hex(neutral),
+    neutralDimmed: hex(mix(neutral, background, DIM)),
+    edge: hex(edge),
+    edgeDimmed: hex(mix(edge, background, DIM)),
+    text: hex(rgb("text", [0, 0, 0])),
+    background: hex(background),
+    font: style.fontFamily || "sans-serif",
+    boldWeight: style.getPropertyValue("--font-weight-semibold").trim() || "600",
+  };
+}
+
+/**
+ * Counts theme changes: the data-theme attribute or the system's light and dark preference.
+ * Components that draw on a canvas read their colors again when it changes.
+ */
+export function useThemeVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setVersion((v) => v + 1);
+    const observer = new MutationObserver(bump);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    const media =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : null;
+    media?.addEventListener("change", bump);
+    return () => {
+      observer.disconnect();
+      media?.removeEventListener("change", bump);
+    };
+  }, []);
+  return version;
+}
+
+/** Whether the user asked for less motion; camera moves and the settling layout then jump. */
+export function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}

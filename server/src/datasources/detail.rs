@@ -50,6 +50,7 @@ mod tests {
         "sql",
         "promql",
         "variables",
+        "dashboards",
         "source",
         "sqlite",
         "mysql",
@@ -62,12 +63,21 @@ mod tests {
         "steps",
         "expression",
         "export",
+        "graph",
+        "cypher",
+        "gsql",
+        "bolt",
+        "memgraph",
+        "tigergraph",
         "mongodb",
         "documents",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Settings keys, written like reasons.
+        "dashboards.default_time_range",
+        "dashboards.version_retention",
         "datasource.created",
         "datasource.deleted",
         "datasource.restored",

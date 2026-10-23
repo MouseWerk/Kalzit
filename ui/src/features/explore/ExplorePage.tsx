@@ -13,6 +13,7 @@ import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
@@ -287,15 +288,17 @@ function Explore({ orgId }: { orgId: string }) {
             hidden={tab !== "result"}
           >
             {tab === "result" ? (
-              <PanelBody
-                panel={panel}
-                title={t("explore.result")}
-                range={{ from: submitted.from, to: submitted.to }}
-                pending={result.isPending}
-                error={result.error}
-                outcomes={outcomes}
-                stepsRun={stepsRun}
-              />
+              <PanelHostContext value={{ orgId }}>
+                <PanelBody
+                  panel={panel}
+                  title={t("explore.result")}
+                  range={{ from: submitted.from, to: submitted.to }}
+                  pending={result.isPending}
+                  error={result.error}
+                  outcomes={outcomes}
+                  stepsRun={stepsRun}
+                />
+              </PanelHostContext>
             ) : null}
           </div>
           <div

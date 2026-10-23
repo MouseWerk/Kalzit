@@ -197,7 +197,10 @@ async fn kinds_describe_their_settings_forms() {
     let r = t.get("/datasource-kinds").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let kinds: Vec<&str> = r.body["items"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["postgres", "mysql", "sqlite", "mssql", "prometheus", "mongodb"]);
+    assert_eq!(
+        kinds,
+        ["postgres", "mysql", "sqlite", "mssql", "prometheus", "mongodb", "neo4j", "memgraph", "tigergraph"]
+    );
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");
@@ -1133,6 +1136,79 @@ async fn viewers_run_the_stored_queries_of_dashboards_they_may_read() {
         t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": { "land": "Schweiz" } })).await;
     assert_eq!(r.body["results"]["A"]["error"]["code"], "not_found", "{}", r.text);
     t.finish().await;
+}
+
+/// A dashboard stored before a panel option rule existed keeps working: its queries run, it saves
+/// while that panel stays as it is, and older versions restore. Changing the panel means fixing it.
+#[tokio::test]
+async fn stored_panels_that_predate_the_option_rules_keep_working() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let dashboard = t.dashboard(&ds, None).await;
+    let mut odd = dashboard_model(&ds);
+    odd["panels"][0]["options"] = json!({ "rowColors": true, "pageSize": 1 });
+    odd["panels"][0]["fieldConfig"] = json!({ "defaults": { "decimals": 99 } });
+    sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2 AND version = 1")
+        .bind(odd.to_string())
+        .bind(&dashboard)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+
+    let body = json!({ "timeRange": range(), "variables": { "land": "Schweiz" } });
+    let r = t.panel(&t.owner, &dashboard, "p1", body).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = t.options(&t.owner, &dashboard, "land", json!({ "timeRange": range() })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+
+    let path = t.path(&format!("/dashboards/{dashboard}"));
+    let mut renamed = odd.clone();
+    renamed["title"] = json!("Umsatz 2026");
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": renamed, "version": 1 })), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = t.post(&format!("/dashboards/{dashboard}/versions/1/restore"), json!({})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+
+    let mut changed = odd;
+    changed["panels"][0]["options"] = json!({ "pageSize": 2 });
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": changed, "version": 3 })), Some(&t.owner)).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", r.text);
+    assert!(r.text.contains("model.panels[0].fieldConfig.defaults.decimals"), "{}", r.text);
+}
+
+/// Creating a dashboard and restoring a version check the panel options of what they write, and
+/// the refusal names the panel.
+#[tokio::test]
+async fn creating_and_restoring_check_panel_options() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+
+    let mut odd = dashboard_model(&ds);
+    odd["panels"][0]["options"] = json!({ "pageSize": 1 });
+    let r = t.post("/dashboards", json!({ "model": odd })).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", r.text);
+    assert_eq!(r.body["error"]["reason"], "dashboards.panel_options", "{}", r.text);
+    assert_eq!(r.body["error"]["params"]["panel"], "Verkäufe", "{}", r.text);
+    assert!(r.text.contains("options.pageSize"), "{}", r.text);
+
+    // Version 1 is stored with options from before a rule; version 2 changed them since.
+    let dashboard = t.dashboard(&ds, None).await;
+    let path = t.path(&format!("/dashboards/{dashboard}"));
+    let mut fixed = dashboard_model(&ds);
+    fixed["panels"][0]["options"] = json!({ "pageSize": 50 });
+    let r = t.send(Method::PUT, &path, Some(json!({ "model": fixed, "version": 1 })), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2 AND version = 1")
+        .bind(odd.to_string())
+        .bind(&dashboard)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.post(&format!("/dashboards/{dashboard}/versions/1/restore"), json!({})).await;
+    assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{}", r.text);
+    assert_eq!(r.body["error"]["reason"], "dashboards.panel_options", "{}", r.text);
 }
 
 #[tokio::test]

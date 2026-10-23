@@ -36,6 +36,8 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
 | Dashboards | Your account: sessions |
+| ![Data source kinds as cards with their logos](docs/screenshots/data-source-kinds-light.png) | ![Data source kinds in the dark theme](docs/screenshots/data-source-kinds-dark.png) |
+| Adding a data source | Adding a data source, dark theme |
 | ![Sign-in page](docs/screenshots/sign-in.png) | |
 | Sign in | |
 
@@ -68,8 +70,14 @@ folder to create the first organization and its owner.
 - [docs/api/](docs/api/): the HTTP API (access, data sources and queries, settings and
   dashboards).
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface.
+- [docs/design/feel.md](docs/design/feel.md): how the interface should look and feel, and the plan
+  to get there.
 - [ui/README.md](ui/README.md): the web interface and its scripts.
 
 ## License
 
 AGPL-3.0, see [LICENSE](LICENSE).
+
+Product names and logos are trademarks of their owners; Kalzit uses them only to identify the
+data source it connects to, with no endorsement implied (see
+[ui/src/assets/logos/NOTICE.md](ui/src/assets/logos/NOTICE.md)).

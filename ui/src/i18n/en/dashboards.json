@@ -256,5 +256,6 @@
   "dashboards.save.modelInvalid": "The server did not accept the dashboard: {detail}",
   "dashboards.variables.truncated": "More values exist than are listed. Narrow the query to see the one you need.",
   "dashboards.editor.readOnlyQuery": "Changing this query needs query rights on its data source. You can still rename, arrange and restyle the panel.",
-  "dashboards.editor.noQueryRight": "Adding or changing queries needs query rights on a data source; ask an admin."
+  "dashboards.editor.noQueryRight": "Adding or changing queries needs query rights on a data source; ask an admin.",
+  "dashboards.panel.drawFailed": "This panel could not be drawn. Reload the page, or open the panel in the editor to check its query and options."
 }

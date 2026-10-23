@@ -7,16 +7,22 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod bolt;
+pub mod cypher;
 pub mod detail;
 pub mod frame;
+pub mod graph;
+pub mod gsql;
 pub mod mongodb;
 pub mod mssql;
 pub mod mysql;
+pub mod neo4j;
 pub mod postgres;
 pub mod prometheus;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
+pub mod tigergraph;
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
@@ -132,9 +138,28 @@ pub fn blocked_detail(inner: &(dyn std::error::Error + Send + Sync + 'static)) -
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SourceSchema {
-    Tables { tables: Vec<Table> },
-    Metrics { metrics: Vec<String>, labels: Vec<String> },
-    Collections { database: String, collections: Vec<mongodb::CollectionSchema> },
+    Tables {
+        tables: Vec<Table>,
+    },
+    Metrics {
+        metrics: Vec<String>,
+        labels: Vec<String>,
+    },
+    Collections {
+        database: String,
+        collections: Vec<mongodb::CollectionSchema>,
+    },
+    /// Graph sources: node labels (TigerGraph: vertex types), relationship (edge) types, property
+    /// keys, and for TigerGraph the installed queries.
+    Graph {
+        labels: Vec<String>,
+        #[serde(rename = "edgeTypes")]
+        edge_types: Vec<String>,
+        #[serde(rename = "propertyKeys")]
+        property_keys: Vec<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        queries: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -865,6 +890,9 @@ impl DataSources {
                 mssql::kind(),
                 prometheus::kind(),
                 mongodb::kind(),
+                neo4j::neo4j(),
+                neo4j::memgraph(),
+                tigergraph::kind(),
             ],
             keyring,
             own: Arc::new(OwnDatabase::new(db, &database_url)),
@@ -1294,13 +1322,15 @@ pub fn precheck_targets(
     for host in settings.get("hosts").and_then(Value::as_str).map(mongodb::host_names).unwrap_or_default() {
         policy.precheck_host(&host).map_err(|b| (b, "hosts"))?;
     }
-    let url_host = settings
-        .get("url")
-        .and_then(Value::as_str)
-        .and_then(|u| reqwest::Url::parse(u).ok())
-        .and_then(|u| u.host_str().map(String::from));
-    if let Some(host) = url_host {
-        policy.precheck_host(&host).map_err(|b| (b, "url"))?;
+    for field in ["url", "restppUrl"] {
+        let url_host = settings
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(|u| reqwest::Url::parse(u).ok())
+            .and_then(|u| u.host_str().map(String::from));
+        if let Some(host) = url_host {
+            policy.precheck_host(&host).map_err(|b| (b, field))?;
+        }
     }
     Ok(())
 }
@@ -1538,6 +1568,17 @@ mod tests {
         let secrets: crate::secrets::SecretPatch =
             [("token".to_string(), Some(zeroize::Zeroizing::new("x".to_string())))].into();
         assert_eq!(kind.validate_secrets(&secrets).unwrap_err().field, "secrets");
+    }
+
+    #[test]
+    fn every_url_setting_is_prechecked() {
+        let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
+        let kind = tigergraph::kind();
+        let ok = serde_json::json!({ "url": "http://tg.intern:14240", "graph": "g", "user": "u" });
+        assert!(precheck_targets(&policy, &kind, &ok).is_ok());
+        let mut restpp = ok.clone();
+        restpp["restppUrl"] = serde_json::json!("http://169.254.169.254/restpp");
+        assert_eq!(precheck_targets(&policy, &kind, &restpp).unwrap_err().1, "restppUrl");
     }
 
     #[test]

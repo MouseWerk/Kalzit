@@ -417,7 +417,7 @@ mod tests {
             ],
             schema: vec![],
             next_cursor: None,
-            truncated: Some(crate::shapes::Truncated { limit: 2 }),
+            truncated: Some(crate::shapes::Truncated { limit: 2, reason: None }),
             notices: vec![],
             executed_query: None,
         };

@@ -695,6 +695,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         areas.datasources,
         { refId: target.refId, datasourceId: target.datasourceId, query: target.query },
         query.timeRange,
+        query.variables,
       );
     }
     return json(200, { results });

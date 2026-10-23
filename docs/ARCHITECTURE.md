@@ -217,7 +217,11 @@ type QueryResult =
   `lo_import`, `dblink`, `OPENROWSET`, `OPENDATASOURCE`, `load_extension`). They run in a
   read-only transaction where the engine has one (PostgreSQL, MySQL/MariaDB); SQLite opens the
   file read-only with extension loading disabled. Each engine has tests for these rejections.
-  Rejections answer `query_rejected` with the reason.
+  Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
+  Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
+  checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may
+  write are refused, and GSQL is parsed and refused when it writes or does not parse
+  (docs/api/datasources.md).
 - **No string interpolation of user input.** Macros (`$__timeFilter(col)`, `$__timeFrom`,
   `$__timeTo`, `$__interval`, `$__interval_ms`) and variables become bind parameters. A variable
   used as an identifier must match an allow-list from the source's schema.
@@ -269,6 +273,17 @@ type QueryResult =
   }
   ```
 - Panels declare the shapes they accept; the panel picker offers matching panels first.
+- A panel's `options` belong to its type; `fieldConfig` holds the shared field options
+  (`{defaults, overrides}`: unit, decimals, min and max, thresholds, value mappings, no-value
+  text, display name, color, table cell display, link, width). `null` in an override clears what
+  the defaults set. Regex matchers and mappings use RE2 syntax (no backreferences or
+  lookaround): the UI runs them with re2js in linear time, the server checks them with the
+  `regex` crate.
+- `dashboards::panel_options` checks the options and field options of the built-in frame panel
+  types on create, save and restore, and only for panels the write adds or changes, so stored
+  dashboards keep loading and querying when a rule tightens. Reads never run it. A new panel type
+  (the document and graph panels, plugins) adds its own check there when it lands; unknown types
+  are left alone.
 
 ## Analysis steps and export
 
@@ -517,6 +532,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
 - `ui/src/features/<area>/` own their routes (`routes.tsx`, attached under the signed-in app
   route), nav item, API calls (`api.ts`, through `ui/src/api/client.ts`), components and pages.
 - `ui/src/panels/<type>/` export `{ type, shapes, Editor, Panel }`; a registry lists them.
+  Optional: `description` and `Preview` for the panel picker, `fieldOptions` (the field option
+  groups the panel uses, edited by the shared `FieldConfigEditor`) and `standalone` for panels
+  that draw without a query (text). Panels receive `fieldConfig` parsed and the dashboard's
+  `variables`.
 - Translations: `ui/src/i18n/<lang>/<area>.json`, keys prefixed with the area; core holds only
   shared keys. Tests check prefixes, duplicates and per-file parity.
 - The current organization's permissions come from `GET /api/orgs/{orgId}`; areas hide what the

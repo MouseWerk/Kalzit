@@ -34,7 +34,7 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
-`sqlite`, `mssql`, `prometheus`, `mongodb`.
+`sqlite`, `mssql`, `prometheus`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
 
 ```json
 {
@@ -71,6 +71,14 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `prometheus`: "Use a token or account that can only query."
   - `mongodb`: "Use a login with only the read role on this database. Kalzit refuses logins that
     may do more, and servers without access control."
+  - `neo4j`: "Use a user with only read rights (the reader role). Kalzit also runs every query in a
+    read transaction, which Neo4j enforces."
+  - `memgraph`: "Use a user that may only read (no CREATE, MERGE, SET, REMOVE or DELETE privilege).
+    Memgraph does not enforce read transactions, so Kalzit checks the user and refuses one that
+    may write, unless you allow it below (needed for Memgraph Community)."
+  - `tigergraph`: "Use a user with only the queryreader role. TigerGraph has no read transaction:
+    Kalzit checks the user's rights and refuses one that may write, and checks every query's
+    text."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
   limits for this source; the server-wide limits are the maximum.
 
@@ -84,10 +92,20 @@ Fields per kind (common fields omitted):
 | `mssql` | `host`*, `port` (1433), `database`*, `user`*, `password` S, `encrypt` (bool, default true), `trustServerCertificate` (bool, default false), `caCert` |
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
 | `mongodb` | `hosts`* (`host`, `host:port` or `[v6]:port`, comma-separated, at most 50), `port` (27017, for hosts without one), `srv` (bool, default false: `mongodb+srv`, `hosts` is one name without port), `replicaSet`, `database`*, `user`, `password` S, `authSource` (default: `database`; with SRV the TXT record's, else `admin`), `tls` (bool; default false, true with SRV), `caCert` (needs TLS), `maxResponseBytes` (at least 1, within the server's limit) |
+| `neo4j` | `host`*, `port` (7687), `database` (the server's default database when empty), `user`, `password` S, `encrypt` (bool, default false: Bolt with TLS), `trustServerCertificate` (bool, default false), `caCert`, `maxNodes` (10,000), `maxEdges` (50,000) |
+| `memgraph` | as `neo4j`, plus `allowWriteCapableUser` (bool, default false, a target field) |
+| `tigergraph` | `url`* (the GSQL server, such as `https://tg.intern:14240`), `restppUrl` (REST++; default `<url>/restpp`), `graph`*, `user`*, `password` S, `secret` S (REST++ secret for tokens), `caCert`, `approvedQueries` (text: installed query names separated by commas or line breaks, a target field), `maxNodes`, `maxEdges` |
+
+`maxNodes` and `maxEdges` (at least 1) limit graph answers; both are capped by the row limit
+(`maxRows` and the server's `datasources.max_rows`). `allowWriteCapableUser` and
+`approvedQueries` are target fields although they name no address: they decide what runs with the
+stored secrets, so only a data source admin may change them, and only with the secrets again.
 
 i18n keys the UI needs: `datasources.settings.<name>` for every field name above plus
 `queryTimeoutSecs` and `maxRows`, and `datasources.kinds.<kind>.hint` for each kind. For
-`mongodb`, `maxRows` limits documents.
+`mongodb`, `maxRows` limits documents. TigerGraph's `url`, `secret` and `graph` use the labels
+`datasources.settings.gsqlUrl`, `datasources.settings.restppSecret` and
+`datasources.settings.graph`.
 
 ## List: `GET /orgs/{orgId}/datasources`
 
@@ -241,7 +259,9 @@ Body: none or `{}`. Always `200`, also when the source fails:
 
 - `reason` and `params` are what the UI shows (see [Reasons](#reasons)); `message` is the English
   fallback. `params` is omitted when empty.
-- When `ok` is true, `reason` is `health.connected` (`engine`, `version`),
+- When `ok` is true, `reason` is `health.connected` (`engine`, `version`, and `edition` for the
+  graph kinds when the server tells it), `health.connected_write_capable` (Memgraph with
+  `allowWriteCapableUser`: the user may write),
   `health.connected_read_only` (SQLite: the file is opened read-only), `health.prometheus_answered`
   (`engine`) or `health.connected_admin_login` (`engine`, `version`: the login has administrator
   rights, PostgreSQL superuser or SQL Server sysadmin; the text should advise a read-only login).
@@ -281,6 +301,16 @@ MongoDB lists the database's collections (up to 1,000, by name, without `system.
 ```
 
 `type` is `collection`, `view` (no indexes) or `timeseries`.
+Graph kinds:
+
+```json
+{ "kind": "graph", "labels": ["Person"], "edgeTypes": ["KNOWS"], "propertyKeys": ["name", "since"], "queries": ["nachbarn"] }
+```
+
+Neo4j answers `db.labels()`, `db.relationshipTypes()` and `db.propertyKeys()`; Memgraph a sample
+of up to 10,000 nodes and relationships; TigerGraph its vertex types, edge types and attribute
+names, and in `queries` the installed queries (4.x) and the approved ones. `queries` is omitted
+when empty.
 
 Errors: `502 datasource_error`, `422 datasource_target_blocked`, `504 query_timeout`.
 
@@ -395,8 +425,170 @@ Macros: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at 
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
 
-`cursor` on a query (and `cursors` on the panel route) continues document results; SQL and
-Prometheus sources ignore it.
+### Neo4j and Memgraph: `{"cypher": "MATCH ..."}`
+
+Over Bolt (4.4 and 5.0 to 5.8), with TLS when `encrypt` is set. Kalzit opens the connection to the
+checked address itself and checks the certificate against the host name. Each query runs in a
+read transaction (`BEGIN {mode: "r"}`, the source's `database`, a server-side transaction timeout
+of the query's time limit) that is rolled back; a query cut by a limit, the time limit or a client
+that went away closes its connection, which ends the transaction on the server.
+
+Read-only rules, checked on the tokens of the query (strings, backtick names, comments and
+parameters are tokens of their own, so a keyword inside them is never seen):
+
+- Exactly one statement, starting with `MATCH`, `OPTIONAL MATCH`, `WITH`, `UNWIND`, `RETURN`,
+  `CALL`, `FINISH`, `LET` or `FILTER`, optionally after `EXPLAIN`, `PROFILE` or `CYPHER` options.
+  So administration commands (`SHOW`, `CREATE INDEX`, `DROP`, `GRANT`, `START DATABASE`, Memgraph's
+  `STORAGE MODE`, `FREE MEMORY`, `DUMP DATABASE`, ...) are refused.
+- Refused anywhere, also inside `CALL {}`, `CALL (x) {}`, `EXISTS {}`, `COUNT {}` and `COLLECT {}`:
+  `CREATE`, `MERGE`, `DELETE`, `DETACH`, `NODETACH`, `SET`, `REMOVE`, `INSERT`, `FOREACH`, `LOAD`
+  (`LOAD CSV` and Memgraph's loaders), `USE`, `IN TRANSACTIONS` (also `IN n CONCURRENT
+  TRANSACTIONS`), `PERIODIC COMMIT`.
+- A number or numbered parameter followed directly by letters (`1DELETE`, `LIMIT 1SET`,
+  `$1DELETE`) is refused: the database reads the letters as the next word. Hex (`0x1F`), octal
+  (`0o17`), exponents (`1e-3`) and `_` in numbers are fine. Line comments also end at U+0085,
+  U+2028 and U+2029.
+- Function calls must be built-ins (`count`, `toUpper`, `date`, `shortestPath`, ...) or start with
+  an allowed namespace: `date.`, `datetime.`, `localdatetime.`, `localtime.`, `time.`,
+  `duration.`, `point.`, `vector.similarity.`, and APOC's pure helpers (`apoc.coll.`,
+  `apoc.text.`, `apoc.map.`, `apoc.math.`, `apoc.convert.`, `apoc.date.`, `apoc.temporal.`,
+  `apoc.number.`, `apoc.agg.`, `apoc.label.`, `apoc.hashing.`, `apoc.meta.cypher.`,
+  `apoc.node.degree`, `apoc.node.labels`, `apoc.rel.type`, `apoc.util.md5` and `sha*`).
+  Everything else is refused, among it `apoc.cypher.*` (which runs Cypher given as text),
+  `apoc.load.*`, `apoc.export.*`, `apoc.periodic.*`, `apoc.trigger.*`, `apoc.schema.*`, `dbms.*`
+  and `db.*`.
+- `CALL` of a procedure only from this list (case does not matter): `db.labels`,
+  `db.relationshipTypes`, `db.propertyKeys`, `db.schema.visualization`,
+  `db.schema.nodeTypeProperties`, `db.schema.relTypeProperties`, `dbms.components`,
+  `schema.node_type_properties`, `schema.rel_type_properties`.
+- A word counts as a keyword unless it is in backticks, follows `.` or `:`, or is followed by
+  `:` (a map key). A label or property named like a keyword works as `n:Set`, `n.create` or
+  `{create: 1}`; elsewhere, such as after `|` in a label expression, write it in backticks.
+
+Neo4j enforces the read transaction on the server (a write answers `query_rejected` with
+`query.write_refused`). Memgraph accepts it but does not enforce it, so the user's privileges
+decide. On every new connection, before reusing a pooled connection checked more than a minute
+ago, and on Test connection, Kalzit probes them:
+
+- `CREATE`, `MERGE`, `SET`, `REMOVE`, `DELETE`: each clause on `MATCH (n) WHERE false` (which
+  matches nothing) in a transaction it rolls back.
+- `READ_FILE`: `LOAD CSV` of a file that does not exist, on no rows, rolled back.
+- `AUTH`, `TRIGGER`, `STREAM`, `CONFIG`: `SHOW USERS`, `SHOW TRIGGERS`, `SHOW STREAMS`,
+  `SHOW CONFIG`, which change nothing.
+
+Memgraph checks privileges before it runs a query, so a read-only user is refused each one, and a
+user who has them gets an empty result and nothing changes. A replica (or read-only instance) refuses
+writes the same way, so it counts as read-only. A user with any of these privileges is refused
+(`memgraph.user_can_write`) unless `allowWriteCapableUser` is set; Memgraph Community has no
+read-only users, so there the setting is needed, Test connection answers
+`health.connected_write_capable`, and only the query check keeps queries read-only.
+
+Not covered by the probes: privileges without a harmless probe (`MODULE_WRITE`, `DURABILITY`,
+`REPLICATION`, `STORAGE_MODE`, `FREE_MEMORY`, `INDEX`, `CONSTRAINT`, `DUMP`, multi-tenancy and
+impersonation), label-based (fine-grained) permissions, which can allow writes on some labels only,
+and a privilege granted after the last check (at most a minute on a pooled connection). The query
+check refuses the statements behind all of them.
+
+Parameters: variables are bound as Cypher parameters (`$name`), never spliced into the text; a
+list becomes a list. Macros: `$__timeFrom`, `$__timeTo` (UTC DateTime values),
+`$__timeFromMs`, `$__timeToMs` and `$__interval_ms` (integers). `meta.executedQuery` of a frame is
+the query as sent.
+
+### TigerGraph: `{"gsql": "INTERPRET QUERY ..."}` or `{"installed": "name"}`
+
+Both take `params` (an object), and each declared parameter that has no value there takes the
+dashboard variable of the same name.
+
+- Interpreted queries go to the GSQL server with the user and password: 4.x
+  `POST /gsql/v1/queries/interpret?graph=<graph>`, 3.x `POST /gsqlserver/interpreted_query`. The
+  text is one `INTERPRET QUERY (...) FOR GRAPH <graph> { ... }`; `FOR GRAPH` is required (3.x
+  takes the graph from it), and another graph than the source's is refused. Requests with a body
+  (interpreted queries, `SHOW USER`, token requests) do not follow redirects: a redirect answers
+  `tigergraph.error`, so a body or secret never reaches another URL.
+- Installed queries go to REST++ `GET /query/<graph>/<name>` with a token. With `secret`, the
+  token comes from it (4.x `POST /gsql/v1/tokens`, 3.x `POST <restppUrl>/requesttoken`); without
+  it, 4.x issues one for the user and password, and 3.x calls REST++ without a token (for servers
+  without REST++ authentication). A token is replaced a minute before it expires, and once more
+  when REST++ answers 401.
+- The time limit goes along as `GSQL-TIMEOUT`, the size limit to REST++ as `RESPONSE-LIMIT`.
+- Parameters are typed REST++ query parameters from the declared types: `INT`, `UINT`, `FLOAT`,
+  `DOUBLE`, `BOOL`, `STRING`, `DATETIME` (text `YYYY-MM-DD HH:MM:SS` or Unix milliseconds),
+  `VERTEX<T>` (the id), `VERTEX` (`{"type": ..., "id": ...}`), `SET`/`BAG`/`LIST` of them (a list,
+  sent as repeated values). A value that does not fit is refused (`tigergraph.param_type`), as is
+  a name the query does not declare. For an approved query whose text cannot be read the types
+  are unknown, and values go as given (lists repeated, `{"type", "id"}` as a vertex).
+
+What Kalzit found in the TigerGraph documentation (October 2026) about reading a query's text:
+4.x has `GET /gsql/v1/queries/{name}?graph=<graph>` (field `queryContent`) and
+`GET /gsql/v1/queries/info?graph=<graph>&query=<name>` (field `code`); both need the
+`READ_QUERY` privilege, which the built-in `queryreader` role does not have. 3.x has no REST
+endpoint for it, only the GSQL command `SHOW QUERY`, which Kalzit does not send (it sends no GSQL
+commands made from input). So with a plain `queryreader` user, installed queries run only when
+approved by name. Whether `queryreader` may run interpreted queries in 4.1+ (the per-query
+`EXECUTE_QUERY` privilege) is checked against a real instance by the nightly job; if the server
+refuses, the query answers `tigergraph.error`.
+
+Read-only rules:
+
+- The user must be a reader. Kalzit reads its roles and privileges when it sets up the
+  connection (after every change of the source and every ten minutes) and in Test connection:
+  4.x `GET /gsql/v1/users/<user>`, and when that is not allowed, and on 3.x, the fixed command
+  `SHOW USER`. Allowed are only the privileges `READ_SCHEMA`, `READ_LOADINGJOB`,
+  `EXECUTE_LOADINGJOB`, `READ_DATA`, `READ_QUERY` and `EXECUTE_QUERY` (on any graph), or, when
+  only roles are known, the role `queryreader` (global roles and roles on the source's graph).
+  Anything else, or a superuser, refuses the source (`tigergraph.user_can_write`). The built-in
+  `queryreader` role includes `EXECUTE_LOADINGJOB`; Kalzit never runs loading jobs, but a custom
+  role without it is safer.
+- The GSQL text is parsed; what does not parse is refused. Allowed is exactly one query body
+  with declarations, accumulators, vertex set seeds, `SELECT` blocks, `PRINT`, `IF`, `WHILE`,
+  `FOREACH`, `CASE`, `BREAK`, `CONTINUE`, `RETURN` and calls of built-in functions. Refused, also
+  inside `ACCUM` and `POST-ACCUM`: `INSERT INTO`, `UPDATE`, `DELETE`, assignments to attributes
+  (`v.age = 1`, `e.weight += 1`), `PRINT ... TO_CSV` and `FILE`, `CREATE`, `ALTER`, `DROP`, `RUN`
+  (loading jobs, schema changes), `INSTALL`, `GRANT`, `REVOKE`, `CLEAR`, `USE`, `LOAD`, `EXPORT`,
+  `IMPORT`, calls of functions and methods outside a fixed list of built-ins (so calls of other
+  queries, user-defined functions, `SelectVertex` and `evaluate`, and methods such as
+  `setAttr`), characters outside ASCII outside strings, `#`, `\"` inside strings, `'` anywhere but
+  right after an accumulator (`@@total'`), and a `TYPEDEF` named like a built-in, this or another
+  query or a name used before it; when the graph's query names cannot be read (3.x, or a user
+  without the right to list them), every `TYPEDEF` is refused. Global (`@@`) and vertex (`v.@x`) accumulators live for
+  one run and are allowed.
+- An installed query runs only when its text can be read and passes the check (the result of a
+  check is kept for a minute), or when its text cannot be read and its name is in
+  `approvedQueries`. Then only the reader user protects the data.
+- Kalzit never calls REST++ upsert, delete or loading endpoints.
+
+### Graph results
+
+Graph kinds answer `graph` when the result holds graph elements and `frame` otherwise:
+
+| Source | Becomes `graph` | Node `id` | Edge `id` |
+|---|---|---|---|
+| Neo4j, Memgraph | columns holding nodes, relationships, paths, or lists of them (the first record with a value decides) | the element id (Bolt 4.4: the number as text) | the element id |
+| TigerGraph | printed vertex sets and edges (`PRINT R`, `PRINT @@edges`), also inside lists | `Type:id` (split at the first `:`) | `Type:<from>-><to>`; undirected `Type:<a>--<b>` with the ends in sorted order; a parallel edge with other attributes gets `#2`, `#3` |
+
+- Each node and edge appears once. An edge whose end node is not in the result gets a node with
+  only its id (and its type for TigerGraph), completed when the node itself arrives.
+- Paths stay paths: `paths` lists the node and edge ids in walking order (a relationship walked
+  against its direction keeps its own `from` and `to`).
+- `schema` holds the labels, edge types and property keys per label of the answer.
+- Columns or printed values without graph elements next to them are not part of the graph; a
+  `graph.columns_omitted` notice names them. Query them separately for a table.
+- Without graph elements the answer is a `frame`: per column one type when all values share it
+  (`int64` for integers, `number`, `string`, `bool`, `time` for dates and date-times), else
+  `json`. A TigerGraph result that prints one list of objects has a row per object, otherwise one
+  row with every printed value. An empty Cypher result is an empty frame with its columns.
+- Property values keep their types: integers beyond 2^53 as `{"$type": "int64", "value"}`, NaN
+  and infinities as `{"$type": "float"}`, `{"$type": "date" | "time" | "localTime" |
+  "localDateTime" | "dateTime" | "duration", "value"}` in ISO 8601 (a `dateTime` with a zone name
+  is the UTC instant with `"zone"`), `{"$type": "point", "srid", "x", "y"[, "z"]}`,
+  `{"$type": "binary"}` (base64); nodes and relationships inside frame values as
+  `{"$type": "node" | "edge", ...}`.
+- Hitting `maxNodes`, `maxEdges` or the response size limit stops reading: `truncated` is
+  `{"limit", "reason"}` with `graph.node_limit`, `graph.edge_limit` or `graph.size_limit`, and a
+  notice says the same.
+
+`cursor` on a query (and `cursors` on the panel route) continues document results; SQL,
+Prometheus and graph sources ignore it.
 
 ### MongoDB: a pipeline or `find`
 
@@ -706,6 +898,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.url_credentials` | | the URL contains credentials |
 | `settings.url_query` | | the URL contains a query or fragment |
 | `settings.url_no_host` | | the URL has no host |
+| `settings.name_invalid` | | TigerGraph: the graph, user or an approved query name has characters other than letters, digits and `_` (users also `-`, `.`, `@`) |
 | `settings.invalid` | `detail` | the settings do not fit the kind (other cases) |
 | `mongodb.too_many_hosts` | `max` | more than `max` hosts |
 | `mongodb.srv_host` | | with SRV, `hosts` is not exactly one host name without a port |
@@ -800,6 +993,41 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `mongodb.variable_in_text` | | `${...}` inside longer text |
 | `mongodb.variable_in_key` | | `${...}` in a key |
 | `mongodb.cursor_invalid` | | the cursor does not belong to this query |
+| `cypher.empty` | | the Cypher query is empty |
+| `cypher.multiple_statements` | | more than one statement |
+| `cypher.not_read_query` | `keyword` | the query does not start with a reading clause (`MATCH`, `WITH`, `RETURN`, ...) |
+| `cypher.write_clause` | `clause` | `CREATE`, `MERGE`, `DELETE`, `DETACH`, `NODETACH`, `SET`, `REMOVE` or `INSERT` |
+| `cypher.foreach` | | `FOREACH` |
+| `cypher.load` | | `LOAD CSV` and other loaders |
+| `cypher.use` | | `USE` of another database |
+| `cypher.in_transactions` | | `CALL { } IN TRANSACTIONS` or `PERIODIC COMMIT` |
+| `cypher.procedure_not_allowed` | `name` | `CALL` of a procedure that is not on the read list |
+| `cypher.parse_error` | | `CALL` without a procedure name or subquery |
+| `cypher.function_not_allowed` | `name` | a function that is neither a built-in nor on the list of allowed namespaced functions |
+| `cypher.number_followed_by_letters` | | a number or `$0` parameter with letters glued to it (`1DELETE`, `LIMIT 1SET`) |
+| `cypher.unclosed_quote`, `cypher.unclosed_comment`, `cypher.unclosed_backtick` | | an unclosed string, `/*` comment or backtick name |
+| `cypher.macro_unknown` | `name` | an unknown `$__` macro |
+| `cypher.variable_missing` | `name` | a parameter without a variable value |
+| `cypher.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
+| `gsql.empty` | | the GSQL query is empty |
+| `gsql.not_one_query` | | not exactly one `INTERPRET QUERY` (interpreted) or `CREATE QUERY` (installed text) |
+| `gsql.parse_error` | `detail` | the query cannot be read for the check |
+| `gsql.write` | `statement` | `INSERT`, `UPDATE` or `DELETE` |
+| `gsql.attribute_assignment` | `target` | an assignment to an attribute |
+| `gsql.file_output` | | `TO_CSV` or `FILE` |
+| `gsql.statement_not_allowed` | `statement` | a schema, loading, user or administration statement |
+| `gsql.function_not_allowed` | `name` | a function outside the built-ins Kalzit allows (also other queries) |
+| `gsql.method_not_allowed` | `name` | a method outside the allowed ones (such as `setAttr`) |
+| `gsql.other_graph` | `graph` | the query is for another graph |
+| `gsql.graph_missing` | | an interpreted query without `FOR GRAPH` |
+| `gsql.typedef_name` | `name` | a `TYPEDEF` named like a built-in, a query or a name used before it, or any `TYPEDEF` when the graph's query names cannot be read |
+| `gsql.string_escape` | | `\"` inside a string |
+| `gsql.unexpected_character` | `character` | a character outside ASCII, or `#`, outside strings and comments |
+| `gsql.unclosed_quote`, `gsql.unclosed_comment` | | an unclosed string or comment |
+| `tigergraph.query_name` | `name` | `installed` is not a query name |
+| `tigergraph.query_text_unreadable` | `name` | the installed query's text cannot be read and the query is not approved |
+| `tigergraph.param_type` | `name`, `type` | a parameter value does not fit its declared type |
+| `tigergraph.param_unknown` | `name` | `params` names a parameter the query does not declare |
 
 ### Dashboard variables (`422 validation`, `field: variables`, unless noted)
 
@@ -874,6 +1102,12 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_many_cells` | `max` | an Excel file takes at most `max` cells (rows times fields); refused before it is built |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
 
+### Dashboards (`422 validation`, `field: model`)
+
+| Reason | Params | When |
+|---|---|---|
+| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes has options or field options the server refuses: `panel` is its title (else its id), `detail` names the option |
+
 ### Sources and the server (`datasource_error` unless noted)
 
 | Reason | Params | When |
@@ -892,6 +1126,18 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `prometheus.not_an_api_response` | `status` | the server answered without a Prometheus API response |
 | `prometheus.error` | `status`, `detail` | Prometheus answered an error |
 | `prometheus.result_type` | `type` | an unexpected result type |
+| `bolt.protocol` | `detail` | the server broke the Bolt protocol (or speaks no version Kalzit does) |
+| `bolt.tls` | `detail` (when known) | TLS could not be set up or failed |
+| `bolt.login_timeout` | | the server did not complete the login in time |
+| `bolt.too_large` | | a single message was larger than the response size limit |
+| `memgraph.user_can_write` | `privileges` | the Memgraph user has privileges beyond reading (writing clauses, `READ_FILE`, `AUTH`, `TRIGGER`, `STREAM`, `CONFIG`) and `allowWriteCapableUser` is off |
+| `memgraph.privileges_unverifiable` | `detail` | the check of the Memgraph user's privileges failed for another reason |
+| `tigergraph.user_can_write` | `privileges` | the TigerGraph user may do more than read (privileges or roles beyond a reader's, or superuser) |
+| `tigergraph.privileges_unverifiable` | | the user's roles and privileges cannot be read |
+| `tigergraph.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `tigergraph.not_an_api_response` | `status` | the server answered without a TigerGraph API response |
+| `tigergraph.error` | `status`, `detail` | TigerGraph answered an error |
+| `tigergraph.no_token` | | the token endpoint answered without a token |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |
 | `http.failed` | `detail` | the HTTP request failed |
@@ -905,10 +1151,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 
 | Reason or notice code | Params | Meaning |
 |---|---|---|
-| `health.connected` | `engine`, `version` | connected (`ok: true`) |
+| `health.connected` | `engine`, `version`, `edition` | connected (`ok: true`); `edition` only for graph kinds that report it |
 | `health.connected_admin_login` | `engine`, `version` | connected, but the login has administrator rights |
 | `health.connected_read_only` | `engine`, `version` | SQLite: connected, the file is opened read-only |
 | `health.prometheus_answered` | `engine` | the Prometheus API answered |
+| `health.connected_write_capable` | `engine`, `version`, `privileges`, `edition` | Memgraph: connected, but the user may write (`allowWriteCapableUser` is on) |
 | `frame.row_limit` | `rows` | notice: the result was cut at `rows` rows |
 | `frame.size_limit` | | notice: the result was cut at the response size limit |
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
@@ -918,6 +1165,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `documents.limit` | `limit` | notice: the set was cut at `limit` documents |
 | `documents.size_limit` | | notice: the set was cut at the response size limit |
 | `documents.binary_hidden` | `path` | notice: binary values at `path` are not shown |
+| `graph.node_limit` | `limit` | notice: the graph was cut at `limit` nodes |
+| `graph.edge_limit` | `limit` | notice: the graph was cut at `limit` edges |
+| `graph.size_limit` | | notice: the graph was cut at the response size limit |
+| `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
+| `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
 
 ## Not here yet
 
