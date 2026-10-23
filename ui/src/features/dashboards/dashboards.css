@@ -40,7 +40,6 @@
     max-width: var(--size-text-max);
   }
 
-  .browser__trash,
   .folder-tree__list {
     display: grid;
     gap: var(--space-px);
@@ -49,6 +48,45 @@
 
   .folder-tree__list .folder-tree__list {
     padding-inline-start: var(--space-4);
+  }
+
+  /* Trash, playlists and library panels: quiet rows below the tree, like the folders. */
+  .browser__links {
+    display: grid;
+    gap: var(--space-px);
+    padding-block-start: var(--space-3);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .browser__link {
+    display: flex;
+    align-items: center;
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+
+  .browser__link:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .browser__link:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .folder-tree__name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .folder-tree__name > .icon {
+    flex: none;
+    color: var(--text-muted);
   }
 
   .folder-tree__item {

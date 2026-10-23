@@ -122,17 +122,19 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
             {t("dashboards.folders.new")}
           </button>
         ) : null}
-        {permissions.has("dashboards:delete") ? (
-          <Link to="/dashboards/trash" className="browser__trash">
-            {t("dashboards.trash.link")}
+        <div className="browser__links">
+          {permissions.has("dashboards:delete") ? (
+            <Link to="/dashboards/trash" className="browser__link">
+              {t("dashboards.trash.link")}
+            </Link>
+          ) : null}
+          <Link to="/dashboards/playlists" className="browser__link">
+            {t("playlists.title")}
           </Link>
-        ) : null}
-        <Link to="/dashboards/playlists" className="browser__trash">
-          {t("playlists.title")}
-        </Link>
-        <Link to="/dashboards/library" className="browser__trash">
-          {t("libraryPanels.title")}
-        </Link>
+          <Link to="/dashboards/library" className="browser__link">
+            {t("libraryPanels.title")}
+          </Link>
+        </div>
       </aside>
       <section className="browser__main" aria-labelledby={`${searchId}-title`}>
         {folder === undefined ? null : (
