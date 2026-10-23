@@ -32,6 +32,15 @@
     --series-color: var(--chart-8);
   }
 
+  /* A lone series and its comparison series: the monochrome look (feel.md section 8). */
+  .series-mono {
+    --series-color: var(--chart-mono);
+  }
+
+  .series-mono-compare {
+    --series-color: var(--chart-mono-compare);
+  }
+
   /*
    * A panel's body wherever it is shown (dashboards, the panel editor, Explore): the
    * visualization takes the height that is left, per-query errors sit above it.
@@ -163,7 +172,57 @@
     fill: none;
     stroke: var(--series-color);
     stroke-linejoin: round;
+  }
+
+  /* Round ends on solid lines; dashes keep the caps their pattern needs. */
+  .ts__line:not([stroke-dasharray]) {
     stroke-linecap: round;
+  }
+
+  /* The fill under a line: the series color, or a hatch pattern set on the element. */
+  .ts__area {
+    stroke: none;
+  }
+
+  .ts__area:not([fill]) {
+    fill: var(--series-color);
+  }
+
+  .ts__hatch {
+    stroke: var(--series-color);
+    stroke-width: var(--chart-hatch-width);
+    stroke-opacity: var(--chart-hatch-alpha);
+  }
+
+  .ts__fade-from {
+    stop-color: var(--chart-mask);
+  }
+
+  .ts__fade-to {
+    stop-color: var(--chart-mask);
+    stop-opacity: var(--chart-fade-to);
+  }
+
+  .ts__bars,
+  .ts__points {
+    fill: var(--series-color);
+  }
+
+  /* Swatches of dashed and dotted series show the line's pattern. */
+  .ts__swatch--dashed {
+    background: repeating-linear-gradient(
+      90deg,
+      var(--series-color) 0 var(--space-1),
+      transparent var(--space-1) calc(var(--space-1) * 1.75)
+    );
+  }
+
+  .ts__swatch--dotted {
+    background: repeating-linear-gradient(
+      90deg,
+      var(--series-color) 0 var(--space-half),
+      transparent var(--space-half) var(--space-1)
+    );
   }
 
   .ts__cursor {

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { newMapping, newOverride, newStep } from "./fieldConfig/FieldConfigEditor";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
+import { GRAPH_LIMITS } from "./fieldConfig/graphStyle";
 import { CUSTOM_PREFIX } from "./fieldConfig/units";
 import { MAX_EXPAND_LIMIT } from "./graph/adapter";
 import { CLUSTER_MODES, COLOR_BY, MAX_NODE_LIMIT, parseGraphOptions } from "./graph/options";
@@ -48,6 +49,56 @@ function editorFieldConfigs(): FieldConfig[] {
         {
           matcher: { type: "regex", value: "^cpu" },
           properties: { unit: null, thresholds: null, mappings: null, decimals: 2 },
+        },
+      ],
+    },
+    // The graph style at both ends of every bound, and per series through overrides.
+    {
+      defaults: {
+        drawStyle: "line",
+        lineInterpolation: "smooth",
+        lineWidth: GRAPH_LIMITS.maxLineWidth,
+        lineStyle: "dotted",
+        fill: "hatch",
+        fillOpacity: 100,
+        gradientMode: "scheme",
+        showPoints: "always",
+        pointSize: GRAPH_LIMITS.maxPointSize,
+        connectGaps: "threshold",
+        connectGapsBelow: GRAPH_LIMITS.maxDuration,
+        breakAfter: GRAPH_LIMITS.minDuration,
+        stack: "percent",
+        stackGroup: "x".repeat(GRAPH_LIMITS.stackGroupChars),
+        barAlignment: "after",
+        barWidth: GRAPH_LIMITS.maxBarWidth,
+        comparison: false,
+      },
+      overrides: [
+        {
+          matcher: { type: "name", value: "previous" },
+          properties: {
+            comparison: true,
+            drawStyle: "bars",
+            lineInterpolation: "stepBefore",
+            lineWidth: 0,
+            lineStyle: null,
+            fill: "none",
+            fillOpacity: 0,
+            gradientMode: "hue",
+            showPoints: "never",
+            pointSize: GRAPH_LIMITS.minPointSize,
+            connectGaps: "always",
+            connectGapsBelow: GRAPH_LIMITS.minDuration,
+            breakAfter: GRAPH_LIMITS.maxDuration,
+            stack: "normal",
+            stackGroup: "B",
+            barAlignment: "before",
+            barWidth: GRAPH_LIMITS.minBarWidth,
+          },
+        },
+        {
+          matcher: { type: "regex", value: "^p" },
+          properties: { drawStyle: "points", stack: "none", gradientMode: "opacity", fill: null },
         },
       ],
     },

@@ -23,6 +23,16 @@ pub const MIN_COLUMN_WIDTH: u32 = 40;
 pub const MAX_COLUMN_WIDTH: u32 = 1000;
 /// The text panel's content.
 pub const MAX_CONTENT_CHARS: usize = 20_000;
+/// Graph style bounds of the time series (`GRAPH_LIMITS` in the UI).
+pub const MAX_LINE_WIDTH: u32 = 10;
+pub const MIN_POINT_SIZE: u32 = 1;
+pub const MAX_POINT_SIZE: u32 = 40;
+/// Bar width in percent of the room between two points.
+pub const MIN_BAR_WIDTH: u32 = 10;
+pub const MAX_BAR_WIDTH: u32 = 100;
+/// Gap durations in ms: a millisecond to a year.
+pub const MAX_GAP_DURATION_MS: u64 = 365 * 24 * 60 * 60 * 1000;
+pub const MAX_STACK_GROUP_CHARS: usize = 50;
 /// A dotted field path of the document panels, as for projection columns.
 pub const MAX_FIELD_PATH_CHARS: usize = 500;
 /// Property keys, captions and variable names of the graph panels.
@@ -140,6 +150,36 @@ struct FieldOptions {
     cell_display: Option<CellDisplay>,
     link: Option<String>,
     width: Option<u32>,
+    // The time series' graph style (`ui/src/panels/fieldConfig/graphStyle.ts`): field options,
+    // so overrides set them per series. Every panel may store them (they stay when a panel
+    // changes type); only the time series draws them. The choices are checked by parsing.
+    #[allow(dead_code)]
+    draw_style: Option<DrawStyle>,
+    #[allow(dead_code)]
+    line_interpolation: Option<Interpolation>,
+    line_width: Option<u32>,
+    #[allow(dead_code)]
+    line_style: Option<LineStyle>,
+    #[allow(dead_code)]
+    fill: Option<Fill>,
+    fill_opacity: Option<u32>,
+    #[allow(dead_code)]
+    gradient_mode: Option<Gradient>,
+    #[allow(dead_code)]
+    show_points: Option<ShowPoints>,
+    point_size: Option<u32>,
+    #[allow(dead_code)]
+    connect_gaps: Option<ConnectGaps>,
+    connect_gaps_below: Option<u64>,
+    break_after: Option<u64>,
+    #[allow(dead_code)]
+    stack: Option<Stacking>,
+    stack_group: Option<String>,
+    #[allow(dead_code)]
+    bar_alignment: Option<BarAlignment>,
+    bar_width: Option<u32>,
+    #[allow(dead_code)]
+    comparison: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +242,15 @@ choice!(HeatmapScale { Linear = "linear", Sqrt = "sqrt" });
 choice!(TextFormat { Markdown = "markdown", Plain = "plain" });
 choice!(ColorBy { Label = "label", Community = "community", Component = "component" });
 choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
+choice!(DrawStyle { Line = "line", Bars = "bars", Points = "points" });
+choice!(Interpolation { Linear = "linear", Smooth = "smooth", StepBefore = "stepBefore", StepAfter = "stepAfter" });
+choice!(LineStyle { Solid = "solid", Dashed = "dashed", Dotted = "dotted" });
+choice!(Fill { None = "none", Solid = "solid", Hatch = "hatch" });
+choice!(Gradient { None = "none", Opacity = "opacity", Hue = "hue", Scheme = "scheme" });
+choice!(ShowPoints { Auto = "auto", Always = "always", Never = "never" });
+choice!(ConnectGaps { Never = "never", Always = "always", Threshold = "threshold" });
+choice!(Stacking { None = "none", Normal = "normal", Percent = "percent" });
+choice!(BarAlignment { Before = "before", Center = "center", After = "after" });
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -503,7 +552,30 @@ fn check_options(at: &str, o: &FieldOptions) -> Result<(), String> {
             return Err(format!("{at}.link must be a web or mail address or a path on this server"));
         }
     }
-    check_range(&format!("{at}.width"), o.width, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
+    check_range(&format!("{at}.width"), o.width, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)?;
+    check_graph_style(at, o)
+}
+
+/// The graph style's numbers and its stack group: the UI's bounds (`GRAPH_LIMITS`).
+fn check_graph_style(at: &str, o: &FieldOptions) -> Result<(), String> {
+    check_range(&format!("{at}.lineWidth"), o.line_width, 0, MAX_LINE_WIDTH)?;
+    check_range(&format!("{at}.fillOpacity"), o.fill_opacity, 0, 100)?;
+    check_range(&format!("{at}.pointSize"), o.point_size, MIN_POINT_SIZE, MAX_POINT_SIZE)?;
+    check_range(&format!("{at}.barWidth"), o.bar_width, MIN_BAR_WIDTH, MAX_BAR_WIDTH)?;
+    for (name, duration) in [("connectGapsBelow", o.connect_gaps_below), ("breakAfter", o.break_after)] {
+        if let Some(ms) = duration
+            && !(1..=MAX_GAP_DURATION_MS).contains(&ms)
+        {
+            return Err(format!("{at}.{name} must be 1 to {MAX_GAP_DURATION_MS} ms"));
+        }
+    }
+    if let Some(group) = &o.stack_group {
+        if group.is_empty() {
+            return Err(format!("{at}.stackGroup must not be empty"));
+        }
+        check_text(&format!("{at}.stackGroup"), group, MAX_STACK_GROUP_CHARS, false)?;
+    }
+    Ok(())
 }
 
 /// Checks the shared field options of a panel.
@@ -877,6 +949,74 @@ mod tests {
         let mut config = field_config();
         config["defaults"]["thresholds"]["steps"] = json!(steps);
         assert!(check("stat", &json!({}), &config).unwrap_err().contains("1 to 20"));
+    }
+
+    #[test]
+    fn graph_styles_pass_at_their_bounds_per_series() {
+        let style = json!({
+            "drawStyle": "bars", "lineInterpolation": "stepBefore", "lineWidth": MAX_LINE_WIDTH,
+            "lineStyle": "dashed", "fill": "hatch", "fillOpacity": 100, "gradientMode": "scheme",
+            "showPoints": "never", "pointSize": MAX_POINT_SIZE, "connectGaps": "threshold",
+            "connectGapsBelow": MAX_GAP_DURATION_MS, "breakAfter": 1, "stack": "percent",
+            "stackGroup": "g".repeat(MAX_STACK_GROUP_CHARS), "barAlignment": "after",
+            "barWidth": MIN_BAR_WIDTH, "comparison": true
+        });
+        let lowest = json!({
+            "lineWidth": 0, "fillOpacity": 0, "pointSize": MIN_POINT_SIZE, "barWidth": MAX_BAR_WIDTH,
+            "drawStyle": "points", "lineInterpolation": "smooth", "fill": "none", "gradientMode": "hue",
+            "stack": "none", "connectGaps": "always", "showPoints": "auto", "barAlignment": "center"
+        });
+        let config = json!({
+            "defaults": style,
+            "overrides": [
+                { "matcher": { "type": "name", "value": "previous" }, "properties": lowest },
+                { "matcher": { "type": "regex", "value": "^p" },
+                  "properties": { "comparison": null, "lineStyle": null, "stack": "normal", "stackGroup": "B" } }
+            ]
+        });
+        check("timeseries", &json!({}), &config).unwrap();
+    }
+
+    #[test]
+    fn graph_styles_out_of_bounds_are_refused_with_the_place() {
+        for (key, value, expect) in [
+            ("lineWidth", json!(MAX_LINE_WIDTH + 1), "defaults.lineWidth"),
+            ("lineWidth", json!(-1), "fieldConfig"),
+            ("lineWidth", json!(1.5), "fieldConfig"),
+            ("fillOpacity", json!(101), "defaults.fillOpacity"),
+            ("pointSize", json!(0), "defaults.pointSize"),
+            ("pointSize", json!(MAX_POINT_SIZE + 1), "defaults.pointSize"),
+            ("barWidth", json!(MIN_BAR_WIDTH - 1), "defaults.barWidth"),
+            ("barWidth", json!(MAX_BAR_WIDTH + 1), "defaults.barWidth"),
+            ("connectGapsBelow", json!(0), "defaults.connectGapsBelow"),
+            ("breakAfter", json!(MAX_GAP_DURATION_MS + 1), "defaults.breakAfter"),
+            ("stackGroup", json!(""), "defaults.stackGroup"),
+            ("stackGroup", json!("g".repeat(MAX_STACK_GROUP_CHARS + 1)), "defaults.stackGroup"),
+            ("stackGroup", json!("a\nb"), "control characters"),
+            ("drawStyle", json!("area"), "fieldConfig"),
+            ("lineInterpolation", json!("cubic"), "fieldConfig"),
+            ("lineStyle", json!("dashdot"), "fieldConfig"),
+            ("fill", json!("gradient"), "fieldConfig"),
+            ("gradientMode", json!("rainbow"), "fieldConfig"),
+            ("showPoints", json!(true), "fieldConfig"),
+            ("connectGaps", json!(true), "fieldConfig"),
+            ("stack", json!("stacked"), "fieldConfig"),
+            ("barAlignment", json!(-1), "fieldConfig"),
+            ("comparison", json!("yes"), "fieldConfig"),
+        ] {
+            let config = json!({ "defaults": { key: value.clone() } });
+            let err = check("timeseries", &json!({}), &config).unwrap_err();
+            assert!(err.contains(expect), "{key} = {value}: {err}");
+        }
+        // Overrides are checked the same way.
+        let config = json!({ "overrides": [{ "matcher": { "type": "name", "value": "a" }, "properties": { "pointSize": 99 } }] });
+        assert!(check("timeseries", &json!({}), &config).unwrap_err().contains("overrides[0].properties.pointSize"));
+    }
+
+    #[test]
+    fn older_time_series_keep_their_line_width_option() {
+        check("timeseries", &json!({ "lineWidth": 3 }), &json!({})).unwrap();
+        assert!(check("timeseries", &json!({ "lineWidth": 4 }), &json!({})).is_err());
     }
 
     #[test]

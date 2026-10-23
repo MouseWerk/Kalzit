@@ -1,4 +1,16 @@
 import type { Series } from "./series";
+import { type SeriesStyle, type StackedData, stackData } from "./styles";
+
+/** What a chart draws: the shared times and every series as drawn, stacked where it stacks. */
+export interface ChartData {
+  x: number[];
+  stacked: StackedData;
+}
+
+export function chartData(series: readonly Series[], styles: readonly SeriesStyle[]): ChartData {
+  const [x, ...ys] = alignSeries(series);
+  return { x, stacked: stackData(ys, styles) };
+}
 
 /**
  * Series as uPlot takes them: one shared, ascending x array and one y array per series, null where
