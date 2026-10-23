@@ -2,7 +2,6 @@ import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useId } from "react";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
-import { Page } from "../../components/Page";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useOrgPermissions } from "../../org/useOrg";
@@ -32,13 +31,27 @@ export function AdminLayout() {
       </EmptyState>
     );
   }
+  // The overview carries the administration's heading (AdminHeader); a section page is headed
+  // by its own name (Section), with the administration in the breadcrumbs, not a second heading.
   return (
     <>
       <AdminCrumbs />
-      <Page title={t("admin.title")} lead={t("admin.lead")}>
+      <div className="page">
+        {permissions.loaded && !canOpenAdministration(permissions) ? <AdminHeader /> : null}
         {body}
-      </Page>
+      </div>
     </>
+  );
+}
+
+/** The administration's own heading and lead, on the overview and where it cannot be opened. */
+function AdminHeader() {
+  const { t } = useI18n();
+  return (
+    <div className="page__header">
+      <h1>{t("admin.title")}</h1>
+      <p className="page__lead">{t("admin.lead")}</p>
+    </div>
   );
 }
 
@@ -81,23 +94,26 @@ export function AdminOverview() {
   // without users:read); then no section opens, and the page says so instead of staying blank.
   const nothing = access.loaded && orgSections.length === 0 && serverSections.length === 0;
   return (
-    <div className="admin-overview">
-      <Notice notice={notice.notice} onDismiss={notice.clear} />
-      {nothing ? (
-        <EmptyState icon="lock" title={t("admin.overview.emptyTitle")}>
-          {t("admin.overview.emptyText")}
-        </EmptyState>
-      ) : null}
-      <OverviewGroup
-        title={
-          access.orgName === undefined
-            ? t("admin.group.org")
-            : t("admin.group.orgNamed", { name: access.orgName })
-        }
-        sections={orgSections}
-      />
-      <OverviewGroup title={t("admin.group.server")} sections={serverSections} />
-    </div>
+    <>
+      <AdminHeader />
+      <div className="admin-overview">
+        <Notice notice={notice.notice} onDismiss={notice.clear} />
+        {nothing ? (
+          <EmptyState icon="lock" title={t("admin.overview.emptyTitle")}>
+            {t("admin.overview.emptyText")}
+          </EmptyState>
+        ) : null}
+        <OverviewGroup
+          title={
+            access.orgName === undefined
+              ? t("admin.group.org")
+              : t("admin.group.orgNamed", { name: access.orgName })
+          }
+          sections={orgSections}
+        />
+        <OverviewGroup title={t("admin.group.server")} sections={serverSections} />
+      </div>
+    </>
   );
 }
 

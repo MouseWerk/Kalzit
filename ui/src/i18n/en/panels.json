@@ -226,5 +226,7 @@
   "panels.option.cellDisplay": "Cell display",
   "panels.option.link": "Link",
   "panels.option.width": "Column width",
-  "panels.checkingPattern": "Checking the pattern…"
+  "panels.checkingPattern": "Checking the pattern…",
+  "panels.state.colorStateWords": "Color known state words",
+  "panels.state.colorStateWordsHint": "A value that is a state word takes its color: ok, up, healthy, success and passed good; warning, degraded and pending warning; down, error, failed, failure, critical and offline danger; unknown neutral. A value mapping, thresholds or a field color come first."
 }

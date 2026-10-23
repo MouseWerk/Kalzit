@@ -640,6 +640,25 @@
     }
   }
 
+  /*
+   * One way back to a parent list: a quiet link with a back mark, in muted text, underlined on
+   * hover. Pages use it above their content (a trash, a history, a team, a role).
+   */
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    justify-self: start;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+  }
+
+  .back-link:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
   /* Page header */
 
   .page {

@@ -1,28 +1,47 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type { FakeAdminState } from "./test/fakeAdmin";
 import { openAdmin, sent } from "./test/openAdmin";
 
 const RANGE = "dashboards.default_time_range";
 const RANGE_LABEL = "Default time range";
+/** A setting whose value is JSON, shown as a JSON field: one a newer server could add. */
+const JSON_KEY = "future.limits";
 
 async function fieldOf(key: string) {
   return (await screen.findByLabelText(key)) as HTMLInputElement;
 }
 
+/** The organization's settings with a JSON setting next to the time range, as index 1. */
+function withJsonSetting(admin: FakeAdminState): void {
+  admin.orgSettings.push({
+    ...structuredClone(admin.orgSettings[0]),
+    key: JSON_KEY,
+    value: { rows: 10 },
+    default: { rows: 10 },
+    description: "Limits from a newer server.",
+  } as (typeof admin.orgSettings)[number]);
+}
+
+function openJson() {
+  return openAdmin("/admin/settings", { setup: withJsonSetting });
+}
+
 describe("organization settings", () => {
-  it("reads the settings page and applies a value when the field is left, with undo", async () => {
+  it("chooses the default time range with the time range picker, with undo", async () => {
     const { user, admin } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
-    expect(field.value).toBe('{"from":"now-6h","to":"now"}');
-    await user.clear(field);
-    await user.click(field);
-    await user.paste('{"from":"now-24h","to":"now"}');
-    await user.tab();
-    expect(await screen.findByText("“Default time range” was saved.")).toBeTruthy();
-    expect(admin.orgSettings[0]).toMatchObject({
-      value: { from: "now-24h", to: "now" },
-      version: 1,
+    const picker = await screen.findByRole("button", {
+      name: "Default time range: Last 6 hours",
     });
+    expect(screen.getByText("Default: Last 6 hours")).toBeTruthy();
+    await user.click(picker);
+    const dialog = await screen.findByRole("dialog", { name: "Time range" });
+    await user.click(within(dialog).getByRole("button", { name: "Last 24 hours" }));
+    expect(await screen.findByText("“Default time range” was saved.")).toBeTruthy();
+    expect(admin.orgSettings[0]).toMatchObject({ value: { from: "now-24h", to: "now" } });
+    expect(
+      await screen.findByRole("button", { name: "Default time range: Last 24 hours" }),
+    ).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() =>
@@ -31,110 +50,131 @@ describe("organization settings", () => {
         version: 2,
       }),
     );
-    // The field stays the same element across saves, so focus is not lost.
-    await waitFor(() =>
-      expect((screen.getByLabelText(RANGE_LABEL) as HTMLInputElement).value).toBe(
-        '{"from":"now-6h","to":"now"}',
-      ),
-    );
-    expect(screen.getByLabelText(RANGE_LABEL)).toBe(field);
   });
 
-  it("undoes with the version the change produced, so a change in between is a conflict", async () => {
+  it("names the setting and both ranges in the conflict dialog", async () => {
     const { user, admin } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
-    await user.clear(field);
-    await user.click(field);
-    await user.paste('{"from":"now-1h","to":"now"}');
-    await user.tab();
-    await screen.findByText("“Default time range” was saved.");
-    // Someone else saves after this change and before the undo.
-    Object.assign(admin.orgSettings[0] ?? {}, { value: { from: "now-7d", to: "now" }, version: 5 });
-    await user.click(screen.getByRole("button", { name: "Undo" }));
-    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
-    expect(within(dialog).getByText('{"from":"now-7d","to":"now"}')).toBeTruthy();
-    expect(admin.orgSettings[0]?.version).toBe(5);
-  });
-
-  it("shows what changed on a version conflict and keeps the stored value", async () => {
-    const { user, admin } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
+    const picker = await screen.findByRole("button", {
+      name: "Default time range: Last 6 hours",
+    });
     Object.assign(admin.orgSettings[0] ?? {}, {
       value: { from: "now-30d", to: "now" },
       version: 2,
     });
+    await user.click(picker);
+    const ranges = await screen.findByRole("dialog", { name: "Time range" });
+    await user.click(within(ranges).getByRole("button", { name: "Last 2 days" }));
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(within(dialog).getByText(/Someone else saved “Default time range”/)).toBeTruthy();
+    expect(within(dialog).getByText("Last 30 days")).toBeTruthy();
+    expect(within(dialog).getByText("Last 2 days")).toBeTruthy();
+  });
+
+  it("applies a JSON value when the field is left, with undo", async () => {
+    const { user, admin } = await openJson();
+    const field = await fieldOf(JSON_KEY);
+    expect(field.value).toBe('{"rows":10}');
     await user.clear(field);
     await user.click(field);
-    await user.paste('{"from":"now-2d","to":"now"}');
+    await user.paste('{"rows":20}');
+    await user.tab();
+    expect(await screen.findByText(`“${JSON_KEY}” was saved.`)).toBeTruthy();
+    expect(admin.orgSettings[1]).toMatchObject({ value: { rows: 20 }, version: 1 });
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() =>
+      expect(admin.orgSettings[1]).toMatchObject({ value: { rows: 10 }, version: 2 }),
+    );
+    // The field stays the same element across saves, so focus is not lost.
+    await waitFor(() =>
+      expect((screen.getByLabelText(JSON_KEY) as HTMLInputElement).value).toBe('{"rows":10}'),
+    );
+    expect(screen.getByLabelText(JSON_KEY)).toBe(field);
+  });
+
+  it("undoes with the version the change produced, so a change in between is a conflict", async () => {
+    const { user, admin } = await openJson();
+    const field = await fieldOf(JSON_KEY);
+    await user.clear(field);
+    await user.click(field);
+    await user.paste('{"rows":30}');
+    await user.tab();
+    await screen.findByText(`“${JSON_KEY}” was saved.`);
+    // Someone else saves after this change and before the undo.
+    Object.assign(admin.orgSettings[1] ?? {}, { value: { rows: 70 }, version: 5 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(within(dialog).getByText('{"rows":70}')).toBeTruthy();
+    expect(admin.orgSettings[1]?.version).toBe(5);
+  });
+
+  it("shows what changed on a version conflict and keeps the stored value", async () => {
+    const { user, admin } = await openJson();
+    const field = await fieldOf(JSON_KEY);
+    Object.assign(admin.orgSettings[1] ?? {}, { value: { rows: 300 }, version: 2 });
+    await user.clear(field);
+    await user.click(field);
+    await user.paste('{"rows":2}');
     await user.tab();
 
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
-    expect(within(dialog).getByText('{"from":"now-30d","to":"now"}')).toBeTruthy();
-    expect(within(dialog).getByText('{"from":"now-2d","to":"now"}')).toBeTruthy();
+    expect(within(dialog).getByText('{"rows":300}')).toBeTruthy();
+    expect(within(dialog).getByText('{"rows":2}')).toBeTruthy();
     expect(document.activeElement).toBe(
       within(dialog).getByRole("button", { name: "Keep saved value" }),
     );
     await user.click(within(dialog).getByRole("button", { name: "Keep saved value" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    await waitFor(() => expect(field.value).toBe('{"from":"now-30d","to":"now"}'));
-    expect(admin.orgSettings[0]?.version).toBe(2);
+    await waitFor(() => expect(field.value).toBe('{"rows":300}'));
+    expect(admin.orgSettings[1]?.version).toBe(2);
   });
 
   it("overwrites on a version conflict only when asked to", async () => {
-    const { user, admin } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
-    Object.assign(admin.orgSettings[0] ?? {}, {
-      value: { from: "now-30d", to: "now" },
-      version: 2,
-    });
+    const { user, admin } = await openJson();
+    const field = await fieldOf(JSON_KEY);
+    Object.assign(admin.orgSettings[1] ?? {}, { value: { rows: 300 }, version: 2 });
     await user.clear(field);
     await user.click(field);
-    await user.paste('{"from":"now-2d","to":"now"}');
+    await user.paste('{"rows":2}');
     await user.tab();
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
     await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
     await waitFor(() =>
-      expect(admin.orgSettings[0]).toMatchObject({
-        value: { from: "now-2d", to: "now" },
-        version: 3,
-      }),
+      expect(admin.orgSettings[1]).toMatchObject({ value: { rows: 2 }, version: 3 }),
     );
   });
 
   it("takes the stored value from the conflict answer, without reading the list first", async () => {
-    const { user, admin, server } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
-    Object.assign(admin.orgSettings[0] ?? {}, {
-      value: { from: "now-90d", to: "now" },
-      version: 4,
-    });
+    const { user, admin, server } = await openJson();
+    const field = await fieldOf(JSON_KEY);
+    Object.assign(admin.orgSettings[1] ?? {}, { value: { rows: 900 }, version: 4 });
     // The list would answer something else; the dialog must show the conflict's `current`.
     server.failNext("/api/orgs/o1/settings", 500, "internal", "GET");
     await user.clear(field);
     await user.click(field);
-    await user.paste('{"from":"now-2d","to":"now"}');
+    await user.paste('{"rows":2}');
     await user.tab();
     const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
-    expect(within(dialog).getByText('{"from":"now-90d","to":"now"}')).toBeTruthy();
+    expect(within(dialog).getByText('{"rows":900}')).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Overwrite with mine" }));
-    await waitFor(() => expect(admin.orgSettings[0]?.version).toBe(5));
+    await waitFor(() => expect(admin.orgSettings[1]?.version).toBe(5));
   });
 
   it("reports an error instead of a stale conflict when the answer has no stored value", async () => {
-    const { user, server } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
-    server.failNext(`/api/orgs/o1/settings/${RANGE}`, 409, "version_conflict", "PATCH");
+    const { user, server } = await openJson();
+    const field = await fieldOf(JSON_KEY);
+    server.failNext(`/api/orgs/o1/settings/${JSON_KEY}`, 409, "version_conflict", "PATCH");
     await user.clear(field);
     await user.click(field);
-    await user.paste('{"from":"now-2d","to":"now"}');
+    await user.paste('{"rows":2}');
     await user.tab();
     expect(await screen.findByText(/The server sent an unexpected response/)).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("rejects text that is not JSON without sending it", async () => {
-    const { user, server } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
+    const { user, server } = await openJson();
+    const field = await fieldOf(JSON_KEY);
     await user.clear(field);
     await user.type(field, "last week");
     await user.tab();
@@ -144,8 +184,8 @@ describe("organization settings", () => {
   });
 
   it("shows a value the server rejects at its field", async () => {
-    const { user } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
+    const { user } = await openJson();
+    const field = await fieldOf(JSON_KEY);
     await user.clear(field);
     await user.type(field, "42");
     await user.tab();
@@ -165,21 +205,6 @@ describe("organization settings", () => {
     expect(row.getByText("Time range of new dashboards in this organization.")).toBeTruthy();
     // The fake server's English description is not shown for a setting the UI knows.
     expect(row.queryByText(`The setting ${RANGE}`)).toBeNull();
-  });
-
-  it("names the setting by its label in the conflict dialog", async () => {
-    const { user, admin } = await openAdmin("/admin/settings");
-    const field = await fieldOf(RANGE_LABEL);
-    Object.assign(admin.orgSettings[0] ?? {}, {
-      value: { from: "now-30d", to: "now" },
-      version: 2,
-    });
-    await user.clear(field);
-    await user.click(field);
-    await user.paste('{"from":"now-2d","to":"now"}');
-    await user.tab();
-    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
-    expect(within(dialog).getByText(/Someone else saved “Default time range”/)).toBeTruthy();
   });
 
   it("falls back to the key and the server's description for a setting the UI does not know", async () => {
@@ -204,6 +229,8 @@ describe("organization settings", () => {
     await openAdmin("/admin/settings", { permissions: ["settings:read"] });
     const list = await screen.findByRole("list", { name: "Organization settings" });
     expect(within(list).queryByRole("textbox")).toBeNull();
+    expect(within(list).queryByRole("button")).toBeNull();
+    expect(within(list).getByText("Last 6 hours")).toBeTruthy();
     expect(within(list).getByText("You can see this setting, but not change it.")).toBeTruthy();
   });
 });
@@ -271,6 +298,8 @@ describe("server settings", () => {
   it("is not offered to members who are not server admins", async () => {
     await openAdmin("/admin/server/settings", { isServerAdmin: false });
     expect(await screen.findByRole("heading", { name: "No access" })).toBeTruthy();
+    // The page keeps its own heading above the notice.
+    expect(screen.getByRole("heading", { level: 1, name: "Server settings" })).toBeTruthy();
     const sections = screen.getByRole("list", { name: "Administration sections" });
     expect(within(sections).queryByRole("link", { name: "Server settings" })).toBeNull();
   });

@@ -34,14 +34,53 @@ export interface StateData {
 }
 
 /**
+ * The words that name a state unambiguously, in English and German, by the tone that means them.
+ * Only whole values match ("down", not "Down Under" or "up-to-date"); words that are often plain
+ * values (red, active, running, idle ...) are left out on purpose. docs/ARCHITECTURE.md lists them.
+ */
+export const STATE_WORDS: Record<"ok" | "warn" | "critical" | "neutral", readonly string[]> = {
+  ok: ["ok", "up", "healthy", "success", "passed", "gesund", "erfolgreich", "bestanden"],
+  warn: ["warning", "degraded", "pending", "warnung", "eingeschränkt", "ausstehend"],
+  critical: [
+    "down",
+    "error",
+    "failed",
+    "failure",
+    "critical",
+    "offline",
+    "fehler",
+    "fehlgeschlagen",
+    "ausgefallen",
+    "kritisch",
+  ],
+  neutral: ["unknown", "unbekannt"],
+};
+
+/**
+ * The tone a state's own word stands for ("ok" good, "down" danger, "degraded" warning,
+ * "unknown" neutral), so a status column reads at a glance without value mappings. The whole
+ * value must be the word, in any case and with surrounding spaces.
+ */
+export function stateTone(text: string): "ok" | "warn" | "critical" | "neutral" | undefined {
+  const word = text.trim().toLowerCase();
+  for (const [tone, words] of Object.entries(STATE_WORDS)) {
+    if (words.includes(word)) {
+      return tone as keyof typeof STATE_WORDS;
+    }
+  }
+  return undefined;
+}
+/**
  * Every field except time becomes a row of states over the frame's time points. A value's color
- * comes from its mapping or the thresholds; values without one take palette colors in the
- * order they first appear, the same color for the same text in every row.
+ * comes, in this order, from its mapping, the thresholds, the field's color, the state word it is
+ * (stateTone, unless `stateWords` is off), and else the palette in the order values first appear,
+ * the same color for the same text in every row.
  */
 export function stateData(
   frames: readonly Frame[],
   config: FieldConfig,
   language: string,
+  stateWords = true,
 ): StateData | null {
   const frame = frames.find(
     (f) => timeField(f) !== undefined && f.fields.some((field) => field.type !== "time"),
@@ -83,8 +122,11 @@ export function stateData(
         const display = displayValue(raw, field.type, options, language);
         const text = displayText(display);
         let colorClass: string;
+        const known = stateWords && options.color === undefined ? stateTone(text) : undefined;
         if (display.tone !== undefined) {
           colorClass = toneClass(display.tone);
+        } else if (known !== undefined) {
+          colorClass = toneClass(known);
         } else {
           if (!palette.has(text)) palette.set(text, palette.size);
           colorClass = toneClass(options.color, palette.get(text));
