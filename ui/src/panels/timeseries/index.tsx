@@ -80,8 +80,10 @@ function TimeSeriesPanel({
   const { language } = useI18n();
   const config = legacyUnit(fieldConfig, options.unit);
   const series = buildSeries(frames, options.seriesName, config);
-  if (series.length === 0) {
-    return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
+  // No rows in the range is one muted line, not an empty chart with axes and a legend.
+  const reason = emptyReason(frames, "noTimeSeries");
+  if (series.length === 0 || reason === "noData") {
+    return <EmptyPanel reason={reason} />;
   }
   // The value axis follows the first series' unit and decimals; ends from the defaults.
   const axisOptions = series[0]?.options ?? config.defaults;

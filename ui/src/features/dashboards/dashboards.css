@@ -40,7 +40,6 @@
     max-width: var(--size-text-max);
   }
 
-  .browser__trash,
   .folder-tree__list {
     display: grid;
     gap: var(--space-px);
@@ -49,6 +48,45 @@
 
   .folder-tree__list .folder-tree__list {
     padding-inline-start: var(--space-4);
+  }
+
+  /* Trash, playlists and library panels: quiet rows below the tree, like the folders. */
+  .browser__links {
+    display: grid;
+    gap: var(--space-px);
+    padding-block-start: var(--space-3);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .browser__link {
+    display: flex;
+    align-items: center;
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+
+  .browser__link:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .browser__link:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .folder-tree__name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .folder-tree__name > .icon {
+    flex: none;
+    color: var(--text-muted);
   }
 
   .folder-tree__item {
@@ -213,11 +251,30 @@
   /*
    * While viewing, a panel's actions appear on hover or keyboard focus, so the canvas shows
    * titles and data, not rows of buttons. Hidden visually only: Tab still reaches them, and
-   * touch screens (no hover, or any coarse pointer) always show them.
+   * touch screens (no hover, or any coarse pointer) always show them. They stay on the title's
+   * row and never wrap, so a narrow panel keeps its title at the same height as its neighbours;
+   * hidden they take no width, shown the title ends in an ellipsis against them.
    */
   @media (hover: hover) and (not (any-pointer: coarse)) {
+    .panel-card:not(.panel-card--editing) .panel-card__header {
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+
+    .panel-card:not(.panel-card--editing) .panel-card__title {
+      flex: 1 1 auto;
+    }
+
+    .panel-card:not(.panel-card--editing) .panel-card__actions {
+      flex: none;
+      flex-wrap: nowrap;
+    }
+
+    /* Kept while the panel's menu is open: the menu is drawn outside the card. */
     .panel-card:not(.panel-card--editing, :hover, :focus-within, :has([aria-expanded="true"]))
       .panel-card__actions {
+      max-width: 0;
+      overflow: hidden;
       clip-path: inset(50%);
     }
   }

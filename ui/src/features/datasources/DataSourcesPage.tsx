@@ -4,6 +4,7 @@ import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Page } from "../../components/Page";
+import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -138,24 +139,29 @@ function DataSourceList({
       </>
     );
   }
+  const dateLabel = trash ? t("datasources.column.deleted") : t("datasources.column.created");
   return (
     <div className="ds-list">
       <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
       {toolbar}
-      <table className="data-table data-table--stack">
-        <thead>
-          <tr>
-            <th scope="col">{t("datasources.column.name")}</th>
-            <th scope="col">{t("datasources.column.kind")}</th>
-            <th scope="col">
-              {trash ? t("datasources.column.deleted") : t("datasources.column.created")}
+      <table className="data-table data-table--stack" {...STACK_ROLES.table}>
+        <thead {...STACK_ROLES.rowgroup}>
+          <tr {...STACK_ROLES.row}>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("datasources.column.name")}
             </th>
-            <th scope="col">
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("datasources.column.kind")}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {dateLabel}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
               <span className="visually-hidden">{t("datasources.column.actions")}</span>
             </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody {...STACK_ROLES.rowgroup}>
           {items.map((source) => (
             <DataSourceRow
               key={source.id}
@@ -163,6 +169,7 @@ function DataSourceList({
               source={source}
               kindName={kindName(source.kind)}
               date={dateFormat.format(trash ? (source.deletedAt ?? 0) : source.createdAt)}
+              dateLabel={dateLabel}
               link={accessOf(source).write && !trash}
               canTest={accessOf(source).query && !trash}
               onRestore={trash ? () => restore.mutate(source.id) : undefined}
@@ -189,6 +196,7 @@ function DataSourceRow({
   source,
   kindName,
   date,
+  dateLabel,
   link,
   canTest,
   onRestore,
@@ -197,6 +205,7 @@ function DataSourceRow({
   source: DatasourceSummary;
   kindName: string;
   date: string;
+  dateLabel: string;
   link: boolean;
   canTest: boolean;
   onRestore: (() => void) | undefined;
@@ -209,8 +218,8 @@ function DataSourceRow({
     onSuccess: setHealth,
   });
   return (
-    <tr>
-      <td>
+    <tr {...STACK_ROLES.row}>
+      <td {...STACK_ROLES.cell}>
         {link ? (
           <Link to="/data-sources/$datasourceId" params={{ datasourceId: source.id }}>
             {source.name}
@@ -220,11 +229,13 @@ function DataSourceRow({
         )}
         {canTest ? <HealthResult health={health} error={test.error} /> : null}
       </td>
-      <td>
+      <td {...STACK_ROLES.cell} data-label={t("datasources.column.kind")}>
         <KindLabel kind={source.kind} name={kindName} />
       </td>
-      <td>{date}</td>
-      <td className="data-table__actions">
+      <td {...STACK_ROLES.cell} data-label={dateLabel}>
+        {date}
+      </td>
+      <td {...STACK_ROLES.cell} className="data-table__actions">
         {canTest ? (
           <button
             type="button"

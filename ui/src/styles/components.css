@@ -571,15 +571,20 @@
 
     /* The links wrap instead of scrolling, so no label is ever cut off at the edge. */
     .shell__nav {
+      display: flex;
       flex: 1 0 100%;
+      flex-wrap: wrap;
       order: 3;
+      gap: var(--space-1);
       overflow: visible;
     }
 
+    /*
+     * The groups' entries share the bar's one wrapping row. As a box of its own, the group with
+     * the open sub-pages took a whole line, which left its entry alone on a second row.
+     */
     .shell__nav-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-1);
+      display: contents;
     }
 
     .nav-group__row > .nav-link {
@@ -621,7 +626,7 @@
 
   /* Phones: icons only; the label stays as the accessible name and the title as a tooltip. */
   @media (max-width: 25rem) {
-    .shell__nav-list {
+    .shell__nav {
       justify-content: space-between;
     }
 
@@ -777,6 +782,16 @@
     background: var(--bg-raised);
     box-shadow: var(--shadow-menu);
     font-size: var(--font-size-sm);
+  }
+
+  /*
+   * In the open sidebar the account and organization menus take their card's width, so they
+   * end at the sidebar's edge instead of reaching a few pixels over the page.
+   */
+  @media not (max-width: 48rem) {
+    .shell:not([data-sidebar="collapsed"]) .shell__sidebar .menu {
+      width: 100%;
+    }
   }
 
   @media (max-width: 48rem) {
