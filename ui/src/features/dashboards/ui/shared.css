@@ -98,9 +98,18 @@
     text-align: end;
   }
 
+  /*
+   * The name that opens a row: text color and weight, underlined on hover. A column of underlined
+   * names read as a page of links rather than a list.
+   */
   .data-table a {
     color: var(--text);
     font-weight: var(--font-weight-medium);
+    text-decoration: none;
+  }
+
+  .data-table a:hover {
+    text-decoration: underline;
   }
 
   /*
