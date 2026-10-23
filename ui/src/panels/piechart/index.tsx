@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
@@ -27,6 +27,7 @@ import { reduceFrames } from "../reduce";
 import { EmptyPanel, emptyReason, SelectField } from "../shared";
 import { parseReducer, REDUCERS, type Reducer } from "../stat/reduce";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import { useElementSize } from "../useElementSize";
 import "../viz.css";
 
 export const PIE_TYPES = ["pie", "donut"] as const;
@@ -129,6 +130,8 @@ const CX = 120;
 const CY = 120;
 const RADIUS = 92;
 const HOLE = 56;
+/** The view box, with room around the circle for the labels. */
+const VIEW = { x: -40, y: -16, width: 320, height: 272 };
 
 /** A slice as an SVG path between two angles (radians from twelve o'clock, clockwise). */
 export function slicePath(from: number, to: number, inner: number, outer = RADIUS): string {
@@ -156,6 +159,12 @@ function PiePanel({
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<PieOptions>) {
   const { t, language } = useI18n();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const { width, height } = useElementSize(boxRef);
+  // The view box scales with the panel; the labels are scaled back, so they keep the size of
+  // every other label instead of shrinking with a small pie.
+  const fit = Math.min(width / VIEW.width, height / VIEW.height);
+  const labelScale = fit > 0 ? 1 / fit : 1;
   const slices = pieSlices(frames, fieldConfig, options.reducer, language);
   if (slices.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
@@ -203,56 +212,61 @@ function PiePanel({
     <WithLegend placement={options.legend.placement} legend={legend}>
       <Readout title={title} items={items} tooltip={options.tooltip.mode} className="pie">
         {(active, hover) => (
-          <svg className="pie__svg" viewBox="-40 -16 320 272" aria-hidden="true">
-            {slices.map((slice, index) => {
-              const arc = arcs[index] as { from: number; to: number };
-              // The active slice moves out a little along its middle, a quiet highlight.
-              const mid = (arc.from + arc.to) / 2;
-              const shift = active === index ? 6 : 0;
-              return (
-                <path
-                  // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
-                  key={index}
-                  className={`pie__slice ${classOf(slice, index)}`}
-                  d={slicePath(arc.from, arc.to, inner)}
-                  transform={
-                    shift === 0
-                      ? undefined
-                      : `translate(${(shift * Math.sin(mid)).toFixed(2)} ${(-shift * Math.cos(mid)).toFixed(2)})`
-                  }
-                  onPointerEnter={() => hover(index)}
-                />
-              );
-            })}
-            {options.labels === "none"
-              ? null
-              : slices.map((slice, index) => {
-                  const arc = arcs[index] as { from: number; to: number };
-                  if (arc.to - arc.from < 0.25) return null;
-                  const mid = (arc.from + arc.to) / 2;
-                  const r = RADIUS + 14;
-                  const x = CX + r * Math.sin(mid);
-                  const y = CY - r * Math.cos(mid);
-                  const text =
-                    options.labels === "percent"
-                      ? percent.format(slice.value / total)
-                      : options.labels === "name"
-                        ? nameOf(slice)
-                        : valueText(slice);
-                  return (
-                    <text
-                      // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
-                      key={index}
-                      className="pie__label"
-                      x={x}
-                      y={y}
-                      textAnchor={Math.abs(x - CX) < 8 ? "middle" : x > CX ? "start" : "end"}
-                    >
-                      {text}
-                    </text>
-                  );
-                })}
-          </svg>
+          <div className="pie__box" ref={boxRef}>
+            <svg
+              className="pie__svg"
+              viewBox={`${VIEW.x} ${VIEW.y} ${VIEW.width} ${VIEW.height}`}
+              aria-hidden="true"
+            >
+              {slices.map((slice, index) => {
+                const arc = arcs[index] as { from: number; to: number };
+                // The active slice moves out a little along its middle, a quiet highlight.
+                const mid = (arc.from + arc.to) / 2;
+                const shift = active === index ? 6 : 0;
+                return (
+                  <path
+                    // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
+                    key={index}
+                    className={`pie__slice ${classOf(slice, index)}`}
+                    d={slicePath(arc.from, arc.to, inner)}
+                    transform={
+                      shift === 0
+                        ? undefined
+                        : `translate(${(shift * Math.sin(mid)).toFixed(2)} ${(-shift * Math.cos(mid)).toFixed(2)})`
+                    }
+                    onPointerEnter={() => hover(index)}
+                  />
+                );
+              })}
+              {options.labels === "none"
+                ? null
+                : slices.map((slice, index) => {
+                    const arc = arcs[index] as { from: number; to: number };
+                    if (arc.to - arc.from < 0.25) return null;
+                    const mid = (arc.from + arc.to) / 2;
+                    const r = RADIUS + 14;
+                    const x = CX + r * Math.sin(mid);
+                    const y = CY - r * Math.cos(mid);
+                    const text =
+                      options.labels === "percent"
+                        ? percent.format(slice.value / total)
+                        : options.labels === "name"
+                          ? nameOf(slice)
+                          : valueText(slice);
+                    return (
+                      <text
+                        // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
+                        key={index}
+                        className="pie__label"
+                        transform={`translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${labelScale.toFixed(3)})`}
+                        textAnchor={Math.abs(x - CX) < 8 ? "middle" : x > CX ? "start" : "end"}
+                      >
+                        {text}
+                      </text>
+                    );
+                  })}
+            </svg>
+          </div>
         )}
       </Readout>
     </WithLegend>
