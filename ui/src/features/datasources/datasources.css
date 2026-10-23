@@ -112,8 +112,8 @@
     height: var(--size-kind-mark);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text);
+    background: var(--logo-tile);
+    color: var(--logo-glyph);
   }
 
   .kind-mark--small {
@@ -127,13 +127,17 @@
     height: 60%;
   }
 
+  .ds-kinds__link .kind-mark {
+    grid-column: 2;
+    grid-row: 2 / 4;
+  }
+
   /* A logo on its light tile; a kind for two products shows both marks side by side. */
   .kind-mark--logo {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: var(--space-px);
-    background: var(--logo-tile);
   }
 
   .kind-logo {
@@ -187,18 +191,14 @@
     color: var(--brand-neo4j);
   }
 
-  /* High contrast: the marks in the text color on the usual tile, as one-color shapes. */
-  :root[data-theme="contrast"] .kind-mark--logo {
+  /* High contrast: every mark in the text color on the usual tile, as one-color shapes. */
+  :root[data-theme="contrast"] .kind-mark {
     background: var(--bg-surface);
+    color: var(--text);
   }
 
   :root[data-theme="contrast"] .kind-logo {
     color: var(--text);
-  }
-
-  .ds-kinds__link .kind-mark {
-    grid-column: 2;
-    grid-row: 2 / 4;
   }
 
   .ds-secret {

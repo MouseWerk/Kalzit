@@ -147,6 +147,8 @@
      * light tile in both schemes, as several are dark blue. Never used for states.
      */
     --logo-tile: light-dark(oklch(100% 0 0), oklch(94% 0.004 286));
+    /* The glyph of a kind without a logo, on the same light tile, so the picker looks even. */
+    --logo-glyph: oklch(28% 0.006 286);
     --brand-postgresql: #4169e1;
     --brand-mysql: #4479a1;
     --brand-mariadb: #003545;

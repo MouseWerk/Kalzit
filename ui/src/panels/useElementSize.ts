@@ -17,14 +17,18 @@ type Measure = (width: number, height: number) => void;
  * many charts renders once per frame, not once per chart.
  */
 let shared: ResizeObserver | null = null;
-const measures = new Map<Element, Measure>();
+// Handlers per element: two hooks may measure the same element; it stays observed until the
+// last of them is gone.
+const measures = new Map<Element, Set<Measure>>();
 
 function observer(): ResizeObserver {
   shared ??= new ResizeObserver((entries) => {
     flushSync(() => {
       for (const entry of entries) {
         const box = entry.contentRect;
-        measures.get(entry.target)?.(Math.floor(box.width), Math.floor(box.height));
+        for (const measure of measures.get(entry.target) ?? []) {
+          measure(Math.floor(box.width), Math.floor(box.height));
+        }
       }
     });
   });
@@ -56,12 +60,20 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
     };
     const rect = element.getBoundingClientRect();
     measure(Math.floor(rect.width), Math.floor(rect.height));
-    measures.set(element, measure);
     const resize = observer();
-    resize.observe(element);
+    let handlers = measures.get(element);
+    if (handlers === undefined) {
+      handlers = new Set();
+      measures.set(element, handlers);
+      resize.observe(element);
+    }
+    handlers.add(measure);
     return () => {
-      resize.unobserve(element);
-      measures.delete(element);
+      handlers.delete(measure);
+      if (handlers.size === 0) {
+        measures.delete(element);
+        resize.unobserve(element);
+      }
     };
   }, [ref]);
   return size;
