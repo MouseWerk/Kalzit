@@ -903,7 +903,11 @@ impl DataSources {
 
     /// Drops the cached connection after the source changed or went to the trash.
     pub fn forget(&self, datasource_id: &str) {
-        self.connections.lock().expect("connection cache lock").remove(datasource_id);
+        let removed = self.connections.lock().expect("connection cache lock").remove(datasource_id);
+        // A SQLite pool closes its file now, not whenever the last query holding it ends.
+        if let (Some(cached), Ok(rt)) = (removed, tokio::runtime::Handle::try_current()) {
+            rt.spawn(async move { cached.conn.close().await });
+        }
     }
 
     async fn setting(&self, state: &AppState, key: &str) -> ApiResult<Value> {
