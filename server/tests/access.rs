@@ -66,11 +66,16 @@ impl Reply {
 }
 
 async fn test_app(db_url: Option<String>) -> TestApp {
+    test_app_with_pool(db_url, POOL_SIZE).await
+}
+
+/// `test_app` with `pool_size` connections to Kalzit's own database.
+async fn test_app_with_pool(db_url: Option<String>, pool_size: u32) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.database.url = db_url;
-    let pool = kalzit::db::connect(&config.database_url(), POOL_SIZE).await.unwrap();
+    let pool = kalzit::db::connect(&config.database_url(), pool_size).await.unwrap();
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
@@ -976,31 +981,40 @@ async fn disabling_an_owner_races_member_changes_cleanly() {
 }
 
 /// Handlers that hold the organization lock must not need a second connection: with more
-/// parallel writes than pool connections, every one still succeeds, without waiting for timeouts.
+/// parallel writes than pool connections, every one still succeeds.
+///
+/// Such a handler cannot finish until a timeout fires: with one connection it waits for the
+/// pool's acquire timeout (`500`); with several, the writers holding the others give up after
+/// SQLite's busy timeout (`503 busy`). Nothing on this path retries, so every delete answering
+/// `204` shows that none of them waited for a timeout, however slow the machine is. One
+/// connection shows the mistake on every run, several also when other writers hold the rest.
+/// The time limit only stops a hang and lies far above both timeouts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_grant_deletes_do_not_drain_the_pool() {
-    let parallel = 3 * POOL_SIZE as usize;
-    let t = test_app(None).await;
-    let (owner, org) = t.setup().await;
-    let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
-    let mut calls = Vec::new();
-    for _ in 0..parallel {
-        let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
-                            "resourceId": t.dashboard(&org).await, "level": "edit" });
-        let r = t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await;
-        assert_eq!(r.status, StatusCode::CREATED);
-        let path = format!("/api/orgs/{org}/grants/{}", r.body["id"].as_str().unwrap());
-        calls.push((Method::DELETE, path, Value::Null, owner.clone()));
+    for pool_size in [1, POOL_SIZE] {
+        let parallel = 3 * POOL_SIZE as usize;
+        let t = test_app_with_pool(None, pool_size).await;
+        let (owner, org) = t.setup().await;
+        let vic = t.member(&owner, &org, "Vic", "vic@example.de", "viewer").await;
+        let mut calls = Vec::new();
+        for _ in 0..parallel {
+            let grant = json!({ "subjectType": "user", "subjectId": vic.user_id, "resourceType": "dashboard",
+                                "resourceId": t.dashboard(&org).await, "level": "edit" });
+            let r = t.post(&format!("/api/orgs/{org}/grants"), grant, &owner).await;
+            assert_eq!(r.status, StatusCode::CREATED);
+            let path = format!("/api/orgs/{org}/grants/{}", r.body["id"].as_str().unwrap());
+            calls.push((Method::DELETE, path, Value::Null, owner.clone()));
+        }
+        let replies = tokio::time::timeout(std::time::Duration::from_secs(300), t.parallel(calls))
+            .await
+            .unwrap_or_else(|_| panic!("the deletes hang with {pool_size} connection(s)"));
+        let failed: Vec<_> = replies.iter().filter(|(s, _)| *s != StatusCode::NO_CONTENT).collect();
+        assert!(failed.is_empty(), "{pool_size} connection(s): {failed:?}");
+        let (left,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM resource_grants").fetch_one(&t.state.db).await.unwrap();
+        assert_eq!(left, 0);
+        t.finish().await;
     }
-    let started = std::time::Instant::now();
-    let replies = t.parallel(calls).await;
-    let elapsed = started.elapsed();
-    assert!(replies.iter().all(|(s, _)| *s == StatusCode::NO_CONTENT), "{replies:?}");
-    // A drained pool shows as waits for SQLite's 5 s busy timeout or the pool's acquire timeout.
-    assert!(elapsed < std::time::Duration::from_secs(4), "took {elapsed:?}");
-    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resource_grants").fetch_one(&t.state.db).await.unwrap();
-    assert_eq!(left, 0);
-    t.finish().await;
 }
 
 #[tokio::test]
