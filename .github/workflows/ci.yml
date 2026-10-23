@@ -284,37 +284,39 @@ jobs:
             echo "::warning::installing the browsers failed (attempt $attempt of 3)"
           done
           exit 1
-      # Usually 20 s, but the runner's package mirror sometimes slows to a few kB/s without
-      # failing. Each attempt gets 3 minutes; from the second on, the main Ubuntu archive. Run as
-      # root so `timeout` can stop apt and the downloads it started. An attempt stopped while
-      # dpkg was unpacking leaves it half done, so the next one finishes that first.
+      # The system packages (about 190, 140 MB, most of them WebKit's and Firefox's media
+      # libraries) come from the runner's package mirror, which sometimes slows to a few kB/s
+      # without failing. They are kept between runs per runner image, so apt downloads only what
+      # changed; .github/scripts/browser-deps.sh retries with a limit per attempt and moves to
+      # the main Ubuntu archive. Its test runs first, so a broken retry shows before it is needed.
+      - name: Test the browser package install script
+        if: runner.os == 'Linux'
+        run: .github/scripts/browser-deps.test.sh
+      - name: Runner image
+        if: runner.os == 'Linux'
+        id: image
+        run: echo "name=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore browser system packages
+        if: runner.os == 'Linux'
+        id: debs
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/kalzit-browser-debs
+          key: browser-debs-${{ steps.image.outputs.name }}-playwright-${{ steps.playwright.outputs.version }}
+          restore-keys: browser-debs-
       - name: Install browser system packages
         if: runner.os == 'Linux'
         timeout-minutes: 12
         working-directory: ui
         run: |
-          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' |
-            sudo tee /etc/apt/apt.conf.d/80-kalzit-ci > /dev/null
-          mirror=azure.archive.ubuntu.com
-          for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then
-              echo "::warning::installing the browser system packages failed or stalled (attempt $((attempt - 1)) of 3)"
-              sudo dpkg --configure -a || true
-            fi
-            if [ "$attempt" -eq 2 ]; then
-              lists=$(sudo grep -l -F "://$mirror/" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true)
-              if [ -z "$lists" ]; then
-                echo "::notice::no apt source names $mirror; retrying with the configured sources"
-              fi
-              for list in $lists; do
-                sudo sed -i "s#://$mirror/#://archive.ubuntu.com/#g" "$list"
-                echo "switched $list to archive.ubuntu.com"
-              done
-            fi
-            sudo env "PATH=$PATH" timeout --kill-after=15 180 \
-              node node_modules/@playwright/test/cli.js install-deps chromium firefox webkit && exit 0
-          done
-          exit 1
+          DEPS_CACHE="$HOME/.cache/kalzit-browser-debs" ../.github/scripts/browser-deps.sh \
+            node node_modules/@playwright/test/cli.js install-deps chromium firefox webkit
+      - name: Save browser system packages
+        if: runner.os == 'Linux' && steps.debs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/kalzit-browser-debs
+          key: ${{ steps.debs.outputs.cache-primary-key }}
       - run: npm run e2e
         timeout-minutes: 15
         working-directory: ui
