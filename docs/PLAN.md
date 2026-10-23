@@ -387,3 +387,5 @@ Getroffen (stehen auch in `CLAUDE.md`):
     der Datenquelle, die Projektion ist sichtbar, abschaltbar, und die Schritte danach arbeiten
     mit ihrer Tabelle. Schritte laufen im Browser für die Anzeige und auf dem Server für den
     Export, mit denselben Regeln (`docs/api/settings-dashboards.md`, „Analysis steps“).
+
+<!-- temporary docs-only change to test CI path filtering; not for merge -->
