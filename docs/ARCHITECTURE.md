@@ -156,7 +156,9 @@ type QueryResult =
   one shared walker (`datasources/document_schema.rs`) with its own type names, and cut sets
   carry `documents.*` notices like frames.
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
-- Projections (documents or graph to a frame) are explicit query steps stored in the query,
+- Projections (documents or graph to a frame) are explicit steps stored with the panel in its
+  `transformations` (`{"id", "type": "toFrame", "frame": "<refId>", "columns", "disabled"?}`,
+  docs/api/settings-dashboards.md), not in the query, which keeps the source's own form. They are
   never applied by the backend on its own.
 - Query API: `POST /api/orgs/{orgId}/query` (`QueryRequest`, needs `datasources:query`) and
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
@@ -290,9 +292,11 @@ type QueryResult =
   lookaround): the UI runs them with re2js in linear time, the server checks them with the
   `regex` crate.
 - `dashboards::panel_options` checks the options and field options of the built-in frame and
-  graph panel types (network, hierarchy, path) on create, save and restore, and only for panels
-  the write adds or changes, so stored dashboards keep loading and querying when a rule tightens.
-  Reads never run it. A new panel type (the document panels, plugins) adds its own check there
+  document and graph panel types (network, hierarchy, path) on create, save and restore, and
+  only for panels the write adds or changes, so stored dashboards keep loading and querying when
+  a rule tightens. Reads never run it. The document explorer and the schema panel take no
+  options; the distribution's `path` and the card's `titlePath` are field paths of up to 500
+  characters without control characters. A new panel type (plugins) adds its own check there
   when it lands, and its default and editor options to the contract fixture
   (`ui/src/panels/contract.test.ts`); unknown types are left alone.
 

@@ -1039,6 +1039,330 @@
     }
   },
   {
+    "type": "documents",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "documents",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "schema",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "schema",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "distribution",
+    "options": {
+      "path": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "distribution",
+    "options": {
+      "path": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": ""
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "network",
     "options": {
       "caption": "",

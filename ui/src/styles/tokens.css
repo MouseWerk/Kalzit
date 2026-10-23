@@ -247,6 +247,15 @@
   }
 }
 
+/* Document panels (explorer, schema, distribution) and the pipeline editor. */
+@layer tokens {
+  :root {
+    --size-meter: 4rem;
+    --size-histogram: 8rem;
+    --size-stage-preview: 14rem;
+  }
+}
+
 /*
  * The Kalzit look (appended by the brand retune): the bundled website faces, the remaining
  * status colors, the icon stroke and the skeleton pulse.

@@ -1,4 +1,10 @@
-import type { Frame, QueryResponse, QueryResult, Shape } from "../../api/generated/shapes";
+import type {
+  DocumentSet,
+  Frame,
+  QueryResponse,
+  QueryResult,
+  Shape,
+} from "../../api/generated/shapes";
 import type { PanelGraph } from "../../panels/types";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
@@ -30,6 +36,58 @@ export function framesOf(outcomes: readonly TargetOutcome[]): Frame[] {
   return outcomes.flatMap((o) =>
     "result" in o && o.result.shape === "frame" ? [o.result.frame] : [],
   );
+}
+
+/** The document sets of the outcomes with the refId of each, in target order. */
+export function documentsOf(
+  outcomes: readonly TargetOutcome[],
+): { refId: string; documents: DocumentSet }[] {
+  return outcomes.flatMap((o) =>
+    "result" in o && o.result.shape === "documents"
+      ? [{ refId: o.refId, documents: o.result.documents }]
+      : [],
+  );
+}
+
+/**
+ * The document set of `refId` with the pages loaded after it (`nextCursor`): the documents of
+ * all pages in order, the first page's schema, cut and cursor of the last page, and the notices of
+ * every page, each once.
+ */
+export function appendPages(
+  outcomes: readonly TargetOutcome[],
+  refId: string,
+  pages: readonly DocumentSet[],
+): TargetOutcome[] {
+  const last = pages.at(-1);
+  if (last === undefined) {
+    return [...outcomes];
+  }
+  return outcomes.map((outcome) => {
+    if (outcome.refId !== refId || !("result" in outcome) || outcome.result.shape !== "documents") {
+      return outcome;
+    }
+    const first = outcome.result.documents;
+    // Every page's notices, each said once (pages often repeat the same one).
+    const seen = new Set<string>();
+    const notices = [first, ...pages].flatMap((page) =>
+      page.notices.filter((notice) => {
+        const key = JSON.stringify([notice.severity, notice.code, notice.params, notice.text]);
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      }),
+    );
+    const documents: DocumentSet = {
+      ...last,
+      documents: [...first.documents, ...pages.flatMap((page) => page.documents)],
+      schema: first.schema,
+      notices,
+    };
+    return { refId, result: { shape: "documents", documents } };
+  });
 }
 
 export function errorsOf(outcomes: readonly TargetOutcome[]) {
@@ -65,5 +123,8 @@ export function otherShapes(
 }
 
 export function isTruncated(outcomes: readonly TargetOutcome[]): boolean {
-  return framesOf(outcomes).some((frame) => frame.meta?.rowsTruncated === true);
+  return (
+    framesOf(outcomes).some((frame) => frame.meta?.rowsTruncated === true) ||
+    documentsOf(outcomes).some(({ documents }) => documents.truncated !== undefined)
+  );
 }

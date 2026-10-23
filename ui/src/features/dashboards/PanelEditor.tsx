@@ -4,6 +4,17 @@ import { namedInputs, runPanelSteps } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, withUnknown } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
+import { ProjectionEditor } from "../../documents/ProjectionEditor";
+import {
+  type FrameProjection,
+  hasProjectionProblems,
+  projectionApplies,
+  projectionFor,
+  projectionPaths,
+  storableTransformations,
+  withProjection,
+} from "../../documents/projection";
+import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
@@ -11,7 +22,9 @@ import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
+import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
+import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, queryText } from "../datasources/queryKinds";
 import {
   nextRefId,
@@ -24,6 +37,7 @@ import {
 } from "./model";
 import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
+import { documentsOf } from "./results";
 import { Dialog } from "./ui/Dialog";
 import { usePanelResults } from "./usePanelResults";
 
@@ -72,6 +86,9 @@ export function PanelEditor({
   // Options per panel type seen in this editor, so arrowing through the picker and back to a
   // type keeps what was set for it.
   const [optionsByType, setOptionsByType] = useState<Record<string, unknown>>({});
+  const [filterError, setFilterError] = useState<string | null>(null);
+  // Per query: whether its editor holds text that does not parse yet.
+  const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   // The preview runs what was last run, not every keystroke.
   const [preview, setPreview] = useState({ targets: initial.targets, run: 0 });
   const datasources = useQuery(datasourcesQuery(orgId));
@@ -103,15 +120,27 @@ export function PanelEditor({
   const kindOf = (datasourceId: string) =>
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
   // What the preview returned decides which panels fit; before it ran, what the sources can return.
-  const returned = (results.data ?? []).flatMap((o) => ("result" in o ? [o.result.shape] : []));
+  // An applied projection step turns that target's documents into a frame.
+  const projected = (refId: string) => {
+    const step = projectionFor(panel.transformations, refId);
+    return step !== undefined && projectionApplies(step);
+  };
+  const returned = (results.data ?? []).flatMap((o): Shape[] =>
+    "result" in o
+      ? o.result.shape === "documents" && projected(o.refId)
+        ? ["documents", "frame"]
+        : [o.result.shape]
+      : [],
+  );
   const shapes: Shape[] = [
     ...new Set(
       returned.length > 0
         ? returned
-        : panel.targets.flatMap(
-            (target) =>
-              kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [],
-          ),
+        : panel.targets.flatMap((target): Shape[] => {
+            const kindShapes =
+              kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [];
+            return projected(target.refId) ? [...kindShapes, "frame"] : kindShapes;
+          }),
     ),
   ];
 
@@ -138,7 +167,38 @@ export function PanelEditor({
     }));
   }
 
-  const run = () => setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
+  // A new run, or another data source, leaves an old filter refusal behind.
+  const run = () => {
+    setFilterError(null);
+    setPreview((current) => ({ targets: panel.targets, run: current.run + 1 }));
+  };
+
+  /** Click-to-filter in the preview: a `$match` stage on that target's query, run at once. */
+  function filterBy(refId: string, path: string, value: unknown) {
+    // The filter joins the query in the editor, the draft typed since included; text that does
+    // not parse, in the query or still in a field, is never replaced.
+    const draft = panel.targets.find((target) => target.refId === refId);
+    if (draft === undefined || !isMongoQuery(draft.query)) {
+      return;
+    }
+    if (pendingText[refId] === true) {
+      setFilterError(t("documents.filter.refused.draft"));
+      return;
+    }
+    const added = addMatch(parseMongoQuery(draft.query), path, value);
+    if ("refused" in added) {
+      setFilterError(t(`documents.filter.refused.${added.refused}`));
+      return;
+    }
+    setFilterError(null);
+    const targets = panel.targets.map((target) =>
+      target.refId === refId ? { ...target, query: added.query } : target,
+    );
+    setPanel((p) => ({ ...p, targets }));
+    setPreview((current) => ({ targets, run: current.run + 1 }));
+  }
+  // A projection step the server would refuse is fixed here before the panel is applied.
+  const blocked = hasProjectionProblems(panel.transformations);
   const plugin = getPanel(panel.type);
   const Editor = plugin?.Editor;
 
@@ -152,11 +212,19 @@ export function PanelEditor({
           <button type="button" className="button button--secondary" onClick={onClose}>
             {t("dashboards.dialog.cancel")}
           </button>
+          {blocked ? (
+            <p className="field__error" id={`${titleId}-blocked`}>
+              {t("documents.projection.blocked")}
+            </p>
+          ) : null}
           <button
             type="button"
             className="button button--primary"
-            onClick={() => onApply(panel)}
-            disabled={panelExtrasProblem(panel) !== null}
+            disabled={blocked || panelExtrasProblem(panel) !== null}
+            aria-describedby={blocked ? `${titleId}-blocked` : undefined}
+            onClick={() =>
+              onApply({ ...panel, transformations: storableTransformations(panel.transformations) })
+            }
           >
             {t("dashboards.editor.apply")}
           </button>
@@ -168,6 +236,11 @@ export function PanelEditor({
           <h3 className="panel-editor__heading" id={titleId}>
             {t("dashboards.editor.preview")}
           </h3>
+          {filterError === null ? null : (
+            <p className="field__error" role="alert">
+              {filterError}
+            </p>
+          )}
           <div className="panel-editor__viz">
             <PanelBody
               panel={{ ...panel, targets: preview.targets }}
@@ -176,6 +249,10 @@ export function PanelEditor({
               pending={results.isPending && results.fetchStatus !== "idle"}
               error={results.error}
               outcomes={results.data ?? []}
+              revision={results.dataUpdatedAt}
+              onFilter={
+                preview.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
+              }
               stepsRun={stepsRun}
               variables={variableTexts(variables)}
             />
@@ -249,14 +326,38 @@ export function PanelEditor({
               target={target}
               datasources={queryable}
               readOnly={!queryable.some((source) => source.id === target.datasourceId)}
-              onChange={(patch) => updateTarget(target.refId, patch)}
+              onChange={(patch) => {
+                if (patch.datasourceId !== undefined) {
+                  setFilterError(null);
+                }
+                updateTarget(target.refId, patch);
+              }}
               onRemove={() =>
                 setPanel((p) => ({
                   ...p,
                   targets: p.targets.filter((x) => x.refId !== target.refId),
+                  transformations: withProjection(p.transformations, target.refId, undefined),
                 }))
               }
               onRun={run}
+              previewRun={() => ({ range, variables })}
+              onPendingText={(pending) =>
+                setPendingText((current) =>
+                  current[target.refId] === pending
+                    ? current
+                    : { ...current, [target.refId]: pending },
+                )
+              }
+              projection={projectionFor(panel.transformations, target.refId)}
+              fields={documentsOf(results.data ?? [])
+                .filter((d) => d.refId === target.refId)
+                .flatMap((d) => projectionPaths(schemaOf(d.documents)))}
+              onProjection={(projection) =>
+                setPanel((p) => ({
+                  ...p,
+                  transformations: withProjection(p.transformations, target.refId, projection),
+                }))
+              }
             />
           ))}
           {mayQuery ? (
@@ -296,9 +397,22 @@ function TargetEditor({
   onChange,
   onRemove,
   onRun,
+  previewRun,
+  onPendingText,
+  projection,
+  fields,
+  onProjection,
 }: {
+  /** The dashboard's time range and variables, for stage previews. */
+  previewRun: () => PreviewRun;
+  onPendingText: (pending: boolean) => void;
   orgId: string;
   target: Target;
+  /** The projection step of this query, stored with the panel. */
+  projection: FrameProjection | undefined;
+  /** Field paths of the last preview, to suggest for the projection. */
+  fields: readonly string[];
+  onProjection: (projection: FrameProjection | undefined) => void;
   /** The sources the caller may query, to pick from. */
   datasources: readonly { id: string; name: string; kind: string }[];
   /** The target's source is not one of them: the query shows as stored and stays as it is. */
@@ -378,9 +492,18 @@ function TargetEditor({
           query={target.query}
           onChange={(query) => onChange({ query })}
           onRun={onRun}
+          previewRun={previewRun}
+          onPendingText={onPendingText}
           label={t("dashboards.inspect.query", { refId: target.refId })}
         />
       )}
+      {datasource !== undefined && isMongoQuery(target.query) ? (
+        <ProjectionEditor
+          projection={projection}
+          fields={[...new Set(fields)]}
+          onChange={onProjection}
+        />
+      ) : null}
     </section>
   );
 }

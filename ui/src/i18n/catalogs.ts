@@ -9,6 +9,7 @@ import deCore from "./de/core.json";
 import deDashboards from "./de/dashboards.json";
 import deDashboardTools from "./de/dashboardTools.json";
 import deDatasources from "./de/datasources.json";
+import deDocuments from "./de/documents.json";
 import deExplore from "./de/explore.json";
 import deGraph from "./de/graph.json";
 import deLibraryPanels from "./de/libraryPanels.json";
@@ -22,6 +23,7 @@ import enCore from "./en/core.json";
 import enDashboards from "./en/dashboards.json";
 import enDashboardTools from "./en/dashboardTools.json";
 import enDatasources from "./en/datasources.json";
+import enDocuments from "./en/documents.json";
 import enExplore from "./en/explore.json";
 import enGraph from "./en/graph.json";
 import enLibraryPanels from "./en/libraryPanels.json";
@@ -48,6 +50,7 @@ export const en = {
   ...enDatasources,
   ...enDashboards,
   ...enExplore,
+  ...enDocuments,
   ...enAnalysis,
   ...enPanels,
   ...enGraph,
@@ -60,6 +63,7 @@ export const de = {
   ...deDatasources,
   ...deDashboards,
   ...deExplore,
+  ...deDocuments,
   ...deAnalysis,
   ...dePanels,
   ...deGraph,

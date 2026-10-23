@@ -305,3 +305,87 @@ export function GenericPreview() {
     </Frame>
   );
 }
+
+export function DocumentsPreview() {
+  // A tree: documents, one opened, its fields indented.
+  const rows: [number, number, number][] = [
+    [2, 4, 30],
+    [8, 12, 22],
+    [8, 20, 26],
+    [8, 28, 18],
+    [2, 36, 30],
+  ];
+  return (
+    <Frame>
+      {rows.map(([x, y, w]) => (
+        <g key={y}>
+          <rect className="preview__block" x={x} y={y - 2} width="3" height="3" />
+          <rect className="preview__muted" x={x + 6} y={y - 2} width={w} height="3" />
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
+export function SchemaPreview() {
+  // Field paths with how many documents have them.
+  return (
+    <Frame>
+      {[
+        [6, 50],
+        [14, 40],
+        [22, 22],
+        [30, 34],
+      ].map(([y, w]) => (
+        <g key={y}>
+          <rect className="preview__muted" x="2" y={y} width="22" height="4" />
+          <rect
+            className="preview__fill series-1"
+            x="28"
+            y={y}
+            width={((w ?? 0) * 34) / 50}
+            height="4"
+          />
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
+export function DistributionPreview() {
+  // A histogram over the most frequent values.
+  return (
+    <Frame>
+      {[6, 14, 22, 16, 8].map((h, i) => (
+        <rect
+          // biome-ignore lint/suspicious/noArrayIndexKey: a fixed drawing
+          key={i}
+          className="preview__fill series-1"
+          x={4 + i * 8}
+          y={26 - h}
+          width="6"
+          height={h}
+        />
+      ))}
+      <rect className="preview__muted" x="46" y="6" width="16" height="3" />
+      <rect className="preview__muted" x="46" y="12" width="12" height="3" />
+      <rect className="preview__muted" x="46" y="18" width="8" height="3" />
+      <rect className="preview__muted" x="4" y="32" width="56" height="3" />
+    </Frame>
+  );
+}
+
+export function DocumentCardPreview() {
+  // One document readably: a title, then name and value per field.
+  return (
+    <Frame>
+      <rect className="preview__block" x="6" y="4" width="32" height="6" />
+      {[15, 22, 29, 36].map((y) => (
+        <g key={y}>
+          <rect className="preview__muted" x="6" y={y - 2} width="14" height="3" />
+          <rect className="preview__muted" x="24" y={y - 2} width="34" height="3" />
+        </g>
+      ))}
+    </Frame>
+  );
+}
