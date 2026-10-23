@@ -282,12 +282,13 @@ type QueryResult =
   lookaround): the UI runs them with re2js in linear time, the server checks them with the
   `regex` crate.
 - `dashboards::panel_options` checks the options and field options of the built-in frame and
-  document panel types on create, save and restore, and only for panels the write adds or changes,
-  so stored dashboards keep loading and querying when a rule tightens. Reads never run it. The
-  document explorer and the schema panel take no options; the distribution's `path` and the
-  card's `titlePath` are field paths of up to 500 characters without control characters. A new
-  panel type (the graph panels, plugins) adds its own check there when it lands; unknown types are
-  left alone.
+  document and graph panel types (network, hierarchy, path) on create, save and restore, and
+  only for panels the write adds or changes, so stored dashboards keep loading and querying when
+  a rule tightens. Reads never run it. The document explorer and the schema panel take no
+  options; the distribution's `path` and the card's `titlePath` are field paths of up to 500
+  characters without control characters. A new panel type (plugins) adds its own check there
+  when it lands, and its default and editor options to the contract fixture
+  (`ui/src/panels/contract.test.ts`); unknown types are left alone.
 
 ## Analysis steps and export
 

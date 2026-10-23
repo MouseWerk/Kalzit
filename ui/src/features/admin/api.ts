@@ -51,8 +51,9 @@ async function getPage<T>(
   path: string,
   guard: (value: unknown) => value is T,
   what: string,
+  signal?: AbortSignal,
 ): Promise<ListPage<T>> {
-  return expectShape(await request("GET", path), pageOf(guard), what);
+  return expectShape(await request("GET", path, undefined, { signal }), pageOf(guard), what);
 }
 
 async function send<T>(
@@ -104,8 +105,9 @@ const isMember = shape<Member>({
   joinedAt: isNumber,
 });
 
-export function listMembers(orgId: string, cursor?: string, limit?: number) {
-  return getPage(orgPath(orgId, `/members${query({ cursor, limit })}`), isMember, "members");
+export function listMembers(orgId: string, cursor?: string, limit?: number, signal?: AbortSignal) {
+  const path = orgPath(orgId, `/members${query({ cursor, limit })}`);
+  return getPage(path, isMember, "members", signal);
 }
 
 export function addMember(orgId: string, input: { email: string; role: string }) {
@@ -483,10 +485,16 @@ export interface AuditFilter {
 }
 
 /** Org audit log, or the server's when `orgId` is null. */
-export function listAudit(orgId: string | null, filter: AuditFilter, cursor?: string) {
+export function listAudit(
+  orgId: string | null,
+  filter: AuditFilter,
+  cursor?: string,
+  options: { limit?: number | undefined; signal?: AbortSignal | undefined } = {},
+) {
   const base = orgId === null ? "/api/admin/audit" : orgPath(orgId, "/audit");
   const params = orgId === null ? filter : { ...filter, orgId: undefined };
-  return getPage(`${base}${query({ ...params, cursor })}`, isAuditEvent, "audit");
+  const path = `${base}${query({ ...params, cursor, limit: options.limit })}`;
+  return getPage(path, isAuditEvent, "audit", options.signal);
 }
 
 // Server administration

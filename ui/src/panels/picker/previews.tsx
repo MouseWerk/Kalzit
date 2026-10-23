@@ -188,11 +188,204 @@ export function TextPreview() {
   );
 }
 
+/** Nodes as dots of their label's color, joined by neutral edges. */
+function Nodes({ nodes, edges }: { nodes: [number, number, number][]; edges: [number, number][] }) {
+  return (
+    <>
+      {edges.map(([from, to]) => {
+        const a = nodes[from] as [number, number, number];
+        const b = nodes[to] as [number, number, number];
+        return (
+          <line
+            key={`${from}-${to}`}
+            className="preview__edge"
+            x1={a[0]}
+            y1={a[1]}
+            x2={b[0]}
+            y2={b[1]}
+          />
+        );
+      })}
+      {nodes.map(([x, y, series]) => (
+        <circle
+          key={`${x}-${y}`}
+          className={`preview__fill series-${series}`}
+          cx={x}
+          cy={y}
+          r="3.5"
+        />
+      ))}
+    </>
+  );
+}
+
+export function NetworkPreview() {
+  return (
+    <Frame>
+      <Nodes
+        nodes={[
+          [10, 12, 1],
+          [24, 26, 1],
+          [8, 32, 2],
+          [36, 10, 3],
+          [42, 28, 2],
+          [56, 16, 1],
+          [54, 34, 3],
+        ]}
+        edges={[
+          [0, 1],
+          [1, 2],
+          [1, 3],
+          [1, 4],
+          [3, 5],
+          [4, 5],
+          [4, 6],
+        ]}
+      />
+    </Frame>
+  );
+}
+
+export function HierarchyPreview() {
+  return (
+    <Frame>
+      <Nodes
+        nodes={[
+          [32, 6, 1],
+          [18, 20, 2],
+          [46, 20, 2],
+          [8, 34, 3],
+          [24, 34, 3],
+          [40, 34, 3],
+          [56, 34, 3],
+        ]}
+        edges={[
+          [0, 1],
+          [0, 2],
+          [1, 3],
+          [1, 4],
+          [2, 5],
+          [2, 6],
+        ]}
+      />
+    </Frame>
+  );
+}
+
+export function PathPreview() {
+  return (
+    <Frame>
+      {[12, 28].map((y, row) => (
+        <g key={y}>
+          {[0, 1, 2].map((i) => (
+            <rect
+              key={i}
+              className={row === 0 ? "preview__block" : "preview__muted"}
+              x={4 + i * 22}
+              y={y - 4}
+              width="12"
+              height="8"
+              rx="2"
+            />
+          ))}
+          {[0, 1].map((i) => (
+            <path key={i} className="preview__edge" d={`M${17 + i * 22} ${y}H${25 + i * 22}`} />
+          ))}
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
 /** For panel types without a drawing of their own. */
 export function GenericPreview() {
   return (
     <Frame>
       <rect className="preview__muted" x="4" y="4" width="56" height="32" rx="3" />
+    </Frame>
+  );
+}
+
+export function DocumentsPreview() {
+  // A tree: documents, one opened, its fields indented.
+  const rows: [number, number, number][] = [
+    [2, 4, 30],
+    [8, 12, 22],
+    [8, 20, 26],
+    [8, 28, 18],
+    [2, 36, 30],
+  ];
+  return (
+    <Frame>
+      {rows.map(([x, y, w]) => (
+        <g key={y}>
+          <rect className="preview__block" x={x} y={y - 2} width="3" height="3" />
+          <rect className="preview__muted" x={x + 6} y={y - 2} width={w} height="3" />
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
+export function SchemaPreview() {
+  // Field paths with how many documents have them.
+  return (
+    <Frame>
+      {[
+        [6, 50],
+        [14, 40],
+        [22, 22],
+        [30, 34],
+      ].map(([y, w]) => (
+        <g key={y}>
+          <rect className="preview__muted" x="2" y={y} width="22" height="4" />
+          <rect
+            className="preview__fill series-1"
+            x="28"
+            y={y}
+            width={((w ?? 0) * 34) / 50}
+            height="4"
+          />
+        </g>
+      ))}
+    </Frame>
+  );
+}
+
+export function DistributionPreview() {
+  // A histogram over the most frequent values.
+  return (
+    <Frame>
+      {[6, 14, 22, 16, 8].map((h, i) => (
+        <rect
+          // biome-ignore lint/suspicious/noArrayIndexKey: a fixed drawing
+          key={i}
+          className="preview__fill series-1"
+          x={4 + i * 8}
+          y={26 - h}
+          width="6"
+          height={h}
+        />
+      ))}
+      <rect className="preview__muted" x="46" y="6" width="16" height="3" />
+      <rect className="preview__muted" x="46" y="12" width="12" height="3" />
+      <rect className="preview__muted" x="46" y="18" width="8" height="3" />
+      <rect className="preview__muted" x="4" y="32" width="56" height="3" />
+    </Frame>
+  );
+}
+
+export function DocumentCardPreview() {
+  // One document readably: a title, then name and value per field.
+  return (
+    <Frame>
+      <rect className="preview__block" x="6" y="4" width="32" height="6" />
+      {[15, 22, 29, 36].map((y) => (
+        <g key={y}>
+          <rect className="preview__muted" x="6" y={y - 2} width="14" height="3" />
+          <rect className="preview__muted" x="24" y={y - 2} width="34" height="3" />
+        </g>
+      ))}
     </Frame>
   );
 }

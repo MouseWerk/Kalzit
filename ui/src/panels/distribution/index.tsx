@@ -14,6 +14,7 @@ import { EmptyPanel } from "../shared";
 import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
+import { DistributionPreview } from "../picker/previews";
 
 export interface DistributionOptions {
   /** The schema path to show (`items[].price`); the first numeric path when empty. */
@@ -255,6 +256,8 @@ function DistributionEditor({ options, onChange }: PanelEditorProps<Distribution
 export const distributionPanel: PanelPlugin<DistributionOptions> = {
   type: "distribution",
   name: "documents.panels.distribution",
+  description: "documents.describe.distribution",
+  Preview: DistributionPreview,
   shapes: ["documents"],
   options: (stored) => ({
     path: isRecord(stored) && typeof stored.path === "string" ? stored.path : "",

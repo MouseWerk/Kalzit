@@ -212,6 +212,49 @@ describe("path panel", () => {
   });
 });
 
+describe("option texts", () => {
+  // The server refuses control characters in these texts (panel_options); a pasted tab or line
+  // break must not end up stored.
+  it("drops control characters and trims, for every graph panel", () => {
+    for (const type of ["network", "hierarchy", "path"]) {
+      const plugin = getPanel(type) as AnyPanelPlugin;
+      const options = plugin.options({
+        caption: " na\tme \n",
+        variable: "$cust\u0000omer",
+        variableProperty: "\u007fid\u0085",
+      }) as Record<string, unknown>;
+      expect([options.caption, options.variable, options.variableProperty], type).toEqual([
+        "name",
+        "customer",
+        "id",
+      ]);
+    }
+    const network = getPanel("network") as AnyPanelPlugin;
+    const parsed = network.options({
+      sizeBy: "si\tze",
+      edgeWidthBy: "\tweight",
+      timeProperty: `since${"x".repeat(200)}`,
+    }) as Record<string, string>;
+    expect(parsed.sizeBy).toBe("size");
+    expect(parsed.edgeWidthBy).toBe("weight");
+    expect(parsed.timeProperty).toHaveLength(100);
+  });
+
+  it("stores the path caption trimmed and without a pasted tab", async () => {
+    const plugin = getPanel("path") as AnyPanelPlugin;
+    const { Editor } = plugin;
+    const onChange = vi.fn();
+    render(<Editor options={plugin.options({})} onChange={onChange} />);
+    const caption = await screen.findByRole("textbox", { name: "Node name property (optional)" });
+    fireEvent.change(caption, { target: { value: "  title\tkey " } });
+    expect(onChange).toHaveBeenLastCalledWith({
+      caption: "titlekey",
+      variable: "",
+      variableProperty: "",
+    });
+  });
+});
+
 describe("registry", () => {
   it("suggests the network for graphs and the path panel when every graph is paths", async () => {
     expect(suggestPanel([{ shape: "graph", graph: FAKE_GRAPH }])).toBe("network");

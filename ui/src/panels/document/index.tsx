@@ -9,6 +9,7 @@ import { useI18n } from "../../i18n/i18n";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
+import { DocumentCardPreview } from "../picker/previews";
 
 export interface CardOptions {
   /** The field whose value titles the card (`name`); `_id` when empty. */
@@ -173,6 +174,8 @@ function CardEditor({ options, onChange }: PanelEditorProps<CardOptions>) {
 export const documentCardPanel: PanelPlugin<CardOptions> = {
   type: "document",
   name: "documents.panels.card",
+  description: "documents.describe.card",
+  Preview: DocumentCardPreview,
   shapes: ["documents"],
   options: (stored) => ({
     titlePath: isRecord(stored) && typeof stored.titlePath === "string" ? stored.titlePath : "",

@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/i18n";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
+import { DocumentsPreview } from "../picker/previews";
 
 export type ExplorerOptions = Record<string, never>;
 
@@ -138,6 +139,8 @@ function ExplorerEditor(_: PanelEditorProps<ExplorerOptions>) {
 export const documentsPanel: PanelPlugin<ExplorerOptions> = {
   type: "documents",
   name: "documents.panels.explorer",
+  description: "documents.describe.documents",
+  Preview: DocumentsPreview,
   shapes: ["documents"],
   options: () => ({}),
   Panel: ExplorerPanel,

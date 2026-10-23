@@ -158,5 +158,9 @@
   "documents.projection.full": "Ein Projektionsschritt hat höchstens {max} Spalten.",
   "documents.projection.blocked": "Korrigiere den Projektionsschritt vor dem Übernehmen; der Server würde ihn ablehnen.",
   "documents.filter.refused.draft": "Der Filter wurde nicht hinzugefügt: Die Abfrage in Bearbeitung enthält Text, der kein gültiges JSON ist. Korrigiere ihn zuerst; nichts wurde geändert.",
-  "documents.projection.blockedExplore": "Korrigiere den Projektionsschritt vor dem Export oder dem Hinzufügen zu einem Dashboard; der Server würde ihn ablehnen."
+  "documents.projection.blockedExplore": "Korrigiere den Projektionsschritt vor dem Export oder dem Hinzufügen zu einem Dashboard; der Server würde ihn ablehnen.",
+  "documents.describe.documents": "Dokumente als Baum, zum Aufklappen, Vertiefen und Filtern nach Wert.",
+  "documents.describe.schema": "Jeder Feldpfad mit seinen Typen und wie viele Dokumente ihn haben.",
+  "documents.describe.distribution": "Wie sich die Werte eines Felds verteilen, und die häufigsten.",
+  "documents.describe.card": "Ein Dokument lesbar, Feld für Feld, mit Blättern durch die übrigen."
 }

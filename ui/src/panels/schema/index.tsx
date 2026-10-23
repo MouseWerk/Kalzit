@@ -9,6 +9,7 @@ import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
 import "../../documents/documents.css";
+import { SchemaPreview } from "../picker/previews";
 
 export type SchemaOptions = Record<string, never>;
 
@@ -191,6 +192,8 @@ function SchemaEditor(_: PanelEditorProps<SchemaOptions>) {
 export const schemaPanel: PanelPlugin<SchemaOptions> = {
   type: "schema",
   name: "documents.panels.schema",
+  description: "documents.describe.schema",
+  Preview: SchemaPreview,
   shapes: ["documents"],
   options: () => ({}),
   Panel: SchemaPanel,

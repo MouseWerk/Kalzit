@@ -158,5 +158,9 @@
   "documents.projection.full": "A projection step takes at most {max} columns.",
   "documents.projection.blocked": "Fix the projection step before applying; the server would refuse it.",
   "documents.filter.refused.draft": "The filter was not added: the query being edited has text that is not valid JSON. Fix it first; nothing was changed.",
-  "documents.projection.blockedExplore": "Fix the projection step before exporting or adding to a dashboard; the server would refuse it."
+  "documents.projection.blockedExplore": "Fix the projection step before exporting or adding to a dashboard; the server would refuse it.",
+  "documents.describe.documents": "Documents as a tree, to open, drill into and filter by value.",
+  "documents.describe.schema": "Every field path with its types and how many documents have it.",
+  "documents.describe.distribution": "How the values of one field are spread, and the most frequent.",
+  "documents.describe.card": "One document readably, field by field, paging through the rest."
 }
