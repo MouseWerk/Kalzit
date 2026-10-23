@@ -353,8 +353,10 @@ fn is_safe_link(link: &str) -> bool {
             || (lower.starts_with('/') && !lower.starts_with("//")))
 }
 
-/// Largest compiled size of a pattern; real field patterns are a few hundred bytes.
-const MAX_PATTERN_BYTES: usize = 256 * 1024;
+/// Largest compiled size of a pattern: the crate's own default. The syntax check keeps Unicode-wide
+/// atoms to 100 (`pattern_syntax::MAX_WIDE`), which stays below it, so this limit never refuses a
+/// pattern first; a hundred `\w` take most of it.
+const MAX_PATTERN_BYTES: usize = 10 * (1 << 20);
 
 /// Patterns use RE2 syntax, which the UI runs with a linear-time engine (re2js): no
 /// backreferences or lookaround, so no pattern can make a page hang. Only syntax both engines

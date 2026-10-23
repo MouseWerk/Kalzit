@@ -17,7 +17,7 @@ import {
   type Tone,
   type ValueMapping,
 } from "./fieldConfig";
-import { isInvalidPattern, usePatternEngine } from "./pattern";
+import { patternStatus, usePatternEngine } from "./pattern";
 import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
 
@@ -266,7 +266,8 @@ function MappingEditor({
   onRemove: () => void;
 }) {
   const { t } = useI18n();
-  const invalid = mapping.type === "regex" && isInvalidPattern(mapping.pattern);
+  const status = mapping.type === "regex" ? patternStatus(mapping.pattern) : "valid";
+  const invalid = status === "invalid";
   return (
     <li className="viz-editor__row">
       <SelectField
@@ -322,6 +323,8 @@ function MappingEditor({
             <p className="field__error" role="alert">
               {t("panels.invalidPattern")}
             </p>
+          ) : status === "checking" ? (
+            <p className="field__hint">{t("panels.checkingPattern")}</p>
           ) : null}
         </>
       ) : null}
@@ -521,7 +524,9 @@ function OverrideEditor({
   onRemove: () => void;
 }) {
   const { t } = useI18n();
-  const invalid = override.matcher.type === "regex" && isInvalidPattern(override.matcher.value);
+  const status =
+    override.matcher.type === "regex" ? patternStatus(override.matcher.value) : "valid";
+  const invalid = status === "invalid";
   const present = OPTION_KEYS.filter((key) => override.properties[key] !== undefined);
   const cleared = OPTION_KEYS.filter((key) => override.properties[key] === null);
   return (
@@ -546,6 +551,8 @@ function OverrideEditor({
         <p className="field__error" role="alert">
           {t("panels.invalidPattern")}
         </p>
+      ) : status === "checking" ? (
+        <p className="field__hint">{t("panels.checkingPattern")}</p>
       ) : null}
       <OptionsFields
         options={setOptions(override.properties)}
@@ -629,12 +636,13 @@ export function FieldConfigEditor({
   onChange: (config: FieldConfig) => void;
 }) {
   const { t } = useI18n();
-  // The editor checks patterns as they are typed, so it loads re2js right away.
-  usePatternEngine(true);
+  // The editor checks patterns as they are typed, so it loads re2js right away, and draws its
+  // pattern messages again once re2js is there.
+  const ready = usePatternEngine(true);
   const config = parseFieldConfig(value);
   const overrides = config.overrides;
   return (
-    <div className="viz-editor">
+    <div className="viz-editor" key={ready ? "checked" : "checking"}>
       <OptionsFields
         options={config.defaults}
         groups={groups}

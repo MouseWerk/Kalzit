@@ -260,8 +260,9 @@ export function PanelBody({
   variables,
 }: PanelBodyProps) {
   const { t } = useI18n();
-  // Field option patterns need re2js, which loads with the first panel that uses one.
-  usePatternEngine(usesPatterns(panel.fieldConfig));
+  // Field option patterns need re2js, which loads with the first panel that uses one. The panel
+  // is drawn again once it is there: until then its patterns matched nothing.
+  const patterns = usePatternEngine(usesPatterns(panel.fieldConfig)) ? "patterns" : "waiting";
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
@@ -271,6 +272,7 @@ export function PanelBody({
     const { Panel } = plugin;
     return (
       <Panel
+        key={patterns}
         frames={[]}
         options={plugin.options(panel.options)}
         timeRange={range}
@@ -332,6 +334,7 @@ export function PanelBody({
       ) : (
         <div className="panel-content__viz">
           <Panel
+            key={patterns}
             frames={frames}
             options={plugin.options(panel.options)}
             fieldConfig={parseFieldConfig(panel.fieldConfig)}

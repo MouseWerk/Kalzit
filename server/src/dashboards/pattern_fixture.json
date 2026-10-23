@@ -1390,5 +1390,117 @@
   {
     "pattern": "\\Bx{2}\\B{end}",
     "valid": false
+  },
+  {
+    "pattern": "\\d{100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\w{100}",
+    "valid": true
+  },
+  {
+    "pattern": ".{100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\pL{50}\\d{50}",
+    "valid": true
+  },
+  {
+    "pattern": "(\\w\\w){50}",
+    "valid": true
+  },
+  {
+    "pattern": "[\\w\\d]{100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\P{L}{100}",
+    "valid": true
+  },
+  {
+    "pattern": "(a{100}){10}",
+    "valid": true
+  },
+  {
+    "pattern": "[a-z]{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "(?i)[a-z]{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "\\w+\\w+",
+    "valid": true
+  },
+  {
+    "pattern": "(\\d{10}){10}",
+    "valid": true
+  },
+  {
+    "pattern": "[^a]{1000}",
+    "valid": true
+  },
+  {
+    "pattern": "\\w{0,100}",
+    "valid": true
+  },
+  {
+    "pattern": "\\d{101}",
+    "valid": false
+  },
+  {
+    "pattern": "\\d{1,1000}",
+    "valid": false
+  },
+  {
+    "pattern": "\\w{0,1000}",
+    "valid": false
+  },
+  {
+    "pattern": ".{101}",
+    "valid": false
+  },
+  {
+    "pattern": "\\p{L}{1000}",
+    "valid": false
+  },
+  {
+    "pattern": "(\\w\\w){51}",
+    "valid": false
+  },
+  {
+    "pattern": "\\d{50}\\w{51}",
+    "valid": false
+  },
+  {
+    "pattern": "[\\w]{101}",
+    "valid": false
+  },
+  {
+    "pattern": "(a{100}){11}",
+    "valid": false
+  },
+  {
+    "pattern": "(a{1000}){2}",
+    "valid": false
+  },
+  {
+    "pattern": "(\\d{10}){11}",
+    "valid": false
+  },
+  {
+    "pattern": "\\w{100}\\w",
+    "valid": false
+  },
+  {
+    "pattern": "(?:\\d{2}){60}",
+    "valid": false
+  },
+  {
+    "pattern": "[\\p{Greek}x]{200}",
+    "valid": false
   }
 ]

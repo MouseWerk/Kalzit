@@ -106,9 +106,23 @@ export function compilePattern(pattern: string): Pattern | null {
   return compiled.get(pattern) ?? null;
 }
 
-/** Whether a non-empty pattern is refused, for the editor's error message. */
+/**
+ * What the editor says about a pattern: valid, invalid, or not known yet while re2js loads (the
+ * syntax check alone cannot tell, since re2js still refuses some patterns it lets through).
+ */
+export function patternStatus(pattern: string): "valid" | "invalid" | "checking" {
+  if (pattern === "") return "valid";
+  if (refusedSyntax(pattern)) return "invalid";
+  if (engine === null) {
+    void loadPatternEngine();
+    return "checking";
+  }
+  return compilePattern(pattern) === null ? "invalid" : "valid";
+}
+
+/** Whether a non-empty pattern is known to be refused. */
 export function isInvalidPattern(pattern: string): boolean {
-  return pattern !== "" && compilePattern(pattern) === null;
+  return patternStatus(pattern) === "invalid";
 }
 
 /** Whether field options use patterns, so their panel needs re2js. */

@@ -234,8 +234,12 @@ const PROPERTY_NAMES: &[&str] = &[
 ];
 /// One-letter categories in the short form `\pL`.
 const PROPERTY_LETTERS: &[u8] = b"LMNPSZC";
-/// Largest repeat count; RE2 refuses more.
+/// Largest repeat count, and largest product of nested counts; RE2 refuses more.
 const MAX_REPEAT: u32 = 1000;
+/// Unicode-wide atoms (`\d`, `\w`, `\s`, `\p{...}`, `.`, classes holding one of them) cost this
+/// engine far more than a letter. At most this many of them, counting repeats, so the compiled
+/// size never refuses a pattern the syntax allows.
+const MAX_WIDE: u64 = 100;
 
 /// Index after a `\p` property starting at `i` (just after p or P), or `None` when refused.
 fn property(p: &str, i: usize) -> Option<usize> {
@@ -263,17 +267,62 @@ fn repeat_at(p: &str, i: usize) -> Option<(usize, Option<u32>, Option<u32>)> {
     }
     // Counts too long for a number are over the limit anyway.
     let count = |s: &str| if s.is_empty() { None } else { Some(s.parse().unwrap_or(u32::MAX)) };
-    Some((close + 2, if low.is_empty() { None } else { count(low) }, high.and_then(count)))
+    Some((close + 2, count(low), high.and_then(count)))
+}
+
+/// One group level: wide atoms counted so far, the deepest count product, the last atom.
+#[derive(Default)]
+struct Level {
+    wide: u64,
+    product: u64,
+    last: Option<(u64, u64)>,
+}
+
+impl Level {
+    fn new() -> Self {
+        Level { wide: 0, product: 1, last: None }
+    }
+
+    fn flush(&mut self) {
+        if let Some((wide, product)) = self.last.take() {
+            self.wide += wide;
+            self.product = self.product.max(product);
+        }
+    }
+
+    fn atom(&mut self, wide: u64, product: u64) {
+        self.flush();
+        self.last = Some((wide, product));
+    }
+
+    /// Applies a count to the last atom; false when the counts grow past the limits.
+    fn counted(&mut self, count: u64) -> bool {
+        match self.last.as_mut() {
+            Some((wide, product)) => {
+                *wide = wide.saturating_mul(count);
+                *product = product.saturating_mul(count);
+                *product <= u64::from(MAX_REPEAT)
+            }
+            None => true,
+        }
+    }
 }
 
 /// Whether the pattern uses a form outside the syntax both engines share.
 pub fn refused_syntax(p: &str) -> bool {
     let b = p.as_bytes();
+    let mut levels = vec![Level::new()];
     let mut i = 0;
     let mut in_class = false;
     let mut class_start = 0;
+    let mut class_wide = false;
     // 0: no repeat just before; 1: after a repeat; 2: after a lazy repeat (`*?`).
     let mut repeat = 0;
+    macro_rules! top {
+        () => {
+            levels.last_mut().expect("the outer level stays")
+        };
+    }
     while i < b.len() {
         let c = b[i];
         if c == b'\\' {
@@ -294,12 +343,16 @@ pub fn refused_syntax(p: &str) -> bool {
                 // The escaped character may take several bytes; step over all of them.
                 i += 1 + p[i + 1..].chars().next().map_or(1, char::len_utf8);
             }
+            let wide = b"dDwWsSpP".contains(&e);
             // A class escape cannot start a range: [\d-z] is an error in one engine only.
-            if in_class && b"dwsDWSpP".contains(&e) && b.get(i) == Some(&b'-') && b.get(i + 1) != Some(&b']') {
+            if in_class && wide && b.get(i) == Some(&b'-') && b.get(i + 1) != Some(&b']') {
                 return true;
             }
-            if !in_class {
+            if in_class {
+                class_wide |= wide;
+            } else {
                 repeat = 0;
+                top!().atom(u64::from(wide), 1);
             }
             continue;
         }
@@ -307,6 +360,7 @@ pub fn refused_syntax(p: &str) -> bool {
             if c == b']' && i > class_start {
                 in_class = false;
                 repeat = 0;
+                top!().atom(u64::from(class_wide), 1);
                 i += 1;
                 continue;
             }
@@ -327,6 +381,7 @@ pub fn refused_syntax(p: &str) -> bool {
         match c {
             b'[' => {
                 in_class = true;
+                class_wide = false;
                 i += 1;
                 if b.get(i) == Some(&b'^') {
                     i += 1;
@@ -337,6 +392,15 @@ pub fn refused_syntax(p: &str) -> bool {
                 if b.get(i + 1) == Some(&b'?') && !group_start_ok(&p[i + 2..]) {
                     return true;
                 }
+                top!().flush();
+                levels.push(Level::new());
+                repeat = 0;
+                i += 1;
+            }
+            b')' if levels.len() > 1 => {
+                let mut inner = levels.pop().expect("more than one level");
+                inner.flush();
+                top!().atom(inner.wide, inner.product);
                 repeat = 0;
                 i += 1;
             }
@@ -356,7 +420,9 @@ pub fn refused_syntax(p: &str) -> bool {
             }
             b'{' if repeat_at(p, i).is_some() => {
                 let Some((len, low, high)) = repeat_at(p, i) else { return true };
-                if low.is_none() || low.into_iter().chain(high).any(|n| n > MAX_REPEAT) || repeat != 0 {
+                let Some(low) = low else { return true };
+                let most = high.unwrap_or(low).max(low);
+                if low > MAX_REPEAT || most > MAX_REPEAT || repeat != 0 || !top!().counted(u64::from(most)) {
                     return true;
                 }
                 repeat = 1;
@@ -364,11 +430,19 @@ pub fn refused_syntax(p: &str) -> bool {
             }
             _ => {
                 repeat = 0;
+                top!().atom(u64::from(c == b'.'), 1);
                 i += 1;
             }
         }
     }
-    false
+    while levels.len() > 1 {
+        let mut inner = levels.pop().expect("more than one level");
+        inner.flush();
+        top!().atom(inner.wide, inner.product);
+    }
+    let outer = top!();
+    outer.flush();
+    outer.wide > MAX_WIDE
 }
 
 /// `(?:`, `(?P<name>`, `(?<name>` and flag groups of i, m, s and U; nothing else.

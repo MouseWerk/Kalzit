@@ -222,5 +222,6 @@
   "panels.option.color": "Series color",
   "panels.option.cellDisplay": "Cell display",
   "panels.option.link": "Link",
-  "panels.option.width": "Column width"
+  "panels.option.width": "Column width",
+  "panels.checkingPattern": "Checking the pattern…"
 }

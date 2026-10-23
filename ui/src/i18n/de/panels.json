@@ -222,5 +222,6 @@
   "panels.option.color": "Farbe der Reihe",
   "panels.option.cellDisplay": "Zellendarstellung",
   "panels.option.link": "Link",
-  "panels.option.width": "Spaltenbreite"
+  "panels.option.width": "Spaltenbreite",
+  "panels.checkingPattern": "Das Muster wird geprüft…"
 }

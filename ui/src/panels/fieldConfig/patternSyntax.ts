@@ -236,14 +236,20 @@ const PROPERTY_NAMES = new Set([
 ]);
 /** One-letter categories in the short form `\pL`. */
 const PROPERTY_LETTERS = "LMNPSZC";
-/** Largest repeat count; RE2 refuses more. */
+/** Largest repeat count, and largest product of nested counts; RE2 refuses more. */
 const MAX_REPEAT = 1000;
+/**
+ * Unicode-wide atoms (`\d`, `\w`, `\s`, `\p{...}`, `.`, classes holding one of them) cost the
+ * server's engine far more than a letter. At most this many of them, counting repeats, so the
+ * compiled size never refuses a pattern the syntax allows.
+ */
+const MAX_WIDE = 100;
 
 function isDigit(c: string | undefined): boolean {
   return c !== undefined && c >= "0" && c <= "9";
 }
 
-/** Index after a `\\p` property starting at `i` (just after p or P), or -1 when refused. */
+/** Index after a `\p` property starting at `i` (just after p or P), or -1 when refused. */
 function property(p: string, i: number): number {
   if (p[i] === "{") {
     const end = p.indexOf("}", i);
@@ -253,11 +259,40 @@ function property(p: string, i: number): number {
   return letter !== undefined && PROPERTY_LETTERS.includes(letter) ? i + 1 : -1;
 }
 
+/** One group level: wide atoms counted so far, the deepest count product, the last atom. */
+interface Level {
+  wide: number;
+  product: number;
+  last: { wide: number; product: number } | null;
+}
+
 /** Whether the pattern uses a form outside the syntax both engines share. */
 export function refusedSyntax(p: string): boolean {
+  const levels: Level[] = [{ wide: 0, product: 1, last: null }];
+  const top = () => levels.at(-1) as Level;
+  const flush = (level: Level) => {
+    if (level.last !== null) {
+      level.wide += level.last.wide;
+      level.product = Math.max(level.product, level.last.product);
+      level.last = null;
+    }
+  };
+  const atom = (wide: number, product = 1) => {
+    flush(top());
+    top().last = { wide, product };
+  };
+  /** Applies a count to the last atom; false when the counts grow past the limits. */
+  const counted = (count: number) => {
+    const last = top().last;
+    if (last === null) return true;
+    last.wide *= count;
+    last.product *= count;
+    return last.product <= MAX_REPEAT;
+  };
   let i = 0;
   let inClass = false;
   let classStart = 0;
+  let classWide = false;
   // 0: no repeat just before; 1: after a repeat; 2: after a lazy repeat (`*?`).
   let repeat = 0;
   while (i < p.length) {
@@ -278,15 +313,22 @@ export function refusedSyntax(p: string): boolean {
       } else {
         i += 2;
       }
+      const wide = "dDwWsSpP".includes(e);
       // A class escape cannot start a range: [\d-z] is an error in one engine only.
-      if (inClass && "dwsDWSpP".includes(e) && p[i] === "-" && p[i + 1] !== "]") return true;
-      if (!inClass) repeat = 0;
+      if (inClass && wide && p[i] === "-" && p[i + 1] !== "]") return true;
+      if (inClass) {
+        classWide ||= wide;
+      } else {
+        repeat = 0;
+        atom(wide ? 1 : 0);
+      }
       continue;
     }
     if (inClass) {
       if (c === "]" && i > classStart) {
         inClass = false;
         repeat = 0;
+        atom(classWide ? 1 : 0);
         i++;
         continue;
       }
@@ -303,6 +345,7 @@ export function refusedSyntax(p: string): boolean {
     }
     if (c === "[") {
       inClass = true;
+      classWide = false;
       i++;
       if (p[i] === "^") i++;
       classStart = i;
@@ -313,6 +356,16 @@ export function refusedSyntax(p: string): boolean {
         const rest = p.slice(i + 2);
         if (!/^(:|P<|<[A-Za-z_]|[imsU-]+[:)])/.test(rest)) return true;
       }
+      flush(top());
+      levels.push({ wide: 0, product: 1, last: null });
+      repeat = 0;
+      i++;
+      continue;
+    }
+    if (c === ")" && levels.length > 1) {
+      const inner = levels.pop() as Level;
+      flush(inner);
+      atom(inner.wide, inner.product);
       repeat = 0;
       i++;
       continue;
@@ -335,13 +388,21 @@ export function refusedSyntax(p: string): boolean {
         if (m[1] === "") return true;
         const counts = [m[1], m[2]].filter((n) => n !== undefined && n !== "").map(Number);
         if (counts.some((n) => n > MAX_REPEAT) || repeat !== 0) return true;
+        if (!counted(Math.max(...counts))) return true;
         repeat = 1;
         i += m[0].length;
         continue;
       }
     }
     repeat = 0;
+    atom(c === "." ? 1 : 0);
     i++;
   }
-  return false;
+  while (levels.length > 1) {
+    const inner = levels.pop() as Level;
+    flush(inner);
+    atom(inner.wide, inner.product);
+  }
+  flush(top());
+  return top().wide > MAX_WIDE;
 }
