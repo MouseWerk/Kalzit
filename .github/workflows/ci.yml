@@ -308,8 +308,6 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 12
         working-directory: ui
-        env:
-          DEPS_ATTEMPT_SECONDS: "8 180"
         run: |
           DEPS_CACHE="$HOME/.cache/kalzit-browser-debs" ../.github/scripts/browser-deps.sh \
             node node_modules/@playwright/test/cli.js install-deps chromium firefox webkit
