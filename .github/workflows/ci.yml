@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue tests each queued pull request on top of main before it merges.
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,26 +19,82 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+# Which jobs run: on a pull request only those for the areas it changes (job `changes`, rules in
+# .github/scripts/changes.sh and docs/ARCHITECTURE.md, "CI"); on main and in the merge queue all
+# of them. A job without work still reports its check: the matrix jobs (server, ui, e2e) run and
+# skip their steps, because a matrix job skipped as a whole reports no check per matrix value;
+# the other jobs are skipped as a whole, which counts as passed. If `changes` fails, everything
+# runs.
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.areas.outputs.server }}
+      ui: ${{ steps.areas.outputs.ui }}
+      e2e: ${{ steps.areas.outputs.e2e }}
+      audit: ${{ steps.areas.outputs.audit }}
+      workflows: ${{ steps.areas.outputs.workflows }}
+      docs_only: ${{ steps.areas.outputs.docs_only }}
+    steps:
+      # A pull request checks out its merge commit with main, whose first parent is main.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Test the change detection
+        run: .github/scripts/changes.test.sh
+      - name: Changed areas
+        id: areas
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+            echo "Changed files:"
+            sed 's/^/  /' "$RUNNER_TEMP/changed.txt"
+          else
+            echo "Event $EVENT: everything runs."
+            : > "$RUNNER_TEMP/changed.txt"
+          fi
+          .github/scripts/changes.sh < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
+
   server:
     name: server (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.server == 'true' }}
     steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        run: echo "No server change in this pull request; the checks are skipped."
       - uses: actions/checkout@v7
+        if: env.RUN_JOB == 'true'
       - uses: dtolnay/rust-toolchain@stable
+        if: env.RUN_JOB == 'true'
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
+        if: env.RUN_JOB == 'true'
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - if: env.RUN_JOB == 'true'
+        run: cargo fmt --all --check
+      - if: env.RUN_JOB == 'true'
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - if: env.RUN_JOB == 'true'
+        run: cargo test --locked
 
   postgres:
     name: postgres
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -54,6 +113,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access postgres -- --nocapture
 
   # Data sources against real servers. The passwords below belong to throwaway containers
@@ -61,6 +122,8 @@ jobs:
   # password here (unlike the job above) so password handling and scrubbing are exercised.
   datasources:
     name: datasources
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -153,6 +216,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo build --locked --tests
       - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j and Memgraph
         shell: bash
@@ -185,6 +250,8 @@ jobs:
 
   ui:
     name: ui (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -193,16 +260,22 @@ jobs:
     # A fixed zone, so tests about time zones cannot pass by the runner's accident.
     env:
       TZ: UTC
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.ui == 'true' }}
     defaults:
       run:
         working-directory: ui
     steps:
       - uses: actions/checkout@v7
+      # Runs only for a UI change, and only once the UI exists.
       - name: Check for the UI
         id: has_ui
         shell: bash
         working-directory: .
-        run: echo "present=$([ -f ui/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        run: |
+          present=false
+          if [ "$RUN_JOB" = true ] && [ -f ui/package.json ]; then present=true; fi
+          [ "$RUN_JOB" = true ] || echo "No UI change in this pull request; the checks are skipped."
+          echo "present=$present" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         if: steps.has_ui.outputs.present == 'true'
         with:
@@ -234,6 +307,8 @@ jobs:
   # yet.
   e2e:
     name: e2e (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -245,36 +320,50 @@ jobs:
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true' }}
     steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        run: echo "No server or UI change in this pull request; the end-to-end tests are skipped."
       - uses: actions/checkout@v7
+        if: env.RUN_JOB == 'true'
       - uses: actions/setup-node@v7
+        if: env.RUN_JOB == 'true'
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+        if: env.RUN_JOB == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: env.RUN_JOB == 'true'
         with:
           key: e2e-profile
+          save-if: ${{ github.event_name != 'merge_group' }}
       - run: npm ci
+        if: env.RUN_JOB == 'true'
         working-directory: ui
       - run: npm run build
+        if: env.RUN_JOB == 'true'
         working-directory: ui
       - run: cargo build --profile e2e --locked -p kalzit
+        if: env.RUN_JOB == 'true'
       # The browsers belong to the Playwright version, so other dependency updates keep the cache.
       - name: Playwright version
+        if: env.RUN_JOB == 'true'
         id: playwright
         working-directory: ui
         shell: bash
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
+        if: env.RUN_JOB == 'true'
         id: browsers
         uses: actions/cache@v6
         with:
           path: .playwright-browsers
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install Playwright browsers
-        if: steps.browsers.outputs.cache-hit != 'true'
+        if: env.RUN_JOB == 'true' && steps.browsers.outputs.cache-hit != 'true'
         timeout-minutes: 10
         working-directory: ui
         shell: bash
@@ -289,15 +378,16 @@ jobs:
       # without failing. They are kept between runs per runner image, so apt downloads only what
       # changed; .github/scripts/browser-deps.sh retries with a limit per attempt and moves to
       # the main Ubuntu archive. Its test runs first, so a broken retry shows before it is needed.
+      # A merge queue run restores them but does not save, since its cache would be its own.
       - name: Test the browser package install script
-        if: runner.os == 'Linux'
+        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         run: .github/scripts/browser-deps.test.sh
       - name: Runner image
-        if: runner.os == 'Linux'
+        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         id: image
         run: echo "name=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
       - name: Restore browser system packages
-        if: runner.os == 'Linux'
+        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         id: debs
         uses: actions/cache/restore@v6
         with:
@@ -305,19 +395,22 @@ jobs:
           key: browser-debs-${{ steps.image.outputs.name }}-playwright-${{ steps.playwright.outputs.version }}
           restore-keys: browser-debs-
       - name: Install browser system packages
-        if: runner.os == 'Linux'
+        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
         timeout-minutes: 12
         working-directory: ui
         run: |
           DEPS_CACHE="$HOME/.cache/kalzit-browser-debs" ../.github/scripts/browser-deps.sh \
             node node_modules/@playwright/test/cli.js install-deps chromium firefox webkit
       - name: Save browser system packages
-        if: runner.os == 'Linux' && steps.debs.outputs.cache-hit != 'true'
+        if: >-
+          env.RUN_JOB == 'true' && runner.os == 'Linux' && steps.debs.outputs.cache-hit != 'true'
+          && github.event_name != 'merge_group'
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/kalzit-browser-debs
           key: ${{ steps.debs.outputs.cache-primary-key }}
       - run: npm run e2e
+        if: env.RUN_JOB == 'true'
         timeout-minutes: 15
         working-directory: ui
       - uses: actions/upload-artifact@v7
@@ -330,6 +423,8 @@ jobs:
 
   audit:
     name: audit
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.audit == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

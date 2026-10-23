@@ -612,3 +612,31 @@ through `settings::get`; new registry entries are requested from the orchestrato
   on a clock fixed to it; times the server records (sessions, member since, last saved) are
   moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
   UI reruns `npm run screenshots` and commits the changed images.**
+- CI (`.github/workflows/ci.yml`) runs on pull requests, on pushes to `main` and in the GitHub
+  merge queue (`merge_group`). Its first job, `changes`, compares a pull request's merge commit
+  with its first parent (`main`) and sets flags through `.github/scripts/changes.sh` (tested by
+  `changes.test.sh` in the same job):
+
+  | Flag | Set by |
+  | --- | --- |
+  | `server` | `server/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `clippy.toml`, `rustfmt.toml`, `.cargo/`, `ui/src/api/generated/`, `docs/api/` |
+  | `ui` | `ui/` (including `ui/e2e/`), `docs/api/`, `docs/glossary.md` |
+  | `e2e` | `server` or `ui` |
+  | `audit` | `server`, `ui/package.json`, `ui/package-lock.json` |
+  | `workflows` | `.github/`; turns every flag on |
+  | `docs_only` | only `docs/`, Markdown files and `LICENSE` changed |
+
+  `docs/api/` and `docs/glossary.md` count as code because server and UI tests read them. A
+  path in no listed area turns every flag on, so a new top-level file runs the full check until
+  the script knows it. On pushes to `main` and in the merge queue every flag is on: the queue
+  tests each pull request fully on top of `main`.
+
+  `server`, `postgres` and `datasources` need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
+  `audit` needs `audit`. The required checks keep reporting when their area did not change:
+  `postgres`, `datasources` and `audit` are skipped as a whole (GitHub counts a skipped job as
+  passed), while the matrix jobs `server (<os>)`, `ui (<os>)` and `e2e (<os>)` start and skip
+  every step, because a matrix job skipped as a whole reports one check without the matrix
+  value and leaves the required `server (ubuntu-latest)` and the others waiting. If `changes`
+  itself fails, every job runs. Merge queue runs restore the caches of `main` but do not save
+  their own (Rust build cache, browser system packages), since a cache saved there belongs to
+  the queue's temporary branch.
