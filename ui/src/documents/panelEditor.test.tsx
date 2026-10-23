@@ -115,3 +115,74 @@ describe("click-to-filter in the panel editor", () => {
     expect(server.areas.datasources.queries).toHaveLength(before);
   });
 });
+
+describe("library panels and the documents UI", () => {
+  it("draws a library panel's projection and a library document panel in their slots", async () => {
+    const server = installFakeServer({
+      signedIn: true,
+      user: {
+        ...TEST_USER,
+        isServerAdmin: false,
+        orgs: [{ id: "o1", name: "Org", role: "editor" }],
+      },
+    });
+    addMongoSource(server.areas.datasources);
+    const target = {
+      refId: "A",
+      datasourceId: MONGO_ID,
+      query: { collection: "orders", pipeline: "[]" },
+    };
+    const library = (id: string, model: Record<string, unknown>) => ({
+      id,
+      folderId: null,
+      name: id,
+      model: { schemaVersion: 2, options: {}, fieldConfig: {}, ...model },
+      version: 1,
+    });
+    server.areas.dashboardFeatures.libraryPanels.push(
+      library("lib-table", {
+        type: "table",
+        title: "Order totals",
+        targets: [target],
+        transformations: [
+          {
+            id: "0199f0a0-1c2e-4a4b-9e1d-3f5a6b7c8d93",
+            type: "toFrame",
+            frame: "A",
+            columns: [{ path: "total", name: "Total" }],
+          },
+        ],
+      }),
+      library("lib-docs", {
+        type: "documents",
+        title: "Order documents",
+        targets: [target],
+        transformations: [],
+      }),
+    );
+    // The dashboard holds only the slots: their place, no queries or steps.
+    const slot = (id: string, title: string, x: number, libraryPanelId: string): PanelModel => ({
+      id,
+      type: "table",
+      title,
+      grid: { x, y: 0, w: 12, h: 8 },
+      targets: [],
+      transformations: [],
+      options: {},
+      fieldConfig: {},
+      libraryPanelId,
+    });
+    addDashboard(server.areas.dashboards, "d-shop", {
+      ...emptyModel("Shop"),
+      panels: [
+        slot("p-1", "Order totals", 0, "lib-table"),
+        slot("p-2", "Order documents", 12, "lib-docs"),
+      ],
+    });
+    renderApp("/dashboards/d-shop");
+    const totals = await screen.findByRole("article", { name: "Order totals" }, { timeout: 4000 });
+    expect(await within(totals).findByRole("columnheader", { name: /Total/ })).toBeTruthy();
+    const documents = await screen.findByRole("article", { name: "Order documents" });
+    expect(await within(documents).findByRole("tree", { name: "Order documents" })).toBeTruthy();
+  });
+});

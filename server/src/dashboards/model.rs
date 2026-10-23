@@ -12,10 +12,12 @@ use serde_json::Value;
 ///
 /// - 1: first version; `transformations` had no defined content (the documents UI stored its
 ///   projections there).
-/// - 2: one combined version. `transformations` holds analysis steps (`crate::analysis`); the
-///   dashboard features of `ux/dashboards` (rows, repeat, links, annotations, library panels) add
-///   their fields under the same version 2 and keep `STEPS = [v1_to_v2]`. A library panel
-///   (`libraryPanelId`) has no steps of its own (`check_library_panels`).
+/// - 2: one combined version. `transformations` holds analysis steps (`crate::analysis`), and the
+///   dashboard features add rows, repeats, links, tags, annotation queries, panel time options,
+///   library panel references and multi-value variables. Those are optional and empty by default
+///   and version 1 had none of them, so the one step `v1_to_v2` only converts `transformations`.
+///   A library panel slot (`libraryPanelId`) has no steps, targets or links of its own; the
+///   library panel holds them (the slot rule in `validate`).
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.
@@ -114,6 +116,16 @@ const MAX_TARGETS: usize = 50;
 /// history's growth too; real dashboards stay far below it.
 pub const MAX_MODEL_BYTES: usize = 1024 * 1024;
 const MAX_VARIABLES: usize = 100;
+const MAX_ROWS: usize = 100;
+pub const MAX_TAGS: usize = 20;
+pub const MAX_TAG_CHARS: usize = 50;
+const MAX_LINKS: usize = 50;
+const MAX_PANEL_LINKS: usize = 20;
+const MAX_ANNOTATION_QUERIES: usize = 20;
+const MAX_URL_CHARS: usize = 2048;
+const MAX_PER_ROW: u32 = 24;
+/// Annotation colors are entries of the chart palette (`--chart-1` ... `--chart-8`).
+const ANNOTATION_COLORS: u32 = 8;
 const MAX_ID_CHARS: usize = 64;
 pub const MAX_TITLE_CHARS: usize = 200;
 /// Refreshing faster than this only loads the data sources.
@@ -132,6 +144,106 @@ pub struct DashboardModel {
     pub variables: Vec<Variable>,
     #[serde(default)]
     pub panels: Vec<Panel>,
+    /// Words for finding the dashboard, for links to dashboards by tag and for playlists.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Collapsible groups of panels, in display order below the panels outside every row.
+    #[serde(default)]
+    pub rows: Vec<Row>,
+    /// Queries whose rows become annotations on every time panel.
+    #[serde(default)]
+    pub annotations: Vec<AnnotationQuery>,
+    #[serde(default)]
+    pub links: Vec<DashboardLink>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Row {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    /// Saved as the editor left it; viewers open and close rows without saving.
+    #[serde(default)]
+    pub collapsed: bool,
+    /// The row and its panels are shown once per value of this multi-value variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<RowRepeat>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RowRepeat {
+    pub variable: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RepeatDirection {
+    /// Copies side by side, wrapping after `maxPerRow`.
+    Horizontal,
+    /// Copies below each other.
+    Vertical,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelRepeat {
+    pub variable: String,
+    pub direction: RepeatDirection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_per_row: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnnotationQuery {
+    pub id: String,
+    pub name: String,
+    pub datasource_id: String,
+    pub query: Value,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// 1 to 8, an entry of the chart palette; none uses the neutral annotation color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<u32>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// A link in the dashboard's header.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum DashboardLink {
+    /// The dashboards carrying `tag`, as a list to pick from.
+    #[serde(rename_all = "camelCase")]
+    Dashboards {
+        tag: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        new_tab: bool,
+    },
+    /// A fixed address; variables (`${name}`) are filled in by the viewer's browser.
+    #[serde(rename_all = "camelCase")]
+    Url {
+        title: String,
+        url: String,
+        #[serde(default)]
+        new_tab: bool,
+    },
+}
+
+/// A panel's data link: an address with variables, shown in the panel's header.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelLink {
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub new_tab: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -169,6 +281,9 @@ pub struct Variable {
     pub options: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current: Option<Value>,
+    /// Several values may be picked at once (custom and query variables); repeats need it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multi: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -188,6 +303,22 @@ pub struct Panel {
     pub options: Value,
     #[serde(default = "empty_object")]
     pub field_config: Value,
+    /// The row the panel belongs to; its grid then counts from the top of that row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<PanelRepeat>,
+    /// A relative range of its own instead of the dashboard's (`now-24h`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_from: Option<String>,
+    /// Moves the range back by this much (`1d`), to compare with an earlier period.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_shift: Option<String>,
+    #[serde(default)]
+    pub links: Vec<PanelLink>,
+    /// The panel shows this library panel: queries, type and options come from there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_panel_id: Option<String>,
 }
 
 fn empty_object() -> Value {
@@ -219,14 +350,22 @@ impl DashboardModel {
         let variables = self.variables.iter().filter_map(|v| {
             v.datasource_id.as_deref().map(|id| (id, v.query.as_ref().map_or_else(String::new, |q| q.to_string())))
         });
-        targets.chain(variables).collect()
+        let annotations = self.annotations.iter().map(|a| (a.datasource_id.as_str(), a.query.to_string()));
+        targets.chain(variables).chain(annotations).collect()
     }
 
-    /// Every data source the stored queries use: panel targets and query variables.
+    /// Every data source the stored queries use: panel targets, query variables and annotation
+    /// queries.
     pub fn datasource_ids(&self) -> BTreeSet<&str> {
         let targets = self.panels.iter().flat_map(|p| p.targets.iter().map(|t| t.datasource_id.as_str()));
         let variables = self.variables.iter().filter_map(|v| v.datasource_id.as_deref());
-        targets.chain(variables).collect()
+        let annotations = self.annotations.iter().map(|a| a.datasource_id.as_str());
+        targets.chain(variables).chain(annotations).collect()
+    }
+
+    /// The library panels the dashboard shows.
+    pub fn library_panel_ids(&self) -> BTreeSet<&str> {
+        self.panels.iter().filter_map(|p| p.library_panel_id.as_deref()).collect()
     }
 }
 
@@ -256,7 +395,6 @@ pub fn check_panel_options(model: &DashboardModel, previous: Option<&DashboardMo
 /// options are left to `check_panel_options`, which writes run on top.
 pub fn parse(raw: Value) -> Result<DashboardModel, String> {
     let current = migrate(raw)?;
-    check_library_panels(&current)?;
     let model: DashboardModel = serde_json::from_value(current).map_err(|e| format!("model: {e}"))?;
     // Measured as stored (defaults filled in), so what is kept is what is limited; before the
     // detailed checks, so an oversized model is refused for its size whatever it holds.
@@ -266,20 +404,6 @@ pub fn parse(raw: Value) -> Result<DashboardModel, String> {
     }
     validate(&model)?;
     Ok(model)
-}
-
-/// A library panel (`libraryPanelId`) shows the library's panel as it is, so it has no steps of
-/// its own. Checked on the JSON, so the rule holds before the field is part of `Panel`.
-fn check_library_panels(model: &Value) -> Result<(), String> {
-    let panels = model.get("panels").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-    for (i, p) in panels.iter().enumerate() {
-        let library = p.get("libraryPanelId").is_some_and(|v| !v.is_null());
-        let steps = p.get("transformations").and_then(Value::as_array).is_some_and(|t| !t.is_empty());
-        if library && steps {
-            return Err(format!("model.panels[{i}].transformations must be empty for a library panel"));
-        }
-    }
-    Ok(())
 }
 
 pub fn migrate(raw: Value) -> Result<Value, String> {
@@ -373,6 +497,71 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
             (_, Some(_)) => return Err(format!("{at}.datasourceId belongs only to query variables")),
             (_, None) => {}
         }
+        if v.multi && !matches!(v.kind, VariableType::Custom | VariableType::Query) {
+            return Err(format!("{at}.multi is only for custom and query variables"));
+        }
+    }
+    // What a repeat may name: a variable offering several values at once.
+    let repeatable = |at: &str, name: &str| -> Result<(), String> {
+        match model.variables.iter().find(|v| v.name == name) {
+            Some(v) if v.multi => Ok(()),
+            Some(_) => Err(format!("{at}.variable {name} must allow several values (multi)")),
+            None => Err(format!("{at}.variable {name} is not a variable of this dashboard")),
+        }
+    };
+
+    check_tags("model.tags", &model.tags)?;
+
+    if model.rows.len() > MAX_ROWS {
+        return Err(format!("model.rows takes at most {MAX_ROWS} entries"));
+    }
+    let mut row_ids = BTreeSet::new();
+    for (i, r) in model.rows.iter().enumerate() {
+        let at = format!("model.rows[{i}]");
+        check_id(&format!("{at}.id"), &r.id)?;
+        if !row_ids.insert(r.id.as_str()) {
+            return Err(format!("{at}.id {} is used twice", r.id));
+        }
+        check_text(&format!("{at}.title"), &r.title, 0, MAX_TITLE_CHARS)?;
+        if let Some(repeat) = &r.repeat {
+            repeatable(&format!("{at}.repeat"), &repeat.variable)?;
+        }
+    }
+
+    if model.annotations.len() > MAX_ANNOTATION_QUERIES {
+        return Err(format!("model.annotations takes at most {MAX_ANNOTATION_QUERIES} entries"));
+    }
+    let mut annotation_ids = BTreeSet::new();
+    for (i, a) in model.annotations.iter().enumerate() {
+        let at = format!("model.annotations[{i}]");
+        check_id(&format!("{at}.id"), &a.id)?;
+        if !annotation_ids.insert(a.id.as_str()) {
+            return Err(format!("{at}.id {} is used twice", a.id));
+        }
+        check_text(&format!("{at}.name"), &a.name, 1, MAX_TITLE_CHARS)?;
+        check_id(&format!("{at}.datasourceId"), &a.datasource_id)?;
+        if let Some(color) = a.color
+            && !(1..=ANNOTATION_COLORS).contains(&color)
+        {
+            return Err(format!("{at}.color must be 1 to {ANNOTATION_COLORS}"));
+        }
+    }
+
+    if model.links.len() > MAX_LINKS {
+        return Err(format!("model.links takes at most {MAX_LINKS} entries"));
+    }
+    for (i, link) in model.links.iter().enumerate() {
+        let at = format!("model.links[{i}]");
+        match link {
+            DashboardLink::Dashboards { tag, title, .. } => {
+                check_tag(&format!("{at}.tag"), tag)?;
+                check_text(&format!("{at}.title"), title, 0, MAX_TITLE_CHARS)?;
+            }
+            DashboardLink::Url { title, url, .. } => {
+                check_text(&format!("{at}.title"), title, 1, MAX_TITLE_CHARS)?;
+                check_url(&format!("{at}.url"), url)?;
+            }
+        }
     }
 
     if model.panels.len() > MAX_PANELS {
@@ -385,6 +574,42 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         if !ids.insert(p.id.as_str()) {
             return Err(format!("{at}.id {} is used twice", p.id));
         }
+        let row = match &p.row_id {
+            Some(row_id) => Some(
+                model
+                    .rows
+                    .iter()
+                    .find(|r| &r.id == row_id)
+                    .ok_or_else(|| format!("{at}.rowId {row_id} is not a row of this dashboard"))?,
+            ),
+            None => None,
+        };
+        if let Some(repeat) = &p.repeat {
+            repeatable(&format!("{at}.repeat"), &repeat.variable)?;
+            if row.is_some_and(|r| r.repeat.is_some()) {
+                return Err(format!("{at}.repeat: a panel in a repeated row repeats with its row"));
+            }
+            if let Some(n) = repeat.max_per_row
+                && !(1..=MAX_PER_ROW).contains(&n)
+            {
+                return Err(format!("{at}.repeat.maxPerRow must be 1 to {MAX_PER_ROW}"));
+            }
+        }
+        if let Some(library) = &p.library_panel_id {
+            check_id(&format!("{at}.libraryPanelId"), library)?;
+            if !p.targets.is_empty() {
+                return Err(format!("{at}.targets must be empty: the library panel holds the queries"));
+            }
+            // The slot holds the place only; steps and links are the library panel's.
+            if !p.transformations.is_empty() {
+                return Err(format!("{at}.transformations must be empty: the library panel holds them"));
+            }
+            if !p.links.is_empty() {
+                return Err(format!("{at}.links must be empty: the library panel holds them"));
+            }
+        }
+        check_panel_time(&at, p.time_from.as_deref(), p.time_shift.as_deref())?;
+        check_panel_links(&at, &p.links)?;
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
         check_grid(&p.grid).map_err(|e| format!("{at}.grid: {e}"))?;
@@ -421,6 +646,141 @@ fn check_grid(g: &Grid) -> Result<(), String> {
         return Err(format!("y must be 0 to {MAX_GRID_Y}"));
     }
     Ok(())
+}
+
+/// A tag: 1 to 50 characters without control characters or surrounding spaces.
+pub fn check_tag(what: &str, tag: &str) -> Result<(), String> {
+    check_text(what, tag, 1, MAX_TAG_CHARS)?;
+    if tag.trim() != tag {
+        return Err(format!("{what} must not start or end with spaces"));
+    }
+    Ok(())
+}
+
+/// Up to 20 tags, each once regardless of letter case.
+pub fn check_tags(what: &str, tags: &[String]) -> Result<(), String> {
+    if tags.len() > MAX_TAGS {
+        return Err(format!("{what} takes at most {MAX_TAGS} entries"));
+    }
+    let mut seen = BTreeSet::new();
+    for (i, tag) in tags.iter().enumerate() {
+        check_tag(&format!("{what}[{i}]"), tag)?;
+        if !seen.insert(tag.to_lowercase()) {
+            return Err(format!("{what}[{i}] {tag} is used twice"));
+        }
+    }
+    Ok(())
+}
+
+/// Schemes a link may open. Anything else, `javascript:`, `data:` and `vbscript:` included, could
+/// run code or load content in the viewer's browser.
+const LINK_SCHEMES: &[&str] = &["http", "https", "mailto"];
+
+/// A link address: `http://`, `https://` or `mailto:` written out at the start, or a path on this
+/// server (`/dashboards/...`, not `//host`). Variables may appear anywhere after that, so the
+/// scheme never comes from a variable; the browser checks the filled-in address again.
+pub fn check_url(what: &str, url: &str) -> Result<(), String> {
+    check_text(what, url, 1, MAX_URL_CHARS)?;
+    if url.trim() != url {
+        return Err(format!("{what} must not start or end with spaces"));
+    }
+    if url.starts_with('/') {
+        return if url.starts_with("//") || url.starts_with("/\\") {
+            Err(format!("{what} must name the scheme (https://) for another server"))
+        } else {
+            Ok(())
+        };
+    }
+    let scheme = url.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase());
+    match scheme {
+        Some(s) if LINK_SCHEMES.contains(&s.as_str()) => {
+            let rest = &url[s.len() + 1..];
+            if s != "mailto" && !rest.starts_with("//") {
+                return Err(format!("{what} must start with {s}://"));
+            }
+            Ok(())
+        }
+        _ => Err(format!("{what} must start with http://, https://, mailto: or /")),
+    }
+}
+
+/// `timeFrom` is a range relative to now that ends now (`now-24h`, `now-7d/d`); `timeShift` a
+/// length (`1d`, `2w`).
+fn check_panel_time(at: &str, from: Option<&str>, shift: Option<&str>) -> Result<(), String> {
+    if let Some(from) = from
+        && !(from.starts_with("now-") && is_time(from))
+    {
+        return Err(format!("{at}.timeFrom must be relative like \"now-24h\""));
+    }
+    if let Some(shift) = shift
+        && !is_duration(shift)
+    {
+        return Err(format!("{at}.timeShift must be a length like \"1d\""));
+    }
+    Ok(())
+}
+
+/// One to five digits and a unit: `90m`, `1d`, `2w`, `1M`, `1y`.
+pub fn is_duration(text: &str) -> bool {
+    let digits = text.chars().take_while(char::is_ascii_digit).count();
+    let mut unit = text[digits..].chars();
+    (1..=5).contains(&digits)
+        && text[..digits].parse::<u32>().is_ok_and(|n| n > 0)
+        && unit.next().is_some_and(|u| UNITS.contains(&u))
+        && unit.next().is_none()
+}
+
+fn check_panel_links(at: &str, links: &[PanelLink]) -> Result<(), String> {
+    if links.len() > MAX_PANEL_LINKS {
+        return Err(format!("{at}.links takes at most {MAX_PANEL_LINKS} entries"));
+    }
+    for (j, link) in links.iter().enumerate() {
+        check_text(&format!("{at}.links[{j}].title"), &link.title, 1, MAX_TITLE_CHARS)?;
+        check_url(&format!("{at}.links[{j}].url"), &link.url)?;
+    }
+    Ok(())
+}
+
+/// What a library panel stores: a panel without its place (`id`, `grid`, `rowId`, `repeat`),
+/// with the `schemaVersion` it was written with. Older ones are migrated on read like a
+/// dashboard, by the same steps.
+pub const LIBRARY_PLACE_FIELDS: &[&str] = &["id", "grid", "rowId", "repeat", "libraryPanelId"];
+
+/// Migrates and validates a library panel's content; answers it with defaults filled in and the
+/// current `schemaVersion`. Messages name the place as `model.targets[0]...`.
+pub fn parse_library_panel(raw: Value) -> Result<Value, String> {
+    let Value::Object(mut fields) = raw else { return Err("model must be an object".into()) };
+    if let Some(place) = LIBRARY_PLACE_FIELDS.iter().find(|f| fields.contains_key(**f)) {
+        return Err(format!("model.{place}: the dashboard decides where a library panel goes"));
+    }
+    let version = fields.remove("schemaVersion").ok_or("model.schemaVersion must be a whole number")?;
+    fields.insert("id".into(), Value::from("library"));
+    fields.insert("grid".into(), serde_json::json!({ "x": 0, "y": 0, "w": 1, "h": 1 }));
+    // A dashboard around the panel runs the same migrations and checks as any dashboard.
+    let wrapped = serde_json::json!({
+        "schemaVersion": version,
+        "title": "library",
+        "timeRange": { "from": "now-1h", "to": "now" },
+        "panels": [Value::Object(fields)],
+    });
+    let model = parse(wrapped).map_err(|e| e.replace("model.panels[0]", "model"))?;
+    let panel = model.panels.into_iter().next().ok_or("model: the panel went missing")?;
+    let mut out = serde_json::to_value(&panel).map_err(|e| format!("model: {e}"))?;
+    let out_fields = out.as_object_mut().ok_or("model must be an object")?;
+    for place in LIBRARY_PLACE_FIELDS {
+        out_fields.remove(*place);
+    }
+    out_fields.insert("schemaVersion".into(), Value::from(SCHEMA_VERSION));
+    Ok(out)
+}
+
+/// The library panel content as a panel, for running its queries.
+pub fn library_panel_as_panel(content: &Value) -> Result<Panel, String> {
+    let mut fields = content.as_object().cloned().ok_or("library panel model must be an object")?;
+    fields.remove("schemaVersion");
+    fields.insert("id".into(), Value::from("library"));
+    fields.insert("grid".into(), serde_json::json!({ "x": 0, "y": 0, "w": 1, "h": 1 }));
+    serde_json::from_value(Value::Object(fields)).map_err(|e| e.to_string())
 }
 
 /// A time range as JSON (`{"from": "now-6h", "to": "now"}`), for settings that hold one.
@@ -713,6 +1073,161 @@ mod tests {
     }
 
     #[test]
+    fn a_version_1_model_parses_with_empty_version_2_parts() {
+        let v1 = with(sample(), &["schemaVersion"], json!(1));
+        let model = parse(v1).unwrap();
+        assert_eq!(model.schema_version, SCHEMA_VERSION);
+        assert!(model.rows.is_empty() && model.tags.is_empty() && model.links.is_empty());
+        assert!(model.annotations.is_empty());
+        assert!(model.panels.iter().all(|p| p.row_id.is_none()
+            && p.repeat.is_none()
+            && p.links.is_empty()
+            && p.time_from.is_none()
+            && p.time_shift.is_none()
+            && p.library_panel_id.is_none()));
+        assert!(model.variables.iter().all(|v| !v.multi));
+    }
+
+    /// Every part version 2 adds, valid.
+    fn sample_v2() -> Value {
+        let mut m = sample();
+        m["variables"][1]["multi"] = json!(true);
+        m["tags"] = json!(["Vertrieb", "Österreich"]);
+        m["rows"] = json!([
+            { "id": "r1", "title": "Details", "collapsed": true },
+            { "id": "r2", "title": "Je Schritt", "repeat": { "variable": "step" } }
+        ]);
+        m["annotations"] = json!([
+            { "id": "a1", "name": "Releases", "datasourceId": "ds-3", "query": { "sql": "SELECT 1" }, "color": 3 }
+        ]);
+        m["links"] = json!([
+            { "type": "dashboards", "tag": "Vertrieb", "title": "Mehr Vertrieb" },
+            { "type": "url", "title": "Wiki", "url": "https://wiki.example.de/${region}", "newTab": true }
+        ]);
+        m["panels"][0]["timeFrom"] = json!("now-24h");
+        m["panels"][0]["timeShift"] = json!("1d");
+        m["panels"][0]["repeat"] = json!({ "variable": "step", "direction": "horizontal", "maxPerRow": 4 });
+        m["panels"][0]["links"] = json!([{ "title": "Bestellung", "url": "/dashboards/x?var-id=${__value}" }]);
+        m["panels"][1]["rowId"] = json!("r1");
+        m["panels"][1]["libraryPanelId"] = json!("lib-1");
+        m
+    }
+
+    #[test]
+    fn version_2_parts_round_trip() {
+        let model = parse(sample_v2()).unwrap();
+        assert_eq!(model.rows.len(), 2);
+        assert!(model.rows[0].collapsed && !model.rows[1].collapsed);
+        assert!(model.annotations[0].enabled, "annotation queries are on by default");
+        assert_eq!(model.library_panel_ids().into_iter().collect::<Vec<_>>(), ["lib-1"]);
+        assert!(model.datasource_ids().contains("ds-3"), "annotation queries are stored queries");
+        let back = serde_json::to_value(&model).unwrap();
+        assert_eq!(back["links"][1]["newTab"], true);
+        assert_eq!(back["links"][0]["newTab"], false);
+        assert_eq!(parse(back).unwrap(), model);
+    }
+
+    #[test]
+    fn version_2_parts_are_checked() {
+        for (path, value, expect) in [
+            (vec!["rows", "1", "id"], json!("r1"), "rows[1].id r1 is used twice"),
+            (vec!["rows", "1", "repeat", "variable"], json!("region"), "must allow several values"),
+            (vec!["rows", "1", "repeat", "variable"], json!("nope"), "is not a variable"),
+            (vec!["panels", "1", "rowId"], json!("r9"), "rowId r9 is not a row"),
+            (vec!["panels", "0", "repeat", "maxPerRow"], json!(25), "maxPerRow"),
+            (vec!["panels", "0", "repeat", "direction"], json!("diagonal"), "unknown variant"),
+            (vec!["panels", "0", "timeFrom"], json!("2026-10-01"), "timeFrom"),
+            (vec!["panels", "0", "timeFrom"], json!("now"), "timeFrom"),
+            (vec!["panels", "0", "timeShift"], json!("1x"), "timeShift"),
+            (vec!["panels", "0", "timeShift"], json!("0d"), "timeShift"),
+            (vec!["panels", "0", "links", "0", "url"], json!("javascript:alert(1)"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "url"], json!("JavaScript:alert(1)"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "url"], json!("${target}"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "url"], json!(" https://x.de"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "url"], json!("data:text/html,x"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "url"], json!("//evil.example"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "url"], json!("https:evil"), "links[0].url"),
+            (vec!["panels", "0", "links", "0", "title"], json!(""), "links[0].title"),
+            (vec!["links", "1", "url"], json!("vbscript:x"), "links[1].url"),
+            (vec!["links", "0", "tag"], json!(""), "links[0].tag"),
+            (vec!["links", "1", "kind"], json!("x"), "unknown field"),
+            (vec!["tags"], json!(["a", "A"]), "used twice"),
+            (vec!["tags"], json!([" a"]), "tags[0]"),
+            (vec!["annotations", "0", "color"], json!(9), "color"),
+            (vec!["annotations", "0", "name"], json!(""), "annotations[0].name"),
+            (vec!["variables", "0", "multi"], json!(true), "ok"),
+            (vec!["variables", "1", "type"], json!("textbox"), "multi is only"),
+            (
+                vec!["panels", "1", "targets"],
+                json!([{ "refId": "A", "datasourceId": "ds", "query": {} }]),
+                "library panel holds",
+            ),
+            (vec!["panels", "1", "transformations"], json!([{ "type": "x" }]), "transformations must be empty"),
+            (vec!["panels", "1", "links"], json!([{ "title": "x", "url": "/x" }]), "links must be empty"),
+        ] {
+            let result = parse(with(sample_v2(), &path, value.clone()));
+            if expect == "ok" {
+                assert!(result.is_ok(), "{path:?}: {result:?}");
+                continue;
+            }
+            let err = result.unwrap_err();
+            assert!(err.contains(expect), "{path:?} = {value}: {err}");
+        }
+        // A panel may not repeat inside a repeated row.
+        let mut nested = sample_v2();
+        nested["panels"][0]["rowId"] = json!("r2");
+        assert!(parse(nested).unwrap_err().contains("repeats with its row"));
+        let too_many: Vec<Value> = (0..=MAX_TAGS).map(|i| json!(format!("t{i}"))).collect();
+        assert!(parse(with(sample_v2(), &["tags"], json!(too_many))).unwrap_err().contains("tags takes at most"));
+    }
+
+    #[test]
+    fn links_accept_web_mail_and_local_addresses() {
+        for ok in ["https://x.de/a?b=${v}", "HTTP://x.de", "mailto:team@example.de", "/dashboards/1", "/d?x=//y"] {
+            assert!(check_url("url", ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "x.de", "ftp://x.de", "javascript://%0aalert(1)", "/\\evil", "https:/x", "\u{0}https://x"] {
+            assert!(check_url("url", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn library_panels_use_the_panel_rules_and_the_same_migrations() {
+        let content = json!({ "schemaVersion": 1, "type": "timeseries", "title": "Umsatz",
+                              "targets": [ { "refId": "A", "datasourceId": "ds-1", "query": { "sql": "SELECT 1" } } ] });
+        let parsed = parse_library_panel(content).unwrap();
+        assert_eq!(parsed["schemaVersion"], SCHEMA_VERSION);
+        assert_eq!(parsed["fieldConfig"], json!({}), "defaults are filled in");
+        assert!(parsed.get("id").is_none() && parsed.get("grid").is_none());
+        assert_eq!(library_panel_as_panel(&parsed).unwrap().targets.len(), 1);
+        for (field, value, expect) in [
+            ("grid", json!({ "x": 0, "y": 0, "w": 1, "h": 1 }), "model.grid"),
+            ("libraryPanelId", json!("x"), "model.libraryPanelId"),
+            ("type", json!(""), "model.type"),
+            ("links", json!([{ "title": "x", "url": "javascript:1" }]), "model.links[0].url"),
+            ("schemaVersion", json!(99), "newer Kalzit"),
+        ] {
+            let mut bad = parsed.clone();
+            bad[field] = value;
+            let err = parse_library_panel(bad).unwrap_err();
+            assert!(err.contains(expect), "{field}: {err}");
+        }
+        let mut missing = parsed;
+        missing.as_object_mut().unwrap().remove("schemaVersion");
+        assert!(parse_library_panel(missing).is_err());
+    }
+
+    #[test]
+    fn durations_are_counts_with_a_unit() {
+        for ok in ["1d", "90m", "2w", "1M", "1y", "99999s"] {
+            assert!(is_duration(ok), "{ok}");
+        }
+        for bad in ["", "d", "0d", "1", "1dd", "-1d", "123456s", "1.5h"] {
+            assert!(!is_duration(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn version_1_projections_become_steps_and_the_rest_is_dropped() {
         let mut v1 = with(sample(), &["schemaVersion"], json!(1));
         v1 = with(
@@ -772,15 +1287,25 @@ mod tests {
     }
 
     #[test]
-    fn library_panels_have_no_steps() {
+    fn library_panel_slots_have_no_steps_and_library_content_checks_its_own() {
         let step = json!([{ "id": "s", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }]);
-        let mut model = with(sample(), &["panels", "0", "transformations"], step);
-        model = with(model, &["panels", "0", "libraryPanelId"], json!("lib-1"));
-        let err = parse(model).unwrap_err();
-        assert!(err.contains("model.panels[0].transformations must be empty for a library panel"), "{err}");
-        // The rule is on the JSON; until `ux/dashboards` adds the field, it is otherwise unknown.
-        let model = with(sample(), &["panels", "0", "libraryPanelId"], json!("lib-1"));
-        assert!(parse(model).unwrap_err().contains("unknown field"));
+        // A slot: no queries and no steps; the library panel holds them.
+        let slot = with(sample(), &["panels", "0", "targets"], json!([]));
+        let slot = with(slot, &["panels", "0", "libraryPanelId"], json!("lib-1"));
+        let with_steps = with(slot.clone(), &["panels", "0", "transformations"], step.clone());
+        let err = parse(with_steps).unwrap_err();
+        assert!(err.contains("model.panels[0].transformations must be empty"), "{err}");
+        assert!(parse(slot).is_ok(), "a slot with empty transformations is accepted");
+        // The library panel's own steps are checked against its own queries.
+        let content = json!({ "schemaVersion": SCHEMA_VERSION, "type": "table",
+                              "targets": [{ "refId": "A", "datasourceId": "ds-1", "query": {} }],
+                              "transformations": step });
+        let parsed = parse_library_panel(content.clone()).unwrap();
+        assert_eq!(parsed["transformations"][0]["frame"], "A");
+        let mut other = content;
+        other["transformations"][0]["frame"] = json!("B");
+        let err = parse_library_panel(other).unwrap_err();
+        assert!(err.contains("model.transformations[0]: there is no query B"), "{err}");
     }
 
     #[test]
@@ -819,8 +1344,8 @@ mod tests {
 
     #[test]
     fn newer_or_missing_versions_are_refused_clearly() {
-        let err = migrate(with(sample(), &["schemaVersion"], json!(3))).unwrap_err();
-        assert!(err.contains("newer Kalzit") && err.contains("up to 2"), "{err}");
+        let err = migrate(with(sample(), &["schemaVersion"], json!(SCHEMA_VERSION + 1))).unwrap_err();
+        assert!(err.contains("newer Kalzit") && err.contains(&format!("up to {SCHEMA_VERSION}")), "{err}");
         for bad in [json!(0), json!("1"), Value::Null, json!(-1)] {
             assert!(migrate(with(sample(), &["schemaVersion"], bad.clone())).is_err(), "{bad}");
         }

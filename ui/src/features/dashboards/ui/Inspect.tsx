@@ -54,16 +54,14 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
                   <span>{t("dashboards.inspect.truncated")}</span>
                 </p>
               ) : null}
-              <Details
-                notices={outcome.result.frame.meta?.notices ?? []}
-                executedQuery={outcome.result.frame.meta?.executedQuery}
-              />
+              <Notices notices={outcome.result.frame.meta?.notices ?? []} />
+              <Executed query={outcome.result.frame.meta?.executedQuery} />
             </>
           ) : outcome.result.shape === "documents" ? (
             <>
               <p className="inspect__meta">
-                {t("documents.inspect.size", {
-                  documents: number.format(outcome.result.documents.documents.length),
+                {t("dashboards.inspect.documents", {
+                  count: number.format(outcome.result.documents.documents.length),
                   paths: number.format(outcome.result.documents.schema.length),
                 })}
               </p>
@@ -77,10 +75,8 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
                   </span>
                 </p>
               )}
-              <Details
-                notices={outcome.result.documents.notices}
-                executedQuery={outcome.result.documents.executedQuery}
-              />
+              <Notices notices={outcome.result.documents.notices} />
+              <Executed query={outcome.result.documents.executedQuery} />
             </>
           ) : (
             <p className="inspect__meta">
@@ -93,38 +89,32 @@ export function Inspect({ outcomes }: { outcomes: readonly TargetOutcome[] }) {
   );
 }
 
-/** Notices from the source and the query as it ran, for frames and documents alike. */
-function Details({
-  notices,
-  executedQuery,
-}: {
-  notices: readonly Notice[];
-  executedQuery?: string | undefined;
-}) {
+function Notices({ notices }: { notices: readonly Notice[] }) {
   const { t } = useI18n();
+  return notices.map((notice, index) => (
+    <p
+      // biome-ignore lint/suspicious/noArrayIndexKey: notices have no id and keep their order
+      key={index}
+      className="notice"
+    >
+      <Icon name="alert" />
+      <span>
+        {notice.severity === "warning"
+          ? t("dashboards.inspect.warning")
+          : t("dashboards.inspect.info")}{" "}
+        {noticeText(t, notice)}
+      </span>
+    </p>
+  ));
+}
+
+function Executed({ query }: { query: string | undefined }) {
+  const { t } = useI18n();
+  if (query === undefined) return null;
   return (
     <>
-      {notices.map((notice, index) => (
-        <p
-          // biome-ignore lint/suspicious/noArrayIndexKey: notices have no id and keep their order
-          key={index}
-          className="notice"
-        >
-          <Icon name="alert" />
-          <span>
-            {notice.severity === "warning"
-              ? t("dashboards.inspect.warning")
-              : t("dashboards.inspect.info")}{" "}
-            {noticeText(t, notice)}
-          </span>
-        </p>
-      ))}
-      {executedQuery === undefined ? null : (
-        <>
-          <h4 className="inspect__label">{t("dashboards.inspect.executed")}</h4>
-          <pre className="inspect__code">{executedQuery}</pre>
-        </>
-      )}
+      <h4 className="inspect__label">{t("dashboards.inspect.executed")}</h4>
+      <pre className="inspect__code">{query}</pre>
     </>
   );
 }

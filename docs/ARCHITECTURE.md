@@ -152,7 +152,9 @@ type QueryResult =
 - Documents keep database types JSON lacks as `{"$type": "objectId" | "date" | "decimal" |
   "binary" | "int64" | "uuid" | ..., "value": string}` (all of them, and binary values hidden as
   `null`, in docs/api/datasources.md, "The documents shape"). The schema sample gives every path
-  with coverage and type shares (finite numbers 0 to 1).
+  with coverage and type shares (finite numbers 0 to 1); every document source samples through
+  one shared walker (`datasources/document_schema.rs`) with its own type names, and cut sets
+  carry `documents.*` notices like frames.
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
 - Projections (documents or graph to a frame) are explicit steps stored with the panel in its
   `transformations` (`{"id", "type": "toFrame", "frame": "<refId>", "columns", "disabled"?}`,
@@ -198,7 +200,8 @@ type QueryResult =
   Kalzit's own data directory and database (also through a PostgreSQL source at the same server
   and database), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`,
   `fd00:ec2::254`), and SQLite files outside the directories a server admin allowed
-  (`datasources.sqlite_dirs`, empty by default, never including the data directory). A server
+  (`datasources.sqlite_dirs`, empty by default, never including the data directory); CSV and
+  JSON files of file sources follow the same rules within `datasources.file_dirs`. A server
   admin can additionally restrict sources to a list of allowed hosts and networks
   (`datasources.allowed_targets`). Rules that make this hold:
   - Names are resolved once per connect, the resolved address is checked, and the driver connects
@@ -219,6 +222,9 @@ type QueryResult =
   `lo_import`, `dblink`, `OPENROWSET`, `OPENDATASOURCE`, `load_extension`). They run in a
   read-only transaction where the engine has one (PostgreSQL, MySQL/MariaDB); SQLite opens the
   file read-only with extension loading disabled. Each engine has tests for these rejections.
+  Rejections answer `query_rejected` with the reason. Elasticsearch and OpenSearch sources reach
+  only a fixed list of read endpoints (checked on every URL before it is sent) and refuse stored
+  scripts and scripts that use `ctx`; HTTP JSON sources send only GET requests below their URL.
   Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
   Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
   checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may
@@ -274,6 +280,10 @@ type QueryResult =
     }[];
   }
   ```
+- Model version 2 adds tags, rows, repeats, annotation queries, dashboard and panel links, panel
+  time options, multi-value variables and library panel references; annotations, playlists and
+  library panels are their own resources (docs/api/dashboard-features.md). Library panels follow
+  their folder's rights; a dashboard that shows one authorizes its queries for its readers.
 - Panels declare the shapes they accept; the panel picker offers matching panels first.
 - A panel's `options` belong to its type; `fieldConfig` holds the shared field options
   (`{defaults, overrides}`: unit, decimals, min and max, thresholds, value mappings, no-value
@@ -510,6 +520,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0006 | data sources, data source secrets | stream C |
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
 | 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
+| 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
 
 ## M1 work streams
 
@@ -581,6 +592,16 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
   `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
   `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+
+  Known runner fault, not fixed (tracked in
+  [#42](https://github.com/MouseWerk/Kalzit/issues/42)): on the Windows CI runner a page load
+  occasionally fails with `net::ERR_NO_BUFFER_SPACE` (Windows `WSAENOBUFS`) for one of the UI's
+  own files, so the page
+  stays empty and the test fails on that console entry and a timeout. It is not the suite's own
+  connection count: a full local run with four workers peaks at about 600 loopback sockets,
+  most in `TIME_WAIT`, against 16,384 ephemeral ports, and CI runs two workers. Fewer workers
+  or shared browser contexts would not remove it, so the guard keeps failing on it rather than
+  retrying; rerun the job and add the run to the issue.
 - Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
   in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
   through the same global setup, seeds a demo organization through the API (members, teams,

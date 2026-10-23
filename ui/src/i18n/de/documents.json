@@ -9,7 +9,6 @@
   "documents.panel.needsDocuments": "Diese Visualisierung zeigt Dokumente, die Abfrage hat aber eine Tabelle geliefert.",
   "documents.summary.truncated": "Bei {limit} Dokumenten abgeschnitten.",
   "documents.summary.more": "Die Quelle hat weitere.",
-  "documents.inspect.size": "Dokumente: {documents} · Feldpfade: {paths}",
   "documents.tree.document": "Dokument {number}",
   "documents.tree.hidden": "nicht angezeigt",
   "documents.tree.hint": "Wähle einen Wert, um seinen Pfad zu kopieren oder danach zu filtern.",

@@ -4,7 +4,12 @@ import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
 import { queryText } from "../datasources/queryKinds";
 import { runPanelQuery } from "./api";
-import { type PanelModel, storedQueryVariables, type VariableModel } from "./model";
+import {
+  type PanelModel,
+  storedQueryVariables,
+  type VariableModel,
+  type VariableValues,
+} from "./model";
 import { panelQueries } from "./queryQueue";
 import { outcomesOf, type TargetOutcome } from "./results";
 import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
@@ -16,7 +21,7 @@ export interface PanelQueryInput {
   dashboardId: string;
   panel: PanelModel;
   range: TimeRange;
-  variables: Record<string, string>;
+  variables: VariableValues;
   /** The saved dashboard's variables, which decide what the panel route may be sent. */
   saved?: readonly VariableModel[];
   /**

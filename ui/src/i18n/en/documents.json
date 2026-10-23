@@ -9,7 +9,6 @@
   "documents.panel.needsDocuments": "This visualization shows documents, and the query answered with a table.",
   "documents.summary.truncated": "Cut off at {limit} documents.",
   "documents.summary.more": "The source has more.",
-  "documents.inspect.size": "Documents: {documents} · Field paths: {paths}",
   "documents.tree.document": "Document {number}",
   "documents.tree.hidden": "not shown",
   "documents.tree.hint": "Select a value to copy its path or filter by it.",

@@ -53,6 +53,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Directories SQLite data sources may open. Never the data directory.",
     },
     SettingDef {
+        key: "datasources.file_dirs",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: true,
+        description: "Directories CSV and JSON file data sources may read. Never the data directory.",
+    },
+    SettingDef {
         key: "datasources.allowed_targets",
         scope: Scope::Server,
         default: || json!([]),
@@ -174,6 +181,7 @@ enum Rule {
 fn rule(key: &str) -> Option<Rule> {
     Some(match key {
         "datasources.sqlite_dirs" | "datasources.allowed_targets" => Rule::Strings { max_items: 100, max_chars: 1024 },
+        "datasources.file_dirs" => Rule::Strings { max_items: 100, max_chars: 1024 },
         "datasources.query_timeout_secs" => Rule::Int { min: 1, max: 3600 },
         "datasources.max_rows" => Rule::Int { min: 1, max: 10_000_000 },
         "datasources.max_response_bytes" => Rule::Int { min: 1024, max: 1024 * 1024 * 1024 },

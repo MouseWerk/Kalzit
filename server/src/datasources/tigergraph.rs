@@ -177,9 +177,25 @@ fn approved_list(raw: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+/// A request: the first goes where the caller sent it, a redirect is never followed. The GSQL
+/// server and REST++ share one origin with every endpoint, including installed queries outside
+/// `approvedQueries` and user management, so no redirect target is safe to follow, not even the
+/// same URL again (it would resend a body).
+fn check_hop(hop: usize, url: &Url) -> Result<(), Detail> {
+    if hop == 0 {
+        return Ok(());
+    }
+    Err(Detail::new(
+        "tigergraph.redirect_refused",
+        format!("TigerGraph redirected to {}; Kalzit does not follow it", url.path()),
+    )
+    .with("path", url.path()))
+}
+
 fn failed_http(e: HttpError, scrub: &dyn Fn(&str) -> String) -> SourceError {
     match e {
         HttpError::Blocked(b) => SourceError::Blocked(b.0),
+        HttpError::Refused(d) => SourceError::Failed(d.scrubbed(scrub)),
         other => SourceError::Failed(other.detail().scrubbed(scrub)),
     }
 }
@@ -279,18 +295,20 @@ impl Client {
                 headers.insert(*k, v);
             }
         }
-        // A request with a body (a query text, a command) goes to this URL only: a redirect is not
-        // followed, so the body never reaches another host.
-        let response = match body {
-            Some((b, _)) => self.http.send_once(method, url, headers, Some(b)).await,
-            None => self.http.send(method, url, headers).await,
-        }
-        .map_err(|e| self.failed(e))?;
+        // The request passes the target checks and goes to this URL only: no redirect is
+        // followed, so a body never reaches another place and a query never another endpoint.
+        let hops = std::sync::atomic::AtomicUsize::new(0);
+        let hop = |_: &Method, u: &Url| check_hop(hops.fetch_add(1, std::sync::atomic::Ordering::Relaxed), u);
+        let response = self
+            .http
+            .send_checked(method, url, headers, body.map(|(b, _)| b), Some(&hop))
+            .await
+            .map_err(|e| self.failed(e))?;
         let status = response.status();
         if status.is_redirection() {
             return Err(SourceError::failed(
                 "tigergraph.error",
-                format!("TigerGraph answered {status} to a request with a body; Kalzit does not follow it"),
+                format!("TigerGraph answered {status} without a target; Kalzit does not follow redirects"),
             )
             .with("status", status.as_u16())
             .with("detail", "redirect"));

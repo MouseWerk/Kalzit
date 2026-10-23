@@ -9,6 +9,8 @@ import {
 } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
+import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
+import { usePanelAnnotations } from "../annotations";
 import { toneClass } from "../fieldConfig/fieldConfig";
 import { Legend, type LegendItem, WithLegend } from "../fieldConfig/Legend";
 import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
@@ -90,6 +92,9 @@ export function ChartShell({
   // Whether the plot has keyboard focus and the cursor follows the keyboard (not the pointer).
   const [focused, setFocused] = useState(false);
   const [byKeyboard, setByKeyboard] = useState(false);
+  const annotations = usePanelAnnotations();
+  const annotateHintId = useId();
+  const onAdd = annotations?.onAdd;
 
   // Escape clears the keyboard readout first; only the next Escape reaches a dialog around the
   // chart. Layers are handled in a document capture listener, so stopping the event in the
@@ -137,6 +142,12 @@ export function ChartShell({
   const clamp = (x: number) => Math.min(Math.max(x, plot.left), plot.left + plot.width);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    // "A" adds an annotation where the keyboard readout stands.
+    if (onAdd !== undefined && isAddAnnotationKey(event) && event.target === event.currentTarget) {
+      event.preventDefault();
+      onAdd(timeAt(cursorX ?? plot.left + plot.width / 2));
+      return;
+    }
     const current = cursorX ?? plot.left + plot.width / 2;
     const step = plot.width / (event.shiftKey ? 10 : 50);
     const keys: Record<string, number> = {
@@ -187,8 +198,19 @@ export function ChartShell({
           tabIndex={0}
           role="group"
           aria-label={title}
-          aria-describedby={hintId}
+          aria-describedby={onAdd === undefined ? hintId : `${hintId} ${annotateHintId}`}
           onKeyDown={onKeyDown}
+          onClick={(event) => {
+            // Ctrl+click (Cmd+click on macOS) adds an annotation at that time.
+            if (onAdd !== undefined && (event.ctrlKey || event.metaKey)) {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const x = Math.min(
+                Math.max(event.clientX - rect.left, plot.left),
+                plot.left + plot.width,
+              );
+              onAdd(timeAt(x));
+            }
+          }}
           onFocus={(event) => {
             setFocused(true);
             // Keyboard focus starts the readout in the middle; a click only focuses.
@@ -212,10 +234,23 @@ export function ChartShell({
           <span className="visually-hidden" id={hintId}>
             {t("dashboards.panels.readoutHint")}
           </span>
+          {onAdd === undefined ? null : (
+            <span className="visually-hidden" id={annotateHintId}>
+              {t("annotations.addHint")}
+            </span>
+          )}
           <span className="visually-hidden" role="status">
             {spoken}
           </span>
           {children(cursorX)}
+          {annotations === null ? null : (
+            <AnnotationMarks
+              annotations={annotations}
+              plot={plot}
+              from={timeAt(plot.left)}
+              to={timeAt(plot.left + plot.width)}
+            />
+          )}
           {cursorTime === null || tooltip === "hidden" ? null : (
             <div
               // Past the middle the tooltip opens to the left, so the edge never cuts it off.
