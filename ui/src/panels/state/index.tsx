@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
+import { zoneOption } from "../../lib/timeSettings";
 import { EMPTY_FIELD_CONFIG } from "../fieldConfig/fieldConfig";
 import { Legend, WithLegend } from "../fieldConfig/Legend";
 import { LegendTooltipEditor } from "../fieldConfig/LegendTooltipEditor";
@@ -36,11 +37,13 @@ const DAY = 86_400_000;
 const percent = (value: number) => `${(Math.min(Math.max(value, 0), 1) * 100).toFixed(3)}%`;
 
 function TimeAxis({ from, to }: { from: number; to: number }) {
-  const { language } = useI18n();
-  const { ticks, step } = timeTicks(from, to, 5);
+  const { language, timeZone } = useI18n();
+  const { ticks, step } = timeTicks(from, to, 5, timeZone);
   const format = new Intl.DateTimeFormat(
     language,
-    step >= DAY ? { day: "2-digit", month: "2-digit" } : { hour: "2-digit", minute: "2-digit" },
+    step >= DAY
+      ? { day: "2-digit", month: "2-digit", ...zoneOption(timeZone) }
+      : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
   return (
     <div className="state__axis">
@@ -79,7 +82,7 @@ function StateTimelinePanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<StateOptions>) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const gridRef = useRef<HTMLDivElement>(null);
   const { width } = useElementSize(gridRef);
   const data = stateData(frames, fieldConfig, language);
@@ -88,7 +91,11 @@ function StateTimelinePanel({
   }
   const { from, to } = timeRange;
   const span = to - from || 1;
-  const dateTime = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
+  const dateTime = new Intl.DateTimeFormat(language, {
+    dateStyle: "short",
+    timeStyle: "medium",
+    ...zoneOption(timeZone),
+  });
   // The track takes four fifths of the row; a run narrower than one of its pixels is folded in.
   const pixel = span / Math.max((width * 4) / 5, 1);
   const rows = data.rows.map((row) => ({
@@ -153,14 +160,18 @@ function StatusHistoryPanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<StateOptions>) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const data = stateData(frames, fieldConfig, language);
   if (data === null || data.times.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
   }
   const picked = columns(data, MAX_COLUMNS);
   const width = 1 / picked.length;
-  const dateTime = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
+  const dateTime = new Intl.DateTimeFormat(language, {
+    dateStyle: "short",
+    timeStyle: "medium",
+    ...zoneOption(timeZone),
+  });
   const items: ReadoutItem[] = [];
   data.rows.forEach((row) => {
     for (const column of picked) {

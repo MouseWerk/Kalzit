@@ -79,6 +79,7 @@ export function barData(
   frames: readonly Frame[],
   language: string,
   config: FieldConfig = EMPTY_FIELD_CONFIG,
+  timeZone: string | null = null,
 ): BarData | null {
   const frame = frames.find((f) => valueFields(f).length > 0);
   if (frame === undefined) {
@@ -88,7 +89,9 @@ export function barData(
     frame.fields.find((f) => f.type === "string") ?? frame.fields.find((f) => f.type === "time");
   const count = Math.min(rowCount(frame), MAX_BARS);
   const categories = Array.from({ length: count }, (_, row) =>
-    label === undefined ? String(row + 1) : formatValue(label.type, label.values[row], language),
+    label === undefined
+      ? String(row + 1)
+      : formatValue(label.type, label.values[row], language, timeZone),
   );
   const series = valueFields(frame).map((field) => {
     const options = fieldOptionsFor(field, config);
@@ -108,11 +111,11 @@ function BarPanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<BarOptions>) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
   const config = legacyUnit(fieldConfig, options.unit);
-  const data = barData(frames, language, config);
+  const data = barData(frames, language, config, timeZone);
   if (data === null) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }

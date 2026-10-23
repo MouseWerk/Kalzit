@@ -16,6 +16,7 @@ import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
 import "../panels.css";
 import "../viz.css";
+import { zoneOption } from "../../lib/timeSettings";
 
 export interface TimeSeriesChartProps {
   series: readonly Series[];
@@ -81,7 +82,7 @@ export function ChartShell({
   valueAt,
   children,
 }: ChartShellProps) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const hintId = useId();
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [cursorX, setCursorX] = useState<number | null>(null);
@@ -110,7 +111,7 @@ export function ChartShell({
     cursorTime === null || !byKeyboard
       ? ""
       : [
-          new Date(cursorTime).toLocaleString(language),
+          new Date(cursorTime).toLocaleString(language, zoneOption(timeZone)),
           ...readout.map(
             (row) =>
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : format(row.index, row.value)}`,
@@ -227,7 +228,7 @@ export function ChartShell({
               aria-hidden="true"
             >
               <div className="ts__tooltip-time">
-                {new Date(cursorTime).toLocaleString(language)}
+                {new Date(cursorTime).toLocaleString(language, zoneOption(timeZone))}
               </div>
               {shown.map((row) => (
                 <div key={row.index} className="ts__tooltip-row">

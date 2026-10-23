@@ -194,15 +194,26 @@ function columnsOf(frame: Frame, config: FieldConfig): Column[] {
 }
 
 /** One cell as its column's options say: plain, colored text or background, gauge or link. */
-function Cell({ column, raw, language }: { column: Column; raw: unknown; language: string }) {
+function Cell({
+  column,
+  raw,
+  language,
+  timeZone,
+}: {
+  column: Column;
+  raw: unknown;
+  language: string;
+  timeZone: string | null;
+}) {
   const { t } = useI18n();
   const { field, options } = column;
   const plain = Object.keys(options).length === 0;
   // Without options a cell is its value as it came; this is the fast path for big tables.
   const display: DisplayValue | null = plain
     ? null
-    : displayValue(raw, field.type, options, language, column.range);
-  const text = display === null ? formatValue(field.type, raw, language) : displayText(display);
+    : displayValue(raw, field.type, options, language, column.range, timeZone);
+  const text =
+    display === null ? formatValue(field.type, raw, language, timeZone) : displayText(display);
   const mode = options.cellDisplay ?? "auto";
   const tone = display?.tone;
   const state = toneName(tone);
@@ -282,7 +293,7 @@ function FrameTable({
   config: FieldConfig;
   options: TableOptions;
 }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const filterId = useId();
   const scrollRef = useRef<HTMLElement>(null);
   const topRef = useRef<HTMLTableRowElement>(null);
@@ -325,8 +336,14 @@ function FrameTable({
     rows.push(
       <tr key={row} className="vt__row" aria-rowindex={position + headerRows + 1}>
         {columns.map((column, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
-          <Cell key={index} column={column} raw={column.field.values[row]} language={language} />
+          <Cell
+            // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
+            key={index}
+            column={column}
+            raw={column.field.values[row]}
+            language={language}
+            timeZone={timeZone}
+          />
         ))}
       </tr>,
     );

@@ -29,12 +29,13 @@ interface FilterInput {
 
 const NO_FILTER: FilterInput = { actor: "", action: "", from: "", to: "", orgId: "" };
 
-function toFilter(input: FilterInput): AuditFilter {
+/** The day filter covers whole days in the user's time zone. */
+function toFilter(input: FilterInput, zone: string | null): AuditFilter {
   return {
     actor: input.actor === "" ? undefined : input.actor,
     action: input.action === "" ? undefined : input.action,
-    from: startOfDay(input.from),
-    to: startOfNextDay(input.to),
+    from: startOfDay(input.from, zone),
+    to: startOfNextDay(input.to, zone),
     orgId: input.orgId === "" ? undefined : input.orgId,
   };
 }
@@ -55,12 +56,12 @@ export function AuditLog({
   /** Server audit log: organizations to narrow it to. */
   orgs?: PickerSource | undefined;
 }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const ids = { actor: useId(), action: useId(), from: useId(), to: useId(), org: useId() };
   const [input, setInput] = useState<FilterInput>(NO_FILTER);
   // Cursors of the pages before the current one; the last entry is the current page's cursor.
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
-  const filter = toFilter(input);
+  const filter = toFilter(input, timeZone);
   const backwards =
     filter.from !== undefined && filter.to !== undefined && filter.from >= filter.to;
   const cursor = cursors.at(-1);
@@ -231,7 +232,7 @@ function AuditRow({
   orgName: ((id: string) => string) | undefined;
   language: Language;
 }) {
-  const { t } = useI18n();
+  const { t, timeZone } = useI18n();
   const actor = event.actorName ?? event.actorUserId ?? t("admin.audit.system");
   const resource =
     event.resourceType === null
@@ -260,7 +261,7 @@ function AuditRow({
         ) : null}
       </div>
       <time className="admin-row__meta" dateTime={new Date(event.createdAt).toISOString()}>
-        {formatDateTime(event.createdAt, language)}
+        {formatDateTime(event.createdAt, language, timeZone)}
       </time>
     </>
   );

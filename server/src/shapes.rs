@@ -251,10 +251,14 @@ pub struct TypeShare {
     pub share: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Truncated {
     pub limit: u32,
+    /// Which limit cut the result (a notice code such as `graph.node_limit`), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -271,6 +275,10 @@ pub struct GraphSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub truncated: Option<Truncated>,
+    /// What the source said about the result, such as columns that are not part of the graph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub notices: Option<Vec<Notice>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

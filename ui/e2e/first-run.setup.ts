@@ -1,4 +1,4 @@
-import { OWNER } from "./support/api";
+import { Api, OWNER } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signIn, test } from "./support/test";
 
@@ -50,4 +50,12 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
   await expect(
     page.getByRole("heading", { name: t("home.welcome", { name: OWNER.name }) }),
   ).toBeVisible();
+
+  // The German runs sign in as a second owner whose language is German.
+  const owner = await Api.owner();
+  try {
+    await owner.createGermanOwner();
+  } finally {
+    await owner.dispose();
+  }
 });

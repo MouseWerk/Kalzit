@@ -15,6 +15,8 @@ use kalzit::config::Config;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod common;
+
 const SETUP_CODE: &str = "test-setup-code-0123456789";
 const PASSWORD: &str = "Grün und sicher 2026";
 /// Small, so tests with more parallel requests than connections show a handler that needs a
@@ -25,7 +27,21 @@ struct TestApp {
     app: Router,
     clock: Arc<ManualClock>,
     state: AppState,
-    _dir: tempfile::TempDir,
+    dir: Arc<tempfile::TempDir>,
+}
+
+impl TestApp {
+    /// Stops the app and deletes its data directory (`common::Finish`).
+    async fn finish(self) {
+        let finish = self.finisher();
+        drop(self);
+        finish.finish().await;
+    }
+
+    /// What `finish` does, for a test that hands the app on by value.
+    fn finisher(&self) -> common::Finish {
+        common::Finish::new(self.state.clone(), self.dir.clone())
+    }
 }
 
 struct Reply {
@@ -58,7 +74,7 @@ async fn test_app(db_url: Option<String>) -> TestApp {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, _dir: dir }
+    TestApp { app: router(state.clone()).layer(MockConnectInfo(peer)), clock, state, dir: Arc::new(dir) }
 }
 
 /// A signed-in user, as the requests of one browser.
@@ -284,6 +300,7 @@ async fn members_are_listed_added_changed_and_removed() {
         assert!(has(&actions, action), "{action} in {actions:?}");
     }
     assert!(t.audit_summaries().await.iter().all(|s| !s.contains('@')), "no emails in audit summaries");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -319,6 +336,7 @@ async fn owners_and_admins_cannot_hand_out_or_take_more_than_they_hold() {
     assert_eq!(t.patch(&ada_path, json!({ "role": "owner" }), &owner).await.status, StatusCode::OK);
     assert_eq!(t.patch(&owner_path, json!({ "role": "admin" }), &owner).await.status, StatusCode::OK);
     assert_eq!(t.delete(&ada_path, &ada).await.status, StatusCode::CONFLICT, "ada is the last owner now");
+    t.finish().await;
 }
 
 /// Both owners step down at the same moment; one must be refused.
@@ -343,6 +361,7 @@ async fn concurrent_owner_demotions_keep_one_owner() {
     let t = test_app(None).await;
     let (owner, org) = t.setup().await;
     check_concurrent_owner_demotions(&t, &owner, &org).await;
+    t.finish().await;
 }
 
 /// Two admins give up their admin role at the same moment; one must be refused. (Each revokes their
@@ -376,6 +395,7 @@ async fn concurrent_admin_revocations_keep_one_admin() {
     let t = test_app(None).await;
     let (admin, _) = t.setup().await;
     check_concurrent_admin_revocations(&t, &admin).await;
+    t.finish().await;
 }
 
 /// The same request sent several times at once: grants and team member PUT answer 200 with the
@@ -416,6 +436,7 @@ async fn parallel_duplicate_writes_are_answered_cleanly() {
     assert!(replies.iter().all(|(s, b)| *s == StatusCode::OK && b["role"] == "member"), "{replies:?}");
     let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM team_members").fetch_one(&t.state.db).await.unwrap();
     assert_eq!(rows, 1);
+    t.finish().await;
 }
 #[tokio::test]
 async fn teams_members_and_team_roles() {
@@ -503,6 +524,7 @@ async fn teams_members_and_team_roles() {
     ] {
         assert!(has(&actions, action), "{action} in {actions:?}");
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -586,6 +608,7 @@ async fn custom_roles_are_created_assigned_changed_and_deleted() {
     for action in ["role.created", "role.updated", "role.deleted"] {
         assert!(has(&actions, action), "{action} in {actions:?}");
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -707,6 +730,7 @@ async fn grants_extend_access_per_resource() {
     for action in ["grant.created", "grant.changed", "grant.deleted"] {
         assert!(has(&actions, action), "{action} in {actions:?}");
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -728,6 +752,7 @@ async fn nobody_grants_more_than_they_hold_on_a_resource() {
     assert_eq!(t.post(&grants, other, &vic).await.status, StatusCode::FORBIDDEN);
     // An edit grant does not let Max share further.
     assert_eq!(t.post(&grants, grant(&vic.user_id, "view"), &max).await.status, StatusCode::FORBIDDEN);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -801,6 +826,7 @@ async fn server_admins_manage_accounts() {
         assert!(has(&actions, action), "{action} in {actions:?}");
     }
     assert!(t.audit_summaries().await.iter().all(|s| !s.contains("Ein neues")), "no passwords in audit summaries");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -839,6 +865,7 @@ async fn server_admins_create_and_rename_organizations() {
 
     let actions = t.audit_actions().await;
     assert!(has(&actions, "org.created") && has(&actions, "org.renamed"), "{actions:?}");
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -898,6 +925,7 @@ async fn users_manage_their_own_name_password_and_sessions() {
         assert!(has(&actions, action), "{action} in {actions:?}");
     }
     assert!(t.audit_summaries().await.iter().all(|s| !s.contains("Passwort")), "no passwords in audit summaries");
+    t.finish().await;
 }
 
 /// Disabling an owner of two organizations while members change in both at the same moment: no
@@ -944,6 +972,7 @@ async fn disabling_an_owner_races_member_changes_cleanly() {
     let t = test_app(None).await;
     let (admin, _) = t.setup().await;
     check_disable_races_member_changes(&t, &admin).await;
+    t.finish().await;
 }
 
 /// Handlers that hold the organization lock must not need a second connection: with more
@@ -971,6 +1000,7 @@ async fn parallel_grant_deletes_do_not_drain_the_pool() {
     assert!(elapsed < std::time::Duration::from_secs(4), "took {elapsed:?}");
     let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resource_grants").fetch_one(&t.state.db).await.unwrap();
     assert_eq!(left, 0);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1004,6 +1034,7 @@ async fn removing_a_member_needs_what_they_hold_through_teams_and_grants() {
     let plain = t.member(&owner, &org, "Pia", "pia@example.de", "viewer").await;
     let r = t.delete(&format!("/api/orgs/{org}/members/{}", plain.user_id), &hr).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1032,6 +1063,7 @@ async fn names_are_unique_regardless_of_case_and_deleted_teams_leave_nothing() {
             .unwrap();
         assert_eq!(rows, 0, "{table}");
     }
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1071,6 +1103,7 @@ async fn disabled_accounts_do_not_count_as_owners() {
     t.patch(&ada_path, json!({ "disabled": false }), &root).await;
     let r = t.patch(&format!("/api/admin/users/{}", admin.user_id), json!({ "disabled": true }), &root).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1090,6 +1123,7 @@ async fn ended_sessions_are_not_listed() {
     assert_eq!(items.len(), 1, "{}", r.body);
     assert_eq!(items[0]["current"], true);
     assert_eq!(t.get("/api/me", &other).await.status, StatusCode::UNAUTHORIZED);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1111,6 +1145,7 @@ async fn failed_sign_ins_and_password_checks_share_the_email_budget() {
     let r =
         t.post("/api/me/password", json!({ "current": PASSWORD, "new": "Ein neues langes Passwort" }), &owner).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "{}", r.body);
+    t.finish().await;
 }
 
 #[tokio::test]
@@ -1127,6 +1162,7 @@ async fn guessing_the_current_password_is_rate_limited() {
     let r =
         t.post("/api/me/password", json!({ "current": PASSWORD, "new": "Ein neues langes Passwort" }), &owner).await;
     assert_eq!((r.status, r.code()), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    t.finish().await;
 }
 
 /// The access model on PostgreSQL, in a throwaway schema so the test database is left as it was.
@@ -1169,7 +1205,7 @@ async fn postgres_access_model() {
     check_disable_races_member_changes(&t, &owner).await;
     check_concurrent_owner_demotions(&t, &owner, &org).await;
     check_concurrent_admin_revocations(&t, &owner).await;
-    drop(t);
+    t.finish().await;
 
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE"))).execute(&admin_pool).await.unwrap();
 }

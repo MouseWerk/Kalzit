@@ -1,5 +1,6 @@
 import type { Field, FieldType, Frame } from "../api/generated/shapes";
 import type { MessageKey } from "../i18n/i18n";
+import { getTimeZone } from "../lib/timeSettings";
 import {
   type DisplayValue,
   displayNameOf,
@@ -50,6 +51,7 @@ export function reduceFrames(
   config: FieldConfig,
   reducer: Reducer,
   language: string,
+  zone: string | null = getTimeZone(),
 ): ReducedItem[] {
   const items: ReducedItem[] = [];
   for (const frame of frames) {
@@ -63,7 +65,7 @@ export function reduceFrames(
         options,
         name: displayNameOf(field, options),
         type,
-        display: displayValue(value, type, options, language, range),
+        display: displayValue(value, type, options, language, range, zone),
         range,
         index: items.length,
       });

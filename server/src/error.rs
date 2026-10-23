@@ -268,6 +268,9 @@ mod tests {
         assert!(matches!(postgres_contention(Some("40P01")), Some(Contention::Deadlock)));
         assert!(matches!(postgres_contention(Some("40001")), Some(Contention::Busy)));
         assert!(postgres_contention(Some("23505")).is_none());
+        holder.close().await.unwrap();
+        other.close().await.unwrap();
+        dir.close().unwrap();
     }
 
     #[test]

@@ -36,7 +36,7 @@ const appRoute = getRouteApi("/_app");
 
 /** Every account on the server: create, rename, lock, make server admin, set a password. */
 export function UsersPage() {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const access = useAdminAccess();
   const { me } = appRoute.useRouteContext();
   const queryClient = useQueryClient();
@@ -134,7 +134,9 @@ export function UsersPage() {
                 </span>
                 <span className="admin-row__meta">{user.email}</span>
                 <span className="admin-row__meta">
-                  {t("admin.users.createdAt", { date: formatDateTime(user.createdAt, language) })}
+                  {t("admin.users.createdAt", {
+                    date: formatDateTime(user.createdAt, language, timeZone),
+                  })}
                 </span>
               </div>
               <div className="admin-row__actions">

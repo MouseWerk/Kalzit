@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import type { Field, FieldType } from "../../api/generated/shapes";
+import { getTimeZone } from "../../lib/timeSettings";
 import { formatValue, seriesName, toNumber } from "../frame";
 import {
   CUSTOM_PREFIX,
@@ -409,6 +410,8 @@ export function displayValue(
   options: FieldOptions,
   language: string,
   range?: { min: number; max: number },
+  /** The user's time zone for time values (`useI18n().timeZone`), null for the browser's. */
+  zone: string | null = getTimeZone(),
 ): DisplayValue {
   const numeric = type === "number" || type === "int64" ? toNumber(raw) : null;
   const missing =
@@ -433,7 +436,7 @@ export function displayValue(
     ((unit !== undefined && isCatalogUnit(unit)) || options.decimals !== undefined)
       ? formatUnit(numeric, unit, options.decimals, language)
       : {
-          text: formatValue(type, raw, language),
+          text: formatValue(type, raw, language, zone),
           suffix: unit === undefined || numeric === null ? "" : customSuffix(unit),
         };
   return { ...formatted, tone: mapping?.tone ?? tone, numeric, missing };

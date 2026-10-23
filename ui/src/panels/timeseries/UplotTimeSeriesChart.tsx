@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useI18n } from "../../i18n/i18n";
+import { zoneOption } from "../../lib/timeSettings";
 import { TONES } from "../fieldConfig/fieldConfig";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
@@ -81,7 +82,7 @@ export function UplotTimeSeriesChart({
   axisFormat,
   yRange,
 }: TimeSeriesChartProps) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement>(null);
   const probesRef = useRef<HTMLDivElement>(null);
@@ -105,8 +106,14 @@ export function UplotTimeSeriesChart({
     const grid = probeColor(probes, ".ts__probe--grid");
     const font = `${getComputedStyle(probes).fontSize} ${getComputedStyle(probes).fontFamily}`;
     // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
-    const dates = new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit" });
-    const times = new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" });
+    // Ticks and labels on the wall clock of the user's time zone.
+    const zone = zoneOption(timeZone);
+    const dates = new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit", ...zone });
+    const times = new Intl.DateTimeFormat(language, {
+      hour: "2-digit",
+      minute: "2-digit",
+      ...zone,
+    });
     const axisStyle = {
       stroke: axis,
       font,
@@ -117,6 +124,9 @@ export function UplotTimeSeriesChart({
       width: Math.max(width, 10),
       height: Math.max(height, 10),
       ms: 1,
+      ...(timeZone === null
+        ? {}
+        : { tzDate: (ts: number) => uPlot.tzDate(new Date(ts), timeZone) }),
       legend: { show: false },
       // The shell draws the cursor and the readout, the same for keyboard and pointer.
       cursor: { show: false },
@@ -164,7 +174,17 @@ export function UplotTimeSeriesChart({
       chart.destroy();
       chartRef.current = null;
     };
-  }, [series, timeRange.from, timeRange.to, lineWidth, language, themeVersion, yMin, yMax]);
+  }, [
+    series,
+    timeRange.from,
+    timeRange.to,
+    lineWidth,
+    language,
+    timeZone,
+    themeVersion,
+    yMin,
+    yMax,
+  ]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
   useEffect(() => {

@@ -98,9 +98,9 @@ function Sparkline({
 }
 
 function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelProps<StatOptions>) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const config = legacyUnit(fieldConfig, options.unit);
-  const items = reduceFrames(frames, config, options.reducer, language);
+  const items = reduceFrames(frames, config, options.reducer, language, timeZone);
   if (items.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }

@@ -1,4 +1,6 @@
 import type { Field, Frame } from "../../api/generated/shapes";
+import { getTimeZone } from "../../lib/timeSettings";
+import { fromWall, normalizeWall, wallOf } from "../../lib/zonedTime";
 import {
   displayNameOf,
   EMPTY_FIELD_CONFIG,
@@ -190,52 +192,64 @@ const TIME_STEPS = [
 ];
 
 /**
- * Time ticks at round steps. Steps of a day or more fall on local midnight, so a day tick reads
- * "20.10." and not "20.10. 02:00" in a time zone east of UTC.
+ * Time ticks at round steps, on the wall clock of the user's time zone (the preference, else the
+ * browser's). Steps of a day or more fall on midnight, so a day tick reads "20.10." and not
+ * "20.10. 02:00" in a zone east of UTC.
  */
 export function timeTicks(
   from: number,
   to: number,
   count: number,
+  zone: string | null = getTimeZone(),
 ): { ticks: number[]; step: number } {
   const span = to - from;
   const step = TIME_STEPS.find((s) => span / s <= count) ?? (TIME_STEPS.at(-1) as number);
   const ticks: number[] = [];
   if (step >= DAY) {
-    const start = new Date(from);
-    start.setHours(0, 0, 0, 0);
+    const start = wallOf(from, zone);
     const days = Math.round(step / DAY);
-    for (let d = new Date(start); d.getTime() <= to; d.setDate(d.getDate() + days)) {
-      if (d.getTime() >= from) {
-        ticks.push(d.getTime());
+    const midnight = { hour: 0, minute: 0, second: 0, millisecond: 0 };
+    for (let n = 0, t = fromWall({ ...start, ...midnight }, zone); t <= to && n < 1000; n++) {
+      if (t >= from) {
+        ticks.push(t);
       }
+      t = fromWall({ ...start, ...midnight, day: start.day + (n + 1) * days }, zone);
     }
   } else if (step >= HOUR) {
-    // Hour steps are counted on the local clock tick by tick, so they stay on 00:00, 06:00, 12:00
+    // Hour steps are counted on the wall clock hour by hour, so they stay on 00:00, 06:00, 12:00
     // across a daylight saving change instead of drifting to 01:00 after it.
     const hours = Math.round(step / HOUR);
-    const d = new Date(from);
-    d.setMinutes(0, 0, 0);
-    if (d.getTime() < from) {
-      d.setHours(d.getHours() + 1);
-    }
-    while (d.getHours() % hours !== 0) {
-      d.setHours(d.getHours() + 1);
-    }
-    for (let guard = 0; d.getTime() <= to && guard < 1000; guard++) {
-      ticks.push(d.getTime());
-      const before = d.getHours();
-      d.setHours(before + hours);
-      // A skipped or repeated hour can leave the clock off the grid; put it back on.
-      while (d.getHours() % hours !== 0) {
-        d.setHours(d.getHours() + 1);
+    const start = wallOf(from, zone);
+    const base = { ...start, minute: 0, second: 0, millisecond: 0 };
+    for (let n = 0, guard = 0; guard < 2000; n++, guard++) {
+      const wall = normalizeWall({ ...base, hour: base.hour + n });
+      if (wall.hour % hours !== 0) {
+        continue;
+      }
+      const t = fromWall(wall, zone);
+      if (t > to) {
+        break;
+      }
+      // A skipped hour lands on the next one; a repeated hour is drawn once.
+      if (t >= from && wallOf(t, zone).hour === wall.hour && ticks.at(-1) !== t) {
+        ticks.push(t);
       }
     }
   } else {
-    // Steps below an hour divide an hour, and zones move by whole hours, so a fixed step from a
-    // local boundary stays on local boundaries.
-    const offset = new Date(from).getTimezoneOffset() * MINUTE;
-    for (let t = Math.ceil((from - offset) / step) * step + offset; t <= to; t += step) {
+    // Steps below an hour divide an hour; the zone's offset at the start puts them on its
+    // boundaries (zones with half or quarter hour offsets included).
+    const wall = wallOf(from, zone);
+    const offset =
+      Date.UTC(
+        wall.year,
+        wall.month - 1,
+        wall.day,
+        wall.hour,
+        wall.minute,
+        wall.second,
+        wall.millisecond,
+      ) - from;
+    for (let t = Math.ceil((from + offset) / step) * step - offset; t <= to; t += step) {
       ticks.push(t);
     }
   }

@@ -99,6 +99,14 @@ jobs:
       prometheus:
         image: prom/prometheus:v3.5.0
         ports: ["9090:9090"]
+      neo4j:
+        image: neo4j:2026.10.0-community
+        env:
+          NEO4J_AUTH: neo4j/kalzit-ci-neo4j
+        ports: ["7687:7687"]
+      memgraph:
+        image: memgraph/memgraph:3.14.0
+        ports: ["7688:7687"]
       mongodb:
         image: mongo:8.2
         env:
@@ -115,13 +123,15 @@ jobs:
       KALZIT_TEST_MARIADB_URL: mysql://root:kalzit-ci-mariadb@127.0.0.1:3307/kalzit
       KALZIT_TEST_MSSQL_URL: mssql://sa:Kalzit-CI-mssql-1@127.0.0.1:1433/master
       KALZIT_TEST_PROMETHEUS_URL: http://127.0.0.1:9090
+      KALZIT_TEST_NEO4J_URL: bolt://neo4j:kalzit-ci-neo4j@127.0.0.1:7687
+      KALZIT_TEST_MEMGRAPH_URL: bolt://127.0.0.1:7688
       KALZIT_TEST_MONGODB_URL: mongodb://kalzit:kalzit-ci-mongo@127.0.0.1:27017/?authSource=admin
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --tests
-      - name: Wait for SQL Server and Prometheus
+      - name: Wait for SQL Server, Prometheus, Neo4j and Memgraph
         shell: bash
         run: |
           for i in $(seq 1 90); do
@@ -130,10 +140,12 @@ jobs:
               mssql=ok
             fi
             if curl -fs http://127.0.0.1:9090/-/ready > /dev/null; then prom=ok; fi
-            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ]; then exit 0; fi
+            if docker exec "${{ job.services.neo4j.id }}" cypher-shell -u neo4j -p kalzit-ci-neo4j "RETURN 1" > /dev/null 2>&1; then neo4j=ok; fi
+            if timeout 1 bash -c "</dev/tcp/127.0.0.1/7688" 2> /dev/null; then memgraph=ok; fi
+            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ] && [ "${neo4j:-}" = ok ] && [ "${memgraph:-}" = ok ]; then exit 0; fi
             sleep 2
           done
-          echo "SQL Server or Prometheus did not become ready" >&2
+          echo "SQL Server, Prometheus, Neo4j or Memgraph did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
       - run: cargo test --locked --test mongodb -- --nocapture
@@ -145,6 +157,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A fixed zone, so tests about time zones cannot pass by the runner's accident.
+    env:
+      TZ: UTC
     defaults:
       run:
         working-directory: ui
@@ -172,6 +187,11 @@ jobs:
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run typecheck
       - if: steps.has_ui.outputs.present == 'true'
+        run: npm test
+      - name: Tests in a zone with daylight saving time
+        if: steps.has_ui.outputs.present == 'true' && runner.os == 'Linux'
+        env:
+          TZ: America/New_York
         run: npm test
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run build

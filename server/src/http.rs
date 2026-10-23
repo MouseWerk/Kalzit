@@ -163,6 +163,23 @@ impl HttpClient {
         Err(HttpError::Other(format!("more than {MAX_REDIRECTS} redirects")))
     }
 
+    /// One request that does not follow redirects; a redirect is the answer. For requests with a
+    /// body, such as a token request carrying a secret, which must reach exactly this URL.
+    pub async fn send_once(
+        &self,
+        method: Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, HttpError> {
+        self.check_url(&url).await?;
+        let mut request = self.client.request(method, url).headers(headers);
+        if let Some(b) = body {
+            request = request.body(b);
+        }
+        Ok(request.send().await?)
+    }
+
     /// Names are checked by the resolver when the client connects (there is no proxy); this
     /// covers the scheme and address literals, which skip the resolver.
     async fn check_url(&self, url: &Url) -> Result<(), HttpError> {
@@ -327,7 +344,7 @@ mod tests {
     async fn redirector(target: String) -> std::net::SocketAddr {
         let app = Router::new().route(
             "/",
-            axum::routing::get(move || async move {
+            axum::routing::any(move || async move {
                 (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, target)]).into_response()
             }),
         );
@@ -350,5 +367,16 @@ mod tests {
         let hop = redirector(format!("http://{addr}/auth")).await;
         let r = c.send(Method::GET, Url::parse(&format!("http://{hop}/")).unwrap(), headers).await.unwrap();
         assert_eq!(r.text().await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn send_once_does_not_follow_redirects() {
+        let addr = upstream().await;
+        let c = test_client(&[]);
+        let hop = Url::parse(&format!("http://{}/", redirector(format!("http://{addr}/auth")).await)).unwrap();
+        let once = c.send_once(Method::POST, hop, HeaderMap::new(), Some(b"secret".to_vec())).await.unwrap();
+        assert_eq!(once.status(), StatusCode::TEMPORARY_REDIRECT, "not followed");
+        let blocked = Url::parse("http://169.254.169.254/").unwrap();
+        assert!(matches!(c.send_once(Method::POST, blocked, HeaderMap::new(), None).await, Err(HttpError::Blocked(_))));
     }
 }

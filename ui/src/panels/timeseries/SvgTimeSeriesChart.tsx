@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { zoneOption } from "../../lib/timeSettings";
 import { useElementSize } from "../useElementSize";
 import { ChartShell, seriesClass, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
@@ -31,7 +32,7 @@ export function SvgTimeSeriesChart({
   axisFormat,
   yRange,
 }: TimeSeriesChartProps) {
-  const { language } = useI18n();
+  const { language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
 
@@ -57,10 +58,13 @@ export function SvgTimeSeriesChart({
     from,
     to,
     Math.max(2, Math.floor(plotWidth / PX_PER_TIME_TICK)),
+    timeZone,
   );
   const timeLabel = new Intl.DateTimeFormat(
     language,
-    step >= DAY ? { day: "2-digit", month: "2-digit" } : { hour: "2-digit", minute: "2-digit" },
+    step >= DAY
+      ? { day: "2-digit", month: "2-digit", ...zoneOption(timeZone) }
+      : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
   const paths = series.map((s) => seriesPath(s, scale, AXIS_LEFT + plotWidth));
 

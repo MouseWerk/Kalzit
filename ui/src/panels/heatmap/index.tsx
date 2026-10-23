@@ -2,6 +2,7 @@ import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
+import { zoneOption } from "../../lib/timeSettings";
 import {
   displayNameOf,
   EMPTY_FIELD_CONFIG,
@@ -264,7 +265,7 @@ function HeatmapPanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<HeatmapOptions>) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
   const data = heatmapData(frames, options, timeRange, fieldConfig, language);
@@ -282,12 +283,19 @@ function HeatmapPanel({
     timeRange.from,
     timeRange.to,
     Math.max(2, Math.floor(plotWidth / 110)),
+    timeZone,
   );
   const timeLabel = new Intl.DateTimeFormat(
     language,
-    step >= DAY ? { day: "2-digit", month: "2-digit" } : { hour: "2-digit", minute: "2-digit" },
+    step >= DAY
+      ? { day: "2-digit", month: "2-digit", ...zoneOption(timeZone) }
+      : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
-  const dateTime = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short" });
+  const dateTime = new Intl.DateTimeFormat(language, {
+    dateStyle: "short",
+    timeStyle: "short",
+    ...zoneOption(timeZone),
+  });
   const labelEvery = Math.ceil(rowCount / Math.max(1, Math.floor(plotHeight / 16)));
 
   const cells: { x: number; y: number; value: number }[] = [];

@@ -1,3 +1,5 @@
+import { getTimeZone, zoneOption } from "../../lib/timeSettings";
+
 /**
  * The unit catalog of the field options: how a number is written with its unit, per language.
  * Numbers go through Intl (grouping, decimal sign, currency position), symbols are the SI and
@@ -221,11 +223,18 @@ export function fromNow(time: number, language: string, now = Date.now()): strin
 
 const dateTimes = new Map<string, Intl.DateTimeFormat>();
 
+/** Dates on the wall clock of the user's time zone, as every time in the panels. */
 function dateTime(language: string): Intl.DateTimeFormat {
-  let format = dateTimes.get(language);
+  const zone = getTimeZone();
+  const key = `${language}|${zone ?? ""}`;
+  let format = dateTimes.get(key);
   if (format === undefined) {
-    format = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
-    dateTimes.set(language, format);
+    format = new Intl.DateTimeFormat(language, {
+      dateStyle: "short",
+      timeStyle: "medium",
+      ...zoneOption(zone),
+    });
+    dateTimes.set(key, format);
   }
   return format;
 }
