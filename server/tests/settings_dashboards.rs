@@ -385,8 +385,9 @@ async fn a_locked_database_answers_busy_not_internal() {
 }
 
 /// Reading never waits on a writer, also when the session is due for its last-seen update: that
-/// update is best-effort and gives up at once, so the request answers well within the busy
-/// timeout (15 s) instead of waiting for it.
+/// update is best-effort and gives up at once, so the request answers within the busy timeout
+/// instead of waiting for it. The writer keeps the lock until the request answered, so a request
+/// that waited for it would take the whole busy timeout, however fast the machine is.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_due_session_touch_does_not_wait_for_a_writer() {
     let t = test_app(None, |_| {}).await;
@@ -401,7 +402,7 @@ async fn a_due_session_touch_does_not_wait_for_a_writer() {
     let took = started.elapsed();
     sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
     assert_eq!(me.status, StatusCode::OK, "{}", me.body);
-    assert!(took < std::time::Duration::from_secs(3), "the read waited {took:?} for the writer");
+    assert!(took < kalzit::db::SQLITE_BUSY_TIMEOUT, "the read waited {took:?} for the writer");
     // The update waited for the lock in the background, briefly; if it gave up, the touch is
     // still due and the session's next request writes it.
     t.state.touches.settle().await;
@@ -549,11 +550,14 @@ async fn a_waiting_session_touch_does_not_delay_the_stop() {
 
     let started = std::time::Instant::now();
     server.shutdown();
-    server.wait().await.unwrap();
+    let stopped = server.wait().await.unwrap();
     let took = started.elapsed();
     sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
-    // Within the shortest grace (closing the console on Windows: 3 s), far below the 15 s busy timeout.
-    assert!(took < std::time::Duration::from_secs(3), "the stop waited {took:?} for the touch");
+    // A touch still waiting out the busy timeout keeps its connection, so the database would not
+    // close within its budget; the writer holds the lock until after the stop, so that does not
+    // depend on how fast the machine is.
+    assert!(stopped.closed_in_time, "the close ran out of time after {took:?}");
+    assert!(took < kalzit::db::SQLITE_BUSY_TIMEOUT, "the stop waited {took:?} for the touch");
     holder.close().await.unwrap();
     common::remove_dir(dir);
 }

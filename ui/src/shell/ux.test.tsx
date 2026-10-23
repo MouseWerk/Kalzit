@@ -15,6 +15,8 @@ import { renderApp } from "../test/renderApp";
 import { getTheme } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
+import { SETUP_DISMISSED_KEY } from "./setupSteps";
+import { SIDEBAR_STORAGE_KEY } from "./sidebarState";
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
@@ -144,6 +146,55 @@ describe("command palette", () => {
   });
 });
 
+describe("search with /", () => {
+  it("opens the palette, but not while typing", async () => {
+    setup();
+    const { user } = renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    fireEvent.keyDown(document.body, { key: "/" });
+    const dialog = await screen.findByRole("dialog", { name: "Command palette" });
+    // In the palette's field, "/" is a letter to search for.
+    await user.keyboard("/");
+    expect((within(dialog).getByRole("combobox") as HTMLInputElement).value).toBe("/");
+  });
+
+  it("shows / on the sidebar's search entry and names both shortcuts", async () => {
+    setup();
+    renderApp("/");
+    const search = await screen.findByRole("button", { name: "Search" });
+    expect(search.getAttribute("aria-keyshortcuts")).toBe("/ Control+K");
+    expect(search.getAttribute("title")).toBe("Search (/ or Ctrl+K)");
+    expect(search.textContent).toContain("/");
+  });
+});
+
+describe("organization menu", () => {
+  it("opens from the workspace card with the places of the organization", async () => {
+    setup("owner");
+    const { user, location } = renderApp("/");
+    const card = await screen.findByRole("button", { name: "Organization Org Owner" });
+    await user.click(card);
+    const menu = await screen.findByRole("menu", { name: "Organization menu" });
+    expect(within(menu).getByText("Your role: Owner")).toBeTruthy();
+    const items = within(menu)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent);
+    expect(items.slice(0, 2)).toEqual(["Organization settings", "Members"]);
+    expect(document.activeElement?.textContent).toBe("Organization settings");
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(location().pathname).toBe("/admin/members"));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("is a plain card for a viewer, who has nothing of the organization to open", async () => {
+    setup("viewer");
+    renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    await waitFor(() => expect(document.querySelector(".org-switcher--static")).not.toBeNull());
+    expect(screen.queryByRole("button", { name: /^Organization/ })).toBeNull();
+  });
+});
+
 describe("keyboard shortcuts help", () => {
   it("opens with ?, lists every area and closes with Escape", async () => {
     setup();
@@ -207,9 +258,17 @@ describe("start page", () => {
     );
     renderApp("/");
     const starred = await screen.findByRole("region", { name: "Starred dashboards" });
-    const link = await within(starred).findByRole("link", { name: /Sales overview/ });
+    const link = await within(starred).findByRole("link", { name: "Sales overview" });
     expect(link.getAttribute("href")).toBe("/dashboards/d-sales");
-    expect(link.textContent).toContain("Operations");
+    // A card: its folder, and the star already set for a starred dashboard.
+    const card = link.closest("li") as HTMLElement;
+    expect(card.textContent).toContain("Operations");
+    expect(within(card).getByRole("button", { name: "Starred" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(within(card).getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
+      "/dashboards/d-sales?edit=true",
+    );
     const recent = screen.getByRole("region", { name: "Recently opened" });
     await within(recent).findByRole("link", { name: /Stock/ });
     // The restricted dashboard is not listed for an editor.
@@ -219,23 +278,104 @@ describe("start page", () => {
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
   });
 
-  it("guides a fresh organization with the steps the user may take", async () => {
+  it("counts what the user may see, each number a link to where it is", async () => {
+    setup("owner");
+    renderApp("/");
+    const stats = await screen.findByRole("region", { name: "Overview" });
+    // Two of the three dashboards; the restricted folder's is not counted for this role.
+    const dashboards = await within(stats).findByRole("link", { name: /^Dashboards/ });
+    await waitFor(() => expect(dashboards.textContent).toMatch(/\d$/));
+    expect(dashboards.getAttribute("href")).toBe("/dashboards");
+    expect(within(stats).getByRole("link", { name: /^Data sources/ })).toBeTruthy();
+    expect(
+      within(stats)
+        .getByRole("link", { name: /^Members/ })
+        .getAttribute("href"),
+    ).toBe("/admin/members");
+    expect(within(stats).getByRole("link", { name: /^Changes, 7 days/ })).toBeTruthy();
+  });
+
+  it("shows a viewer only the numbers it may see", async () => {
+    setup("viewer");
+    renderApp("/");
+    const stats = await screen.findByRole("region", { name: "Overview" });
+    await within(stats).findByRole("link", { name: /^Dashboards/ });
+    expect(within(stats).queryByRole("link", { name: /^Members/ })).toBeNull();
+    expect(within(stats).queryByRole("link", { name: /^Changes/ })).toBeNull();
+  });
+
+  it("guides a fresh organization with a checklist of the steps the user may take", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("owner") });
+    server.areas.datasources.datasources = [];
+    const { user } = renderApp("/");
+    const steps = await screen.findByRole("region", { name: "First steps" });
+    // In the sidebar, from real data: nothing yet but other members.
+    expect(steps.closest("header")).not.toBeNull();
+    const items = within(steps)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(items).toEqual([
+      "Add a data source, to do",
+      "Create a dashboard, to do",
+      "Invite a colleague, done",
+    ]);
+    expect(within(steps).getByText("1 of 3 done")).toBeTruthy();
+    // The card offers the next step.
+    await user.click(within(steps).getByRole("link", { name: "Connect a database" }));
+    await screen.findByRole("heading", { level: 1, name: /data source/i });
+  });
+
+  it("hides the checklist when the user dismisses it, and keeps it hidden", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("owner") });
+    server.areas.datasources.datasources = [];
+    const { user, view } = renderApp("/");
+    const steps = await screen.findByRole("region", { name: "First steps" });
+    await user.click(within(steps).getByRole("button", { name: "Hide first steps" }));
+    expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
+    view.unmount();
+    renderApp("/");
+    await screen.findByRole("region", { name: "Overview" });
+    expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
+  });
+
+  it("shows no checklist once every step is done, and stops asking for it", async () => {
+    const server = setup("owner");
+    renderApp("/");
+    await screen.findByRole("region", { name: "Overview" });
+    await waitFor(() =>
+      expect(window.localStorage.getItem(SETUP_DISMISSED_KEY)).toContain(`${TEST_USER.id}:o1`),
+    );
+    expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
+    // Existence checks only: one entry (two members), never a page of 200.
+    const checks = server.calls.filter((call) =>
+      /search\?.*limit=1\b|members\?limit=2\b/.test(call.path),
+    );
+    expect(checks.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a dismissal to its own organization", async () => {
+    window.localStorage.setItem(SETUP_DISMISSED_KEY, JSON.stringify([`${TEST_USER.id}:o2`]));
+    const server = installFakeServer({ signedIn: true, user: asRole("owner") });
+    server.areas.datasources.datasources = [];
+    renderApp("/");
+    expect(await screen.findByRole("region", { name: "First steps" })).toBeTruthy();
+  });
+
+  it("moves the checklist onto the start page while the sidebar is the rail", async () => {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
     const server = installFakeServer({ signedIn: true, user: asRole("owner") });
     server.areas.datasources.datasources = [];
     renderApp("/");
     const steps = await screen.findByRole("region", { name: "First steps" });
-    expect(within(steps).getByRole("heading", { name: "Add a data source" })).toBeTruthy();
-    expect(within(steps).getByRole("heading", { name: "Create a dashboard" })).toBeTruthy();
-    expect(within(steps).getByRole("heading", { name: "Invite members" })).toBeTruthy();
+    expect(steps.closest("main")).not.toBeNull();
   });
 
   it("shows a viewer of a fresh organization no step it could not take", async () => {
     const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
     server.areas.datasources.datasources = [];
     renderApp("/");
-    const steps = await screen.findByRole("region", { name: "First steps" });
-    expect(within(steps).queryByRole("heading", { level: 3 })).toBeNull();
-    expect(within(steps).getByText(/Ask an admin/)).toBeTruthy();
+    expect(await screen.findByText(/Ask an admin/)).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
     expect(screen.queryByRole("link", { name: "New dashboard" })).toBeNull();
   });
 
@@ -512,6 +652,25 @@ describe("shortcuts and editors", () => {
     fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.activeElement).toBe(editor);
+  });
+
+  it("leaves / to text fields, editable text, code editors and input methods", async () => {
+    setup();
+    const { user } = renderApp("/dashboards");
+    const search = await screen.findByLabelText("Search dashboards");
+    await user.click(search);
+    await user.keyboard("/");
+    expect((search as HTMLInputElement).value).toBe("/");
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    screen.getByRole("main").append(editable);
+    fireEvent.keyDown(editable, { key: "/" });
+    fireEvent.keyDown(codeEditor(), { key: "/" });
+    // A "/" that confirms an input method composition is the composition's, not a shortcut.
+    fireEvent.keyDown(document.body, { key: "/", isComposing: true });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    fireEvent.keyDown(document.body, { key: "/" });
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
   });
 
   it("does not open the help with ? from a text field or a code editor", async () => {

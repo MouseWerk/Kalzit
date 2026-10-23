@@ -106,13 +106,18 @@
     --space-10: 2.5rem;
     --space-12: 3rem;
     --space-16: 4rem;
+    /* Half a step, between the rows of the navigation. */
+    --space-half: 0.125rem;
 
     --border-width: 1px;
 
-    /* Soft corners: controls and nav items a little round, cards and panels more so. */
+    /*
+     * Soft corners: controls and nav items a little round, cards and panels more so, the
+     * workspace card and stat tiles in between (the reference's 10, 14 and 16 px at 1.5x).
+     */
     --radius-sm: 4px;
-    --radius-md: 6px;
-    --radius-lg: 10px;
+    --radius-md: 7px;
+    --radius-lg: 12px;
     --radius-pill: 999px;
 
     /* Layers, lowest first. */
@@ -123,10 +128,10 @@
     --z-toast: 300;
     --z-skip-link: 400;
 
-    /* Compact density, as in developer tools: 232 px sidebar, 56 px rail, 30 px rows. */
-    --sidebar-width: 14.5rem;
+    /* Compact density, as in developer tools: 240 px sidebar, 56 px rail, 32 px rows. */
+    --sidebar-width: 15rem;
     --sidebar-rail-width: 3.5rem;
-    --nav-row-height: 1.875rem;
+    --nav-row-height: 2rem;
     /*
      * Reading width, for forms, settings and running text only. Dashboards, Explore and lists
      * use the whole width of the window.
@@ -391,6 +396,33 @@
     :root {
       --duration-pulse: 0ms;
     }
+  }
+}
+
+/*
+ * The start page and the sidebar after the owner's reference (docs/design/feel.md, phase 2):
+ * stat tiles with an illustration well, dashboard cards with a thumbnail, the workspace card and
+ * the setup checklist. Sizes are the reference's divided by 1.5. Stat numbers use
+ * --font-size-display from the visualization block, the greeting --font-size-2xl.
+ */
+@layer tokens {
+  :root {
+    /* Inner padding of cards on the start page, in lists and in the sidebar. */
+    --space-card: var(--space-4);
+    /* Gaps between cards on the start page and in lists (the dashboard grid keeps 8 px). */
+    --space-cards: var(--space-3);
+    --size-stat-min: 14rem;
+    --size-stat-well: 6.5rem;
+    --size-stat-height: 5.75rem;
+    --size-thumb-width: 5.75rem;
+    --size-thumb-height: 4.25rem;
+    /* The workspace card on top of the sidebar and its mark tile. */
+    --size-switcher: 2.75rem;
+    --size-switcher-mark: 1.75rem;
+    /* The icon tile of the setup checklist card. */
+    --size-setup-tile: 2.5rem;
+    /* Rows of lists and tables. */
+    --size-row: 2.25rem;
   }
 }
 

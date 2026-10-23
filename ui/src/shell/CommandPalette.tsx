@@ -392,7 +392,7 @@ export function CommandPalette({
           {t("shell.palette.title")}
         </h2>
         <div className="palette__field">
-          <Icon name="explore" />
+          <Icon name="search" />
           <input
             ref={inputRef}
             className="palette__input"

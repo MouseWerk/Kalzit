@@ -31,6 +31,11 @@ export function createApp(options: AppOptions = {}): KalzitApp {
     }
     queryClient.setQueryData(meQuery.queryKey, null);
     forgetAccountData(queryClient);
+    // A request that was on its way when the guard already sent the user to sign in must not
+    // send them there again: that would drop the page to return to.
+    if (router.state.location.pathname === "/login") {
+      return;
+    }
     const back = safeRedirect(router.state.location.href);
     void router.navigate({
       to: "/login",

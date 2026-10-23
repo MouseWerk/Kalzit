@@ -583,6 +583,16 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
   `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
   `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+
+  Known runner fault, not fixed (tracked in
+  [#42](https://github.com/MouseWerk/Kalzit/issues/42)): on the Windows CI runner a page load
+  occasionally fails with `net::ERR_NO_BUFFER_SPACE` (Windows `WSAENOBUFS`) for one of the UI's
+  own files, so the page
+  stays empty and the test fails on that console entry and a timeout. It is not the suite's own
+  connection count: a full local run with four workers peaks at about 600 loopback sockets,
+  most in `TIME_WAIT`, against 16,384 ephemeral ports, and CI runs two workers. Fewer workers
+  or shared browser contexts would not remove it, so the guard keeps failing on it rather than
+  retrying; rerun the job and add the run to the issue.
 - Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
   in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
   through the same global setup, seeds a demo organization through the API (members, teams,

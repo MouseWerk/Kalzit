@@ -1,7 +1,7 @@
 import { Fragment, useId } from "react";
 import { Dialog } from "../features/admin/components/Dialog";
 import { type MessageKey, useI18n } from "../i18n/i18n";
-import { isMac } from "./sidebarState";
+import { isMac, keyLabel, modShortcut } from "./sidebarState";
 import "./shellUx.css";
 
 interface Shortcut {
@@ -20,7 +20,7 @@ export const SHORTCUT_AREAS: readonly Area[] = [
   {
     title: "shell.shortcuts.area.general",
     shortcuts: [
-      { keys: [["Mod", "K"]], label: "shell.shortcuts.palette" },
+      { keys: [["Mod", "K"], ["/"]], label: "shell.shortcuts.palette" },
       { keys: [["?"]], label: "shell.shortcuts.help" },
       { keys: [["F6"], ["Shift", "F6"]], label: "shell.shortcuts.regions" },
       { keys: [["Esc"]], label: "shell.shortcuts.close" },
@@ -76,9 +76,9 @@ export const SHORTCUT_AREAS: readonly Area[] = [
 /** A key as the platform names it. */
 function keyName(key: string): string {
   if (key === "Mod") {
-    return isMac() ? "⌘" : "Ctrl";
+    return isMac() ? "⌘" : keyLabel("Ctrl");
   }
-  return key;
+  return keyLabel(key);
 }
 
 /** The keyboard shortcuts help, opened with ? or from the command palette. */
@@ -147,6 +147,16 @@ export function isHelpShortcut(event: KeyboardEvent): boolean {
   );
 }
 
+/**
+ * Whether a key press asks to search: "/" on any layout (Shift+7 on German ones), never while
+ * typing; it opens the command palette.
+ */
+export function isSearchShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
+  );
+}
+
 /** Whether a key press asks for the command palette: Ctrl+K, or Cmd+K on macOS. */
 export function isPaletteShortcut(event: KeyboardEvent): boolean {
   const isK = event.key.toLowerCase() === "k" || event.code === "KeyK";
@@ -158,5 +168,5 @@ export function isPaletteShortcut(event: KeyboardEvent): boolean {
 
 /** The palette shortcut as shown in the sidebar and as `aria-keyshortcuts`. */
 export function paletteShortcut(): { label: string; aria: string } {
-  return isMac() ? { label: "⌘K", aria: "Meta+K" } : { label: "Ctrl+K", aria: "Control+K" };
+  return modShortcut("K");
 }
