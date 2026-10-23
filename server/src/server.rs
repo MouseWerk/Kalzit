@@ -150,9 +150,28 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         db::redact(&config.database_url())
     );
 
-    let state = AppState::new(config.clone(), pool, Arc::new(SystemClock), setup_code).await?;
+    // A start that fails from here on closes what it opened: on Windows the data directory's files
+    // stay locked while a pool or the key file is open.
+    let state = match AppState::new(config.clone(), pool.clone(), Arc::new(SystemClock), setup_code).await {
+        Ok(state) => state,
+        Err(e) => {
+            pool.close().await;
+            return Err(e);
+        }
+    };
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
+    match listen(&config, &state).await {
+        Ok(running) => Ok(running),
+        Err(e) => {
+            state.close().await;
+            Err(e)
+        }
+    }
+}
+
+/// Binds the listeners of a started server; on an error the ones already bound are dropped.
+async fn listen(config: &Config, state: &AppState) -> Result<Running> {
     let app = router(state.clone());
     let mut running = Running {
         http_addr: None,

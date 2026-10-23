@@ -388,6 +388,8 @@ async fn weak_fixed_setup_codes_are_refused_at_start() {
         let clock = Arc::new(ManualClock::new(0));
         assert!(AppState::new(config.clone(), pool.clone(), clock, Some(weak.into())).await.is_err(), "{weak}");
     }
+    pool.close().await;
+    common::remove_dir(dir);
 }
 
 #[tokio::test]
@@ -463,6 +465,7 @@ async fn cookie_is_secure_behind_a_trusted_tls_proxy() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(r.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap().contains("; Secure"));
+    t.finish().await;
 }
 
 #[tokio::test]

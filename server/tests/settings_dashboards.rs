@@ -490,6 +490,7 @@ async fn stopping_the_server_checkpoints_the_database() {
     let stopped = server.wait().await.unwrap();
     assert!(stopped.closed_in_time, "the database closed within its budget");
     assert!(!wal.exists(), "the WAL is folded into the database once the server stops");
+    common::remove_dir(dir);
 }
 
 /// A touch waiting for the write lock does not hold up the stop: the server drops it before it
@@ -553,6 +554,8 @@ async fn a_waiting_session_touch_does_not_delay_the_stop() {
     sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
     // Within the shortest grace (closing the console on Windows: 3 s), far below the 15 s busy timeout.
     assert!(took < std::time::Duration::from_secs(3), "the stop waited {took:?} for the touch");
+    holder.close().await.unwrap();
+    common::remove_dir(dir);
 }
 
 /// The jobs the server runs at its start write too. One that waits for a lock another program
@@ -582,6 +585,8 @@ async fn a_start_job_waiting_for_the_lock_does_not_delay_the_stop() {
     // The jobs were dropped and the database closed in time, not cut off by the close's budget.
     assert!(stopped.closed_in_time, "the close ran out of time after {took:?}");
     assert!(took < kalzit::server::CLOSE_WAIT, "the stop waited {took:?} for the start jobs");
+    holder.close().await.unwrap();
+    common::remove_dir(dir);
 }
 
 /// Polls `done` every few milliseconds until it holds, for at most 20 s.
@@ -625,7 +630,8 @@ async fn a_busy_retention_run_is_tried_again_before_the_next_run() {
             sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE id = 'old'").fetch_one(&t.state.db).await.unwrap();
         gone = old == 0;
     }
-    t.state.background.stop().await;
+    holder.close().await.unwrap();
+    t.finish().await;
 }
 
 /// The server schedules the audit retention when it starts: an event from 1970 is gone soon after.
@@ -657,6 +663,7 @@ async fn the_server_runs_the_audit_retention() {
     db.close().await;
     server.shutdown();
     server.wait().await.unwrap();
+    common::remove_dir(dir);
 }
 
 fn model(title: &str) -> Value {

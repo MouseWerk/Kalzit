@@ -64,7 +64,7 @@ impl AppState {
     /// files in the data directory stay open, and Windows cannot delete them (tests delete their
     /// temporary data directory right after).
     pub async fn close(&self) {
-        self.touches.abort_all().await;
+        self.background.stop().await;
         self.datasources.close().await;
         self.db.close().await;
     }

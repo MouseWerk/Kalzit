@@ -39,10 +39,15 @@ impl Finish {
     pub async fn finish(self) {
         self.state.close().await;
         drop(self.state);
-        let dir = Arc::try_unwrap(self.dir).expect("the test app still holds its data directory");
-        let path = dir.path().to_path_buf();
-        if let Err(e) = dir.close() {
-            panic!("the data directory {} was not deleted: {e}", path.display());
-        }
+        remove_dir(Arc::try_unwrap(self.dir).expect("the test app still holds its data directory"));
+    }
+}
+
+/// Deletes a test's temporary directory and fails the test when that does not work, where a
+/// dropped `TempDir` would give up silently (see `Finish`).
+pub fn remove_dir(dir: tempfile::TempDir) {
+    let path = dir.path().to_path_buf();
+    if let Err(e) = dir.close() {
+        panic!("the data directory {} was not deleted: {e}", path.display());
     }
 }
