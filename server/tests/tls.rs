@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 use kalzit::config::Config;
 use reqwest::{Certificate, Client, StatusCode, redirect};
 
+mod common;
+
 struct TestCert {
     pem: String,
     key: String,
@@ -70,6 +72,7 @@ async fn https_serves_and_http_redirects() {
 
     server.shutdown();
     server.wait().await.unwrap();
+    common::remove_dir(dir);
 }
 
 #[tokio::test]
@@ -105,6 +108,7 @@ async fn redirect_respects_public_url_proxies_and_bad_hosts() {
     assert_eq!(res.headers().get("location").unwrap().to_str().unwrap(), format!("https://[::1]:{https_port}/a"));
     server.shutdown();
     server.wait().await.unwrap();
+    common::remove_dir(dir);
 }
 
 #[tokio::test]
@@ -131,6 +135,7 @@ async fn renewed_certificate_is_picked_up_without_restart() {
 
     server.shutdown();
     server.wait().await.unwrap();
+    common::remove_dir(dir);
 }
 
 #[tokio::test]
@@ -151,6 +156,7 @@ async fn minimum_tls_version_is_enforced() {
 
     server.shutdown();
     server.wait().await.unwrap();
+    common::remove_dir(dir);
 }
 
 #[tokio::test]
@@ -166,4 +172,6 @@ async fn busy_port_is_reported() {
         Err(e) => format!("{e:#}"),
     };
     assert!(err.contains(&port.to_string()), "{err}");
+    // The failed start closed what it had opened.
+    common::remove_dir(dir);
 }

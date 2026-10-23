@@ -48,8 +48,7 @@ pub struct Running {
     pub https_addr: Option<SocketAddr>,
     handles: Vec<Handle<SocketAddr>>,
     listeners: JoinSet<Result<()>>,
-    db: sqlx::AnyPool,
-    background: Arc<db::Background>,
+    state: AppState,
     /// When the process ends regardless of the stop (Windows console close and shutdown).
     hard_deadline: Arc<std::sync::Mutex<Option<Instant>>>,
 }
@@ -62,8 +61,9 @@ impl Running {
         }
     }
 
-    /// Waits until every listener has stopped, then stops the background writes and closes the
-    /// database; the first listener error ends the wait. Closing lets SQLite checkpoint its WAL
+    /// Waits until every listener has stopped, then closes the state (`AppState::close`: the
+    /// background writes, the data sources' pools and the database); the first listener error
+    /// ends the wait. Closing lets SQLite checkpoint its WAL
     /// into the database file, so a copy of `kalzit.db` taken while the server is stopped is
     /// complete on its own. The close gets `CLOSE_WAIT`, less when the process ends sooner; past
     /// that the stop goes on without it.
@@ -77,11 +77,7 @@ impl Running {
         }
         let deadline = *self.hard_deadline.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let budget = close_budget(deadline, Instant::now());
-        let close = async {
-            self.background.stop().await;
-            self.db.close().await;
-        };
-        let closed_in_time = tokio::time::timeout(budget, close).await.is_ok();
+        let closed_in_time = tokio::time::timeout(budget, self.state.close()).await.is_ok();
         if !closed_in_time {
             tracing::warn!(
                 "the database did not close within {budget:?}; a statement still waits for a lock another \
@@ -95,8 +91,9 @@ impl Running {
     /// request open, these are background writes running or waiting for the lock).
     #[doc(hidden)]
     pub fn connections_in_use(&self) -> u32 {
-        let main = self.db.size().saturating_sub(self.db.num_idle() as u32);
-        main + self.background.connections_in_use()
+        let db = &self.state.db;
+        let main = db.size().saturating_sub(db.num_idle() as u32);
+        main + self.state.background.connections_in_use()
     }
 }
 
@@ -150,17 +147,37 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         db::redact(&config.database_url())
     );
 
-    let state = AppState::new(config.clone(), pool, Arc::new(SystemClock), setup_code).await?;
+    // A start that fails from here on closes its pools and stops its background jobs: on Windows
+    // the data directory's files stay locked while a pool is open. The `secrets.lock` the
+    // keyring holds is released only once the last clone of the state is gone, which the stopped
+    // jobs no longer keep.
+    let state = match AppState::new(config.clone(), pool.clone(), Arc::new(SystemClock), setup_code).await {
+        Ok(state) => state,
+        Err(e) => {
+            pool.close().await;
+            return Err(e);
+        }
+    };
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
+    match listen(&config, &state).await {
+        Ok(running) => Ok(running),
+        Err(e) => {
+            state.close().await;
+            Err(e)
+        }
+    }
+}
+
+/// Binds the listeners of a started server; on an error the ones already bound are dropped.
+async fn listen(config: &Config, state: &AppState) -> Result<Running> {
     let app = router(state.clone());
     let mut running = Running {
         http_addr: None,
         https_addr: None,
         handles: Vec::new(),
         listeners: JoinSet::new(),
-        db: state.db.clone(),
-        background: state.background.clone(),
+        state: state.clone(),
         hard_deadline: Arc::default(),
     };
 
