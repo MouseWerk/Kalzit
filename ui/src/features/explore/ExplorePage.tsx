@@ -42,7 +42,7 @@ import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasou
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
-import { emptyQuery, queryText } from "../datasources/queryKinds";
+import { emptyQuery, hasQuery } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import "./explore.css";
 
@@ -155,7 +155,7 @@ function Explore({ orgId }: { orgId: string }) {
   });
 
   function run(nextRange = range, nextQuery: unknown = query) {
-    if (datasource === undefined || nextQuery === null || queryText(nextQuery).trim() === "") {
+    if (datasource === undefined || !hasQuery(nextQuery, datasource.kind)) {
       return;
     }
     // A new run leaves an old filter refusal behind.
@@ -297,7 +297,7 @@ function Explore({ orgId }: { orgId: string }) {
           type="button"
           className="button button--primary"
           onClick={() => run()}
-          disabled={queryText(query).trim() === ""}
+          disabled={!hasQuery(query, datasource.kind)}
         >
           {result.isFetching ? t("explore.running") : t("explore.run")}
         </button>

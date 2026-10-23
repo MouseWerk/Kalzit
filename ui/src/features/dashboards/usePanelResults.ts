@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
-import { queryText } from "../datasources/queryKinds";
+import { hasQuery } from "../datasources/queryKinds";
 import { runPanelQuery } from "./api";
 import {
   type PanelModel,
@@ -49,7 +49,7 @@ export function usePanelResults(input: PanelQueryInput) {
   const targets =
     source === "stored"
       ? panel.targets
-      : panel.targets.filter((t) => t.datasourceId !== "" && queryText(t.query).trim() !== "");
+      : panel.targets.filter((t) => t.datasourceId !== "" && hasQuery(t.query));
   const refIds = targets.map((t) => t.refId);
   return useQuery({
     queryKey: [

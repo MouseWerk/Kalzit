@@ -18,7 +18,7 @@ import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import type { DocumentFilter } from "../../panels/types";
-import { queryText } from "../datasources/queryKinds";
+import { hasQuery } from "../datasources/queryKinds";
 import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
 import "./dashboardTools.css";
@@ -419,9 +419,7 @@ function exportPanelData(
   // what is wrong with them instead of refusing the steps.
   const read = new Set(asSteps(panel.transformations).flatMap(stepFrames));
   const targets = panel.targets.filter(
-    (target) =>
-      read.has(target.refId) ||
-      (target.datasourceId !== "" && queryText(target.query).trim() !== ""),
+    (target) => read.has(target.refId) || (target.datasourceId !== "" && hasQuery(target.query)),
   );
   return exportQuery(
     query.orgId,
@@ -507,7 +505,7 @@ export function PanelBody({
       </div>
     );
   }
-  if (!panel.targets.some((target) => queryText(target.query).trim() !== "")) {
+  if (!panel.targets.some((target) => hasQuery(target.query))) {
     return <p className="panel-empty">{t("dashboards.panel.noQuery")}</p>;
   }
   if (pending) {
