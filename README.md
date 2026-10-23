@@ -42,7 +42,7 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | Dashboards | Your account: sessions |
 | ![Data source kinds as cards with their logos](docs/screenshots/data-source-kinds-light.png) | ![Data source kinds in the dark theme](docs/screenshots/data-source-kinds-dark.png) |
 | Adding a data source | Adding a data source, dark theme |
-| ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page](docs/screenshots/sign-in.png) |
+| ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).

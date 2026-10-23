@@ -2,6 +2,7 @@ import { useId } from "react";
 import { LANGUAGES, setLanguage, useI18n } from "../i18n/i18n";
 import { recordChoice } from "../lib/localChoice";
 import { setTheme, THEMES, useTheme } from "../theme/theme";
+import "../auth/auth.css";
 
 function pick<T extends string>(options: readonly T[], value: string, apply: (option: T) => void) {
   const option = options.find((candidate) => candidate === value);
@@ -26,7 +27,7 @@ export function PreferenceSelects() {
         <label htmlFor={languageId}>{t("language.label")}</label>
         <select
           id={languageId}
-          className="select"
+          className="select auth__select"
           value={language}
           onChange={(event) =>
             pick(LANGUAGES, event.currentTarget.value, (language) => {
@@ -46,7 +47,7 @@ export function PreferenceSelects() {
         <label htmlFor={themeId}>{t("theme.label")}</label>
         <select
           id={themeId}
-          className="select"
+          className="select auth__select"
           value={theme}
           onChange={(event) =>
             pick(THEMES, event.currentTarget.value, (theme) => {
