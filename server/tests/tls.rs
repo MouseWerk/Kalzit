@@ -124,12 +124,12 @@ async fn renewed_certificate_is_picked_up_without_restart() {
     assert!(trusts_new.get(&url).send().await.is_err(), "new certificate must not be served yet");
     write_cert(dir.path(), &new);
 
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + common::HANG_GUARD;
     loop {
         if trusts_new.get(&url).send().await.is_ok() {
             break;
         }
-        assert!(Instant::now() < deadline, "renewed certificate was not loaded within 15 s");
+        assert!(Instant::now() < deadline, "renewed certificate was not loaded in time");
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 

@@ -485,7 +485,7 @@ type QueryResult =
   wait at most 0.5 s for the write lock: SQLite keeps waiting even after a statement is aborted,
   and closing the database would wait the full 15 s. The requests' connections keep their 15 s.
   Each of these writes is repeated later, so a dropped one costs nothing. An hourly run that
-  finds the database busy is tried again after 1, 2 and 4 minutes, as long as that is before the
+  finds the database busy is tried again after 2 s, 10 s, 1 and 5 minutes, as long as that is before the
   next run (`db::Schedule`): the audit retention is a privacy rule and must not slip by an hour.
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive

@@ -523,7 +523,7 @@ async fn a_waiting_session_touch_does_not_delay_the_stop() {
 
     let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let mut holder = sqlx::AnyConnection::connect(&url).await.unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + common::HANG_GUARD;
     loop {
         let (left,): (i64,) = sqlx::query_as(
             "SELECT (SELECT COUNT(*) FROM sessions) + (SELECT COUNT(*) FROM audit_events WHERE id = 'old')",
@@ -534,7 +534,7 @@ async fn a_waiting_session_touch_does_not_delay_the_stop() {
         if left == 1 {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "the start jobs did not run within 20 s");
+        assert!(std::time::Instant::now() < deadline, "the start jobs did not run in time");
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
@@ -593,9 +593,9 @@ async fn a_start_job_waiting_for_the_lock_does_not_delay_the_stop() {
     common::remove_dir(dir);
 }
 
-/// Polls `done` every few milliseconds until it holds, for at most 20 s.
+/// Polls `done` every few milliseconds until it holds, for at most `HANG_GUARD`.
 async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + common::HANG_GUARD;
     while !done() {
         assert!(std::time::Instant::now() < deadline, "timed out: {what}");
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -626,7 +626,7 @@ async fn a_busy_retention_run_is_tried_again_before_the_next_run() {
     sqlx::query("ROLLBACK").execute(&mut holder).await.unwrap();
 
     let mut gone = false;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + common::HANG_GUARD;
     while !gone {
         assert!(std::time::Instant::now() < deadline, "the retry did not delete the 1970 event");
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -654,14 +654,14 @@ async fn the_server_runs_the_audit_retention() {
 
     let server = kalzit::server::start(config.clone(), Some(SETUP_CODE.into())).await.unwrap();
     let db = kalzit::db::connect(&config.database_url(), 1).await.unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + common::HANG_GUARD;
     loop {
         let (old,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE id = 'old'").fetch_one(&db).await.unwrap();
         if old == 0 {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "the retention did not delete the 1970 event within 20 s");
+        assert!(std::time::Instant::now() < deadline, "the retention did not delete the 1970 event in time");
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     db.close().await;

@@ -472,10 +472,12 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// Every hour; after `busy` again in 1, 2 and 4 minutes.
+    /// Every hour; after `busy` again in 2 s, 10 s, 1 minute and 5 minutes. A short first retry
+    /// matters: the jobs that start with the server contend for the lock for a moment, and
+    /// waiting a minute for that would be a long time for a run that is due now.
     pub fn hourly() -> Self {
-        let minutes = |m: u64| Duration::from_secs(m * 60);
-        Self { interval: minutes(60), retries: vec![minutes(1), minutes(2), minutes(4)] }
+        let secs = Duration::from_secs;
+        Self { interval: secs(60 * 60), retries: vec![secs(2), secs(10), secs(60), secs(5 * 60)] }
     }
 }
 
@@ -591,6 +593,34 @@ mod tests {
         assert_eq!(request_scope(nothing_saved).await, "busy");
         assert!(!committed(), "outside a request scope nothing is marked");
         holder.close().await.unwrap();
+        pool.close().await;
+        dir.close().unwrap();
+    }
+
+    /// A first run that finds the database busy is tried again after the first retry delay, not
+    /// at the next interval.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_busy_first_run_is_tried_again_after_the_short_delay() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let url = crate::config::sqlite_url(&dir.path().join("k.db"));
+        let pool = connect_with(&url, 2, Duration::from_millis(100)).await.unwrap();
+        let background = Background::new(&pool, &url, 1);
+        let runs = std::sync::Arc::new(AtomicU32::new(0));
+        let counted = runs.clone();
+        let schedule = Schedule { interval: Duration::from_secs(3600), retries: vec![Duration::from_millis(50)] };
+        spawn_job(&background, "test job", schedule, move || {
+            let counted = counted.clone();
+            async move {
+                if counted.fetch_add(1, Ordering::SeqCst) == 0 { Err(JobError::Busy("locked".into())) } else { Ok(()) }
+            }
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while runs.load(Ordering::SeqCst) < 2 {
+            assert!(std::time::Instant::now() < deadline, "the busy run was not tried again");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(Schedule::hourly().retries[0], Duration::from_secs(2));
         pool.close().await;
         dir.close().unwrap();
     }
