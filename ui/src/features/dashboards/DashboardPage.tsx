@@ -2,12 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { PanelHostContext } from "../../panels/host";
+import { StarButton, useRecordView } from "../../shell/StarButton";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AnnotationDialog } from "./AnnotationDialog";
@@ -21,6 +24,7 @@ import {
   dashboardQuery,
   deleteDashboard,
   fetchDashboard,
+  foldersQuery,
   type LinkedPanel,
   restoreDashboard,
   saveDashboard,
@@ -33,6 +37,7 @@ import { buildExport, downloadJson } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
 import {
+  clickTargets,
   type DashboardModel,
   newPanelId,
   type PanelModel,
@@ -154,6 +159,7 @@ interface ScreenProps {
 export function DashboardScreen({ orgId, dashboardId, display, onDisplay, controls }: ScreenProps) {
   const { t } = useI18n();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
+  useRecordView(orgId, dashboardId);
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
   const picked = useRef(new Map<string, VariableValues>());
@@ -281,8 +287,13 @@ function DashboardView({
   onDisplay: (patch: Partial<DisplayState>) => void;
   controls?: ReactNode;
 }) {
-  const { t } = useI18n();
+  const { t, timeZone, weekStart } = useI18n();
   const permissions = useOrgPermissions();
+  // For the breadcrumbs; without folders:read the trail starts at the list.
+  const folders = useQuery({
+    ...foldersQuery(orgId),
+    enabled: permissions.has("folders:read"),
+  });
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const headingId = useId();
@@ -342,7 +353,7 @@ function DashboardView({
     draft === null && display.from !== undefined && display.to !== undefined
       ? { from: display.from, to: display.to }
       : model.timeRange;
-  const resolved = resolveRange(textRange, clock.now);
+  const resolved = resolveRange(textRange, clock.now, { timeZone, weekStart });
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
 
   useEffect(() => {
@@ -636,6 +647,15 @@ function DashboardView({
     downloadJson(model.title, buildExport(model, library, sources));
   }
 
+  // Panels may set a variable the dashboard defines (a node click setting $customerId).
+  const host = {
+    orgId,
+    variables: {
+      ...clickTargets(model.variables),
+      set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
+    },
+  };
+
   const viewActions = {
     onView: (panelId: string) => onDisplay({ viewPanel: panelId }),
     marks: annotations.marks,
@@ -714,6 +734,18 @@ function DashboardView({
           {t("dashboardTools.view.exit")}
         </button>
       ) : null}
+      {mode === "normal" ? (
+        <Breadcrumbs
+          crumbs={[
+            { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+            ...folderTrail(folders.data ?? [], dashboard.folderId).map((step) => ({
+              label: step.name,
+              link: { to: "/dashboards" as const, search: { folder: step.id } },
+            })),
+            { label: model.title === "" ? t("dashboards.untitled") : model.title },
+          ]}
+        />
+      ) : null}
       {mode === "kiosk" ? null : (
         <div className="dashboard__bar">
           <h1 className="dashboard__title truncate" id={headingId}>
@@ -754,6 +786,7 @@ function DashboardView({
               </button>
             ) : draft === null ? (
               <>
+                <StarButton orgId={orgId} dashboardId={dashboard.id} />
                 {canEdit ? (
                   <button
                     type="button"
@@ -928,59 +961,63 @@ function DashboardView({
               {canEdit ? t("dashboards.noPanels.text") : t("dashboards.noPanels.textViewer")}
             </EmptyState>
           ) : (
-            <DashboardGrid
-              panels={model.panels}
-              rows={rows}
-              libraryPanels={library}
-              now={clock.now}
-              query={{
-                orgId,
-                dashboardId: dashboard.id,
-                range: resolved.range,
-                variables: values,
-                saved: dashboard.model.variables,
-                source: "stored",
-                run: clock.run,
-              }}
-              storedPanels={dashboard.model.panels}
-              collapsed={(row) =>
-                openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
-              }
-              onToggleRow={(row) =>
-                setOpenRows((current) => {
-                  const open = current[row.id] ?? !row.collapsed;
-                  return { ...current, [row.id]: !open };
-                })
-              }
-              view={viewActions}
-              edit={editActions}
-            />
+            <PanelHostContext value={host}>
+              <DashboardGrid
+                panels={model.panels}
+                rows={rows}
+                libraryPanels={library}
+                now={clock.now}
+                query={{
+                  orgId,
+                  dashboardId: dashboard.id,
+                  range: resolved.range,
+                  variables: values,
+                  saved: dashboard.model.variables,
+                  source: "stored",
+                  run: clock.run,
+                }}
+                storedPanels={dashboard.model.panels}
+                collapsed={(row) =>
+                  openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
+                }
+                onToggleRow={(row) =>
+                  setOpenRows((current) => {
+                    const open = current[row.id] ?? !row.collapsed;
+                    return { ...current, [row.id]: !open };
+                  })
+                }
+                view={viewActions}
+                edit={editActions}
+              />
+            </PanelHostContext>
           )}
         </>
       ) : null}
       {dialog?.kind === "panel" && resolved.ok ? (
-        <PanelEditor
-          orgId={orgId}
-          dashboardId={dashboard.id}
-          panel={dialog.panel}
-          range={resolved.range}
-          variables={editorValues(dialog.panel, rows, values)}
-          stored={(() => {
-            const saved = dashboard.model.panels.find((p) => p.id === dialog.panel.id);
-            return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);
-          })()}
-          savedVariables={dashboard.model.variables}
-          rows={rows}
-          dashboardVariables={model.variables}
-          libraryName={
-            dialog.panel.libraryPanelId === undefined
-              ? undefined
-              : (library[dialog.panel.libraryPanelId]?.name ?? t("libraryPanels.missing"))
-          }
-          onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
-          onApply={(panel) => onPanelApply(panel, dialog.isNew)}
-          onClose={() => setDialog(null)}
-        />
+        <PanelHostContext value={host}>
+          <PanelEditor
+            orgId={orgId}
+            dashboardId={dashboard.id}
+            panel={dialog.panel}
+            range={resolved.range}
+            variables={editorValues(dialog.panel, rows, values)}
+            stored={(() => {
+              const saved = dashboard.model.panels.find((p) => p.id === dialog.panel.id);
+              return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);
+            })()}
+            savedVariables={dashboard.model.variables}
+            rows={rows}
+            dashboardVariables={model.variables}
+            libraryName={
+              dialog.panel.libraryPanelId === undefined
+                ? undefined
+                : (library[dialog.panel.libraryPanelId]?.name ?? t("libraryPanels.missing"))
+            }
+            onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
+            onApply={(panel) => onPanelApply(panel, dialog.isNew)}
+            onClose={() => setDialog(null)}
+          />
+        </PanelHostContext>
       ) : null}
       {dialog?.kind === "settings" ? (
         <SettingsDialog

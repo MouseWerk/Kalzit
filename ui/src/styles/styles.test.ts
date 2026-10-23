@@ -1,6 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { contrastRatio, perceivedDistance, VISIONS } from "../test/contrast";
 import { listCssFiles, parseCss, type StyleRule, stripComments } from "../test/cssParse";
@@ -173,10 +181,40 @@ describe("tokens only", () => {
 describe("no accent frames for states", () => {
   // From design/guard-tests.md.
   const STATE =
-    /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
+    /\.(active|selected|sel|current|on|checked|picked|now|today|focused|is-selected|is-editing|recording|running|live|playing)\b|--(active|selected|current|checked)\b|:checked|:hover|:active|:focus(-visible|-within)?\b|\[aria-(selected|current|pressed|checked|expanded)/;
   const FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow)$/;
+  // The outline of an SVG mark (a cell, a slice) is its stroke; a state must not color it either.
+  const STATE_FRAME = /^(border(-[\w-]+)?|outline(-color)?|box-shadow|stroke)$/;
   const ACCENT =
-    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?)\b/;
+    /--(accent(-strong|-soft|-text|-hover)?|on-accent|success(-[\w-]+)?|warning(-[\w-]+)?|danger(-[\w-]+)?|info(-[\w-]+)?|tone(-[\w-]+)?|brand-[\w-]+)\b/;
+  // Brand colors belong inside data source logos only: never in a state, frame or not.
+  const BRAND = /--brand-[\w-]+\b/;
+
+  /** Every declaration that colors a hovered, focused, selected or current element by brand. */
+  function brandInStates(rules: (StyleRule & { file?: string })[]): string[] {
+    return rules.flatMap((rule) =>
+      STATE.test(rule.selector)
+        ? rule.declarations
+            .filter(({ value }) => BRAND.test(value))
+            .map(({ property, value }) => `${rule.selector} { ${property}: ${value} }`)
+        : [],
+    );
+  }
+
+  it("uses no brand color for any state", () => {
+    expect(brandInStates(allRules())).toEqual([]);
+  });
+
+  it("catches brand colors in state rules, frames and fills alike", () => {
+    const sample = parseCss(
+      '@layer components { .a:hover { background: var(--brand-mongodb); } .b[aria-current="page"] { border-color: var(--brand-neo4j); } .kind-logo[data-logo="x"] { color: var(--brand-x); } }',
+    );
+    expect(brandInStates(sample)).toEqual([
+      ".a:hover { background: var(--brand-mongodb) }",
+      '.b[aria-current="page"] { border-color: var(--brand-neo4j) }',
+    ]);
+    expect(ACCENT.test("var(--brand-postgresql)")).toBe(true);
+  });
 
   it("frames no hovered, focused, selected or current element in an accent or status color", () => {
     for (const rule of allRules()) {
@@ -184,18 +222,29 @@ describe("no accent frames for states", () => {
         continue;
       }
       for (const { property, value } of rule.declarations) {
-        if (FRAME.test(property)) {
+        if (STATE_FRAME.test(property)) {
           expect(ACCENT.test(value), where(rule, `${property}: ${value}`)).toBe(false);
         }
       }
     }
   });
 
+  it("counts BEM state modifiers and SVG strokes", () => {
+    expect(STATE.test(".heatmap__cell--active")).toBe(true);
+    expect(STATE.test(".picker__card--current .picker__name")).toBe(true);
+    expect(STATE.test(".gauge__track")).toBe(false);
+    expect(STATE_FRAME.test("stroke")).toBe(true);
+    expect(ACCENT.test("var(--tone-critical)")).toBe(true);
+  });
+
   it("puts status colors into text, icons and fills, never frames", () => {
     for (const rule of allRules({ exceptTokens: true })) {
       for (const { property, value } of rule.declarations) {
         if (FRAME.test(property) && property !== "box-shadow") {
-          expect(/--(success|warning|danger|info)/.test(value), where(rule, property)).toBe(false);
+          // Threshold tones (--tone, --tone-ok, ...) are status colors as well.
+          expect(/--(success|warning|danger|info|tone)\b/.test(value), where(rule, property)).toBe(
+            false,
+          );
         }
       }
     }
@@ -371,7 +420,24 @@ describe("motion and typography", () => {
     const zeroed = reduced?.flatMap((rule) =>
       rule.declarations.map((d) => `${d.property}: ${d.value}`),
     );
-    expect(zeroed).toEqual(["--duration-fast: 0ms", "--duration-normal: 0ms"]);
+    expect(zeroed).toEqual([
+      "--duration-fast: 0ms",
+      "--duration-normal: 0ms",
+      "--duration-pulse: 0ms",
+    ]);
+    // Each zeroing block must come after the block that declares the duration, or it loses.
+    const tokenRules = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
+    for (const rule of reduced ?? []) {
+      for (const { property } of rule.declarations) {
+        const declared = tokenRules.findLastIndex(
+          (r) =>
+            r.selector === ":root" &&
+            r.context.length === 1 &&
+            r.declarations.some((d) => d.property === property),
+        );
+        expect(tokenRules.indexOf(rule), property).toBeGreaterThan(declared);
+      }
+    }
   });
 
   it("turns off ligatures wherever the mono font is used", () => {
@@ -410,19 +476,261 @@ describe("motion and typography", () => {
     }
   });
 
-  it("loads no web fonts and nothing from other hosts", () => {
+  it("loads nothing from other hosts", () => {
     for (const { name, source } of files) {
-      expect(/@font-face|url\(\s*["']?(https?:)?\/\//.test(source), name).toBe(false);
+      expect(remoteLoads(source), name).toEqual([]);
+    }
+  });
+
+  it("catches remote loads in url() and in @import, in any case", () => {
+    for (const source of [
+      '.a { background: url("https://example.com/a.png"); }',
+      ".a { background: URL(//example.com/a.png); }",
+      '@import "https://example.com/a.css";',
+      "@import '//example.com/a.css';",
+      '@IMPORT "HTTPS://example.com/a.css";',
+      "@import url(https://example.com/a.css);",
+      '.a { background: image-set("https://example.com/a.png" 1x, "./a2.png" 2x); }',
+      ".a { background: -webkit-IMAGE-SET('//example.com/a.png' 1x); }",
+      '.a { background: image-set(url("https://example.com/a.png") 1x); }',
+    ]) {
+      expect(remoteLoads(source), source).toHaveLength(1);
+    }
+    expect(remoteLoads('@import "./tokens.css"; .a { background: url("./a.png"); }')).toEqual([]);
+    expect(
+      remoteLoads('.a { background: image-set("./a.png" 1x, "a2.png" type("image/png")); }'),
+    ).toEqual([]);
+  });
+
+  it("loads fonts only from the bundled, licensed files declared in tokens.css", () => {
+    const disk = {
+      exists: existsSync,
+      list: (dir: string) => (existsSync(dir) ? readdirSync(dir) : []),
+    };
+    expect(fontViolations(files, disk)).toEqual([]);
+  });
+
+  it("catches every way a font could break the bundling rule", () => {
+    const fonts = resolve(SRC_DIR, "assets/fonts");
+    const disk = {
+      exists: (path: string) => resolve(path) === resolve(fonts, "a.woff2"),
+      list: () => ["OFL-a.txt"],
+    };
+    const face = (body: string, at = "@font-face") =>
+      `@layer tokens { ${at} { font-family: "A"; ${body} } }`;
+    const good = 'font-display: swap; src: url("../assets/fonts/a.woff2") format("woff2");';
+    const check = (name: string, source: string) => fontViolations([{ name, source }], disk);
+    const notBundled = (url: string) =>
+      `styles/tokens.css: font file ${url} is not a bundled woff2 under src/assets/fonts`;
+
+    expect(check(TOKENS_FILE, face(good))).toEqual([]);
+    expect(check(TOKENS_FILE, face('font-display: swap; src: local("Arial");'))).toEqual([]);
+    // A: a face outside tokens.css; B: the same, spelled in capitals.
+    expect(check("features/x/x.css", face(good))).toEqual([
+      "features/x/x.css: @font-face outside styles/tokens.css",
+    ]);
+    expect(check("features/x/x.css", face(good, "@FONT-FACE"))).toEqual([
+      "features/x/x.css: @font-face outside styles/tokens.css",
+    ]);
+    // C, D: no swap.
+    expect(check(TOKENS_FILE, face('src: url("../assets/fonts/a.woff2");'))).toEqual([
+      "styles/tokens.css: @font-face without font-display: swap",
+    ]);
+    expect(
+      check(TOKENS_FILE, face('font-display: block; src: url("../assets/fonts/a.woff2");')),
+    ).toEqual(["styles/tokens.css: @font-face without font-display: swap"]);
+    // E: files that are not bundled woff2.
+    for (const url of [
+      "https://fonts.example.com/a.woff2",
+      "//fonts.example.com/a.woff2",
+      "/assets/fonts/a.woff2",
+      "data:font/woff2;base64,AAAA",
+      "../assets/a.woff2",
+      "../assets/fonts/b.woff2",
+      "../assets/fonts/a.ttf",
+    ]) {
+      expect(check(TOKENS_FILE, face(`font-display: swap; src: url("${url}");`)), url).toEqual([
+        notBundled(url),
+      ]);
+    }
+    // F: a second src or font-display would win over the first one.
+    expect(check(TOKENS_FILE, face(`${good} src: url("../assets/fonts/a.woff2");`))).toEqual([
+      "styles/tokens.css: @font-face declares src more than once",
+    ]);
+    expect(check(TOKENS_FILE, face(`${good} font-display: swap;`))).toEqual([
+      "styles/tokens.css: @font-face declares font-display more than once",
+    ]);
+    // G: url() in capitals.
+    expect(
+      check(TOKENS_FILE, face('font-display: swap; src: URL("data:font/woff2;base64,AAAA");')),
+    ).toEqual([notBundled("data:font/woff2;base64,AAAA")]);
+    // H: no license next to the file; I: no license in the release bundle.
+    const publicDir = resolve(SRC_DIR, "../public/licenses/fonts");
+    const noLicense = {
+      ...disk,
+      list: (dir: string) => (dir === fonts ? ["OFL-b.txt", "README.md"] : ["OFL-a.txt"]),
+    };
+    expect(fontViolations([{ name: TOKENS_FILE, source: face(good) }], noLicense)).toEqual([
+      "styles/tokens.css: font file ../assets/fonts/a.woff2 has no license file next to it",
+    ]);
+    const notShipped = {
+      ...disk,
+      list: (dir: string) => (dir === publicDir ? ["OFL-b.txt"] : ["OFL-a.txt"]),
+    };
+    expect(fontViolations([{ name: TOKENS_FILE, source: face(good) }], notShipped)).toEqual([
+      "styles/tokens.css: font file ../assets/fonts/a.woff2 has no license in public/licenses/fonts",
+    ]);
+  });
+
+  it("gives the fallback faces the measured metrics of the bundled faces", () => {
+    // Measured with fontTools (see the comment at the fallback faces in tokens.css).
+    const measured: Record<string, Record<string, string>> = {
+      '"Instrument Sans Fallback"': {
+        "size-adjust": "102.8%",
+        "ascent-override": "94.4%",
+        "descent-override": "24.3%",
+      },
+      '"Newsreader Fallback"': {
+        "size-adjust": "96.7%",
+        "ascent-override": "76%",
+        "descent-override": "27.4%",
+      },
+    };
+    const tokens = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
+    for (const [family, metrics] of Object.entries(measured)) {
+      const face = tokens.find(
+        (rule) =>
+          rule.selector === "@font-face" &&
+          rule.declarations.some((d) => d.property === "font-family" && d.value === family),
+      );
+      for (const [property, value] of Object.entries(metrics)) {
+        expect(
+          face?.declarations.find((d) => d.property === property)?.value,
+          `${family} ${property}`,
+        ).toBe(value);
+      }
+    }
+  });
+
+  it("sizes menus and the rail's flyout from the menu tokens", () => {
+    const rules = rulesByFile.find(({ name }) => name === "styles/components.css")?.rules ?? [];
+    const widths = rules
+      .filter((rule) => [".menu", ".nav-flyout"].includes(rule.selector))
+      .flatMap((rule) => rule.declarations)
+      .filter((d) => /^(min-|max-)?width$/.test(d.property));
+    expect(widths.length).toBeGreaterThan(0);
+    for (const { property, value } of widths) {
+      expect(value, property).toMatch(/var\(--size-menu-(min|max)\)/);
+    }
+  });
+
+  it("colors native check boxes and radios with the text color", () => {
+    const rules = rulesByFile.find(({ name }) => name === "styles/base.css")?.rules ?? [];
+    for (const type of ["checkbox", "radio"]) {
+      const rule = rules.find((r) =>
+        r.selector.split(",").some((part) => part.trim() === `input[type="${type}"]`),
+      );
+      expect(rule?.declarations, type).toContainEqual({
+        property: "accent-color",
+        value: "var(--text)",
+      });
     }
   });
 });
 
+/** Every url() or @import of a stylesheet that reaches another host (a scheme or `//`). */
+function remoteLoads(source: string): string[] {
+  const css = stripComments(source);
+  const remote = /^\s*["']?\s*([a-z][\w+.-]*:|\/\/)/i;
+  const found: string[] = [];
+  for (const [, target = ""] of css.matchAll(/url\(([^)]*)\)/gi)) {
+    if (remote.test(target)) found.push(`url(${target})`);
+  }
+  for (const [, target = ""] of css.matchAll(/@import\s+("[^"]*"|'[^']*')/gi)) {
+    if (remote.test(target)) found.push(`@import ${target}`);
+  }
+  // image-set() also takes plain strings as image addresses (url() inside it is caught above).
+  for (const [, inner = ""] of css.matchAll(/image-set\(((?:[^()]|\([^()]*\))*)\)/gi)) {
+    for (const [target] of inner.replace(/url\([^)]*\)/gi, "").matchAll(/"[^"]*"|'[^']*'/g)) {
+      if (remote.test(target)) found.push(`image-set ${target}`);
+    }
+  }
+  return found;
+}
+
+/**
+ * Fonts are bundled with the app (the server runs offline): faces only in tokens.css, each with
+ * one font-display: swap and one src, each file a woff2 under src/assets/fonts that exists, with
+ * its family's license (OFL-<family>.txt) next to it and in public/licenses/fonts, which ships in
+ * the release. The file system is injectable so the guard itself can be tested.
+ */
+function fontViolations(
+  sheets: { name: string; source: string }[],
+  disk: { exists: (path: string) => boolean; list: (dir: string) => string[] },
+): string[] {
+  const fontsDir = resolve(SRC_DIR, "assets/fonts");
+  const publicDir = resolve(SRC_DIR, "../public/licenses/fonts");
+  const found: string[] = [];
+  for (const { name, source } of sheets) {
+    for (const rule of parseCss(source)) {
+      if (rule.selector.toLowerCase() !== "@font-face") {
+        continue;
+      }
+      if (name !== TOKENS_FILE) {
+        found.push(`${name}: @font-face outside ${TOKENS_FILE}`);
+        continue;
+      }
+      const all = (property: string) =>
+        rule.declarations.filter((d) => d.property === property).map((d) => d.value);
+      for (const property of ["src", "font-display"]) {
+        if (all(property).length > 1) {
+          found.push(`${name}: @font-face declares ${property} more than once`);
+        }
+      }
+      if (all("font-display").at(-1)?.toLowerCase() !== "swap") {
+        found.push(`${name}: @font-face without font-display: swap`);
+      }
+      for (const src of all("src")) {
+        for (const [, url = ""] of src.matchAll(/url\(\s*["']?([^"')]*)["']?\s*\)/gi)) {
+          const path = resolve(SRC_DIR, dirname(name), url);
+          const bundled =
+            url.startsWith(".") &&
+            url.endsWith(".woff2") &&
+            dirname(path) === fontsDir &&
+            disk.exists(path);
+          if (!bundled) {
+            found.push(`${name}: font file ${url} is not a bundled woff2 under src/assets/fonts`);
+            continue;
+          }
+          // OFL-instrument-sans.txt covers instrument-sans-*.woff2.
+          const file = basename(path);
+          const covers = (license: string) => {
+            const family = /^OFL-(.+)\.txt$/.exec(license)?.[1];
+            return (
+              family !== undefined &&
+              (file.startsWith(`${family}-`) || file.startsWith(`${family}.`))
+            );
+          };
+          if (!disk.list(fontsDir).some(covers)) {
+            found.push(`${name}: font file ${url} has no license file next to it`);
+          } else if (!disk.list(publicDir).some(covers)) {
+            found.push(`${name}: font file ${url} has no license in public/licenses/fonts`);
+          }
+        }
+      }
+    }
+  }
+  return found;
+}
+
 describe("contrast in every theme", () => {
   const tokenRules = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
 
+  // Every top-level block of the selector, in file order: areas append their tokens in blocks of
+  // their own, and those are checked like the first.
   function declarationsOf(selector: string): Map<string, string> {
-    const rule = tokenRules.find((r) => r.selector === selector && r.context.length === 1);
-    return new Map(rule?.declarations.map((d) => [d.property, d.value]));
+    const rules = tokenRules.filter((r) => r.selector === selector && r.context.length === 1);
+    return new Map(rules.flatMap((rule) => rule.declarations.map((d) => [d.property, d.value])));
   }
 
   const base = declarationsOf(":root");
@@ -489,11 +797,32 @@ describe("contrast in every theme", () => {
     ["--on-accent", ["--accent", "--accent-hover"], TEXT],
     ["--on-accent-busy", ["--accent-busy"], TEXT],
     ["--danger-text", ["--bg", "--bg-surface", "--bg-raised", "--danger-bg"], TEXT],
-    ["--success-text", ["--bg", "--bg-surface", "--bg-raised"], TEXT],
+    ["--success-text", ["--bg", "--bg-surface", "--bg-raised", "--success-bg"], TEXT],
+    ["--warning-text", ["--bg", "--bg-surface", "--bg-raised", "--warning-bg"], TEXT],
+    ["--info-text", ["--bg", "--bg-surface", "--bg-raised", "--info-bg"], TEXT],
+    ["--text", ["--success-bg", "--warning-bg", "--info-bg"], TEXT],
     // Non-text UI that carries meaning: input borders, the focus ring, the primary button fill.
     ["--border-strong", ["--bg", "--bg-surface", "--bg-raised"], UI],
     ["--focus-ring", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], UI],
     ["--accent", ["--bg", "--bg-surface", "--bg-raised"], UI],
+    // Threshold states are marks on the panel surfaces (gauge arcs, bars, cells, large values).
+    ...["--tone-ok", "--tone-warn", "--tone-critical"].map(
+      (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
+    ),
+    // Text sits on the tinted fills of colored stats and table cells.
+    ...["--text", "--text-muted"].map(
+      (name) =>
+        [
+          name,
+          [
+            "--tone-ok-bg",
+            "--tone-warn-bg",
+            "--tone-critical-bg",
+            ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `--chart-${n}-bg`),
+          ],
+          TEXT,
+        ] as [string, string[], number],
+    ),
     // Chart series are meaningful marks on the panel surfaces.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map(
       (n) =>
@@ -526,6 +855,49 @@ describe("contrast in every theme", () => {
         }
       }
       expect(tooClose).toEqual([]);
+    });
+  }
+
+  // Threshold states must be told apart without color vision too; they also carry a name for
+  // screen readers, but on the screen the color is what shows the state.
+  for (const scheme of ["light", "dark"] as const) {
+    it(`keeps threshold states distinguishable for every color vision (${scheme})`, () => {
+      const states = ["ok", "warn", "critical"].map((name) =>
+        resolveColor(base, scheme, `--tone-${name}`),
+      );
+      const tooClose: string[] = [];
+      for (const vision of VISIONS) {
+        for (let i = 0; i < states.length; i++) {
+          for (let j = i + 1; j < states.length; j++) {
+            const distance = perceivedDistance(states[i] ?? "", states[j] ?? "", vision);
+            if (distance < NEIGHBOURS_APART) {
+              tooClose.push(`${vision} ${i}/${j}: ${distance.toFixed(1)}`);
+            }
+          }
+        }
+      }
+      expect(tooClose).toEqual([]);
+    });
+
+    it(`grows the heat ramp steadily away from the surface (${scheme})`, () => {
+      const surface = resolveColor(base, scheme, "--bg-surface");
+      const ramp = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => resolveColor(base, scheme, `--heat-${n}`));
+      const contrast = ramp.map((color) => contrastRatio(color, surface));
+      for (let i = 1; i < contrast.length; i++) {
+        expect(contrast[i] ?? 0, `heat-${i + 1} after heat-${i}`).toBeGreaterThan(
+          contrast[i - 1] ?? 0,
+        );
+      }
+      // The strongest step is a mark that must stand out like a series color.
+      expect(contrast.at(-1) ?? 0).toBeGreaterThanOrEqual(UI);
+      for (const vision of VISIONS) {
+        for (let i = 1; i < ramp.length; i++) {
+          expect(
+            perceivedDistance(ramp[i] ?? "", ramp[i - 1] ?? "", vision),
+            `${vision} heat-${i}/heat-${i + 1}`,
+          ).toBeGreaterThanOrEqual(SERIES_APART);
+        }
+      }
     });
   }
 

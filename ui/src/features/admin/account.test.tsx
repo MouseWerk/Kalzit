@@ -69,7 +69,8 @@ describe("own account", () => {
     await user.click(current);
     await user.paste(TEST_PASSWORD);
     await user.click(submit);
-    expect(await within(section).findByText("Your password was changed.")).toBeTruthy();
+    // The confirmation is a toast in the app's notification region, outside the section.
+    expect(await screen.findByText("Your password was changed.")).toBeTruthy();
     expect(admin.password).toBe("a fresh long password");
     expect((current as HTMLInputElement).value).toBe("");
     // The server ended the other sessions; the list shows only this browser now.
@@ -85,9 +86,12 @@ describe("own account", () => {
     expect(within(rows[0] as HTMLElement).getByText(/^Last used .+, expires .+$/)).toBeTruthy();
 
     const end = within(rows[1] as HTMLElement).getByRole("button", {
-      name: /^End the session signed in /,
+      name: /^End this session \(signed in .+\)$/,
     });
     expect(end.textContent).toBe("End this session");
+    // The visible text starts the accessible name (WCAG 2.5.3), so "click End this session"
+    // works for speech input.
+    expect(end.getAttribute("aria-label")?.startsWith(end.textContent ?? "")).toBe(true);
     await user.click(end);
     expect(await screen.findByText("The session was ended.")).toBeTruthy();
     expect(admin.sessions.map((session) => session.id)).toEqual(["s1", "s3"]);

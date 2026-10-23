@@ -67,6 +67,8 @@ export interface FakeDashboardsState {
   variableRequests: { name: string; body: Record<string, unknown> }[];
   /** Every panel query request, with the panel it was for. */
   panelQueries: { dashboardId: string; panelId: string; body: PanelQueryRequest }[];
+  /** Every panel export request (docs/api/datasources.md, "Export"). */
+  panelExports: { dashboardId: string; panelId: string; body: Record<string, unknown> }[];
   /** Holds every panel query until the test calls `release`, to observe loading and limits. */
   holdPanelQueries: boolean;
   release: () => void;
@@ -322,6 +324,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     createdWithoutRange: [],
     variableRequests: [],
     panelQueries: [],
+    panelExports: [],
     holdPanelQueries: false,
     release: () => {
       state.holdPanelQueries = false;
@@ -604,6 +607,33 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         needs("dashboards:read") ?? panelQuery(dashboard, decodeURIComponent(parts[3] ?? ""), body)
       );
     }
+    if (parts[2] === "panels" && parts[4] === "export" && method === "POST") {
+      // data:export on the route, then dashboards:read on the dashboard, as on the server.
+      const denied = needs("data:export") ?? needs("dashboards:read");
+      if (denied !== null) return denied;
+      const panelId = decodeURIComponent(parts[3] ?? "");
+      if (!latest(dashboard).model.panels.some((p) => p.id === panelId)) {
+        return error(404, "not_found");
+      }
+      const extra = unknownField(body, [
+        "timeRange",
+        "intervalMs",
+        "maxDataPoints",
+        "variables",
+        "format",
+        "language",
+        "frame",
+      ]);
+      if (extra !== undefined) return validation(extra);
+      state.panelExports.push({ dashboardId: dashboard.id, panelId, body });
+      return new Response("﻿a;b\r\n1;2,5\r\n", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="Orders.csv"',
+        },
+      });
+    }
     if (parts[2] === "variables" && parts[4] === "options" && method === "POST") {
       // The decided contract: VariableOptionsRequest {timeRange, variables} without the
       // variable's own name; the answer {options, truncated}; a variable the saved dashboard
@@ -731,6 +761,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         areas.datasources,
         { refId: target.refId, datasourceId: target.datasourceId, query: target.query },
         query.timeRange,
+        query.variables,
       );
     }
     return json(200, { results });

@@ -3,7 +3,8 @@
  * next to an icon carries the meaning, so screen readers skip it.
  */
 const PATHS = {
-  logo: "M12 2.5 20.5 7.25v9.5L12 21.5l-8.5-4.75v-9.5zM12 2.5v19M3.5 7.25 12 12l8.5-4.75",
+  // The Kalzit mark from the website: a calcite rhombohedron, three visible faces.
+  logo: "M3.5 8.5 8 4.2l11.5-2 1.8 13.6-4 4.4L6 22.3ZM3.5 8.5 15 6.6l2.3 13.6M15 6.6l4.5-4.4",
   home: "M3.5 10.5 12 3.5l8.5 7M5.5 9v11h13V9M10 20v-6h4v6",
   dashboards: "M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z",
   explore: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.25 15.25 20 20",
@@ -17,7 +18,14 @@ const PATHS = {
   lock: "M6.5 10.5h11v9.5h-11zM8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5",
   chevron: "M9 6.5 14.5 12 9 17.5",
   sidebar: "M4.5 4.5h15v15h-15zM9.5 4.5v15",
+  star: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
+  starFilled: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
+  plus: "M12 5v14M5 12h14",
+  keyboard: "M3.5 6.5h17v11h-17zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8",
 } as const;
+
+/** Icons drawn filled instead of outlined (the starred state of a star). */
+const FILLED: ReadonlySet<IconName> = new Set<IconName>(["starFilled"]);
 
 export type IconName = keyof typeof PATHS;
 
@@ -26,7 +34,7 @@ export function Icon({ name, className }: { name: IconName; className?: string }
     <svg
       className={className === undefined ? "icon" : `icon ${className}`}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={FILLED.has(name) ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth="1.75"
       strokeLinecap="round"

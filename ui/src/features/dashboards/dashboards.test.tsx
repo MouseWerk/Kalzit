@@ -1,5 +1,5 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
@@ -428,6 +428,80 @@ describe("dashboard view", () => {
     expect(within(two).getByText("Ada")).toBeTruthy();
   });
 
+  it("draws a panel after its stored steps and names a failing step", async () => {
+    setup("viewer", [
+      {
+        ...sqlPanel("p-steps", "Scores", "SELECT * FROM scores"),
+        transformations: [
+          { id: "s1", type: "calculate", frame: "A", name: "doubled", expression: "score * 2" },
+        ],
+      },
+      {
+        ...sqlPanel("p-broken", "Broken", "SELECT * FROM scores", 12, 0),
+        transformations: [
+          { id: "s1", type: "calculate", frame: "A", name: "x", expression: "name * 2" },
+        ],
+      },
+    ]);
+    renderApp("/dashboards/d-sales");
+    const scores = await waitFor(() => {
+      const panel = panelOf("Scores");
+      within(panel).getByRole("columnheader", { name: "doubled" });
+      return panel;
+    });
+    expect(within(scores).getByText("6")).toBeTruthy();
+    const broken = await waitFor(() => {
+      const panel = panelOf("Broken");
+      within(panel).getByText(/Step 1:/);
+      return panel;
+    });
+    expect(within(broken).getByText(/Step 1:/).textContent).toMatch(
+      /Step 1: “\*” cannot combine text and number/,
+    );
+    // The queries' own result still shows.
+    expect(within(broken).getByText("Ada")).toBeTruthy();
+  });
+
+  it("offers export only with data:export and asks the panel's export route", async () => {
+    setup("viewer");
+    renderApp("/dashboards/d-sales");
+    await waitFor(() => within(panelOf("Orders")).getByText("9,007,199,254,740,993"));
+    expect(screen.queryByRole("button", { name: "Export Orders" })).toBeNull();
+    cleanup();
+
+    const server = setup("editor");
+    // jsdom has no object URLs; they are put in for this test and taken out again after it.
+    const before = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = () => "blob:kalzit";
+    URL.revokeObjectURL = () => {};
+    const created = vi.spyOn(URL, "createObjectURL");
+    const clicked = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    onTestFinished(() => {
+      created.mockRestore();
+      clicked.mockRestore();
+      URL.createObjectURL = before.create;
+      URL.revokeObjectURL = before.revoke;
+    });
+    const { user } = renderApp("/dashboards/d-sales");
+    const orders = await waitFor(() => {
+      const panel = panelOf("Orders");
+      within(panel).getByText("9,007,199,254,740,993");
+      return panel;
+    });
+    await user.click(within(orders).getByRole("button", { name: "Export Orders" }));
+    const dialog = screen.getByRole("dialog", { name: "Export data" });
+    await user.click(within(dialog).getByRole("radio", { name: /German/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(clicked).toHaveBeenCalled());
+    expect(server.areas.dashboards.panelExports).toHaveLength(1);
+    expect(server.areas.dashboards.panelExports[0]).toMatchObject({
+      panelId: "p-orders",
+      body: { format: "csv", language: "de" },
+    });
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "Export data" })).toBeNull();
+  });
+
   it("gives viewers view mode only", async () => {
     setup("viewer");
     renderApp("/dashboards/d-sales");
@@ -563,6 +637,22 @@ describe("editing a dashboard", () => {
     });
     // Unsaved panels were previewed with the free query route; viewers use the stored panel.
     expect(server.areas.datasources.queries.length).toBeGreaterThan(0);
+  });
+
+  it("keeps each panel type's options while stepping through the picker", async () => {
+    setup("editor", []);
+    const { user } = renderApp("/dashboards/d-sales");
+    await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
+    await user.click(screen.getAllByRole("button", { name: "Add panel" })[0] as HTMLElement);
+    const dialog = screen.getByRole("dialog", { name: "Edit panel" });
+    await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Color" }), "background");
+    // Arrow keys in the radio group pass through other types; coming back restores the options.
+    await user.click(within(dialog).getByRole("radio", { name: "Gauge" }));
+    await user.click(within(dialog).getByRole("radio", { name: "Stat" }));
+    expect(
+      (within(dialog).getByRole("combobox", { name: "Color" }) as HTMLSelectElement).value,
+    ).toBe("background");
   });
 
   it("adds a variable whose value reaches every panel query", async () => {

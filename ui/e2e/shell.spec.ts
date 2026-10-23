@@ -1,0 +1,71 @@
+import { t } from "./support/i18n";
+import { expect, signInOwner, test } from "./support/test";
+
+test("Ctrl+B collapses and expands the sidebar, and the choice survives a reload", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const shell = page.locator(".shell");
+  const toggle = page.getByRole("button", { name: t("nav.sidebar"), exact: true });
+  await expect(shell).toHaveAttribute("data-sidebar", "expanded");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  await page.keyboard.press("ControlOrMeta+B");
+  await expect(shell).toHaveAttribute("data-sidebar", "collapsed");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // The rail keeps every entry reachable by name.
+  await expect(
+    page.getByRole("navigation", { name: t("nav.label") }).getByRole("link", {
+      name: t("dashboards.nav"),
+    }),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(shell).toHaveAttribute("data-sidebar", "collapsed");
+
+  await page.keyboard.press("ControlOrMeta+B");
+  await expect(shell).toHaveAttribute("data-sidebar", "expanded");
+  await toggle.click();
+  await expect(shell).toHaveAttribute("data-sidebar", "collapsed");
+  await toggle.click();
+  await expect(shell).toHaveAttribute("data-sidebar", "expanded");
+});
+
+test("Ctrl+B does nothing while typing in a field", async ({ page }) => {
+  await signInOwner(page);
+  await page.goto("/dashboards");
+  await page.getByRole("searchbox", { name: t("dashboards.search") }).fill("abc");
+  await page.keyboard.press("ControlOrMeta+B");
+  await expect(page.locator(".shell")).toHaveAttribute("data-sidebar", "expanded");
+});
+
+const SECTIONS = [
+  ["admin.members.title", "/admin/members"],
+  ["admin.teams.title", "/admin/teams"],
+  ["admin.roles.title", "/admin/roles"],
+  ["admin.orgSettings.title", "/admin/settings"],
+  ["admin.audit.title", "/admin/audit"],
+  ["admin.users.title", "/admin/server/users"],
+  ["admin.orgs.title", "/admin/server/organizations"],
+  ["admin.serverSettings.title", "/admin/server/settings"],
+  ["admin.serverAudit.title", "/admin/server/audit"],
+] as const;
+
+test("every administration section opens from the sidebar", async ({ page }) => {
+  await signInOwner(page);
+  const nav = page.getByRole("navigation", { name: t("nav.label") });
+  const sections = nav.getByRole("button", { name: t("admin.sections") });
+  if ((await sections.getAttribute("aria-expanded")) !== "true") {
+    await sections.click();
+  }
+  const list = nav.getByRole("list", { name: t("admin.sections") });
+  for (const [label, path] of SECTIONS) {
+    await list.getByRole("link", { name: t(label), exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${path}$`));
+    await expect(page.getByRole("heading", { name: t(label), exact: true })).toBeVisible();
+    await expect(list.getByRole("link", { name: t(label), exact: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  }
+});

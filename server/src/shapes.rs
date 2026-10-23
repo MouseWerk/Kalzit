@@ -173,9 +173,10 @@ pub struct Field {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentSet {
-    /// Documents with typed values (see `typed`) where JSON has no type for them.
+    /// Documents with typed values (see `typed`) where JSON has no type for them, each in the
+    /// field order the database stored.
     #[cfg_attr(test, ts(type = "unknown[]"))]
-    pub documents: Vec<Value>,
+    pub documents: Vec<OrderedJson>,
     /// Sampled from the result: every field path with its types and how many documents have it.
     pub schema: Vec<FieldSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,6 +185,51 @@ pub struct DocumentSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub truncated: Option<Truncated>,
+    /// Why the set was cut, values that are not shown, ... (codes as for frames).
+    #[serde(default)]
+    pub notices: Vec<Notice>,
+    /// The query as sent, after macros and variables were bound (shown in the inspector).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub executed_query: Option<String>,
+}
+
+/// One JSON value kept as its text, so the key order survives (`serde_json::Map` sorts keys).
+/// Serializes as the JSON itself.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub struct OrderedJson(Box<serde_json::value::RawValue>);
+
+impl OrderedJson {
+    pub fn new(value: &impl Serialize) -> Result<Self, serde_json::Error> {
+        serde_json::value::to_raw_value(value).map(Self)
+    }
+
+    /// The JSON text.
+    pub fn get(&self) -> &str {
+        self.0.get()
+    }
+}
+
+impl From<Value> for OrderedJson {
+    fn from(value: Value) -> Self {
+        Self::new(&value).expect("a JSON value always serializes")
+    }
+}
+
+impl PartialEq for OrderedJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+/// Deserializing goes through `Value`, so it works with any deserializer (a raw value needs
+/// serde_json's own), but the key order is **not** kept there. No response path deserializes it:
+/// the server only builds and serializes document sets; deserializing is for tests and clients.
+impl<'de> Deserialize<'de> for OrderedJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Value::deserialize(deserializer)?.into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -205,10 +251,14 @@ pub struct TypeShare {
     pub share: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Truncated {
     pub limit: u32,
+    /// Which limit cut the result (a notice code such as `graph.node_limit`), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -225,6 +275,10 @@ pub struct GraphSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub truncated: Option<Truncated>,
+    /// What the source said about the result, such as columns that are not part of the graph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub notices: Option<Vec<Notice>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -354,6 +408,83 @@ pub struct VariableOptionsResponse {
     pub options: Vec<VariableOption>,
     /// True when the list was cut at the option limit or the query's row limit.
     pub truncated: bool,
+}
+
+/// Export file formats (docs/api/datasources.md, "Export"). Frames export as CSV, JSON or Excel; documents
+/// (NDJSON) and graphs (GraphML) follow with their milestones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ExportFormat {
+    Csv,
+    Json,
+    Xlsx,
+}
+
+/// Decides the CSV separator and decimal mark: German `;` and `,`, English `,` and `.`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ExportLanguage {
+    De,
+    En,
+}
+
+/// `POST /api/orgs/{orgId}/export`: a free query's result, after its steps, as a file. Needs
+/// `data:export` and `datasources:query` on every data source, as running it does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportRequest {
+    pub queries: Vec<QueryItem>,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// Analysis steps, as a panel stores them in `transformations`.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "unknown[]"))]
+    pub steps: Vec<Value>,
+    pub format: ExportFormat,
+    pub language: ExportLanguage,
+    /// The frame to export, by `refId`; the first frame when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub frame: Option<String>,
+    /// The file name's base, such as the Explore data source's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub title: Option<String>,
+}
+
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: the stored
+/// panel's result, after its stored steps, as a file. Needs `data:export` and `dashboards:read`
+/// on the dashboard, as viewing it does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelExportRequest {
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    pub format: ExportFormat,
+    pub language: ExportLanguage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub frame: Option<String>,
 }
 
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".
@@ -529,6 +660,10 @@ mod tests {
             ErrorBody::decl(&cfg),
             Page::<()>::decl(&cfg),
             DatasourceAccess::decl(&cfg),
+            ExportFormat::decl(&cfg),
+            ExportLanguage::decl(&cfg),
+            ExportRequest::decl(&cfg),
+            PanelExportRequest::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

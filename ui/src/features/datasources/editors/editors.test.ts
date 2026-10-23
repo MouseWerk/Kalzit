@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { PromSchema, SqlSchema } from "../api";
-import { promqlCompletions, sqlCompletions } from "./completion";
-import { tokenizePromql, tokenizeSql } from "./syntax";
+import type { GraphSourceSchema, PromSchema, SqlSchema } from "../api";
+import { emptyQuery, parseGsqlQuery, queryText } from "../queryKinds";
+import { cypherCompletions, promqlCompletions, sqlCompletions } from "./completion";
+import { GRAPH_GAP, gsqlTemplate, parseParams, templateGraph } from "./GsqlQueryEditor";
+import { tokenizeCypher, tokenizeGsql, tokenizePromql, tokenizeSql } from "./syntax";
 
 // Wire shapes of GET .../schema in docs/api/datasources.md.
 const SQL: SqlSchema = {
@@ -81,6 +83,45 @@ describe("PromQL completion", () => {
   });
 });
 
+// The graph kinds' schema answer: property keys for the whole source.
+const GRAPH: GraphSourceSchema = {
+  kind: "graph",
+  labels: ["Customer", "Product"],
+  edgeTypes: ["BOUGHT", "REVIEWED"],
+  propertyKeys: ["name", "price"],
+  queries: [],
+};
+
+describe("Cypher completion", () => {
+  it("offers labels in node patterns and edge types in edge patterns", () => {
+    expect(labels(cypherCompletions("MATCH (c:Cu", 11, GRAPH))).toEqual(["Customer"]);
+    expect(labels(cypherCompletions("MATCH (:", 8, GRAPH))).toEqual(["Customer", "Product"]);
+    expect(labels(cypherCompletions("MATCH (c)-[:B", 13, GRAPH))).toEqual(["BOUGHT"]);
+    expect(labels(cypherCompletions("MATCH (c)-[:BOUGHT|R", 20, GRAPH))).toEqual(["REVIEWED"]);
+    expect(labels(cypherCompletions("MATCH (c)-[r]->(p:P", 19, GRAPH))).toEqual(["Product"]);
+  });
+
+  it("offers property keys after a dot and in a pattern's braces, not as labels in a map", () => {
+    expect(labels(cypherCompletions("MATCH (c) RETURN c.n", 20, GRAPH))).toEqual(["name"]);
+    expect(labels(cypherCompletions("MATCH (c {", 10, GRAPH))).toEqual(["name", "price"]);
+    expect(cypherCompletions("MATCH (c {name:", 15, GRAPH)).toBeNull();
+  });
+
+  it("offers macros, keywords and functions", () => {
+    expect(labels(cypherCompletions("WHERE t > $__timeF", 18, GRAPH))).toEqual([
+      "$__timeFrom",
+      "$__timeFromMs",
+    ]);
+    expect(labels(cypherCompletions("re", 2, GRAPH))).toEqual([
+      "RETURN",
+      "relationships",
+      "replace",
+    ]);
+    expect(cypherCompletions("MATCH ", 6, GRAPH)).toBeNull();
+    expect(labels(cypherCompletions("ma", 2, undefined))).toEqual(["MATCH", "max"]);
+  });
+});
+
 describe("highlighting", () => {
   const samples = [
     "SELECT o.id, 'it''s' AS x -- note\nFROM orders o WHERE $__timeFilter(created_at) AND n > 1.5e3 /* c",
@@ -100,6 +141,27 @@ describe("highlighting", () => {
         .map((t) => t.text)
         .join(""),
     ).toBe(text);
+    expect(
+      tokenizeCypher(text)
+        .map((t) => t.text)
+        .join(""),
+    ).toBe(text);
+  });
+
+  it("colors Cypher clauses, labels, parameters, strings and comments", () => {
+    const tokens = tokenizeCypher(
+      "MATCH (c:Customer)-[:`HAS ORDER`]->(o) // note\nWHERE c.name = 'x' AND o.at > $__timeFrom RETURN count(o)",
+    );
+    const kind = (text: string) => tokens.find((t) => t.text.trim() === text)?.kind;
+    expect(kind("MATCH")).toBe("keyword");
+    expect(kind(":Customer")).toBe("label");
+    expect(kind(":`HAS ORDER`")).toBe("label");
+    expect(kind("// note")).toBe("comment");
+    expect(kind("'x'")).toBe("string");
+    expect(kind("$__timeFrom")).toBe("macro");
+    expect(kind("count")).toBe("function");
+    // A keyword as a property name is not a keyword.
+    expect(tokenizeCypher("RETURN n.count").find((t) => t.text === "count")?.kind).toBe("plain");
   });
 
   it("tells keywords, strings, comments and macros apart", () => {
@@ -116,5 +178,44 @@ describe("highlighting", () => {
     expect(prom.find((t) => t.text === "rate")?.kind).toBe("function");
     expect(prom.find((t) => t.text === "job")?.kind).toBe("label");
     expect(prom.find((t) => t.text === "5m")?.kind).toBe("duration");
+  });
+});
+
+describe("TigerGraph queries", () => {
+  it("start as interpreted GSQL and keep the installed form with its params", () => {
+    expect(emptyQuery("tigergraph")).toEqual({ gsql: "" });
+    expect(parseGsqlQuery({ installed: "q", params: { a: 1 } })).toEqual({
+      installed: "q",
+      params: { a: 1 },
+    });
+    expect(parseGsqlQuery({ gsql: "x", params: [1] })).toEqual({ gsql: "x" });
+    expect(queryText({ installed: "q" })).toBe("q");
+  });
+
+  it("name the source's graph in the template, or leave a visible gap instead of a guess", () => {
+    expect(templateGraph("social")).toEqual({ graph: "social", known: true });
+    expect(templateGraph(undefined)).toEqual({ graph: GRAPH_GAP, known: false });
+    expect(gsqlTemplate(templateGraph(undefined).graph)).toContain("FOR GRAPH <graph> {");
+  });
+
+  it("read params as a JSON object only", () => {
+    expect(parseParams("")).toEqual({});
+    expect(parseParams('{"a": 1}')).toEqual({ params: { a: 1 } });
+    expect(parseParams("[1]")).toEqual({ error: true });
+    expect(parseParams("{")).toEqual({ error: true });
+  });
+
+  it("highlight GSQL and start from one query body for the graph", () => {
+    const text = gsqlTemplate("social");
+    expect(text).toMatch(/^INTERPRET QUERY \(\) FOR GRAPH social \{/);
+    const tokens = tokenizeGsql(`${text} // c\nSELECT s FROM Start:s ACCUM @@n += 1`);
+    expect(tokens.map((t) => t.text).join("")).toBe(
+      `${text} // c\nSELECT s FROM Start:s ACCUM @@n += 1`,
+    );
+    const kind = (word: string) => tokens.find((t) => t.text === word)?.kind;
+    expect(kind("INTERPRET")).toBe("keyword");
+    expect(kind("ACCUM")).toBe("keyword");
+    expect(kind("@@n")).toBe("macro");
+    expect(kind("// c")).toBe("comment");
   });
 });

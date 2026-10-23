@@ -6,11 +6,18 @@ import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
 import { HomePage } from "../pages/HomePage";
 import { PendingPage } from "../pages/StatusPages";
+import { redirectToStartDashboard } from "../preferences/startDashboard";
 import { appRoute, loginRoute, rootRoute, setupRoute } from "./baseRoutes";
 
 export { type LoginSearch, parseLoginSearch, type RouterContext } from "./baseRoutes";
 
-const homeRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: HomePage });
+const homeRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/",
+  beforeLoad: ({ context, preload }) =>
+    redirectToStartDashboard(context.queryClient, context.me, preload),
+  component: HomePage,
+});
 
 const routeTree = rootRoute.addChildren([
   setupRoute,

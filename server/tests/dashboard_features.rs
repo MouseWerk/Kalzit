@@ -644,6 +644,24 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
         .await
         .id();
     let a = t.dashboard(None, showing("A", &lib), &editor).await;
+    // A library panel with an analysis step of its own: the step is checked against the library
+    // panel's queries, and a dashboard showing it saves with an empty slot.
+    let mut stepped = content.clone();
+    stepped["transformations"] =
+        json!([{ "id": "s", "type": "calculate", "frame": "A", "name": "laenge", "expression": "1" }]);
+    let with_step = t
+        .post("~/library-panels", json!({ "name": "Mit Schritt", "folderId": folder, "model": stepped }), &editor)
+        .await;
+    assert_eq!(with_step.status, StatusCode::CREATED, "{}", with_step.body);
+    assert_eq!(with_step.body["model"]["transformations"][0]["frame"], "A");
+    let mut wrong = content.clone();
+    wrong["transformations"] =
+        json!([{ "id": "s", "type": "calculate", "frame": "B", "name": "x", "expression": "1" }]);
+    let refused = t.post("~/library-panels", json!({ "name": "Falsch", "model": wrong }), &editor).await;
+    assert_eq!((refused.code(), refused.field()), ("validation", "model"), "{}", refused.body);
+    let holder = t.post("~/dashboards", json!({ "model": showing("Mit Schritt", &with_step.id()) }), &editor).await;
+    assert_eq!(holder.status, StatusCode::CREATED, "{}", holder.body);
+    assert_eq!(holder.body["libraryPanels"][with_step.id()]["model"]["transformations"][0]["id"], "s");
     let b = t.dashboard(None, showing("B", &lib), &t.owner).await;
     let read = t.get(&format!("~/dashboards/{a}"), &viewer).await;
     assert_eq!(read.body["libraryPanels"][&lib]["model"]["title"], "Umsatz", "{}", read.body);

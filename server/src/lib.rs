@@ -1,5 +1,6 @@
 //! Kalzit server: a self-hosted platform for visualizing and analyzing data.
 
+pub mod analysis;
 pub mod app;
 pub mod audit;
 pub mod auth;

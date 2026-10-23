@@ -10,7 +10,7 @@
   "dashboardTools.rows.moveHint": "Ziehen oder mit den Pfeiltasten nach oben und unten die Zeile samt Panels verschieben.",
   "dashboardTools.rows.moved": "Zeile „{title}“ steht jetzt an Stelle {position} von {count}.",
   "dashboardTools.rows.edit": "Zeileneinstellungen",
-  "dashboardTools.rows.editNamed": "Einstellungen der Zeile „{title}“",
+  "dashboardTools.rows.editNamed": "Zeileneinstellungen: „{title}“",
   "dashboardTools.rows.remove": "Zeile entfernen",
   "dashboardTools.rows.removeNamed": "Zeile „{title}“ entfernen",
   "dashboardTools.rows.removeTitle": "Zeile entfernen?",

@@ -6,14 +6,17 @@ pub mod audit;
 pub mod auth;
 pub mod dashboards;
 pub mod datasources;
+pub mod export;
 pub mod folders;
 pub mod grants;
 pub mod health;
+pub mod home;
 pub mod library_panels;
 pub mod me;
 pub mod members;
 pub mod orgs;
 pub mod playlists;
+pub mod preferences;
 pub mod query;
 pub mod roles;
 pub mod setup;
@@ -41,6 +44,7 @@ pub fn all() -> Vec<table::RouteDef> {
         playlists::routes(),
         datasources::routes(),
         query::routes(),
+        export::routes(),
         members::routes(),
         teams::routes(),
         roles::routes(),
@@ -48,6 +52,8 @@ pub fn all() -> Vec<table::RouteDef> {
         admin_users::routes(),
         admin_orgs::routes(),
         me::routes(),
+        home::routes(),
+        preferences::routes(),
     ]
     .into_iter()
     .flatten()
@@ -158,6 +164,8 @@ mod access_guard {
         "GET /me/sessions",
         "DELETE /me/sessions/{sessionId}",
         "POST /me/sessions/revoke-others",
+        "GET /me/preferences",
+        "PATCH /me/preferences",
     ];
 
     /// The path layout decides the access rule, so a route cannot be scoped to an organization

@@ -1,0 +1,31 @@
+name: TigerGraph nightly
+
+# TigerGraph is too large for the PR check (several GB, 8 GB RAM, a developer license, no Windows
+# container), so the PR check tests it against a fake server (server/src/datasources/tigergraph/
+# tests.rs) and this job runs against the real image once a night. It is not a required check.
+#
+# Still to settle against the real instance (docs/api/datasources.md, TigerGraph): whether a
+# queryreader may read its own user record and run interpreted queries (4.1+ EXECUTE_QUERY), and
+# the exact SHOW USER output.
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tigergraph:
+    name: tigergraph (real image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real TigerGraph not set up yet
+        run: |
+          echo "Stub: start tigergraph/community, create a graph, a queryreader user and an installed query,"
+          echo "then run the TigerGraph tests with KALZIT_TEST_TIGERGRAPH_URL set."

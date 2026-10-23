@@ -10,59 +10,74 @@
   :root {
     color-scheme: light dark;
 
-    /* Neutral surfaces, a cool stone gray. */
-    --bg: light-dark(oklch(98.6% 0.003 260), oklch(18.5% 0.006 260));
-    --bg-surface: light-dark(oklch(96.4% 0.004 260), oklch(21% 0.007 260));
-    --bg-raised: light-dark(oklch(100% 0 0), oklch(24% 0.008 260));
-    --bg-hover: light-dark(oklch(93.2% 0.006 260), oklch(27.5% 0.009 260));
-    --bg-active: light-dark(oklch(90.6% 0.008 260), oklch(31% 0.011 260));
-    --border: light-dark(oklch(89.5% 0.006 260), oklch(31% 0.009 260));
-    --border-strong: light-dark(oklch(60% 0.012 260), oklch(58% 0.012 260));
+    /*
+     * Neutral graphite, almost without chroma (a hint of cool, hue 286), so data and the few
+     * primary actions carry the color. Three layers close in value: the sidebar and sunken wells
+     * (surface) a step below the canvas (bg), cards and inputs (raised) a step above it, joined by
+     * hairline borders instead of shadows. Light is the same idea inverted: soft greys, white
+     * cards.
+     */
+    --bg: light-dark(oklch(97.8% 0.0015 286), oklch(19.7% 0.004 286));
+    --bg-surface: light-dark(oklch(95.8% 0.002 286), oklch(16.9% 0.003 286));
+    --bg-raised: light-dark(oklch(100% 0 0), oklch(22.8% 0.006 286));
+    --bg-hover: light-dark(oklch(94% 0.003 286), oklch(25.5% 0.006 286));
+    --bg-active: light-dark(oklch(91.5% 0.004 286), oklch(28% 0.007 286));
+    --border: light-dark(oklch(91% 0.004 286), oklch(30% 0.007 286));
+    --border-strong: light-dark(oklch(58% 0.01 286), oklch(56% 0.008 286));
 
-    --text: light-dark(oklch(22% 0.012 260), oklch(94.5% 0.004 260));
-    --text-muted: light-dark(oklch(47% 0.014 260), oklch(74% 0.01 260));
+    --text: light-dark(oklch(20.5% 0.006 286), oklch(96% 0.002 286));
+    --text-muted: light-dark(oklch(46% 0.012 286), oklch(72% 0.008 286));
 
-    /* Accent: primary actions and links only, never frames for states. */
-    --accent: light-dark(oklch(47% 0.13 255), oklch(76% 0.1 255));
-    --accent-hover: light-dark(oklch(42% 0.13 255), oklch(82% 0.08 255));
-    --on-accent: light-dark(oklch(100% 0 0), oklch(18% 0.02 260));
+    /*
+     * Accent: sunstone, the warm copper of calcite in low light. Primary actions and links only,
+     * never frames for states. Lower in chroma than a signal color, so it never reads as a warning.
+     */
+    --accent: light-dark(oklch(50% 0.1 52), oklch(79% 0.085 68));
+    --accent-hover: light-dark(oklch(45% 0.095 50), oklch(85% 0.07 72));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
     /* A busy primary button ("Wird eingerichtet…") stays readable; opacity would drop below AA. */
-    --accent-busy: light-dark(oklch(88% 0.04 255), oklch(36% 0.06 255));
-    --on-accent-busy: light-dark(oklch(30% 0.06 255), oklch(90% 0.03 255));
-    --accent-text: light-dark(oklch(46% 0.14 255), oklch(79% 0.1 255));
+    --accent-busy: light-dark(oklch(89% 0.03 62), oklch(33% 0.035 60));
+    --on-accent-busy: light-dark(oklch(33% 0.05 52), oklch(90% 0.03 72));
+    --accent-text: light-dark(oklch(47% 0.1 50), oklch(81% 0.08 70));
 
     /* Status colors go into icons, small text and tinted fills. */
-    --danger-text: light-dark(oklch(49% 0.17 27), oklch(77% 0.13 25));
-    --danger-bg: light-dark(oklch(95.6% 0.022 27), oklch(26% 0.045 25));
-    --success-text: light-dark(oklch(47% 0.11 150), oklch(78% 0.13 150));
+    --danger-text: light-dark(oklch(48% 0.16 27), oklch(77% 0.12 25));
+    --danger-bg: light-dark(oklch(95.4% 0.022 27), oklch(26% 0.04 25));
+    --success-text: light-dark(oklch(46% 0.1 150), oklch(78% 0.12 150));
     /* Series colors for charts, after the Okabe-Ito order (blue, orange, sky blue, vermillion,
        bluish green, reddish purple, yellow, gray). Lightness and chroma alternate so series stay
        apart for protanopia, deuteranopia and tritanopia too, and each reaches 3:1 on the panel
-       surfaces; styles.test.ts pins both. */
-    --chart-1: light-dark(oklch(57.6% 0.103 241), oklch(74.4% 0.114 268));
-    --chart-2: light-dark(oklch(41.7% 0.09 69), oklch(87.6% 0.097 77));
+       surfaces; styles.test.ts pins both. The orange sits on the sunstone amber, the blues lean
+       toward the website's frame blue and the gray is the graphite of the surfaces. */
+    --chart-1: light-dark(oklch(57.6% 0.103 241), oklch(74.4% 0.114 262));
+    --chart-2: light-dark(oklch(41.7% 0.09 69), oklch(87.6% 0.097 74));
     --chart-3: light-dark(oklch(48.2% 0.116 249), oklch(58% 0.154 249));
-    --chart-4: light-dark(oklch(63.8% 0.113 35), oklch(60% 0.192 26));
+    --chart-4: light-dark(oklch(63.8% 0.113 35), oklch(60% 0.192 28));
     --chart-5: light-dark(oklch(41.6% 0.08 161), oklch(93.4% 0.091 156));
     --chart-6: light-dark(oklch(31.2% 0.119 326), oklch(69.7% 0.159 349));
-    --chart-7: light-dark(oklch(49.9% 0.095 88), oklch(77.3% 0.133 109));
-    --chart-8: light-dark(oklch(28% 0 258), oklch(58% 0 254));
+    --chart-7: light-dark(oklch(49.9% 0.095 88), oklch(77.3% 0.133 105));
+    --chart-8: light-dark(oklch(28% 0.006 286), oklch(58% 0.006 286));
 
-    --shadow-color: light-dark(oklch(0% 0 0 / 0.12), oklch(0% 0 0 / 0.5));
-    --shadow-menu: 0 4px 16px var(--shadow-color), 0 1px 3px var(--shadow-color);
+    /* Shadows only for what floats (menus, popovers); cards stand on hairline borders. */
+    --shadow-color: light-dark(oklch(21% 0.006 286 / 0.14), oklch(0% 0 0 / 0.55));
+    --shadow-menu: 0 0.5rem 1.5rem -0.5rem var(--shadow-color), 0 1px 2px var(--shadow-color);
 
     /* Focus: neutral, from one token, only on :focus-visible. */
-    --focus-ring: light-dark(oklch(38% 0.012 260), oklch(84% 0.008 260));
+    --focus-ring: light-dark(oklch(36% 0.008 286), oklch(85% 0.004 286));
     --focus-ring-width: 2px;
     --focus-ring-offset: 2px;
     --focus-outline: var(--focus-ring-width) solid var(--focus-ring);
 
-    /* Typography: system fonts only, no downloads. */
+    /*
+     * Typography: the website's faces, bundled with the app (see the @font-face rules at the end of
+     * this file), so nothing is fetched from another host; system fonts stand in while they load.
+     */
     --font-sans:
-      system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell,
-      "Helvetica Neue", Arial, sans-serif;
+      "Instrument Sans Variable", "Instrument Sans Fallback", system-ui, -apple-system, "Segoe UI",
+      Roboto, "Noto Sans", Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
     --font-mono:
-      ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      "JetBrains Mono Variable", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
+      "Liberation Mono", monospace;
     --font-size-2xs: 0.6875rem;
     --font-size-xs: 0.75rem;
     --font-size-sm: 0.8125rem;
@@ -94,6 +109,7 @@
 
     --border-width: 1px;
 
+    /* Soft corners: controls and nav items a little round, cards and panels more so. */
     --radius-sm: 4px;
     --radius-md: 6px;
     --radius-lg: 10px;
@@ -111,7 +127,37 @@
     --sidebar-width: 14.5rem;
     --sidebar-rail-width: 3.5rem;
     --nav-row-height: 1.875rem;
+    /*
+     * Reading width, for forms, settings and running text only. Dashboards, Explore and lists
+     * use the whole width of the window.
+     */
     --content-max-width: 72rem;
+    /* The gutter around the content, the gap of the dashboard grid and a panel's inner padding. */
+    --space-gutter: var(--space-6);
+    --space-grid: var(--space-2);
+    --space-panel: var(--space-2);
+    /* One dashboard row and a panel's title bar. */
+    --size-grid-row: 2rem;
+    --size-panel-header: 2rem;
+    /* A data source kind's mark: in the picker's cards, and next to a name in lists. */
+    --size-kind-mark: 2.5rem;
+    --size-kind-mark-small: 1.5rem;
+    /*
+     * Data source logos are content: the marks keep their brand colors (from Simple Icons) on a
+     * light tile in both schemes, as several are dark blue. Never used for states.
+     */
+    --logo-tile: light-dark(oklch(100% 0 0), oklch(94% 0.004 286));
+    /* The glyph of a kind without a logo, on the same light tile, so the picker looks even. */
+    --logo-glyph: oklch(28% 0.006 286);
+    --brand-postgresql: #4169e1;
+    --brand-mysql: #4479a1;
+    --brand-mariadb: #003545;
+    --brand-sqlite: #003b57;
+    --brand-prometheus: #e6522c;
+    --brand-mongodb: #47a248;
+    --brand-elasticsearch: #005571;
+    --brand-opensearch: #005eb8;
+    --brand-neo4j: #4581c3;
     --auth-card-width: 26rem;
     --control-height: 2rem;
     --icon-size: 1rem;
@@ -139,21 +185,21 @@
 
     --bg: light-dark(oklch(100% 0 0), oklch(0% 0 0));
     --bg-surface: light-dark(oklch(100% 0 0), oklch(0% 0 0));
-    --bg-raised: light-dark(oklch(100% 0 0), oklch(14% 0 0));
-    --bg-hover: light-dark(oklch(91% 0.004 260), oklch(26% 0.006 260));
-    --bg-active: light-dark(oklch(85% 0.006 260), oklch(34% 0.008 260));
-    --border: light-dark(oklch(35% 0 0), oklch(75% 0 0));
-    --border-strong: light-dark(oklch(20% 0 0), oklch(88% 0 0));
+    --bg-raised: light-dark(oklch(100% 0 0), oklch(14% 0.003 60));
+    --bg-hover: light-dark(oklch(91% 0.006 70), oklch(26% 0.006 60));
+    --bg-active: light-dark(oklch(85% 0.008 70), oklch(34% 0.008 60));
+    --border: light-dark(oklch(35% 0.004 60), oklch(75% 0.004 70));
+    --border-strong: light-dark(oklch(20% 0.004 60), oklch(88% 0.004 70));
 
     --text: light-dark(oklch(0% 0 0), oklch(100% 0 0));
-    --text-muted: light-dark(oklch(28% 0.01 260), oklch(88% 0.006 260));
+    --text-muted: light-dark(oklch(28% 0.008 60), oklch(88% 0.006 75));
 
-    --accent: light-dark(oklch(36% 0.15 255), oklch(84% 0.09 255));
-    --accent-hover: light-dark(oklch(30% 0.14 255), oklch(90% 0.06 255));
+    --accent: light-dark(oklch(39% 0.1 48), oklch(85% 0.08 70));
+    --accent-hover: light-dark(oklch(33% 0.09 46), oklch(91% 0.055 72));
     --on-accent: light-dark(oklch(100% 0 0), oklch(0% 0 0));
-    --accent-busy: light-dark(oklch(86% 0.05 255), oklch(32% 0.08 255));
-    --on-accent-busy: light-dark(oklch(12% 0.04 255), oklch(98% 0.01 255));
-    --accent-text: light-dark(oklch(36% 0.16 255), oklch(86% 0.09 255));
+    --accent-busy: light-dark(oklch(87% 0.04 62), oklch(31% 0.05 58));
+    --on-accent-busy: light-dark(oklch(14% 0.03 50), oklch(98% 0.01 75));
+    --accent-text: light-dark(oklch(37% 0.1 48), oklch(87% 0.08 70));
 
     --danger-text: light-dark(oklch(40% 0.17 27), oklch(85% 0.1 25));
     --danger-bg: light-dark(oklch(94% 0.03 27), oklch(22% 0.06 25));
@@ -193,6 +239,208 @@
     --size-legend-max: 4.5rem;
     --size-preview: 18rem;
     --size-result: 24rem;
+  }
+}
+
+/*
+ * The Kalzit look (appended by the brand retune): the bundled website faces, the remaining
+ * status colors, the icon stroke and the skeleton pulse.
+ *
+ * Fonts: SIL OFL 1.1 (licenses next to the files), Latin and Latin Extended subsets, served by
+ * the server itself. Instrument Sans for text, JetBrains Mono for code, Newsreader only for the
+ * headings of the pages before the app (sign-in, setup, status pages).
+ */
+@layer tokens {
+  @font-face {
+    font-family: "Instrument Sans Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400 700;
+    src: url("../assets/fonts/instrument-sans-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  @font-face {
+    font-family: "Instrument Sans Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400 700;
+    src: url("../assets/fonts/instrument-sans-latin-ext-wght-normal.woff2")
+      format("woff2-variations");
+    unicode-range:
+      U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+      U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+      U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  @font-face {
+    font-family: "JetBrains Mono Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url("../assets/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  @font-face {
+    font-family: "JetBrains Mono Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 800;
+    src: url("../assets/fonts/jetbrains-mono-latin-ext-wght-normal.woff2")
+      format("woff2-variations");
+    unicode-range:
+      U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+      U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+      U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  @font-face {
+    font-family: "Newsreader Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url("../assets/fonts/newsreader-latin-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+      U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  @font-face {
+    font-family: "Newsreader Variable";
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url("../assets/fonts/newsreader-latin-ext-wght-normal.woff2") format("woff2-variations");
+    unicode-range:
+      U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+      U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+      U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  /*
+   * Local stand-ins with the bundled faces' metrics, so the swap does not shift the layout.
+   * Measured with fontTools from the woff2 files (default instance) against Windows' Arial and
+   * Georgia, as capsize does: size-adjust is the ratio of the average advance over a German UI
+   * sample text, the overrides are the web font's hhea ascender and descender per em divided by
+   * size-adjust. Instrument Sans: ascent 0.970, descent 0.250; Newsreader: 0.735, 0.265.
+   */
+  @font-face {
+    font-family: "Instrument Sans Fallback";
+    font-display: swap;
+    src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans");
+    size-adjust: 102.8%;
+    ascent-override: 94.4%;
+    descent-override: 24.3%;
+    line-gap-override: 0%;
+  }
+
+  @font-face {
+    font-family: "Newsreader Fallback";
+    font-display: swap;
+    src: local("Georgia"), local("Times New Roman");
+    size-adjust: 96.7%;
+    ascent-override: 76%;
+    descent-override: 27.4%;
+    line-gap-override: 0%;
+  }
+
+  :root {
+    --font-display:
+      "Newsreader Variable", "Newsreader Fallback", ui-serif, Georgia, "Times New Roman", serif;
+    --font-weight-display: 400;
+    --letter-spacing-display: -0.02em;
+    --font-size-2xl: 1.625rem;
+
+    /* Cards that stand on the page (the sign-in panel): a shadow lower than a menu's. */
+    --shadow-raised: 0 1px 2px var(--shadow-color), 0 0.5rem 1.5rem -1rem var(--shadow-color);
+
+    /* Status: ok (success), warn (warning), critical (danger) and info, as text and tints. */
+    --success-bg: light-dark(oklch(95.4% 0.025 150), oklch(26% 0.035 150));
+    --warning-text: light-dark(oklch(48% 0.1 70), oklch(82% 0.11 80));
+    --warning-bg: light-dark(oklch(95% 0.035 82), oklch(27% 0.04 75));
+    --info-text: light-dark(oklch(47% 0.09 245), oklch(79% 0.08 245));
+    --info-bg: light-dark(oklch(95.4% 0.018 245), oklch(26% 0.035 245));
+
+    /* Line icons: a little lighter than before, close to the website's 1.4. */
+    --icon-stroke: 1.5;
+
+    /* Menus and the rail's flyout: wide enough for an email address, never a column. */
+    --size-menu-min: 15rem;
+    --size-menu-max: 20rem;
+
+    /* Skeleton loaders breathe slowly; components.css stops them for reduced motion. */
+    --duration-pulse: 1.4s;
+  }
+
+  :root[data-theme="contrast"] {
+    --success-bg: light-dark(oklch(94% 0.03 150), oklch(22% 0.04 150));
+    --warning-text: light-dark(oklch(38% 0.09 65), oklch(88% 0.1 85));
+    --warning-bg: light-dark(oklch(94% 0.04 85), oklch(22% 0.05 75));
+    --info-text: light-dark(oklch(36% 0.1 250), oklch(87% 0.07 245));
+    --info-bg: light-dark(oklch(94% 0.025 245), oklch(22% 0.04 245));
+    --icon-stroke: 1.75;
+  }
+
+  /* After the pulse is declared, so this block wins. */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --duration-pulse: 0ms;
+    }
+  }
+}
+
+/* Graph panels: the smallest drawing area, so a graph stays usable in a short panel. */
+@layer tokens {
+  :root {
+    --size-graph-min: 12rem;
+  }
+}
+
+/*
+ * Visualization tokens (one block, appended by the visualization pack, after every other block).
+ * Threshold tones are the marks of the states the status tokens name (ok = success, warn =
+ * warning, critical = danger), on the same hues but tuned as chart fills: 3:1 against the panel
+ * backgrounds and apart for every color vision. Their tints are the status backgrounds; the
+ * chart tints are the chart palette mixed into the surface. styles.test.ts checks all of them.
+ */
+@layer tokens {
+  :root {
+    --tone-ok: light-dark(oklch(47% 0.115 160), oklch(74% 0.13 160));
+    --tone-warn: light-dark(oklch(64% 0.14 74), oklch(92% 0.13 95));
+    --tone-critical: light-dark(oklch(33% 0.14 27), oklch(60% 0.21 27));
+
+    /* The status backgrounds, so tints follow every theme the status colors follow. */
+    --tone-ok-bg: var(--success-bg);
+    --tone-warn-bg: var(--warning-bg);
+    --tone-critical-bg: var(--danger-bg);
+
+    --chart-1-bg: light-dark(oklch(93% 0.035 241), oklch(31% 0.045 262));
+    --chart-2-bg: light-dark(oklch(93% 0.035 69), oklch(31% 0.04 74));
+    --chart-3-bg: light-dark(oklch(92% 0.04 249), oklch(30% 0.06 249));
+    --chart-4-bg: light-dark(oklch(93% 0.035 35), oklch(31% 0.06 28));
+    --chart-5-bg: light-dark(oklch(93% 0.03 161), oklch(31% 0.04 156));
+    --chart-6-bg: light-dark(oklch(93% 0.035 326), oklch(31% 0.06 349));
+    --chart-7-bg: light-dark(oklch(94% 0.04 88), oklch(31% 0.045 105));
+    --chart-8-bg: light-dark(oklch(92% 0.004 60), oklch(33% 0.004 60));
+
+    --heat-1: light-dark(oklch(88% 0.045 245), oklch(36% 0.07 250));
+    --heat-2: light-dark(oklch(80% 0.065 245), oklch(43% 0.09 250));
+    --heat-3: light-dark(oklch(72% 0.085 245), oklch(50% 0.11 248));
+    --heat-4: light-dark(oklch(64% 0.1 245), oklch(57% 0.12 246));
+    --heat-5: light-dark(oklch(56% 0.115 246), oklch(64% 0.12 244));
+    --heat-6: light-dark(oklch(48% 0.12 248), oklch(71% 0.11 242));
+    --heat-7: light-dark(oklch(41% 0.12 250), oklch(79% 0.1 240));
+    --heat-8: light-dark(oklch(34% 0.11 252), oklch(87% 0.08 238));
+
+    --font-size-display: 2rem;
+    --size-gauge: 12rem;
+    --size-picker-card: 7rem;
+    --size-bar-gauge: 1.5rem;
   }
 }
 

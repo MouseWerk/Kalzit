@@ -5,6 +5,7 @@ import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
 import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
+import { shellFake } from "../shell/test/fakeShell";
 
 /**
  * An in-memory stand-in for the Kalzit server's auth routes, installed as the global fetch.
@@ -42,6 +43,7 @@ const EDIT_PERMISSIONS: Permission[] = [
   "folders:write",
   "datasources:query",
   "datasources:read",
+  "data:export",
 ];
 const DATA_ADMIN_PERMISSIONS: Permission[] = [
   "datasources:write",
@@ -94,11 +96,23 @@ const AREA_FAKES = {
   // Before dashboards: it answers /dashboards/validate and the annotation routes.
   dashboardFeatures: dashboardFeaturesFake,
   dashboards: dashboardsFake,
+  shell: shellFake,
 };
 
 export type FakeAreaStates = {
   [Name in keyof typeof AREA_FAKES]: ReturnType<(typeof AREA_FAKES)[Name]>["state"];
 };
+
+/** Stored preferences; `null` follows the defaults, as on the server (docs/api/shell.md). */
+export interface FakePreferences {
+  language: string | null;
+  theme: string | null;
+  timeZone: string | null;
+  weekStart: string | null;
+  startDashboard: { orgId: string; dashboardId: string } | null;
+  /** The server defaults (`appearance.*`); English here, so tests read English. */
+  defaults: { language: string; theme: string };
+}
 
 export const TEST_USER: Me = {
   id: "u1",
@@ -113,7 +127,14 @@ export const TEST_SETUP_TOKEN = "setup-token-for-tests";
 
 export interface FakeServer {
   /** `offline` makes every request fail the way fetch does when nothing answers. */
-  state: { setupNeeded: boolean; signedIn: boolean; user: Me; offline: boolean };
+  state: {
+    setupNeeded: boolean;
+    signedIn: boolean;
+    user: Me;
+    offline: boolean;
+    /** The stored preferences (`/api/me/preferences`), as the server keeps them. */
+    preferences: FakePreferences;
+  };
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
   failNext: (path: string, status: number, code: string, method?: string, field?: string) => void;
@@ -155,6 +176,15 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       signedIn: options.signedIn ?? false,
       user: options.user ?? TEST_USER,
       offline: false,
+      preferences: {
+        // A user who already chose English, so signing in adopts nothing unless a test says so.
+        language: "en",
+        theme: null,
+        timeZone: null,
+        weekStart: null,
+        startDashboard: null,
+        defaults: { language: "en", theme: "system" },
+      },
     },
     calls: [],
     failNext: (path, status, code, method, field) =>
@@ -164,6 +194,63 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
   function permissionsOf(role: string): string[] {
     const roles = options.rolePermissions ?? BUILT_IN_ROLE_PERMISSIONS;
     return roles[role] ?? [];
+  }
+
+  /** The preferences route: patch semantics and the documented checks. */
+  function preferences(method: string, input: Record<string, unknown>): Response {
+    const stored = server.state.preferences;
+    if (method === "PATCH") {
+      const allowed: Record<string, readonly string[] | null> = {
+        language: ["de", "en"],
+        theme: ["system", "light", "dark", "contrast"],
+        weekStart: ["monday", "sunday", "saturday"],
+        timeZone: null,
+        startDashboard: null,
+      };
+      for (const [key, value] of Object.entries(input)) {
+        if (!(key in allowed)) {
+          return error(422, "validation", key);
+        }
+        const options = allowed[key];
+        if (value !== null && options != null && !options.includes(String(value))) {
+          return error(422, "validation", key);
+        }
+        if (
+          key === "timeZone" &&
+          value !== null &&
+          !/^[A-Za-z][\w+-]*(\/[\w+-]+){0,2}$/.test(String(value))
+        ) {
+          return error(422, "validation", key);
+        }
+      }
+      const start = input.startDashboard as
+        | { orgId?: string; dashboardId?: string }
+        | null
+        | undefined;
+      if (start != null) {
+        const found = areaStates.dashboards.dashboards.find(
+          (d) => d.id === start.dashboardId && d.deletedAt === null,
+        );
+        if (found === undefined || !server.state.user.orgs.some((o) => o.id === start.orgId)) {
+          return error(422, "validation", "startDashboard");
+        }
+      }
+      Object.assign(stored, input);
+    }
+    const start = stored.startDashboard;
+    const dashboard =
+      start === null
+        ? undefined
+        : areaStates.dashboards.dashboards.find(
+            (d) => d.id === start.dashboardId && d.deletedAt === null,
+          );
+    return json(200, {
+      ...stored,
+      startDashboard:
+        start === null || dashboard === undefined
+          ? null
+          : { ...start, title: dashboard.versions.at(-1)?.model.title ?? "" },
+    });
   }
 
   async function handle(path: string, method: string, body: unknown): Promise<Response> {
@@ -208,6 +295,12 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     if (path === "/api/auth/logout" && method === "POST") {
       state.signedIn = false;
       return new Response(null, { status: 204 });
+    }
+    if (path === "/api/me/preferences" && (method === "GET" || method === "PATCH")) {
+      if (!state.signedIn) {
+        return error(401, "unauthenticated");
+      }
+      return preferences(method, input);
     }
     if (path === "/api/me" && method === "GET") {
       return state.signedIn ? json(200, state.user) : error(401, "unauthenticated");

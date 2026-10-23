@@ -1,5 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { type KeyboardEvent, useId, useRef, useState } from "react";
+import { type KeyboardEvent, useDeferredValue, useId, useRef, useState } from "react";
+import { exportQuery } from "../../analysis/api";
+import { ExportDialog } from "../../analysis/ExportDialog";
+import { namedInputs, runPanelSteps } from "../../analysis/panel";
+import { StepsEditor } from "../../analysis/StepsEditor";
+import type { Step } from "../../analysis/steps";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -8,6 +13,7 @@ import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
@@ -88,6 +94,11 @@ function Explore({ orgId }: { orgId: string }) {
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
   const [adding, setAdding] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // Analysis steps on the result; they go with the panel when it is added to a dashboard.
+  const [steps, setSteps] = useState<Step[]>([]);
+  // The result and the steps editor share one run, a moment behind typing.
+  const deferredSteps = useDeferredValue(steps);
   const tabsId = useId();
 
   // Only the sources the caller may query (the role or a grant).
@@ -155,6 +166,7 @@ function Explore({ orgId }: { orgId: string }) {
   }
 
   const outcomes = result.data ?? [];
+  const stepsRun = runPanelSteps(deferredSteps, outcomes);
   const results = outcomes.flatMap((o) => ("result" in o ? [o.result] : []));
   const shapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
   const choices = panelsForShapes(shapes);
@@ -168,7 +180,7 @@ function Explore({ orgId }: { orgId: string }) {
       submitted === null
         ? []
         : [{ refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query }],
-    transformations: [],
+    transformations: steps,
     options: {},
     fieldConfig: {},
   };
@@ -246,6 +258,16 @@ function Explore({ orgId }: { orgId: string }) {
                 ))}
               </select>
             </div>
+            {permissions.has("data:export") ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setExporting(true)}
+                disabled={result.data === undefined}
+              >
+                {t("analysis.export.button")}
+              </button>
+            ) : null}
             {permissions.has("dashboards:write") ? (
               <button
                 type="button"
@@ -266,14 +288,17 @@ function Explore({ orgId }: { orgId: string }) {
             hidden={tab !== "result"}
           >
             {tab === "result" ? (
-              <PanelBody
-                panel={panel}
-                title={t("explore.result")}
-                range={{ from: submitted.from, to: submitted.to }}
-                pending={result.isPending}
-                error={result.error}
-                outcomes={outcomes}
-              />
+              <PanelHostContext value={{ orgId }}>
+                <PanelBody
+                  panel={panel}
+                  title={t("explore.result")}
+                  range={{ from: submitted.from, to: submitted.to }}
+                  pending={result.isPending}
+                  error={result.error}
+                  outcomes={outcomes}
+                  stepsRun={stepsRun}
+                />
+              </PanelHostContext>
             ) : null}
           </div>
           <div
@@ -287,6 +312,42 @@ function Explore({ orgId }: { orgId: string }) {
           </div>
         </section>
       )}
+      {submitted === null ? null : (
+        <StepsEditor
+          steps={steps}
+          onChange={setSteps}
+          refIds={[REF_ID]}
+          inputs={namedInputs(outcomes)}
+          run={stepsRun}
+        />
+      )}
+      {exporting && submitted !== null ? (
+        <ExportDialog
+          frames={stepsRun.frames.map((f) => f.name)}
+          run={(choice, signal) => {
+            const timeRange = { from: submitted.from, to: submitted.to };
+            return exportQuery(
+              orgId,
+              {
+                queries: [
+                  { refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query },
+                ],
+                timeRange,
+                maxDataPoints: MAX_DATA_POINTS,
+                intervalMs: intervalFor(timeRange),
+                variables: {},
+                steps,
+                format: choice.format,
+                language: choice.language,
+                ...(choice.frame === undefined ? {} : { frame: choice.frame }),
+                title: datasource.name,
+              },
+              signal,
+            );
+          }}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
       {adding && submitted !== null ? (
         <AddToDashboardDialog
           orgId={orgId}

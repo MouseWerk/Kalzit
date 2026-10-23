@@ -4,6 +4,8 @@ import { appRoute } from "../../app/baseRoutes";
 export interface DashboardsSearch {
   folder?: string | undefined;
   q?: string | undefined;
+  /** Opens the dialog for a new dashboard (from the command palette and the start page). */
+  create?: "dashboard" | undefined;
 }
 
 export interface DashboardSearch {
@@ -28,6 +30,7 @@ const dashboardsRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): DashboardsSearch => ({
     folder: text(search.folder),
     q: text(search.q),
+    create: search.create === "dashboard" ? "dashboard" : undefined,
   }),
   component: lazyRouteComponent(() => import("./DashboardsPage"), "DashboardsPage"),
 });

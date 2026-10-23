@@ -13,6 +13,7 @@ everything else is M1.
 | `server/migrations/` | Numbered, portable SQL migrations (SQLite and PostgreSQL). |
 | `server/src/shapes.rs` | Result envelope and API wire types; the UI's TypeScript types are generated from it. |
 | `server/src/authz.rs` | Permission catalog, built-in roles, access and resource checks. |
+| `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `ui/` | React UI: `ui/src/features/<area>/` per area, `ui/src/panels/<type>/` per panel type. |
@@ -149,8 +150,9 @@ type QueryResult =
   `bool`, `json`; a missing value is `null`. Frames are built through `Frame::new`, which checks
   equal lengths.
 - Documents keep database types JSON lacks as `{"$type": "objectId" | "date" | "decimal" |
-  "binary" | "int64", "value": string}`. The schema sample gives every path with coverage and
-  type shares (finite numbers 0 to 1).
+  "binary" | "int64" | "uuid" | ..., "value": string}` (all of them, and binary values hidden as
+  `null`, in docs/api/datasources.md, "The documents shape"). The schema sample gives every path
+  with coverage and type shares (finite numbers 0 to 1).
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
 - Projections (documents or graph to a frame) are explicit query steps stored in the query,
   never applied by the backend on its own.
@@ -215,7 +217,11 @@ type QueryResult =
   `lo_import`, `dblink`, `OPENROWSET`, `OPENDATASOURCE`, `load_extension`). They run in a
   read-only transaction where the engine has one (PostgreSQL, MySQL/MariaDB); SQLite opens the
   file read-only with extension loading disabled. Each engine has tests for these rejections.
-  Rejections answer `query_rejected` with the reason.
+  Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
+  Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
+  checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may
+  write are refused, and GSQL is parsed and refused when it writes or does not parse
+  (docs/api/datasources.md).
 - **No string interpolation of user input.** Macros (`$__timeFilter(col)`, `$__timeFrom`,
   `$__timeTo`, `$__interval`, `$__interval_ms`) and variables become bind parameters. A variable
   used as an identifier must match an allow-list from the source's schema.
@@ -252,7 +258,7 @@ type QueryResult =
 
   ```ts
   interface DashboardModel {
-    schemaVersion: 1;
+    schemaVersion: 2;
     title: string;
     timeRange: { from: string; to: string };   // "now-6h", "now", or ISO times
     refreshSeconds?: number;
@@ -261,7 +267,8 @@ type QueryResult =
       id: string; type: string; title: string;
       grid: { x: number; y: number; w: number; h: number };   // 24 columns
       targets: { refId: string; datasourceId: string; query: unknown }[];
-      transformations: unknown[]; options: unknown; fieldConfig: unknown;
+      transformations: Step[];   // analysis steps, see "Analysis steps and export"
+      options: unknown; fieldConfig: unknown;
     }[];
   }
   ```
@@ -270,6 +277,45 @@ type QueryResult =
   library panels are their own resources (docs/api/dashboard-features.md). Library panels follow
   their folder's rights; a dashboard that shows one authorizes its queries for its readers.
 - Panels declare the shapes they accept; the panel picker offers matching panels first.
+- A panel's `options` belong to its type; `fieldConfig` holds the shared field options
+  (`{defaults, overrides}`: unit, decimals, min and max, thresholds, value mappings, no-value
+  text, display name, color, table cell display, link, width). `null` in an override clears what
+  the defaults set. Regex matchers and mappings use RE2 syntax (no backreferences or
+  lookaround): the UI runs them with re2js in linear time, the server checks them with the
+  `regex` crate.
+- `dashboards::panel_options` checks the options and field options of the built-in frame panel
+  types on create, save and restore, and only for panels the write adds or changes, so stored
+  dashboards keep loading and querying when a rule tightens. Reads never run it. A new panel type
+  (the document and graph panels, plugins) adds its own check there when it lands; unknown types
+  are left alone.
+
+## Analysis steps and export
+
+- A panel's `transformations` are analysis steps (docs/api/settings-dashboards.md, "Analysis
+  steps"): `{id, type, disabled?, ...}`, ordered, each reading results by `refId`. Types:
+  `toFrame` (projection of documents), `calculate` (expression language, parsed and type-checked,
+  never evaluated as code), `join` (two queries by time or key, fields named `<refId>.<field>`),
+  `reduce`, `trend`, `movingAverage`, `correlate`, `compare`, `group`, `pivot`.
+- **The projection lives in the panel's `transformations`**, as a `toFrame` step, not in the
+  query (PLAN section 1 said "in der Abfrage"; decided otherwise, PLAN section 13): the query stays
+  in the data source's own form, the projection is visible, can be turned off, and steps after it
+  work on its frame.
+- Two engines with one behaviour: `ui/src/analysis/` runs the steps for what the browser shows;
+  `server/src/analysis/` runs them for exports, so a file holds what the panel shows and the
+  permission check stays on the server. Both pass `server/src/analysis/conformance.json`; numbers
+  are written as JavaScript writes them and calendar functions work in UTC in both.
+- Saving a dashboard checks the steps' form and bounds and parses expressions; fields and types are
+  checked when a step runs. Steps run on results in memory, bounded by the row limit; pushdown of
+  grouping into the database comes later.
+- Export: `POST /api/orgs/{orgId}/export` and
+  `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, both
+  `Access::Org(Permission::DataExport)` plus the rights of running the queries (free:
+  `datasources:query` per source; panel: `dashboards:read`). CSV, Excel (`rust_xlsxwriter`) and
+  JSON; written to the audit log as `data.exported` (refused ones as `data.export_refused`). At
+  most 3 exports make files at once per server; their steps and encoder run in `spawn_blocking`
+  and stop on a cancel flag (a drop guard in the handler) and the query timeout. Both engines
+  share the bounds: expression trees at most 128 high, text at most 32,767 UTF-16 units per cell
+  and 64 Mi units per run, at most 5,000,000 cells per step.
 
 ## Settings and audit
 
@@ -370,7 +416,17 @@ type QueryResult =
   StateDirectory=kalzit
   StateDirectoryMode=0700
   ConfigurationDirectory=kalzit
+  PrivateTmp=yes
+  RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
   ```
+
+  Kalzit opens no Unix sockets itself: logs go to standard output, which systemd hands over
+  already open (the restriction only stops new sockets), and data sources reach only network
+  hosts. So `RestrictAddressFamilies` also stops a driver from being steered to a local socket
+  (a MongoDB replica set member can announce a socket path). Add `AF_UNIX` only when
+  `database.url` reaches PostgreSQL through a socket directory (`?host=/run/postgresql`). Name
+  lookups through `nss-resolve` fall back to DNS without it, as with the usual
+  `resolve [!UNAVAIL=return] dns`.
 
   `StateDirectory=kalzit` creates `/var/lib/kalzit` owned by `User`. Without systemd, create it
   with `sudo install -d -o kalzit -m 0700 /var/lib/kalzit`. `/etc/kalzit/kalzit.toml` should be
@@ -397,15 +453,27 @@ type QueryResult =
   elsewhere (`clippy.toml`); the data source drivers' read-only transactions on the users'
   databases are the marked exceptions. A graceful stop (Ctrl+C, SIGTERM, and on Windows closing
   the console or shutting down, with a 3 s grace instead of 10 s) closes the database, which
-  folds the WAL back into `kalzit.db`.
+  folds the WAL back into `kalzit.db`. The close gets 5 s, on Windows at most what is left of the
+  grace; when a statement still waits for a lock another program holds, the stop goes on without
+  it and logs a warning. Nothing committed is lost, and the next start completes the checkpoint.
+  A supervisor must allow for that: stop the container with `docker stop -t 20`, or create it
+  with `docker run --stop-timeout 20` (Docker's default of 10 s is shorter than the 10 s grace
+  plus the close); systemd's default of 90 s is enough.
 - Reads never wait on writers: the one write a read request makes, the session's last-seen time,
   runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
   the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
-  tries again, since its touch is still due. An older touch never overwrites a newer one. On
-  SQLite the touches use a small pool of their own whose connections wait at most 1 s for the
-  write lock: SQLite keeps waiting even after a touch is aborted, and a stop, which aborts all
-  touches before it closes the database, would otherwise wait the full 15 s. The requests'
-  connections keep their 15 s. A failed touch is logged at debug level only.
+  tries again, since its touch is still due. An older touch never overwrites a newer one. A
+  failed touch is logged at debug level only.
+- Background writes: the touches and the hourly jobs (session cleanup, audit retention) run as
+  tasks a stop ends before it closes the database (`db::Background`). The stop signals them;
+  they start no new statement and leave their sleeps, and the stop waits up to 3 s for the
+  statement they are in, so every connection is back and closed with the pool. Only a task still
+  running after that is aborted. On SQLite they use a small pool of their own whose connections
+  wait at most 0.5 s for the write lock: SQLite keeps waiting even after a statement is aborted,
+  and closing the database would wait the full 15 s. The requests' connections keep their 15 s.
+  Each of these writes is repeated later, so a dropped one costs nothing. An hourly run that
+  finds the database busy is tried again after 1, 2 and 4 minutes, as long as that is before the
+  next run (`db::Schedule`): the audit retention is a privacy rule and must not slip by an hour.
 - Network drives: a symbolic link or junction is followed to where `kalzit.db` really is. The
   check lets the start go on when it cannot tell (no readable mount table, a path without drive
   letter, an unknown drive type, systems other than Windows and Linux).
@@ -440,6 +508,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0005 | folders, dashboards, dashboard versions | stream B |
 | 0006 | data sources, data source secrets | stream C |
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
+| 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 | 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
 
 ## M1 work streams
@@ -468,6 +537,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
 - `ui/src/features/<area>/` own their routes (`routes.tsx`, attached under the signed-in app
   route), nav item, API calls (`api.ts`, through `ui/src/api/client.ts`), components and pages.
 - `ui/src/panels/<type>/` export `{ type, shapes, Editor, Panel }`; a registry lists them.
+  Optional: `description` and `Preview` for the panel picker, `fieldOptions` (the field option
+  groups the panel uses, edited by the shared `FieldConfigEditor`) and `standalone` for panels
+  that draw without a query (text). Panels receive `fieldConfig` parsed and the dashboard's
+  `variables`.
 - Translations: `ui/src/i18n/<lang>/<area>.json`, keys prefixed with the area; core holds only
   shared keys. Tests check prefixes, duplicates and per-file parity.
 - The current organization's permissions come from `GET /api/orgs/{orgId}`; areas hide what the
@@ -480,4 +553,39 @@ through `settings::get`; new registry entries are requested from the orchestrato
   skipped with a printed notice when the variable is not set.
 - UI: Vitest per feature; guard tests for design (every CSS file), i18n and the route tree;
   generated types current.
-- E2E: Playwright against the production build of the binary, on Linux and Windows (M1 end).
+- E2E: Playwright (`ui/e2e/`) against the server binary with the embedded UI, on Linux and
+  Windows (CI job `e2e`, which builds with the `e2e` profile: release settings, less
+  optimization). Global setup starts the binary on a free port with a fresh private data
+  directory, a random setup token and `datasources.sqlite_dirs` set to a fixture folder,
+  writes the fixture SQLite database there (sales per region and time, from code, nothing
+  binary committed) and stops the server by its PID afterwards. It records that PID in the run
+  folder; the next setup removes folders of runs that crashed, stopping a recorded server only
+  if it still runs the binary copied into that folder. The first project runs the first-run
+  setup through the UI; the other tests arrange what they need through the API and run in
+  parallel on unique names. Chromium runs every scenario, Firefox and WebKit the query editor
+  under the server's CSP. Every test fails on an unexpected browser console warning or error;
+  the CSP notice for CodeMirror's refused style element passes once per page load and only
+  while CodeMirror's is the page's only `<style>` element. axe (`@axe-core/playwright`) allows
+  no serious or critical finding on the main pages (light theme in English, dark theme in
+  German), and at 360 px nothing sticks out of the viewport or of an open dialog.
+  Run locally from `ui/`:
+
+  ```
+  npm run e2e                                  # builds the UI and the release server first
+  KALZIT_E2E_BINARY=../target/release/kalzit npm run e2e   # an existing binary, no build
+  npx playwright test -c e2e/playwright.config.ts viewer   # one file
+  ```
+
+  Once per machine: `npx playwright install chromium firefox webkit` (on Linux also
+  `npx playwright install-deps`). `KALZIT_E2E_BROWSERS=chromium` limits the browsers,
+  `KALZIT_E2E_RUN_DIR` sets the folder for run data (default: the system temp folder) and
+  `KALZIT_E2E_KEEP=1` keeps it until the next run. Report, traces and `server.log` land in
+  `ui/e2e/.output/` (`npx playwright show-report e2e/.output/report`).
+- Screenshots: the images in `README.md` come from the real application. `npm run screenshots`
+  in `ui/` (config `ui/e2e/screenshots.config.ts`, not part of the test run) starts the binary
+  through the same global setup, seeds a demo organization through the API (members, teams,
+  the SQLite sales fixture, a dashboard with a variable and four panels) and writes PNGs at
+  1440x900 to `docs/screenshots/`. The fixture data lies around a fixed moment and the pages run
+  on a clock fixed to it; times the server records (sessions, member since, last saved) are
+  moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
+  UI reruns `npm run screenshots` and commits the changed images.**

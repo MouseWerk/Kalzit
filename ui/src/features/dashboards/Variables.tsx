@@ -163,6 +163,12 @@ function VariableControl({
   const { t } = useI18n();
   const id = useId();
   const [text, setText] = useState(valueText(value));
+  // A value set from elsewhere (a panel click setting the variable) replaces the typed text.
+  const [shown, setShown] = useState(valueText(value));
+  if (shown !== valueText(value)) {
+    setShown(valueText(value));
+    setText(valueText(value));
+  }
   // Only the variables this query mentions feed it; changing any other one asks nothing.
   const mentioned = referencedNames(variable.query);
   const mentionedValues = Object.fromEntries(

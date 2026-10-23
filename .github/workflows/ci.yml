@@ -99,6 +99,23 @@ jobs:
       prometheus:
         image: prom/prometheus:v3.5.0
         ports: ["9090:9090"]
+      neo4j:
+        image: neo4j:2026.10.0-community
+        env:
+          NEO4J_AUTH: neo4j/kalzit-ci-neo4j
+        ports: ["7687:7687"]
+      memgraph:
+        image: memgraph/memgraph:3.14.0
+        ports: ["7688:7687"]
+      mongodb:
+        image: mongo:8.2
+        env:
+          MONGO_INITDB_ROOT_USERNAME: kalzit
+          MONGO_INITDB_ROOT_PASSWORD: kalzit-ci-mongo
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     env:
       KALZIT_TEST_REQUIRE_DATABASES: "1"
       KALZIT_TEST_POSTGRES_URL: postgres://kalzit:kalzit-ci-pg@localhost:5432/kalzit
@@ -106,12 +123,15 @@ jobs:
       KALZIT_TEST_MARIADB_URL: mysql://root:kalzit-ci-mariadb@127.0.0.1:3307/kalzit
       KALZIT_TEST_MSSQL_URL: mssql://sa:Kalzit-CI-mssql-1@127.0.0.1:1433/master
       KALZIT_TEST_PROMETHEUS_URL: http://127.0.0.1:9090
+      KALZIT_TEST_NEO4J_URL: bolt://neo4j:kalzit-ci-neo4j@127.0.0.1:7687
+      KALZIT_TEST_MEMGRAPH_URL: bolt://127.0.0.1:7688
+      KALZIT_TEST_MONGODB_URL: mongodb://kalzit:kalzit-ci-mongo@127.0.0.1:27017/?authSource=admin
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --tests
-      - name: Wait for SQL Server and Prometheus
+      - name: Wait for SQL Server, Prometheus, Neo4j and Memgraph
         shell: bash
         run: |
           for i in $(seq 1 90); do
@@ -120,12 +140,15 @@ jobs:
               mssql=ok
             fi
             if curl -fs http://127.0.0.1:9090/-/ready > /dev/null; then prom=ok; fi
-            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ]; then exit 0; fi
+            if docker exec "${{ job.services.neo4j.id }}" cypher-shell -u neo4j -p kalzit-ci-neo4j "RETURN 1" > /dev/null 2>&1; then neo4j=ok; fi
+            if timeout 1 bash -c "</dev/tcp/127.0.0.1/7688" 2> /dev/null; then memgraph=ok; fi
+            if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ] && [ "${neo4j:-}" = ok ] && [ "${memgraph:-}" = ok ]; then exit 0; fi
             sleep 2
           done
-          echo "SQL Server or Prometheus did not become ready" >&2
+          echo "SQL Server, Prometheus, Neo4j or Memgraph did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
+      - run: cargo test --locked --test mongodb -- --nocapture
 
   ui:
     name: ui (${{ matrix.os }})
@@ -134,6 +157,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A fixed zone, so tests about time zones cannot pass by the runner's accident.
+    env:
+      TZ: UTC
     defaults:
       run:
         working-directory: ui
@@ -162,8 +188,67 @@ jobs:
         run: npm run typecheck
       - if: steps.has_ui.outputs.present == 'true'
         run: npm test
+      - name: Tests in a zone with daylight saving time
+        if: steps.has_ui.outputs.present == 'true' && runner.os == 'Linux'
+        env:
+          TZ: America/New_York
+        run: npm test
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run build
+
+  # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
+  # e2e profile (release settings, less optimization, so it builds faster). Not a required check
+  # yet.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e-profile
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: cargo build --profile e2e --locked -p kalzit
+      - name: Cache Playwright browsers
+        id: browsers
+        uses: actions/cache@v6
+        with:
+          path: .playwright-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: Install Playwright browsers
+        if: steps.browsers.outputs.cache-hit != 'true'
+        working-directory: ui
+        run: npx playwright install chromium firefox webkit
+      - name: Install browser system packages
+        if: runner.os == 'Linux'
+        working-directory: ui
+        run: npx playwright install-deps chromium firefox webkit
+      - run: npm run e2e
+        working-directory: ui
+      - uses: actions/upload-artifact@v7
+        if: ${{ !success() }}
+        with:
+          name: e2e-${{ matrix.os }}
+          path: ui/e2e/.output
+          if-no-files-found: ignore
+          retention-days: 14
 
   audit:
     name: audit

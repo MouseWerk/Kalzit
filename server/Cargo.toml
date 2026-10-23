@@ -13,18 +13,24 @@ async-trait = "0.1.92"
 axum = { version = "0.8.9", features = ["macros"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
 base64 = "0.22.1"
+bson = { version = "3.1.0", features = ["serde", "serde_json-1"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
 futures-util = "0.3.34"
 hex = "0.4.3"
 ipnet = { version = "2.12.2", features = ["serde"] }
 mime_guess = "2.0.5"
+mongodb = { version = "3.9.1", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls", "dns-resolver", "socks5-proxy"] }
 rand = "0.10.3"
+regex = { version = "1.12.2", default-features = false, features = ["std", "unicode"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rust-embed = "8.13.0"
+rust_xlsxwriter = { version = "0.101.0", default-features = false }
+ryu-js = "1.0.3"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8.5"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio", "any", "sqlite", "postgres", "mysql", "migrate", "macros", "chrono", "json",
@@ -33,7 +39,8 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 sqlparser = { version = "0.63.0", features = ["visitor"] }
 thiserror = "2.0.21"
 tiberius = { version = "0.13.0", default-features = false, features = ["tds80", "rustls", "chrono"] }
-tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "signal", "net", "fs", "time", "sync", "io-util"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "fs", "time", "sync", "io-util"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-util = { version = "0.7.20", features = ["compat"] }
 toml = "1.1.8"
 tower = { version = "0.5.3", features = ["util"] }
@@ -57,4 +64,6 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no
 tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
+# Reads the xlsx files of the export tests; the version rust_xlsxwriter writes them with.
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 

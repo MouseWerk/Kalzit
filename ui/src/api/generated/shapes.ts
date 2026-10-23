@@ -48,13 +48,22 @@ labels?: { [key in string]: string }, };
 
 export type DocumentSet = { 
 /**
- * Documents with typed values (see `typed`) where JSON has no type for them.
+ * Documents with typed values (see `typed`) where JSON has no type for them, each in the
+ * field order the database stored.
  */
 documents: unknown[], 
 /**
  * Sampled from the result: every field path with its types and how many documents have it.
  */
-schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, };
+schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, 
+/**
+ * Why the set was cut, values that are not shown, ... (codes as for frames).
+ */
+notices: Array<Notice>, 
+/**
+ * The query as sent, after macros and variables were bound (shown in the inspector).
+ */
+executedQuery?: string, };
 
 export type FieldSchema = { 
 /**
@@ -72,13 +81,21 @@ export type TypeShare = { name: string,
  */
 share: number, };
 
-export type Truncated = { limit: number, };
+export type Truncated = { limit: number, 
+/**
+ * Which limit cut the result (a notice code such as `graph.node_limit`), when known.
+ */
+reason?: string, };
 
 export type GraphSet = { nodes: Array<Node>, edges: Array<Edge>, 
 /**
  * Paths stay paths when the query returned them, instead of a loose set of edges.
  */
-paths?: Array<GraphPath>, schema: GraphSchema, truncated?: Truncated, };
+paths?: Array<GraphPath>, schema: GraphSchema, truncated?: Truncated, 
+/**
+ * What the source said about the result, such as columns that are not part of the graph.
+ */
+notices?: Array<Notice>, };
 
 export type Node = { id: string, labels: Array<string>, properties: Record<string, unknown>, };
 
@@ -159,3 +176,23 @@ params?: { [key in string]: string }, };
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
 export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };
+
+export type ExportFormat = "csv" | "json" | "xlsx";
+
+export type ExportLanguage = "de" | "en";
+
+export type ExportRequest = { queries: Array<QueryItem>, timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, 
+/**
+ * Analysis steps, as a panel stores them in `transformations`.
+ */
+steps: unknown[], format: ExportFormat, language: ExportLanguage, 
+/**
+ * The frame to export, by `refId`; the first frame when absent.
+ */
+frame?: string, 
+/**
+ * The file name's base, such as the Explore data source's name.
+ */
+title?: string, };
+
+export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, };
