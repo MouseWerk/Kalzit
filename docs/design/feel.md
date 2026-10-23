@@ -304,3 +304,27 @@ owned by #27, #29, #30).
   faint horizontal grid only.
 - Sidebar: workspace switcher card, thin dividers between nav groups, keyboard hints (`/` for
   search, the palette shortcut) shown as keycaps.
+
+## 15. Phase 2, part A: shell, start page and lists (done)
+
+- Sidebar: workspace card on top (mark tile, organization name and role, up/down chevron) that
+  opens the organization menu (settings, members, teams, all organizations for a server admin;
+  a plain card for who has none of them); Search as a nav row with a `/` keycap, and `/` opens
+  the palette anywhere but in a text field; thin dividers between the nav groups (start, data,
+  administration; `NAV_SECTIONS` in `features/nav.ts`); nav rows 32 px at body size; tooltips
+  name the shortcuts (Search: `/` or Ctrl+K, sidebar: Ctrl+B).
+- First-steps card at the bottom of the sidebar (on the start page where the sidebar is a bar on
+  top): add a data source, create a dashboard, invite a colleague, each only for who may do it
+  and checked from real data (search, member list); gone once all are done or when dismissed,
+  remembered in the browser per account and organization (there is no server preference yet).
+- Start page: a muted page name, the greeting, quick actions on the same row; stat tiles for
+  dashboards, data sources, members and changes of the last seven days (audit log, counted per
+  day in the user's time zone, with a sparkline), each a link, only what the user may see;
+  starred and recently opened dashboards as cards with a thumbnail tile, title, folder, a star
+  toggle and Edit.
+- Tokens: `--radius-md` 7 px, `--radius-lg` 12 px, sidebar 240 px, `--space-card`,
+  `--space-cards`, `--font-size-display` (30 px), stat, thumbnail, switcher and row sizes.
+- Lists: tables are cards (hairline frame, sunken header row, 36 px rows, neutral hover tint);
+  admin rows at least 36 px with the same tint; cards use the card padding and gaps.
+- The stat tile's divider is the tile's border color showing through a 1 px gap, not a border on
+  one side, so the guard against left bars holds.

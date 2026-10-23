@@ -1,8 +1,8 @@
-import { getRouteApi, Link, Outlet } from "@tanstack/react-router";
+import { getRouteApi, Outlet } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Toaster } from "../components/Toaster";
-import { NAV_ITEMS } from "../features/nav";
+import { NAV_SECTIONS } from "../features/nav";
 import { useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
@@ -11,9 +11,18 @@ import { markEntered } from "../preferences/startDashboard";
 import { CommandPalette } from "./CommandPalette";
 import { trackInputModality } from "./inputModality";
 import { NavEntry } from "./NavEntry";
+import type { NavItem } from "./navItem";
+import { OrgSwitcher } from "./OrgSwitcher";
 import { setOverlay, useOverlay } from "./overlay";
 import { RailTooltip } from "./RailTooltip";
-import { isHelpShortcut, isPaletteShortcut, paletteShortcut, ShortcutsHelp } from "./ShortcutsHelp";
+import { SetupChecklist } from "./SetupChecklist";
+import {
+  isHelpShortcut,
+  isPaletteShortcut,
+  isSearchShortcut,
+  paletteShortcut,
+  ShortcutsHelp,
+} from "./ShortcutsHelp";
 import {
   isToggleShortcut,
   isTypingTarget,
@@ -41,9 +50,11 @@ export function AppShell() {
   const sidebarId = useId();
   const permissions = useOrgPermissions();
   // Hidden by the permissions: an entry with `useGranted` may still show, from its own data.
-  const items = NAV_ITEMS.filter(
-    (item) => (item.visible?.(permissions) ?? true) || item.useGranted !== undefined,
-  );
+  const sections = NAV_SECTIONS.map((section) =>
+    section.filter(
+      (item) => (item.visible?.(permissions) ?? true) || item.useGranted !== undefined,
+    ),
+  ).filter((section) => section.length > 0);
   const currentOrg = currentOrgOf(me);
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const wide = useWideLayout();
@@ -89,6 +100,15 @@ export function AppShell() {
       }
       event.preventDefault();
       setOverlay(overlay === "palette" ? null : "palette");
+      return;
+    }
+    // "/" searches, as in most tools; only where it would not type a slash.
+    if (isSearchShortcut(event)) {
+      if (event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
+        return;
+      }
+      event.preventDefault();
+      setOverlay("palette");
       return;
     }
     if (isHelpShortcut(event)) {
@@ -149,17 +169,7 @@ export function AppShell() {
       </button>
       <header ref={sidebarRef} id={sidebarId} className="shell__sidebar">
         <div className="shell__top">
-          <Link to="/" className="shell__brand" title={rail ? t("app.name") : undefined}>
-            <span className="shell__brand-name">
-              <Icon name="logo" />
-              <span className="shell__brand-text">{t("app.name")}</span>
-            </span>
-            {currentOrg === undefined ? null : (
-              <span className="shell__org truncate" title={currentOrg.name}>
-                {currentOrg.name}
-              </span>
-            )}
-          </Link>
+          <OrgSwitcher me={me} rail={rail} />
           <button
             type="button"
             className="shell__toggle"
@@ -176,42 +186,32 @@ export function AppShell() {
         <button
           type="button"
           className="shell__search"
-          aria-keyshortcuts={palette.aria}
-          title={rail ? t("shell.palette.open", { shortcut: palette.label }) : undefined}
+          aria-keyshortcuts={`/ ${palette.aria}`}
+          title={t("shell.search.hint", { shortcut: palette.label })}
           onClick={() => setOverlay("palette")}
         >
           <Icon name="explore" />
-          <span className="shell__search-label">{t("shell.palette.button")}</span>
+          <span className="shell__search-label">{t("shell.search.label")}</span>
           <span className="shell__search-key" aria-hidden="true">
-            <kbd className="kbd">{palette.label}</kbd>
+            <kbd className="kbd">/</kbd>
           </span>
         </button>
         <nav ref={navRef} className="shell__nav" aria-label={t("nav.label")}>
-          <ul className="shell__nav-list">
-            {items.map((item) =>
-              (item.visible?.(permissions) ?? true) || item.useGranted === undefined ? (
-                <NavEntry
-                  key={item.to}
-                  item={item}
-                  rail={rail}
-                  wide={wide}
-                  permissions={permissions}
-                  onFlyoutLayerChange={onFlyoutLayerChange}
-                />
-              ) : (
-                <GrantedNavEntry
-                  key={item.to}
-                  useGranted={item.useGranted}
-                  item={item}
-                  rail={rail}
-                  wide={wide}
-                  permissions={permissions}
-                  onFlyoutLayerChange={onFlyoutLayerChange}
-                />
-              ),
-            )}
-          </ul>
+          {sections.map((section, index) => (
+            <NavSection
+              key={section[0]?.to ?? index}
+              first={index === 0}
+              items={section}
+              rail={rail}
+              wide={wide}
+              permissions={permissions}
+              onFlyoutLayerChange={onFlyoutLayerChange}
+            />
+          ))}
         </nav>
+        {currentOrg === undefined || rail || !wide ? null : (
+          <SetupChecklist userId={me.id} orgId={currentOrg.id} placement="sidebar" />
+        )}
         <UserMenu me={me} rail={rail} />
         <RailTooltip rail={rail} sidebarRef={sidebarRef} />
       </header>
@@ -229,6 +229,31 @@ export function AppShell() {
       ) : null}
       {overlay === "shortcuts" ? <ShortcutsHelp onClose={() => setOverlay(null)} /> : null}
     </div>
+  );
+}
+
+/** One group of the navigation, set apart from the one before by a thin divider. */
+function NavSection({
+  first,
+  items,
+  ...entry
+}: Omit<ComponentProps<typeof NavEntry>, "item"> & {
+  first: boolean;
+  items: readonly NavItem[];
+}) {
+  return (
+    <>
+      {first ? null : <hr className="shell__divider" />}
+      <ul className="shell__nav-list">
+        {items.map((item) =>
+          (item.visible?.(entry.permissions) ?? true) || item.useGranted === undefined ? (
+            <NavEntry key={item.to} item={item} {...entry} />
+          ) : (
+            <GrantedNavEntry key={item.to} useGranted={item.useGranted} item={item} {...entry} />
+          ),
+        )}
+      </ul>
+    </>
   );
 }
 

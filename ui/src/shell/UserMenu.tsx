@@ -1,40 +1,21 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import {
-  type KeyboardEvent,
-  type ReactNode,
-  useEffect,
-  useEffectEvent,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useId } from "react";
 import { logout, type Me, meQuery } from "../api/auth";
 import { isApiError } from "../api/client";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
 import { LANGUAGES, useI18n } from "../i18n/i18n";
-import { useEscapeLayer } from "../lib/layers";
 import { clearChoice } from "../lib/localChoice";
 import { showErrorToast } from "../lib/toasts";
 import { usePreferenceChange } from "../preferences/preferences";
 import { THEMES, useTheme } from "../theme/theme";
 import { apiErrorText } from "./shellErrors";
-
-type FocusTarget = "first" | "last";
+import { useMenuButton } from "./useMenuButton";
 
 function initialOf(name: string): string {
   const first = Array.from(name.trim())[0];
   return first === undefined ? "?" : first.toLocaleUpperCase();
-}
-
-function menuItems(menu: HTMLElement | null): HTMLElement[] {
-  if (menu === null) {
-    return [];
-  }
-  return Array.from(
-    menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
-  );
 }
 
 /**
@@ -47,12 +28,6 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const theme = useTheme();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const [focusTarget, setFocusTarget] = useState<FocusTarget>("first");
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuId = useId();
   const themeLabelId = useId();
   const languageLabelId = useId();
 
@@ -60,6 +35,9 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
   const change = usePreferenceChange(me.id, {
     onFailed: (error) => showErrorToast(apiErrorText(t, error)),
   });
+  // A sign-out error from an earlier attempt is stale once the user acts again.
+  const menu = useMenuButton({ onOpen: () => signOut.reset() });
+  const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const signOut = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
@@ -70,80 +48,6 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
       await navigate({ to: "/login" });
     },
   });
-
-  function openMenu(target: FocusTarget) {
-    // A sign-out error from an earlier attempt is stale once the user acts again.
-    signOut.reset();
-    setFocusTarget(target);
-    setOpen(true);
-  }
-
-  function closeMenu(returnFocus: boolean) {
-    setOpen(false);
-    if (returnFocus) {
-      buttonRef.current?.focus();
-    }
-  }
-
-  useEscapeLayer(open, () => closeMenu(true));
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const items = menuItems(menuRef.current);
-    (focusTarget === "last" ? items.at(-1) : items[0])?.focus();
-  }, [open, focusTarget]);
-
-  const onOutsidePointer = useEffectEvent((event: PointerEvent) => {
-    if (event.target instanceof Node && anchorRef.current?.contains(event.target) !== true) {
-      // Focus follows the click to wherever the user pointed, so it is not pulled back.
-      closeMenu(false);
-    }
-  });
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const listener = (event: PointerEvent) => onOutsidePointer(event);
-    document.addEventListener("pointerdown", listener);
-    return () => document.removeEventListener("pointerdown", listener);
-  }, [open]);
-
-  function onButtonKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      openMenu(event.key === "ArrowUp" ? "last" : "first");
-    }
-  }
-
-  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const items = menuItems(menuRef.current);
-    const index = items.indexOf(document.activeElement as HTMLElement);
-    let next: HTMLElement | undefined;
-    switch (event.key) {
-      case "ArrowDown":
-        next = items[(index + 1) % items.length];
-        break;
-      case "ArrowUp":
-        next = items[(index - 1 + items.length) % items.length];
-        break;
-      case "Home":
-        next = items[0];
-        break;
-      case "End":
-        next = items.at(-1);
-        break;
-      case "Tab":
-        closeMenu(false);
-        return;
-      default:
-        return;
-    }
-    event.preventDefault();
-    next?.focus();
-  }
 
   function choose(action: () => void) {
     action();
@@ -167,8 +71,8 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
-          onClick={() => (open ? closeMenu(false) : openMenu("first"))}
-          onKeyDown={onButtonKeyDown}
+          onClick={menu.toggle}
+          onKeyDown={menu.onButtonKeyDown}
         >
           <span className="user-button__avatar" aria-hidden="true">
             {initialOf(me.name)}
@@ -187,7 +91,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
             role="menu"
             aria-label={t("userMenu.label")}
             className="menu"
-            onKeyDown={onMenuKeyDown}
+            onKeyDown={menu.onMenuKeyDown}
           >
             {/* Who is signed in; the button shows only the initial on small screens. */}
             <div className="menu__account">

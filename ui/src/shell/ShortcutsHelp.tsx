@@ -20,7 +20,7 @@ export const SHORTCUT_AREAS: readonly Area[] = [
   {
     title: "shell.shortcuts.area.general",
     shortcuts: [
-      { keys: [["Mod", "K"]], label: "shell.shortcuts.palette" },
+      { keys: [["Mod", "K"], ["/"]], label: "shell.shortcuts.palette" },
       { keys: [["?"]], label: "shell.shortcuts.help" },
       { keys: [["F6"], ["Shift", "F6"]], label: "shell.shortcuts.regions" },
       { keys: [["Esc"]], label: "shell.shortcuts.close" },
@@ -144,6 +144,16 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
 export function isHelpShortcut(event: KeyboardEvent): boolean {
   return (
     event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
+  );
+}
+
+/**
+ * Whether a key press asks to search: "/" on any layout (Shift+7 on German ones), never while
+ * typing; it opens the command palette.
+ */
+export function isSearchShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
   );
 }
 

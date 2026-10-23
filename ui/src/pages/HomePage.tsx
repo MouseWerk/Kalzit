@@ -1,55 +1,100 @@
-import { useQuery } from "@tanstack/react-query";
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getRouteApi, Link, type LinkProps } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { EmptyState } from "../components/EmptyState";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
-import { Page } from "../components/Page";
-import { useI18n } from "../i18n/i18n";
+import { datasourcesNav } from "../features/datasources/nav";
+import { type MessageKey, useI18n } from "../i18n/i18n";
+import { showErrorToast } from "../lib/toasts";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
-import { type DashboardEntry, recentsQuery, search, starsQuery } from "../shell/homeApi";
+import {
+  type DashboardEntry,
+  HOME_KEY,
+  recentsQuery,
+  search,
+  setStarred,
+  starredQuery,
+  starsQuery,
+} from "../shell/homeApi";
 import { setOverlay } from "../shell/overlay";
+import { SetupChecklist } from "../shell/SetupChecklist";
 import { paletteShortcut } from "../shell/ShortcutsHelp";
 import { apiErrorText } from "../shell/shellErrors";
+import { useWideLayout } from "../shell/sidebarState";
+import {
+  ACTIVITY_DAYS,
+  activityQuery,
+  type Count,
+  dashboardCountQuery,
+  datasourceCountQuery,
+  memberCountQuery,
+} from "../shell/startData";
 import "../shell/shellUx.css";
 
 const appRoute = getRouteApi("/_app");
 
+/** Recently opened dashboards shown as cards; the server keeps more for the palette. */
+const RECENT_CARDS = 8;
+
 /**
- * The start page ("Start"), per user: quick actions, starred and recently opened dashboards, and
- * in an organization that holds nothing yet, the first steps the user may take.
+ * The start page ("Start"), per user: a greeting with quick actions, the organization in numbers,
+ * and starred and recently opened dashboards as cards.
  */
 export function HomePage() {
   const { t } = useI18n();
   useDocumentTitle("home.title");
   const { me } = appRoute.useRouteContext();
   const org = useCurrentOrg();
-  return (
-    <Page title={t("home.welcome", { name: me.name })} lead={t("home.lead")}>
-      {org === undefined ? (
+  const greeting = t("home.welcome", { name: me.name });
+  if (org === undefined) {
+    return (
+      <div className="start">
+        <StartHeader greeting={greeting} />
         <EmptyState icon="home" title={t("shell.start.noOrg.title")}>
           {t("shell.start.noOrg.text")}
         </EmptyState>
-      ) : (
-        <Start orgId={org.id} />
-      )}
-    </Page>
+      </div>
+    );
+  }
+  return <Start userId={me.id} orgId={org.id} greeting={greeting} />;
+}
+
+function StartHeader({ greeting, actions }: { greeting: string; actions?: ReactNode }) {
+  const { t } = useI18n();
+  return (
+    <div className="start__header">
+      <p className="start__crumb">
+        <Icon name="home" />
+        {t("home.title")}
+      </p>
+      <div className="start__heading">
+        <h1 className="start__greeting">{greeting}</h1>
+        {actions}
+      </div>
+    </div>
   );
 }
 
-function Start({ orgId }: { orgId: string }) {
+function Start({ userId, orgId, greeting }: { userId: string; orgId: string; greeting: string }) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
+  const wide = useWideLayout();
   const stars = useQuery(starsQuery(orgId));
   const recents = useQuery(recentsQuery(orgId));
   // Anything at all the user may open; an empty answer is an organization without content yet.
   const anything = useQuery({
-    queryKey: ["home", orgId, "anything"],
+    queryKey: [HOME_KEY, orgId, "anything"],
     queryFn: ({ signal }) => search(orgId, { q: "", limit: 1 }, signal),
   });
   const fresh = anything.data !== undefined && anything.data.items.length === 0;
   const palette = paletteShortcut();
+  const canCreate =
+    permissions.has("dashboards:write") ||
+    permissions.has("datasources:write") ||
+    permissions.has("users:write") ||
+    permissions.has("users:invite");
 
   const actions: ReactNode[] = [];
   if (permissions.has("dashboards:write")) {
@@ -91,7 +136,7 @@ function Start({ orgId }: { orgId: string }) {
       key="search"
       type="button"
       className="button button--secondary"
-      aria-keyshortcuts={palette.aria}
+      aria-keyshortcuts={`/ ${palette.aria}`}
       onClick={() => setOverlay("palette")}
     >
       <Icon name="explore" />
@@ -99,102 +144,233 @@ function Start({ orgId }: { orgId: string }) {
     </button>,
   );
 
+  const starredIds = new Set((stars.data?.items ?? []).map((entry) => entry.id));
+
   return (
     <div className="start">
-      <section className="start__actions" aria-label={t("shell.start.actions")}>
-        {actions}
-      </section>
-      {fresh ? <Onboarding /> : null}
-      <div className="start__columns">
-        <EntryList
-          title={t("shell.start.starred")}
-          empty={t("shell.start.starredEmpty")}
-          query={stars}
-        />
-        <EntryList
-          title={t("shell.start.recent")}
-          empty={t("shell.start.recentEmpty")}
-          query={recents}
-        />
-      </div>
+      <StartHeader
+        greeting={greeting}
+        actions={
+          <section className="start__actions" aria-label={t("shell.start.actions")}>
+            {actions}
+          </section>
+        }
+      />
+      {/* Where the sidebar is a bar on top, its setup card moves here, first in view. */}
+      {wide ? null : <SetupChecklist userId={userId} orgId={orgId} placement="page" />}
+      <Stats orgId={orgId} />
+      {fresh && !canCreate ? (
+        <EmptyState icon="dashboards" title={t("shell.start.empty.title")}>
+          {t("shell.start.empty.text")}
+        </EmptyState>
+      ) : null}
+      <EntryCards
+        orgId={orgId}
+        title={t("shell.start.starred")}
+        empty={t("shell.start.starredEmpty")}
+        query={stars}
+        starredIds={starredIds}
+      />
+      <EntryCards
+        orgId={orgId}
+        title={t("shell.start.recent")}
+        empty={t("shell.start.recentEmpty")}
+        query={recents}
+        limit={RECENT_CARDS}
+        starredIds={starredIds}
+      />
     </div>
   );
 }
 
-/** First steps in an organization without content, each only for who may take it. */
-function Onboarding() {
+// Stat tiles
+
+interface StatSpec {
+  key: string;
+  label: MessageKey;
+  to: NonNullable<LinkProps["to"]>;
+  count: Count | undefined;
+  failed: boolean;
+  well: ReactNode;
+}
+
+/** The organization in numbers, each a link to where the things are; only what the user may see. */
+function Stats({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
-  const titleId = useId();
-  const steps: { key: string; title: string; text: string; link: ReactNode }[] = [];
-  if (permissions.has("datasources:write")) {
-    steps.push({
-      key: "datasource",
-      title: t("shell.start.onboarding.datasource"),
-      text: t("shell.start.onboarding.datasourceText"),
-      link: (
-        <Link to="/data-sources/new" search={{}} className="button button--primary">
-          {t("shell.start.onboarding.datasourceAction")}
-        </Link>
-      ),
+  const canDatasources = datasourcesNav.visible?.(permissions) ?? true;
+  const canMembers = permissions.has("users:read");
+  const canAudit = permissions.has("audit:read");
+  const dashboards = useQuery(dashboardCountQuery(orgId));
+  const datasources = useQuery({ ...datasourceCountQuery(orgId), enabled: canDatasources });
+  const members = useQuery({ ...memberCountQuery(orgId), enabled: canMembers });
+  const activity = useQuery({ ...activityQuery(orgId), enabled: canAudit });
+
+  const stats: StatSpec[] = [
+    {
+      key: "dashboards",
+      label: "shell.start.stat.dashboards",
+      to: "/dashboards",
+      count: dashboards.data,
+      failed: dashboards.isError,
+      well: <DashboardsArt />,
+    },
+  ];
+  if (canDatasources) {
+    stats.push({
+      key: "datasources",
+      label: "shell.start.stat.datasources",
+      to: "/data-sources",
+      count: datasources.data,
+      failed: datasources.isError,
+      well: <DatasourcesArt />,
     });
   }
-  if (permissions.has("dashboards:write")) {
-    steps.push({
-      key: "dashboard",
-      title: t("shell.start.onboarding.dashboard"),
-      text: t("shell.start.onboarding.dashboardText"),
-      link: (
-        <Link
-          to="/dashboards"
-          search={{ create: "dashboard" }}
-          className="button button--secondary"
-        >
-          {t("shell.start.onboarding.dashboardAction")}
-        </Link>
-      ),
-    });
-  }
-  if (permissions.has("users:invite") || permissions.has("users:write")) {
-    steps.push({
+  if (canMembers && permissions.loaded) {
+    stats.push({
       key: "members",
-      title: t("shell.start.onboarding.members"),
-      text: t("shell.start.onboarding.membersText"),
-      link: (
-        <Link to="/admin/members" className="button button--secondary">
-          {t("shell.start.onboarding.membersAction")}
-        </Link>
-      ),
+      label: "shell.start.stat.members",
+      to: "/admin/members",
+      count: members.data,
+      failed: members.isError,
+      well: <MembersArt />,
     });
   }
+  if (canAudit && permissions.loaded) {
+    stats.push({
+      key: "activity",
+      label: "shell.start.stat.activity",
+      to: "/admin/audit",
+      count: activity.data?.total,
+      failed: activity.isError,
+      well: <Sparkline values={activity.data?.perDay ?? []} />,
+    });
+  }
+
   return (
-    <section className="start__onboarding" aria-labelledby={titleId}>
-      <h2 id={titleId}>{t("shell.start.onboarding.title")}</h2>
-      {steps.length === 0 ? (
-        <p className="start__muted">{t("shell.start.onboarding.nothing")}</p>
-      ) : (
-        <ol className="start__steps">
-          {steps.map((step) => (
-            <li key={step.key} className="start__step">
-              <h3 className="start__step-title">{step.title}</h3>
-              <p className="start__muted">{step.text}</p>
-              <div>{step.link}</div>
-            </li>
-          ))}
-        </ol>
-      )}
+    <section aria-label={t("shell.start.stats")}>
+      <ul className="start__stats">
+        {stats.map((stat) => (
+          <li key={stat.key}>
+            <Link to={stat.to} className="stat">
+              <span className="stat__text">
+                <span className="stat__label">{t(stat.label)}</span>
+                <StatValue count={stat.count} failed={stat.failed} />
+              </span>
+              <span className="stat__well" aria-hidden="true">
+                {stat.well}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
 
-function EntryList({
+function StatValue({ count, failed }: { count: Count | undefined; failed: boolean }) {
+  const { t, language } = useI18n();
+  if (count === undefined) {
+    return failed ? (
+      <span className="stat__value stat__value--none">{t("shell.start.stat.unknown")}</span>
+    ) : (
+      <span className="stat__value">
+        <span className="stat__skeleton skeleton" />
+        <span className="visually-hidden">{t("common.loading")}</span>
+      </span>
+    );
+  }
+  const value = new Intl.NumberFormat(language).format(count.value);
+  return (
+    <span className="stat__value">
+      {count.more ? t("shell.start.stat.more", { count: value }) : value}
+    </span>
+  );
+}
+
+/*
+ * Illustrations for the wells: drawn from the surface, border and muted text tokens, so they sit
+ * quietly in every theme. Decorative; the label and number carry the meaning.
+ */
+
+function DashboardsArt() {
+  return (
+    <svg className="art" aria-hidden="true" viewBox="0 0 64 48" focusable="false">
+      <rect className="art__sheet" x="10" y="2" width="50" height="40" rx="5" />
+      <rect className="art__sheet art__sheet--front" x="4" y="7" width="50" height="39" rx="5" />
+      <rect className="art__panel" x="9" y="12" width="18" height="12" rx="2" />
+      <rect className="art__panel" x="30" y="12" width="19" height="12" rx="2" />
+      <path className="art__line" d="M10 39 17 33l6 3 7-7 7 4 11-6" />
+    </svg>
+  );
+}
+
+function DatasourcesArt() {
+  return (
+    <svg className="art" aria-hidden="true" viewBox="0 0 64 48" focusable="false">
+      <path className="art__sheet" d="M14 10c0-4 8-7 18-7s18 3 18 7v28c0 4-8 7-18 7s-18-3-18-7z" />
+      <ellipse className="art__sheet art__sheet--front" cx="32" cy="10" rx="18" ry="7" />
+      <path className="art__line" d="M14 20c0 4 8 7 18 7s18-3 18-7M14 30c0 4 8 7 18 7s18-3 18-7" />
+    </svg>
+  );
+}
+
+function MembersArt() {
+  return (
+    <svg className="art" aria-hidden="true" viewBox="0 0 64 48" focusable="false">
+      <circle className="art__sheet" cx="44" cy="20" r="11" />
+      <circle className="art__sheet" cx="20" cy="20" r="11" />
+      <circle className="art__sheet art__sheet--front" cx="32" cy="24" r="13" />
+      <circle className="art__line" cx="32" cy="20" r="4" />
+      <path className="art__line" d="M24 33a8 8 0 0 1 16 0" />
+    </svg>
+  );
+}
+
+/** Changes per day as a small line, in the text color; flat until the numbers arrive. */
+function Sparkline({ values }: { values: number[] }) {
+  const width = 64;
+  const height = 40;
+  const points = values.length > 0 ? values : Array.from({ length: ACTIVITY_DAYS }, () => 0);
+  const max = Math.max(1, ...points);
+  const step = width / Math.max(1, points.length - 1);
+  const path = points
+    .map((value, index) => {
+      const x = index * step;
+      // A pixel of room top and bottom, so the stroke is never cut.
+      const y = height - 2 - (value / max) * (height - 4);
+      return `${index === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      className="art art--spark"
+      aria-hidden="true"
+      viewBox={`0 0 ${width} ${height}`}
+      focusable="false"
+    >
+      <path className="art__grid" d={`M0 ${height - 1}H${width}`} />
+      <path className="art__spark" d={path} />
+    </svg>
+  );
+}
+
+// Dashboard cards
+
+function EntryCards({
+  orgId,
   title,
   empty,
   query,
+  limit,
+  starredIds,
 }: {
+  orgId: string;
   title: string;
   empty: string;
   query: { data?: { items: DashboardEntry[] } | undefined; isPending: boolean; error: unknown };
+  limit?: number;
+  starredIds: ReadonlySet<string>;
 }) {
   const { t } = useI18n();
   const titleId = useId();
@@ -206,24 +382,16 @@ function EntryList({
   } else if (query.data.items.length === 0) {
     body = <p className="start__muted">{empty}</p>;
   } else {
+    const items = limit === undefined ? query.data.items : query.data.items.slice(0, limit);
     body = (
-      <ul className="start__list">
-        {query.data.items.map((entry) => (
-          <li key={entry.id}>
-            <Link
-              to="/dashboards/$dashboardId"
-              params={{ dashboardId: entry.id }}
-              className="start__entry"
-            >
-              <Icon name="dashboards" />
-              <span className="start__entry-text">
-                <span className="start__entry-title truncate">{entry.title}</span>
-                {entry.path.length === 0 ? null : (
-                  <span className="start__entry-path truncate">{entry.path.join(" / ")}</span>
-                )}
-              </span>
-            </Link>
-          </li>
+      <ul className="start__cards">
+        {items.map((entry) => (
+          <DashboardCard
+            key={entry.id}
+            orgId={orgId}
+            entry={entry}
+            starred={starredIds.has(entry.id)}
+          />
         ))}
       </ul>
     );
@@ -235,5 +403,89 @@ function EntryList({
       </h2>
       {body}
     </section>
+  );
+}
+
+/** The card's thumbnail: a small sheet of panels, the same for every dashboard. */
+function DashboardThumb() {
+  return (
+    <svg className="dash-card__thumb" aria-hidden="true" viewBox="0 0 92 68" focusable="false">
+      <rect className="thumb__tab" x="0.5" y="0.5" width="30" height="12" rx="5" />
+      <rect className="thumb__sheet" x="0.5" y="6.5" width="91" height="61" rx="7" />
+      <rect className="thumb__panel" x="7" y="13" width="35" height="20" rx="3" />
+      <rect className="thumb__panel" x="47" y="13" width="38" height="20" rx="3" />
+      <rect className="thumb__panel" x="7" y="38" width="78" height="23" rx="3" />
+      <path className="thumb__line" d="M12 55l10-6 9 3 11-8 10 5 11-6 9 2" />
+    </svg>
+  );
+}
+
+/** A dashboard as a card: a thumbnail tile, its title and folder, and two quick actions. */
+function DashboardCard({
+  orgId,
+  entry,
+  starred,
+}: {
+  orgId: string;
+  entry: DashboardEntry;
+  starred: boolean;
+}) {
+  const { t } = useI18n();
+  const permissions = useOrgPermissions();
+  const queryClient = useQueryClient();
+  const titleId = useId();
+  const toggle = useMutation({
+    mutationFn: (next: boolean) => setStarred(orgId, entry.id, next),
+    onSuccess: (_result, next) => {
+      queryClient.setQueryData(starredQuery(orgId, entry.id).queryKey, next);
+    },
+    onError: (error) => showErrorToast(apiErrorText(t, error)),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [HOME_KEY, orgId, "stars"] }),
+  });
+  // The star shows the change at once, before the server answers.
+  const on = toggle.isPending ? toggle.variables : starred;
+  return (
+    <li className="dash-card">
+      <DashboardThumb />
+      <h3 id={titleId} className="dash-card__title">
+        <Link
+          to="/dashboards/$dashboardId"
+          params={{ dashboardId: entry.id }}
+          className="dash-card__link truncate"
+        >
+          {entry.title}
+        </Link>
+      </h3>
+      <p className="dash-card__path">
+        <Icon name="folder" />
+        <span className="truncate">
+          {entry.path.length === 0 ? t("shell.start.noFolder") : entry.path.join(" / ")}
+        </span>
+      </p>
+      <div className="dash-card__actions">
+        <button
+          type="button"
+          className="button button--secondary button--small star-button"
+          aria-pressed={on}
+          aria-describedby={titleId}
+          onClick={() => toggle.mutate(!on)}
+        >
+          <Icon name={on ? "starFilled" : "star"} />
+          {on ? t("shell.star.starred") : t("shell.star.star")}
+        </button>
+        {permissions.has("dashboards:write") ? (
+          <Link
+            to="/dashboards/$dashboardId"
+            params={{ dashboardId: entry.id }}
+            search={{ edit: true }}
+            className="button button--ghost button--small"
+            aria-describedby={titleId}
+          >
+            <Icon name="edit" />
+            {t("shell.start.edit")}
+          </Link>
+        ) : null}
+      </div>
+    </li>
   );
 }

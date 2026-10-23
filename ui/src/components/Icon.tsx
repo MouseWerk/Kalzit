@@ -22,6 +22,16 @@ const PATHS = {
   starFilled: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
   plus: "M12 5v14M5 12h14",
   keyboard: "M3.5 6.5h17v11h-17zM7 10h.01M10 10h.01M13 10h.01M16 10h.01M8 14h8",
+  // Opens a menu that lists choices above and below: two chevrons, one up, one down.
+  chevronUpDown: "M8.5 9.5 12 6l3.5 3.5M8.5 14.5 12 18l3.5-3.5",
+  close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
+  edit: "M5 19h3.5L18.5 9a2.47 2.47 0 0 0-3.5-3.5L5 15.5zM13.5 7l3.5 3.5",
+  members:
+    "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3.5 20a5.5 5.5 0 0 1 11 0M15.5 4.5a3.5 3.5 0 0 1 0 6.5M17.5 14.5a5.5 5.5 0 0 1 3 5.5",
+  activity: "M3.5 12h4l2.5-6 4 12 2.5-6h4",
+  checklist: "M10 6.5h9.5M10 12h9.5M10 17.5h9.5M4.5 6.5l1.25 1.25L8 5.5M4.5 12l1.25 1.25L8 11",
+  folder:
+    "M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z",
 } as const;
 
 /** Icons drawn filled instead of outlined (the starred state of a star). */
