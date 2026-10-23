@@ -38,8 +38,24 @@ export interface GraphPanelOptions {
   variableProperty: string;
 }
 
-const text = (value: unknown, fallback = "") =>
-  typeof value === "string" ? value.trim().slice(0, 100) : fallback;
+/** Longest caption, property key or variable name the graph panels store. */
+export const MAX_OPTION_TEXT = 100;
+
+/**
+ * A one-line option text as the graph panels store it: control characters (a pasted tab) taken
+ * out, the ends trimmed, cut to MAX_OPTION_TEXT. The server refuses control characters
+ * (`panel_options`), so what is stored is what it accepts.
+ */
+export function optionText(value: unknown, fallback = ""): string {
+  if (typeof value !== "string") return fallback;
+  // \p{Cc}: the characters Rust's `char::is_control` names, which the server refuses.
+  return value
+    .replace(/\p{Cc}/gu, "")
+    .trim()
+    .slice(0, MAX_OPTION_TEXT);
+}
+
+const text = optionText;
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value)
