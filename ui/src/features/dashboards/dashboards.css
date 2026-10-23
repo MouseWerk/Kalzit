@@ -251,22 +251,28 @@
   /*
    * While viewing, a panel's actions appear on hover or keyboard focus, so the canvas shows
    * titles and data, not rows of buttons. Hidden visually only: Tab still reaches them, and
-   * touch screens (no hover, or any coarse pointer) always show them. They float over the top
-   * right corner instead of taking a row of their own, so a narrow panel keeps its title at the
-   * same height as its neighbours whether its actions would wrap or not.
+   * touch screens (no hover, or any coarse pointer) always show them. They stay on the title's
+   * row and never wrap, so a narrow panel keeps its title at the same height as its neighbours;
+   * hidden they take no width, shown the title ends in an ellipsis against them.
    */
   @media (hover: hover) and (not (any-pointer: coarse)) {
+    .panel-card:not(.panel-card--editing) .panel-card__header {
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+
+    .panel-card:not(.panel-card--editing) .panel-card__title {
+      flex: 1 1 auto;
+    }
+
     .panel-card:not(.panel-card--editing) .panel-card__actions {
-      position: absolute;
-      z-index: var(--z-sticky);
-      inset-block-start: var(--space-1);
-      inset-inline-end: var(--space-1);
-      max-width: calc(100% - 2 * var(--space-1));
-      border-radius: var(--radius-md);
-      background: var(--bg-raised);
+      flex: none;
+      flex-wrap: nowrap;
     }
 
     .panel-card:not(.panel-card--editing, :hover, :focus-within) .panel-card__actions {
+      max-width: 0;
+      overflow: hidden;
       clip-path: inset(50%);
     }
   }
