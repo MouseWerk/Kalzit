@@ -1,4 +1,5 @@
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { forgetDrafts } from "../features/dashboards/draftStore";
 import { expectShape, isApiError, isRecord, request } from "./client";
 
 export const ORG_ROLES = ["owner", "admin", "editor", "viewer"] as const;
@@ -111,4 +112,6 @@ export const meQuery = queryOptions({
 export function forgetAccountData(queryClient: QueryClient): void {
   const keep = new Set<unknown>([meQuery.queryKey[0], setupStatusQuery.queryKey[0]]);
   queryClient.removeQueries({ predicate: (query) => !keep.has(query.queryKey[0]) });
+  // Unsaved dashboard drafts kept in this tab belong to the account that made them.
+  forgetDrafts();
 }

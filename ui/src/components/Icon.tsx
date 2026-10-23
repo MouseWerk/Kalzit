@@ -28,6 +28,8 @@ const PATHS = {
   // Opens a menu that lists choices above and below: two chevrons, one up, one down.
   chevronUpDown: "M8.5 9.5 12 6l3.5 3.5M8.5 14.5 12 18l3.5-3.5",
   close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
+  // A menu of more actions: three dots in a row.
+  more: "M5 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M11 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0M17 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0",
   edit: "M5 19h3.5L18.5 9a2.47 2.47 0 0 0-3.5-3.5L5 15.5zM13.5 7l3.5 3.5",
   members:
     "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3.5 20a5.5 5.5 0 0 1 11 0M15.5 4.5a3.5 3.5 0 0 1 0 6.5M17.5 14.5a5.5 5.5 0 0 1 3 5.5",

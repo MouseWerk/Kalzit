@@ -1,4 +1,12 @@
-import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  memo,
+  type PointerEvent,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { useI18n } from "../../i18n/i18n";
 import type { LinkedPanel } from "./api";
 import { layoutSections, type PlacedPanel, panelValues, type Section } from "./layout";
@@ -50,17 +58,26 @@ interface DashboardGridProps {
   edit?: GridEditActions | undefined;
 }
 
+/** Resolved library panels per slot and library version, so an unchanged slot keeps its object. */
+const resolved = new WeakMap<PanelModel, { linked: LinkedPanel; panel: PanelModel }>();
+
 /** A panel showing a library panel draws the library panel's content in its own place. */
 export function resolvePanel(panel: PanelModel, library: Record<string, LinkedPanel>): PanelModel {
   const linked = panel.libraryPanelId === undefined ? undefined : library[panel.libraryPanelId];
   if (linked === undefined) {
     return panel;
   }
+  const known = resolved.get(panel);
+  if (known !== undefined && known.linked === linked) {
+    return known.panel;
+  }
   const { id, grid, rowId, repeat } = panel;
   const place: Partial<PanelModel> = { id, grid, libraryPanelId: linked.id };
   if (rowId !== undefined) place.rowId = rowId;
   if (repeat !== undefined) place.repeat = repeat;
-  return { ...linked.model, ...place };
+  const result = { ...linked.model, ...place };
+  resolved.set(panel, { linked, panel: result });
+  return result;
 }
 
 /**
@@ -83,11 +100,11 @@ export function DashboardGrid({
 }: DashboardGridProps) {
   const { t } = useI18n();
   const [announcement, setAnnouncement] = useState("");
-  const resolved = panels.map((p) => resolvePanel(p, libraryPanels));
-  const stored = new Map(
-    storedPanels.map((p) => [p.id, JSON.stringify(resolvePanel(p, libraryPanels).targets)]),
-  );
-  const sections = layoutSections(resolved, rows, query.variables, edit === undefined);
+  const drawn = panels.map((p) => resolvePanel(p, libraryPanels));
+  // Panels whose queries differ from the saved ones (or are new), worked out once per change of
+  // the panels instead of per card and render.
+  const changed = changedPanels(drawn, storedPanels, libraryPanels);
+  const sections = layoutSections(drawn, rows, query.variables, edit === undefined);
   const [focusRow, setFocusRow] = useState<string | null>(null);
 
   function moveRow(index: number, to: number, byKeyboard: boolean) {
@@ -143,7 +160,7 @@ export function DashboardGrid({
                 section={section}
                 query={query}
                 now={now}
-                stored={stored}
+                changed={changed}
                 view={view}
                 edit={edit !== undefined && section.first ? edit : undefined}
                 onAnnounce={setAnnouncement}
@@ -164,11 +181,34 @@ function rowLabel(t: ReturnType<typeof useI18n>["t"], row: RowModel, value?: str
   return value === undefined ? title : `${title}: ${value}`;
 }
 
+/** Targets as text per stored targets list, so each saved panel is serialized once. */
+const targetTexts = new WeakMap<readonly unknown[], string>();
+function targetsText(targets: readonly unknown[]): string {
+  let text = targetTexts.get(targets);
+  if (text === undefined) {
+    text = JSON.stringify(targets);
+    targetTexts.set(targets, text);
+  }
+  return text;
+}
+
+/** Ids of the drawn panels whose queries are not the saved ones; new panels are among them. */
+function changedPanels(
+  drawn: readonly PanelModel[],
+  storedPanels: readonly PanelModel[],
+  library: Record<string, LinkedPanel>,
+): ReadonlySet<string> {
+  const stored = new Map(
+    storedPanels.map((p) => [p.id, targetsText(resolvePanel(p, library).targets)]),
+  );
+  return new Set(drawn.filter((p) => stored.get(p.id) !== targetsText(p.targets)).map((p) => p.id));
+}
+
 function SectionGrid({
   section,
   query,
   now,
-  stored,
+  changed,
   view,
   edit,
   onAnnounce,
@@ -176,7 +216,7 @@ function SectionGrid({
   section: Section;
   query: DashboardGridProps["query"];
   now: number;
-  stored: Map<string, string>;
+  changed: ReadonlySet<string>;
   view: DashboardGridProps["view"];
   edit: GridEditActions | undefined;
   onAnnounce: (text: string) => void;
@@ -203,56 +243,122 @@ function SectionGrid({
   }
   return (
     <div className="dash-grid" ref={ref}>
-      {section.panels.map((placed: PlacedPanel) => {
-        const panel = { ...placed.panel, grid: placed.grid };
-        const changed =
-          edit !== undefined && stored.get(panel.id) !== JSON.stringify(panel.targets);
-        const values = panelValues(query.variables, placed, section);
-        return (
-          <PanelCard
-            key={placed.key}
-            panel={panel}
-            repeatValue={placed.repeat?.value}
-            query={{
-              ...query,
-              variables: values,
-              range: panelRange(panel, query.range, now),
-              source: changed ? "draft" : "stored",
-            }}
-            view={view === undefined ? undefined : { ...view, values }}
-            edit={
-              edit === undefined
-                ? undefined
-                : {
-                    onEdit: () => edit.onEdit(panel.id),
-                    onDuplicate: () => edit.onDuplicate(panel.id),
-                    onRemove: () => edit.onRemove(panel.id),
-                    onCopy: () => edit.onCopy(panel.id),
-                    onGrid: (grid, byKeyboard) => {
-                      edit.onGrid(panel.id, grid);
-                      if (byKeyboard) {
-                        const g = clampGrid(grid);
-                        onAnnounce(
-                          t("dashboards.panel.placed", {
-                            title:
-                              panel.title === "" ? t("dashboards.panel.untitled") : panel.title,
-                            column: g.x + 1,
-                            row: g.y + 1,
-                            width: g.w,
-                            height: g.h,
-                          }),
-                        );
-                      }
-                    },
-                    cellSize,
-                  }
-            }
-          />
-        );
-      })}
+      {section.panels.map((placed: PlacedPanel) => (
+        <GridCard
+          key={placed.key}
+          panel={placed.panel}
+          x={placed.grid.x}
+          y={placed.grid.y}
+          w={placed.grid.w}
+          h={placed.grid.h}
+          rowVariable={section.repeat?.variable}
+          rowValue={section.repeat?.value}
+          repeatVariable={placed.repeat?.variable}
+          repeatValue={placed.repeat?.value}
+          query={query}
+          now={now}
+          changed={edit !== undefined && changed.has(placed.panel.id)}
+          view={view}
+          edit={edit}
+          cellSize={cellSize}
+          onAnnounce={onAnnounce}
+        />
+      ))}
     </div>
   );
 }
+
+/**
+ * One card of the grid. Its props are the stored panel and plain values, so a card whose panel,
+ * place and inputs did not change is skipped when the dashboard draws again (a drop, another
+ * panel's edit, a variable that this panel does not use still re-runs through `query`).
+ */
+const GridCard = memo(function GridCard({
+  panel: stored,
+  x,
+  y,
+  w,
+  h,
+  rowVariable,
+  rowValue,
+  repeatVariable,
+  repeatValue,
+  query,
+  now,
+  changed,
+  view,
+  edit,
+  cellSize,
+  onAnnounce,
+}: {
+  panel: PanelModel;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rowVariable: string | undefined;
+  rowValue: string | undefined;
+  repeatVariable: string | undefined;
+  repeatValue: string | undefined;
+  query: DashboardGridProps["query"];
+  now: number;
+  changed: boolean;
+  view: DashboardGridProps["view"];
+  edit: GridEditActions | undefined;
+  cellSize: () => { width: number; height: number };
+  onAnnounce: (text: string) => void;
+}) {
+  const { t } = useI18n();
+  const panel = { ...stored, grid: { x, y, w, h } };
+  const copy = (variable: string | undefined, value: string | undefined) =>
+    variable === undefined || value === undefined ? undefined : { variable, value };
+  const values = panelValues(
+    query.variables,
+    { repeat: copy(repeatVariable, repeatValue) },
+    { repeat: copy(rowVariable, rowValue) },
+  );
+  const id = panel.id;
+  const title = panel.title;
+  return (
+    <PanelCard
+      panel={panel}
+      repeatValue={repeatValue}
+      query={{
+        ...query,
+        variables: values,
+        range: panelRange(panel, query.range, now),
+        source: changed ? "draft" : "stored",
+      }}
+      view={view === undefined ? undefined : { ...view, values }}
+      edit={
+        edit === undefined
+          ? undefined
+          : {
+              onEdit: () => edit.onEdit(id),
+              onDuplicate: () => edit.onDuplicate(id),
+              onRemove: () => edit.onRemove(id),
+              onCopy: () => edit.onCopy(id),
+              onGrid: (grid, byKeyboard) => {
+                edit.onGrid(id, grid);
+                if (byKeyboard) {
+                  const g = clampGrid(grid);
+                  onAnnounce(
+                    t("dashboards.panel.placed", {
+                      title: title === "" ? t("dashboards.panel.untitled") : title,
+                      column: g.x + 1,
+                      row: g.y + 1,
+                      width: g.w,
+                      height: g.h,
+                    }),
+                  );
+                }
+              },
+              cellSize,
+            }
+      }
+    />
+  );
+});
 
 function RowHeader({
   row,

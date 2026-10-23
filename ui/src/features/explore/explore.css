@@ -41,29 +41,4 @@
   .explore__panel:has(> .panel-error:only-child) {
     height: auto;
   }
-
-  .tabs {
-    display: flex;
-    gap: var(--space-1);
-  }
-
-  .tabs__tab {
-    padding: var(--space-1) var(--space-3);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .tabs__tab:hover {
-    background: var(--bg-hover);
-  }
-
-  /* Selected tab: neutral tint and weight, no underline in the accent color. */
-  .tabs__tab[aria-selected="true"] {
-    background: var(--bg-active);
-    font-weight: var(--font-weight-semibold);
-  }
 }

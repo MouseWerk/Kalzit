@@ -1,8 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  getRouteApi,
+  Link,
+  useBlocker,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "@tanstack/react-router";
+import { type ReactNode, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
-import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
+import { Breadcrumbs, type Crumb, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -33,6 +40,7 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardLinks } from "./DashboardLinks";
+import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
@@ -46,9 +54,10 @@ import {
   valueList,
 } from "./model";
 import { PanelCard } from "./PanelCard";
-import { PanelEditor } from "./PanelEditor";
+import { type EditorSnapshot, PanelEditor } from "./PanelEditor";
 import { panelRange } from "./panelTime";
 import { REFRESH_CHOICES } from "./refresh";
+import type { DashboardSearch } from "./routes";
 import { ConflictDialog, SaveDialog } from "./SaveDialogs";
 import { SettingsDialog } from "./SettingsDialog";
 import { TimeRangePicker } from "./TimeRangePicker";
@@ -85,6 +94,7 @@ function saveErrorText(t: Translate, error: unknown): string {
 }
 
 const dashboardRoute = getRouteApi("/_app/dashboards/$dashboardId");
+const appRoute = getRouteApi("/_app");
 
 /** Size of a new panel: half the width, a comfortable chart height. */
 const NEW_PANEL_GRID = { w: 12, h: 8 };
@@ -102,7 +112,14 @@ export interface DisplayState {
   mode: ViewMode;
   /** A panel shown alone, full screen. */
   viewPanel?: string | undefined;
+  /** The panel open in the full-page editor (its own route), or `NEW_PANEL` for one being added. */
+  editPanel?: string | undefined;
+  /** Opening the editor replaces the current history entry instead of adding one. */
+  replace?: boolean | undefined;
 }
+
+/** `editPanel` for a panel being added: the editor at `/dashboards/$id/panels/new`. */
+export const NEW_PANEL = "new";
 
 export function DashboardPage() {
   const { t } = useI18n();
@@ -110,6 +127,9 @@ export function DashboardPage() {
   const { dashboardId } = dashboardRoute.useParams();
   const search = dashboardRoute.useSearch();
   const navigate = dashboardRoute.useNavigate();
+  // Set on the editor's child routes only.
+  const { panelId } = useParams({ strict: false });
+  const adding = useLocation({ select: (location) => location.pathname.endsWith("/panels/new") });
   if (org === undefined) {
     return (
       <EmptyState icon="dashboards" title={t("dashboards.noOrg.title")}>
@@ -127,8 +147,31 @@ export function DashboardPage() {
         edit: search.edit,
         mode: search.kiosk ?? "normal",
         viewPanel: search.viewPanel,
+        editPanel: panelId ?? (adding ? NEW_PANEL : undefined),
       }}
-      onDisplay={(patch) =>
+      onDisplay={(patch) => {
+        if ("editPanel" in patch) {
+          // Into the editor and back are entries in the history; the browser's back button
+          // leaves the editor as Discard does, after asking when something changed.
+          const keep = (prev: DashboardSearch) => ({ ...prev, edit: undefined });
+          const replace = patch.replace === true;
+          void (patch.editPanel === undefined
+            ? navigate({ to: "/dashboards/$dashboardId", params: { dashboardId }, search: keep })
+            : patch.editPanel === NEW_PANEL
+              ? navigate({
+                  to: "/dashboards/$dashboardId/panels/new",
+                  params: { dashboardId },
+                  search: keep,
+                  replace,
+                })
+              : navigate({
+                  to: "/dashboards/$dashboardId/panels/$panelId/edit",
+                  params: { dashboardId, panelId: patch.editPanel },
+                  search: keep,
+                  replace,
+                }));
+          return;
+        }
         void navigate({
           search: (prev) => {
             const next = { ...prev };
@@ -140,8 +183,8 @@ export function DashboardPage() {
             return next;
           },
           replace: true,
-        })
-      }
+        });
+      }}
     />
   );
 }
@@ -211,7 +254,6 @@ export function DashboardScreen({ orgId, dashboardId, display, onDisplay, contro
 }
 
 type DialogState =
-  | { kind: "panel"; panel: PanelModel; isNew: boolean }
   | { kind: "settings" }
   | { kind: "save" }
   | { kind: "conflict"; current: Dashboard; message: string }
@@ -227,7 +269,23 @@ type DialogState =
   | { kind: "librarySave"; panel: PanelModel; isNew: boolean }
   | { kind: "annotate"; time: number; panelId: string | null }
   | { kind: "mark"; mark: DashboardMark }
+  | { kind: "discardPanel"; fresh: boolean }
   | null;
+
+/**
+ * How the open panel editor is being left: with its change put into the draft (Back, Apply,
+ * Esc), with the panel put back as it was (Discard; also the browser's back button or a link,
+ * after asking when something changed), or as it stands because the change already went
+ * elsewhere (made into a library panel, or a new panel saved and opened at its own address).
+ */
+type LeaveMode = "apply" | "discard" | "keep";
+
+/** The panel the editor opened, for Discard: absent and `fresh` for a panel added just now. */
+interface OpenedPanel {
+  id: string;
+  panel: PanelModel | undefined;
+  fresh: boolean;
+}
 
 /**
  * The values the panel editor previews with: a repeated panel (or one in a repeated row) shows
@@ -308,7 +366,15 @@ function DashboardView({
   const canAnnotate =
     !inTrash && (permissions.has("annotations:write") || (dashboard.access?.write ?? false));
 
+  const userId = appRoute.useRouteContext().me.id;
+  // Kept drafts belong to one account in one organization.
+  const owner = useMemo(() => ({ userId, orgId }), [userId, orgId]);
+  // What this tab kept of unsaved work on this version (a reload): the draft and the editor's
+  // panel. It comes back below, once it is clear that this person may edit.
+  const [kept] = useState(() => readDraft(owner, dashboard.id, dashboard.version));
   const [draft, setDraft] = useState<DashboardModel | null>(null);
+  // The editor's panel from a reload, used once when the editor opens on it again.
+  const [keptEditor, setKeptEditor] = useState(kept?.editor);
   // Edit mode is where query editors appear; start loading the editor before one opens.
   useEffect(() => {
     if (draft !== null) {
@@ -336,6 +402,111 @@ function DashboardView({
   const [clock, setClock] = useState(() => ({ now: Date.now(), run: 0, manual: 0 }));
   const [dialog, setDialog] = useState<DialogState>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The panel whose menu takes focus when the editor closes.
+  const [focusAfter, setFocusAfter] = useState<string | null>(null);
+  const editing = display.editPanel;
+  const isNewPanel = editing === NEW_PANEL;
+  // The open editor's state, read when it is left, and the panel as it was when it opened.
+  const snapshot = useRef<EditorSnapshot | null>(null);
+  const opened = useRef<OpenedPanel | null>(null);
+  // Set by the editor's buttons just before they leave it; unset, leaving discards.
+  const leaveMode = useRef<LeaveMode | null>(null);
+  // A panel being added: it joins the dashboard only when it is applied.
+  const [fresh, setFresh] = useState<PanelModel | null>(null);
+  const draftRef = useRef(draft);
+  const editingRef = useRef(editing);
+  useEffect(() => {
+    draftRef.current = draft;
+    editingRef.current = editing;
+  });
+  // The model as last drawn, for actions that look a panel or row up: reading it from a ref
+  // keeps those actions the same objects while the draft changes, so cards are not drawn again.
+  const modelRef = useRef(model);
+  useEffect(() => {
+    modelRef.current = model;
+  });
+
+  // A kept draft comes back for someone who may edit this dashboard; for anyone else it goes.
+  // (Before the editor's address below, which would otherwise start from the saved model.)
+  useEffect(() => {
+    if (kept === null || !permissions.loaded) {
+      return;
+    }
+    if (canEdit) {
+      setDraft((current) => current ?? kept.model);
+    } else {
+      setKeptEditor(undefined);
+      writeDraft(owner, dashboard.id, null);
+    }
+  }, [kept, permissions.loaded, canEdit, owner, dashboard.id]);
+
+  // The editor's address opens edit mode (a reload, a shared link), for those who may edit;
+  // everyone else goes back to the dashboard.
+  useEffect(() => {
+    if (editing === undefined || !permissions.loaded) {
+      return;
+    }
+    if (!canEdit) {
+      onDisplay({ editPanel: undefined });
+      return;
+    }
+    setDraft((current) => current ?? dashboard.model);
+  }, [editing, permissions.loaded, canEdit, dashboard.model, onDisplay]);
+  useEffect(() => {
+    if (editing !== undefined && !isNewPanel && draft !== null && opened.current?.id !== editing) {
+      opened.current = {
+        id: editing,
+        panel: draft.panels.find((p) => p.id === editing),
+        fresh: false,
+      };
+    }
+  }, [editing, isNewPanel, draft]);
+
+  // Unsaved work survives a reload of this tab: the draft, and what the open editor holds.
+  function keepDraft() {
+    const current = draftRef.current;
+    const state = snapshot.current;
+    const key = editingRef.current;
+    writeDraft(
+      owner,
+      dashboard.id,
+      current === null
+        ? null
+        : {
+            version: dashboard.version,
+            model: current,
+            editor: state === null || key === undefined ? undefined : { key, panel: state.panel() },
+          },
+    );
+  }
+  useEffect(() => {
+    // Nothing is written before a kept draft had its chance to come back.
+    if (draft === null && kept !== null && !permissions.loaded) {
+      return;
+    }
+    writeDraft(
+      owner,
+      dashboard.id,
+      draft === null ? null : { version: dashboard.version, model: draft },
+    );
+  }, [owner, dashboard.id, dashboard.version, draft, kept, permissions.loaded]);
+  const keepTimer = useRef(0);
+  // Leaving the page (a reload, closing the tab) keeps the editor's latest change at once,
+  // without waiting for the pause after typing.
+  const flushDraft = useEffectEvent(() => {
+    window.clearTimeout(keepTimer.current);
+    if (draftRef.current !== null) {
+      keepDraft();
+    }
+  });
+  useEffect(() => {
+    const onPageHide = () => flushDraft();
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      window.clearTimeout(keepTimer.current);
+    };
+  }, []);
 
   // "?edit" opens edit mode once, and only for someone who may edit; it must not reopen it after
   // a save remounts the view. Permissions arrive after the first render, so this waits for them.
@@ -349,11 +520,19 @@ function DashboardView({
     onDisplay({ edit: undefined });
   }, [display.edit, permissions.loaded, canEdit, dashboard.model, onDisplay]);
 
-  const textRange: TextRange =
-    draft === null && display.from !== undefined && display.to !== undefined
-      ? { from: display.from, to: display.to }
-      : model.timeRange;
-  const resolved = resolveRange(textRange, clock.now, { timeZone, weekStart });
+  // The range and what the cards run with keep their identity while they stay the same, so an
+  // edit of the draft (a panel moved) does not hand every card new props.
+  const textRange: TextRange = useMemo(
+    () =>
+      draft === null && display.from !== undefined && display.to !== undefined
+        ? { from: display.from, to: display.to }
+        : model.timeRange,
+    [draft, display.from, display.to, model.timeRange],
+  );
+  const resolved = useMemo(
+    () => resolveRange(textRange, clock.now, { timeZone, weekStart }),
+    [textRange, clock.now, timeZone, weekStart],
+  );
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
 
   useEffect(() => {
@@ -521,8 +700,38 @@ function DashboardView({
     };
   }
 
+  // Adding a panel: one made now (or the one kept from a reload), outside the draft.
+  const startFresh = useEffectEvent(() => {
+    const panel = keptEditor?.key === NEW_PANEL ? keptEditor.panel : newPanel();
+    setFresh(panel);
+    opened.current = { id: panel.id, panel: undefined, fresh: true };
+  });
+  useEffect(() => {
+    if (isNewPanel && draft !== null && fresh === null) {
+      startFresh();
+    }
+  }, [isNewPanel, draft, fresh]);
+
+  /** A new panel opens in the editor at its own address; it joins the dashboard on Apply. */
   function addPanel() {
-    setDialog({ kind: "panel", isNew: true, panel: newPanel() });
+    onDisplay({ editPanel: NEW_PANEL });
+  }
+
+  /** Puts the panel the editor opened back as it was (a new one never joined the draft). */
+  function restorePanel(before: OpenedPanel | null) {
+    const panel = before?.panel;
+    if (before === null || before.fresh || panel === undefined) {
+      return;
+    }
+    changeDraft((m) => ({
+      ...m,
+      panels: m.panels.map((p) => (p.id === before.id && p !== panel ? panel : p)),
+    }));
+  }
+
+  function leaveEditor(mode: LeaveMode) {
+    leaveMode.current = mode;
+    onDisplay({ editPanel: undefined });
   }
 
   function applyPanel(panel: PanelModel, isNew: boolean) {
@@ -552,6 +761,53 @@ function DashboardView({
     }
     applyPanel(linked === undefined ? panel : linkedPlace(panel), isNew);
   }
+
+  // Leaving the editor: Back, Apply and Esc put its change into the draft (a new panel joins
+  // it); Discard, the browser's back button and links leave the panel as it was.
+  const onEditorLeft = useEffectEvent((left: string) => {
+    const state = snapshot.current;
+    const before = opened.current;
+    const mode = leaveMode.current ?? "discard";
+    const wasNew = left === NEW_PANEL;
+    snapshot.current = null;
+    opened.current = null;
+    leaveMode.current = null;
+    window.clearTimeout(keepTimer.current);
+    setKeptEditor(undefined);
+    if (wasNew) {
+      setFresh(null);
+    }
+    if (mode === "discard") {
+      restorePanel(before);
+    } else if (mode === "apply" && state !== null && (wasNew || state.id === left)) {
+      if (wasNew || state.changed()) {
+        onPanelApply(state.panel(), wasNew);
+      }
+    }
+    keepDraft();
+    // Focus goes back to the panel that was edited (a new one that was applied included).
+    const back = wasNew ? (mode === "apply" ? state?.id : undefined) : left;
+    setFocusAfter(back ?? null);
+  });
+  // Focus goes to that panel's menu once the dashboard is drawn again after the editor.
+  useEffect(() => {
+    if (editing !== undefined || focusAfter === null) {
+      return;
+    }
+    const button = document.querySelector<HTMLElement>(
+      `[data-panel-id="${CSS.escape(focusAfter)}"] .panel-menu__button`,
+    );
+    button?.focus();
+    setFocusAfter(null);
+  });
+  const lastEditing = useRef(editing);
+  useEffect(() => {
+    const left = lastEditing.current;
+    lastEditing.current = editing;
+    if (left !== undefined && left !== editing) {
+      onEditorLeft(left);
+    }
+  }, [editing]);
 
   function addRow() {
     changeDraft((m) => ({
@@ -589,58 +845,84 @@ function DashboardView({
   }
 
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(dashboard.model);
-  const editActions =
-    draft === null
-      ? undefined
-      : {
-          onEdit: (id: string) => {
-            const panel = draft.panels.find((p) => p.id === id);
-            if (panel !== undefined) {
-              setDialog({ kind: "panel", panel: resolvePanel(panel, library), isNew: false });
+  const dirtyRef = useRef(dirty);
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  });
+  // Leaving the dashboard with nothing changed keeps no draft for later.
+  const forgetUnchanged = useEffectEvent(() => {
+    if (!dirtyRef.current && !(snapshot.current?.changed() ?? false)) {
+      writeDraft(owner, dashboard.id, null);
+    }
+  });
+  useEffect(() => () => forgetUnchanged(), []);
+  // Leaving the dashboard with unsaved changes asks first; so does leaving the editor without
+  // its buttons (the browser's back button) when that would drop a change to the panel.
+  const editorChanged = () => snapshot.current?.changed() ?? false;
+  const unsaved = () => dirtyRef.current || editorChanged();
+  const here = `/dashboards/${dashboard.id}`;
+  const staysHere = (pathname: string) =>
+    pathname === here || pathname.startsWith(`${here}/panels/`);
+  const blocker = useBlocker({
+    shouldBlockFn: ({ current, next }) => {
+      if (staysHere(next.pathname)) {
+        const fromEditor = current.pathname.startsWith(`${here}/panels/`);
+        return fromEditor && leaveMode.current === null && editorChanged();
+      }
+      return unsaved();
+    },
+    enableBeforeUnload: unsaved,
+    withResolver: true,
+    disabled: draft === null,
+  });
+  const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
+  const inEditMode = draft !== null;
+  const editActions = !inEditMode
+    ? undefined
+    : {
+        onEdit: (id: string) => onDisplay({ editPanel: id }),
+        onDuplicate: (id: string) =>
+          changeDraft((m) => {
+            const source = m.panels.find((p) => p.id === id);
+            if (source === undefined) {
+              return m;
             }
-          },
-          onDuplicate: (id: string) =>
-            changeDraft((m) => {
-              const source = m.panels.find((p) => p.id === id);
-              if (source === undefined) {
-                return m;
-              }
-              const copy = { ...structuredClone(source), id: newPanelId() };
-              copy.grid.y = source.grid.y + source.grid.h;
-              return {
-                ...m,
-                panels: placeInSection([...m.panels, copy], copy.id, copy.grid, m.rows ?? []),
-              };
-            }),
-          onRemove: (id: string) =>
-            changeDraft((m) => ({ ...m, panels: m.panels.filter((p) => p.id !== id) })),
-          onGrid: (id: string, grid: { x: number; y: number; w: number; h: number }) =>
-            changeDraft((m) => ({
+            const copy = { ...structuredClone(source), id: newPanelId() };
+            copy.grid.y = source.grid.y + source.grid.h;
+            return {
               ...m,
-              panels: placeInSection(m.panels, id, grid, m.rows ?? []),
-            })),
-          onCopy: (id: string) => {
-            const panel = draft.panels.find((p) => p.id === id);
-            if (panel !== undefined) setDialog({ kind: "copy", panel });
-          },
-          onRowMove: (from: number, to: number) =>
-            changeDraft((m) => ({ ...m, rows: moveRow(m.rows ?? [], from, to) })),
-          onRowEdit: (rowId: string) => {
-            const row = rows.find((r) => r.id === rowId);
-            if (row !== undefined) setDialog({ kind: "row", row });
-          },
-          onRowRemove: (rowId: string) => {
-            const row = rows.find((r) => r.id === rowId);
-            if (row !== undefined) setDialog({ kind: "removeRow", row });
-          },
-          onRowToggle: (rowId: string) =>
-            changeDraft((m) => ({
-              ...m,
-              rows: (m.rows ?? []).map((r) =>
-                r.id === rowId ? { ...r, collapsed: !r.collapsed } : r,
-              ),
-            })),
-        };
+              panels: placeInSection([...m.panels, copy], copy.id, copy.grid, m.rows ?? []),
+            };
+          }),
+        onRemove: (id: string) =>
+          changeDraft((m) => ({ ...m, panels: m.panels.filter((p) => p.id !== id) })),
+        onGrid: (id: string, grid: { x: number; y: number; w: number; h: number }) =>
+          changeDraft((m) => ({
+            ...m,
+            panels: placeInSection(m.panels, id, grid, m.rows ?? []),
+          })),
+        onCopy: (id: string) => {
+          const panel = modelRef.current.panels.find((p) => p.id === id);
+          if (panel !== undefined) setDialog({ kind: "copy", panel });
+        },
+        onRowMove: (from: number, to: number) =>
+          changeDraft((m) => ({ ...m, rows: moveRow(m.rows ?? [], from, to) })),
+        onRowEdit: (rowId: string) => {
+          const row = (modelRef.current.rows ?? []).find((r) => r.id === rowId);
+          if (row !== undefined) setDialog({ kind: "row", row });
+        },
+        onRowRemove: (rowId: string) => {
+          const row = (modelRef.current.rows ?? []).find((r) => r.id === rowId);
+          if (row !== undefined) setDialog({ kind: "removeRow", row });
+        },
+        onRowToggle: (rowId: string) =>
+          changeDraft((m) => ({
+            ...m,
+            rows: (m.rows ?? []).map((r) =>
+              r.id === rowId ? { ...r, collapsed: !r.collapsed } : r,
+            ),
+          })),
+      };
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
@@ -656,19 +938,154 @@ function DashboardView({
     },
   };
 
-  const viewActions = {
-    onView: (panelId: string) => onDisplay({ viewPanel: panelId }),
-    marks: annotations.marks,
-    onOpenMark: (mark: DashboardMark) => setDialog({ kind: "mark", mark }),
-    onAnnotate: canAnnotate
-      ? (panelId: string, time: number) => setDialog({ kind: "annotate", time, panelId })
-      : undefined,
-  };
+  const gridQuery = useMemo(
+    () => ({
+      orgId,
+      dashboardId: dashboard.id,
+      range: resolved.ok ? resolved.range : { from: 0, to: 0 },
+      variables: values,
+      saved: dashboard.model.variables,
+      source: "stored" as const,
+      run: clock.run,
+    }),
+    [orgId, dashboard.id, resolved, values, dashboard.model.variables, clock.run],
+  );
+  const marks = annotations.marks;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the React Compiler keeps this memo only with the setter listed
+  const viewActions = useMemo(
+    () => ({
+      onView: (panelId: string) => onDisplay({ viewPanel: panelId }),
+      marks,
+      onOpenMark: (mark: DashboardMark) => setDialog({ kind: "mark", mark }),
+      onAnnotate: canAnnotate
+        ? (panelId: string, time: number) => setDialog({ kind: "annotate", time, panelId })
+        : undefined,
+    }),
+    [onDisplay, marks, canAnnotate, setDialog],
+  );
 
   const alone =
     display.viewPanel === undefined
       ? undefined
       : model.panels.find((p) => p.id === display.viewPanel);
+  const dashboardTitle = model.title === "" ? t("dashboards.untitled") : model.title;
+  const trail: Crumb[] = [
+    { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+    ...folderTrail(folders.data ?? [], dashboard.folderId).map((step) => ({
+      label: step.name,
+      link: { to: "/dashboards" as const, search: { folder: step.id } },
+    })),
+  ];
+  // The editor's trail ends at the dashboard, which leads back to it.
+  const editorTrail: Crumb[] = [
+    ...trail,
+    {
+      label: dashboardTitle,
+      link: { to: "/dashboards/$dashboardId", params: { dashboardId: dashboard.id }, search: {} },
+    },
+  ];
+  const edited =
+    editing === undefined || draft === null
+      ? undefined
+      : isNewPanel
+        ? (fresh ?? undefined)
+        : draft.panels.find((p) => p.id === editing);
+  const editorTitle = isNewPanel ? t("dashboards.editor.newTitle") : t("dashboards.editor.title");
+  const editorView =
+    editing === undefined ? null : draft === null ||
+      !resolved.ok ||
+      (isNewPanel && fresh === null) ? (
+      <p className="loading">{t("common.loading")}</p>
+    ) : edited === undefined ? (
+      <>
+        <Breadcrumbs crumbs={[...editorTrail, { label: editorTitle }]} />
+        <EmptyState
+          icon="dashboards"
+          title={t("dashboards.editor.notFound.title")}
+          actions={
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => leaveEditor("keep")}
+            >
+              {t("dashboards.editor.back")}
+            </button>
+          }
+        >
+          {t("dashboards.editor.notFound.text")}
+        </EmptyState>
+      </>
+    ) : (
+      <PanelHostContext value={host}>
+        <PanelEditor
+          key={edited.id}
+          orgId={orgId}
+          dashboardId={dashboard.id}
+          userId={userId}
+          isNew={isNewPanel}
+          panel={
+            keptEditor !== undefined && keptEditor.key === editing
+              ? keptEditor.panel
+              : resolvePanel(edited, library)
+          }
+          original={isNewPanel ? undefined : resolvePanel(edited, library)}
+          refresh={clock.run}
+          toolbar={
+            <>
+              <TimeRangePicker value={textRange} onChange={onRangeChange} />
+              <button type="button" className="button button--secondary" onClick={tick}>
+                {t("dashboards.refresh")}
+              </button>
+            </>
+          }
+          range={resolved.range}
+          variables={editorValues(edited, rows, values)}
+          stored={(() => {
+            const saved = dashboard.model.panels.find((p) => p.id === edited.id);
+            return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);
+          })()}
+          savedVariables={dashboard.model.variables}
+          crumbs={editorTrail}
+          onSnapshot={(state) => {
+            snapshot.current = state;
+            // Kept for a reload a moment after the last change, not on every key.
+            window.clearTimeout(keepTimer.current);
+            keepTimer.current = window.setTimeout(keepDraft, 400);
+          }}
+          rows={rows}
+          dashboardVariables={model.variables}
+          libraryName={
+            edited.libraryPanelId === undefined
+              ? undefined
+              : (library[edited.libraryPanelId]?.name ?? t("libraryPanels.missing"))
+          }
+          onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
+          onApply={() => leaveEditor("apply")}
+          onDiscard={() => {
+            if (snapshot.current?.changed() === true) {
+              setDialog({ kind: "discardPanel", fresh: isNewPanel });
+            } else {
+              leaveEditor("discard");
+            }
+          }}
+          onSave={(panel) => {
+            const linked =
+              panel.libraryPanelId === undefined ? undefined : library[panel.libraryPanelId];
+            if (linked !== undefined && contentChanged(panel, linked)) {
+              onPanelApply(panel, false);
+              return;
+            }
+            applyPanel(linked === undefined ? panel : linkedPlace(panel), isNewPanel);
+            if (isNewPanel) {
+              // Part of the dashboard now: the editor goes on at the panel's own address.
+              leaveMode.current = "keep";
+              onDisplay({ editPanel: panel.id, replace: true });
+            }
+            setDialog({ kind: "save" });
+          }}
+        />
+      </PanelHostContext>
+    );
   const mode = display.mode;
   const className = [
     "dashboard",
@@ -676,6 +1093,7 @@ function DashboardView({
     mode === "tv" ? "dashboard--tv" : "",
     idle ? "dashboard--idle" : "",
     alone === undefined ? "" : "dashboard--alone",
+    editing === undefined ? "" : "dashboard--editor",
   ]
     .filter((c) => c !== "")
     .join(" ");
@@ -723,306 +1141,308 @@ function DashboardView({
 
   return (
     <div className={className}>
-      {mode === "kiosk" ? (
-        // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
-        // lately (as TV mode shows its bar); keyboard focus always shows it.
-        <button
-          type="button"
-          className="dashboard__exit button button--secondary"
-          onClick={() => onDisplay({ mode: "normal" })}
-        >
-          {t("dashboardTools.view.exit")}
-        </button>
-      ) : null}
-      {mode === "normal" ? (
-        <Breadcrumbs
-          crumbs={[
-            { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
-            ...folderTrail(folders.data ?? [], dashboard.folderId).map((step) => ({
-              label: step.name,
-              link: { to: "/dashboards" as const, search: { folder: step.id } },
-            })),
-            { label: model.title === "" ? t("dashboards.untitled") : model.title },
-          ]}
-        />
-      ) : null}
-      {mode === "kiosk" ? null : (
-        <div className="dashboard__bar">
-          <h1 className="dashboard__title truncate" id={headingId}>
-            {model.title === "" ? t("dashboards.untitled") : model.title}
-          </h1>
-          <div className="dashboard__tools">
-            {controls}
-            {resolved.ok ? null : (
-              <span className="field__error">{t(`dashboards.time.error.${resolved.error}`)}</span>
-            )}
-            <TimeRangePicker value={textRange} onChange={onRangeChange} />
-            <button type="button" className="button button--secondary" onClick={tick}>
-              {t("dashboards.refresh")}
-            </button>
-            <label className="visually-hidden" htmlFor={`${headingId}-refresh`}>
-              {t("dashboards.refresh.auto")}
-            </label>
-            <select
-              id={`${headingId}-refresh`}
-              className="select"
-              value={refresh}
-              onChange={(event) => setRefresh(Number(event.currentTarget.value))}
-              title={t("dashboards.refresh.auto")}
-            >
-              {REFRESH_CHOICES.map((choice) => (
-                <option key={choice.seconds} value={choice.seconds}>
-                  {t(choice.label)}
-                </option>
-              ))}
-            </select>
-            {mode === "tv" ? (
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => onDisplay({ mode: "normal" })}
-              >
-                {t("dashboardTools.view.exit")}
-              </button>
-            ) : draft === null ? (
-              <>
-                <StarButton orgId={orgId} dashboardId={dashboard.id} />
-                {/* Secondary: copper is for Save, the one main action while editing. */}
-                {canEdit ? (
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    onClick={() => setDraft(dashboard.model)}
-                  >
-                    <Icon name="edit" />
-                    {t("dashboards.edit")}
-                  </button>
-                ) : null}
-                <Link
-                  to="/dashboards/$dashboardId/versions"
-                  params={{ dashboardId: dashboard.id }}
-                  className="button button--secondary"
-                >
-                  {t("dashboards.versions")}
-                </Link>
-                <AccessButton
-                  allowed={dashboard.access?.permissions}
-                  resource={{ kind: "dashboard", id: dashboard.id, name: dashboard.title }}
-                />
-                {canDelete && !inTrash ? (
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    onClick={() => setDialog({ kind: "delete" })}
-                  >
-                    {t("dashboards.delete")}
-                  </button>
-                ) : null}
-                {moreMenu}
-              </>
-            ) : (
-              <>
-                {/*
-                 * "Done" takes the place of "Edit", so a second click on that spot leaves edit
-                 * mode instead of adding a panel by accident.
-                 */}
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  onClick={() => (dirty ? setDialog({ kind: "discard" }) : setDraft(null))}
-                >
-                  {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
-                </button>
-                <button type="button" className="button button--secondary" onClick={addPanel}>
-                  {t("dashboards.addPanel")}
-                </button>
-                <button type="button" className="button button--secondary" onClick={addRow}>
-                  {t("dashboardTools.rows.add")}
-                </button>
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  onClick={() => setDialog({ kind: "libraryPick" })}
-                >
-                  {t("libraryPanels.add")}
-                </button>
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  onClick={() => setDialog({ kind: "settings" })}
-                >
-                  {t("dashboards.settings")}
-                </button>
-                <button
-                  type="button"
-                  className="button button--primary"
-                  onClick={() => setDialog({ kind: "save" })}
-                  disabled={!dirty}
-                >
-                  {t("dashboards.save")}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-      {inTrash && mode === "normal" ? (
-        <div className="dashboard__mode" role="status">
-          <Icon name="alert" />
-          <span>{t("dashboards.inTrash")}</span>
-          {canDelete ? (
+      {editorView ?? (
+        <>
+          {mode === "kiosk" ? (
+            // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
+            // lately (as TV mode shows its bar); keyboard focus always shows it.
             <button
               type="button"
-              className="button button--secondary button--small"
-              onClick={() => restore.mutate()}
-              disabled={restore.isPending}
+              className="dashboard__exit button button--secondary"
+              onClick={() => onDisplay({ mode: "normal" })}
             >
-              {t("dashboards.trash.restore")}
+              {t("dashboardTools.view.exit")}
             </button>
           ) : null}
-        </div>
-      ) : null}
-      {draft === null ? null : (
-        <p className="dashboard__mode" role="status">
-          <Icon name="dashboards" />
-          {dirty ? t("dashboards.editingUnsaved") : t("dashboards.editing")}
-        </p>
-      )}
-      {notice === null ? null : (
-        <p className="dashboard__mode" role="status">
-          {notice}
-        </p>
-      )}
-      {resolved.ok ? (
-        <>
-          {mode === "kiosk" || alone !== undefined ? null : (
-            <>
-              <VariablesBar
-                orgId={orgId}
-                dashboardId={dashboard.id}
-                variables={model.variables}
-                values={values}
-                textRange={textRange}
-                range={resolved.range}
-                run={clock.manual}
-                stored={draft === null ? undefined : dashboard.model.variables}
-                onChange={(name, value) => setValues((v) => ({ ...v, [name]: value }))}
-              />
-              <DashboardLinks
-                orgId={orgId}
-                dashboardId={dashboard.id}
-                links={model.links ?? []}
-                values={values}
-              />
-            </>
-          )}
-          {alone !== undefined ? (
-            <div className="dashboard__alone">
-              <button
-                type="button"
-                className="button button--secondary dashboard__back"
-                onClick={() => onDisplay({ viewPanel: undefined })}
-              >
-                {t("dashboardTools.view.back")}
-              </button>
-              {/* Alone too, a panel may set variables (a node click) and explore. */}
-              <PanelHostContext value={host}>
-                <PanelCard
-                  panel={resolvePanel(alone, library)}
-                  alone
-                  query={{
-                    orgId,
-                    dashboardId: dashboard.id,
-                    range: panelRange(alone, resolved.range, clock.now),
-                    variables: editorValues(alone, rows, values),
-                    saved: dashboard.model.variables,
-                    source: "stored",
-                    run: clock.run,
-                  }}
-                  view={{ ...viewActions, values: editorValues(alone, rows, values) }}
-                />
-              </PanelHostContext>
-            </div>
-          ) : model.panels.length === 0 && rows.length === 0 ? (
-            <EmptyState
-              icon="dashboards"
-              title={t("dashboards.noPanels.title")}
-              actions={
-                draft !== null ? (
-                  <button type="button" className="button button--primary" onClick={addPanel}>
-                    {t("dashboards.addPanel")}
-                  </button>
-                ) : canEdit ? (
+          {mode === "normal" ? (
+            <Breadcrumbs crumbs={[...trail, { label: dashboardTitle }]} />
+          ) : null}
+          {mode === "kiosk" ? null : (
+            <div className="dashboard__bar">
+              <h1 className="dashboard__title truncate" id={headingId}>
+                {model.title === "" ? t("dashboards.untitled") : model.title}
+              </h1>
+              <div className="dashboard__tools">
+                {controls}
+                {resolved.ok ? null : (
+                  <span className="field__error">
+                    {t(`dashboards.time.error.${resolved.error}`)}
+                  </span>
+                )}
+                <TimeRangePicker value={textRange} onChange={onRangeChange} />
+                <button type="button" className="button button--secondary" onClick={tick}>
+                  {t("dashboards.refresh")}
+                </button>
+                <label className="visually-hidden" htmlFor={`${headingId}-refresh`}>
+                  {t("dashboards.refresh.auto")}
+                </label>
+                <select
+                  id={`${headingId}-refresh`}
+                  className="select"
+                  value={refresh}
+                  onChange={(event) => setRefresh(Number(event.currentTarget.value))}
+                  title={t("dashboards.refresh.auto")}
+                >
+                  {REFRESH_CHOICES.map((choice) => (
+                    <option key={choice.seconds} value={choice.seconds}>
+                      {t(choice.label)}
+                    </option>
+                  ))}
+                </select>
+                {mode === "tv" ? (
                   <button
                     type="button"
-                    className="button button--primary"
-                    onClick={() => setDraft(dashboard.model)}
+                    className="button button--secondary"
+                    onClick={() => onDisplay({ mode: "normal" })}
                   >
-                    {t("dashboards.edit")}
+                    {t("dashboardTools.view.exit")}
                   </button>
-                ) : undefined
-              }
-            >
-              {canEdit ? t("dashboards.noPanels.text") : t("dashboards.noPanels.textViewer")}
-            </EmptyState>
-          ) : (
-            <PanelHostContext value={host}>
-              <DashboardGrid
-                panels={model.panels}
-                rows={rows}
-                libraryPanels={library}
-                now={clock.now}
-                query={{
-                  orgId,
-                  dashboardId: dashboard.id,
-                  range: resolved.range,
-                  variables: values,
-                  saved: dashboard.model.variables,
-                  source: "stored",
-                  run: clock.run,
-                }}
-                storedPanels={dashboard.model.panels}
-                collapsed={(row) =>
-                  openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
-                }
-                onToggleRow={(row) =>
-                  setOpenRows((current) => {
-                    const open = current[row.id] ?? !row.collapsed;
-                    return { ...current, [row.id]: !open };
-                  })
-                }
-                view={viewActions}
-                edit={editActions}
-              />
-            </PanelHostContext>
+                ) : draft === null ? (
+                  <>
+                    <StarButton orgId={orgId} dashboardId={dashboard.id} />
+                    {/* Secondary: copper is for Save, the one main action while editing. */}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        className="button button--secondary"
+                        onClick={() => setDraft(dashboard.model)}
+                      >
+                        <Icon name="edit" />
+                        {t("dashboards.edit")}
+                      </button>
+                    ) : null}
+                    <Link
+                      to="/dashboards/$dashboardId/versions"
+                      params={{ dashboardId: dashboard.id }}
+                      className="button button--secondary"
+                    >
+                      {t("dashboards.versions")}
+                    </Link>
+                    <AccessButton
+                      allowed={dashboard.access?.permissions}
+                      resource={{ kind: "dashboard", id: dashboard.id, name: dashboard.title }}
+                    />
+                    {canDelete && !inTrash ? (
+                      <button
+                        type="button"
+                        className="button button--secondary"
+                        onClick={() => setDialog({ kind: "delete" })}
+                      >
+                        {t("dashboards.delete")}
+                      </button>
+                    ) : null}
+                    {moreMenu}
+                  </>
+                ) : (
+                  <>
+                    {/*
+                     * "Done" takes the place of "Edit", so a second click on that spot leaves edit
+                     * mode instead of adding a panel by accident.
+                     */}
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => (dirty ? setDialog({ kind: "discard" }) : setDraft(null))}
+                    >
+                      {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
+                    </button>
+                    <button type="button" className="button button--secondary" onClick={addPanel}>
+                      {t("dashboards.addPanel")}
+                    </button>
+                    <button type="button" className="button button--secondary" onClick={addRow}>
+                      {t("dashboardTools.rows.add")}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => setDialog({ kind: "libraryPick" })}
+                    >
+                      {t("libraryPanels.add")}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => setDialog({ kind: "settings" })}
+                    >
+                      {t("dashboards.settings")}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--primary"
+                      onClick={() => setDialog({ kind: "save" })}
+                      disabled={!dirty}
+                    >
+                      {t("dashboards.save")}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           )}
+          {inTrash && mode === "normal" ? (
+            <div className="dashboard__mode" role="status">
+              <Icon name="alert" />
+              <span>{t("dashboards.inTrash")}</span>
+              {canDelete ? (
+                <button
+                  type="button"
+                  className="button button--secondary button--small"
+                  onClick={() => restore.mutate()}
+                  disabled={restore.isPending}
+                >
+                  {t("dashboards.trash.restore")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {draft === null ? null : (
+            <p className="dashboard__mode" role="status">
+              <Icon name="dashboards" />
+              {dirty ? t("dashboards.editingUnsaved") : t("dashboards.editing")}
+            </p>
+          )}
+          {notice === null ? null : (
+            <p className="dashboard__mode" role="status">
+              {notice}
+            </p>
+          )}
+          {resolved.ok ? (
+            <>
+              {mode === "kiosk" || alone !== undefined ? null : (
+                <>
+                  <VariablesBar
+                    orgId={orgId}
+                    dashboardId={dashboard.id}
+                    variables={model.variables}
+                    values={values}
+                    textRange={textRange}
+                    range={resolved.range}
+                    run={clock.manual}
+                    stored={draft === null ? undefined : dashboard.model.variables}
+                    onChange={(name, value) => setValues((v) => ({ ...v, [name]: value }))}
+                  />
+                  <DashboardLinks
+                    orgId={orgId}
+                    dashboardId={dashboard.id}
+                    links={model.links ?? []}
+                    values={values}
+                  />
+                </>
+              )}
+              {alone !== undefined ? (
+                <div className="dashboard__alone">
+                  <button
+                    type="button"
+                    className="button button--secondary dashboard__back"
+                    onClick={() => onDisplay({ viewPanel: undefined })}
+                  >
+                    {t("dashboardTools.view.back")}
+                  </button>
+                  {/* Alone too, a panel may set variables (a node click) and explore. */}
+                  <PanelHostContext value={host}>
+                    <PanelCard
+                      panel={resolvePanel(alone, library)}
+                      alone
+                      query={{
+                        orgId,
+                        dashboardId: dashboard.id,
+                        range: panelRange(alone, resolved.range, clock.now),
+                        variables: editorValues(alone, rows, values),
+                        saved: dashboard.model.variables,
+                        source: "stored",
+                        run: clock.run,
+                      }}
+                      view={{ ...viewActions, values: editorValues(alone, rows, values) }}
+                    />
+                  </PanelHostContext>
+                </div>
+              ) : model.panels.length === 0 && rows.length === 0 ? (
+                <EmptyState
+                  icon="dashboards"
+                  title={t("dashboards.noPanels.title")}
+                  actions={
+                    draft !== null ? (
+                      <button type="button" className="button button--primary" onClick={addPanel}>
+                        {t("dashboards.addPanel")}
+                      </button>
+                    ) : canEdit ? (
+                      <button
+                        type="button"
+                        className="button button--primary"
+                        onClick={() => setDraft(dashboard.model)}
+                      >
+                        {t("dashboards.edit")}
+                      </button>
+                    ) : undefined
+                  }
+                >
+                  {canEdit ? t("dashboards.noPanels.text") : t("dashboards.noPanels.textViewer")}
+                </EmptyState>
+              ) : (
+                <PanelHostContext value={host}>
+                  <DashboardGrid
+                    panels={model.panels}
+                    rows={rows}
+                    libraryPanels={library}
+                    now={clock.now}
+                    query={gridQuery}
+                    storedPanels={dashboard.model.panels}
+                    collapsed={(row) =>
+                      openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
+                    }
+                    onToggleRow={(row) =>
+                      setOpenRows((current) => {
+                        const open = current[row.id] ?? !row.collapsed;
+                        return { ...current, [row.id]: !open };
+                      })
+                    }
+                    view={viewActions}
+                    edit={editActions}
+                  />
+                </PanelHostContext>
+              )}
+            </>
+          ) : null}
         </>
+      )}
+      {dialog?.kind === "discardPanel" ? (
+        <ConfirmDialog
+          title={t("dashboards.editor.discardTitle")}
+          confirmLabel={t("dashboards.discard.confirm")}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => {
+            setDialog(null);
+            leaveEditor("discard");
+          }}
+        >
+          {dialog.fresh
+            ? t("dashboards.editor.discardNewText")
+            : t("dashboards.editor.discardText")}
+        </ConfirmDialog>
       ) : null}
-      {dialog?.kind === "panel" && resolved.ok ? (
-        <PanelHostContext value={host}>
-          <PanelEditor
-            orgId={orgId}
-            dashboardId={dashboard.id}
-            panel={dialog.panel}
-            range={resolved.range}
-            variables={editorValues(dialog.panel, rows, values)}
-            stored={(() => {
-              const saved = dashboard.model.panels.find((p) => p.id === dialog.panel.id);
-              return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);
-            })()}
-            savedVariables={dashboard.model.variables}
-            rows={rows}
-            dashboardVariables={model.variables}
-            libraryName={
-              dialog.panel.libraryPanelId === undefined
-                ? undefined
-                : (library[dialog.panel.libraryPanelId]?.name ?? t("libraryPanels.missing"))
-            }
-            onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
-            onApply={(panel) => onPanelApply(panel, dialog.isNew)}
-            onClose={() => setDialog(null)}
-          />
-        </PanelHostContext>
+      {blocker.status === "blocked" && droppingPanel ? (
+        <ConfirmDialog
+          title={t("dashboards.editor.discardTitle")}
+          confirmLabel={t("dashboards.discard.confirm")}
+          onCancel={() => blocker.reset()}
+          onConfirm={() => blocker.proceed()}
+        >
+          {isNewPanel ? t("dashboards.editor.discardNewText") : t("dashboards.editor.discardText")}
+        </ConfirmDialog>
+      ) : null}
+      {blocker.status === "blocked" && !droppingPanel ? (
+        <ConfirmDialog
+          title={t("dashboards.leave.title")}
+          confirmLabel={t("dashboards.leave.confirm")}
+          onCancel={() => blocker.reset()}
+          onConfirm={() => {
+            // Left on purpose: a reload of this dashboard later starts clean.
+            writeDraft(owner, dashboard.id, null);
+            blocker.proceed();
+          }}
+        >
+          {t("dashboards.discard.text")}
+        </ConfirmDialog>
       ) : null}
       {dialog?.kind === "settings" ? (
         <SettingsDialog
@@ -1142,6 +1562,11 @@ function DashboardView({
             }));
             const isNew = !(draft?.panels ?? []).some((p) => p.id === dialog.panel.id);
             applyPanel(linkedPlace({ ...dialog.panel, libraryPanelId: created.id }), isNew);
+            // Made from the editor: the panel now shows the library panel; the editor's own copy
+            // of it must not overwrite that on the way out.
+            if (editing !== undefined) {
+              leaveEditor("keep");
+            }
             await queryClient.invalidateQueries({ queryKey: [LIBRARY_PANELS_KEY, orgId] });
           }}
           onClose={() => setDialog(null)}

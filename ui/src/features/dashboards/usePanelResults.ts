@@ -46,10 +46,12 @@ export function usePanelResults(input: PanelQueryInput) {
       : input.variables;
   // The panel route runs every stored target, empty ones included, and answers each refId; a
   // draft only sends the targets that can run.
+  // Hidden targets run in neither case (the server leaves them out of the panel route too).
+  const shown = panel.targets.filter((t) => t.hide !== true);
   const targets =
     source === "stored"
-      ? panel.targets
-      : panel.targets.filter((t) => t.datasourceId !== "" && queryText(t.query).trim() !== "");
+      ? shown
+      : shown.filter((t) => t.datasourceId !== "" && queryText(t.query).trim() !== "");
   const refIds = targets.map((t) => t.refId);
   return useQuery({
     queryKey: [
