@@ -243,6 +243,14 @@ describe("annotation ranges and marks", () => {
     const lengths = ranges.map((r) => r.to - r.from);
     expect(lengths).not.toContain(7 * 24 * 3_600_000);
     expect(lengths).not.toContain(30 * 24 * 3_600_000);
+    // The first seven own ranges are read; panels past them (shifts of 7 to 12 days) are not.
+    const shiftedBy = (days: number) => ({
+      from: range.from - days * 24 * 3_600_000,
+      to: range.to - days * 24 * 3_600_000,
+    });
+    expect(ranges).toContainEqual(shiftedBy(6));
+    expect(ranges).not.toContainEqual(shiftedBy(7));
+    expect(ranges).not.toContainEqual(shiftedBy(12));
     // An opened row's panels count again.
     expect(annotationRanges(panels, rows, () => false, range, now)[2]?.to).toBe(now);
   });

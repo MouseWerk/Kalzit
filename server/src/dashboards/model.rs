@@ -17,7 +17,7 @@ use serde_json::Value;
 ///   library panel references and multi-value variables. Those are optional and empty by default
 ///   and version 1 had none of them, so the one step `v1_to_v2` only converts `transformations`.
 ///   A library panel slot (`libraryPanelId`) has no steps, targets or links of its own; the
-///   library panel holds them (`check_library_panels`).
+///   library panel holds them (the slot rule in `validate`).
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.

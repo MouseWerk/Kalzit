@@ -923,20 +923,23 @@ function DashboardView({
               >
                 {t("dashboardTools.view.back")}
               </button>
-              <PanelCard
-                panel={resolvePanel(alone, library)}
-                alone
-                query={{
-                  orgId,
-                  dashboardId: dashboard.id,
-                  range: panelRange(alone, resolved.range, clock.now),
-                  variables: editorValues(alone, rows, values),
-                  saved: dashboard.model.variables,
-                  source: "stored",
-                  run: clock.run,
-                }}
-                view={{ ...viewActions, values: editorValues(alone, rows, values) }}
-              />
+              {/* Alone too, a panel may set variables (a node click) and explore. */}
+              <PanelHostContext value={host}>
+                <PanelCard
+                  panel={resolvePanel(alone, library)}
+                  alone
+                  query={{
+                    orgId,
+                    dashboardId: dashboard.id,
+                    range: panelRange(alone, resolved.range, clock.now),
+                    variables: editorValues(alone, rows, values),
+                    saved: dashboard.model.variables,
+                    source: "stored",
+                    run: clock.run,
+                  }}
+                  view={{ ...viewActions, values: editorValues(alone, rows, values) }}
+                />
+              </PanelHostContext>
             </div>
           ) : model.panels.length === 0 && rows.length === 0 ? (
             <EmptyState

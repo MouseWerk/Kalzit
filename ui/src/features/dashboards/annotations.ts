@@ -127,7 +127,12 @@ export function annotationRanges(
   return distinctRanges([range, ...own]);
 }
 
-/** At most this many ranges are read: the dashboard's and seven of panels with their own. */
+/**
+ * At most this many ranges are read: the dashboard's and seven of panels with their own, so
+ * annotation queries do not fan out to every panel times every query. A time panel whose own
+ * range is beyond the seventh distinct one gets annotations only where its range overlaps one
+ * that was read; a dashboard with that many different panel ranges is rare.
+ */
 export const MAX_ANNOTATION_RANGES = 8;
 
 /** The distinct ranges in the given order (the dashboard's first), at most `MAX_ANNOTATION_RANGES`. */
