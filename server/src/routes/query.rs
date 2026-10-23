@@ -56,7 +56,7 @@ pub const MAX_OPTIONS: usize = 10_000;
 const OPTIONS_REF_ID: &str = "options";
 
 /// Bounds the variables of a request: count, names and total size.
-fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
+pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<()> {
     let refuse = |e: ApiError| Err(e.with_field("variables"));
     if variables.len() > MAX_VARIABLES {
         return refuse(
@@ -122,7 +122,7 @@ async fn query(
 
 /// The current stored model of a dashboard the caller may read. Unknown, trashed and invisible
 /// dashboards are all `not_found`.
-async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResult<DashboardModel> {
+pub(crate) async fn readable_model(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) -> ApiResult<DashboardModel> {
     // The dashboard and its current version in one read, so a version pruned in between cannot
     // turn into an error.
     let row: Option<(Option<i64>, Option<String>)> = sqlx::query_as(
@@ -193,7 +193,7 @@ fn custom_options(options: Option<&Value>) -> BTreeSet<String> {
 /// - Query, textbox and interval variables are free values. They are bound as parameters in SQL
 ///   and escaped into quoted strings in PromQL; they may not be identifiers, since nothing limits
 ///   them to the dashboard's own list.
-fn resolve_variables(
+pub(crate) fn resolve_variables(
     model: &DashboardModel,
     requested: &BTreeMap<String, Value>,
 ) -> ApiResult<(BTreeMap<String, Value>, BTreeSet<String>)> {
@@ -331,7 +331,7 @@ async fn variable_options(
 }
 
 /// A query outcome's error as the answer of a single-query route.
-fn api_error(error: ErrorBody) -> ApiError {
+pub(crate) fn api_error(error: ErrorBody) -> ApiError {
     let (status, code) = match error.code.as_str() {
         "not_found" => (StatusCode::NOT_FOUND, "not_found"),
         "forbidden" => (StatusCode::FORBIDDEN, "forbidden"),

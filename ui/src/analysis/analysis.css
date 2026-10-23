@@ -1,0 +1,141 @@
+@layer components {
+  /* Analysis steps (StepsEditor) and the export dialog. */
+
+  /* Spans the whole width of the grid it sits in (the panel editor). */
+  .steps {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: var(--space-3);
+  }
+
+  .steps__heading {
+    font-size: var(--font-size-md);
+  }
+
+  .steps__list {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .step {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .step__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .step__number {
+    min-width: var(--space-6);
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    text-align: center;
+  }
+
+  .step__title {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .step__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-inline-start: auto;
+  }
+
+  .step__actions [aria-pressed="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .step__form {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--size-list-max), 1fr));
+    gap: var(--space-3);
+    align-items: start;
+  }
+
+  .step__wide {
+    grid-column: 1 / -1;
+  }
+
+  .step__expression {
+    min-height: var(--size-editor-min);
+    resize: vertical;
+  }
+
+  .step__checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .step__checks legend {
+    width: 100%;
+    margin-bottom: var(--space-1);
+  }
+
+  .step__aggregations {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .step__aggregation {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2);
+  }
+
+  .step__status {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .steps__error {
+    color: var(--danger-text);
+  }
+
+  .steps__add,
+  .steps__preview-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2);
+  }
+
+  .steps__preview {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .steps__table {
+    max-height: var(--size-preview);
+    overflow: auto;
+  }
+
+  .export-form {
+    display: grid;
+    gap: var(--space-4);
+  }
+}

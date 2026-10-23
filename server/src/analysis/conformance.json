@@ -1,0 +1,318 @@
+{
+  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case gives its inputs by refId (in the order of the refIds sorted), lists the fields to check per frame and, with names, the full field order; outputOrder is the order of the frames after the steps.",
+  "frames": {
+    "sales": [
+      { "name": "zeit", "type": "time", "values": [1767225600000, 1767312000000, 1767398400000, 1767484800000] },
+      { "name": "land", "type": "string", "values": ["AT", "CH", "AT", null] },
+      { "name": "betrag", "type": "number", "values": [10, 20, 30.5, null] },
+      { "name": "stueck", "type": "int64", "values": ["1", "2", "3", "9007199254740993"] },
+      { "name": "ok", "type": "bool", "values": [true, false, true, null] },
+      { "name": "Umsatz (€)", "type": "number", "values": [100, 0, -1, 2] },
+      { "name": "roh", "type": "json", "values": [{ "a": 1 }, null, [1], "x"] }
+    ],
+    "visits": [
+      { "name": "time", "type": "time", "values": [1767312000000, 1767225600000, 1768003200000] },
+      { "name": "sitzungen", "type": "number", "values": [4, 5, 1] }
+    ],
+    "prices": [
+      { "name": "nr", "type": "number", "values": [2, 3, 3, null] },
+      { "name": "preis", "type": "number", "values": [1.5, 2, 2.5, 9] }
+    ],
+    "weekly": [
+      { "name": "t", "type": "time", "values": [1766620800000, 1767225600000, 1767312000000] },
+      { "name": "v", "type": "number", "values": [5, 10, 20] }
+    ],
+    "padded": [
+      { "name": "i", "type": "int64", "values": [" 5", "+7", "x"] },
+      { "name": "x", "type": "number", "values": [1, 2, 3] }
+    ],
+    "long": [
+      { "name": "a", "type": "string", "values": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"] }
+    ],
+    "wide": [
+      { "name": "land", "type": "string", "values": ["AT", "AT", "CH", "AT"] },
+      { "name": "jahr", "type": "int64", "values": ["2025", "2026", "2026", "2026"] },
+      { "name": "betrag", "type": "number", "values": [1, 2, 3, 4] }
+    ]
+  },
+  "documents": {
+    "orders": {
+      "documents": [
+        { "at": { "$type": "date", "value": "1767225600000" }, "customer": { "city": "Wien" }, "items": [{ "price": 10 }, { "price": 5 }], "n": { "$type": "int64", "value": "9007199254740993" }, "total": { "$type": "decimal", "value": "15.50" } },
+        { "at": { "$type": "date", "value": "1767312000000" }, "customer": { "city": "Graz" }, "items": [{ "price": 7 }], "n": 3, "total": 20 },
+        { "customer": null, "items": [], "total": "x" }
+      ],
+      "schema": []
+    }
+  },
+  "expressions": [
+    { "frame": "sales", "expression": "betrag * 2", "type": "number", "values": [20, 40, 61, null] },
+    { "frame": "sales", "expression": "1 + 2 * 3", "type": "number", "values": [7, 7, 7, 7] },
+    { "frame": "sales", "expression": "-2 ^ 2", "type": "number", "values": [-4, -4, -4, -4] },
+    { "frame": "sales", "expression": "2 ^ 3 ^ 2", "type": "number", "values": [512, 512, 512, 512] },
+    { "frame": "sales", "expression": "10 % 3 - 7 % -3", "type": "number", "values": [0, 0, 0, 0] },
+    { "frame": "sales", "expression": "betrag / 0", "type": "number", "values": [null, null, null, null] },
+    { "frame": "sales", "expression": "sqrt(-1)", "type": "number", "values": [null, null, null, null] },
+    { "frame": "sales", "expression": "10 ^ 400", "type": "number", "values": [null, null, null, null] },
+    { "frame": "sales", "expression": "coalesce(betrag, -1)", "type": "number", "values": [10, 20, 30.5, -1] },
+    { "frame": "sales", "expression": "if(ok, 'ja', 'nein')", "type": "string", "values": ["ja", "nein", "ja", "nein"] },
+    { "frame": "sales", "expression": "ok and betrag > 15", "type": "bool", "values": [false, false, true, null] },
+    { "frame": "sales", "expression": "isnull(land) or land = 'CH'", "type": "bool", "values": [false, true, false, true] },
+    { "frame": "sales", "expression": "NOT ok", "type": "bool", "values": [false, true, false, null] },
+    { "frame": "sales", "expression": "round(betrag * 1.2, 1)", "type": "number", "values": [12, 24, 36.6, null] },
+    { "frame": "sales", "expression": "round(-2.5) + round(2.5)", "type": "number", "values": [0, 0, 0, 0] },
+    { "frame": "sales", "expression": "concat(land, '-', stueck)", "type": "string", "values": ["AT-1", "CH-2", "AT-3", "-9007199254740992"] },
+    { "frame": "sales", "expression": "text(zeit)", "type": "string", "values": ["2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", "2026-01-03T00:00:00.000Z", "2026-01-04T00:00:00.000Z"] },
+    { "frame": "sales", "expression": "weekday(zeit)", "type": "number", "values": [4, 5, 6, 7] },
+    { "frame": "sales", "expression": "startOf(zeit, 'week')", "type": "time", "values": [1766966400000, 1766966400000, 1766966400000, 1766966400000] },
+    { "frame": "sales", "expression": "startOf(zeit + 86400000 * 40, 'MONTH')", "type": "time", "values": [1769904000000, 1769904000000, 1769904000000, 1769904000000] },
+    { "frame": "sales", "expression": "year(zeit) * 10000 + month(zeit) * 100 + day(zeit)", "type": "number", "values": [20260101, 20260102, 20260103, 20260104] },
+    { "frame": "sales", "expression": "(zeit - startOf(zeit, 'year')) / 86400000", "type": "number", "values": [0, 1, 2, 3] },
+    { "frame": "sales", "expression": "hour(zeit + 3600000 * 5.5) * 100 + minute(zeit + 3600000 * 5.5)", "type": "number", "values": [530, 530, 530, 530] },
+    { "frame": "sales", "expression": "zeit - 1e20", "type": "time", "values": [null, null, null, null] },
+    { "frame": "sales", "expression": "max(land, 'BE')", "type": "string", "values": ["BE", "CH", "BE", "BE"] },
+    { "frame": "sales", "expression": "min(betrag, 15)", "type": "number", "values": [10, 15, 15, 15] },
+    { "frame": "sales", "expression": "[Umsatz (€)] / betrag", "type": "number", "values": [10, 0, -0.03278688524590164, null] },
+    { "frame": "sales", "expression": "number(' 1.5e3 ') + length('Größe') + number('x')", "type": "number", "values": [null, null, null, null] },
+    { "frame": "sales", "expression": "number(' 1.5e3 ') + length('Größe')", "type": "number", "values": [1505, 1505, 1505, 1505] },
+    { "frame": "sales", "expression": "upper(land)", "type": "string", "values": ["AT", "CH", "AT", null] },
+    { "frame": "sales", "expression": "contains(land, 'H')", "type": "bool", "values": [false, true, false, null] },
+    { "frame": "sales", "expression": "text(0.1 + 0.2) + ' ' + text(1e21) + ' ' + text(1e-7)", "type": "string", "values": ["0.30000000000000004 1e+21 1e-7", "0.30000000000000004 1e+21 1e-7", "0.30000000000000004 1e+21 1e-7", "0.30000000000000004 1e+21 1e-7"] },
+    { "frame": "sales", "expression": "'z' < 'ä' and 'ﬀ' < '😀'", "type": "bool", "values": [true, true, true, true] },
+    {"frame": "sales", "expression": "text(1658206780088562.25)", "type": "string", "values": ["1658206780088562.2", "1658206780088562.2", "1658206780088562.2", "1658206780088562.2"]},
+    {"frame": "sales", "expression": "ln(3)", "type": "number", "ulp": true, "values": [1.0986122886681098, 1.0986122886681098, 1.0986122886681098, 1.0986122886681098]},
+    {"frame": "padded", "expression": "i + 0", "type": "number", "values": [5, 7, null]},
+    {"frame": "padded", "expression": "max(number(text(i)), 6)", "type": "number", "values": [6, 7, 6]},
+    {"frame": "padded", "expression": "((((((((((((((((((((((((((((((((((((((((((((x)*x)*x*x)*x*x*x)*x*x*x*x)*x*x*x*x*x)*x*x*x*x*x*x)*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x*x)", "error": {"reason": "expression.too_deep", "params": {"max": "128"}}},
+    {"frame": "long", "expression": "concat(a, a)", "error": {"reason": "expression.text_too_long", "params": {"max": "32767"}}},
+    { "frame": "sales", "expression": "betrag +", "error": { "reason": "expression.syntax", "params": { "at": "9" } } },
+    { "frame": "sales", "expression": "1 < 2 < 3", "error": { "reason": "expression.syntax", "params": { "at": "7" } } },
+    { "frame": "sales", "expression": "land * 2", "error": { "reason": "expression.operand_types", "params": { "operator": "*", "left": "text", "right": "number" } } },
+    { "frame": "sales", "expression": "preis", "error": { "reason": "expression.unknown_field", "params": { "field": "preis" } } },
+    { "frame": "sales", "expression": "roh", "error": { "reason": "expression.field_type", "params": { "field": "roh", "type": "json" } } },
+    { "frame": "sales", "expression": "round(1, 2, 3)", "error": { "reason": "expression.arguments_range", "params": { "name": "round", "min": "1", "max": "2" } } },
+    { "frame": "sales", "expression": "if(ok, 1)", "error": { "reason": "expression.arguments_exact", "params": { "name": "if", "count": "3" } } },
+    { "frame": "sales", "expression": "max(1)", "error": { "reason": "expression.arguments_min", "params": { "name": "max", "min": "2" } } },
+    { "frame": "sales", "expression": "if(ok, 1, 'x')", "error": { "reason": "expression.mixed_types", "params": { "name": "if", "first": "number", "second": "text" } } },
+    { "frame": "sales", "expression": "year(betrag)", "error": { "reason": "expression.argument_type", "params": { "name": "year", "position": "1", "expected": "time", "found": "number" } } },
+    { "frame": "sales", "expression": "'offen", "error": { "reason": "expression.unclosed", "params": { "at": "1" } } },
+    { "frame": "sales", "expression": "betrag = null", "error": { "reason": "expression.null_compare", "params": {} } },
+    { "frame": "sales", "expression": "1e400", "error": { "reason": "expression.number", "params": { "at": "1" } } },
+    { "frame": "sales", "expression": "Wurzel(4)", "error": { "reason": "expression.unknown_function", "params": { "name": "Wurzel" } } },
+    { "frame": "sales", "expression": "  ", "error": { "reason": "expression.empty", "params": {} } },
+    { "frame": "sales", "expression": "coalesce(null)", "error": { "reason": "expression.no_type", "params": {} } },
+    { "frame": "sales", "expression": "startOf(zeit, 'tag')", "error": { "reason": "expression.unit", "params": {} } }
+  ],
+  "steps": [
+    {
+      "name": "calculate adds a field",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "1", "type": "calculate", "frame": "A", "name": "brutto", "expression": "betrag * 2" }],
+      "expect": { "A": { "names": ["zeit", "land", "betrag", "stueck", "ok", "Umsatz (€)", "roh", "brutto"], "fields": [{ "name": "brutto", "type": "number", "values": [20, 40, 61, null] }] } }
+    },
+    {
+      "name": "disabled steps are passed over",
+      "frames": { "A": "sales" },
+      "steps": [
+        { "id": "1", "type": "calculate", "frame": "A", "name": "land", "expression": "1", "disabled": true },
+        { "id": "2", "type": "calculate", "frame": "A", "name": "eins", "expression": "1" }
+      ],
+      "expect": { "A": { "fields": [{ "name": "eins", "type": "number", "values": [1, 1, 1, 1] }] } }
+    },
+    {
+      "name": "join by time, then a formula across both queries",
+      "frames": { "A": "sales", "B": "visits" },
+      "steps": [
+        { "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "inner" },
+        { "id": "c", "type": "calculate", "frame": "A", "name": "proSitzung", "expression": "A.betrag / B.sitzungen" }
+      ],
+      "expect": { "A": { "names": ["zeit", "A.land", "A.betrag", "A.stueck", "A.ok", "A.Umsatz (€)", "A.roh", "B.sitzungen", "proSitzung"], "fields": [
+        { "name": "zeit", "type": "time", "values": [1767225600000, 1767312000000] },
+        { "name": "proSitzung", "type": "number", "values": [2, 5] }
+      ] } },
+      "gone": ["B"]
+    },
+    {
+      "name": "outer join by time keeps time order",
+      "frames": { "A": "sales", "B": "visits" },
+      "steps": [{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "outer" }],
+      "expect": { "A": { "fields": [
+        { "name": "zeit", "type": "time", "values": [1767225600000, 1767312000000, 1767398400000, 1767484800000, 1768003200000] },
+        { "name": "B.sitzungen", "type": "number", "values": [5, 4, null, null, 1] },
+        { "name": "A.betrag", "type": "number", "values": [10, 20, 30.5, null, null] }
+      ] } }
+    },
+    {
+      "name": "outer join by key matches int64 with numbers",
+      "frames": { "A": "sales", "B": "prices" },
+      "steps": [{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "key", "leftField": "stueck", "rightField": "nr" }, "mode": "outer" }],
+      "expect": { "A": { "fields": [
+        { "name": "stueck", "type": "int64", "values": ["1", "2", "3", "3", "9007199254740993", null] },
+        { "name": "B.preis", "type": "number", "values": [null, 1.5, 2, 2.5, null, 9] }
+      ] } }
+    },
+    {
+      "name": "statistics per field",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "r", "type": "reduce", "frame": "A", "fields": ["betrag", "stueck"], "stats": ["count", "sum", "mean", "median", "min", "max", "stddev", "percentile"], "percentiles": [90, 12.5] }],
+      "expect": { "A": { "names": ["field", "count", "sum", "mean", "median", "min", "max", "stddev", "p90", "p12.5"], "fields": [
+        { "name": "field", "type": "string", "values": ["betrag", "stueck"] },
+        { "name": "count", "type": "number", "values": [3, 4] },
+        { "name": "sum", "type": "number", "values": [60.5, 9007199254740998] },
+        { "name": "mean", "type": "number", "values": [20.166666666666668, 2251799813685249.5] },
+        { "name": "median", "type": "number", "values": [20, 2.5] },
+        { "name": "min", "type": "number", "values": [10, 1] },
+        { "name": "max", "type": "number", "values": [30.5, 9007199254740992] },
+        { "name": "stddev", "type": "number", "values": [10.251016209787853, 4503599627370494.5] },
+        { "name": "p90", "type": "number", "values": [28.4, 6305039478318697] },
+        { "name": "p12.5", "type": "number", "values": [12.5, 1.375] }
+      ] } }
+    },
+    {
+      "name": "trend, moving average and correlation",
+      "frames": { "A": "sales" },
+      "steps": [
+        { "id": "t", "type": "trend", "frame": "A", "field": "betrag", "output": "fitted", "name": "linie" },
+        { "id": "m", "type": "movingAverage", "frame": "A", "field": "betrag", "window": 2, "name": "schnitt" }
+      ],
+      "expect": { "A": { "fields": [
+        { "name": "linie", "type": "number", "values": [9.916666666656965, 20.166666666656965, 30.416666666656965, 40.666666666656965] },
+        { "name": "schnitt", "type": "number", "values": [null, 15, 25.25, 30.5] }
+      ] } }
+    },
+    {
+      "name": "trend summary per day",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "t", "type": "trend", "frame": "A", "field": "betrag", "output": "summary" }],
+      "expect": { "A": { "names": ["field", "slope", "intercept", "r2", "n"], "fields": [
+        { "name": "slope", "type": "number", "values": [10.25] },
+        { "name": "r2", "type": "number", "values": [0.9998017446471055] },
+        { "name": "n", "type": "number", "values": [3] }
+      ] } }
+    },
+    {
+      "name": "correlation of two fields",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "c", "type": "correlate", "frame": "A", "x": "betrag", "y": "stueck" }],
+      "expect": { "A": { "names": ["x", "y", "r", "n"], "fields": [
+        { "name": "r", "type": "number", "values": [0.9999008674099175] },
+        { "name": "n", "type": "number", "values": [3] }
+      ] } }
+    },
+    {
+      "name": "previous week",
+      "frames": { "A": "weekly" },
+      "steps": [
+        { "id": "d", "type": "compare", "frame": "A", "field": "v", "period": "week", "output": "difference", "name": "diff" },
+        { "id": "p", "type": "compare", "frame": "A", "field": "v", "period": "week", "output": "percent", "name": "pct" }
+      ],
+      "expect": { "A": { "fields": [
+        { "name": "diff", "type": "number", "values": [null, 5, null] },
+        { "name": "pct", "type": "number", "values": [null, 100, null] }
+      ] } }
+    },
+    {
+      "name": "group by a field",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "g", "type": "group", "frame": "A", "by": ["land"], "aggregations": [
+        { "field": "betrag", "op": "sum" }, { "field": "betrag", "op": "count", "name": "n" },
+        { "field": "stueck", "op": "max" }, { "field": "zeit", "op": "first" }, { "field": "betrag", "op": "mean" }
+      ] }],
+      "expect": { "A": { "names": ["land", "sum(betrag)", "n", "max(stueck)", "first(zeit)", "mean(betrag)"], "fields": [
+        { "name": "land", "type": "string", "values": ["AT", "CH", null] },
+        { "name": "sum(betrag)", "type": "number", "values": [40.5, 20, null] },
+        { "name": "n", "type": "number", "values": [2, 1, 0] },
+        { "name": "max(stueck)", "type": "int64", "values": ["3", "2", "9007199254740993"] },
+        { "name": "first(zeit)", "type": "time", "values": [1767225600000, 1767312000000, 1767484800000] },
+        { "name": "mean(betrag)", "type": "number", "values": [20.25, 20, null] }
+      ] } }
+    },
+    {
+      "name": "pivot",
+      "frames": { "A": "wide" },
+      "steps": [{ "id": "p", "type": "pivot", "frame": "A", "row": "land", "column": "jahr", "value": "betrag", "op": "sum" }],
+      "expect": { "A": { "names": ["land", "2025", "2026"], "fields": [
+        { "name": "2025", "type": "number", "values": [1, null] },
+        { "name": "2026", "type": "number", "values": [6, 3] }
+      ] } }
+    },
+    {
+      "name": "a projection makes a frame of documents for the steps after it",
+      "frames": { "B": "visits", "A": "orders" },
+      "steps": [
+        { "id": "p", "type": "toFrame", "frame": "A", "columns": [
+          { "path": "at" }, { "path": "customer.city", "name": "Stadt" }, { "path": "items.0.price", "name": "erster" },
+          { "path": "n" }, { "path": "total", "type": "number" }, { "path": "items" }, { "path": "customer", "name": "kunde", "type": "string" }
+        ] },
+        { "id": "c", "type": "calculate", "frame": "A", "name": "doppelt", "expression": "erster * 2" }
+      ],
+      "outputOrder": ["A", "B"],
+      "expect": { "A": { "names": ["at", "Stadt", "erster", "n", "total", "items", "kunde", "doppelt"], "fields": [
+        { "name": "at", "type": "time", "values": [1767225600000, 1767312000000, null] },
+        { "name": "Stadt", "type": "string", "values": ["Wien", "Graz", null] },
+        { "name": "erster", "type": "number", "values": [10, 7, null] },
+        { "name": "n", "type": "int64", "values": ["9007199254740993", "3", null] },
+        { "name": "total", "type": "number", "values": [15.5, 20, null] },
+        { "name": "kunde", "type": "string", "values": ["{\"city\":\"Wien\"}", "{\"city\":\"Graz\"}", null] },
+        { "name": "doppelt", "type": "number", "values": [20, 14, null] }
+      ] } }
+    },
+    {
+      "name": "a projection of a frame changes nothing",
+      "frames": { "A": "visits" },
+      "steps": [{ "id": "p", "type": "toFrame", "frame": "A", "columns": [{ "path": "x" }] }],
+      "expect": { "A": { "names": ["time", "sitzungen"], "fields": [{ "name": "sitzungen", "type": "number", "values": [4, 5, 1] }] } }
+    },
+    {
+      "name": "documents are no frame before their projection",
+      "frames": { "A": "orders" },
+      "steps": [
+        { "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "1" },
+        { "id": "p", "type": "toFrame", "frame": "A", "columns": [{ "path": "n" }] }
+      ],
+      "error": { "index": 0, "reason": "steps.frame_missing", "params": { "frame": "A" } }
+    },
+    {
+      "name": "a projection of a query that does not exist",
+      "frames": { "A": "visits" },
+      "steps": [{ "id": "p", "type": "toFrame", "frame": "Z", "columns": [{ "path": "x" }] }],
+      "error": { "index": 0, "reason": "steps.frame_missing", "params": { "frame": "Z" } }
+    },
+    {
+      "name": "a taken name stops the run at its step",
+      "frames": { "A": "sales" },
+      "steps": [
+        { "id": "1", "type": "calculate", "frame": "A", "name": "x", "expression": "1" },
+        { "id": "2", "type": "movingAverage", "frame": "A", "field": "betrag", "window": 3, "name": "x" }
+      ],
+      "error": { "index": 1, "reason": "steps.name_taken", "params": { "name": "x" } }
+    },
+    {
+      "name": "a joined table is used up",
+      "frames": { "A": "sales", "B": "visits" },
+      "steps": [
+        { "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "left" },
+        { "id": "c", "type": "calculate", "frame": "B", "name": "x", "expression": "1" }
+      ],
+      "error": { "index": 1, "reason": "steps.frame_missing", "params": { "frame": "B" } }
+    },
+    {
+      "name": "keys of different types",
+      "frames": { "A": "sales", "B": "prices" },
+      "steps": [{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "key", "leftField": "land", "rightField": "nr" }, "mode": "inner" }],
+      "error": { "index": 0, "reason": "steps.key_types", "params": { "left": "string", "right": "number" } }
+    },
+    {
+      "name": "statistics need numbers",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "r", "type": "reduce", "frame": "A", "fields": ["land"], "stats": ["sum"] }],
+      "error": { "index": 0, "reason": "steps.field_type", "params": { "field": "land", "type": "string" } }
+    },
+    {
+      "name": "an expression error at its step",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "c", "type": "calculate", "frame": "A", "name": "x", "expression": "land / 2" }],
+      "error": { "index": 0, "reason": "expression.operand_types", "params": { "operator": "/", "left": "text", "right": "number" } }
+    }
+  ]
+}

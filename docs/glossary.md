@@ -35,6 +35,8 @@ catalog.
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
 | Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn die Quelle selbst einen anderen Begriff verwendet. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |
+| Schritt | Step | Ein sichtbarer, abschaltbarer Rechenschritt auf dem Ergebnis der Abfragen, gespeichert mit dem Panel. | Transformation (in der Oberfläche) |
+| Berechnetes Feld | Calculated field | Ein neues Feld aus einem Ausdruck über die Felder einer Tabelle. | Formelfeld |
 | Projektion | Projection | Sichtbarer Schritt, der eine Datenform in eine andere umwandelt. | Konvertierung |
 | Verlauf | History | Frühere Versionen oder Abfragen, wiederherstellbar. | Historie |
 | Einrichtung | Setup | Der erste Start: erste Organisation und erstes Konto anlegen. | Installation (für diesen Schritt), Onboarding |
