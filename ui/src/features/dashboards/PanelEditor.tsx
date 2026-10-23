@@ -44,7 +44,7 @@ import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
-import { emptyQuery, queryText } from "../datasources/queryKinds";
+import { emptyQuery, familyOf, queryText } from "../datasources/queryKinds";
 import { type EditorLayout, readEditorLayout, writeEditorLayout } from "./editorLayout";
 import {
   nextRefId,
@@ -299,8 +299,39 @@ export function PanelEditor({
     return byRef;
   }, [outcomes]);
 
+  // A query field holding something the server would refuse keeps the panel from running, until
+  // it is fixed; a MongoDB field keeps its last valid text and runs that, as its editor says.
+  // Tracked in a ref so typing renders nothing else; the run button hears only a change.
+  const sourcesRef = useRef(datasources.data);
+  useEffect(() => {
+    sourcesRef.current = datasources.data;
+  });
+  const blockedRef = useRef(false);
+  const [runBlocked, setRunBlocked] = useState(false);
+  const updateBlocked = useCallback(() => {
+    const kindOf = (id: string) => sourcesRef.current?.find((d) => d.id === id)?.kind ?? "";
+    blockedRef.current = targetsRef.current.some(
+      (target) =>
+        pendingText.current[target.refId] === true &&
+        familyOf(kindOf(target.datasourceId)) !== "mongo",
+    );
+    setRunBlocked(blockedRef.current);
+  }, []);
+  // Removing a query or changing its source can lift the block.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs again when the queries change; it reads them through targetsRef
+  useEffect(() => {
+    updateBlocked();
+  }, [targets, updateBlocked]);
+  // Whether a preview query can run is decided by its source's kind.
+  const sourceKindOf = useCallback(
+    (id: string) => datasources.data?.find((d) => d.id === id)?.kind,
+    [datasources.data],
+  );
   // A new run, or another data source, leaves an old filter refusal behind.
   const run = useCallback(() => {
+    if (blockedRef.current) {
+      return;
+    }
     setFilterError(null);
     setPreview((current) => ({ targets: targetsRef.current, run: current.run + 1 }));
   }, []);
@@ -321,9 +352,16 @@ export function PanelEditor({
       setSteps((current) => withProjection(current, refId, projection)),
     [],
   );
-  const markPending = useCallback((refId: string, pending: boolean) => {
-    pendingText.current = { ...pendingText.current, [refId]: pending };
-  }, []);
+  const markPending = useCallback(
+    (refId: string, pending: boolean) => {
+      if ((pendingText.current[refId] === true) === pending) {
+        return;
+      }
+      pendingText.current = { ...pendingText.current, [refId]: pending };
+      updateBlocked();
+    },
+    [updateBlocked],
+  );
   const previewRun = useCallback(() => runInput.current, []);
 
   /** Click-to-filter in the preview: a `$match` stage on that query, run at once. */
@@ -472,6 +510,7 @@ export function PanelEditor({
           onChange={changeTarget}
           onRemove={removeTarget}
           onRun={run}
+          runBlocked={runBlocked}
           onLeave={runIfChanged}
           onDuplicate={duplicateTarget}
           steps={steps}
@@ -509,6 +548,7 @@ export function PanelEditor({
       outcomes={outcomes}
       stepsRun={stepsRun}
       variables={texts}
+      kindOf={sourceKindOf}
     />
   );
 
@@ -994,6 +1034,7 @@ function TargetList({
   onChange,
   onRemove,
   onRun,
+  runBlocked,
   onLeave,
   onDuplicate,
   steps,
@@ -1012,6 +1053,8 @@ function TargetList({
   onChange: (refId: string, patch: Partial<Target>) => void;
   onRemove: (refId: string) => void;
   onRun: () => void;
+  /** A query field holds something the server would refuse; its field says why. */
+  runBlocked: boolean;
   onLeave: () => void;
   onDuplicate: (refId: string) => void;
   /** The panel's steps, for each document query's projection step. */
@@ -1037,7 +1080,12 @@ function TargetList({
             {t("dashboards.editor.addQuery")}
           </button>
         ) : null}
-        <button type="button" className="button button--secondary button--small" onClick={onRun}>
+        <button
+          type="button"
+          className="button button--secondary button--small"
+          onClick={onRun}
+          disabled={runBlocked}
+        >
           {t("dashboards.editor.run")}
         </button>
       </div>
