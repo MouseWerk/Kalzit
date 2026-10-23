@@ -320,9 +320,9 @@ export function PanelCard({
                   className="button button--ghost button--small"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={edit.onCopy}
-                  aria-label={t("dashboardTools.copy.namedButton", { title })}
+                  aria-label={t("dashboardTools.copy.panelNamed", { title })}
                 >
-                  {t("dashboardTools.copy.button")}
+                  {t("dashboardTools.copy.panel")}
                 </button>
               )}
               <button

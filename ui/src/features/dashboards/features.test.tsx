@@ -958,7 +958,7 @@ describe("copy and save as", () => {
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(
-      within(article("Orders")).getByRole("button", { name: "Copy “Orders” to another dashboard" }),
+      within(article("Orders")).getByRole("button", { name: "Copy to another dashboard: “Orders”" }),
     );
     const dialog = screen.getByRole("dialog", { name: "Copy panel to another dashboard" });
     expect(within(dialog).queryByRole("radio", { name: "Main" })).toBeNull();
