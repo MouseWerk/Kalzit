@@ -1,4 +1,5 @@
 import { Api, OWNER } from "./support/api";
+import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
 import { expect, signIn, test } from "./support/test";
 
@@ -27,6 +28,9 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
   await page.getByLabel(t("setup.password"), { exact: true }).fill(OWNER.password);
   await page.getByRole("button", { name: t("setup.submit") }).click();
   await expect(page.getByText(t("errors.invalid_setup_token"))).toBeVisible();
+  // The setup page, with an error on a field and the password rated: nothing serious for axe.
+  await expect(page.getByText(t("password.strengthStrong"))).toBeVisible();
+  expect(await seriousViolations(page)).toEqual([]);
 
   await page.getByLabel(t("setup.token")).fill(token);
   await page.getByRole("button", { name: t("setup.submit") }).click();

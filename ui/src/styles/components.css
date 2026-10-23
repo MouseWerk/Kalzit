@@ -242,67 +242,9 @@
     margin-block-end: var(--space-4);
   }
 
-  /* Sign-in and setup pages */
+  /* The sign-in and setup pages live in auth/auth.css. */
 
-  .auth {
-    display: grid;
-    min-height: 100dvh;
-    padding: var(--space-6) var(--space-4);
-    place-items: center;
-  }
-
-  .auth__card {
-    display: grid;
-    width: 100%;
-    max-width: var(--auth-card-width);
-    gap: var(--space-6);
-  }
-
-  .auth__brand {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-  }
-
-  .auth__header {
-    display: grid;
-    gap: var(--space-2);
-  }
-
-  /* The pages before the app greet in the website's serif; inside the app headings stay sans. */
-  .auth__header h1,
-  .status-page h1 {
-    font-family: var(--font-display);
-    font-size: var(--font-size-2xl);
-    font-weight: var(--font-weight-display);
-    letter-spacing: var(--letter-spacing-display);
-  }
-
-  .auth__lead {
-    color: var(--text-muted);
-  }
-
-  .auth__panel {
-    padding: var(--space-6);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--bg-raised);
-    box-shadow: var(--shadow-raised);
-  }
-
-  .auth__footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-4);
-    justify-content: center;
-    font-size: var(--font-size-sm);
-    color: var(--text-muted);
-  }
-
-  /* Shrinks with its select, so a long option cannot widen the row past the page. */
+  /* A labelled select in a row; shrinks with its select, so a long option cannot widen the row. */
   .preference {
     display: flex;
     align-items: center;
@@ -973,6 +915,24 @@
     max-width: 30rem;
     gap: var(--space-3);
     text-align: center;
+  }
+
+  .status-page__mark {
+    display: grid;
+    width: var(--size-setup-tile);
+    height: var(--size-setup-tile);
+    margin-block-end: var(--space-2);
+    place-items: center;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+  }
+
+  .status-page h1 {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
   }
 
   .status-page__text {

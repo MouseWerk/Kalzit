@@ -45,7 +45,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
       clearChoice();
       queryClient.clear();
       queryClient.setQueryData(meQuery.queryKey, null);
-      await navigate({ to: "/login" });
+      await navigate({ to: "/login", search: { signedOut: true } });
     },
   });
 
