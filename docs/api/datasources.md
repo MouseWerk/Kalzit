@@ -1370,7 +1370,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 
 | Reason | Params | When |
 |---|---|---|
-| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes has options or field options the server refuses: `panel` is its title (else its id), `detail` names the option |
+| `dashboards.panel_options` | `panel`, `detail` | a panel the save adds or changes (a dashboard, or a library panel) has options or field options the server refuses: `panel` is its title (else its id, for a library panel its name), `detail` names the option |
 
 ### Sources and the server (`datasource_error` unless noted)
 
