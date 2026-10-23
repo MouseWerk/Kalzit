@@ -331,7 +331,7 @@ async fn mongodb_reads_with_a_read_only_login_and_refuses_more() {
             {"$group": {"_id": null, "n": {"$sum": 1}}}]"# }),
     );
     let seen = async {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + common::HANG_GUARD;
         loop {
             if let Some(command) = f.running().await.into_iter().next() {
                 return command;
@@ -343,7 +343,7 @@ async fn mongodb_reads_with_a_read_only_login_and_refuses_more() {
     let (slow, seen) = tokio::join!(slow, seen);
     assert_eq!(slow["error"]["code"], "query_timeout", "{slow}");
     assert_eq!(number(seen.get("maxTimeMS")), Some(1_000), "{seen}");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + common::HANG_GUARD;
     while !f.running().await.is_empty() {
         assert!(Instant::now() < deadline, "the slow pipeline still runs on the server after the timeout");
         tokio::time::sleep(Duration::from_millis(50)).await;
