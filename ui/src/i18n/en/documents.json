@@ -157,5 +157,6 @@
   "documents.projection.error.duplicate": "Another column is already named “{name}”. Give this one a name of its own.",
   "documents.projection.full": "A projection step takes at most {max} columns.",
   "documents.projection.blocked": "Fix the projection step before applying; the server would refuse it.",
-  "documents.filter.refused.draft": "The filter was not added: the query being edited has text that is not valid JSON. Fix it first; nothing was changed."
+  "documents.filter.refused.draft": "The filter was not added: the query being edited has text that is not valid JSON. Fix it first; nothing was changed.",
+  "documents.projection.blockedExplore": "Fix the projection step before exporting or adding to a dashboard; the server would refuse it."
 }

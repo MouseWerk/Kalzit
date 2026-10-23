@@ -157,5 +157,6 @@
   "documents.projection.error.duplicate": "Eine andere Spalte heißt schon „{name}“. Gib dieser einen eigenen Namen.",
   "documents.projection.full": "Ein Projektionsschritt hat höchstens {max} Spalten.",
   "documents.projection.blocked": "Korrigiere den Projektionsschritt vor dem Übernehmen; der Server würde ihn ablehnen.",
-  "documents.filter.refused.draft": "Der Filter wurde nicht hinzugefügt: Die Abfrage in Bearbeitung enthält Text, der kein gültiges JSON ist. Korrigiere ihn zuerst; nichts wurde geändert."
+  "documents.filter.refused.draft": "Der Filter wurde nicht hinzugefügt: Die Abfrage in Bearbeitung enthält Text, der kein gültiges JSON ist. Korrigiere ihn zuerst; nichts wurde geändert.",
+  "documents.projection.blockedExplore": "Korrigiere den Projektionsschritt vor dem Export oder dem Hinzufügen zu einem Dashboard; der Server würde ihn ablehnen."
 }

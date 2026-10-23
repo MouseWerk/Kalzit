@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -461,5 +461,64 @@ describe("inspecting a documents result", () => {
     expect(within(inspect).getByText("Executed query")).toBeTruthy();
     // The fake names the collection and the method, as the server's executedQuery does.
     expect(within(inspect).getByText(/^orders\.(find|aggregate)\(\.\.\.\)$/)).toBeTruthy();
+  });
+});
+
+describe("Explore after the delta review", () => {
+  it("exports the steps as stored, and waits with export while a column would be refused", async () => {
+    const { user } = await open();
+    // The fake has no export route: the request is caught here.
+    const sentExports: unknown[] = [];
+    const fakeFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/export")) {
+        sentExports.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(new Response("{}", { status: 500 }));
+      }
+      return fakeFetch(input, init);
+    });
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("3 documents.");
+    await user.click(screen.getByRole("button", { name: "Add projection step" }));
+    fireEvent.change(screen.getByLabelText("Field path of column 1"), {
+      target: { value: "total" },
+    });
+    await user.click(screen.getByRole("button", { name: "Add column" }));
+
+    // A second column named like the first: the server would refuse it, so export waits.
+    fireEvent.change(screen.getByLabelText("Field path of column 2"), {
+      target: { value: "total" },
+    });
+    const exportButton = screen.getByRole("button", { name: "Export…" });
+    expect(exportButton).toHaveProperty("disabled", true);
+    expect(screen.getByText(/before exporting or adding to a dashboard/)).toBeTruthy();
+
+    // A column still without a path is fine, and left out of what is sent.
+    fireEvent.change(screen.getByLabelText("Field path of column 2"), { target: { value: "" } });
+    expect(exportButton).toHaveProperty("disabled", false);
+    await user.click(exportButton);
+    const dialog = screen.getByRole("dialog", { name: "Export data" });
+    await user.click(within(dialog).getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(sentExports).toHaveLength(1));
+    expect((sentExports[0] as { steps: unknown }).steps).toEqual([
+      { id: expect.any(String), type: "toFrame", frame: "A", columns: [{ path: "total" }] },
+    ]);
+  });
+
+  it("clears a filter refusal when the query runs again", async () => {
+    const { user } = await open();
+    await addStage(user, "$match", MATCH);
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("2 documents.");
+    fireEvent.change(screen.getByLabelText("Stage 1"), { target: { value: '{"$limit": ' } });
+    await filterByStatus(user);
+    expect(screen.getByText(/the query being edited has text that is not valid JSON/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Stage 1"), { target: { value: MATCH } });
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/the query being edited has text that is not valid JSON/),
+      ).toBeNull(),
+    );
   });
 });

@@ -131,6 +131,17 @@ function isStepFor(value: unknown, refId: string): value is Record<string, unkno
   return isRecord(value) && value.type === PROJECTION_STEP && value.frame === refId;
 }
 
+/**
+ * Whether a step turns its documents into a frame: switched on, with at least one column that
+ * has a path. A step whose columns all still wait for one is not stored, so it projects nothing.
+ */
+export function projectionApplies(projection: {
+  disabled?: boolean | undefined;
+  columns: readonly { path: string }[];
+}): boolean {
+  return projection.disabled !== true && projection.columns.some((c) => c.path.trim() !== "");
+}
+
 /** The projection step of the query `refId` among a panel's transformations. */
 export function projectionFor(
   transformations: readonly unknown[],

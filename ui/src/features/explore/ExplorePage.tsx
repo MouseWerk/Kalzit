@@ -13,6 +13,7 @@ import { Page } from "../../components/Page";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
   hasProjectionProblems,
+  projectionApplies,
   projectionFor,
   projectionPaths,
   storableTransformations,
@@ -233,7 +234,9 @@ function Explore({ orgId }: { orgId: string }) {
   // One list of steps for the result: the projection (edited under the query) and the
   // analysis steps after it, run once for the panel and the steps editor.
   const projection = projectionFor(steps, REF_ID);
-  const projected = projection !== undefined && projection.disabled !== true;
+  const projected = projection !== undefined && projectionApplies(projection);
+  // A projection step the server would refuse waits for a fix before it leaves the page.
+  const blocked = hasProjectionProblems(steps);
   const stepsRun = runPanelSteps(deferredSteps, outcomes);
   // The suggestion follows what the panel will get: documents, or the frame of a projection.
   const results: QueryResult[] = [
@@ -363,7 +366,8 @@ function Explore({ orgId }: { orgId: string }) {
                 type="button"
                 className="button button--secondary"
                 onClick={() => setExporting(true)}
-                disabled={result.data === undefined}
+                disabled={result.data === undefined || blocked}
+                aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
               >
                 {t("analysis.export.button")}
               </button>
@@ -373,10 +377,16 @@ function Explore({ orgId }: { orgId: string }) {
                 type="button"
                 className="button button--secondary"
                 onClick={() => setAdding(true)}
-                disabled={result.data === undefined || hasProjectionProblems(steps)}
+                disabled={result.data === undefined || blocked}
+                aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
               >
                 {t("explore.addToDashboard")}
               </button>
+            ) : null}
+            {blocked ? (
+              <p className="field__error" id={`${tabsId}-blocked`}>
+                {t("documents.projection.blockedExplore")}
+              </p>
             ) : null}
           </div>
           {/* Both panels exist, so every tab's aria-controls points at an element. */}
@@ -472,7 +482,8 @@ function Explore({ orgId }: { orgId: string }) {
                 maxDataPoints: MAX_DATA_POINTS,
                 intervalMs: intervalFor(timeRange),
                 variables: {},
-                steps,
+                // As stored: without the columns that still wait for a path.
+                steps: storableTransformations(steps),
                 format: choice.format,
                 language: choice.language,
                 ...(choice.frame === undefined ? {} : { frame: choice.frame }),

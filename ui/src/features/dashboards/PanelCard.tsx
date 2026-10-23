@@ -12,6 +12,7 @@ import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { projectionApplies } from "../../documents/projection";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
@@ -407,9 +408,9 @@ export function PanelBody({
   // Documents an enabled projection step turns into a frame are that frame now; the others stay
   // documents for the document panels.
   const projected = new Set(
-    asSteps(panel.transformations)
-      .filter((step) => isProjection(step) && step.disabled !== true)
-      .map((step) => (isProjection(step) ? step.frame : "")),
+    asSteps(panel.transformations).flatMap((step) =>
+      isProjection(step) && projectionApplies(step) ? [step.frame] : [],
+    ),
   );
   const documents = documentsOf(outcomes).filter((d) => !projected.has(d.refId));
   const errors = errorsOf(outcomes);

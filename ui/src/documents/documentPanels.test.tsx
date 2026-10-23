@@ -303,6 +303,41 @@ describe("panels and shapes", () => {
     expect(screen.getByText("129.9")).toBeTruthy();
   });
 
+  it("gives document panels only the documents no projection step turns into a frame", () => {
+    const step = (columns: { path: string }[]) => ({
+      id: "0199f0a0-1c2e-4a4b-9e1d-3f5a6b7c8d92",
+      type: "toFrame",
+      frame: "A",
+      columns,
+    });
+    const view = render(
+      <PanelBody
+        panel={panel("documents", [step([{ path: "total" }])])}
+        title="T"
+        range={RANGE}
+        pending={false}
+        error={null}
+        outcomes={[outcome]}
+      />,
+    );
+    // The projection made a frame of them: the explorer says it got a table, not documents.
+    expect(screen.getByText(/the query answered with a table/)).toBeTruthy();
+    expect(screen.queryByRole("tree")).toBeNull();
+    view.unmount();
+    // A step whose columns all still wait for a path projects nothing: the documents show.
+    render(
+      <PanelBody
+        panel={panel("documents", [step([{ path: " " }])])}
+        title="T"
+        range={RANGE}
+        pending={false}
+        error={null}
+        outcomes={[outcome]}
+      />,
+    );
+    expect(screen.getByRole("tree")).toBeTruthy();
+  });
+
   it("says when a document panel gets a table", () => {
     render(
       <PanelBody

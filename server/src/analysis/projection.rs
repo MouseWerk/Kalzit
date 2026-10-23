@@ -347,7 +347,12 @@ pub fn project(set: &DocumentSet, columns: &[ProjectionColumn]) -> Frame {
             }
         })
         .collect();
-    let meta = FrameMeta { executed_query: None, rows_truncated: set.truncated.is_some(), notices: Vec::new() };
+    // The source's notices and the query as it ran stay with the frame, as in the UI.
+    let meta = FrameMeta {
+        executed_query: set.executed_query.clone(),
+        rows_truncated: set.truncated.is_some(),
+        notices: set.notices.clone(),
+    };
     Frame::new(fields).expect("one value per document in every column").with_meta(meta)
 }
 
@@ -418,8 +423,13 @@ mod tests {
             schema: vec![],
             next_cursor: None,
             truncated: Some(crate::shapes::Truncated { limit: 2, reason: None }),
-            notices: vec![],
-            executed_query: None,
+            notices: vec![crate::shapes::Notice {
+                severity: crate::shapes::NoticeSeverity::Warning,
+                code: "documents.limit".into(),
+                params: None,
+                text: "cut".into(),
+            }],
+            executed_query: Some("orders.find(...)".into()),
         };
         let mut named = column("p");
         named.name = Some("Preis".into());
@@ -450,6 +460,10 @@ mod tests {
         assert_eq!(values(4), [json!(true), Value::Null]);
         assert_eq!(values(5), [json!("65f0"), Value::Null]);
         assert_eq!(values(6), [json!("9007199254740993"), json!("7")]);
-        assert!(frame.meta().unwrap().rows_truncated);
+        let meta = frame.meta().unwrap();
+        assert!(meta.rows_truncated);
+        // The source's notices and the executed query go with the frame (and so into exports).
+        assert_eq!(meta.notices, set.notices);
+        assert_eq!(meta.executed_query.as_deref(), Some("orders.find(...)"));
     }
 }

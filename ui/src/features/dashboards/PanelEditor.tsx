@@ -8,6 +8,7 @@ import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
   type FrameProjection,
   hasProjectionProblems,
+  projectionApplies,
   projectionFor,
   projectionPaths,
   storableTransformations,
@@ -102,7 +103,7 @@ export function PanelEditor({
   // An applied projection step turns that target's documents into a frame.
   const projected = (refId: string) => {
     const step = projectionFor(panel.transformations, refId);
-    return step !== undefined && step.disabled !== true;
+    return step !== undefined && projectionApplies(step);
   };
   const returned = (results.data ?? []).flatMap((o): Shape[] =>
     "result" in o
