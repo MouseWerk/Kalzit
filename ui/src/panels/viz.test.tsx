@@ -1,12 +1,13 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: link placeholders such as ${__value} are typed by users, not template literals
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { Frame } from "../api/generated/shapes";
+import type { Frame, GraphSet } from "../api/generated/shapes";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { loadPatternEngine } from "./fieldConfig/pattern";
+import { generateGraph } from "./graph/test/generate";
 import { compareBounds, heatLevel, heatmapData } from "./heatmap";
 import { histogram } from "./histogram";
 import { PanelPicker } from "./picker/PanelPicker";
@@ -18,10 +19,6 @@ import { interpolate, markdown } from "./text/markdown";
 import type { AnyPanelPlugin } from "./types";
 
 const RANGE = { from: 0, to: 100_000 };
-/** The panels of this pack: frame panels and text. Graph panels draw graphs and are tested apart. */
-const FRAME_PANELS = PANELS.filter(
-  (panel) => panel.standalone === true || panel.shapes.includes("frame"),
-);
 
 // re2js loads on first use; the table tests use patterns right away.
 beforeAll(async () => {
@@ -188,7 +185,7 @@ describe("every new panel", () => {
   });
 
   it("has a name, a description and a preview in the picker", () => {
-    for (const panel of FRAME_PANELS) {
+    for (const panel of PANELS) {
       expect(panel.Preview, panel.type).toBeDefined();
       expect(panel.description, panel.type).toBeDefined();
     }
@@ -688,6 +685,35 @@ describe("panel picker", () => {
 
 describe("performance budget", () => {
   const CI = process.env.CI !== undefined;
+  /** A graph result of a realistic panel size, with a few paths for the path panel. */
+  const graph: GraphSet = (() => {
+    const set = generateGraph(100, 200);
+    const paths = set.edges.slice(0, 10).map((edge) => ({
+      nodes: [edge.from, edge.to],
+      edges: [edge.id],
+    }));
+    return { ...set, paths };
+  })();
+  const isGraphPanel = (plugin: AnyPanelPlugin) => plugin.shapes.includes("graph");
+
+  // The graph panels load their code with the first use (lazy.tsx); one render each loads it, so
+  // the timed dashboard below measures drawing, not loading modules.
+  beforeAll(async () => {
+    for (const plugin of PANELS.filter(isGraphPanel)) {
+      const { Panel } = plugin;
+      const { unmount } = render(
+        <Panel
+          frames={[]}
+          graphs={[{ refId: "A", datasourceId: "ds", graph }]}
+          options={plugin.options({})}
+          timeRange={RANGE}
+          title="Preload"
+        />,
+      );
+      await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull(), { timeout: 10_000 });
+      unmount();
+    }
+  }, 30_000);
 
   it("filters and sorts 100,000 cells and renders only the rows in view", () => {
     const rows = 10_000;
@@ -803,7 +829,7 @@ describe("performance budget", () => {
   });
 
   it("renders a dashboard of 50 panels of every type within budget", () => {
-    const types = FRAME_PANELS.map((p) => p.type);
+    const types = PANELS.map((p) => p.type);
     // A realistic dashboard: a few hundred rows per panel, with field options in use.
     const frame = bigSeries(500);
     const options: FieldConfig = {
@@ -827,7 +853,10 @@ describe("performance budget", () => {
             // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of panels
             <div key={i}>
               <Panel
-                frames={[frame]}
+                frames={isGraphPanel(plugin) ? [] : [frame]}
+                graphs={
+                  isGraphPanel(plugin) ? [{ refId: "A", datasourceId: "ds", graph }] : undefined
+                }
                 options={plugin.options(
                   plugin.type === "text" ? { content: "# Notes\n\nAll **fine**." } : {},
                 )}
@@ -845,6 +874,9 @@ describe("performance budget", () => {
     expect(container.querySelectorAll(".panel-empty")).toHaveLength(0);
     expect(container.querySelectorAll(".gauge__value-arc").length).toBeGreaterThan(0);
     expect(container.querySelectorAll("table[aria-rowcount]").length).toBeGreaterThan(0);
+    // The graph panels drew too: the network and hierarchy as tables here (no WebGL), the paths.
+    expect(screen.getAllByRole("table", { name: /^Nodes of Panel/ }).length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".path").length).toBeGreaterThan(0);
     unmount();
     process.stdout.write(`dashboard: 50 panels rendered in ${ms.toFixed(0)} ms\n`);
     // About five times the measured time on a busy machine.

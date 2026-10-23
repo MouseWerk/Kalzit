@@ -31,6 +31,26 @@ test("Ctrl+B collapses and expands the sidebar, and the choice survives a reload
   await expect(shell).toHaveAttribute("data-sidebar", "expanded");
 });
 
+test("/ opens the search, and the workspace card opens the organization menu", async ({ page }) => {
+  await signInOwner(page);
+  await page.keyboard.press("/");
+  const palette = page.getByRole("dialog", { name: t("shell.palette.title") });
+  await expect(palette).toBeVisible();
+  // Inside the palette's field, "/" is typed like any other letter.
+  await page.keyboard.press("/");
+  await expect(palette.getByRole("combobox")).toHaveValue("/");
+  await page.keyboard.press("Escape");
+  await expect(palette).toBeHidden();
+
+  const card = page.locator("button.org-switcher");
+  await card.click();
+  const menu = page.getByRole("menu", { name: t("shell.org.menu") });
+  await expect(menu.getByRole("menuitem", { name: t("shell.org.settings") })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(card).toBeFocused();
+});
+
 test("Ctrl+B does nothing while typing in a field", async ({ page }) => {
   await signInOwner(page);
   await page.goto("/dashboards");

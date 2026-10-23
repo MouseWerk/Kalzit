@@ -6,7 +6,7 @@ import { buildGraphModel, type GraphModel } from "../graph/model";
 import { MAX_NODE_LIMIT } from "../graph/options";
 import { setVariableFromClick, usePanelHost } from "../host";
 import type { PanelEditorProps, PanelProps } from "../types";
-import type { PathOptions } from "./index";
+import { type PathOptions, parsePathOptions } from "./index";
 import "../graph/graph.css";
 import "../panels.css";
 
@@ -174,14 +174,16 @@ export function PathEditor({ options, onChange }: PanelEditorProps<PathOptions>)
           defaultValue={options.caption}
           maxLength={100}
           aria-describedby={`${captionId}-hint`}
-          onChange={(event) => onChange({ ...options, caption: event.currentTarget.value })}
+          onChange={(event) =>
+            onChange(parsePathOptions({ ...options, caption: event.currentTarget.value }))
+          }
         />
       </div>
       <VariableOptions
         id={variableId}
         names={host.variables?.names ?? []}
         options={options}
-        onChange={(patch) => onChange({ ...options, ...patch })}
+        onChange={(patch) => onChange(parsePathOptions({ ...options, ...patch }))}
       />
     </>
   );

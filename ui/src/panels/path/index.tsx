@@ -1,5 +1,7 @@
 import { isRecord } from "../../api/client";
+import { optionText as text } from "../graph/options";
 import { lazyPanel } from "../lazy";
+import { PathPreview } from "../picker/previews";
 import type { PanelPlugin } from "../types";
 
 export interface PathOptions {
@@ -8,9 +10,8 @@ export interface PathOptions {
   variableProperty: string;
 }
 
-function parseOptions(stored: unknown): PathOptions {
+export function parsePathOptions(stored: unknown): PathOptions {
   const value = isRecord(stored) ? stored : {};
-  const text = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, 100) : "");
   return {
     caption: text(value.caption),
     variable: text(value.variable).replace(/^\$/, ""),
@@ -22,8 +23,10 @@ function parseOptions(stored: unknown): PathOptions {
 export const pathPanel: PanelPlugin<PathOptions> = {
   type: "path",
   name: "graph.panels.path",
+  description: "panels.describe.path",
   shapes: ["graph"],
-  options: parseOptions,
+  options: parsePathOptions,
   Panel: lazyPanel(() => import("./PathPanel").then((m) => m.PathPanel)),
   Editor: lazyPanel(() => import("./PathPanel").then((m) => m.PathEditor)),
+  Preview: PathPreview,
 };
