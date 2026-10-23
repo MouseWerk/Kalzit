@@ -20,6 +20,7 @@ import { canOpenAdministration } from "./visibility";
 export function AdminLayout() {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
+  const { pathname } = useLocation();
 
   let body = null;
   if (canOpenAdministration(permissions)) {
@@ -32,12 +33,18 @@ export function AdminLayout() {
       </EmptyState>
     );
   }
+  // The overview carries the administration's heading; a section page is headed by its own
+  // name (Section), with the administration in the breadcrumbs above it, not a second heading.
   return (
     <>
       <AdminCrumbs />
-      <Page title={t("admin.title")} lead={t("admin.lead")}>
-        {body}
-      </Page>
+      {pathname === "/admin" || pathname === "/admin/" ? (
+        <Page title={t("admin.title")} lead={t("admin.lead")}>
+          {body}
+        </Page>
+      ) : (
+        <div className="page">{body}</div>
+      )}
     </>
   );
 }
