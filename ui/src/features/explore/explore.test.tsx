@@ -146,6 +146,38 @@ describe("Explore", () => {
     expect(screen.getByRole("tabpanel", { name: "Inspect" })).toBeTruthy();
   });
 
+  it("runs steps on the result and keeps them with the panel added to a dashboard", async () => {
+    const { server, user } = open();
+    addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
+    await runSql(user, "SELECT * FROM customers");
+    await screen.findByText("Grace");
+    expect(screen.getByRole("button", { name: "Export…" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    const expression = within(step).getByLabelText("Expression");
+    await user.clear(expression);
+    await user.click(expression);
+    await user.paste("score * 10");
+    const result = screen.getByRole("tabpanel", { name: "Result" });
+    expect(await within(result).findByRole("columnheader", { name: "Calculated" })).toBeTruthy();
+    expect(within(result).getByText("30")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
+    const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
+    await user.selectOptions(
+      await within(dialog).findByRole("combobox", { name: "Dashboard" }),
+      "d-ops",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Add panel" }));
+    await waitFor(() =>
+      expect(latest(server.areas.dashboards.dashboards[0] as never).model.panels).toHaveLength(1),
+    );
+    const saved = latest(server.areas.dashboards.dashboards[0] as never);
+    expect(saved.model.panels[0]?.transformations).toEqual([
+      expect.objectContaining({ type: "calculate", frame: "A", expression: "score * 10" }),
+    ]);
+  });
+
   it("adds the query as a panel to an existing dashboard", async () => {
     const { server, user, location } = open();
     addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
