@@ -154,8 +154,32 @@
       overflow-wrap: break-word;
     }
 
-    /* A cell without a value (a dashboard outside any folder) leaves no empty line. */
-    .data-table--stack td:empty {
+    /*
+     * Each line names its column, since the header row is hidden. The label is the header's
+     * text, so it is left out of the accessible text: the cell's column header already says it.
+     */
+    /* A hanging indent: a value that wraps continues under itself, not under the label. */
+    .data-table--stack td[data-label] {
+      padding-inline-start: var(--space-stack-label);
+      text-indent: calc(-1 * var(--space-stack-label));
+    }
+
+    .data-table--stack td[data-label] > * {
+      text-indent: 0;
+    }
+
+    .data-table--stack td[data-label]::before {
+      content: attr(data-label) / "";
+      display: inline-block;
+      min-width: var(--size-label);
+      margin-inline-end: var(--space-2);
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+      text-indent: 0;
+    }
+
+    /* An optional value (a dashboard outside any folder) leaves no empty line. */
+    .data-table--stack .data-table__optional:empty {
       display: none;
     }
 

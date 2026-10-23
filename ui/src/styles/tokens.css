@@ -140,6 +140,8 @@
     /* The gutter around the content, the gap of the dashboard grid and a panel's inner padding. */
     --space-gutter: var(--space-6);
     --space-grid: var(--space-2);
+    /* Where the value of a stacked list row starts on a phone: after its column label. */
+    --space-stack-label: calc(var(--size-label) + var(--space-2));
     --space-panel: var(--space-2);
     /* One dashboard row and a panel's title bar. */
     --size-grid-row: 2rem;

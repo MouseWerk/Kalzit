@@ -12,6 +12,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
+import { STACK_ROLES } from "../../components/stackTable";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
@@ -289,24 +290,41 @@ function DashboardList({
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? "";
   return (
     <>
-      <table className="data-table data-table--stack">
-        <thead>
-          <tr>
-            <th scope="col">{t("dashboards.column.title")}</th>
-            <th scope="col">{t("dashboards.column.folder")}</th>
-            <th scope="col">{t("dashboards.column.updated")}</th>
+      <table className="data-table data-table--stack" {...STACK_ROLES.table}>
+        <thead {...STACK_ROLES.rowgroup}>
+          <tr {...STACK_ROLES.row}>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("dashboards.column.title")}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("dashboards.column.folder")}
+            </th>
+            <th scope="col" {...STACK_ROLES.columnheader}>
+              {t("dashboards.column.updated")}
+            </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody {...STACK_ROLES.rowgroup}>
           {items.map((item) => (
-            <tr key={item.id}>
-              <td>
+            <tr key={item.id} {...STACK_ROLES.row}>
+              <td {...STACK_ROLES.cell}>
                 <Link to="/dashboards/$dashboardId" params={{ dashboardId: item.id }} search={{}}>
                   {item.title === "" ? t("dashboards.untitled") : item.title}
                 </Link>
               </td>
-              <td className="data-table__muted">{folderName(item.folderId)}</td>
-              <td className="data-table__muted">
+              {/* Optional: a dashboard outside any folder leaves no empty line on a phone. */}
+              <td
+                {...STACK_ROLES.cell}
+                className="data-table__muted data-table__optional"
+                data-label={t("dashboards.column.folder")}
+              >
+                {folderName(item.folderId)}
+              </td>
+              <td
+                {...STACK_ROLES.cell}
+                className="data-table__muted"
+                data-label={t("dashboards.column.updated")}
+              >
                 {item.updatedAt > 0 ? dateFormat.format(item.updatedAt) : ""}
               </td>
             </tr>
