@@ -1,4 +1,5 @@
-import type { Frame, QueryResponse, QueryResult } from "../../api/generated/shapes";
+import type { Frame, QueryResponse, QueryResult, Shape } from "../../api/generated/shapes";
+import type { PanelGraph } from "../../panels/types";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
 export type TargetOutcome =
@@ -35,10 +36,31 @@ export function errorsOf(outcomes: readonly TargetOutcome[]) {
   return outcomes.flatMap((o) => ("error" in o ? [{ refId: o.refId, ...o.error }] : []));
 }
 
-/** Results this panel cannot draw in M1 (documents, graphs): shown as a note, not dropped silently. */
-export function otherShapes(outcomes: readonly TargetOutcome[]): string[] {
+/** Graph results with the data source of their target, for graph panels. */
+export function graphsOf(
+  outcomes: readonly TargetOutcome[],
+  targets: readonly { refId: string; datasourceId: string }[],
+): PanelGraph[] {
   return outcomes.flatMap((o) =>
-    "result" in o && o.result.shape !== "frame" ? [o.result.shape] : [],
+    "result" in o && o.result.shape === "graph"
+      ? [
+          {
+            refId: o.refId,
+            datasourceId: targets.find((t) => t.refId === o.refId)?.datasourceId ?? "",
+            graph: o.result.graph,
+          },
+        ]
+      : [],
+  );
+}
+
+/** Results of shapes the panel cannot draw: shown as a note, not dropped silently. */
+export function otherShapes(
+  outcomes: readonly TargetOutcome[],
+  accepted: readonly Shape[] = ["frame"],
+): string[] {
+  return outcomes.flatMap((o) =>
+    "result" in o && !accepted.includes(o.result.shape) ? [o.result.shape] : [],
   );
 }
 

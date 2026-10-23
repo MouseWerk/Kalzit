@@ -394,6 +394,13 @@
   }
 }
 
+/* Graph panels: the smallest drawing area, so a graph stays usable in a short panel. */
+@layer tokens {
+  :root {
+    --size-graph-min: 12rem;
+  }
+}
+
 /*
  * Visualization tokens (one block, appended by the visualization pack, after every other block).
  * Threshold tones are the marks of the states the status tokens name (ok = success, warn =

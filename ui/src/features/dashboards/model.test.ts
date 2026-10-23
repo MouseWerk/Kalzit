@@ -4,6 +4,7 @@ import { buildTree } from "./FolderTree";
 import {
   clampGrid,
   cleanVariable,
+  clickTargets,
   emptyModel,
   nextRefId,
   type PanelModel,
@@ -162,5 +163,29 @@ describe("query limiter", () => {
     releases[2]?.();
     expect(await Promise.all([results[1], results[3]])).toEqual([2, 4]);
     expect(limiter.stats()).toEqual({ active: 0, waiting: 0 });
+  });
+});
+
+describe("variables a panel click may set", () => {
+  const targets = clickTargets([
+    { name: "id", type: "textbox" },
+    { name: "city", type: "query", datasourceId: "ds" },
+    { name: "region", type: "custom", options: ["eu", { value: "us", label: "US" }] },
+    { name: "regions", type: "custom", options: ["eu", "us"], current: ["eu", "us"] },
+    { name: "step", type: "interval", options: ["1m"] },
+    { name: "tenant", type: "constant", current: "t1" },
+  ]);
+
+  it("are text, query and custom variables, never lists, intervals or constants", () => {
+    expect(targets.names).toEqual(["id", "city", "region"]);
+  });
+
+  it("take any value, except custom ones, which take only their options", () => {
+    expect(targets.accepts("id", "anything")).toBe(true);
+    expect(targets.accepts("city", "graz")).toBe(true);
+    expect(targets.accepts("region", "us")).toBe(true);
+    expect(targets.accepts("region", "asia")).toBe(false);
+    // A variable holding several values is not turned into one string.
+    expect(targets.accepts("regions", "eu")).toBe(false);
   });
 });

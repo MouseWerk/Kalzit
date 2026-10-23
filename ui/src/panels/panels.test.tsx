@@ -49,6 +49,10 @@ describe("registry", () => {
       ["state-timeline", true],
       ["status-history", true],
       ["text", true],
+      // The graph panels follow, offered but not as fitting.
+      ["network", false],
+      ["hierarchy", false],
+      ["path", false],
     ]);
     // Documents fit no frame panel; only text, which needs no query, is offered as fitting.
     expect(

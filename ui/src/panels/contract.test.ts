@@ -53,7 +53,12 @@ function editorFieldConfigs(): FieldConfig[] {
 }
 
 function fixture(): string {
-  const entries = PANELS.flatMap((panel) =>
+  // The panels whose options the server checks in `panel_options`; other panel types (graphs)
+  // bring their own checks.
+  const checked = PANELS.filter(
+    (panel) => panel.standalone === true || panel.shapes.includes("frame"),
+  );
+  const entries = checked.flatMap((panel) =>
     editorFieldConfigs().map((fieldConfig) => ({
       type: panel.type,
       options: panel.options({}),

@@ -4,7 +4,10 @@ import { barGaugePanel } from "./bargauge";
 import { timeField, valueFields } from "./frame";
 import { gaugePanel } from "./gauge";
 import { heatmapPanel } from "./heatmap";
+import { hierarchyPanel } from "./hierarchy";
 import { histogramPanel } from "./histogram";
+import { networkPanel } from "./network";
+import { pathPanel } from "./path";
 import { pieChartPanel } from "./piechart";
 import { statPanel } from "./stat";
 import { stateTimelinePanel, statusHistoryPanel } from "./state";
@@ -29,6 +32,9 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   heatmapPanel,
   stateTimelinePanel,
   statusHistoryPanel,
+  networkPanel,
+  hierarchyPanel,
+  pathPanel,
   textPanel,
 ];
 
@@ -50,8 +56,15 @@ export function panelsForShapes(
   return [...entries.filter((e) => e.accepts), ...entries.filter((e) => !e.accepts)];
 }
 
-/** The panel that fits a set of results best: a time series when there is time, else a table. */
+/**
+ * The panel that fits a set of results best: for graphs the network (the path panel when every
+ * graph is made of paths), for frames a time series when there is time, else a table.
+ */
 export function suggestPanel(results: readonly QueryResult[]): string {
+  const graphs = results.flatMap((r) => (r.shape === "graph" ? [r.graph] : []));
+  if (graphs.length > 0 && graphs.length === results.length) {
+    return graphs.every((g) => (g.paths?.length ?? 0) > 0) ? pathPanel.type : networkPanel.type;
+  }
   const frames = results.flatMap((r) => (r.shape === "frame" ? [r.frame] : []));
   if (frames.some((f) => timeField(f) !== undefined && valueFields(f).length > 0)) {
     return timeseriesPanel.type;

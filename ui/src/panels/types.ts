@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Frame, Shape } from "../api/generated/shapes";
+import type { Frame, GraphSet, Shape } from "../api/generated/shapes";
 import type { MessageKey } from "../i18n/i18n";
 import type { FieldConfig } from "./fieldConfig/fieldConfig";
 
@@ -59,6 +59,15 @@ export interface PanelProps<Options> {
   fieldConfig?: FieldConfig;
   /** Current values of the dashboard variables, for panels that show text. */
   variables?: Readonly<Record<string, string>>;
+  /** Graphs of every target that answered with one, in target order (graph panels). */
+  graphs?: readonly PanelGraph[] | undefined;
+}
+
+/** One target's graph, with the source it came from (explorer mode queries it again). */
+export interface PanelGraph {
+  refId: string;
+  datasourceId: string;
+  graph: GraphSet;
 }
 
 export interface PanelEditorProps<Options> {

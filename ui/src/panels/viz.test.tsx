@@ -18,6 +18,10 @@ import { interpolate, markdown } from "./text/markdown";
 import type { AnyPanelPlugin } from "./types";
 
 const RANGE = { from: 0, to: 100_000 };
+/** The panels of this pack: frame panels and text. Graph panels draw graphs and are tested apart. */
+const FRAME_PANELS = PANELS.filter(
+  (panel) => panel.standalone === true || panel.shapes.includes("frame"),
+);
 
 // re2js loads on first use; the table tests use patterns right away.
 beforeAll(async () => {
@@ -184,7 +188,7 @@ describe("every new panel", () => {
   });
 
   it("has a name, a description and a preview in the picker", () => {
-    for (const panel of PANELS) {
+    for (const panel of FRAME_PANELS) {
       expect(panel.Preview, panel.type).toBeDefined();
       expect(panel.description, panel.type).toBeDefined();
     }
@@ -670,7 +674,9 @@ describe("panel picker", () => {
       "text",
       "timeseries",
     ]);
-    await user.click(screen.getByRole("checkbox", { name: /Show 11 more/ }));
+    await user.click(
+      screen.getByRole("checkbox", { name: new RegExp(`Show ${PANELS.length - 1} more`) }),
+    );
     expect(screen.getAllByRole("radio")).toHaveLength(PANELS.length);
     await user.click(screen.getByRole("radio", { name: "Heatmap" }));
     expect(picked).toBe("heatmap");
@@ -797,7 +803,7 @@ describe("performance budget", () => {
   });
 
   it("renders a dashboard of 50 panels of every type within budget", () => {
-    const types = PANELS.map((p) => p.type);
+    const types = FRAME_PANELS.map((p) => p.type);
     // A realistic dashboard: a few hundred rows per panel, with field options in use.
     const frame = bigSeries(500);
     const options: FieldConfig = {
