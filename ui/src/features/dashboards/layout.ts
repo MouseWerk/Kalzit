@@ -161,7 +161,7 @@ export function layoutSections(
 export function panelValues(
   values: VariableValues,
   placed: { repeat?: PlacedPanel["repeat"] },
-  section?: Section,
+  section?: { repeat?: Section["repeat"] },
 ) {
   const out = { ...values };
   if (section?.repeat !== undefined) {

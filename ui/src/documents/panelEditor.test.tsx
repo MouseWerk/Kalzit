@@ -6,6 +6,14 @@ import { addMongoSource, MONGO_ID } from "../features/datasources/test/fakeDatas
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 
+/** Opens a panel's menu and picks an action, named as the old buttons were ("Edit “Orders”"). */
+async function panelAction(user: ReturnType<typeof renderApp>["user"], name: string) {
+  const title = /“(.*)”/.exec(name)?.[1] ?? "";
+  const panel = await screen.findByRole("article", { name: title });
+  await user.click(within(panel).getByRole("button", { name: `Panel menu of “${title}”` }));
+  await user.click(await screen.findByRole("menuitem", { name }));
+}
+
 /** A table panel over MongoDB whose projection step names two columns "total", one has no path. */
 const panel: PanelModel = {
   id: "p-orders",
@@ -41,11 +49,12 @@ describe("the panel editor and the projection step", () => {
     addDashboard(server.areas.dashboards, "d-shop", { ...emptyModel("Shop"), panels: [panel] });
     const { user } = renderApp("/dashboards/d-shop");
     await user.click(await screen.findByRole("button", { name: "Edit" }, { timeout: 4000 }));
-    await user.click(screen.getByRole("button", { name: "Edit “Orders”" }));
-    const dialog = await screen.findByRole("dialog", { name: "Edit panel" });
+    await panelAction(user, "Edit “Orders”");
+    const dialog = await screen.findByRole("region", { name: "Edit panel" });
 
     expect(within(dialog).getByText(/Another column is already named “total”/)).toBeTruthy();
-    const apply = within(dialog).getByRole("button", { name: "Apply" });
+    // Saving waits for the fix; so does going back (it stays in the editor and says why).
+    const apply = within(dialog).getByRole("button", { name: "Save dashboard…" });
     expect(apply).toHaveProperty("disabled", true);
     expect(within(dialog).getByText(/Fix the projection step before applying/)).toBeTruthy();
 
@@ -54,7 +63,6 @@ describe("the panel editor and the projection step", () => {
     });
     expect(apply).toHaveProperty("disabled", false);
     await user.click(apply);
-    await user.click(screen.getByRole("button", { name: "Save…" }));
     const save = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(save).getByRole("button", { name: "Save" }));
     const stored = server.areas.dashboards.dashboards.find((d) => d.id === "d-shop");
@@ -96,8 +104,8 @@ describe("click-to-filter in the panel editor", () => {
     addDashboard(server.areas.dashboards, "d-shop", { ...emptyModel("Shop"), panels: [explorer] });
     const { user } = renderApp("/dashboards/d-shop");
     await user.click(await screen.findByRole("button", { name: "Edit" }, { timeout: 4000 }));
-    await user.click(screen.getByRole("button", { name: "Edit “Orders”" }));
-    const dialog = await screen.findByRole("dialog", { name: "Edit panel" });
+    await panelAction(user, "Edit “Orders”");
+    const dialog = await screen.findByRole("region", { name: "Edit panel" });
     const tree = await within(dialog).findByRole("tree", { name: "Orders" });
     const before = server.areas.datasources.queries.length;
     const typing = '{"$limit": ';

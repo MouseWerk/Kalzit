@@ -15,6 +15,8 @@ const browsers = (process.env.KALZIT_E2E_BROWSERS ?? "chromium,firefox,webkit")
   .filter((name) => name !== "");
 
 const ENGINE_CHECKS = /editor-csp\.spec\.ts/;
+/** Timing budgets (Chromium only: they slow the CPU down through the DevTools protocol). */
+const BUDGETS = /budget\.spec\.ts/;
 
 const others = [
   { name: "firefox", device: devices["Desktop Firefox"] },
@@ -53,6 +55,14 @@ export default defineConfig({
       name: "chromium",
       dependencies: ["setup"],
       testMatch: /\.spec\.ts$/,
+      testIgnore: BUDGETS,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // The performance budgets run last and alone, so no other test shares the CPU with them.
+    {
+      name: "budget",
+      dependencies: ["chromium"],
+      testMatch: BUDGETS,
       use: { ...devices["Desktop Chrome"] },
     },
     ...others.map((browser) => ({

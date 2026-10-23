@@ -10,7 +10,12 @@ import { UplotTimeSeriesChart } from "./UplotTimeSeriesChart";
 
 // jsdom has no canvas, so uPlot itself is replaced by a recorder: these tests check what the chart
 // hands to uPlot (data, colors from the theme tokens, sizes) and the shared keyboard readout.
-const created: { options: Record<string, unknown>; data: unknown[]; destroyed: boolean }[] = [];
+const created: {
+  options: Record<string, unknown>;
+  data: unknown[];
+  destroyed: boolean;
+  setDataCalls: unknown[][];
+}[] = [];
 vi.mock("uplot", () => {
   class FakeUplot {
     static pxRatio = 1;
@@ -19,13 +24,19 @@ vi.mock("uplot", () => {
     constructor(options: Record<string, unknown>, data: unknown[]) {
       this.width = options.width as number;
       this.height = options.height as number;
-      this.record = { options, data, destroyed: false };
+      this.data = data;
+      this.record = { options, data, destroyed: false, setDataCalls: [] };
       Object.assign(this.record, { setSizeCalls: this.setSizeCalls });
       created.push(this.record);
     }
     width: number;
     height: number;
+    data: unknown[];
     setSizeCalls: unknown[] = [];
+    setData(data: unknown[]) {
+      this.data = data;
+      this.record.setDataCalls.push(data);
+    }
     posToVal(x: number) {
       return x * 200;
     }
@@ -216,10 +227,10 @@ describe("uPlot chart", () => {
     const options = chart?.options as {
       ms: number;
       series: { label?: string; width?: number; stroke?: string }[];
-      scales: { x: { min: number; max: number } };
+      scales: { x: { range: () => number[] } };
     };
     expect(options.ms).toBe(1);
-    expect(options.scales.x).toMatchObject({ min: 0, max: 100_000 });
+    expect(options.scales.x.range()).toEqual([0, 100_000]);
     expect(options.series.slice(1).map((s) => [s.label, s.width])).toEqual([
       ["load", 2],
       ["rate", 2],
@@ -235,6 +246,48 @@ describe("uPlot chart", () => {
     expect(screen.getByRole("status").textContent).toContain("load: 3 %");
     expect(screen.getByRole("status").textContent).toContain("rate: 9 %");
     unmount();
+    expect(chart?.destroyed).toBe(true);
+  });
+
+  it("puts new data and a new range into the chart that stands instead of building another", () => {
+    created.length = 0;
+    const times = Float64Array.from([0, 50_000, 100_000]);
+    const props = { title: "CPU", lineWidth: 1, ...display("", false) };
+    const { rerender } = render(
+      <UplotTimeSeriesChart
+        series={[series("load", times, [1, 2, 3])]}
+        timeRange={{ from: 0, to: 100_000 }}
+        {...props}
+      />,
+    );
+    expect(created).toHaveLength(1);
+    const chart = created[0];
+    // Building it drew it; nothing more on the first render.
+    expect(chart?.setDataCalls).toHaveLength(0);
+    rerender(
+      <UplotTimeSeriesChart
+        series={[series("load", times, [4, 5, 6])]}
+        timeRange={{ from: 0, to: 200_000 }}
+        {...props}
+      />,
+    );
+    expect(created).toHaveLength(1);
+    expect(chart?.destroyed).toBe(false);
+    expect(chart?.setDataCalls.at(-1)).toEqual([
+      [0, 50_000, 100_000],
+      [4, 5, 6],
+    ]);
+    const options = chart?.options as { scales: { x: { range: () => number[] } } };
+    expect(options.scales.x.range()).toEqual([0, 200_000]);
+    // Another series is another chart: its color and legend entry are new.
+    rerender(
+      <UplotTimeSeriesChart
+        series={[series("load", times, [4, 5, 6]), series("rate", times, [1, 1, 1])]}
+        timeRange={{ from: 0, to: 200_000 }}
+        {...props}
+      />,
+    );
+    expect(created).toHaveLength(2);
     expect(chart?.destroyed).toBe(true);
   });
 });

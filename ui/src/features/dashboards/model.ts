@@ -28,6 +28,8 @@ export interface Target {
   refId: string;
   datasourceId: string;
   query: unknown;
+  /** Kept with the panel but not run (the editor's Hide). */
+  hide?: boolean | undefined;
 }
 
 export interface PanelModel {
@@ -516,25 +518,30 @@ export function clampGrid(grid: GridPos): GridPos {
  */
 export function placePanel(panels: readonly PanelModel[], id: string, grid: GridPos): PanelModel[] {
   const placed = clampGrid(grid);
-  const result = panels.map((p) =>
-    p.id === id ? { ...p, grid: placed } : { ...p, grid: { ...p.grid } },
-  );
+  // Positions are worked out on copies; only a panel whose place changed becomes a new object,
+  // so the others keep their identity and their cards are not drawn again.
+  const at = panels.map((p) => ({ id: p.id, grid: p.id === id ? placed : { ...p.grid } }));
   const queue = [id];
   // Each push moves a panel strictly down, so this ends; the guard only bounds odd input.
   for (let guard = 0; queue.length > 0 && guard < 10_000; guard++) {
     const moverId = queue.shift() as string;
-    const mover = result.find((p) => p.id === moverId);
+    const mover = at.find((p) => p.id === moverId);
     if (mover === undefined) {
       continue;
     }
-    for (const other of result) {
+    for (const other of at) {
       if (other.id !== moverId && overlaps(mover.grid, other.grid)) {
         other.grid.y = mover.grid.y + mover.grid.h;
         queue.push(other.id);
       }
     }
   }
-  return result;
+  return panels.map((p, index) => {
+    const next = (at[index] as (typeof at)[number]).grid;
+    const same =
+      next.x === p.grid.x && next.y === p.grid.y && next.w === p.grid.w && next.h === p.grid.h;
+    return same ? p : { ...p, grid: next };
+  });
 }
 
 /** The first row below every panel, where a new panel goes. */

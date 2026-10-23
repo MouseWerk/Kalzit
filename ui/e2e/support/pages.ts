@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { SQL } from "./api";
 import { type Language, t } from "./i18n";
 import { expect, type World } from "./test";
-import { fillQuery } from "./ui";
+import { fillQuery, panelAction } from "./ui";
 
 /** A main page, or a state of one (a result, a dialog), for the layout and accessibility checks. */
 export interface MainPage {
@@ -38,13 +38,13 @@ export const MAIN_PAGES: readonly MainPage[] = [
     ready: async (page, world, language) => {
       await dashboardReady(page, world);
       await page.getByRole("button", { name: t("dashboards.edit", {}, language) }).click();
-      await page
-        .getByRole("button", {
-          name: t("dashboards.panel.editNamed", { title: "Sales" }, language),
-        })
-        .click();
-      await dialog(page, "dashboards.editor.title", language);
-      await expect(page.getByRole("dialog").locator(".cm-editor")).toBeVisible();
+      await panelAction(page, "Sales", "dashboards.panel.editNamed", language);
+      // A page of its own, at its own address.
+      const editor = page.getByRole("region", {
+        name: t("dashboards.editor.title", {}, language),
+      });
+      await expect(editor.locator(".cm-editor")).toBeVisible();
+      await expect(page).toHaveURL(/\/panels\/p1\/edit$/);
     },
   },
   {

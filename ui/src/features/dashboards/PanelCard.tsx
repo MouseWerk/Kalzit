@@ -1,4 +1,14 @@
-import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type PointerEvent,
+  startTransition,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { exportPanel, exportQuery } from "../../analysis/api";
 import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
 import { runPanelSteps } from "../../analysis/panel";
@@ -25,12 +35,14 @@ import "./dashboardTools.css";
 import { reasonText } from "../datasources/reasons";
 import { linkHref } from "./links";
 import {
+  clampGrid,
   type GridPos,
   type PanelModel,
   storedQueryVariables,
   type VariableValues,
   variableTexts,
 } from "./model";
+import { PanelMenu, type PanelMenuItem } from "./PanelMenu";
 import { TIME_PANELS, timeNote } from "./panelTime";
 import {
   documentsOf,
@@ -104,6 +116,12 @@ export function PanelCard({
   const mayExport = useOrgPermissions().has("data:export");
   const handleRef = useRef<HTMLButtonElement>(null);
   const keepHandleFocus = useRef(false);
+  // While the pointer drags or resizes: the card follows through a transform and a placeholder
+  // shows the cell it will land in; both are styled through the CSSOM, without a render per move.
+  const [dragging, setDragging] = useState<"move" | "resize" | null>(null);
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  // Set between a drop and the render that puts the card into its new cell.
+  const settling = useRef(false);
 
   // A keyboard move can change the panel's place in reading order, and moving a focused element
   // in the document drops its focus; the handle takes it back so arrow keys keep working.
@@ -144,6 +162,21 @@ export function PanelCard({
     "--w": panel.grid.w,
     "--h": panel.grid.h,
   });
+  // The placeholder starts where the panel is.
+  useLayoutEffect(() => {
+    if (dragging !== null) {
+      placeAt(placeholderRef.current, panel.grid);
+    }
+  }, [dragging, panel.grid]);
+  // A dropped card stands in its new cell now: the drag's offset goes in the same frame.
+  const { x: gridX, y: gridY, w: gridW, h: gridH } = panel.grid;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the cell's values stand for its move
+  useLayoutEffect(() => {
+    if (settling.current) {
+      settling.current = false;
+      ref.current?.style.removeProperty("translate");
+    }
+  }, [gridX, gridY, gridW, gridH]);
 
   function onHandleKey(event: KeyboardEvent<HTMLButtonElement>) {
     if (edit === undefined) {
@@ -179,26 +212,64 @@ export function PanelCard({
     }
     event.preventDefault();
     const target = event.currentTarget;
+    const card = ref.current;
     target.setPointerCapture(event.pointerId);
     const start = { x: event.clientX, y: event.clientY, grid: { ...panel.grid } };
     const cell = edit.cellSize();
-    let last = `${start.grid.x},${start.grid.y},${start.grid.w},${start.grid.h}`;
-    const onMove = (move: globalThis.PointerEvent) => {
-      const dx = Math.round((move.clientX - start.x) / cell.width);
-      const dy = Math.round((move.clientY - start.y) / cell.height);
+    const key = (g: GridPos) => `${g.x},${g.y},${g.w},${g.h}`;
+    let pointer = { x: start.x, y: start.y };
+    let next = start.grid;
+    let placed = key(start.grid);
+    let frame = 0;
+    setDragging(mode);
+    // At most once per frame: the card's offset and the placeholder's cell. Nothing renders and
+    // the dashboard changes once, on release.
+    const follow = () => {
+      frame = 0;
+      const dxPx = pointer.x - start.x;
+      const dyPx = pointer.y - start.y;
+      const dx = Math.round(dxPx / cell.width);
+      const dy = Math.round(dyPx / cell.height);
       const g = start.grid;
-      const next =
-        mode === "move" ? { ...g, x: g.x + dx, y: g.y + dy } : { ...g, w: g.w + dx, h: g.h + dy };
-      const key = `${next.x},${next.y},${next.w},${next.h}`;
-      if (key !== last) {
-        last = key;
-        edit.onGrid(next, false);
+      next = clampGrid(
+        mode === "move" ? { ...g, x: g.x + dx, y: g.y + dy } : { ...g, w: g.w + dx, h: g.h + dy },
+      );
+      // The translate property, not a custom property: those inherit, and setting one would
+      // restyle everything inside the card on every frame.
+      if (mode === "move") {
+        card?.style.setProperty("translate", `${dxPx}px ${dyPx}px`);
+      }
+      // The grid lays out again only when the target cell changes, not on every move.
+      if (key(next) !== placed) {
+        placed = key(next);
+        placeAt(placeholderRef.current, next);
       }
     };
-    const onUp = () => {
+    const onMove = (move: globalThis.PointerEvent) => {
+      pointer = { x: move.clientX, y: move.clientY };
+      if (frame === 0) {
+        frame = requestAnimationFrame(follow);
+      }
+    };
+    const onUp = (up: globalThis.PointerEvent) => {
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onUp);
       target.removeEventListener("pointercancel", onUp);
+      cancelAnimationFrame(frame);
+      if (up.type === "pointerup") {
+        follow();
+      } else {
+        next = start.grid;
+      }
+      setDragging(null);
+      if (key(next) === key(start.grid)) {
+        card?.style.removeProperty("translate");
+        return;
+      }
+      // The drop renders as a transition, in slices that leave the main thread free between
+      // them, so it makes no long task; the card keeps its offset until it stands in its cell.
+      settling.current = true;
+      startTransition(() => edit.onGrid(next, false));
     };
     target.addEventListener("pointermove", onMove);
     target.addEventListener("pointerup", onUp);
@@ -206,191 +277,194 @@ export function PanelCard({
   }
 
   const outcomes = results.data ?? [];
+  const noData = results.data === undefined;
+  // Every action of the panel, in one menu: its links first, then viewing, then editing.
+  const menuItems: PanelMenuItem[] = [
+    ...links.map((link) => ({
+      key: `link:${link.title}${link.url}`,
+      label: link.title,
+      name: link.title,
+      href: link.href,
+      ...(link.newTab === true ? { newTab: true } : {}),
+    })),
+  ];
+  if (view?.onView !== undefined && !alone) {
+    const onView = view.onView;
+    menuItems.push({
+      key: "view",
+      label: t("dashboardTools.view.panel"),
+      name: t("dashboardTools.view.panelNamed", { title }),
+      onSelect: () => onView(panel.id),
+    });
+  }
+  if (onAnnotate !== undefined && isTimePanel) {
+    menuItems.push({
+      key: "annotate",
+      label: t("annotations.add"),
+      name: t("annotations.addNamed", { title }),
+      onSelect: () => onAnnotate(panel.id, Math.min(Date.now(), query.range.to)),
+    });
+  }
+  menuItems.push({
+    key: "inspect",
+    label: t("dashboards.panel.inspect"),
+    name: t("dashboards.panel.inspectNamed", { title }),
+    onSelect: () => setInspecting(true),
+    disabled: noData,
+  });
+  if (mayExport) {
+    menuItems.push({
+      key: "export",
+      label: t("analysis.export.button"),
+      name: t("analysis.export.buttonNamed", { title }),
+      onSelect: () => setExporting(true),
+      disabled: noData,
+    });
+  }
+  if (edit !== undefined) {
+    menuItems.push(
+      {
+        key: "edit",
+        label: t("dashboards.panel.edit"),
+        name: t("dashboards.panel.editNamed", { title }),
+        onSelect: edit.onEdit,
+      },
+      {
+        key: "duplicate",
+        label: t("dashboards.panel.duplicate"),
+        name: t("dashboards.panel.duplicateNamed", { title }),
+        onSelect: edit.onDuplicate,
+      },
+    );
+    if (edit.onCopy !== undefined) {
+      menuItems.push({
+        key: "copy",
+        label: t("dashboardTools.copy.panel"),
+        name: t("dashboardTools.copy.panelNamed", { title }),
+        onSelect: edit.onCopy,
+      });
+    }
+    menuItems.push({
+      key: "remove",
+      label: t("dashboards.panel.remove"),
+      name: t("dashboards.panel.removeNamed", { title }),
+      onSelect: edit.onRemove,
+    });
+  }
+  const className = [
+    "panel-card",
+    edit === undefined ? "" : "panel-card--editing",
+    alone ? "panel-card--alone" : "",
+    dragging === null ? "" : `panel-card--${dragging === "move" ? "dragging" : "resizing"}`,
+  ]
+    .filter((c) => c !== "")
+    .join(" ");
 
   return (
-    <article
-      ref={ref}
-      className={`panel-card${edit === undefined ? "" : " panel-card--editing"}${alone ? " panel-card--alone" : ""}`}
-      aria-labelledby={titleId}
-      aria-busy={results.isFetching}
-    >
-      <header
-        className="panel-card__header"
-        onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
+    <>
+      {dragging === null ? null : (
+        <div className="dash-placeholder" ref={placeholderRef} aria-hidden="true" />
+      )}
+      <article
+        ref={ref}
+        className={className}
+        data-panel-id={panel.id}
+        aria-labelledby={titleId}
+        aria-busy={results.isFetching}
       >
-        <h2 className="panel-card__title truncate" id={titleId} title={title}>
-          {title}
-        </h2>
-        {panel.libraryPanelId === undefined ? null : (
-          <span className="panel-card__badge">{t("libraryPanels.badge")}</span>
-        )}
-        {noteText === "" ? null : (
-          <span className="panel-card__note" title={noteText}>
-            {noteText}
-          </span>
-        )}
-        <div className="panel-card__actions">
-          {links.map((link) => (
-            <a
-              key={`${link.title}${link.url}`}
-              className="button button--ghost button--small panel-card__link"
-              href={link.href}
-              onPointerDown={(event) => event.stopPropagation()}
-              {...(link.newTab === true ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-            >
-              {link.title}
-            </a>
-          ))}
-          {onAnnotate === undefined || !isTimePanel ? null : (
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => onAnnotate(panel.id, Math.min(Date.now(), query.range.to))}
-              aria-label={t("annotations.addNamed", { title })}
-            >
-              {t("annotations.add")}
-            </button>
+        <header
+          className="panel-card__header"
+          onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
+        >
+          <h2 className="panel-card__title truncate" id={titleId} title={title}>
+            {title}
+          </h2>
+          {panel.libraryPanelId === undefined ? null : (
+            <span className="panel-card__badge">{t("libraryPanels.badge")}</span>
           )}
-          {view?.onView === undefined || alone ? null : (
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => view.onView?.(panel.id)}
-              aria-label={t("dashboardTools.view.panelNamed", { title })}
-            >
-              {t("dashboardTools.view.panel")}
-            </button>
+          {noteText === "" ? null : (
+            <span className="panel-card__note" title={noteText}>
+              {noteText}
+            </span>
           )}
-          {edit === undefined ? null : (
-            <>
-              <button
-                type="button"
-                ref={handleRef}
-                className="button button--ghost button--small panel-card__handle"
-                aria-describedby={hintId}
-                aria-label={t("dashboards.panel.arrange", { title })}
-                title={t("dashboards.panel.arrangeHint")}
-                onKeyDown={onHandleKey}
-              >
-                <span aria-hidden="true">⠿</span>
-              </button>
-              <span className="visually-hidden" id={hintId}>
-                {t("dashboards.panel.arrangeHint")}
-              </span>
-            </>
-          )}
-          <button
-            type="button"
-            className="button button--ghost button--small"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => setInspecting(true)}
-            aria-label={t("dashboards.panel.inspectNamed", { title })}
-            disabled={results.data === undefined}
-          >
-            {t("dashboards.panel.inspect")}
-          </button>
-          {mayExport ? (
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => setExporting(true)}
-              aria-label={t("analysis.export.buttonNamed", { title })}
-              disabled={results.data === undefined}
-            >
-              {t("analysis.export.button")}
-            </button>
-          ) : null}
-          {edit === undefined ? null : (
-            <>
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={edit.onEdit}
-                aria-label={t("dashboards.panel.editNamed", { title })}
-              >
-                {t("dashboards.panel.edit")}
-              </button>
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={edit.onDuplicate}
-                aria-label={t("dashboards.panel.duplicateNamed", { title })}
-              >
-                {t("dashboards.panel.duplicate")}
-              </button>
-              {edit.onCopy === undefined ? null : (
+          <div className="panel-card__actions">
+            {edit === undefined ? null : (
+              <>
                 <button
                   type="button"
-                  className="button button--ghost button--small"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={edit.onCopy}
-                  aria-label={t("dashboardTools.copy.panelNamed", { title })}
+                  ref={handleRef}
+                  className="button button--ghost button--small panel-card__handle"
+                  aria-describedby={hintId}
+                  aria-label={t("dashboards.panel.arrange", { title })}
+                  title={t("dashboards.panel.arrangeHint")}
+                  onKeyDown={onHandleKey}
                 >
-                  {t("dashboardTools.copy.panel")}
+                  <span aria-hidden="true">⠿</span>
                 </button>
-              )}
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={edit.onRemove}
-                aria-label={t("dashboards.panel.removeNamed", { title })}
-              >
-                {t("dashboards.panel.remove")}
-              </button>
-            </>
-          )}
+                <span className="visually-hidden" id={hintId}>
+                  {t("dashboards.panel.arrangeHint")}
+                </span>
+              </>
+            )}
+            <PanelMenu title={title} items={menuItems} />
+          </div>
+        </header>
+        <div className="panel-card__body">
+          <PanelAnnotationsContext.Provider value={annotations}>
+            <PanelBody
+              panel={panel}
+              title={title}
+              range={query.range}
+              pending={results.isPending && results.fetchStatus !== "idle"}
+              error={results.error}
+              outcomes={outcomes}
+              revision={results.dataUpdatedAt}
+              variables={variableTexts(query.variables)}
+            />
+          </PanelAnnotationsContext.Provider>
         </div>
-      </header>
-      <div className="panel-card__body">
-        <PanelAnnotationsContext.Provider value={annotations}>
-          <PanelBody
-            panel={panel}
-            title={title}
-            range={query.range}
-            pending={results.isPending && results.fetchStatus !== "idle"}
-            error={results.error}
-            outcomes={outcomes}
-            revision={results.dataUpdatedAt}
-            variables={variableTexts(query.variables)}
+        {edit === undefined || alone ? null : (
+          <div
+            className="panel-card__resize"
+            aria-hidden="true"
+            onPointerDown={(event) => startDrag(event, "resize")}
           />
-        </PanelAnnotationsContext.Provider>
-      </div>
-      {edit === undefined || alone ? null : (
-        <div
-          className="panel-card__resize"
-          aria-hidden="true"
-          onPointerDown={(event) => startDrag(event, "resize")}
-        />
-      )}
-      {inspecting ? (
-        <Dialog
-          title={t("dashboards.inspect.title", { title })}
-          onClose={() => setInspecting(false)}
-          size="large"
-        >
-          <Inspect outcomes={outcomes} />
-        </Dialog>
-      ) : null}
-      {exporting ? (
-        <ExportDialog
-          frames={runPanelSteps(panel.transformations, outcomes).frames.map((f) => f.name)}
-          note={
-            query.source === "stored" && edit !== undefined
-              ? t("analysis.export.stored")
-              : undefined
-          }
-          run={(choice, signal) => exportPanelData(query, panel, choice, signal)}
-          onClose={() => setExporting(false)}
-        />
-      ) : null}
-    </article>
+        )}
+        {inspecting ? (
+          <Dialog
+            title={t("dashboards.inspect.title", { title })}
+            onClose={() => setInspecting(false)}
+            size="large"
+          >
+            <Inspect outcomes={outcomes} />
+          </Dialog>
+        ) : null}
+        {exporting ? (
+          <ExportDialog
+            frames={runPanelSteps(panel.transformations, outcomes).frames.map((f) => f.name)}
+            note={
+              query.source === "stored" && edit !== undefined
+                ? t("analysis.export.stored")
+                : undefined
+            }
+            run={(choice, signal) => exportPanelData(query, panel, choice, signal)}
+            onClose={() => setExporting(false)}
+          />
+        ) : null}
+      </article>
+    </>
   );
+}
+
+/** Puts the drag placeholder into a grid cell. */
+function placeAt(element: HTMLElement | null, grid: GridPos) {
+  if (element === null) {
+    return;
+  }
+  element.style.setProperty("--col", String(grid.x + 1));
+  element.style.setProperty("--row", String(grid.y + 1));
+  element.style.setProperty("--w", String(grid.w));
+  element.style.setProperty("--h", String(grid.h));
 }
 
 /**
@@ -480,7 +554,22 @@ export function PanelBody({
   // Field option patterns need re2js, which loads with the first panel that uses one. The panel
   // is drawn again once it is there: until then its patterns matched nothing.
   const patterns = usePatternEngine(usesPatterns(panel.fieldConfig)) ? "patterns" : "waiting";
+  // The panel's steps run here, on what the queries answered; a failing step shows its reason
+  // and the panel draws what the steps before it made. Kept while the steps and answers stay the
+  // same, so a panel drawn again for another reason (moved in the grid) hands its chart the same
+  // frames and the chart is not drawn again.
+  const transformations = panel.transformations;
+  const stepsRun = useMemo(
+    () => given ?? runPanelSteps(transformations, outcomes),
+    [given, transformations, outcomes],
+  );
+  const frames = useMemo(() => stepsRun.frames.map((f) => f.frame), [stepsRun]);
   const plugin = getPanel(panel.type);
+  // Parsed once per change of the stored options, for the same reason.
+  const stored = panel.options;
+  const options = useMemo(() => plugin?.options(stored), [plugin, stored]);
+  const storedConfig = panel.fieldConfig;
+  const fieldConfig = useMemo(() => parseFieldConfig(storedConfig), [storedConfig]);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
   }
@@ -491,7 +580,7 @@ export function PanelBody({
       <Panel
         key={patterns}
         frames={[]}
-        options={plugin.options(panel.options)}
+        options={options}
         timeRange={range}
         title={title}
         {...(variables === undefined ? {} : { variables })}
@@ -513,10 +602,6 @@ export function PanelBody({
   if (pending) {
     return <p className="panel-empty">{t("common.loading")}</p>;
   }
-  // The panel's steps run here, on what the queries answered; a failing step shows its reason
-  // and the panel draws what the steps before it made.
-  const stepsRun = given ?? runPanelSteps(panel.transformations, outcomes);
-  const frames = stepsRun.frames.map((f) => f.frame);
   const graphs = graphsOf(outcomes, panel.targets);
   // Documents an enabled projection step turns into a frame are that frame now; the others stay
   // documents for the document panels.
@@ -613,8 +698,8 @@ export function PanelBody({
                       }
                     }
               }
-              options={plugin.options(panel.options)}
-              fieldConfig={parseFieldConfig(panel.fieldConfig)}
+              options={options}
+              fieldConfig={fieldConfig}
               timeRange={range}
               title={title}
               revision={revision}

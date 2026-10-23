@@ -249,6 +249,27 @@ Fixes (phase 2, in the files the open PRs rewrite):
 5. A performance budget test in e2e: typing 40 keys in the panel editor with 4x throttling must
    stay under 50 ms p95 Event Timing; dragging must not produce long tasks over 50 ms.
 
+Done in P1-1a (`ui/e2e/budget.spec.ts`, best of three rounds, run last and alone): fixes 1 to 5.
+Most of the work is the React Compiler's: with the state split and props that keep their
+identity (callbacks keyed by refId, values memoized on what they read), it skips every part of
+the editor a key does not touch. `memo` is left only on list items (each query's editor, each
+grid card), which the compiler cannot memoize inside a `map`. The measurements turned up more on
+the way: the dashboard's range, the cards' query input, the view actions and the annotation
+marks keep their identity while they stay the same (the marks were new on every render, which
+drew every card again); a card's steps, options and field options are memoized, so a moved panel
+hands its chart the same series and uPlot does not draw again; the drag sets `translate` on the
+card, not a custom property, which would restyle the whole card on every frame; the drop renders
+as a transition, in slices, and the card keeps its offset until it stands in its new cell; the
+editor's panes use `contain: strict`.
+
+Measured with the same test on the same machine, before and after: React draws 36 components
+per key in the modal editor and 11 on the page (counted through React's hook for developer
+tools, independent of the machine; the budget is 20); typing 40 keys at 4x, the longest task
+38 to 45 ms before and 21 to 30 ms after (the budget is 34 ms, scaled by a timed piece of script
+on slower machines); Event Timing p95 40 to 48 ms before and 32 to 40 ms after (8 ms steps, so
+it barely separates them; the budget stays 50 ms); dragging a panel at 4x, 2 to 3 long tasks of
+56 to 78 ms per drag before, none after.
+
 ## 11. Data source logos
 
 The owner decided to show the real vendor logos, in nominative use (to identify the data source,

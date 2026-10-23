@@ -1,0 +1,402 @@
+@layer components {
+  /*
+   * The full-page panel editor (docs/design/feel.md section 5): the preview on top, the queries
+   * and steps below it, the options on the right; each pane is a card on the canvas and the
+   * separators between them can be dragged or moved with the arrow keys. On a desktop the editor
+   * fills the window below the header and the panes scroll on their own; on a phone it stacks.
+   */
+
+  .panel-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .panel-editor__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .panel-editor__back-icon {
+    transform: scaleX(-1);
+  }
+
+  .panel-editor__title {
+    display: flex;
+    flex: 1 1 var(--size-field);
+    align-items: baseline;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .panel-editor__name {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The dashboard's time range and refresh, then the editor's own actions. */
+  .panel-editor__tools,
+  .panel-editor__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .panel-editor__preview-bar {
+    display: flex;
+    flex: none;
+    justify-content: flex-end;
+    margin-block-end: var(--space-1);
+  }
+
+  /* A toggle in the bar: pressed is a neutral tint and weight. */
+  .panel-editor__preview-bar [aria-pressed="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Option groups: a heading that folds its options, a hairline between groups. */
+  .option-group {
+    display: grid;
+    gap: var(--space-3);
+    padding-block-end: var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .option-group:last-child {
+    padding-block-end: 0;
+    border-bottom: 0;
+  }
+
+  .option-group__heading {
+    margin: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .option-group__toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-width: 0;
+    padding: var(--space-1) 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-weight: var(--font-weight-semibold);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .option-group__chevron,
+  .target__chevron {
+    flex: none;
+    transform: rotate(90deg);
+    transition: transform var(--duration-fast) var(--easing);
+  }
+
+  .option-group__toggle[aria-expanded="false"] .option-group__chevron,
+  .target__toggle[aria-expanded="false"] .target__chevron {
+    transform: none;
+  }
+
+  .option-group__title {
+    flex: none;
+  }
+
+  .option-group__summary {
+    min-width: 0;
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .option-group__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .editor-splits {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto var(--editor-options, var(--size-editor-options));
+    min-height: 0;
+  }
+
+  /* Folded away: no separator, the pane keeps the width of its toggle. */
+  .editor-splits--collapsed {
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--space-3);
+  }
+
+  .editor-splits__main {
+    display: grid;
+    grid-template-rows:
+      var(--editor-preview, minmax(var(--size-editor-pane-min), 1fr))
+      auto minmax(var(--size-editor-pane-min), 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .editor-splits__preview,
+  .editor-splits__lower,
+  .editor-splits__options {
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Panes: cards on the canvas, as the dashboard's panels are. */
+  .panel-editor__preview,
+  .lower-pane,
+  .editor-splits__options {
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .panel-editor__preview {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: var(--space-panel);
+  }
+
+  .panel-editor__viz {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .lower-pane {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .lower-pane__tabs {
+    flex: none;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .lower-pane__panel {
+    flex: 1;
+    min-height: 0;
+    padding: var(--space-3);
+    overflow: auto;
+  }
+
+  .panel-editor__note {
+    margin: 0 0 var(--space-3);
+  }
+
+  .panel-editor__queries {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .panel-editor__queries-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  /*
+   * The query editor does not wrap long lines; without a zero minimum the column took the width
+   * of the longest line and pushed the editor past a phone's width.
+   */
+  .target {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .target__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .target__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-inline-start: auto;
+  }
+
+  .target__badge {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .target__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  /* Folded: the display above would otherwise win over the hidden attribute. */
+  .option-group__body[hidden],
+  .target__body[hidden] {
+    display: none;
+  }
+
+  .target__ref {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* A stored query the caller may not change, shown as text. */
+  .target__stored {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .editor-splits__options {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .options-pane__header {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .options-pane__heading {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Folded away: only the toggle stays, the heading remains its name for screen readers. */
+  .editor-splits--collapsed .options-pane__header {
+    padding: var(--space-2);
+    border-bottom: 0;
+  }
+
+  .editor-splits--collapsed .options-pane__heading {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .options-pane__body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  /* In the narrow pane each visualization's description keeps to one line; the card's tooltip
+     holds all of it. */
+  .options-pane .picker__hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .options-pane {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--space-5);
+    padding: var(--space-4);
+  }
+
+  /* Desktop: the editor fills the window below the header, each pane scrolls on its own. */
+  @media not (max-width: 48rem) {
+    .shell__main:has(.panel-editor) {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      padding-block-end: var(--space-4);
+    }
+
+    .shell__content:has(.panel-editor),
+    .dashboard--editor,
+    .dashboard--editor > .panel-editor {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .panel-editor > .editor-splits {
+      flex: 1;
+    }
+
+    /*
+     * Each pane takes its size from the grid, never from its content, so a key typed into a
+     * query lays out the queries pane only, not the preview, the options or the page. (The
+     * query editor notices the contained pane and places its completion list inside it.)
+     */
+    .editor-splits__preview,
+    .editor-splits__lower,
+    .editor-splits:not(.editor-splits--collapsed) .editor-splits__options {
+      contain: strict;
+    }
+  }
+
+  /* Phones and small tablets: one column, preview, queries and options below each other. */
+  @media (max-width: 48rem) {
+    .editor-splits,
+    .editor-splits--collapsed {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-3);
+    }
+
+    .editor-splits__main {
+      grid-template-rows: none;
+      gap: var(--space-3);
+    }
+
+    .editor-splits__preview {
+      height: var(--size-preview);
+    }
+
+    .editor-splits .splitter {
+      display: none;
+    }
+  }
+}

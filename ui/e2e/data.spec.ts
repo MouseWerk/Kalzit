@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { fixturesDir, SQL, unique } from "./support/api";
 import { pattern, t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
-import { fillQuery } from "./support/ui";
+import { fillQuery, panelAction } from "./support/ui";
 
 test("the owner connects SQLite, explores a time series and builds a dashboard with a variable", async ({
   page,
@@ -70,13 +70,18 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
 
   // A panel from Explore is named after its data source.
   const panelTitle = source;
-  await page
-    .getByRole("button", { name: t("dashboards.panel.editNamed", { title: panelTitle }) })
-    .click();
-  const editor = page.getByRole("dialog", { name: t("dashboards.editor.title") });
+  await panelAction(page, panelTitle, "dashboards.panel.editNamed");
+  const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await editor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
   await fillQuery(editor, SQL.byRegion);
-  await editor.getByRole("button", { name: t("dashboards.editor.apply") }).click();
+  // Escape closes the query's suggestions first, then leaves the editor with the change in the
+  // dashboard, unsaved.
+  const suggestions = page.locator(".cm-tooltip-autocomplete");
+  await expect(suggestions).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(suggestions).toHaveCount(0);
+  await expect(editor).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(editor).toBeHidden();
 
   await page.getByRole("button", { name: t("dashboards.save") }).click();
