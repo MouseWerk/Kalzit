@@ -35,28 +35,36 @@ const tableFrame: Frame = {
 };
 
 describe("registry", () => {
-  it("lists every M1 panel for frames and suggests one from the data", () => {
+  it("lists every frame panel for frames and suggests one from the data", () => {
     expect(panelsForShapes(["frame"]).map((e) => [e.panel.type, e.accepts])).toEqual([
       ["timeseries", true],
       ["stat", true],
+      ["gauge", true],
+      ["bargauge", true],
       ["bar", true],
       ["table", true],
+      ["piechart", true],
+      ["histogram", true],
+      ["heatmap", true],
+      ["state-timeline", true],
+      ["status-history", true],
+      ["text", true],
+      // The document and graph panels follow, offered but not as fitting.
       ["documents", false],
       ["schema", false],
       ["distribution", false],
       ["document", false],
+      ["network", false],
+      ["hierarchy", false],
+      ["path", false],
     ]);
-    // Documents: the document panels first, then the frame panels, which need a projection.
-    expect(panelsForShapes(["documents"]).map((e) => [e.panel.type, e.accepts])).toEqual([
-      ["documents", true],
-      ["schema", true],
-      ["distribution", true],
-      ["document", true],
-      ["timeseries", false],
-      ["stat", false],
-      ["bar", false],
-      ["table", false],
-    ]);
+    // Documents: the document panels fit, and text, which needs no query; frame panels need a
+    // projection step first.
+    expect(
+      panelsForShapes(["documents"])
+        .filter((e) => e.accepts)
+        .map((e) => e.panel.type),
+    ).toEqual(["documents", "schema", "distribution", "document", "text"]);
     expect(
       suggestPanel([
         { shape: "documents", documents: { documents: [{ a: 1 }], schema: [], notices: [] } },
@@ -143,7 +151,8 @@ describe("stat panel", () => {
   it("shows the value with its unit and a dash when there is none", () => {
     const frame: Frame = { fields: [field] };
     const { unmount } = renderPanel("stat", [frame], { reducer: "max", unit: "B" });
-    expect(screen.getByText(BIG_SHOWN).textContent).toBe(`${BIG_SHOWN} B`);
+    // Value and unit are joined by a no-break space, so they never wrap apart.
+    expect(screen.getByText(BIG_SHOWN).textContent).toBe(`${BIG_SHOWN}\u00a0B`);
     unmount();
     renderPanel("stat", [{ fields: [{ name: "x", type: "number", values: [null] }] }]);
     expect(screen.getByText("–")).toBeTruthy();
@@ -250,9 +259,9 @@ describe("bar and time series panels", () => {
     await user.tab();
     expect(document.activeElement).toBe(screen.getByRole("group", { name: "Panel" }));
     // Focus puts the cursor in the middle of the range.
-    expect(screen.getByRole("status").textContent).toContain("load: 2 %");
+    expect(screen.getByRole("status").textContent).toContain("load: 2\u00a0%");
     await user.keyboard("{End}");
-    expect(screen.getByRole("status").textContent).toContain("load: 3 %");
+    expect(screen.getByRole("status").textContent).toContain("load: 3\u00a0%");
   });
 
   it("explains a result without time", () => {

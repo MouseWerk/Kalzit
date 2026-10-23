@@ -2,6 +2,7 @@ import { type ReactNode, useId } from "react";
 import { EmptyState } from "../../../components/EmptyState";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
+import { usePublishCrumbTitle } from "../../../shell/crumbTitle";
 import { errorText } from "../errors";
 import "../admin.css";
 
@@ -32,6 +33,8 @@ export function Section({
   const { t } = useI18n();
   const titleId = useId();
   useDocumentTitle(title);
+  // The breadcrumbs end with this page's own name, such as the team's.
+  usePublishCrumbTitle(heading);
   if (allowed === undefined) {
     return null;
   }

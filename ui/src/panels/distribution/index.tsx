@@ -4,6 +4,7 @@ import type { FieldSchema } from "../../api/generated/shapes";
 import { type Bin, distribution } from "../../documents/distribution";
 import { filterable, filterablePath } from "../../documents/filter";
 import { typeLabel, valueSummary } from "../../documents/labels";
+import { MAX_PATH_CHARS } from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
 import { SetPicker } from "../../documents/shared";
 import { NUMERIC_TYPES, typeOf } from "../../documents/values";
@@ -96,7 +97,7 @@ function DistributionPanel({
   title,
   onFilter,
 }: PanelProps<DistributionOptions>) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const pathId = useId();
   const [index, setIndex] = useState(0);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -120,7 +121,9 @@ function DistributionPanel({
   const number = new Intl.NumberFormat(language, { maximumFractionDigits: 4 });
   const percent = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 });
   const format = (value: number) =>
-    result.scale === "date" ? dateTimeFormat(language).format(value) : number.format(value);
+    result.scale === "date"
+      ? dateTimeFormat(language, timeZone).format(value)
+      : number.format(value);
   const show = (value: unknown) =>
     typeof value === "number" ? format(value) : valueSummary(t, value, language);
   const filterPathOf = path.replaceAll("[]", "");
@@ -241,6 +244,7 @@ function DistributionEditor({ options, onChange }: PanelEditorProps<Distribution
         id={id}
         className="input input--mono"
         value={options.path}
+        maxLength={MAX_PATH_CHARS}
         aria-describedby={hintId}
         onChange={(event) => onChange({ path: event.currentTarget.value })}
       />

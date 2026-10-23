@@ -1,4 +1,5 @@
 import { isRecord } from "../api/client";
+import { getTimeZone } from "../lib/timeSettings";
 import { dateTimeFormat, formatValue } from "../panels/frame";
 
 /**
@@ -143,7 +144,11 @@ export function numericValue(value: unknown): number | null {
  * A leaf value as text for the tree, a card or a top-values list. Containers are summarized by
  * the caller, which knows the words for them.
  */
-export function formatLeaf(value: unknown, language: string): string {
+export function formatLeaf(
+  value: unknown,
+  language: string,
+  zone: string | null = getTimeZone(),
+): string {
   if (value === null || value === undefined) {
     return "null";
   }
@@ -151,7 +156,7 @@ export function formatLeaf(value: unknown, language: string): string {
     switch (value.$type) {
       case "date": {
         const ms = dateMs(value);
-        return ms === null ? (value.value ?? "") : dateTimeFormat(language).format(ms);
+        return ms === null ? (value.value ?? "") : dateTimeFormat(language, zone).format(ms);
       }
       case "int64":
         return formatValue("int64", value.value, language);

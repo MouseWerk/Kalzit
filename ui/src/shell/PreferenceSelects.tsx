@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { LANGUAGES, setLanguage, useI18n } from "../i18n/i18n";
+import { recordChoice } from "../lib/localChoice";
 import { setTheme, THEMES, useTheme } from "../theme/theme";
 
 function pick<T extends string>(options: readonly T[], value: string, apply: (option: T) => void) {
@@ -9,7 +10,10 @@ function pick<T extends string>(options: readonly T[], value: string, apply: (op
   }
 }
 
-/** Language and theme choice for pages without the app shell (sign in, setup). */
+/**
+ * Language and theme choice for pages without the app shell (sign in, setup). A choice made here
+ * becomes the preference of the account that signs in next, where it has none.
+ */
 export function PreferenceSelects() {
   const { t, language } = useI18n();
   const theme = useTheme();
@@ -24,7 +28,12 @@ export function PreferenceSelects() {
           id={languageId}
           className="select"
           value={language}
-          onChange={(event) => pick(LANGUAGES, event.currentTarget.value, setLanguage)}
+          onChange={(event) =>
+            pick(LANGUAGES, event.currentTarget.value, (language) => {
+              setLanguage(language);
+              recordChoice({ language });
+            })
+          }
         >
           {LANGUAGES.map((option) => (
             <option key={option} value={option} lang={option}>
@@ -39,7 +48,12 @@ export function PreferenceSelects() {
           id={themeId}
           className="select"
           value={theme}
-          onChange={(event) => pick(THEMES, event.currentTarget.value, setTheme)}
+          onChange={(event) =>
+            pick(THEMES, event.currentTarget.value, (theme) => {
+              setTheme(theme);
+              recordChoice({ theme });
+            })
+          }
         >
           {THEMES.map((option) => (
             <option key={option} value={option}>

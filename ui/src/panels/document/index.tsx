@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { isRecord } from "../../api/client";
 import { typeLabel, valueSummary } from "../../documents/labels";
 import { valueAt } from "../../documents/paths";
+import { MAX_PATH_CHARS } from "../../documents/projection";
 import { SetPicker } from "../../documents/shared";
 import { entriesOf, isContainer, typeOf, unwrap } from "../../documents/values";
 import { useI18n } from "../../i18n/i18n";
@@ -161,6 +162,7 @@ function CardEditor({ options, onChange }: PanelEditorProps<CardOptions>) {
         id={id}
         className="input input--mono"
         value={options.titlePath}
+        maxLength={MAX_PATH_CHARS}
         aria-describedby={hintId}
         onChange={(event) => onChange({ titlePath: event.currentTarget.value })}
       />

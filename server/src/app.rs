@@ -28,6 +28,8 @@ pub struct AppState {
     pub setup: Arc<SetupGate>,
     pub secrets: Arc<Keyring>,
     pub datasources: Arc<DataSources>,
+    /// The server's own writes outside requests (`db::Background`).
+    pub background: Arc<db::Background>,
     /// Session last-seen updates in flight (`auth::session::Touches`).
     pub touches: Arc<crate::auth::session::Touches>,
 }
@@ -40,7 +42,10 @@ impl AppState {
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
-        let touches = Arc::new(crate::auth::session::Touches::new(&db, &config.database_url()));
+        let touch_limit = crate::auth::session::Touches::limit_for(&db);
+        // The touches, plus one for each of the two hourly jobs.
+        let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 2));
+        let touches = Arc::new(crate::auth::session::Touches::new(background.clone(), touch_limit));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -49,8 +54,32 @@ impl AppState {
             setup: Arc::new(setup),
             secrets,
             datasources,
+            background,
             touches,
         })
+    }
+
+    /// Stops the background writes and closes every database pool this state opened: the
+    /// server's, the background writes' own and the data sources' SQLite files. Until then the
+    /// files in the data directory stay open, and Windows cannot delete them (tests delete their
+    /// temporary data directory right after).
+    pub async fn close(&self) {
+        self.background.stop().await;
+        self.datasources.close().await;
+        self.db.close().await;
+    }
+}
+
+/// Ends an app a unit test built on the temporary directory `dir`: closes it, then deletes the
+/// directory. A dropped `TempDir` ignores files Windows cannot delete because they are still open,
+/// which left every test's databases behind; this fails the test instead.
+#[cfg(test)]
+pub(crate) async fn finish_test_app(state: AppState, dir: tempfile::TempDir) {
+    state.close().await;
+    drop(state);
+    let path = dir.path().to_path_buf();
+    if let Err(e) = dir.close() {
+        panic!("the test directory {} was not deleted: {e}", path.display());
     }
 }
 

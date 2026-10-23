@@ -6,3 +6,11 @@ resolver = "3"
 edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/MouseWerk/Kalzit"
+
+# The binary the end-to-end tests run in CI: release settings with less optimization and more
+# parallel code generation, so it builds in a fraction of the release time.
+[profile.e2e]
+inherits = "release"
+opt-level = 1
+codegen-units = 256
+incremental = true

@@ -18,6 +18,7 @@ import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
@@ -368,37 +369,39 @@ function Explore({ orgId }: { orgId: string }) {
             hidden={tab !== "result"}
           >
             {tab === "result" ? (
-              <PanelBody
-                panel={panel}
-                title={t("explore.result")}
-                range={{ from: submitted.from, to: submitted.to }}
-                pending={result.isPending}
-                error={result.error}
-                outcomes={outcomes}
-                revision={`${submitted.run}:${current.pages.length}`}
-                onFilter={
-                  isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
-                    ? (_refId, path, value) => {
-                        // The filter joins the query in the editor (the one that gave this
-                        // result, or the draft typed since) as a visible $match stage, and runs.
-                        // Text that does not parse, in the query or still in a field, is never
-                        // replaced: the filter waits for it.
-                        if (pendingText[datasource.id] === true) {
-                          setFilterError(t("documents.filter.refused.draft"));
-                          return;
+              <PanelHostContext value={{ orgId }}>
+                <PanelBody
+                  panel={panel}
+                  title={t("explore.result")}
+                  range={{ from: submitted.from, to: submitted.to }}
+                  pending={result.isPending}
+                  error={result.error}
+                  outcomes={outcomes}
+                  revision={`${submitted.run}:${current.pages.length}`}
+                  onFilter={
+                    isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
+                      ? (_refId, path, value) => {
+                          // The filter joins the query in the editor (the one that gave this
+                          // result, or the draft typed since) as a visible $match stage, and runs.
+                          // Text that does not parse, in the query or still in a field, is never
+                          // replaced: the filter waits for it.
+                          if (pendingText[datasource.id] === true) {
+                            setFilterError(t("documents.filter.refused.draft"));
+                            return;
+                          }
+                          const added = addMatch(parseMongoQuery(query), path, value);
+                          if ("refused" in added) {
+                            setFilterError(t(`documents.filter.refused.${added.refused}`));
+                            return;
+                          }
+                          setFilterError(null);
+                          setQueries((current) => ({ ...current, [datasource.id]: added.query }));
+                          run(range, added.query);
                         }
-                        const added = addMatch(parseMongoQuery(query), path, value);
-                        if ("refused" in added) {
-                          setFilterError(t(`documents.filter.refused.${added.refused}`));
-                          return;
-                        }
-                        setFilterError(null);
-                        setQueries((current) => ({ ...current, [datasource.id]: added.query }));
-                        run(range, added.query);
-                      }
-                    : undefined
-                }
-              />
+                      : undefined
+                  }
+                />
+              </PanelHostContext>
             ) : null}
           </div>
           <div

@@ -6,6 +6,7 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
+import { FAKE_GRAPH, FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID, TIGERGRAPH_ID } from "./fakeGraph";
 import { FAKE_MONGO_COLLECTIONS, mongoOutcome, parseMongo } from "./fakeMongo";
 
 /**
@@ -149,7 +150,58 @@ export const FAKE_KINDS: WireKind[] = [
       ...COMMON,
     ],
   },
+  boltKind("neo4j", "Neo4j", []),
+  boltKind("memgraph", "Memgraph", [
+    setting("allowWriteCapableUser", "bool", { default: false, target: true }),
+  ]),
+  {
+    kind: "tigergraph",
+    name: "TigerGraph",
+    shapes: ["graph", "frame"],
+    hintKey: "datasources.kinds.tigergraph.hint",
+    settings: [
+      setting("url", "string", {
+        required: true,
+        target: true,
+        labelKey: "datasources.settings.gsqlUrl",
+      }),
+      setting("restppUrl", "string", { target: true }),
+      setting("graph", "string", { required: true, target: true }),
+      setting("user", "string", { required: true }),
+      setting("password", "string", { secret: true }),
+      setting("secret", "string", { secret: true, labelKey: "datasources.settings.restppSecret" }),
+      setting("caCert", "text"),
+      setting("approvedQueries", "text", { target: true }),
+      setting("maxNodes", "number", { default: 10_000 }),
+      setting("maxEdges", "number", { default: 50_000 }),
+      ...COMMON,
+    ],
+  },
 ];
+
+/** Neo4j and Memgraph over Bolt (docs/api/datasources.md, the fields per kind). */
+function boltKind(kind: string, name: string, extra: WireSetting[]): WireKind {
+  return {
+    kind,
+    name,
+    shapes: ["graph", "frame"],
+    hintKey: `datasources.kinds.${kind}.hint`,
+    settings: [
+      setting("host", "string", { required: true }),
+      setting("port", "number", { default: 7687 }),
+      setting("database", "string"),
+      setting("user", "string"),
+      setting("password", "string", { secret: true }),
+      setting("encrypt", "bool", { default: false }),
+      setting("trustServerCertificate", "bool", { default: false }),
+      setting("caCert", "text"),
+      setting("maxNodes", "number", { default: 10_000 }),
+      setting("maxEdges", "number", { default: 50_000 }),
+      ...extra,
+      ...COMMON,
+    ],
+  };
+}
 
 export interface StoredDatasource {
   id: string;
@@ -178,7 +230,11 @@ export interface FakeDatasourcesState {
   /** The answer of "Test connection" per data source id; healthy by default. */
   health: Record<string, WireHealth>;
   /** Answers one valid query item. Defaults to `defaultOutcome`. */
-  respond: (item: QueryItem, range: TimeRange) => QueryOutcome | Promise<QueryOutcome>;
+  respond: (
+    item: QueryItem,
+    range: TimeRange,
+    variables: Record<string, unknown>,
+  ) => QueryOutcome | Promise<QueryOutcome>;
   /** Grants on data sources for the caller, by data source id. */
   grants: Record<string, "query" | "edit" | "admin">;
   /** Whether answers carry `access` (stream C's addition); false plays an older server. */
@@ -226,14 +282,25 @@ const BLOCKED_HOST = /^(169\.254\.|fe80:|fd00:ec2::254)/i;
 
 /**
  * A query whose text contains `fail:<code>` answers that error code. SQL with "time" in it, and
- * every PromQL query, answers a time series; other SQL a table with int64 and null values.
+ * every PromQL query, answers a time series; other SQL a table with int64 and null values;
+ * Cypher a graph (fakeGraph.ts).
  */
-export function defaultOutcome(item: QueryItem, range: TimeRange): QueryOutcome {
+export function defaultOutcome(
+  item: QueryItem,
+  range: TimeRange,
+  variables: Record<string, unknown> = {},
+): QueryOutcome {
   const query = (item.query ?? {}) as Record<string, unknown>;
-  const text = String(query.sql ?? query.expr ?? "");
+  const text = String(query.sql ?? query.expr ?? query.cypher ?? "");
   const failure = /fail:(\w+)/.exec(text);
   if (failure !== null) {
     return { error: { code: failure[1] as never, message: `source said no (${failure[1]})` } };
+  }
+  if (typeof query.cypher === "string") {
+    return graphOutcome(query.cypher, variables);
+  }
+  if (typeof query.gsql === "string" || typeof query.installed === "string") {
+    return { result: { shape: "graph", graph: FAKE_GRAPH } };
   }
   const meta = { executedQuery: text, rowsTruncated: false, notices: [] };
   if (typeof query.sql === "string" && !/\btime\b/i.test(query.sql)) {
@@ -306,6 +373,18 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     // Checked whole, with its reasons, in `answerQuery`.
     return null;
   }
+  if (kind === "neo4j" || kind === "memgraph") {
+    const extra = unknownKey(q, ["cypher"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    if (typeof q.cypher !== "string") return "cypher is required";
+    return q.cypher.trim() === "" ? "the query is empty" : null;
+  }
+  if (kind === "tigergraph") {
+    const extra = unknownKey(q, ["gsql", "installed", "params"]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    const forms = [typeof q.gsql === "string", typeof q.installed === "string"].filter(Boolean);
+    return forms.length === 1 ? null : "gsql or installed is required";
+  }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
     if (extra !== undefined) return `unknown query field ${extra}`;
@@ -326,6 +405,7 @@ export async function answerQuery(
   state: FakeDatasourcesState,
   item: QueryItem,
   range: TimeRange,
+  variables: Record<string, unknown> = {},
 ): Promise<QueryOutcome> {
   const source = state.datasources.find(
     (d) => d.id === item.datasourceId && d.deletedAt === undefined,
@@ -344,7 +424,37 @@ export async function answerQuery(
   if (problem !== null) {
     return { error: { code: "query_rejected", message: problem } };
   }
-  return state.respond(item, range);
+  return state.respond(item, range, variables);
+}
+
+/** Adds the TigerGraph source "Tiger" (graph `social`) with an installed query, for the tests. */
+export function addTigerGraphSource(state: FakeDatasourcesState): void {
+  const created = Date.UTC(2026, 0, 9);
+  state.datasources.push({
+    id: TIGERGRAPH_ID,
+    name: "Tiger",
+    kind: "tigergraph",
+    settings: { url: "https://tg.internal:14240", graph: "social", user: "reader" },
+    secrets: { password: "s3cret" },
+    createdAt: created,
+    updatedAt: created,
+  });
+  state.schemas[TIGERGRAPH_ID] = { ...FAKE_GRAPH_SCHEMA, queries: ["neighbours", "top_customers"] };
+}
+
+/** Adds the Neo4j source "Graph DB" (NEO4J_ID) with its schema, for the graph tests. */
+export function addNeo4jSource(state: FakeDatasourcesState): void {
+  const created = Date.UTC(2026, 0, 10);
+  state.datasources.push({
+    id: NEO4J_ID,
+    name: "Graph DB",
+    kind: "neo4j",
+    settings: { host: "graph.internal", port: 7687, user: "reader" },
+    secrets: { password: "s3cret" },
+    createdAt: created,
+    updatedAt: created,
+  });
+  state.schemas[NEO4J_ID] = FAKE_GRAPH_SCHEMA;
 }
 
 function publicView(ds: StoredDatasource, access?: Record<string, boolean>) {
@@ -482,10 +592,10 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     },
     health: {},
     // MongoDB queries run against the fake collections; everything else as `defaultOutcome`.
-    respond: (item, range) =>
+    respond: (item, range, variables) =>
       typeof (item.query as Record<string, unknown> | null)?.collection === "string"
         ? mongoOutcome(item, state.mongo)
-        : defaultOutcome(item, range),
+        : defaultOutcome(item, range, variables),
     grants: {},
     sendAccess: true,
     queries: [],
@@ -557,7 +667,12 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
           ? { error: { code: "not_found", message: "no such data source" } }
           : !may(item.datasourceId, "query")
             ? { error: { code: "forbidden", message: "no query right on this data source" } }
-            : await answerQuery(state, item, range);
+            : await answerQuery(
+                state,
+                item,
+                range,
+                (body.variables ?? {}) as Record<string, unknown>,
+              );
       }
       return json(200, { results });
     }

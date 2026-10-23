@@ -2,9 +2,12 @@ import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useSta
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
+import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import type { DocumentFilter } from "../../panels/types";
@@ -15,6 +18,7 @@ import {
   documentsOf,
   errorsOf,
   framesOf,
+  graphsOf,
   isTruncated,
   otherShapes,
   projectOutcomes,
@@ -220,6 +224,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
           error={results.error}
           outcomes={outcomes}
           revision={results.dataUpdatedAt}
+          variables={query.variables}
         />
       </div>
       {edit === undefined ? null : (
@@ -256,6 +261,8 @@ interface PanelBodyProps {
   onFilter?: ((refId: string, path: string, value: unknown) => void) | undefined;
   /** Changes with every new result: a run, or a page loaded after it. */
   revision?: string | number | undefined;
+  /** Dashboard variables, for panels that show text. */
+  variables?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -271,11 +278,29 @@ export function PanelBody({
   outcomes: received,
   onFilter,
   revision,
+  variables,
 }: PanelBodyProps) {
   const { t } = useI18n();
+  // Field option patterns need re2js, which loads with the first panel that uses one. The panel
+  // is drawn again once it is there: until then its patterns matched nothing.
+  const patterns = usePatternEngine(usesPatterns(panel.fieldConfig)) ? "patterns" : "waiting";
   const plugin = getPanel(panel.type);
   if (plugin === undefined) {
     return <p className="panel-empty">{t("dashboards.panel.unknownType", { type: panel.type })}</p>;
+  }
+  // A panel that needs no query (text) draws right away, whatever the queries do.
+  if (plugin.standalone === true) {
+    const { Panel } = plugin;
+    return (
+      <Panel
+        key={patterns}
+        frames={[]}
+        options={plugin.options(panel.options)}
+        timeRange={range}
+        title={title}
+        {...(variables === undefined ? {} : { variables })}
+      />
+    );
   }
   // A failed request comes first: it must never read as "no query yet".
   if (error !== null) {
@@ -295,10 +320,12 @@ export function PanelBody({
   // A projection step of the panel turns that query's documents into a frame here.
   const outcomes = projectOutcomes(received, panel.transformations);
   const frames = framesOf(outcomes);
+  const graphs = graphsOf(outcomes, panel.targets);
   const documents = documentsOf(outcomes);
   const errors = errorsOf(outcomes);
-  const shapes = otherShapes(outcomes).filter((shape) => shape !== "documents");
-  const failedAll = frames.length === 0 && documents.length === 0 && errors.length > 0;
+  const shapes = otherShapes(outcomes, plugin.shapes);
+  const failedAll =
+    frames.length === 0 && graphs.length === 0 && documents.length === 0 && errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
       <ul className={failedAll ? "panel-error" : "panel-error panel-error--partial"} role="alert">
@@ -319,13 +346,16 @@ export function PanelBody({
     return errorList;
   }
   const { Panel } = plugin;
+  // A graph panel draws graphs; every other panel documents (when it takes them) or frames.
+  const graphPanel = plugin.shapes.includes("graph");
   const takesDocuments = plugin.shapes.includes("documents") && documents.length > 0;
   const takesFrames = plugin.shapes.includes("frame") && frames.length > 0;
+  const drawable = graphPanel ? graphs.length > 0 : takesDocuments || takesFrames;
   let note: string | null = null;
-  if (!takesDocuments && !takesFrames) {
-    if (documents.length > 0) {
+  if (!drawable) {
+    if (!graphPanel && documents.length > 0) {
       note = t("documents.panel.needsProjection");
-    } else if (frames.length > 0) {
+    } else if (plugin.shapes.includes("documents") && frames.length > 0) {
       note = t("documents.panel.needsDocuments");
     } else if (shapes.length > 0) {
       note = t("dashboards.panel.otherShape", { shape: shapes[0] ?? "" });
@@ -334,26 +364,42 @@ export function PanelBody({
   return (
     <div className="panel-content">
       {errorList}
-      {takesDocuments || takesFrames ? (
+      {drawable ? (
         <div className="panel-content__viz">
-          <Panel
-            frames={frames}
-            documents={documents.map((d) => d.documents)}
-            onFilter={
-              onFilter === undefined
-                ? undefined
-                : (filter: DocumentFilter) => {
-                    const refId = documents[filter.index]?.refId;
-                    if (refId !== undefined) {
-                      onFilter(refId, filter.path, filter.value);
+          <PanelErrorBoundary
+            resetKeys={[
+              received,
+              revision,
+              panel.type,
+              JSON.stringify(panel.options ?? null),
+              JSON.stringify(panel.fieldConfig ?? null),
+              JSON.stringify(panel.transformations ?? null),
+              patterns,
+            ]}
+          >
+            <Panel
+              key={patterns}
+              frames={frames}
+              graphs={graphs}
+              documents={documents.map((d) => d.documents)}
+              onFilter={
+                onFilter === undefined
+                  ? undefined
+                  : (filter: DocumentFilter) => {
+                      const refId = documents[filter.index]?.refId;
+                      if (refId !== undefined) {
+                        onFilter(refId, filter.path, filter.value);
+                      }
                     }
-                  }
-            }
-            options={plugin.options(panel.options)}
-            timeRange={range}
-            title={title}
-            revision={revision}
-          />
+              }
+              options={plugin.options(panel.options)}
+              fieldConfig={parseFieldConfig(panel.fieldConfig)}
+              timeRange={range}
+              title={title}
+              revision={revision}
+              {...(variables === undefined ? {} : { variables })}
+            />
+          </PanelErrorBoundary>
         </div>
       ) : note === null ? (
         <EmptyPanel reason="noData" />

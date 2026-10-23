@@ -13,7 +13,10 @@ import {
 import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
-import { panelsForShapes } from "../../panels/registry";
+import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
+import { upgradePanel } from "../../panels/fieldConfig/upgrade";
+import { PanelPicker } from "../../panels/picker/PanelPicker";
+import { getPanel } from "../../panels/registry";
 import { datasourcesQuery, kindsQuery, sourceAccess } from "../datasources/api";
 import type { PreviewRun } from "../datasources/editors/MongoQueryEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
@@ -54,7 +57,11 @@ export function PanelEditor({
   const { t } = useI18n();
   const titleId = useId();
   const permissions = useOrgPermissions();
-  const [panel, setPanel] = useState(initial);
+  // Panels saved before the field options existed move their old options to the new place.
+  const [panel, setPanel] = useState(() => upgradePanel(initial));
+  // Options per panel type seen in this editor, so arrowing through the picker and back to a
+  // type keeps what was set for it.
+  const [optionsByType, setOptionsByType] = useState<Record<string, unknown>>({});
   const [filterError, setFilterError] = useState<string | null>(null);
   // Per query: whether its editor holds text that does not parse yet.
   const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
@@ -84,18 +91,30 @@ export function PanelEditor({
 
   const kindOf = (datasourceId: string) =>
     datasources.data?.find((d) => d.id === datasourceId)?.kind;
+  // What the preview returned decides which panels fit; before it ran, what the sources can return.
+  // An applied projection step turns that target's documents into a frame.
+  const projected = (refId: string) => {
+    const step = projectionFor(panel.transformations, refId);
+    return step !== undefined && step.disabled !== true;
+  };
+  const returned = (results.data ?? []).flatMap((o): Shape[] =>
+    "result" in o
+      ? o.result.shape === "documents" && projected(o.refId)
+        ? ["documents", "frame"]
+        : [o.result.shape]
+      : [],
+  );
   const shapes: Shape[] = [
     ...new Set(
-      panel.targets.flatMap((target): Shape[] => {
-        const kindShapes =
-          kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [];
-        // An applied projection step turns the target's documents into a frame.
-        const step = projectionFor(panel.transformations, target.refId);
-        return step === undefined || step.disabled === true ? kindShapes : [...kindShapes, "frame"];
-      }),
+      returned.length > 0
+        ? returned
+        : panel.targets.flatMap((target): Shape[] => {
+            const kindShapes =
+              kinds.data?.find((k) => k.kind === kindOf(target.datasourceId))?.shapes ?? [];
+            return projected(target.refId) ? [...kindShapes, "frame"] : kindShapes;
+          }),
     ),
   ];
-  const choices = panelsForShapes(shapes.length === 0 ? ["frame"] : shapes);
 
   const updateTarget = (refId: string, patch: Partial<Target>) =>
     setPanel((p) => ({
@@ -152,7 +171,7 @@ export function PanelEditor({
   }
   // A projection step the server would refuse is fixed here before the panel is applied.
   const blocked = hasProjectionProblems(panel.transformations);
-  const plugin = choices.find((c) => c.panel.type === panel.type)?.panel;
+  const plugin = getPanel(panel.type);
   const Editor = plugin?.Editor;
 
   return (
@@ -206,6 +225,7 @@ export function PanelEditor({
               onFilter={
                 preview.targets.some((target) => isMongoQuery(target.query)) ? filterBy : undefined
               }
+              variables={variables}
             />
           </div>
         </section>
@@ -225,30 +245,30 @@ export function PanelEditor({
               data-autofocus
             />
           </div>
-          <fieldset className="panel-editor__types">
-            <legend className="field__label">{t("dashboards.editor.visualization")}</legend>
-            {choices.map(({ panel: choice, accepts }) => (
-              <label key={choice.type} className="radio">
-                <input
-                  type="radio"
-                  name={`${titleId}-type`}
-                  value={choice.type}
-                  checked={panel.type === choice.type}
-                  onChange={() => setPanel((p) => ({ ...p, type: choice.type, options: {} }))}
-                />
-                <span>{t(choice.name)}</span>
-                {accepts ? null : (
-                  <span className="field__hint">{t("dashboards.editor.notForShape")}</span>
-                )}
-              </label>
-            ))}
-          </fieldset>
+          <PanelPicker
+            value={panel.type}
+            shapes={shapes}
+            onChange={(type) => {
+              setOptionsByType((kept) => ({ ...kept, [panel.type]: panel.options }));
+              setPanel((p) => ({ ...p, type, options: optionsByType[type] ?? {} }));
+            }}
+          />
           {plugin === undefined || Editor === undefined ? null : (
             <fieldset className="panel-editor__options">
               <legend className="field__label">{t("dashboards.editor.options")}</legend>
               <Editor
                 options={plugin.options(panel.options)}
                 onChange={(options: unknown) => setPanel((p) => ({ ...p, options }))}
+              />
+            </fieldset>
+          )}
+          {plugin?.fieldOptions === undefined ? null : (
+            <fieldset className="panel-editor__options">
+              <legend className="field__label">{t("panels.fieldOptions")}</legend>
+              <FieldConfigEditor
+                value={panel.fieldConfig}
+                groups={plugin.fieldOptions}
+                onChange={(fieldConfig) => setPanel((p) => ({ ...p, fieldConfig }))}
               />
             </fieldset>
           )}

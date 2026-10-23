@@ -11,10 +11,17 @@ import {
 import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CompletionResult } from "./completion";
-import { type Token, tokenizeJson, tokenizePromql, tokenizeSql } from "./syntax";
+import {
+  type Token,
+  tokenizeCypher,
+  tokenizeGsql,
+  tokenizeJson,
+  tokenizePromql,
+  tokenizeSql,
+} from "./syntax";
 import "./editors.css";
 
-export type CodeLanguage = "sql" | "promql" | "json";
+export type CodeLanguage = "sql" | "promql" | "json" | "cypher" | "gsql";
 
 /**
  * The contract every query text editor implements. Query editors depend on this, not on an
@@ -39,6 +46,8 @@ const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   sql: tokenizeSql,
   promql: tokenizePromql,
   json: tokenizeJson,
+  cypher: tokenizeCypher,
+  gsql: tokenizeGsql,
 };
 
 /**

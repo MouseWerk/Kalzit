@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
+import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { PanelHostContext } from "../../panels/host";
+import { StarButton, useRecordView } from "../../shell/StarButton";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AccessButton } from "./accessIntegration";
 import {
@@ -16,6 +19,7 @@ import {
   dashboardQuery,
   deleteDashboard,
   fetchDashboard,
+  foldersQuery,
   restoreDashboard,
   saveDashboard,
 } from "./api";
@@ -23,6 +27,7 @@ import "./dashboards.css";
 import { DashboardGrid } from "./DashboardGrid";
 import {
   bottomRow,
+  clickTargets,
   type DashboardModel,
   type GridPos,
   newPanelId,
@@ -79,6 +84,7 @@ function DashboardLoader({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const { dashboardId } = dashboardRoute.useParams();
   const dashboard = useQuery(dashboardQuery(orgId, dashboardId));
+  useRecordView(orgId, dashboardId);
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
   const picked = useRef(new Map<string, Record<string, string>>());
@@ -135,8 +141,13 @@ function DashboardView({
   dashboard: Dashboard;
   picked: Map<string, Record<string, string>>;
 }) {
-  const { t } = useI18n();
+  const { t, timeZone, weekStart } = useI18n();
   const permissions = useOrgPermissions();
+  // For the breadcrumbs; without folders:read the trail starts at the list.
+  const folders = useQuery({
+    ...foldersQuery(orgId),
+    enabled: permissions.has("folders:read"),
+  });
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const search = dashboardRoute.useSearch();
@@ -196,7 +207,7 @@ function DashboardView({
     draft === null && search.from !== undefined && search.to !== undefined
       ? { from: search.from, to: search.to }
       : model.timeRange;
-  const resolved = resolveRange(textRange, clock.now);
+  const resolved = resolveRange(textRange, clock.now, { timeZone, weekStart });
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
 
   useEffect(() => {
@@ -335,8 +346,27 @@ function DashboardView({
             changeDraft((m) => ({ ...m, panels: placePanel(m.panels, id, grid) })),
         };
 
+  // Panels may set a variable the dashboard defines (a node click setting $customerId).
+  const host = {
+    orgId,
+    variables: {
+      ...clickTargets(model.variables),
+      set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
+    },
+  };
+
   return (
     <div className="dashboard">
+      <Breadcrumbs
+        crumbs={[
+          { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
+          ...folderTrail(folders.data ?? [], dashboard.folderId).map((step) => ({
+            label: step.name,
+            link: { to: "/dashboards" as const, search: { folder: step.id } },
+          })),
+          { label: model.title === "" ? t("dashboards.untitled") : model.title },
+        ]}
+      />
       <div className="dashboard__bar">
         <h1 className="dashboard__title truncate" id={headingId}>
           {model.title === "" ? t("dashboards.untitled") : model.title}
@@ -367,6 +397,7 @@ function DashboardView({
           </select>
           {draft === null ? (
             <>
+              <StarButton orgId={orgId} dashboardId={dashboard.id} />
               {canEdit ? (
                 <button
                   type="button"
@@ -490,35 +521,39 @@ function DashboardView({
               {canEdit ? t("dashboards.noPanels.text") : t("dashboards.noPanels.textViewer")}
             </EmptyState>
           ) : (
-            <DashboardGrid
-              panels={model.panels}
-              query={{
-                orgId,
-                dashboardId: dashboard.id,
-                range: resolved.range,
-                variables: values,
-                saved: dashboard.model.variables,
-                source: "stored",
-                run: clock.run,
-              }}
-              storedPanels={dashboard.model.panels}
-              edit={editActions}
-            />
+            <PanelHostContext value={host}>
+              <DashboardGrid
+                panels={model.panels}
+                query={{
+                  orgId,
+                  dashboardId: dashboard.id,
+                  range: resolved.range,
+                  variables: values,
+                  saved: dashboard.model.variables,
+                  source: "stored",
+                  run: clock.run,
+                }}
+                storedPanels={dashboard.model.panels}
+                edit={editActions}
+              />
+            </PanelHostContext>
           )}
         </>
       ) : null}
       {dialog?.kind === "panel" && resolved.ok ? (
-        <PanelEditor
-          orgId={orgId}
-          dashboardId={dashboard.id}
-          panel={dialog.panel}
-          range={resolved.range}
-          variables={values}
-          stored={dashboard.model.panels.find((p) => p.id === dialog.panel.id)}
-          savedVariables={dashboard.model.variables}
-          onApply={(panel) => applyPanel(panel, dialog.isNew)}
-          onClose={() => setDialog(null)}
-        />
+        <PanelHostContext value={host}>
+          <PanelEditor
+            orgId={orgId}
+            dashboardId={dashboard.id}
+            panel={dialog.panel}
+            range={resolved.range}
+            variables={values}
+            stored={dashboard.model.panels.find((p) => p.id === dialog.panel.id)}
+            savedVariables={dashboard.model.variables}
+            onApply={(panel) => applyPanel(panel, dialog.isNew)}
+            onClose={() => setDialog(null)}
+          />
+        </PanelHostContext>
       ) : null}
       {dialog?.kind === "settings" ? (
         <SettingsDialog

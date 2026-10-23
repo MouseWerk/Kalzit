@@ -159,6 +159,11 @@ enum Contention {
     Deadlock,
 }
 
+/// Whether `e` is lock contention (`busy` or a deadlock), which goes away when tried again.
+pub fn is_contention(e: &sqlx::Error) -> bool {
+    contention(e).is_some()
+}
+
 /// Lock contention, as opposed to a fault: SQLite's `SQLITE_BUSY` (with its extended codes), and
 /// PostgreSQL's serialization failure, lock timeout and deadlock.
 fn contention(e: &sqlx::Error) -> Option<Contention> {
@@ -263,6 +268,9 @@ mod tests {
         assert!(matches!(postgres_contention(Some("40P01")), Some(Contention::Deadlock)));
         assert!(matches!(postgres_contention(Some("40001")), Some(Contention::Busy)));
         assert!(postgres_contention(Some("23505")).is_none());
+        holder.close().await.unwrap();
+        other.close().await.unwrap();
+        dir.close().unwrap();
     }
 
     #[test]
