@@ -22,6 +22,8 @@ test.skip(
   ({ browserName }) => browserName !== "chromium",
   "CPU throttling needs the DevTools protocol",
 );
+// One after the other, so the two budgets never share the CPU either.
+test.describe.configure({ mode: "serial" });
 
 interface Store {
   __events: { id: number; duration: number }[];
