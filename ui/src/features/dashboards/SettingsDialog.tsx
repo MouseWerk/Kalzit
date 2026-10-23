@@ -6,8 +6,11 @@ import { datasourcesQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
 import {
+  type AnnotationQueryModel,
   cleanVariable,
   currentValue,
+  currentValues,
+  type DashboardLinkModel,
   type DashboardModel,
   optionValues,
   VARIABLE_TYPES,
@@ -15,6 +18,7 @@ import {
   type VariableType,
 } from "./model";
 import { REFRESH_CHOICES } from "./refresh";
+import { AnnotationQueriesEditor, LinksEditor, linkProblem, parseTags } from "./SettingsParts";
 import { Dialog } from "./ui/Dialog";
 import "./dashboards.css";
 
@@ -26,10 +30,12 @@ interface SettingsDialogProps {
   model: DashboardModel;
   onApply: (model: DashboardModel) => void;
   onClose: () => void;
+  /** Opens the JSON model instead (unapplied changes here are dropped). */
+  onJson?: () => void;
 }
 
 /** Dashboard settings in edit mode: title, default refresh and the variables. */
-export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ orgId, model, onApply, onClose, onJson }: SettingsDialogProps) {
   const { t } = useI18n();
   const refreshId = useId();
   const formId = useId();
@@ -39,6 +45,11 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
   // Names change while typing, so editors are keyed by an id that lives only in this dialog.
   const [keys, setKeys] = useState(() => model.variables.map(() => crypto.randomUUID()));
   const [errors, setErrors] = useState<Record<number, string>>({});
+  const [tags, setTags] = useState((model.tags ?? []).join(", "));
+  const [links, setLinks] = useState<DashboardLinkModel[]>(model.links ?? []);
+  const [annotations, setAnnotations] = useState<AnnotationQueryModel[]>(model.annotations ?? []);
+  const [checked, setChecked] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
 
   const update = (index: number, patch: Partial<VariableModel>) =>
     setVariables((list) => list.map((v, i) => (i === index ? { ...v, ...patch } : v)));
@@ -55,7 +66,11 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
       names.add(variable.name);
     });
     setErrors(found);
-    if (Object.keys(found).length > 0) {
+    setChecked(true);
+    const linksBad = links.some((link) => linkProblem(link) !== null);
+    const annotationsBad = annotations.some((a) => a.datasourceId === "" || a.name.trim() === "");
+    setProblem(annotationsBad ? t("annotations.queries.incomplete") : null);
+    if (Object.keys(found).length > 0 || linksBad || annotationsBad) {
       return;
     }
     const next: DashboardModel = {
@@ -68,6 +83,15 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
     } else {
       delete next.refreshSeconds;
     }
+    const tagList = parseTags(tags);
+    const parts = { tags: tagList, links, annotations } as const;
+    for (const [key, list] of Object.entries(parts) as [keyof typeof parts, unknown[]][]) {
+      if (list.length > 0) {
+        Object.assign(next, { [key]: list });
+      } else {
+        delete next[key];
+      }
+    }
     onApply(next);
   }
 
@@ -78,6 +102,11 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
       size="large"
       actions={
         <>
+          {onJson === undefined ? null : (
+            <button type="button" className="button button--secondary" onClick={onJson}>
+              {t("dashboardTools.json.open")}
+            </button>
+          )}
           <button type="button" className="button button--secondary" onClick={onClose}>
             {t("dashboards.dialog.cancel")}
           </button>
@@ -120,6 +149,13 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
             ))}
           </select>
         </div>
+        <TextField
+          label={t("dashboardTools.tags.label")}
+          hint={t("dashboardTools.tags.hint")}
+          value={tags}
+          onValueChange={setTags}
+          autoComplete="off"
+        />
         <fieldset className="settings__variables">
           <legend className="section-title">{t("dashboards.variables.label")}</legend>
           <p className="field__hint">{t("dashboards.variables.hint")}</p>
@@ -151,6 +187,13 @@ export function SettingsDialog({ orgId, model, onApply, onClose }: SettingsDialo
             {t("dashboards.variables.add")}
           </button>
         </fieldset>
+        <LinksEditor links={links} onChange={setLinks} showErrors={checked} />
+        <AnnotationQueriesEditor orgId={orgId} queries={annotations} onChange={setAnnotations} />
+        {problem === null ? null : (
+          <p className="notice notice--danger" role="alert">
+            {problem}
+          </p>
+        )}
       </form>
     </Dialog>
   );
@@ -174,6 +217,7 @@ function VariableEditor({
   const datasources = useQuery({ ...datasourcesQuery(orgId), enabled: variable.type === "query" });
   const datasource = datasources.data?.find((d) => d.id === variable.datasourceId);
   const [valuesText, setValuesText] = useState(optionValues(variable).join(", "));
+  const [defaultText, setDefaultText] = useState(currentValues(variable).join(", "));
   return (
     <section className="variable-editor" aria-label={variable.name}>
       <div className="variable-editor__row">
@@ -267,12 +311,41 @@ function VariableEditor({
           <p className="field__hint">{t("dashboards.variables.queryHint")}</p>
         </>
       ) : null}
-      <TextField
-        label={t("dashboards.variables.default")}
-        value={currentValue(variable) ?? ""}
-        onValueChange={(current) => onChange({ current })}
-        autoComplete="off"
-      />
+      {variable.type === "custom" || variable.type === "query" ? (
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={variable.multi === true}
+            onChange={(event) => {
+              const multi = event.currentTarget.checked;
+              onChange({
+                multi,
+                current: multi ? currentValues(variable) : (currentValue(variable) ?? ""),
+              });
+            }}
+          />
+          {t("dashboardTools.variables.multi")}
+        </label>
+      ) : null}
+      {variable.multi === true ? (
+        <TextField
+          label={t("dashboards.variables.default")}
+          hint={t("dashboardTools.variables.multiDefaultHint")}
+          value={defaultText}
+          onValueChange={(text) => {
+            setDefaultText(text);
+            onChange({ current: parseTags(text) });
+          }}
+          autoComplete="off"
+        />
+      ) : (
+        <TextField
+          label={t("dashboards.variables.default")}
+          value={currentValue(variable) ?? ""}
+          onValueChange={(current) => onChange({ current })}
+          autoComplete="off"
+        />
+      )}
       <button type="button" className="button button--ghost" onClick={onRemove}>
         {t("dashboards.variables.remove", { name: variable.name })}
       </button>

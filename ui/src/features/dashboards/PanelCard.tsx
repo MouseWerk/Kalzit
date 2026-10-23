@@ -12,13 +12,24 @@ import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern
 import { getPanel } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
+import { type PanelAnnotations, PanelAnnotationsContext } from "../../panels/annotations";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import { queryText } from "../datasources/queryKinds";
+import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
+import "./dashboardTools.css";
 import { reasonText } from "../datasources/reasons";
-import { type GridPos, type PanelModel, storedQueryVariables } from "./model";
+import { linkHref } from "./links";
+import {
+  type GridPos,
+  type PanelModel,
+  storedQueryVariables,
+  type VariableValues,
+  variableTexts,
+} from "./model";
+import { TIME_PANELS, timeNote } from "./panelTime";
 import { errorsOf, graphsOf, isTruncated, otherShapes, type TargetOutcome } from "./results";
 import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
@@ -29,10 +40,23 @@ import { type PanelQueryInput, usePanelResults } from "./usePanelResults";
 /** The width at which dashboards.css switches to one column. */
 const SINGLE_COLUMN = "(max-width: 48rem)";
 
+export interface PanelViewActions {
+  /** The variable values this panel runs with (its repeat copy's value included). */
+  values: VariableValues;
+  /** Shows the panel alone, full screen. */
+  onView?: ((panelId: string) => void) | undefined;
+  marks: readonly DashboardMark[];
+  onOpenMark: (mark: DashboardMark) => void;
+  /** Present for those who may write annotations. */
+  onAnnotate?: ((panelId: string, time: number) => void) | undefined;
+}
+
 export interface PanelEditActions {
   onEdit: () => void;
   onDuplicate: () => void;
   onRemove: () => void;
+  /** Copies the panel to another dashboard. */
+  onCopy?: () => void;
   /** A new position or size; the grid pushes overlapped panels down. */
   onGrid: (grid: GridPos, byKeyboard: boolean) => void;
   /** Size of one grid cell in px, for turning a pointer drag into cells. */
@@ -42,12 +66,25 @@ export interface PanelEditActions {
 interface PanelCardProps {
   query: Omit<PanelQueryInput, "panel">;
   panel: PanelModel;
+  /** The value of a repeat copy, shown with the title. */
+  repeatValue?: string | undefined;
+  /** Links, annotations and full screen, while viewing and editing. */
+  view?: PanelViewActions | undefined;
   /** Present in edit mode. */
   edit?: PanelEditActions | undefined;
+  /** Full screen: the panel fills the view and has no arrange controls. */
+  alone?: boolean;
 }
 
 /** One panel in the grid: title bar, its own query state, and the visualization. */
-export function PanelCard({ query, panel, edit }: PanelCardProps) {
+export function PanelCard({
+  query,
+  panel,
+  repeatValue,
+  view,
+  edit,
+  alone = false,
+}: PanelCardProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLElement>(null);
   const titleId = useId();
@@ -68,7 +105,29 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
     keepHandleFocus.current = false;
   });
   const results = usePanelResults({ ...query, panel });
-  const title = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
+  const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
+  const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
+  const note = timeNote(panel);
+  const noteText = [
+    note.last === undefined ? null : t("dashboardTools.time.last", { range: note.last }),
+    note.shift === undefined ? null : t("dashboardTools.time.shifted", { shift: note.shift }),
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+  const links = (panel.links ?? []).flatMap((link) => {
+    const href = linkHref(link.url, view?.values ?? query.variables);
+    return href === null ? [] : [{ ...link, href }];
+  });
+  const isTimePanel = TIME_PANELS.has(panel.type);
+  const onAnnotate = view?.onAnnotate;
+  const annotations: PanelAnnotations | null =
+    view === undefined || !isTimePanel
+      ? null
+      : {
+          marks: view.marks.filter((m) => m.panelId === null || m.panelId === panel.id),
+          onOpen: (mark) => view.onOpenMark(mark as DashboardMark),
+          onAdd: onAnnotate === undefined ? undefined : (time) => onAnnotate(panel.id, time),
+        };
 
   useStyleVars(ref, {
     "--col": panel.grid.x + 1,
@@ -142,7 +201,7 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
   return (
     <article
       ref={ref}
-      className={edit === undefined ? "panel-card" : "panel-card panel-card--editing"}
+      className={`panel-card${edit === undefined ? "" : " panel-card--editing"}${alone ? " panel-card--alone" : ""}`}
       aria-labelledby={titleId}
       aria-busy={results.isFetching}
     >
@@ -153,7 +212,48 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
         <h2 className="panel-card__title truncate" id={titleId} title={title}>
           {title}
         </h2>
+        {panel.libraryPanelId === undefined ? null : (
+          <span className="panel-card__badge">{t("libraryPanels.badge")}</span>
+        )}
+        {noteText === "" ? null : (
+          <span className="panel-card__note" title={noteText}>
+            {noteText}
+          </span>
+        )}
         <div className="panel-card__actions">
+          {links.map((link) => (
+            <a
+              key={`${link.title}${link.url}`}
+              className="button button--ghost button--small panel-card__link"
+              href={link.href}
+              onPointerDown={(event) => event.stopPropagation()}
+              {...(link.newTab === true ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+            >
+              {link.title}
+            </a>
+          ))}
+          {onAnnotate === undefined || !isTimePanel ? null : (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => onAnnotate(panel.id, Math.min(Date.now(), query.range.to))}
+              aria-label={t("annotations.addNamed", { title })}
+            >
+              {t("annotations.add")}
+            </button>
+          )}
+          {view?.onView === undefined || alone ? null : (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => view.onView?.(panel.id)}
+              aria-label={t("dashboardTools.view.panelNamed", { title })}
+            >
+              {t("dashboardTools.view.panel")}
+            </button>
+          )}
           {edit === undefined ? null : (
             <>
               <button
@@ -214,6 +314,17 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
               >
                 {t("dashboards.panel.duplicate")}
               </button>
+              {edit.onCopy === undefined ? null : (
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={edit.onCopy}
+                  aria-label={t("dashboardTools.copy.panelNamed", { title })}
+                >
+                  {t("dashboardTools.copy.panel")}
+                </button>
+              )}
               <button
                 type="button"
                 className="button button--ghost button--small"
@@ -228,17 +339,19 @@ export function PanelCard({ query, panel, edit }: PanelCardProps) {
         </div>
       </header>
       <div className="panel-card__body">
-        <PanelBody
-          panel={panel}
-          title={title}
-          range={query.range}
-          pending={results.isPending && results.fetchStatus !== "idle"}
-          error={results.error}
-          outcomes={outcomes}
-          variables={query.variables}
-        />
+        <PanelAnnotationsContext.Provider value={annotations}>
+          <PanelBody
+            panel={panel}
+            title={title}
+            range={query.range}
+            pending={results.isPending && results.fetchStatus !== "idle"}
+            error={results.error}
+            outcomes={outcomes}
+            variables={variableTexts(query.variables)}
+          />
+        </PanelAnnotationsContext.Provider>
       </div>
-      {edit === undefined ? null : (
+      {edit === undefined || alone ? null : (
         <div
           className="panel-card__resize"
           aria-hidden="true"

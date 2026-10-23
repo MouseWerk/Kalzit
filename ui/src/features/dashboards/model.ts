@@ -1,9 +1,13 @@
 import { isRecord } from "../../api/client";
 
 /**
- * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"), schemaVersion 2. The server migrates
- * older models on read; the UI still parses defensively, so one odd panel cannot break the page.
+ * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"; version 2 parts in
+ * docs/api/dashboard-features.md). The server migrates older models on read; the UI still parses
+ * defensively, so one odd panel cannot break the page.
  */
+
+/** The model version this UI writes; the server stores and answers the same. */
+export const SCHEMA_VERSION = 2;
 
 /** Columns of the dashboard grid. */
 export const GRID_COLUMNS = 24;
@@ -35,7 +39,55 @@ export interface PanelModel {
   transformations: unknown[];
   options: unknown;
   fieldConfig: unknown;
+  /** The row the panel belongs to; its grid then counts from the top of that row. */
+  rowId?: string;
+  repeat?: PanelRepeat;
+  /** A relative range of its own ("now-24h") instead of the dashboard's. */
+  timeFrom?: string;
+  /** Moves the range back by this length ("1d"). */
+  timeShift?: string;
+  links?: PanelLink[];
+  /** Shows this library panel: queries, type and options come from there. */
+  libraryPanelId?: string;
 }
+
+export interface PanelRepeat {
+  variable: string;
+  direction: "horizontal" | "vertical";
+  maxPerRow?: number;
+}
+
+export interface PanelLink {
+  title: string;
+  /** May hold variables (`${name}`); checked again after they are filled in. */
+  url: string;
+  newTab?: boolean;
+}
+
+export interface RowModel {
+  id: string;
+  title: string;
+  collapsed: boolean;
+  repeat?: { variable: string };
+}
+
+export interface AnnotationQueryModel {
+  id: string;
+  name: string;
+  datasourceId: string;
+  query: unknown;
+  enabled: boolean;
+  /** 1 to 8, an entry of the chart palette. */
+  color?: number;
+}
+
+export type DashboardLinkModel =
+  | { type: "dashboards"; tag: string; title: string; newTab?: boolean }
+  | { type: "url"; title: string; url: string; newTab?: boolean };
+
+/** A variable's value: one text, or several for a multi-value variable. */
+export type VariableValue = string | string[];
+export type VariableValues = Record<string, VariableValue>;
 
 /** Every variable type the model allows (docs/api/settings-dashboards.md). */
 export const ALL_VARIABLE_TYPES = ["custom", "textbox", "query", "constant", "interval"] as const;
@@ -63,6 +115,8 @@ export interface VariableModel {
   query?: unknown;
   /** The value the dashboard opens with: text, a number or a list, as stored. */
   current?: unknown;
+  /** Several values at once (custom and query variables); repeats need it. */
+  multi?: boolean;
 }
 
 const asText = (value: unknown): string | null =>
@@ -76,9 +130,9 @@ const asText = (value: unknown): string | null =>
  * whose sending the server refuses (docs/api/datasources.md, "Variables").
  */
 export function storedQueryVariables(
-  values: Record<string, string>,
+  values: VariableValues,
   saved: readonly VariableModel[],
-): Record<string, string> {
+): VariableValues {
   const allowed = new Set(saved.filter((v) => v.type !== "constant").map((v) => v.name));
   return Object.fromEntries(Object.entries(values).filter(([name]) => allowed.has(name)));
 }
@@ -143,21 +197,53 @@ export function currentValue(variable: VariableModel): string | undefined {
   return asText(isRecord(current) ? current.value : current) ?? undefined;
 }
 
+/** Every stored value of a multi-value variable's `current`, as text. */
+export function currentValues(variable: VariableModel): string[] {
+  const list = Array.isArray(variable.current) ? variable.current : [variable.current];
+  return list
+    .map((item) => asText(isRecord(item) ? item.value : item))
+    .filter((v): v is string => v !== null && v !== "");
+}
+
+/** A value as a list: one text is a list of one, nothing is an empty list. */
+export function valueList(value: VariableValue | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  return Array.isArray(value) ? value : value === "" ? [] : [value];
+}
+
+/** A value as one text, for places that show it in a line: several are joined by commas. */
+export function valueText(value: VariableValue | undefined): string {
+  return valueList(value).join(", ");
+}
+
+/** Every value as one text, for panels that put variables into text (the text panel). */
+export function variableTexts(values: VariableValues): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [name, valueText(value)]),
+  );
+}
+
 export interface DashboardModel {
-  schemaVersion: 2;
+  schemaVersion: typeof SCHEMA_VERSION;
   title: string;
   /** Text as typed: "now-6h", "now", or ISO times; resolved to milliseconds per run. */
   timeRange: { from: string; to: string };
   refreshSeconds?: number;
   variables: VariableModel[];
   panels: PanelModel[];
+  tags?: string[];
+  rows?: RowModel[];
+  annotations?: AnnotationQueryModel[];
+  links?: DashboardLinkModel[];
 }
 
 export const DEFAULT_TIME_RANGE = { from: "now-6h", to: "now" };
 
 export function emptyModel(title: string): DashboardModel {
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     title,
     timeRange: { ...DEFAULT_TIME_RANGE },
     variables: [],
@@ -196,7 +282,7 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     return null;
   }
   const targets = Array.isArray(value.targets) ? value.targets : [];
-  return {
+  const panel: PanelModel = {
     id: typeof value.id === "string" ? value.id : `panel-${index + 1}`,
     type: typeof value.type === "string" ? value.type : "table",
     title: typeof value.title === "string" ? value.title : "",
@@ -206,6 +292,87 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     options: value.options ?? {},
     fieldConfig: value.fieldConfig ?? {},
   };
+  for (const key of ["rowId", "timeFrom", "timeShift", "libraryPanelId"] as const) {
+    const text = value[key];
+    if (typeof text === "string" && text !== "") {
+      panel[key] = text;
+    }
+  }
+  if (isRecord(value.repeat) && typeof value.repeat.variable === "string") {
+    panel.repeat = {
+      variable: value.repeat.variable,
+      direction: value.repeat.direction === "vertical" ? "vertical" : "horizontal",
+    };
+    if (typeof value.repeat.maxPerRow === "number") {
+      panel.repeat.maxPerRow = value.repeat.maxPerRow;
+    }
+  }
+  const links = parseLinks(value.links);
+  if (links.length > 0) {
+    panel.links = links;
+  }
+  return panel;
+}
+
+function parseLinks(value: unknown): PanelLink[] {
+  return (Array.isArray(value) ? value : []).flatMap((link) =>
+    isRecord(link) && typeof link.url === "string"
+      ? [
+          {
+            title: typeof link.title === "string" ? link.title : "",
+            url: link.url,
+            ...(link.newTab === true ? { newTab: true } : {}),
+          },
+        ]
+      : [],
+  );
+}
+
+function parseRow(value: unknown): RowModel | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
+  const row: RowModel = {
+    id: value.id,
+    title: typeof value.title === "string" ? value.title : "",
+    collapsed: value.collapsed === true,
+  };
+  if (isRecord(value.repeat) && typeof value.repeat.variable === "string") {
+    row.repeat = { variable: value.repeat.variable };
+  }
+  return row;
+}
+
+function parseAnnotationQuery(value: unknown): AnnotationQueryModel | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.datasourceId !== "string") {
+    return null;
+  }
+  const query: AnnotationQueryModel = {
+    id: value.id,
+    name: typeof value.name === "string" ? value.name : value.id,
+    datasourceId: value.datasourceId,
+    query: value.query ?? null,
+    enabled: value.enabled !== false,
+  };
+  if (typeof value.color === "number") {
+    query.color = value.color;
+  }
+  return query;
+}
+
+function parseDashboardLink(value: unknown): DashboardLinkModel | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const title = typeof value.title === "string" ? value.title : "";
+  const newTab = value.newTab === true ? { newTab: true } : {};
+  if (value.type === "dashboards" && typeof value.tag === "string") {
+    return { type: "dashboards", tag: value.tag, title, ...newTab };
+  }
+  if (value.type === "url" && typeof value.url === "string") {
+    return { type: "url", title, url: value.url, ...newTab };
+  }
+  return null;
 }
 
 function parseVariable(value: unknown): VariableModel | null {
@@ -229,6 +396,9 @@ function parseVariable(value: unknown): VariableModel | null {
   if (value.current !== undefined) {
     variable.current = value.current;
   }
+  if (value.multi === true) {
+    variable.multi = true;
+  }
   return variable;
 }
 
@@ -241,7 +411,12 @@ export function cleanVariable(variable: VariableModel): VariableModel {
   const clean: VariableModel = { ...variable };
   if (clean.type !== "query") delete clean.datasourceId;
   if (clean.label === "") delete clean.label;
-  if (clean.current === "") delete clean.current;
+  if (clean.current === "" || (Array.isArray(clean.current) && clean.current.length === 0)) {
+    delete clean.current;
+  }
+  if (clean.multi !== true || (clean.type !== "custom" && clean.type !== "query")) {
+    delete clean.multi;
+  }
   return clean;
 }
 
@@ -249,7 +424,7 @@ export function parseModel(value: unknown, fallbackTitle: string): DashboardMode
   const model = isRecord(value) ? value : {};
   const range = isRecord(model.timeRange) ? model.timeRange : {};
   const parsed: DashboardModel = {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     title: typeof model.title === "string" ? model.title : fallbackTitle,
     timeRange: {
       from: typeof range.from === "string" ? range.from : DEFAULT_TIME_RANGE.from,
@@ -265,7 +440,32 @@ export function parseModel(value: unknown, fallbackTitle: string): DashboardMode
   if (typeof model.refreshSeconds === "number" && model.refreshSeconds > 0) {
     parsed.refreshSeconds = model.refreshSeconds;
   }
+  // Version 2 parts appear only when set, so a dashboard without them reads as before.
+  const tags = (Array.isArray(model.tags) ? model.tags : []).filter(
+    (t): t is string => typeof t === "string",
+  );
+  if (tags.length > 0) parsed.tags = tags;
+  const rows = (Array.isArray(model.rows) ? model.rows : [])
+    .map(parseRow)
+    .filter((r) => r !== null);
+  if (rows.length > 0) parsed.rows = rows;
+  const annotations = (Array.isArray(model.annotations) ? model.annotations : [])
+    .map(parseAnnotationQuery)
+    .filter((a) => a !== null);
+  if (annotations.length > 0) parsed.annotations = annotations;
+  const links = (Array.isArray(model.links) ? model.links : [])
+    .map(parseDashboardLink)
+    .filter((l) => l !== null);
+  if (links.length > 0) parsed.links = links;
   return parsed;
+}
+
+/**
+ * The model as the server stores it: empty version 2 parts left out, so comparing a draft with
+ * the saved model does not see a change where there is none.
+ */
+export function normalizeModel(model: DashboardModel): DashboardModel {
+  return parseModel(JSON.parse(JSON.stringify(model)), model.title);
 }
 
 /** "A", "B", ... "Z", "AA": the reference id of the nth target. */
