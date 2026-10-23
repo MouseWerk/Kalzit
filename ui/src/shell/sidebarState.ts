@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { getLanguage } from "../i18n/i18n";
 import { readPreference, writePreference } from "../lib/storage";
 
 /** "true" while the sidebar is collapsed to the icon rail; absent or anything else is expanded. */
@@ -65,9 +66,29 @@ export function isMac(): boolean {
   return /Mac|iPhone|iPad/.test(window.navigator.platform);
 }
 
+/** Key names as printed on the keyboard of the UI's language (docs/glossary.md, Style). */
+const GERMAN_KEYS: Record<string, string> = {
+  Ctrl: "Strg",
+  Shift: "Umschalt",
+  Enter: "Eingabe",
+  Del: "Entf",
+};
+
+/** A key's name in the current language: Strg, Umschalt and Eingabe on German keyboards. */
+export function keyLabel(key: string): string {
+  return getLanguage() === "de" ? (GERMAN_KEYS[key] ?? key) : key;
+}
+
+/** A shortcut with the platform's modifier: Cmd on macOS, else Ctrl in the UI's language. */
+export function modShortcut(key: string): { label: string; aria: string } {
+  return isMac()
+    ? { label: `⌘${key}`, aria: `Meta+${key}` }
+    : { label: `${keyLabel("Ctrl")}+${key}`, aria: `Control+${key}` };
+}
+
 /** The toggle shortcut as shown in the tooltip and as `aria-keyshortcuts`. */
 export function sidebarShortcut(): { label: string; aria: string } {
-  return isMac() ? { label: "⌘B", aria: "Meta+B" } : { label: "Ctrl+B", aria: "Control+B" };
+  return modShortcut("B");
 }
 
 /**

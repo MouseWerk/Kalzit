@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, type LinkProps } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
+import { Breadcrumbs } from "../components/Breadcrumbs";
 import { EmptyState } from "../components/EmptyState";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
@@ -21,8 +22,8 @@ import {
 import { setOverlay } from "../shell/overlay";
 import { SetupChecklist } from "../shell/SetupChecklist";
 import { paletteShortcut } from "../shell/ShortcutsHelp";
+import { useSidebarColumn } from "../shell/shellContext";
 import { apiErrorText } from "../shell/shellErrors";
-import { useWideLayout } from "../shell/sidebarState";
 import {
   ACTIVITY_DAYS,
   activityQuery,
@@ -65,10 +66,7 @@ function StartHeader({ greeting, actions }: { greeting: string; actions?: ReactN
   const { t } = useI18n();
   return (
     <div className="start__header">
-      <p className="start__crumb">
-        <Icon name="home" />
-        {t("home.title")}
-      </p>
+      <Breadcrumbs crumbs={[{ label: t("home.title") }]} />
       <div className="start__heading">
         <h1 className="start__greeting">{greeting}</h1>
         {actions}
@@ -80,7 +78,8 @@ function StartHeader({ greeting, actions }: { greeting: string; actions?: ReactN
 function Start({ userId, orgId, greeting }: { userId: string; orgId: string; greeting: string }) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
-  const wide = useWideLayout();
+  // The sidebar's setup card shows only in its full column; otherwise it comes here.
+  const sidebarColumn = useSidebarColumn();
   const stars = useQuery(starsQuery(orgId));
   const recents = useQuery(recentsQuery(orgId));
   // Anything at all the user may open; an empty answer is an organization without content yet.
@@ -139,7 +138,7 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
       aria-keyshortcuts={`/ ${palette.aria}`}
       onClick={() => setOverlay("palette")}
     >
-      <Icon name="explore" />
+      <Icon name="search" />
       {t("shell.start.action.search", { shortcut: palette.label })}
     </button>,
   );
@@ -157,7 +156,9 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         }
       />
       {/* Where the sidebar is a bar on top, its setup card moves here, first in view. */}
-      {wide ? null : <SetupChecklist userId={userId} orgId={orgId} placement="page" />}
+      {sidebarColumn ? null : (
+        <SetupChecklist key={`${userId}:${orgId}`} userId={userId} orgId={orgId} placement="page" />
+      )}
       <Stats orgId={orgId} />
       {fresh && !canCreate ? (
         <EmptyState icon="dashboards" title={t("shell.start.empty.title")}>
@@ -192,6 +193,8 @@ interface StatSpec {
   count: Count | undefined;
   failed: boolean;
   well: ReactNode;
+  /** Words for what the well shows, where it carries data (the sparkline). */
+  summary?: string | undefined;
 }
 
 /** The organization in numbers, each a link to where the things are; only what the user may see. */
@@ -244,6 +247,7 @@ function Stats({ orgId }: { orgId: string }) {
       count: activity.data?.total,
       failed: activity.isError,
       well: <Sparkline values={activity.data?.perDay ?? []} />,
+      summary: activitySummary(t, activity.data?.perDay),
     });
   }
 
@@ -256,6 +260,9 @@ function Stats({ orgId }: { orgId: string }) {
               <span className="stat-tile__text">
                 <span className="stat-tile__label">{t(stat.label)}</span>
                 <StatValue count={stat.count} failed={stat.failed} />
+                {stat.summary === undefined ? null : (
+                  <span className="visually-hidden">{stat.summary}</span>
+                )}
               </span>
               <span className="stat-tile__well" aria-hidden="true">
                 {stat.well}
@@ -329,20 +336,47 @@ function MembersArt() {
   );
 }
 
-/** Changes per day as a small line, in the text color; flat until the numbers arrive. */
-function Sparkline({ values }: { values: number[] }) {
+/** The sparkline in words, for screen readers: today's changes and the busiest known day. */
+function activitySummary(
+  t: ReturnType<typeof useI18n>["t"],
+  perDay: (number | null)[] | undefined,
+): string | undefined {
+  if (perDay === undefined) {
+    return undefined;
+  }
+  const known = perDay.filter((value): value is number => value !== null);
+  return t("shell.start.stat.activitySummary", {
+    today: String(perDay.at(-1) ?? 0),
+    busiest: String(Math.max(0, ...known)),
+  });
+}
+
+/**
+ * Changes per day as a small line, in the text color; flat until the numbers arrive. Days the
+ * capped reading did not reach are left out instead of drawn as zero.
+ */
+function Sparkline({ values }: { values: (number | null)[] }) {
   const width = 64;
   const height = 40;
-  const points = values.length > 0 ? values : Array.from({ length: ACTIVITY_DAYS }, () => 0);
-  const max = Math.max(1, ...points);
+  const points: (number | null)[] =
+    values.length > 0 ? values : Array.from({ length: ACTIVITY_DAYS }, () => 0);
+  const max = Math.max(1, ...points.filter((value): value is number => value !== null));
   const step = width / Math.max(1, points.length - 1);
+  let pen = "M";
   const path = points
     .map((value, index) => {
+      if (value === null) {
+        pen = "M";
+        return "";
+      }
       const x = index * step;
       // A pixel of room top and bottom, so the stroke is never cut.
       const y = height - 2 - (value / max) * (height - 4);
-      return `${index === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+      const segment = `${pen}${x.toFixed(1)} ${y.toFixed(1)}`;
+      pen = "L";
+      return segment;
     })
+    .filter((segment) => segment !== "")
     .join(" ");
   return (
     <svg

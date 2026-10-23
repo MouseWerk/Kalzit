@@ -103,6 +103,54 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /*
+   * On phones a stacking table shows each row as a small card of lines (name, then the other
+   * cells), instead of columns so narrow that words break letter by letter.
+   */
+  @media (max-width: 40rem) {
+    .data-table--stack,
+    .data-table--stack tbody {
+      display: block;
+    }
+
+    .data-table--stack thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .data-table--stack tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-1);
+      padding: var(--space-2) var(--space-3);
+      border-bottom: var(--border-width) solid var(--border);
+    }
+
+    .data-table--stack tbody tr:last-child {
+      border-bottom: 0;
+    }
+
+    .data-table--stack tbody tr:hover {
+      background: var(--bg-hover);
+    }
+
+    .data-table--stack td {
+      height: auto;
+      padding: 0;
+      border-bottom: 0;
+      overflow-wrap: break-word;
+    }
+
+    .data-table--stack .data-table__actions {
+      white-space: normal;
+      text-align: start;
+    }
+  }
+
   /* Dialogs */
 
   .dialog-backdrop {

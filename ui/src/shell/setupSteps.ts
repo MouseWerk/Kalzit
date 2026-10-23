@@ -3,13 +3,13 @@ import type { LinkProps } from "@tanstack/react-router";
 import type { MessageKey } from "../i18n/i18n";
 import { readPreference, writePreference } from "../lib/storage";
 import { useOrgPermissions } from "../org/useOrg";
-import { dashboardCountQuery, datasourceCountQuery, memberCountQuery } from "./startData";
+import { hasAnyQuery, hasColleagueQuery } from "./startData";
 
 /*
  * The setup checklist: the first things an organization needs, each derived from real data, and
- * only the steps the user may take. It is hidden once every step is done, or when the user
- * dismissed it; that choice is kept in this browser per account and organization (there is no
- * server preference for it).
+ * only the steps the user may take. It is hidden for good once every step is done, or when the
+ * user dismissed it; both are kept in this browser per account and organization (there is no
+ * server preference for it), and from then on nothing is asked of the server for it.
  */
 
 export type SetupStepKey = "datasource" | "dashboard" | "members";
@@ -24,12 +24,15 @@ export interface SetupStep {
 }
 
 export interface SetupState {
-  /** Undefined until every number the steps depend on has arrived. */
+  /** Undefined until every answer the steps depend on has arrived, or while disabled. */
   steps: SetupStep[] | undefined;
 }
 
-/** The steps the user may take, with whether each is done; undefined while loading. */
-export function useSetupSteps(orgId: string): SetupState {
+/**
+ * The steps the user may take, with whether each is done; undefined while loading. Each check is
+ * an existence check (one entry, or two members), never a count.
+ */
+export function useSetupSteps(orgId: string, enabled: boolean): SetupState {
   const permissions = useOrgPermissions();
   const canDatasource = permissions.has("datasources:write");
   const canDashboard = permissions.has("dashboards:write");
@@ -37,11 +40,17 @@ export function useSetupSteps(orgId: string): SetupState {
   const canInvite =
     (permissions.has("users:invite") || permissions.has("users:write")) &&
     permissions.has("users:read");
-  const datasources = useQuery({ ...datasourceCountQuery(orgId), enabled: canDatasource });
-  const dashboards = useQuery({ ...dashboardCountQuery(orgId), enabled: canDashboard });
-  const members = useQuery({ ...memberCountQuery(orgId), enabled: canInvite });
+  const datasources = useQuery({
+    ...hasAnyQuery(orgId, "datasource"),
+    enabled: enabled && canDatasource,
+  });
+  const dashboards = useQuery({
+    ...hasAnyQuery(orgId, "dashboard"),
+    enabled: enabled && canDashboard,
+  });
+  const members = useQuery({ ...hasColleagueQuery(orgId), enabled: enabled && canInvite });
 
-  if (!permissions.loaded) {
+  if (!enabled || !permissions.loaded) {
     return { steps: undefined };
   }
   const steps: SetupStep[] = [];
@@ -53,7 +62,7 @@ export function useSetupSteps(orgId: string): SetupState {
       label: "shell.setup.datasource",
       action: "shell.setup.datasourceAction",
       to: "/data-sources/new",
-      done: (datasources.data?.value ?? 0) > 0,
+      done: datasources.data === true,
     });
   }
   if (canDashboard) {
@@ -64,7 +73,7 @@ export function useSetupSteps(orgId: string): SetupState {
       action: "shell.setup.dashboardAction",
       to: "/dashboards",
       search: { create: "dashboard" },
-      done: (dashboards.data?.value ?? 0) > 0,
+      done: dashboards.data === true,
     });
   }
   if (canInvite) {
@@ -74,8 +83,7 @@ export function useSetupSteps(orgId: string): SetupState {
       label: "shell.setup.members",
       action: "shell.setup.membersAction",
       to: "/admin/members",
-      // The creator is the first member; a colleague makes two.
-      done: (members.data?.value ?? 0) > 1,
+      done: members.data === true,
     });
   }
   return { steps: pending.some(Boolean) ? undefined : steps };
@@ -96,14 +104,16 @@ function readDismissed(): string[] {
   }
 }
 
-const dismissKey = (userId: string, orgId: string) => `${userId}:${orgId}`;
+/** One entry per account and organization, so hiding it in one never hides it in another. */
+export const setupKey = (userId: string, orgId: string) => `${userId}:${orgId}`;
 
 export function isSetupDismissed(userId: string, orgId: string): boolean {
-  return readDismissed().includes(dismissKey(userId, orgId));
+  return readDismissed().includes(setupKey(userId, orgId));
 }
 
+/** Hides the checklist for this account and organization: dismissed, or every step done. */
 export function dismissSetup(userId: string, orgId: string): void {
-  const key = dismissKey(userId, orgId);
+  const key = setupKey(userId, orgId);
   const dismissed = readDismissed();
   if (!dismissed.includes(key)) {
     writePreference(SETUP_DISMISSED_KEY, JSON.stringify([...dismissed, key]));

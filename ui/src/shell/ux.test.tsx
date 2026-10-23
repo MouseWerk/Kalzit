@@ -15,6 +15,8 @@ import { renderApp } from "../test/renderApp";
 import { getTheme } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
+import { SETUP_DISMISSED_KEY } from "./setupSteps";
+import { SIDEBAR_STORAGE_KEY } from "./sidebarState";
 
 function asRole(role: string) {
   return { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role }] };
@@ -319,7 +321,7 @@ describe("start page", () => {
     ]);
     expect(within(steps).getByText("1 of 3 done")).toBeTruthy();
     // The card offers the next step.
-    await user.click(within(steps).getByRole("link", { name: "Add data source" }));
+    await user.click(within(steps).getByRole("link", { name: "Connect a database" }));
     await screen.findByRole("heading", { level: 1, name: /data source/i });
   });
 
@@ -336,12 +338,36 @@ describe("start page", () => {
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
   });
 
-  it("shows no checklist once every step is done", async () => {
-    setup("owner");
+  it("shows no checklist once every step is done, and stops asking for it", async () => {
+    const server = setup("owner");
     renderApp("/");
     await screen.findByRole("region", { name: "Overview" });
-    await waitFor(() => expect(screen.queryByText(/of 3 done/)).toBeNull());
+    await waitFor(() =>
+      expect(window.localStorage.getItem(SETUP_DISMISSED_KEY)).toContain(`${TEST_USER.id}:o1`),
+    );
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
+    // Existence checks only: one entry (two members), never a page of 200.
+    const checks = server.calls.filter((call) =>
+      /search\?.*limit=1\b|members\?limit=2\b/.test(call.path),
+    );
+    expect(checks.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a dismissal to its own organization", async () => {
+    window.localStorage.setItem(SETUP_DISMISSED_KEY, JSON.stringify([`${TEST_USER.id}:o2`]));
+    const server = installFakeServer({ signedIn: true, user: asRole("owner") });
+    server.areas.datasources.datasources = [];
+    renderApp("/");
+    expect(await screen.findByRole("region", { name: "First steps" })).toBeTruthy();
+  });
+
+  it("moves the checklist onto the start page while the sidebar is the rail", async () => {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
+    const server = installFakeServer({ signedIn: true, user: asRole("owner") });
+    server.areas.datasources.datasources = [];
+    renderApp("/");
+    const steps = await screen.findByRole("region", { name: "First steps" });
+    expect(steps.closest("main")).not.toBeNull();
   });
 
   it("shows a viewer of a fresh organization no step it could not take", async () => {
@@ -626,6 +652,25 @@ describe("shortcuts and editors", () => {
     fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.activeElement).toBe(editor);
+  });
+
+  it("leaves / to text fields, editable text, code editors and input methods", async () => {
+    setup();
+    const { user } = renderApp("/dashboards");
+    const search = await screen.findByLabelText("Search dashboards");
+    await user.click(search);
+    await user.keyboard("/");
+    expect((search as HTMLInputElement).value).toBe("/");
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    screen.getByRole("main").append(editable);
+    fireEvent.keyDown(editable, { key: "/" });
+    fireEvent.keyDown(codeEditor(), { key: "/" });
+    // A "/" that confirms an input method composition is the composition's, not a shortcut.
+    fireEvent.keyDown(document.body, { key: "/", isComposing: true });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    fireEvent.keyDown(document.body, { key: "/" });
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
   });
 
   it("does not open the help with ? from a text field or a code editor", async () => {

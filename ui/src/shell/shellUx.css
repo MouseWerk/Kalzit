@@ -618,15 +618,33 @@
 
   .start__header {
     display: grid;
-    gap: var(--space-6);
+    gap: var(--space-4);
   }
 
-  .start__crumb {
+  /* The content header: the sidebar toggle, then the page's breadcrumbs. */
+  .shell__header {
     display: flex;
     align-items: center;
+    min-width: 0;
+    min-height: var(--space-6);
     gap: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    margin-block-end: var(--space-4);
+  }
+
+  .shell__crumbs {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .shell__crumbs .breadcrumbs {
+    margin-block-end: 0;
+  }
+
+  /* Without a toggle (the bar on top) and without breadcrumbs, the header takes no room. */
+  @media (max-width: 48rem) {
+    .shell__header:not(:has(.breadcrumbs)) {
+      display: none;
+    }
   }
 
   .start__heading {
@@ -658,7 +676,7 @@
   }
 
   .start__stats {
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-stat-min), 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-stat-min), 100%), 1fr));
   }
 
   .start__cards {
@@ -698,9 +716,13 @@
     background: var(--bg-hover);
   }
 
+  /* One line: a long label is cut, never pushes the number down. */
   .stat-tile__label {
+    overflow: hidden;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .stat-tile__value {

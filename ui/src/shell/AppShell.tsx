@@ -23,6 +23,7 @@ import {
   paletteShortcut,
   ShortcutsHelp,
 } from "./ShortcutsHelp";
+import { CrumbSlotContext, SidebarColumnContext } from "./shellContext";
 import {
   isToggleShortcut,
   isTypingTarget,
@@ -162,6 +163,8 @@ export function AppShell() {
   }
 
   const toggleLabel = t("nav.sidebar");
+  // Set from a ref callback, so breadcrumbs move into the header before the first paint.
+  const [crumbSlot, setCrumbSlot] = useState<HTMLElement | null>(null);
   return (
     <div className="shell" data-sidebar={rail ? "collapsed" : "expanded"}>
       <button type="button" className="skip-link" onClick={skipToContent}>
@@ -170,18 +173,6 @@ export function AppShell() {
       <header ref={sidebarRef} id={sidebarId} className="shell__sidebar">
         <div className="shell__top">
           <OrgSwitcher me={me} rail={rail} />
-          <button
-            type="button"
-            className="shell__toggle"
-            aria-label={toggleLabel}
-            aria-expanded={!rail}
-            aria-controls={sidebarId}
-            aria-keyshortcuts={shortcut.aria}
-            title={t("nav.sidebarHint", { shortcut: shortcut.label })}
-            onClick={toggleSidebar}
-          >
-            <Icon name="sidebar" />
-          </button>
         </div>
         <button
           type="button"
@@ -190,7 +181,7 @@ export function AppShell() {
           title={t("shell.search.hint", { shortcut: palette.label })}
           onClick={() => setOverlay("palette")}
         >
-          <Icon name="explore" />
+          <Icon name="search" />
           <span className="shell__search-label">{t("shell.search.label")}</span>
           <span className="shell__search-key" aria-hidden="true">
             <kbd className="kbd">/</kbd>
@@ -210,14 +201,45 @@ export function AppShell() {
           ))}
         </nav>
         {currentOrg === undefined || rail || !wide ? null : (
-          <SetupChecklist userId={me.id} orgId={currentOrg.id} placement="sidebar" />
+          <SetupChecklist
+            key={`${me.id}:${currentOrg.id}`}
+            userId={me.id}
+            orgId={currentOrg.id}
+            placement="sidebar"
+          />
         )}
         <UserMenu me={me} rail={rail} />
         <RailTooltip rail={rail} sidebarRef={sidebarRef} />
       </header>
       <main ref={mainRef} id="main" className="shell__main" tabIndex={-1}>
+        {/*
+          The content header: the sidebar toggle at the top left, then the page's breadcrumbs
+          (Breadcrumbs portals them in). Below the column breakpoint the sidebar is a bar on top
+          with nothing to collapse, so the toggle is left out there.
+        */}
+        <div className="shell__header">
+          {wide ? (
+            <button
+              type="button"
+              className="shell__toggle"
+              aria-label={toggleLabel}
+              aria-expanded={!rail}
+              aria-controls={sidebarId}
+              aria-keyshortcuts={shortcut.aria}
+              title={t("nav.sidebarHint", { shortcut: shortcut.label })}
+              onClick={toggleSidebar}
+            >
+              <Icon name="sidebar" />
+            </button>
+          ) : null}
+          <div ref={setCrumbSlot} className="shell__crumbs" />
+        </div>
         <div className="shell__content">
-          <Outlet />
+          <CrumbSlotContext value={crumbSlot}>
+            <SidebarColumnContext value={wide && !rail}>
+              <Outlet />
+            </SidebarColumnContext>
+          </CrumbSlotContext>
         </div>
       </main>
       <Toaster />

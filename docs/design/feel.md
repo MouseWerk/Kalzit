@@ -312,7 +312,10 @@ owned by #27, #29, #30).
   a plain card for who has none of them); Search as a nav row with a `/` keycap, and `/` opens
   the palette anywhere but in a text field; thin dividers between the nav groups (start, data,
   administration; `NAV_SECTIONS` in `features/nav.ts`); nav rows 32 px at body size; tooltips
-  name the shortcuts (Search: `/` or Ctrl+K, sidebar: Ctrl+B).
+  name the shortcuts (Search: `/` or Ctrl+K, sidebar: Ctrl+B; Strg on German keyboards). The
+  collapse toggle sits in the content header at the top left, before the breadcrumbs (which
+  `Breadcrumbs` portals there), so the workspace card has the sidebar's full width; on phones,
+  where the sidebar is a bar on top, there is nothing to collapse and no toggle.
 - First-steps card at the bottom of the sidebar (on the start page where the sidebar is a bar on
   top): add a data source, create a dashboard, invite a colleague, each only for who may do it
   and checked from real data (search, member list); gone once all are done or when dismissed,

@@ -1,7 +1,7 @@
 import { Fragment, useId } from "react";
 import { Dialog } from "../features/admin/components/Dialog";
 import { type MessageKey, useI18n } from "../i18n/i18n";
-import { isMac } from "./sidebarState";
+import { isMac, keyLabel, modShortcut } from "./sidebarState";
 import "./shellUx.css";
 
 interface Shortcut {
@@ -76,9 +76,9 @@ export const SHORTCUT_AREAS: readonly Area[] = [
 /** A key as the platform names it. */
 function keyName(key: string): string {
   if (key === "Mod") {
-    return isMac() ? "⌘" : "Ctrl";
+    return isMac() ? "⌘" : keyLabel("Ctrl");
   }
-  return key;
+  return keyLabel(key);
 }
 
 /** The keyboard shortcuts help, opened with ? or from the command palette. */
@@ -168,5 +168,5 @@ export function isPaletteShortcut(event: KeyboardEvent): boolean {
 
 /** The palette shortcut as shown in the sidebar and as `aria-keyshortcuts`. */
 export function paletteShortcut(): { label: string; aria: string } {
-  return isMac() ? { label: "⌘K", aria: "Meta+K" } : { label: "Ctrl+K", aria: "Control+K" };
+  return modShortcut("K");
 }

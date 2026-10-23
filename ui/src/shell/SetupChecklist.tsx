@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { dismissSetup, isSetupDismissed, useSetupSteps } from "./setupSteps";
@@ -23,7 +23,15 @@ export function SetupChecklist({
   const { t } = useI18n();
   const titleId = useId();
   const [dismissed, setDismissed] = useState(() => isSetupDismissed(userId, orgId));
-  const { steps } = useSetupSteps(orgId);
+  const { steps } = useSetupSteps(orgId, !dismissed);
+  const complete = steps !== undefined && steps.length > 0 && steps.every((step) => step.done);
+  // Once everything is done, the card is gone for good and asks the server nothing more.
+  useEffect(() => {
+    if (complete) {
+      dismissSetup(userId, orgId);
+      setDismissed(true);
+    }
+  }, [complete, userId, orgId]);
   if (dismissed || steps === undefined || steps.length === 0) {
     return null;
   }
