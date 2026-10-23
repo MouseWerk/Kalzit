@@ -216,7 +216,8 @@
    * touch screens (no hover, or any coarse pointer) always show them.
    */
   @media (hover: hover) and (not (any-pointer: coarse)) {
-    .panel-card:not(.panel-card--editing, :hover, :focus-within) .panel-card__actions {
+    .panel-card:not(.panel-card--editing, :hover, :focus-within, :has([aria-expanded="true"]))
+      .panel-card__actions {
       clip-path: inset(50%);
     }
   }

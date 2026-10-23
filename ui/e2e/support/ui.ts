@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { type Language, t } from "./i18n";
 
 /**
  * Replaces the text of the query editor inside `scope`. Waits for CodeMirror (it loads after
@@ -13,4 +14,21 @@ export async function fillQuery(scope: Page | Locator, text: string): Promise<vo
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.insertText(text);
   await expect(editor).toHaveText(text);
+}
+
+/**
+ * Picks an action from a panel's menu: `action` is the i18n key of the action's accessible name
+ * ("dashboards.panel.editNamed"), which names the panel by its title.
+ */
+export async function panelAction(
+  page: Page,
+  title: string,
+  action: string,
+  language: Language = "en",
+): Promise<void> {
+  await page
+    .getByRole("article", { name: title, exact: true })
+    .getByRole("button", { name: t("dashboards.panel.menuNamed", { title }, language) })
+    .click();
+  await page.getByRole("menuitem", { name: t(action, { title }, language) }).click();
 }

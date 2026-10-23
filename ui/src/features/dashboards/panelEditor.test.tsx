@@ -8,6 +8,14 @@ import { EDITOR_LAYOUT_KEY, readEditorLayout } from "./editorLayout";
 import { type DashboardModel, emptyModel, type PanelModel, placePanel } from "./model";
 import { addDashboard, latest } from "./test/fakeDashboards";
 
+/** Opens a panel's menu and picks an action, named as the old buttons were ("Edit “Orders”"). */
+async function panelAction(user: ReturnType<typeof renderApp>["user"], name: string) {
+  const title = /“(.*)”/.exec(name)?.[1] ?? "";
+  const panel = await screen.findByRole("article", { name: title });
+  await user.click(within(panel).getByRole("button", { name: `Panel menu of “${title}”` }));
+  await user.click(await screen.findByRole("menuitem", { name }));
+}
+
 /**
  * The full-page panel editor (docs/design/feel.md sections 5 and 10): its route, leaving it with
  * and without the change, the guard for unsaved changes, the remembered splits, and that typing
@@ -117,11 +125,7 @@ const editorRegion = () => screen.findByRole("region", { name: "Edit panel" });
 
 async function openEditor(user: ReturnType<typeof renderApp>["user"], title: string) {
   await user.click(await screen.findByRole("button", { name: "Edit" }));
-  await user.click(
-    within(await screen.findByRole("article", { name: title })).getByRole("button", {
-      name: `Edit “${title}”`,
-    }),
-  );
+  await panelAction(user, `Edit “${title}”`);
   return editorRegion();
 }
 

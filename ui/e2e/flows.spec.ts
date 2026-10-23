@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Api, fixturesDir, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
-import { fillQuery } from "./support/ui";
+import { fillQuery, panelAction } from "./support/ui";
 
 test("a time range chosen on a dashboard lands in the address and survives a reload", async ({
   page,
@@ -156,9 +156,7 @@ test("the panel editor keeps its changes over a reload and asks before the back 
   await signInOwner(page);
   await page.goto(`/dashboards/${id}`);
   await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await page
-    .getByRole("button", { name: t("dashboards.panel.editNamed", { title: "Sales" }) })
-    .click();
+  await panelAction(page, "Sales", "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await editor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz neu");
   // The reload asks first (unsaved changes); accepted, the editor comes back with the change.

@@ -136,6 +136,8 @@
   "dashboards.panel.removeNamed": "„{title}“ entfernen",
   "dashboards.panel.arrange": "„{title}“ anordnen",
   "dashboards.panel.arrangeHint": "Pfeiltasten verschieben das Panel, Umschalt und Pfeiltasten ändern seine Größe.",
+  "dashboards.panel.menu": "Panelmenü",
+  "dashboards.panel.menuNamed": "Panelmenü von „{title}“",
   "dashboards.panel.noQuery": "Dieses Panel hat noch keine Abfrage.",
   "dashboards.panel.unknownType": "Diese Panel-Art ist nicht verfügbar: {type}.",
   "dashboards.panel.otherShape": "Das Ergebnis hat die Form „{shape}“, die dieses Panel nicht zeigen kann. Wähle eine andere Visualisierung.",

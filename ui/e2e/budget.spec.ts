@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { Api, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
+import { panelAction } from "./support/ui";
 
 /**
  * Performance budgets for editing (docs/design/feel.md section 10, fix 5), in Chromium with the
@@ -124,9 +125,7 @@ test("typing in a panel's query stays under 50 ms p95 at 4x CPU throttling", asy
   world,
 }) => {
   await openForEditing(page, world.sourceId);
-  await page
-    .getByRole("button", { name: t("dashboards.panel.editNamed", { title: "Sales" }) })
-    .click();
+  await panelAction(page, "Sales", "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   const query = editor.locator(".cm-content").first();
   await expect(query).toBeVisible();

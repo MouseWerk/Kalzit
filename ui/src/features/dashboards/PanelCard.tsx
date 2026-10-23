@@ -42,6 +42,7 @@ import {
   type VariableValues,
   variableTexts,
 } from "./model";
+import { PanelMenu, type PanelMenuItem } from "./PanelMenu";
 import { TIME_PANELS, timeNote } from "./panelTime";
 import {
   documentsOf,
@@ -276,6 +277,80 @@ export function PanelCard({
   }
 
   const outcomes = results.data ?? [];
+  const noData = results.data === undefined;
+  // Every action of the panel, in one menu: its links first, then viewing, then editing.
+  const menuItems: PanelMenuItem[] = [
+    ...links.map((link) => ({
+      key: `link:${link.title}${link.url}`,
+      label: link.title,
+      name: link.title,
+      href: link.href,
+      ...(link.newTab === true ? { newTab: true } : {}),
+    })),
+  ];
+  if (view?.onView !== undefined && !alone) {
+    const onView = view.onView;
+    menuItems.push({
+      key: "view",
+      label: t("dashboardTools.view.panel"),
+      name: t("dashboardTools.view.panelNamed", { title }),
+      onSelect: () => onView(panel.id),
+    });
+  }
+  if (onAnnotate !== undefined && isTimePanel) {
+    menuItems.push({
+      key: "annotate",
+      label: t("annotations.add"),
+      name: t("annotations.addNamed", { title }),
+      onSelect: () => onAnnotate(panel.id, Math.min(Date.now(), query.range.to)),
+    });
+  }
+  menuItems.push({
+    key: "inspect",
+    label: t("dashboards.panel.inspect"),
+    name: t("dashboards.panel.inspectNamed", { title }),
+    onSelect: () => setInspecting(true),
+    disabled: noData,
+  });
+  if (mayExport) {
+    menuItems.push({
+      key: "export",
+      label: t("analysis.export.button"),
+      name: t("analysis.export.buttonNamed", { title }),
+      onSelect: () => setExporting(true),
+      disabled: noData,
+    });
+  }
+  if (edit !== undefined) {
+    menuItems.push(
+      {
+        key: "edit",
+        label: t("dashboards.panel.edit"),
+        name: t("dashboards.panel.editNamed", { title }),
+        onSelect: edit.onEdit,
+      },
+      {
+        key: "duplicate",
+        label: t("dashboards.panel.duplicate"),
+        name: t("dashboards.panel.duplicateNamed", { title }),
+        onSelect: edit.onDuplicate,
+      },
+    );
+    if (edit.onCopy !== undefined) {
+      menuItems.push({
+        key: "copy",
+        label: t("dashboardTools.copy.panel"),
+        name: t("dashboardTools.copy.panelNamed", { title }),
+        onSelect: edit.onCopy,
+      });
+    }
+    menuItems.push({
+      key: "remove",
+      label: t("dashboards.panel.remove"),
+      name: t("dashboards.panel.removeNamed", { title }),
+      onSelect: edit.onRemove,
+    });
+  }
   const className = [
     "panel-card",
     edit === undefined ? "" : "panel-card--editing",
@@ -312,39 +387,6 @@ export function PanelCard({
             </span>
           )}
           <div className="panel-card__actions">
-            {links.map((link) => (
-              <a
-                key={`${link.title}${link.url}`}
-                className="button button--ghost button--small panel-card__link"
-                href={link.href}
-                onPointerDown={(event) => event.stopPropagation()}
-                {...(link.newTab === true ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-              >
-                {link.title}
-              </a>
-            ))}
-            {onAnnotate === undefined || !isTimePanel ? null : (
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => onAnnotate(panel.id, Math.min(Date.now(), query.range.to))}
-                aria-label={t("annotations.addNamed", { title })}
-              >
-                {t("annotations.add")}
-              </button>
-            )}
-            {view?.onView === undefined || alone ? null : (
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => view.onView?.(panel.id)}
-                aria-label={t("dashboardTools.view.panelNamed", { title })}
-              >
-                {t("dashboardTools.view.panel")}
-              </button>
-            )}
             {edit === undefined ? null : (
               <>
                 <button
@@ -363,70 +405,7 @@ export function PanelCard({
                 </span>
               </>
             )}
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => setInspecting(true)}
-              aria-label={t("dashboards.panel.inspectNamed", { title })}
-              disabled={results.data === undefined}
-            >
-              {t("dashboards.panel.inspect")}
-            </button>
-            {mayExport ? (
-              <button
-                type="button"
-                className="button button--ghost button--small"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => setExporting(true)}
-                aria-label={t("analysis.export.buttonNamed", { title })}
-                disabled={results.data === undefined}
-              >
-                {t("analysis.export.button")}
-              </button>
-            ) : null}
-            {edit === undefined ? null : (
-              <>
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={edit.onEdit}
-                  aria-label={t("dashboards.panel.editNamed", { title })}
-                >
-                  {t("dashboards.panel.edit")}
-                </button>
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={edit.onDuplicate}
-                  aria-label={t("dashboards.panel.duplicateNamed", { title })}
-                >
-                  {t("dashboards.panel.duplicate")}
-                </button>
-                {edit.onCopy === undefined ? null : (
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={edit.onCopy}
-                    aria-label={t("dashboardTools.copy.panelNamed", { title })}
-                  >
-                    {t("dashboardTools.copy.panel")}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={edit.onRemove}
-                  aria-label={t("dashboards.panel.removeNamed", { title })}
-                >
-                  {t("dashboards.panel.remove")}
-                </button>
-              </>
-            )}
+            <PanelMenu title={title} items={menuItems} />
           </div>
         </header>
         <div className="panel-card__body">

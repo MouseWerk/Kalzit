@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { fixturesDir, SQL, unique } from "./support/api";
 import { pattern, t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
-import { fillQuery } from "./support/ui";
+import { fillQuery, panelAction } from "./support/ui";
 
 test("the owner connects SQLite, explores a time series and builds a dashboard with a variable", async ({
   page,
@@ -70,9 +70,7 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
 
   // A panel from Explore is named after its data source.
   const panelTitle = source;
-  await page
-    .getByRole("button", { name: t("dashboards.panel.editNamed", { title: panelTitle }) })
-    .click();
+  await panelAction(page, panelTitle, "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await editor.getByLabel(t("dashboards.editor.panelTitle")).fill("Umsatz");
   await fillQuery(editor, SQL.byRegion);

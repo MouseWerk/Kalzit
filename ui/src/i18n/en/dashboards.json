@@ -136,6 +136,8 @@
   "dashboards.panel.removeNamed": "Remove “{title}”",
   "dashboards.panel.arrange": "Arrange “{title}”",
   "dashboards.panel.arrangeHint": "Arrow keys move the panel, Shift and arrow keys resize it.",
+  "dashboards.panel.menu": "Panel menu",
+  "dashboards.panel.menuNamed": "Panel menu of “{title}”",
   "dashboards.panel.noQuery": "This panel has no query yet.",
   "dashboards.panel.unknownType": "This panel type is not available: {type}.",
   "dashboards.panel.otherShape": "The result is in the shape “{shape}”, which this panel cannot show. Pick another visualization.",

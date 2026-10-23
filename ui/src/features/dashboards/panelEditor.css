@@ -324,6 +324,14 @@
     overflow: auto;
   }
 
+  /* In the narrow pane each visualization's description keeps to one line; the card's tooltip
+     holds all of it. */
+  .options-pane .picker__hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .options-pane {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

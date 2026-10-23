@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
-import { fillQuery } from "../support/ui";
+import { fillQuery, panelAction } from "../support/ui";
 import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
@@ -171,11 +171,7 @@ async function panelEditor(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
   await dashboardReady(page);
   await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await page
-    .getByRole("button", {
-      name: t("dashboards.panel.editNamed", { title: "Sales in the selected region" }),
-    })
-    .click();
+  await panelAction(page, "Sales in the selected region", "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await expect(editor.locator(".cm-content").first()).toBeVisible();
   await expect(editor.locator(".uplot")).toHaveCount(1);
