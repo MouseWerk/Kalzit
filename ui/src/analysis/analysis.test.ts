@@ -198,6 +198,63 @@ describe("bounds shared with the server", () => {
     );
   });
 
+  it("counts the text a join copies, and measures calculate and group", () => {
+    const side = (name: string): NamedFrame => ({
+      name,
+      frame: {
+        fields: [
+          { name: "k", type: "number", values: Array.from({ length: 10 }, (_, i) => i) },
+          { name: "t", type: "string", values: Array(10).fill("x".repeat(100)) },
+        ],
+      },
+    });
+    const join: Step = {
+      id: "j",
+      type: "join",
+      left: "A",
+      right: "B",
+      on: { by: "key", leftField: "k", rightField: "k" },
+      mode: "inner",
+    };
+    expect(runSteps([join], [side("A"), side("B")], { textBudget: 2000 }).failed).toBeUndefined();
+    expect(
+      runSteps([join], [side("A"), side("B")], { textBudget: 1999 }).failed?.error.reason,
+    ).toBe("steps.too_much_text");
+
+    const four = frameOf([
+      { name: "land", type: "string", values: ["AT", "CH", "AT", null] },
+      { name: "betrag", type: "number", values: [1, 2, 3, 4] },
+      { name: "x", type: "number", values: [1, 2, 3, 4] },
+      { name: "y", type: "number", values: [1, 2, 3, 4] },
+    ]);
+    const small = { maxCells: 7 };
+    expect(runSteps([calc("1", "z", "1")], [four], small).failed?.error.reason).toBe(
+      "steps.too_many_cells",
+    );
+    const group = (aggregations: { field: string; op: "sum" | "max" }[]): Step => ({
+      id: "g",
+      type: "group",
+      frame: "A",
+      by: ["land"],
+      aggregations,
+    });
+    expect(
+      runSteps([group([{ field: "betrag", op: "sum" }])], [four], small).failed,
+    ).toBeUndefined();
+    expect(
+      runSteps(
+        [
+          group([
+            { field: "betrag", op: "sum" },
+            { field: "betrag", op: "max" },
+          ]),
+        ],
+        [four],
+        small,
+      ).failed?.error.reason,
+    ).toBe("steps.too_many_cells");
+  });
+
   it("keeps stored entries it does not know", () => {
     const stored = [{ id: "x", type: "fromTheFuture" }, calc("1", "b", "1")];
     expect(withUnknown(stored, [calc("2", "c", "2")])).toEqual([

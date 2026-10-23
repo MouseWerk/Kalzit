@@ -1707,6 +1707,25 @@ mod tests {
             .expect("evaluates on a small stack");
     }
 
+    /// The tallest tree the limits allow, made of calls, checks and runs on a 2 MB thread (the
+    /// size of tokio's blocking threads, where exports run their steps).
+    #[test]
+    fn a_tall_tree_of_calls_runs_on_a_blocking_thread() {
+        let element = "*abs(min(x,2))";
+        let text = (0..6).fold("x".to_string(), |acc, _| format!("({acc}{})", element.repeat(20)));
+        assert!(text.chars().count() <= MAX_CHARS, "{}", text.chars().count());
+        let fields = vec![field("x", FieldType::Number, vec![json!(1.0)])];
+        let expr = parse(&text).unwrap_or_else(|e| panic!("{e}"));
+        assert!(expr.height() >= MAX_HEIGHT - 6 && expr.height() <= MAX_HEIGHT, "{}", expr.height());
+        let value = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || compile(&expr, &fields).unwrap().cell(&fields, 0).unwrap())
+            .unwrap()
+            .join()
+            .expect("checks and evaluates on a 2 MB stack");
+        assert_eq!(value, json!(1.0));
+    }
+
     #[test]
     fn text_results_are_capped() {
         let fields = vec![field("a", FieldType::String, vec![json!("x".repeat(20_000))])];

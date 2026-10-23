@@ -58,13 +58,23 @@ export function StepsEditor({ steps, onChange, refIds, inputs, run: given }: Ste
   const [adding, setAdding] = useState<StepType>("calculate");
   // The step whose result the preview shows; -1 shows the queries' results.
   const [previewAt, setPreviewAt] = useState(-1);
-  const [announcement, setAnnouncement] = useState("");
+  const [announcement, setAnnouncement] = useState({ text: "", count: 0 });
+  // Each announcement is new to the live region, also when the words repeat (a step moved up
+  // twice): the counter keys a fresh node, which screen readers read as an addition.
+  const announce = (text: string) => setAnnouncement((a) => ({ text, count: a.count + 1 }));
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const frames = inputs.flatMap((i) => ("frame" in i ? [i] : []));
   // Typing stays quick: the steps run on the deferred list, a moment behind the keystrokes.
   const deferred = useDeferredValue(steps);
   const run = given ?? runSteps(deferred, inputs);
   const hasData = inputs.length > 0;
+  // The run may be of the list as it was a moment ago (deferred); results go by step id, so a
+  // step never shows its neighbour's result after a move.
+  const byId = new Map(run.steps.map((o) => [o.id, o]));
+  const outcomeAt = (index: number) => {
+    const step = steps[index];
+    return step === undefined ? undefined : byId.get(step.id);
+  };
 
   // A moved or removed step's control left the place it was; focus goes where the user expects.
   useEffect(() => {
@@ -98,7 +108,7 @@ export function StepsEditor({ steps, onChange, refIds, inputs, run: given }: Ste
     // The preview stays on the step it showed, wherever that step now is.
     if (previewAt === index) setPreviewAt(index + by);
     else if (previewAt === index + by) setPreviewAt(index);
-    setAnnouncement(t("analysis.steps.moved", { n: index + by + 1 }));
+    announce(t("analysis.steps.moved", { n: index + by + 1 }));
     setFocus({ id: step.id, action: by < 0 ? "up" : "down" });
   };
   const remove = (index: number) => {
@@ -106,26 +116,26 @@ export function StepsEditor({ steps, onChange, refIds, inputs, run: given }: Ste
     onChange(next);
     if (previewAt === index) setPreviewAt(-1);
     else if (previewAt > index) setPreviewAt(previewAt - 1);
-    setAnnouncement(t("analysis.steps.removed", { n: index + 1 }));
+    announce(t("analysis.steps.removed", { n: index + 1 }));
     const neighbour = next[index] ?? next[index - 1];
     setFocus(neighbour === undefined ? { id: null } : { id: neighbour.id, action: "remove" });
   };
   /** The frames a step reads: what the step before it made, or the queries' results. */
   const inputOf = (index: number): readonly NamedFrame[] => {
     for (let i = index - 1; i >= 0; i--) {
-      const out = run.steps[i]?.frames;
+      const out = outcomeAt(i)?.frames;
       if (out !== undefined) return out;
-      if (run.steps[i]?.skipped !== true) return [];
+      if (outcomeAt(i)?.skipped !== true) return [];
     }
     return frames;
   };
   const previewFrames =
-    previewAt < 0 ? frames : (run.steps[previewAt]?.frames ?? inputOf(previewAt + 1));
+    previewAt < 0 ? frames : (outcomeAt(previewAt)?.frames ?? inputOf(previewAt + 1));
 
   return (
     <section className="steps" aria-labelledby={headingId} ref={sectionRef}>
       <p className="visually-hidden" aria-live="polite">
-        {announcement}
+        <span key={announcement.count}>{announcement.text}</span>
       </p>
       <h3 className="steps__heading" id={headingId}>
         {t("analysis.steps.title")}
@@ -134,7 +144,7 @@ export function StepsEditor({ steps, onChange, refIds, inputs, run: given }: Ste
       {steps.length === 0 ? <p className="field__hint">{t("analysis.steps.empty")}</p> : null}
       <ol className="steps__list">
         {steps.map((step, index) => {
-          const outcome = run.steps[index];
+          const outcome = outcomeAt(index);
           const n = index + 1;
           let status: ReactNode;
           if (step.disabled === true) {

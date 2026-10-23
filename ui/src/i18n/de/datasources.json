@@ -264,6 +264,7 @@
   "datasources.reason.steps.cancelled": "Der Export wurde abgebrochen.",
   "datasources.reason.expression.text_too_long": "Der Text wäre länger als {max} Zeichen.",
   "datasources.reason.export.too_large": "Die Datei wäre größer als {max} Bytes. Exportiere weniger Zeilen oder als Excel.",
+  "datasources.reason.export.too_many_cells": "Eine Excel-Datei nimmt höchstens {max} Zellen. Exportiere stattdessen als CSV.",
   "datasources.reason.export.busy": "Gerade laufen andere Exporte. Versuche es gleich noch einmal.",
   "datasources.reason.source.error": "Die Datenquelle hat einen Fehler gemeldet: {detail}",
   "datasources.reason.source.no_answer": "Die Datenquelle hat keine Antwort geschickt.",

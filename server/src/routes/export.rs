@@ -39,13 +39,12 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::shapes::{
-    ExportFormat, ExportLanguage, ExportRequest, Frame, FrameMeta, PanelExportRequest, QueryItem, QueryOutcome,
-    QueryResponse, QueryResult, Shape, TimeRange,
+    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
+    QueryResult, Shape, TimeRange,
 };
 
-/// Exports that make their file at the same time, per server.
+/// Exports that make their file at the same time, per server (`AppState::exports`).
 pub const MAX_EXPORTS: usize = 3;
-static EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_EXPORTS);
 /// The steps' and the encoder's time limit when the setting cannot be read.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
@@ -131,14 +130,13 @@ async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: 
     for item in &req.queries {
         check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id)).await?;
     }
-    let permit = EXPORTS.try_acquire().map_err(|_| too_busy())?;
+    let permit = state.exports.clone().try_acquire_owned().map_err(|_| too_busy())?;
     let order: Vec<String> = req.queries.iter().map(|q| q.ref_id.clone()).collect();
     let response =
         run_queries(state, ctx, req.queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables)
             .await;
     let title = req.title.unwrap_or_else(|| "kalzit-export".into());
-    let (file, rows) = produce(state, response, &order, steps, wanted).await?;
-    drop(permit);
+    let (file, rows) = produce(state, response, &order, steps, wanted, permit).await?;
     let mut summary = wanted.summary();
     summary.insert("rows".into(), json!(rows));
     Ok(Made { file, title, summary })
@@ -194,7 +192,7 @@ async fn make_panel(
         })
         .collect();
     check_items(&items)?;
-    let permit = EXPORTS.try_acquire().map_err(|_| too_busy())?;
+    let permit = state.exports.clone().try_acquire_owned().map_err(|_| too_busy())?;
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
     let response = run_queries_with(
         state,
@@ -208,8 +206,7 @@ async fn make_panel(
     )
     .await;
     let title = if panel.title.trim().is_empty() { model.title.clone() } else { panel.title.clone() };
-    let (file, rows) = produce(state, response, &order, steps, wanted).await?;
-    drop(permit);
+    let (file, rows) = produce(state, response, &order, steps, wanted, permit).await?;
     let mut summary = wanted.summary();
     summary.insert("panelId".into(), json!(panel_id));
     summary.insert("rows".into(), json!(rows));
@@ -259,6 +256,9 @@ async fn produce(
     order: &[String],
     steps: Vec<Step>,
     wanted: &Wanted,
+    // Held by the blocking work itself: a client that goes away ends the request, not the work,
+    // and the slot is free only when the work has stopped.
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> ApiResult<(export::File, usize)> {
     let timeout = crate::settings::get(state, "datasources.query_timeout_secs")
         .await
@@ -288,6 +288,7 @@ async fn produce(
     let control = Control::new(cancelled, timeout);
     // Steps and encoding take CPU time; they run off the request threads.
     let work = tokio::task::spawn_blocking(move || -> Result<(export::File, usize), ApiError> {
+        let _permit = permit;
         let frames = steps::run_inputs(&steps, inputs, &control).map_err(|f| {
             let message = format!("step {}: {}", f.index + 1, f.detail.message);
             step_error(message, f.detail)
@@ -317,8 +318,8 @@ async fn produce(
                 }
             });
         };
-        let frame = without_statement(&chosen.frame);
-        let file = export::encode(&frame, &chosen.name, format, language, &control)
+        let frame = &chosen.frame;
+        let file = export::encode(frame, &chosen.name, format, language, &control)
             .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
         Ok((file, frame.rows()))
     });
@@ -334,17 +335,6 @@ fn step_error(message: String, detail: Detail) -> ApiError {
         ApiError::validation(message).with_field("steps")
     };
     e.with_reason(detail.reason, detail.params)
-}
-
-/// The frame without the statement as sent to the database: a file goes elsewhere, the query
-/// text stays in Kalzit.
-fn without_statement(frame: &Frame) -> Frame {
-    match frame.meta() {
-        Some(meta) if meta.executed_query.is_some() => {
-            frame.clone().with_meta(FrameMeta { executed_query: None, ..meta.clone() })
-        }
-        _ => frame.clone(),
-    }
 }
 
 async fn record(
@@ -373,7 +363,9 @@ async fn record(
 
 fn attachment(file: export::File, title: &str) -> Response {
     let name = export::file_name(title, file.extension);
-    let mut response = Response::new(Body::from(file.bytes));
+    // The chunks are sent as they are, so the file is not copied into one buffer first.
+    let chunks = file.chunks.into_iter().map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::from(c)));
+    let mut response = Response::new(Body::from_stream(futures_util::stream::iter(chunks)));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(file.content_type));

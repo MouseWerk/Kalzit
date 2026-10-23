@@ -33,6 +33,7 @@ pub struct Control {
     cancelled: Option<Arc<AtomicBool>>,
     deadline: Option<(Instant, u64)>,
     text_left: Cell<usize>,
+    max_cells: usize,
 }
 
 impl Default for Control {
@@ -44,7 +45,7 @@ impl Default for Control {
 impl Control {
     /// No cancel flag and no deadline, only the budget.
     pub fn unbounded() -> Self {
-        Self { cancelled: None, deadline: None, text_left: Cell::new(MAX_RUN_TEXT_UNITS) }
+        Self { cancelled: None, deadline: None, text_left: Cell::new(MAX_RUN_TEXT_UNITS), max_cells: MAX_CELLS }
     }
 
     /// Stops when `cancelled` is set or `timeout_secs` have passed.
@@ -54,6 +55,7 @@ impl Control {
             cancelled: Some(cancelled),
             deadline: Some((deadline, timeout_secs)),
             text_left: Cell::new(MAX_RUN_TEXT_UNITS),
+            max_cells: MAX_CELLS,
         }
     }
 
@@ -89,13 +91,18 @@ impl Control {
     }
 }
 
-/// Refuses a result of `rows` times `fields` cells above `MAX_CELLS`, before it is built.
-fn check_cells(rows: usize, fields: usize) -> Result<(), Detail> {
-    if rows.saturating_mul(fields) > MAX_CELLS {
-        return Err(detail("steps.too_many_cells", format!("the step would make more than {MAX_CELLS} cells"))
-            .with("max", MAX_CELLS));
+impl Control {
+    /// Refuses a result of `rows` times `fields` cells above the limit (`MAX_CELLS`), before it
+    /// is built.
+    fn cells(&self, rows: usize, fields: usize) -> Result<(), Detail> {
+        let max = self.max_cells;
+        if rows.saturating_mul(fields) > max {
+            return Err(
+                detail("steps.too_many_cells", format!("the step would make more than {max} cells")).with("max", max)
+            );
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// The text (UTF-16 units) of one cell, for the budget.
@@ -326,7 +333,7 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
             check_free(frame, name)?;
             let parsed = expr::parse(expression)?;
             let compiled = expr::compile(&parsed, frame.fields())?;
-            check_cells(frame.rows(), frame.fields().len() + 1)?;
+            control.cells(frame.rows(), frame.fields().len() + 1)?;
             let mut values = Vec::with_capacity(frame.rows());
             for row in 0..frame.rows() {
                 control.every(row)?;
@@ -612,7 +619,7 @@ fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation], control: &C
         (0..frame.rows()).map(|r| by_fields.iter().map(|f| key_of(&f.values[r], f.field_type)).collect()),
         control,
     )?;
-    check_cells(rows.len(), by.len() + plan.len())?;
+    control.cells(rows.len(), by.len() + plan.len())?;
     let mut fields: Vec<Field> = by_fields
         .iter()
         .map(|f| Field {
@@ -646,7 +653,7 @@ fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg, control: 
         return Err(detail("steps.too_many_columns", format!("the pivot would make more than {MAX_COLUMNS} fields"))
             .with("max", MAX_COLUMNS));
     }
-    check_cells(row_groups.len(), col_groups.len() + 1)?;
+    control.cells(row_groups.len(), col_groups.len() + 1)?;
     // The rows of each cell (row group, column group).
     let mut column_of = vec![0; frame.rows()];
     for (c, g) in col_groups.iter().enumerate() {
@@ -745,7 +752,7 @@ fn join(
         if pairs > MAX_ROWS {
             return Err(too_many());
         }
-        check_cells(pairs, width)
+        control.cells(pairs, width)
     };
     let mut pairs: Vec<(Option<usize>, Option<usize>)> = Vec::new();
     let mut matched = vec![false; r.frame.rows()];
@@ -1122,6 +1129,48 @@ mod tests {
         let err = run(&s, vec![a]).unwrap_err();
         assert_eq!((err.index, err.detail.reason), (1, "expression.text_too_long"));
         assert_eq!(err.detail.params.get("max").map(String::as_str), Some("32767"));
+    }
+
+    /// The copies of text a join makes count against the run's budget.
+    #[test]
+    fn joins_spend_the_text_budget() {
+        let side = |name: &str| {
+            named(
+                name,
+                vec![
+                    field("k", FieldType::Number, (0..10).map(|i| json!(i)).collect()),
+                    field("t", FieldType::String, vec![json!("x".repeat(100)); 10]),
+                ],
+            )
+        };
+        let j = steps(json!([{ "id": "j", "type": "join", "left": "A", "right": "B",
+            "on": { "by": "key", "leftField": "k", "rightField": "k" }, "mode": "inner" }]));
+        let inputs =
+            || vec![("A".to_string(), Input::Frame(side("A").frame)), ("B".to_string(), Input::Frame(side("B").frame))];
+        // 10 rows of 200 units each.
+        let enough = Control { text_left: Cell::new(2000), ..Control::unbounded() };
+        assert!(run_inputs(&j, inputs(), &enough).is_ok());
+        let short = Control { text_left: Cell::new(1999), ..Control::unbounded() };
+        assert_eq!(run_inputs(&j, inputs(), &short).unwrap_err().detail.reason, "steps.too_much_text");
+    }
+
+    /// Calculate and group are measured before they build, as join and pivot are.
+    #[test]
+    fn calculate_and_group_are_bounded_in_cells() {
+        let small = || Control { max_cells: 7, ..Control::unbounded() };
+        let one = |s: Value| -> Result<Vec<NamedFrame>, StepFailure> {
+            run_inputs(&steps(s), vec![("A".to_string(), Input::Frame(sales().frame))], &small())
+        };
+        // 4 rows of 4 fields, one more is 20 cells.
+        let calc = json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "x", "expression": "1" }]);
+        assert_eq!(one(calc).unwrap_err().detail.reason, "steps.too_many_cells");
+        // 3 groups of a key and an aggregation are 6 cells; a second aggregation makes 9.
+        let fits = json!([{ "id": "g", "type": "group", "frame": "A", "by": ["land"],
+            "aggregations": [{ "field": "betrag", "op": "sum" }] }]);
+        assert!(one(fits).is_ok());
+        let over = json!([{ "id": "g", "type": "group", "frame": "A", "by": ["land"],
+            "aggregations": [{ "field": "betrag", "op": "sum" }, { "field": "betrag", "op": "max" }] }]);
+        assert_eq!(one(over).unwrap_err().detail.reason, "steps.too_many_cells");
     }
 
     /// Every cell of text a run makes counts against one budget.

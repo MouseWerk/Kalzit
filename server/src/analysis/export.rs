@@ -7,32 +7,126 @@
 //! dates, booleans), never formulas. Writing them on the server keeps the export behind the
 //! server's permission check; a browser library would need the data in the browser first.
 
+use std::io::Write;
+
 use rust_xlsxwriter::{Format, Workbook};
 use serde_json::Value;
 
 use super::expr::{iso_time, number_text};
 use super::steps::{Control, int_of};
 use crate::datasources::detail::Detail;
-use crate::shapes::{ExportFormat, ExportLanguage, FieldType, Frame, QueryResult};
+use crate::shapes::{ExportFormat, ExportLanguage, FieldType, Frame, FrameMeta};
 
-/// An encoded file.
+/// An encoded file, in chunks the response sends one after the other, so the file is held once.
 #[derive(Debug)]
 pub struct File {
-    pub bytes: Vec<u8>,
+    pub chunks: Vec<Vec<u8>>,
     pub content_type: &'static str,
     pub extension: &'static str,
+}
+
+impl File {
+    /// The whole file in one piece (for tests and small callers).
+    pub fn bytes(&self) -> Vec<u8> {
+        self.chunks.concat()
+    }
 }
 
 /// Excel's sheet limits: rows including the header, and columns.
 pub const XLSX_MAX_ROWS: usize = 1_048_576;
 pub const XLSX_MAX_COLUMNS: usize = 16_384;
 const XLSX_MAX_TEXT: usize = 32_767;
-/// The largest file an export writes; it is built in memory.
+/// The largest file an export writes; CSV and JSON stop as soon as they would pass it.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
+/// Cells an Excel file may hold: the writer keeps every cell in memory until the file is done
+/// (about 360 bytes per cell measured), so this bounds an Excel export near the file limit.
+pub const XLSX_MAX_CELLS: usize = 1_000_000;
+/// The size of one chunk of a file being written.
+const CHUNK: usize = 1024 * 1024;
 
-fn too_large() -> Detail {
-    Detail::new("export.too_large", format!("the file would be larger than {MAX_FILE_BYTES} bytes"))
-        .with("max", MAX_FILE_BYTES)
+/// The limits a file is written within; tests make them small.
+#[derive(Clone, Copy, Debug)]
+pub struct Caps {
+    pub file_bytes: usize,
+    pub xlsx_cells: usize,
+}
+
+impl Default for Caps {
+    fn default() -> Self {
+        Self { file_bytes: MAX_FILE_BYTES, xlsx_cells: XLSX_MAX_CELLS }
+    }
+}
+
+fn too_large(max: usize) -> Detail {
+    Detail::new("export.too_large", format!("the file would be larger than {max} bytes")).with("max", max)
+}
+
+/// Collects a file in chunks, failing as soon as it would pass the size limit and looking at the
+/// control (cancel flag, deadline) now and then, so a long encode stops in time.
+struct Sink<'a> {
+    chunks: Vec<Vec<u8>>,
+    current: Vec<u8>,
+    total: usize,
+    max: usize,
+    writes: usize,
+    control: &'a Control,
+    failure: Option<Detail>,
+}
+
+impl<'a> Sink<'a> {
+    fn new(max: usize, control: &'a Control) -> Self {
+        Self {
+            chunks: Vec::new(),
+            current: Vec::with_capacity(CHUNK),
+            total: 0,
+            max,
+            writes: 0,
+            control,
+            failure: None,
+        }
+    }
+
+    fn fail(&mut self, d: Detail) -> std::io::Error {
+        self.failure = Some(d);
+        std::io::Error::other("export stopped")
+    }
+
+    /// The reason the writing stopped, from an error of `write`.
+    fn reason(&mut self, e: std::io::Error) -> Detail {
+        self.failure.take().unwrap_or_else(|| {
+            Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e)
+        })
+    }
+
+    fn finish(mut self) -> Vec<Vec<u8>> {
+        if !self.current.is_empty() {
+            self.chunks.push(std::mem::take(&mut self.current));
+        }
+        self.chunks
+    }
+}
+
+impl Write for Sink<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.total + buf.len() > self.max {
+            return Err(self.fail(too_large(self.max)));
+        }
+        if let Err(d) = self.control.every(self.writes) {
+            return Err(self.fail(d));
+        }
+        self.writes += 1;
+        self.total += buf.len();
+        self.current.extend_from_slice(buf);
+        if self.current.len() >= CHUNK {
+            let full = std::mem::replace(&mut self.current, Vec::with_capacity(CHUNK));
+            self.chunks.push(full);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub fn encode(
@@ -42,24 +136,54 @@ pub fn encode(
     language: ExportLanguage,
     control: &Control,
 ) -> Result<File, Detail> {
+    encode_within(frame, name, format, language, control, Caps::default())
+}
+
+pub fn encode_within(
+    frame: &Frame,
+    name: &str,
+    format: ExportFormat,
+    language: ExportLanguage,
+    control: &Control,
+    caps: Caps,
+) -> Result<File, Detail> {
     match format {
         ExportFormat::Csv => Ok(File {
-            bytes: csv_within(frame, language, control)?,
+            chunks: csv_within(frame, language, control, caps.file_bytes)?,
             content_type: "text/csv; charset=utf-8",
             extension: "csv",
         }),
         ExportFormat::Json => Ok(File {
-            bytes: serde_json::to_vec(&QueryResult::Frame { frame: frame.clone() }).map_err(|e| {
-                Detail::new("export.failed", format!("the file could not be written: {e}")).with("detail", &e)
-            })?,
+            chunks: json_within(frame, control, caps.file_bytes)?,
             content_type: "application/json",
             extension: "json",
         }),
         ExportFormat::Xlsx => Ok(File {
-            bytes: xlsx_within(frame, name, control)?,
+            chunks: vec![xlsx_within(frame, name, control, caps)?],
             content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             extension: "xlsx",
         }),
+    }
+}
+
+/// The result envelope of the frame, `{"shape": "frame", "frame": {...}}`, written straight from
+/// the frame (no copy of it) and without the statement as sent to the database: a file goes
+/// elsewhere, the query text stays in Kalzit.
+fn json_within(frame: &Frame, control: &Control, max: usize) -> Result<Vec<Vec<u8>>, Detail> {
+    let mut sink = Sink::new(max, control);
+    let written = (|| -> std::io::Result<()> {
+        sink.write_all(br#"{"shape":"frame","frame":{"fields":"#)?;
+        serde_json::to_writer(&mut sink, frame.fields()).map_err(std::io::Error::other)?;
+        if let Some(meta) = frame.meta() {
+            sink.write_all(br#","meta":"#)?;
+            let meta = FrameMeta { executed_query: None, ..meta.clone() };
+            serde_json::to_writer(&mut sink, &meta).map_err(std::io::Error::other)?;
+        }
+        sink.write_all(b"}}")
+    })();
+    match written {
+        Ok(()) => Ok(sink.finish()),
+        Err(e) => Err(sink.reason(e)),
     }
 }
 
@@ -106,34 +230,38 @@ fn quote(cell: &str, separator: char) -> String {
 /// RFC 4180 CSV with a byte order mark, so Excel opens it as UTF-8, and CRLF line ends. Times
 /// are ISO 8601 in UTC; numbers keep every digit and use the language's decimal mark.
 pub fn csv(frame: &Frame, language: ExportLanguage) -> Vec<u8> {
-    csv_within(frame, language, &Control::unbounded()).expect("no limit without a control")
+    csv_within(frame, language, &Control::unbounded(), usize::MAX).expect("no limit without a control").concat()
 }
 
-/// `csv` within the file size limit, stopping when the control says so.
-fn csv_within(frame: &Frame, language: ExportLanguage, control: &Control) -> Result<Vec<u8>, Detail> {
+/// `csv` within the file size limit, stopping when the control says so. Rows are written one by
+/// one into the chunks, so the file is never held twice.
+fn csv_within(frame: &Frame, language: ExportLanguage, control: &Control, max: usize) -> Result<Vec<Vec<u8>>, Detail> {
     let separator = if language == ExportLanguage::De { ';' } else { ',' };
     let sep = separator.to_string();
-    let mut out = String::from("\u{FEFF}");
-    let header: Vec<String> = frame.fields().iter().map(|f| quote(&defuse(&f.name), separator)).collect();
-    out.push_str(&header.join(&sep));
-    out.push_str("\r\n");
-    for row in 0..frame.rows() {
-        control.every(row)?;
-        if out.len() > MAX_FILE_BYTES {
-            return Err(too_large());
+    let mut sink = Sink::new(max, control);
+    let written = (|| -> std::io::Result<()> {
+        let header: Vec<String> = frame.fields().iter().map(|f| quote(&defuse(&f.name), separator)).collect();
+        sink.write_all("\u{FEFF}".as_bytes())?;
+        sink.write_all(header.join(&sep).as_bytes())?;
+        sink.write_all(b"\r\n")?;
+        let mut line = String::new();
+        for row in 0..frame.rows() {
+            line.clear();
+            for (i, f) in frame.fields().iter().enumerate() {
+                if i > 0 {
+                    line.push_str(&sep);
+                }
+                line.push_str(&quote(&csv_cell(&f.values[row], f.field_type, language), separator));
+            }
+            line.push_str("\r\n");
+            sink.write_all(line.as_bytes())?;
         }
-        let cells: Vec<String> = frame
-            .fields()
-            .iter()
-            .map(|f| quote(&csv_cell(&f.values[row], f.field_type, language), separator))
-            .collect();
-        out.push_str(&cells.join(&sep));
-        out.push_str("\r\n");
+        Ok(())
+    })();
+    match written {
+        Ok(()) => Ok(sink.finish()),
+        Err(e) => Err(sink.reason(e)),
     }
-    if out.len() > MAX_FILE_BYTES {
-        return Err(too_large());
-    }
-    Ok(out.into_bytes())
 }
 
 /// A sheet name Excel accepts: at most 31 characters, none of `[]:*?/\`, not the reserved
@@ -170,10 +298,18 @@ fn xlsx_error(e: rust_xlsxwriter::XlsxError) -> Detail {
 /// their type (times in UTC); int64 beyond 2^53 and times before 1900-03-01 are text, so no digit
 /// is lost; text longer than Excel's 32,767 characters is cut there.
 pub fn xlsx(frame: &Frame, name: &str) -> Result<Vec<u8>, Detail> {
-    xlsx_within(frame, name, &Control::unbounded())
+    xlsx_within(frame, name, &Control::unbounded(), Caps::default())
 }
 
-fn xlsx_within(frame: &Frame, name: &str, control: &Control) -> Result<Vec<u8>, Detail> {
+fn xlsx_within(frame: &Frame, name: &str, control: &Control, caps: Caps) -> Result<Vec<u8>, Detail> {
+    // Refused before a single cell is built: the writer holds them all until the end.
+    if frame.rows().saturating_mul(frame.fields().len()) > caps.xlsx_cells {
+        return Err(Detail::new(
+            "export.too_many_cells",
+            format!("an Excel file takes at most {} cells; export as CSV", caps.xlsx_cells),
+        )
+        .with("max", caps.xlsx_cells));
+    }
     if frame.rows() + 1 > XLSX_MAX_ROWS {
         return Err(Detail::new("export.too_many_rows", format!("Excel takes at most {} rows", XLSX_MAX_ROWS - 1))
             .with("max", XLSX_MAX_ROWS - 1));
@@ -223,8 +359,8 @@ fn xlsx_within(frame: &Frame, name: &str, control: &Control) -> Result<Vec<u8>, 
     sheet.set_freeze_panes(1, 0).map_err(xlsx_error)?;
     control.check()?;
     let bytes = book.save_to_buffer().map_err(xlsx_error)?;
-    if bytes.len() > MAX_FILE_BYTES {
-        return Err(too_large());
+    if bytes.len() > caps.file_bytes {
+        return Err(too_large(caps.file_bytes));
     }
     Ok(bytes)
 }
@@ -249,7 +385,7 @@ pub fn file_name(base: &str, extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shapes::Field;
+    use crate::shapes::{Field, QueryResult};
     use serde_json::json;
     use std::io::Read;
 
@@ -321,7 +457,7 @@ mod tests {
     #[test]
     fn json_is_the_result_envelope() {
         let file = encode(&sample(), "A", ExportFormat::Json, ExportLanguage::De, &Control::unbounded()).unwrap();
-        let back: QueryResult = serde_json::from_slice(&file.bytes).unwrap();
+        let back: QueryResult = serde_json::from_slice(&file.bytes()).unwrap();
         assert_eq!(back, QueryResult::Frame { frame: sample() });
         assert_eq!(file.content_type, "application/json");
     }
@@ -341,8 +477,9 @@ mod tests {
     fn excel_files_hold_typed_cells() {
         let file =
             encode(&sample(), "Umsatz: A/B", ExportFormat::Xlsx, ExportLanguage::De, &Control::unbounded()).unwrap();
-        assert_eq!(&file.bytes[..2], b"PK", "a zip archive");
-        let (sheet, strings) = sheet_xml(&file.bytes);
+        let bytes = file.bytes();
+        assert_eq!(&bytes[..2], b"PK", "a zip archive");
+        let (sheet, strings) = sheet_xml(&bytes);
         // 2026-01-01 is Excel day 46023; numbers stay numbers, the big int64 stays text.
         assert!(sheet.contains("<v>46023</v>"), "{sheet}");
         assert!(sheet.contains("<v>1234.5</v>") && sheet.contains("<v>-0.25</v>"), "{sheet}");
@@ -352,7 +489,7 @@ mod tests {
         assert!(strings.contains("9007199254740993"), "{strings}");
         assert!(strings.contains("=HYPERLINK"), "kept as text: {strings}");
         assert!(strings.contains("1900-01-01T00:00:00.000Z"), "before 1900-03-01 as text: {strings}");
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&file.bytes[..])).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes[..])).unwrap();
         let mut book = String::new();
         zip.by_name("xl/workbook.xml").unwrap().read_to_string(&mut book).unwrap();
         assert!(book.contains(r#"name="Umsatz AB""#), "{book}");
@@ -401,6 +538,67 @@ mod tests {
         assert_eq!(lines[1], "'=1+1,2026-01-01T00:00:00.000Z");
         assert_eq!(lines[2], "-12,1969-12-31T23:59:59.999Z");
         assert_eq!(lines[3], "\" 7\",");
+    }
+
+    fn caps(file_bytes: usize, xlsx_cells: usize) -> Caps {
+        Caps { file_bytes, xlsx_cells }
+    }
+
+    fn reason_of(format: ExportFormat, frame: &Frame, c: Caps) -> &'static str {
+        encode_within(frame, "A", format, ExportLanguage::En, &Control::unbounded(), c)
+            .map_or_else(|d| d.reason, |_| "ok")
+    }
+
+    /// Excel holds every cell until the file is done, so too many cells are refused first.
+    #[test]
+    fn excel_files_are_refused_above_the_cell_limit_before_building() {
+        let frame = sample(); // 3 rows of 6 fields
+        assert_eq!(reason_of(ExportFormat::Xlsx, &frame, caps(MAX_FILE_BYTES, 17)), "export.too_many_cells");
+        assert_eq!(reason_of(ExportFormat::Xlsx, &frame, caps(MAX_FILE_BYTES, 18)), "ok");
+        // The finished workbook is held to the file limit too.
+        assert_eq!(reason_of(ExportFormat::Xlsx, &frame, caps(100, 18)), "export.too_large");
+    }
+
+    /// CSV and JSON stop at the first write past the limit; what they wrote is what they send.
+    #[test]
+    fn csv_and_json_stop_at_the_file_limit() {
+        let frame = sample();
+        let full = csv(&frame, ExportLanguage::En).len();
+        let header = "\u{FEFF}zeit,betrag,stück,text,ok,roh\r\n".len();
+        assert_eq!(reason_of(ExportFormat::Csv, &frame, caps(full, 1)), "ok");
+        assert_eq!(reason_of(ExportFormat::Csv, &frame, caps(full - 1, 1)), "export.too_large", "the last row");
+        assert_eq!(reason_of(ExportFormat::Csv, &frame, caps(header + 1, 1)), "export.too_large", "the first row");
+        assert_eq!(reason_of(ExportFormat::Csv, &frame, caps(3, 1)), "export.too_large", "the header");
+        let json = encode(&frame, "A", ExportFormat::Json, ExportLanguage::En, &Control::unbounded()).unwrap().bytes();
+        assert_eq!(reason_of(ExportFormat::Json, &frame, caps(json.len(), 1)), "ok");
+        assert_eq!(reason_of(ExportFormat::Json, &frame, caps(json.len() - 1, 1)), "export.too_large");
+        let big = Frame::new(vec![field("t", FieldType::String, vec![json!("x".repeat(1024)); 3 * 1024])]).unwrap();
+        let file = encode(&big, "A", ExportFormat::Csv, ExportLanguage::En, &Control::unbounded()).unwrap();
+        assert!(file.chunks.len() >= 3, "written in chunks, not one buffer");
+    }
+
+    /// The statement as sent to the database stays in Kalzit.
+    #[test]
+    fn json_files_leave_out_the_executed_statement() {
+        let frame = sample().with_meta(FrameMeta {
+            executed_query: Some("SELECT secret FROM t".into()),
+            rows_truncated: true,
+            notices: vec![],
+        });
+        let bytes = encode(&frame, "A", ExportFormat::Json, ExportLanguage::En, &Control::unbounded()).unwrap().bytes();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("SELECT secret"), "{text}");
+        let back: QueryResult = serde_json::from_str(&text).unwrap();
+        let QueryResult::Frame { frame: back } = back else { panic!() };
+        assert_eq!((back.meta().unwrap().rows_truncated, back.rows()), (true, 3));
+    }
+
+    #[test]
+    fn invisible_characters_before_a_formula_are_defused() {
+        for risky in ["\u{200B}=1", "\u{FEFF}+1", "\u{00A0}@x", " \n-1", "\u{3000}=1"] {
+            assert!(defuse(risky).starts_with('\''), "{risky:?}");
+        }
+        assert_eq!(defuse("a=1"), "a=1");
     }
 
     #[test]

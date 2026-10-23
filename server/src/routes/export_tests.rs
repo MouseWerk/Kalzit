@@ -35,8 +35,6 @@ struct T {
     org: String,
     owner: String,
     dir: tempfile::TempDir,
-    /// Export tests run one at a time: they share the server-wide export permits.
-    _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
 struct Reply {
@@ -69,8 +67,6 @@ impl Reply {
 
 impl T {
     async fn new() -> T {
-        static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        let serial = SERIAL.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().join("data");
@@ -88,7 +84,7 @@ impl T {
             .insert("datasources.sqlite_dirs".into(), json!([allowed.to_string_lossy()]));
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let app = router(state.clone()).layer(MockConnectInfo(peer));
-        let mut t = T { app, state, org: String::new(), owner: String::new(), dir, _serial: serial };
+        let mut t = T { app, state, org: String::new(), owner: String::new(), dir };
         let r = t
             .send(
                 "/api/setup",
@@ -468,14 +464,39 @@ async fn failures_name_the_step_or_the_query() {
 async fn too_many_exports_at_once_are_busy() {
     let t = T::new().await;
     let ds = t.sqlite_source("umsatz", SALES).await;
-    let held = super::EXPORTS.acquire_many(super::MAX_EXPORTS as u32).await.unwrap();
-    let r = t.post("/export", free(&ds, "csv", "en", json!([])), &t.owner).await;
-    drop(held);
-    assert_eq!(
-        (r.status, r.code(), r.reason()),
-        (StatusCode::SERVICE_UNAVAILABLE, "busy".into(), "export.busy".into()),
-        "{}",
-        r.text()
-    );
+    let model = json!({ "model": {
+        "schemaVersion": 2, "title": "Umsatz", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "p1", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT land FROM verkauf" } }] }]
+    } });
+    let id = t.post("/dashboards", model, &t.owner).await.json()["id"].as_str().unwrap().to_string();
+    let panel = format!("/dashboards/{id}/panels/p1/export");
+    let panel_body = json!({ "timeRange": range(), "format": "csv", "language": "en" });
+    // Two slots are taken: one export still runs.
+    let two = t.state.exports.clone().acquire_many_owned(super::MAX_EXPORTS as u32 - 1).await.unwrap();
     assert_eq!(t.post("/export", free(&ds, "csv", "en", json!([])), &t.owner).await.status, StatusCode::OK);
+    let held = t.state.exports.clone().acquire_owned().await.unwrap();
+    for r in [
+        t.post("/export", free(&ds, "csv", "en", json!([])), &t.owner).await,
+        t.post(&panel, panel_body.clone(), &t.owner).await,
+    ] {
+        assert_eq!(
+            (r.status, r.code(), r.reason()),
+            (StatusCode::SERVICE_UNAVAILABLE, "busy".into(), "export.busy".into()),
+            "{}",
+            r.text()
+        );
+    }
+    drop((two, held));
+    assert_eq!(t.post(&panel, panel_body, &t.owner).await.status, StatusCode::OK);
+    assert_eq!(t.state.exports.available_permits(), super::MAX_EXPORTS, "every slot is given back");
+}
+
+/// The time limit of an export's steps answers as a query timeout.
+#[test]
+fn a_late_export_answers_query_timeout() {
+    let e = super::step_error("step 1: late".into(), crate::datasources::detail::Detail::new("steps.timeout", "late"));
+    assert_eq!((e.status, e.code), (StatusCode::GATEWAY_TIMEOUT, "query_timeout"));
+    let e = super::step_error("step 1: no".into(), crate::datasources::detail::Detail::new("steps.name_taken", "no"));
+    assert_eq!((e.status, e.code, e.field), (StatusCode::UNPROCESSABLE_ENTITY, "validation", Some("steps")));
 }

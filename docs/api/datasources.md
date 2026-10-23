@@ -625,8 +625,12 @@ Resources: a server makes at most 3 export files at once (`503 busy`, reason `ex
 more). The steps and the encoder stop when the client goes away and when the query time limit
 (`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`). The
 steps' bounds hold here as in the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16
-units of made text per run), and a file is at most 256 MiB (`export.too_large`). The statement
-as sent to the database (`meta.executedQuery`) is not in the file.
+units of made text per run), and a file is at most 256 MiB (`export.too_large`): CSV and JSON
+are written in chunks that the answer sends as they are, and stop at the first byte past the
+limit; an Excel file holds every cell until it is done, so it takes at most 1,000,000 cells
+(`export.too_many_cells`, checked before it is built). An export's slot is given back only when
+its work has stopped, also when the client went away. The statement as sent to the database
+(`meta.executedQuery`) is not in the file.
 
 - `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
   `language` `de` separates with `;` and writes a decimal comma, `en` uses `,` and a decimal
@@ -867,6 +871,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.failed` | `detail` | the file could not be written |
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
+| `export.too_many_cells` | `max` | an Excel file takes at most `max` cells (rows times fields); refused before it is built |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
 
 ### Sources and the server (`datasource_error` unless noted)

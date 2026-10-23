@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { StepsEditor } from "./StepsEditor";
-import type { NamedFrame, Step } from "./steps";
+import { type NamedFrame, runSteps, type Step } from "./steps";
 
 const FRAMES: NamedFrame[] = [
   {
@@ -209,6 +209,37 @@ describe("steps editor", () => {
     await user.click(screen.getByRole("button", { name: "Remove step 2" }));
     await user.click(screen.getByRole("button", { name: "Remove step 1" }));
     expect(document.activeElement).toBe(screen.getByLabelText("Kind of step"));
+  });
+
+  it("shows each step its own result when the run is of the list before a move", () => {
+    const steps = [calc("s1", "a", "1"), calc("s2", "b", "land * 2")];
+    // The run of the old order: s1 fine, s2 failing.
+    const run = runSteps(steps, FRAMES);
+    render(
+      <StepsEditor
+        steps={[steps[1] as Step, steps[0] as Step]}
+        onChange={() => {}}
+        refIds={["A"]}
+        inputs={FRAMES}
+        run={run}
+      />,
+    );
+    // s2 is now step 1 and still shows its own error; s1 its own result.
+    expect(
+      within(screen.getByRole("listitem", { name: "Step 1" })).getByText(/cannot combine/),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByRole("listitem", { name: "Step 2" })).queryByText(/cannot combine/),
+    ).toBeNull();
+  });
+
+  it("announces the same words again as a new message", async () => {
+    const { user } = setup([calc("s1", "a", "1"), calc("s2", "b", "2"), calc("s3", "c", "3")]);
+    await user.click(screen.getByRole("button", { name: "Move step 3 up" }));
+    const first = screen.getByText("The step is now step 2.");
+    await user.click(screen.getByRole("button", { name: "Move step 3 up" }));
+    const second = screen.getByText("The step is now step 2.");
+    expect(second).not.toBe(first);
   });
 
   it("offers joins only when there is a second query", () => {

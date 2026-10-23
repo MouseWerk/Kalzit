@@ -126,13 +126,13 @@ export const MAX_RUN_TEXT_UNITS = 64 * 1024 * 1024;
 /** The run's budget, the same as the server's (server/src/analysis/steps.rs, `Control`). */
 interface Budget {
   textLeft: number;
+  maxCells: number;
 }
 
-function checkCells(rows: number, fields: number): void {
-  if (rows * fields > MAX_CELLS) {
-    throw detail("steps.too_many_cells", `the step would make more than ${MAX_CELLS} cells`, {
-      max: MAX_CELLS,
-    });
+function checkCells(budget: Budget, rows: number, fields: number): void {
+  const max = budget.maxCells;
+  if (rows * fields > max) {
+    throw detail("steps.too_many_cells", `the step would make more than ${max} cells`, { max });
   }
 }
 
@@ -184,6 +184,8 @@ export function asSteps(values: readonly unknown[]): Step[] {
 }
 
 export interface StepOutcome {
+  /** The step's id, so a list edited since the run still finds its own results. */
+  id: string;
   /** The frames after this step; absent when it failed or was not reached. */
   frames?: NamedFrame[];
   error?: Detail;
@@ -206,9 +208,13 @@ export interface StepsRun {
 export function runSteps(
   steps: readonly Step[],
   inputs: readonly NamedInput[],
-  options: { textBudget?: number } = {},
+  /** Smaller limits for tests; the defaults are the server's. */
+  options: { textBudget?: number; maxCells?: number } = {},
 ): StepsRun {
-  const budget: Budget = { textLeft: options.textBudget ?? MAX_RUN_TEXT_UNITS };
+  const budget: Budget = {
+    textLeft: options.textBudget ?? MAX_RUN_TEXT_UNITS,
+    maxCells: options.maxCells ?? MAX_CELLS,
+  };
   const order = inputs.map((i) => i.name);
   const documents = inputs.flatMap((i) => ("documents" in i ? [i] : []));
   let current: NamedFrame[] = inputs.flatMap((i) => ("frame" in i ? [i] : []));
@@ -216,21 +222,21 @@ export function runSteps(
   let failed: StepsRun["failed"];
   steps.forEach((step, index) => {
     if (failed !== undefined || step.disabled === true) {
-      outcomes.push({ skipped: true });
+      outcomes.push({ id: step.id, skipped: true });
       return;
     }
     try {
       current = isProjection(step)
         ? project(step, current, documents, order)
         : apply(step, current, budget);
-      outcomes.push({ frames: current, skipped: false });
+      outcomes.push({ id: step.id, frames: current, skipped: false });
     } catch (e) {
       const error =
         e instanceof DetailError
           ? e.detail
           : { reason: "internal", params: {}, message: e instanceof Error ? e.message : String(e) };
       failed = { index, error };
-      outcomes.push({ error, skipped: false });
+      outcomes.push({ id: step.id, error, skipped: false });
     }
   });
   return failed === undefined
@@ -395,7 +401,7 @@ function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedF
       checkFree(frame, step.name);
       const compiled = compile(parse(step.expression), frame.fields);
       const type = compiled.result === "null" ? "number" : FIELD_TYPE_OF[compiled.result];
-      checkCells(rowsOf(frame), frame.fields.length + 1);
+      checkCells(budget, rowsOf(frame), frame.fields.length + 1);
       const values = Array.from({ length: rowsOf(frame) }, (_, row) => {
         const cell = toCell(compiled.result, compiled.eval(row));
         spendText(budget, textUnits(cell));
@@ -440,10 +446,10 @@ function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedF
       result = compare(nf, step);
       break;
     case "group":
-      result = group(frame, step.by, step.aggregations);
+      result = group(frame, step.by, step.aggregations, budget);
       break;
     case "pivot":
-      result = pivot(frame, step.row, step.column, step.value, step.op);
+      result = pivot(frame, step.row, step.column, step.value, step.op, budget);
       break;
     case "toFrame":
       // Projections run in runSteps; an existing frame passes unchanged.
@@ -683,7 +689,7 @@ function copyField(f: Field, values: unknown[]): Field {
   return out;
 }
 
-function group(frame: Frame, by: string[], aggregations: Aggregation[]): Frame {
+function group(frame: Frame, by: string[], aggregations: Aggregation[], budget: Budget): Frame {
   const byFields = by.map((n) => fieldAt(frame, fieldIndex(frame, n)));
   for (const f of byFields) keyable(f);
   const names = [...by];
@@ -700,7 +706,7 @@ function group(frame: Frame, by: string[], aggregations: Aggregation[]): Frame {
   const rows = groups(rowsOf(frame), (r) =>
     joinKeys(byFields.map((f) => keyOf(f.values[r], f.type))),
   );
-  checkCells(rows.length, by.length + plan.length);
+  checkCells(budget, rows.length, by.length + plan.length);
   const fields = byFields.map((f) =>
     copyField(
       f,
@@ -719,7 +725,14 @@ function group(frame: Frame, by: string[], aggregations: Aggregation[]): Frame {
   return frameOf(fields, frame.meta);
 }
 
-function pivot(frame: Frame, row: string, column: string, value: string, op: Agg): Frame {
+function pivot(
+  frame: Frame,
+  row: string,
+  column: string,
+  value: string,
+  op: Agg,
+  budget: Budget,
+): Frame {
   const rf = fieldAt(frame, fieldIndex(frame, row));
   const cf = fieldAt(frame, fieldIndex(frame, column));
   const vf = fieldAt(frame, fieldIndex(frame, value));
@@ -734,7 +747,7 @@ function pivot(frame: Frame, row: string, column: string, value: string, op: Agg
       max: MAX_COLUMNS,
     });
   }
-  checkCells(rowGroups.length, colGroups.length + 1);
+  checkCells(budget, rowGroups.length, colGroups.length + 1);
   const columnOf = new Array<number>(n).fill(0);
   colGroups.forEach((g, c) => {
     for (const r of g) columnOf[r] = c;
@@ -827,7 +840,7 @@ function join(
   const width = l.frame.fields.length + r.frame.fields.length - 1;
   const fits = (n: number) => {
     if (n > MAX_ROWS) throw tooMany();
-    checkCells(n, width);
+    checkCells(budget, n, width);
   };
   const pairs: [number | null, number | null][] = [];
   const matched = new Array<boolean>(rowsOf(r.frame)).fill(false);
