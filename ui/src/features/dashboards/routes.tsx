@@ -59,6 +59,21 @@ const dashboardRoute = createRoute({
   component: lazyRouteComponent(() => import("./DashboardPage"), "DashboardPage"),
 });
 
+// The full-page panel editor. A child of the dashboard, so the dashboard and its unsaved draft
+// stay mounted while a panel is edited; the dashboard page draws the editor in place of the grid.
+const panelEditRoute = createRoute({
+  getParentRoute: () => dashboardRoute,
+  path: "panels/$panelId/edit",
+  component: () => null,
+});
+
+// A panel being added: the same editor, the panel joins the dashboard when it is applied.
+const panelNewRoute = createRoute({
+  getParentRoute: () => dashboardRoute,
+  path: "panels/new",
+  component: () => null,
+});
+
 const playlistsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/dashboards/playlists",
@@ -86,7 +101,7 @@ const versionsRoute = createRoute({
 export const dashboardsRoutes = [
   dashboardsRoute,
   trashRoute,
-  dashboardRoute,
+  dashboardRoute.addChildren([panelEditRoute, panelNewRoute]),
   versionsRoute,
   playlistsRoute,
   playlistPlayRoute,

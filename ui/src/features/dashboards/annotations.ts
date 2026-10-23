@@ -1,4 +1,5 @@
-import { useQueries } from "@tanstack/react-query";
+import { type UseQueryResult, useQueries } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type { Frame, QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import type { PanelAnnotation } from "../../panels/annotations";
@@ -167,9 +168,43 @@ export function mergeQueryMarks(perRange: readonly (readonly DashboardMark[])[])
   );
 }
 
+/** Each written annotation once, whichever range found it; the same object while nothing changed. */
+function combineWritten(results: UseQueryResult<Annotation[]>[]) {
+  const byId = new Map<string, Annotation>();
+  for (const result of results) {
+    for (const a of result.data ?? []) {
+      byId.set(a.id, a);
+    }
+  }
+  return { data: [...byId.values()], error: results.find((r) => r.error)?.error ?? null };
+}
+
+/** The answers of the annotation queries, in the order they were asked. */
+function combineAnswers(results: UseQueryResult<QueryResponse>[]) {
+  return results.map((result) => result.data);
+}
+
+/**
+ * The marks of the dashboard's annotations. The result keeps its identity while the ranges and
+ * the answers stay the same, so a dashboard edit that leaves them alone (moving a panel) does not
+ * hand every panel new marks and draw it again.
+ */
 export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, values, run }: Input) {
-  const distinct = distinctRanges(ranges);
-  const written = useQueries({
+  // The ranges as text, and read back from it: the same ranges give the same list.
+  const rangeKey = distinctRanges(ranges)
+    .map((r) => `${r.from}:${r.to}`)
+    .join(",");
+  const distinct = useMemo(
+    (): TimeRange[] =>
+      rangeKey === ""
+        ? []
+        : rangeKey.split(",").map((pair) => {
+            const [from = 0, to = 0] = pair.split(":").map(Number);
+            return { from, to };
+          }),
+    [rangeKey],
+  );
+  const manual = useQueries({
     queries: distinct.map((range) => ({
       queryKey: [ANNOTATIONS_KEY, orgId, dashboardId, range.from, range.to, run],
       queryFn: ({ signal }: { signal: AbortSignal }) =>
@@ -177,19 +212,19 @@ export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, val
       staleTime: Number.POSITIVE_INFINITY,
       ...BUSY_RETRY,
     })),
+    combine: combineWritten,
   });
-  // Each written annotation once, whichever range found it.
-  const byId = new Map<string, Annotation>();
-  for (const result of written) {
-    for (const a of result.data ?? []) {
-      byId.set(a.id, a);
-    }
-  }
-  const manual = { data: [...byId.values()], error: written.find((r) => r.error)?.error ?? null };
   const variables = storedQueryVariables(values, saved.variables);
-  const enabled = (saved.annotations ?? []).filter((q) => q.enabled);
-  const runs = enabled.flatMap((query) => distinct.map((range) => ({ query, range })));
-  const fromQueries = useQueries({
+  const enabled = useMemo(
+    () => (saved.annotations ?? []).filter((q) => q.enabled),
+    [saved.annotations],
+  );
+  const runs = useMemo(
+    () => enabled.flatMap((query) => distinct.map((range) => ({ query, range }))),
+    [enabled, distinct],
+  );
+  const answers = useQueries({
+    combine: combineAnswers,
     queries: runs.map(({ query, range }) => ({
       queryKey: [
         ANNOTATIONS_KEY,
@@ -208,23 +243,26 @@ export function useDashboardAnnotations({ orgId, dashboardId, ranges, saved, val
       ...BUSY_RETRY,
     })),
   });
-  const marks: DashboardMark[] = (manual.data ?? []).map((a) => ({
-    key: a.id,
-    time: a.time,
-    timeEnd: a.timeEnd,
-    text: a.text,
-    tags: a.tags,
-    panelId: a.panelId,
-    annotation: a,
-  }));
-  for (const query of enabled) {
-    const perRange = runs.flatMap((r, index) => {
-      const data = fromQueries[index]?.data;
-      return r.query === query && data !== undefined
-        ? [marksFromFrames(framesOfResponse(data), query)]
-        : [];
-    });
-    marks.push(...mergeQueryMarks(perRange).map((m) => ({ ...m, key: `${query.id}:${m.key}` })));
-  }
+  const marks = useMemo(() => {
+    const list: DashboardMark[] = manual.data.map((a) => ({
+      key: a.id,
+      time: a.time,
+      timeEnd: a.timeEnd,
+      text: a.text,
+      tags: a.tags,
+      panelId: a.panelId,
+      annotation: a,
+    }));
+    for (const query of enabled) {
+      const perRange = runs.flatMap((r, index) => {
+        const data = answers[index];
+        return r.query === query && data !== undefined
+          ? [marksFromFrames(framesOfResponse(data), query)]
+          : [];
+      });
+      list.push(...mergeQueryMarks(perRange).map((m) => ({ ...m, key: `${query.id}:${m.key}` })));
+    }
+    return list;
+  }, [manual.data, enabled, runs, answers]);
   return { marks, error: manual.error };
 }

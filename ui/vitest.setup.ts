@@ -21,6 +21,7 @@ beforeEach(() => {
   resetInputModality();
   // Setting the defaults above stores them; start every test with nothing remembered.
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 afterEach(() => {

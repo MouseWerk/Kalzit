@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useI18n } from "../../i18n/i18n";
@@ -91,9 +91,24 @@ export function UplotTimeSeriesChart({
   const [plot, setPlot] = useState<PlotArea>({ left: VALUE_AXIS_SIZE, width: 1 });
   // Counts charts built, so the size effect also runs for a chart built after the last resize.
   const [built, setBuilt] = useState(0);
+  // What the chart's callbacks read when they run: new data, a new range or new value bounds
+  // reach a built chart through setData instead of a new chart.
+  const live = useRef({ timeRange, yMin, yMax, axisFormat });
+  useLayoutEffect(() => {
+    live.current = { timeRange, yMin, yMax, axisFormat };
+  });
+  // A new chart only when what it is built from changes: the series' names and colors, the line
+  // width, language, time zone and theme. Data alone goes through setData.
+  const structure = series.map((s, index) => `${s.name}\u0000${seriesClass(s, index)}`).join("\n");
+  const scales = `${timeRange.from},${timeRange.to},${yMin ?? ""},${yMax ?? ""}`;
+  const builtFor = useRef<{
+    series: readonly unknown[];
+    scales: string;
+    axisFormat: (value: number) => string;
+  } | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: themeVersion only triggers a redraw
-  useEffect(() => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the chart is built from `structure`; themeVersion only triggers a redraw
+  useLayoutEffect(() => {
     const target = targetRef.current;
     const probes = probesRef.current;
     if (target === null || probes === null) {
@@ -130,12 +145,16 @@ export function UplotTimeSeriesChart({
       // top, right, bottom, left; null keeps uPlot's own spacing.
       padding: [null, TIME_LABEL_OVERHANG, null, null],
       scales: {
-        x: { time: true, min: timeRange.from, max: timeRange.to },
+        // The panel's time range, read when the scale is set (also after setData).
+        x: {
+          time: true,
+          range: () => [live.current.timeRange.from, live.current.timeRange.to],
+        },
         // Fixed ends from the field options; uPlot's own range for the open ones.
         y: {
           range: (_u, dataMin, dataMax) => {
             const [min, max] = uPlot.rangeNum(dataMin, dataMax, 0.1, true);
-            return [yMin ?? min, yMax ?? max];
+            return [live.current.yMin ?? min, live.current.yMax ?? max];
           },
         },
       },
@@ -149,7 +168,7 @@ export function UplotTimeSeriesChart({
         {
           ...axisStyle,
           size: (_u, values) => valueAxisSize(values, font),
-          values: (_u, values) => values.map((v) => axisFormat(v)),
+          values: (_u, values) => values.map((v) => live.current.axisFormat(v)),
         },
       ],
       series: [
@@ -165,23 +184,32 @@ export function UplotTimeSeriesChart({
     };
     const chart = new uPlot(options, alignSeries(series) as uPlot.AlignedData, target);
     chartRef.current = chart;
+    builtFor.current = { series, scales, axisFormat };
     setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
     setBuilt((count) => count + 1);
     return () => {
       chart.destroy();
       chartRef.current = null;
+      builtFor.current = null;
     };
-  }, [
-    series,
-    timeRange.from,
-    timeRange.to,
-    lineWidth,
-    language,
-    timeZone,
-    themeVersion,
-    yMin,
-    yMax,
-  ]);
+  }, [structure, lineWidth, language, timeZone, themeVersion]);
+
+  // New data, range, value bounds or axis labels for the chart that stands: setData redraws it
+  // in place (the scales read the range and bounds through `live`).
+  useLayoutEffect(() => {
+    const chart = chartRef.current;
+    const made = builtFor.current;
+    if (chart === null || made === null) {
+      return;
+    }
+    if (made.series === series && made.scales === scales && made.axisFormat === axisFormat) {
+      return;
+    }
+    const data = made.series === series ? chart.data : (alignSeries(series) as uPlot.AlignedData);
+    builtFor.current = { series, scales, axisFormat };
+    chart.setData(data);
+    setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+  }, [series, scales, axisFormat]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
   useEffect(() => {

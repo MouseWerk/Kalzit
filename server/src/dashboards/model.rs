@@ -340,6 +340,14 @@ pub struct Target {
     pub ref_id: String,
     pub datasource_id: String,
     pub query: Value,
+    /// Kept with the panel but not run (the editor's "hide"); absent means it runs.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hide: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde hands the field over by reference
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl DashboardModel {

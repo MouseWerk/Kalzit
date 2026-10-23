@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
-import { fillQuery } from "../support/ui";
+import { fillQuery, panelAction } from "../support/ui";
 import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
@@ -31,10 +31,14 @@ test.afterAll(async () => {
 });
 
 /** A page whose clock stands at the screenshot moment, so relative times and ranges repeat. */
-async function openPage(browser: Browser, colorScheme: "light" | "dark" = "light"): Promise<Page> {
+async function openPage(
+  browser: Browser,
+  colorScheme: "light" | "dark" = "light",
+  viewport = { width: 1440, height: 900 },
+): Promise<Page> {
   const context = await browser.newContext({
     baseURL: baseUrl(),
-    viewport: { width: 1440, height: 900 },
+    viewport,
     deviceScaleFactor: 1,
     locale: "en-US",
     timezoneId: "Europe/Berlin",
@@ -161,6 +165,64 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.context().close();
   });
 }
+
+/** The full-page panel editor on the demo's time series, its chart drawn. */
+async function panelEditor(page: Page): Promise<void> {
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await panelAction(page, "Sales in the selected region", "dashboards.panel.editNamed");
+  const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
+  await expect(editor.locator(".cm-content").first()).toBeVisible();
+  await expect(editor.locator(".uplot")).toHaveCount(1);
+  await expect(editor.locator('[aria-busy="true"]')).toHaveCount(0);
+}
+
+test("panel editor, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await panelEditor(page);
+  await shoot(page, "panel-editor-dark");
+  await page.context().close();
+});
+
+/** A new panel: the visualization picker open, the first query ready. */
+async function newPanel(page: Page): Promise<void> {
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await page
+    .getByRole("button", { name: t("dashboards.addPanel") })
+    .first()
+    .click();
+  const editor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });
+  await expect(editor.locator(".cm-content").first()).toBeVisible();
+  await expect(editor.getByRole("radio").first()).toBeVisible();
+}
+
+test("new panel, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await newPanel(page);
+  await shoot(page, "panel-new-dark");
+  await page.context().close();
+});
+
+test("new panel, phone", async ({ browser }) => {
+  const page = await openPage(browser, "light", { width: 360, height: 780 });
+  await signIn(page);
+  await newPanel(page);
+  await shoot(page, "panel-new-phone");
+  await page.context().close();
+});
+
+test("panel editor, phone", async ({ browser }) => {
+  const page = await openPage(browser, "light", { width: 360, height: 780 });
+  await signIn(page);
+  await panelEditor(page);
+  await shoot(page, "panel-editor-phone");
+  await page.context().close();
+});
 
 test("explore", async ({ browser }) => {
   const page = await openPage(browser);

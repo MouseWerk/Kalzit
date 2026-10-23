@@ -383,4 +383,19 @@
     min-width: var(--size-label);
     height: auto;
   }
+
+  /* A panel's menu: drawn in the window under its button, outside the card that clips. */
+  .panel-menu__anchor {
+    position: static;
+  }
+
+  .panel-menu,
+  .panel-menu.menu {
+    position: fixed;
+    inset: var(--menu-top, 0) var(--menu-right, 0) auto auto;
+    width: max-content;
+    min-width: var(--size-field);
+    max-width: var(--size-menu-max);
+    margin-block-start: var(--space-1);
+  }
 }
