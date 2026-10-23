@@ -69,7 +69,8 @@ describe("own account", () => {
     await user.click(current);
     await user.paste(TEST_PASSWORD);
     await user.click(submit);
-    expect(await within(section).findByText("Your password was changed.")).toBeTruthy();
+    // The confirmation is a toast in the app's notification region, outside the section.
+    expect(await screen.findByText("Your password was changed.")).toBeTruthy();
     expect(admin.password).toBe("a fresh long password");
     expect((current as HTMLInputElement).value).toBe("");
     // The server ended the other sessions; the list shows only this browser now.

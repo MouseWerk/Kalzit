@@ -8,6 +8,17 @@ export const OWNER = {
   orgName: "Sunstone Analytics",
 } as const;
 
+/**
+ * The owner's German twin: the same name and role, with German as the account's language.
+ * Language is a preference of the account (docs/api/shell.md), so the German runs sign in as this
+ * account instead of switching the owner's language under the English runs beside them.
+ */
+export const OWNER_DE = {
+  name: OWNER.name,
+  email: "owner.de@kalzit.test",
+  password: "owner-de-password-e2e",
+} as const;
+
 export function baseUrl(): string {
   const url = process.env.KALZIT_E2E_URL;
   if (url === undefined || url === "") {
@@ -90,6 +101,40 @@ export class Api {
       "add member",
     );
     return { id: user.id, name, email, password };
+  }
+
+  /**
+   * Creates `OWNER_DE` as a second owner of the organization and server admin, with German as its
+   * language.
+   */
+  async createGermanOwner(): Promise<void> {
+    await json(
+      await this.context.post("/api/admin/users", {
+        data: {
+          name: OWNER_DE.name,
+          email: OWNER_DE.email,
+          password: OWNER_DE.password,
+          // Like the owner, so the German runs reach the server administration too.
+          isServerAdmin: true,
+        },
+      }),
+      "create the German owner",
+    );
+    await json(
+      await this.context.post(this.org("/members"), {
+        data: { email: OWNER_DE.email, role: "owner" },
+      }),
+      "add the German owner",
+    );
+    const german = await Api.signIn(OWNER_DE.email, OWNER_DE.password);
+    try {
+      await json(
+        await german.context.patch("/api/me/preferences", { data: { language: "de" } }),
+        "German as the language",
+      );
+    } finally {
+      await german.dispose();
+    }
   }
 
   async createSqliteSource(name: string, path: string): Promise<string> {
