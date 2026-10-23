@@ -276,9 +276,11 @@ describe("small screens", () => {
       ?.declarations ?? [];
 
   it("wraps the navigation instead of scrolling it, so no label is cut", () => {
+    // The groups' entries join the bar's own wrapping row, so an open group cannot take a line.
     const list = inMedia("@media (max-width: 48rem)", ".shell__nav-list");
-    expect(list).toContainEqual({ property: "flex-wrap", value: "wrap" });
+    expect(list).toContainEqual({ property: "display", value: "contents" });
     const nav = inMedia("@media (max-width: 48rem)", ".shell__nav");
+    expect(nav).toContainEqual({ property: "flex-wrap", value: "wrap" });
     expect(nav.find((d) => d.property.startsWith("overflow"))?.value).toBe("visible");
   });
 
@@ -289,7 +291,7 @@ describe("small screens", () => {
     const phone = rules
       .filter((rule) => rule.context.includes("@media (max-width: 25rem)"))
       .map((rule) => rule.selector);
-    expect(phone.sort()).toEqual([".nav-link__label", ".shell__nav-list"]);
+    expect(phone.sort()).toEqual([".nav-link__label", ".shell__nav"]);
   });
 
   it("lets long navigation labels shrink with the sidebar: entries truncate, sub-pages wrap", () => {
