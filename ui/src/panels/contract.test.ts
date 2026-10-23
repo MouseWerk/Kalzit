@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { newMapping, newOverride, newStep } from "./fieldConfig/FieldConfigEditor";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { CUSTOM_PREFIX } from "./fieldConfig/units";
+import { MAX_EXPAND_LIMIT } from "./graph/adapter";
+import { CLUSTER_MODES, COLOR_BY, MAX_NODE_LIMIT, parseGraphOptions } from "./graph/options";
 import { PANELS } from "./registry";
 
 /**
@@ -52,19 +54,56 @@ function editorFieldConfigs(): FieldConfig[] {
   ];
 }
 
+/** Text as long as the editors' fields take (`maxLength`). */
+const LONGEST = "x".repeat(100);
+
+/**
+ * Options the graph editors write beyond the defaults: every choice and both ends of each
+ * number. The network and hierarchy editors store what `parseGraphOptions` returns, the path
+ * editor its three texts.
+ */
+function editorOptions(type: string): unknown[] {
+  if (type === "network" || type === "hierarchy") {
+    return [
+      ...COLOR_BY.map((colorBy, i) =>
+        parseGraphOptions({
+          caption: LONGEST,
+          colorBy,
+          sizeBy: "size",
+          edgeWidthBy: "weight",
+          nodeLimit: MAX_NODE_LIMIT,
+          cluster: CLUSTER_MODES[i],
+          timeProperty: "since",
+          explorer: true,
+          expandLimit: MAX_EXPAND_LIMIT,
+          variable: "$customer",
+          variableProperty: LONGEST,
+        }),
+      ),
+      parseGraphOptions({ sizeBy: "", nodeLimit: 1, expandLimit: 1, explorer: false }),
+    ];
+  }
+  if (type === "path") {
+    return [{ caption: LONGEST, variable: "customer", variableProperty: LONGEST }];
+  }
+  return [];
+}
+
 function fixture(): string {
-  // The panels whose options the server checks in `panel_options`; other panel types (graphs)
-  // bring their own checks.
-  const checked = PANELS.filter(
-    (panel) => panel.standalone === true || panel.shapes.includes("frame"),
-  );
-  const entries = checked.flatMap((panel) =>
-    editorFieldConfigs().map((fieldConfig) => ({
+  // Every built-in panel; the server checks each type in `panel_options`. Field options are kept
+  // when a panel changes type, so every panel is stored with every kind the editor writes.
+  const entries = PANELS.flatMap((panel) => [
+    ...editorFieldConfigs().map((fieldConfig) => ({
       type: panel.type,
       options: panel.options({}),
       fieldConfig,
     })),
-  );
+    ...editorOptions(panel.type).map((options) => ({
+      type: panel.type,
+      options,
+      fieldConfig: { defaults: {}, overrides: [] },
+    })),
+  ]);
   return `${JSON.stringify(entries, null, 2)}\n`;
 }
 
