@@ -91,6 +91,24 @@ describe("reason texts", () => {
     );
   });
 
+  it("names the types of analysis reasons in the UI's words", () => {
+    const params = { operator: "*", left: "text", right: "number" };
+    expect(reasonText(de, { reason: "expression.operand_types", params })).toBe(
+      "„*“ kann Text und Zahl nicht verbinden.",
+    );
+    expect(
+      reasonText(de, {
+        reason: "expression.argument_type",
+        params: { name: "min", position: "1", expected: "a number, text or time", found: "bool" },
+      }),
+    ).toBe(
+      "Wert 1 von „min“ muss eine Zahl, ein Text oder eine Zeit sein, nicht wahr oder falsch.",
+    );
+    expect(
+      reasonText(t, { reason: "steps.key_types", params: { left: "int64", right: "string" } }),
+    ).toBe("Fields of type whole number and text cannot be matched.");
+  });
+
   it("says “at least” for a range without an upper bound", () => {
     expect(reasonText(t, { reason: "settings.out_of_range", params: { min: "1" } })).toBe(
       "Enter a value of at least 1.",

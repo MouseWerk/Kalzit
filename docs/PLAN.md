@@ -54,7 +54,7 @@ Regeln:
   Form passen.
 - **Projektionen sind sichtbar und gewollt, nie versteckt.** Wer aus Dokumenten eine Zeitreihe will
   (z. B. `$.metrics.cpu` über `$.ts`), legt im Query-Editor einen Schritt "Projektion" an. Er steht
-  in der Abfrage, ist rückgängig zu machen, und das Original bleibt verfügbar. Es gibt keine
+  als Schritt beim Panel (Entscheidung 13), ist rückgängig zu machen, und das Original bleibt verfügbar. Es gibt keine
   implizite Konvertierung im Backend.
 - Transformationen arbeiten formgerecht: Dokument-Transformationen (Feld auswählen, Array
   entfalten, gruppieren) und Graph-Transformationen (Nachbarschaft erweitern, Subgraph filtern,
@@ -382,3 +382,8 @@ Getroffen (stehen auch in `CLAUDE.md`):
 10. Öffentliches Repository auf GitHub.
 11. Produktname Kalzit (statt Arbeitstitel Granit).
 12. Website mit Astro und ausdrucksstarker Bewegung, angelehnt an die Referenz des Inhabers; Hosting wird später entschieden.
+13. Die Projektion (Abschnitt 1) steht nicht in der Abfrage, sondern als Schritt `toFrame` in den
+    `transformations` des Panels (bzw. den Schritten in Explore): Die Abfrage bleibt in der Form
+    der Datenquelle, die Projektion ist sichtbar, abschaltbar, und die Schritte danach arbeiten
+    mit ihrer Tabelle. Schritte laufen im Browser für die Anzeige und auf dem Server für den
+    Export, mit denselben Regeln (`docs/api/settings-dashboards.md`, „Analysis steps“).
