@@ -266,6 +266,8 @@
   .settings__variables {
     display: grid;
     gap: var(--space-2);
+    /* A fieldset is at least as wide as its content by default; a long name must not widen the dialog. */
+    min-inline-size: 0;
     padding: 0;
     border: 0;
   }
@@ -281,6 +283,17 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
+  }
+
+  /*
+   * The query editor does not wrap long lines; without a zero minimum the column took the width
+   * of the longest line and pushed the panel editor past a phone's width.
+   */
+  .panel-editor__preview,
+  .panel-editor__settings,
+  .panel-editor__queries,
+  .target {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .target {

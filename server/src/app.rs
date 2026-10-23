@@ -28,8 +28,12 @@ pub struct AppState {
     pub setup: Arc<SetupGate>,
     pub secrets: Arc<Keyring>,
     pub datasources: Arc<DataSources>,
+    /// The server's own writes outside requests (`db::Background`).
+    pub background: Arc<db::Background>,
     /// Session last-seen updates in flight (`auth::session::Touches`).
     pub touches: Arc<crate::auth::session::Touches>,
+    /// Exports making their file at the same time (`routes::export::MAX_EXPORTS`).
+    pub exports: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -40,7 +44,10 @@ impl AppState {
         let login_limiter = RateLimiter::new(sec.login_max_failures, sec.login_window_secs);
         let secrets = Arc::new(Keyring::load_for_server(&config.paths.data_dir, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
-        let touches = Arc::new(crate::auth::session::Touches::new(&db, &config.database_url()));
+        let touch_limit = crate::auth::session::Touches::limit_for(&db);
+        // The touches, plus one for each of the two hourly jobs.
+        let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 2));
+        let touches = Arc::new(crate::auth::session::Touches::new(background.clone(), touch_limit));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -49,7 +56,9 @@ impl AppState {
             setup: Arc::new(setup),
             secrets,
             datasources,
+            background,
             touches,
+            exports: Arc::new(tokio::sync::Semaphore::new(crate::routes::export::MAX_EXPORTS)),
         })
     }
 }

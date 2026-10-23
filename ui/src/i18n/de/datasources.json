@@ -90,7 +90,7 @@
   "datasources.column.deleted": "Gelöscht",
   "datasources.column.actions": "Aktionen",
   "datasources.loadMore": "Mehr anzeigen",
-  "datasources.health.testNamed": "Verbindung von „{name}“ testen",
+  "datasources.health.testNamed": "Verbindung testen für „{name}“",
   "datasources.restoreNamed": "„{name}“ wiederherstellen",
   "datasources.editor.sqlHint": "Eine SELECT- oder WITH-Anweisung. Variablen schreibst du als $name; sie erreichen die Datenbank als Parameter.",
   "datasources.editor.promHint": "Variablen nur in Zeichenketten in Anführungszeichen, etwa job=„$job“.",

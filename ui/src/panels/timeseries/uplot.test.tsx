@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { setLanguage } from "../../i18n/i18n";
 import { alignSeries } from "./align";
+import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import type { Series } from "./series";
 import { UplotTimeSeriesChart } from "./UplotTimeSeriesChart";
 
@@ -128,6 +129,52 @@ describe("uPlot chart sizing and labels", () => {
     const at = new Date(2026, 9, 21, 4, 0).getTime();
     expect(axes[0]?.values(null, [at], 0, 0, 3_600_000)).toEqual(["04:00"]);
     expect(axes[0]?.values(null, [at], 0, 0, 86_400_000)).toEqual(["21.10."]);
+  });
+
+  it("leaves room for the time labels: right of the plot and between them", () => {
+    created.length = 0;
+    const times = Float64Array.from([0, 100_000]);
+    render(
+      <UplotTimeSeriesChart
+        series={[series("load", times, [1, 2])]}
+        timeRange={{ from: 0, to: 100_000 }}
+        title="CPU"
+        unit=""
+        lineWidth={1}
+        showLegend={false}
+      />,
+    );
+    const options = created.at(-1)?.options as {
+      padding?: (number | null)[];
+      axes: { space?: number }[];
+    };
+    // The label "04:00 PM" is about 50 px wide at the axis font and centered on the edge.
+    expect(options.padding?.[1]).toBeGreaterThanOrEqual(28);
+    // And neighboring time labels keep apart (uPlot's default spacing let them touch).
+    expect(options.axes[0]?.space).toBeGreaterThanOrEqual(80);
+  });
+
+  it("leaves the same room in the SVG chart shown while uPlot loads", () => {
+    // Six whole hours, so a time label sits exactly on the right edge of the plot.
+    const from = Date.UTC(2026, 9, 20, 10);
+    const to = Date.UTC(2026, 9, 20, 16);
+    const { container } = render(
+      <SvgTimeSeriesChart
+        series={[series("load", Float64Array.from([from, to]), [1, 2])]}
+        timeRange={{ from, to }}
+        title="CPU"
+        unit=""
+        lineWidth={1}
+        showLegend={false}
+      />,
+    );
+    const svg = container.querySelector("svg");
+    const width = Number(svg?.getAttribute("width") ?? svg?.getAttribute("viewBox")?.split(" ")[2]);
+    const labelX = [...container.querySelectorAll('text[text-anchor="middle"]')].map((t) =>
+      Number(t.getAttribute("x")),
+    );
+    expect(labelX.length).toBeGreaterThan(0);
+    expect(Math.max(...labelX)).toBeLessThanOrEqual(width - 28);
   });
 });
 
