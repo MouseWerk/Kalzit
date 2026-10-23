@@ -34,7 +34,11 @@ export function toNumber(value: unknown): number | null {
   return null;
 }
 
-/** The reference id of the query each frame answered, kept beside the bare frames panels get. */
+/**
+ * The reference id of the query each frame answered, kept beside the bare frames panels get:
+ * passing it in the panel props would change every panel and the editor for one name, and a weak
+ * map keeps it with the frame object without copying it (docs/ARCHITECTURE.md, series names).
+ */
 const frameNames = new WeakMap<Frame, string>();
 
 export function nameFrame(frame: Frame, name: string): void {
