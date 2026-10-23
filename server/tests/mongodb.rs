@@ -113,6 +113,23 @@ fn number(value: Option<&Bson>) -> Option<i64> {
     }
 }
 
+/// Whether an aggregate command carries the slow pipeline: four `$project` stages with `$range`,
+/// each followed by an `$unwind`.
+fn is_slow_pipeline(command: &Document) -> bool {
+    let Ok(stages) = command.get_array("pipeline") else { return false };
+    let stages: Vec<&Document> = stages.iter().filter_map(Bson::as_document).collect();
+    let ranges = stages
+        .windows(2)
+        .filter(|w| {
+            let range = w[0]
+                .get_document("$project")
+                .is_ok_and(|p| p.values().any(|v| v.as_document().is_some_and(|d| d.contains_key("$range"))));
+            range && w[1].contains_key("$unwind")
+        })
+        .count();
+    ranges == 4
+}
+
 /// A database with data and two logins (read and readWrite), removed again by `cleanup`.
 struct Fixture {
     admin: mongodb::Client,
@@ -168,7 +185,8 @@ impl Fixture {
         json!({ "hosts": format!("{}:{}", self.host, self.port), "database": self.db, "user": user })
     }
 
-    /// The command documents of the aggregations on `orders` that run on the server right now.
+    /// The command documents of the slow aggregations on `orders` (four `$range` arrays, each
+    /// unwound) that run on the server right now.
     async fn running(&self) -> Vec<Document> {
         let ns = format!("{}.orders", self.db);
         let ops: Vec<Document> = self
@@ -179,11 +197,11 @@ impl Fixture {
                 doc! { "$match": { "ns": ns, "command.aggregate": "orders" } },
             ])
             .await
-            .unwrap()
+            .expect("$currentOp needs an admin login (KALZIT_TEST_MONGODB_URL)")
             .try_collect()
             .await
-            .unwrap();
-        ops.into_iter().filter_map(|op| op.get_document("command").ok().cloned()).collect()
+            .expect("$currentOp needs an admin login (KALZIT_TEST_MONGODB_URL)");
+        ops.into_iter().filter_map(|op| op.get_document("command").ok().cloned()).filter(is_slow_pipeline).collect()
     }
 
     async fn cleanup(self) {
@@ -285,6 +303,9 @@ async fn mongodb_reads_with_a_read_only_login_and_refuses_more() {
     s["queryTimeoutSecs"] = json!(1);
     let (status, body) = t.send(Method::PATCH, &format!("/datasources/{id}"), Some(json!({ "settings": s }))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // The change rebuilds the connection; a first query does that outside the slow query's limit.
+    let warm = t.query(&id, json!({ "collection": "orders", "pipeline": "[{\"$count\": \"n\"}]" })).await;
+    assert_eq!(warm["result"]["documents"]["documents"][0]["n"], 5, "{warm}");
     let slow = t.query(
         &id,
         json!({ "collection": "orders", "pipeline": r#"[{"$limit": 1},
