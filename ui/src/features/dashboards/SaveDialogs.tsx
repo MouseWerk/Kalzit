@@ -78,6 +78,8 @@ export function changeText(t: Translate, change: Change): string {
       return t("dashboards.diff.timeRange");
     case "refresh":
       return t("dashboards.diff.refresh");
+    case "timeOptions":
+      return t("toolbar.diff.timeOptions");
     case "variables":
       return t("dashboards.diff.variables");
     case "panelAdded":

@@ -1,0 +1,390 @@
+@layer components {
+  /*
+   * The dashboard header: title and star on the left, the tools on the right, one row of
+   * control height on wide screens. On a phone the title row keeps Save and the overflow menu,
+   * the time controls take the second row.
+   */
+
+  .dash-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-3);
+    /* A grid item of the dashboard: it shrinks to the page instead of widening it. */
+    min-width: 0;
+    min-height: var(--control-height);
+  }
+
+  .dash-toolbar__heading {
+    display: flex;
+    flex: 1 1 var(--size-sidebar-min);
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .dash-toolbar__push {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-inline-start: auto;
+  }
+
+  .dash-toolbar__tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .dash-toolbar__time {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .time-controls,
+  .split-control {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  /* The interval part of the refresh button sits close to it, as one control. */
+  .split-control__menu {
+    min-width: auto;
+    padding-inline: var(--space-1);
+  }
+
+  .time-picker__button {
+    min-width: 0;
+    max-width: var(--size-column);
+    padding-inline: var(--space-2);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .time-picker__button[aria-expanded="true"] {
+    background: var(--bg-active);
+  }
+
+  .time-picker__label {
+    min-width: 0;
+  }
+
+  .time-picker__chevron {
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 48rem) {
+    .dash-toolbar__tools,
+    .dash-toolbar__time {
+      flex: 1 1 100%;
+      flex-wrap: nowrap;
+      justify-content: flex-start;
+    }
+
+    .time-controls {
+      flex: 1 1 auto;
+    }
+
+    .time-controls .tip-anchor:has(.time-picker__button) {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .time-picker__button {
+      flex: 1 1 auto;
+      max-width: none;
+      justify-content: flex-start;
+    }
+  }
+
+  /* Menus of the toolbar: drawn in the window under their button. */
+
+  .toolbar-menu {
+    position: static;
+  }
+
+  .toolbar-menu__list,
+  .toolbar-menu__list.menu {
+    position: fixed;
+    inset: var(--menu-top, 0) var(--menu-right, 0) auto auto;
+    width: max-content;
+    min-width: var(--size-field);
+    max-width: var(--size-menu-max);
+    margin-block-start: var(--space-1);
+  }
+
+  .toolbar-menu__check {
+    display: inline-flex;
+    flex: none;
+    width: var(--icon-size);
+  }
+
+  .toolbar-menu__label {
+    flex: 1;
+  }
+
+  .toolbar-menu__key {
+    margin-inline-start: auto;
+  }
+
+  .toolbar-menu__item--danger {
+    color: var(--danger-text);
+  }
+
+  .toolbar-menu__separator {
+    margin: var(--space-1) 0;
+    border: 0;
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  /*
+   * The time range popover: quick ranges with a search on the left, the absolute range with
+   * calendar, copy and paste and the recent ranges on the right, the time zone below. On a phone
+   * it spans the width under the toolbar, the quick ranges first.
+   */
+
+  .time-picker {
+    position: fixed;
+    inset: var(--popover-top, 0) var(--popover-right, 0) auto auto;
+    z-index: var(--z-menu);
+    display: grid;
+    gap: var(--space-2);
+    width: min(var(--size-time-picker), 100vw - 2 * var(--space-4));
+    max-height: calc(100dvh - var(--popover-top, 0px) - var(--space-4));
+    margin-block-start: var(--space-1);
+    overflow-y: auto;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .time-picker__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: var(--space-4);
+  }
+
+  .time-picker__quick,
+  .time-picker__absolute {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .time-picker__search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline-start: var(--space-2);
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    color: var(--text-muted);
+  }
+
+  .time-picker__search .input {
+    min-width: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .time-picker__presets {
+    display: grid;
+    max-height: var(--size-result);
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  .time-picker__preset {
+    width: 100%;
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    text-align: start;
+  }
+
+  .time-picker__preset:hover {
+    background: var(--bg-hover);
+  }
+
+  /* The current quick range: a quiet tint and weight, never a frame. */
+  .time-picker__preset[aria-pressed="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .time-picker__preset:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .time-picker__empty {
+    padding: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .time-picker__heading {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .time-picker__form {
+    gap: var(--space-2);
+  }
+
+  .time-picker__end {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .time-picker__end .input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .time-picker__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .time-picker__actions .button--primary {
+    margin-inline-end: auto;
+  }
+
+  .time-picker__recent {
+    display: grid;
+    gap: var(--space-1);
+    padding-block-start: var(--space-2);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .time-picker__zone {
+    padding-block-start: var(--space-2);
+    border-block-start: var(--border-width) solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  @media (max-width: 48rem) {
+    .time-picker {
+      inset-inline: var(--space-4);
+      width: auto;
+    }
+
+    .time-picker__body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  /* The time options in the dashboard settings: fields side by side where there is room. */
+
+  .settings__time {
+    display: grid;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .settings__time-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-field), 100%), 1fr));
+    gap: var(--space-3);
+  }
+
+  /* A select is as wide as its longest zone name; here it takes its column instead. */
+  .settings__time-grid > * {
+    min-width: 0;
+  }
+
+  .settings__time-grid .select {
+    width: 100%;
+  }
+
+  /* The calendar: a month of days; chosen days tinted and bold, the days between lighter. */
+
+  .calendar {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .calendar__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .calendar__month {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .calendar__grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .calendar__weekday {
+    padding-block: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-align: center;
+  }
+
+  .calendar__day {
+    width: 100%;
+    min-height: var(--control-height);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .calendar__day:hover {
+    background: var(--bg-hover);
+  }
+
+  .calendar__day--between {
+    background: var(--bg-hover);
+  }
+
+  .calendar__day--chosen,
+  .calendar__day--chosen:hover {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .calendar__day--today {
+    text-decoration: underline;
+    text-underline-offset: var(--space-1);
+  }
+
+  .calendar__day:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+}

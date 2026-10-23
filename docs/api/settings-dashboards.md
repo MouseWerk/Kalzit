@@ -289,10 +289,22 @@ interface DashboardModel {
   title: string;                                // 1 to 200 characters
   timeRange: { from: string; to: string };      // "now", "now-6h", "now-1d/d", "now+15m", or ISO
                                                 // 8601: "2026-10-20" or "2026-10-20T08:15:00Z"
-                                                // (a time needs a zone: "Z" or "+02:00")
+                                                // (a time needs a zone: "Z" or "+02:00");
+                                                // units s m h d w M y, and fQ, fy for the
+                                                // fiscal quarter and year ("now-1fy/fy")
   refreshSeconds?: number;                      // 5 to 86400
   variables?: Variable[];                       // up to 100, default []
   panels?: Panel[];                             // up to 500, default []
+  // Time options; each left out while unset, so older dashboards read as before.
+  timeZone?: string;                            // "browser" or a zone name ("Europe/Berlin");
+                                                // unset: each viewer's own preference
+  weekStart?: "monday" | "sunday" | "saturday"; // unset: each viewer's own preference
+  fiscalYearStartMonth?: number;                // 1 to 12; unset: January
+  nowDelay?: string;                            // "now" stands this far back: 1 to 5 digits
+                                                // and s, m, h or d ("1m")
+  refreshIntervals?: number[];                  // seconds, 5 to 86400 each, ascending, up to
+                                                // 20; offered for the automatic refresh
+  sharedCursor?: "off" | "crosshair" | "tooltip"; // the pointer's time in every time panel
 }
 interface Variable {
   name: string;                                 // letters, digits, _; not starting with a digit; unique

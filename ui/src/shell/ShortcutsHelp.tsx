@@ -8,6 +8,8 @@ interface Shortcut {
   /** Keys pressed together; "Mod" is Ctrl, or Cmd on macOS. Alternatives are separate entries. */
   keys: readonly (readonly string[])[];
   label: MessageKey;
+  /** The keys of a combination are pressed one after the other ("t", then "z"). */
+  sequence?: boolean;
 }
 
 interface Area {
@@ -53,6 +55,16 @@ export const SHORTCUT_AREAS: readonly Area[] = [
         ],
         label: "shell.shortcuts.panelResize",
       },
+    ],
+  },
+  {
+    title: "shell.shortcuts.area.time",
+    shortcuts: [
+      { keys: [["t", "←"]], label: "shell.shortcuts.timeBack", sequence: true },
+      { keys: [["t", "→"]], label: "shell.shortcuts.timeForward", sequence: true },
+      { keys: [["t", "z"]], label: "shell.shortcuts.timeZoomOut", sequence: true },
+      { keys: [["t", "c"]], label: "shell.shortcuts.timeCopy", sequence: true },
+      { keys: [["t", "v"]], label: "shell.shortcuts.timePaste", sequence: true },
     ],
   },
   {
@@ -117,10 +129,13 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
                           <span className="shortcuts__or">{t("shell.shortcuts.or")}</span>
                         )}
                         <span className="shortcuts__combo">
-                          {combo.map((key) => (
-                            <kbd key={key} className="kbd">
-                              {keyName(key)}
-                            </kbd>
+                          {combo.map((key, keyIndex) => (
+                            <Fragment key={key}>
+                              {shortcut.sequence === true && keyIndex > 0 ? (
+                                <span className="shortcuts__or">{t("shell.shortcuts.then")}</span>
+                              ) : null}
+                              <kbd className="kbd">{keyName(key)}</kbd>
+                            </Fragment>
                           ))}
                         </span>
                       </Fragment>

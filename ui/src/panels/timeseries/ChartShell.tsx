@@ -11,6 +11,7 @@ import { useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
+import { useSharedCursor } from "../crosshair";
 import { toneClass } from "../fieldConfig/fieldConfig";
 import { Legend, type LegendItem, WithLegend } from "../fieldConfig/Legend";
 import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
@@ -103,7 +104,22 @@ export function ChartShell({
     setCursorX(null);
     setByKeyboard(false);
   });
-  const cursorTime = cursorX === null ? null : timeAt(cursorX);
+  // The dashboard's shared cursor: this chart publishes the time under its pointer and draws the
+  // time another panel points at while its own pointer is elsewhere.
+  const sharedCursor = useSharedCursor();
+  const plotFrom = timeAt(plot.left);
+  const plotTo = timeAt(plot.left + plot.width);
+  const otherX =
+    cursorX !== null ||
+    sharedCursor.time === null ||
+    sharedCursor.time < plotFrom ||
+    sharedCursor.time > plotTo ||
+    plotTo <= plotFrom
+      ? null
+      : plot.left + ((sharedCursor.time - plotFrom) / (plotTo - plotFrom)) * plot.width;
+  const shownX = cursorX ?? otherX;
+  const cursorTime =
+    cursorX === null ? (otherX === null ? null : sharedCursor.time) : timeAt(cursorX);
   const readout =
     cursorTime === null
       ? []
@@ -122,11 +138,17 @@ export function ChartShell({
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : format(row.index, row.value)}`,
           ),
         ].join(", ");
-  useStyleVars(tooltipRef, { "--hover-x": `${cursorX ?? 0}px` });
+  useStyleVars(tooltipRef, { "--hover-x": `${shownX ?? 0}px` });
 
   // The single tooltip shows the series whose value is nearest to the pointer.
   let shown = readout;
-  if (tooltip === "single" && !byKeyboard && cursorY !== null && valueAt !== undefined) {
+  if (
+    tooltip === "single" &&
+    !byKeyboard &&
+    cursorX !== null &&
+    cursorY !== null &&
+    valueAt !== undefined
+  ) {
     const target = valueAt(cursorY);
     const present = readout.filter((row) => !Number.isNaN(row.value));
     const nearest = present.reduce<(typeof readout)[number] | undefined>(
@@ -167,8 +189,10 @@ export function ChartShell({
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
+    const inside = x >= plot.left && x <= plot.left + plot.width;
     setByKeyboard(false);
-    setCursorX(x >= plot.left && x <= plot.left + plot.width ? x : null);
+    setCursorX(inside ? x : null);
+    sharedCursor.publish(inside ? timeAt(x) : null);
     setCursorY(event.clientY - rect.top);
   }
 
@@ -223,9 +247,11 @@ export function ChartShell({
             setFocused(false);
             setByKeyboard(false);
             setCursorX(null);
+            sharedCursor.publish(null);
           }}
           onPointerMove={onPointerMove}
           onPointerLeave={() => {
+            sharedCursor.publish(null);
             if (!byKeyboard) {
               setCursorX(null);
             }
@@ -242,7 +268,7 @@ export function ChartShell({
           <span className="visually-hidden" role="status">
             {spoken}
           </span>
-          {children(cursorX)}
+          {children(shownX)}
           {annotations === null ? null : (
             <AnnotationMarks
               annotations={annotations}
@@ -251,11 +277,13 @@ export function ChartShell({
               to={timeAt(plot.left + plot.width)}
             />
           )}
-          {cursorTime === null || tooltip === "hidden" ? null : (
+          {cursorTime === null ||
+          tooltip === "hidden" ||
+          (cursorX === null && sharedCursor.mode !== "tooltip") ? null : (
             <div
               // Past the middle the tooltip opens to the left, so the edge never cuts it off.
               className={
-                (cursorX ?? 0) > plot.left + plot.width / 2
+                (shownX ?? 0) > plot.left + plot.width / 2
                   ? "ts__tooltip ts__tooltip--flip"
                   : "ts__tooltip"
               }

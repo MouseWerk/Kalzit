@@ -1,5 +1,18 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { intervalFor, isRelative, presetOf, resolveRange, resolveTime } from "./timeRange";
+import {
+  delayedNow,
+  formatDuration,
+  intervalFor,
+  isRelative,
+  parseDuration,
+  presetOf,
+  rangeFromClipboard,
+  rangeToClipboard,
+  resolveRange,
+  resolveTime,
+  shiftRange,
+  zoomOutRange,
+} from "./timeRange";
 
 // Resolution follows the browser's time zone. A zone with daylight saving time makes the DST
 // cases real; the clock is always passed in, never read.
@@ -158,5 +171,165 @@ describe("resolveRange", () => {
     expect(presetOf({ from: "now-5h", to: "now" })).toBeUndefined();
     expect(intervalFor({ from: 0, to: 6 * HOUR })).toBe(21_600);
     expect(intervalFor({ from: 0, to: 60_000 })).toBe(1000);
+  });
+});
+
+describe("fiscal years and quarters", () => {
+  // A fiscal year starting in April, in the browser's zone (Berlin).
+  const april = { timeZone: null, weekStart: null, fiscalYearStartMonth: 4 };
+  const now = local(2027, 2, 10, 9);
+
+  it("rounds to the fiscal year and quarter of the start month", () => {
+    expect(resolveTime("now/fy", now, false, april)).toBe(local(2026, 4, 1));
+    expect(resolveTime("now/fy", now, true, april)).toBe(local(2027, 3, 31, 23, 59, 59, 999));
+    // February is in the fourth quarter of a year from April: January to March.
+    expect(resolveTime("now/fQ", now, false, april)).toBe(local(2027, 1, 1));
+    expect(resolveTime("now-1fQ/fQ", now, false, april)).toBe(local(2026, 10, 1));
+    expect(resolveTime("now-1fy/fy", now, true, april)).toBe(local(2026, 3, 31, 23, 59, 59, 999));
+    expect(resolveTime("now-1fy", now, false, april)).toBe(local(2026, 2, 10, 9));
+  });
+
+  it("is the calendar year without a start month", () => {
+    const calendar = { timeZone: null, weekStart: null };
+    expect(resolveTime("now/fy", now, false, calendar)).toBe(resolveTime("now/y", now));
+    expect(resolveTime("now/fQ", now, false, calendar)).toBe(local(2027, 1, 1));
+  });
+
+  it("counts wall-clock days across daylight saving changes", () => {
+    // The quarter from January to March holds the spring change: one hour short.
+    const winter = resolveRange({ from: "now/fQ", to: "now/fQ" }, now, april);
+    expect(winter.ok && winter.range.from).toBe(local(2027, 1, 1));
+    expect(winter.ok && winter.range.to + 1 - winter.range.from).toBe((90 * 24 - 1) * HOUR);
+    // A year from October holds both changes and starts at midnight after the autumn one.
+    const october = { ...april, fiscalYearStartMonth: 10 };
+    const autumn = resolveRange({ from: "now/fy", to: "now/fy" }, local(2026, 10, 25, 12), october);
+    expect(autumn.ok && autumn.range.from).toBe(local(2026, 10, 1));
+    expect(autumn.ok && autumn.range.to + 1).toBe(local(2027, 10, 1));
+    expect(autumn.ok && autumn.range.to + 1 - autumn.range.from).toBe(365 * 24 * HOUR);
+  });
+
+  it("is part of the grammar like every other unit", () => {
+    expect(isRelative("now-2fQ/fQ")).toBe(true);
+    for (const text of ["now/f", "now-1fq", "now-1FY", "now/fy/d"]) {
+      expect(resolveTime(text, now), text).toBeNull();
+    }
+  });
+});
+
+describe("moving and widening a range", () => {
+  const now = local(2026, 10, 20, 14);
+  const settings = { timeZone: null, weekStart: null };
+
+  it("moves relative ranges by their own length and keeps them relative", () => {
+    expect(shiftRange({ from: "now-6h", to: "now" }, -1, now, settings)).toEqual({
+      from: "now-12h",
+      to: "now-6h",
+    });
+    expect(shiftRange({ from: "now-12h", to: "now-6h" }, 1, now, settings)).toEqual({
+      from: "now-6h",
+      to: "now",
+    });
+    expect(shiftRange({ from: "now-90m", to: "now" }, -1, now, settings)).toEqual({
+      from: "now-3h",
+      to: "now-90m",
+    });
+    expect(shiftRange({ from: "now-7d", to: "now" }, -1, now, settings)).toEqual({
+      from: "now-2w",
+      to: "now-1w",
+    });
+    expect(shiftRange({ from: "now/d", to: "now/d" }, -1, now, settings)).toEqual({
+      from: "now-1d/d",
+      to: "now-1d/d",
+    });
+    expect(shiftRange({ from: "now-1w/w", to: "now/w" }, 1, now, settings)).toEqual({
+      from: "now+1w/w",
+      to: "now+2w/w",
+    });
+    expect(shiftRange({ from: "now-1fy/fy", to: "now-1fy/fy" }, -1, now, settings)).toEqual({
+      from: "now-2fy/fy",
+      to: "now-2fy/fy",
+    });
+  });
+
+  it("moves anything else as absolute times", () => {
+    const moved = shiftRange({ from: "now-1d", to: "now-6h" }, -1, now, settings);
+    const before = resolveRange({ from: "now-1d", to: "now-6h" }, now, settings);
+    const after = moved === null ? null : resolveRange(moved, now, settings);
+    expect(moved?.from).toMatch(/Z$/);
+    expect(before.ok && after?.ok && after.range.to).toBe(before.ok && before.range.from);
+    const absolute = { from: "2026-10-20T08:00:00.000Z", to: "2026-10-20T10:00:00.000Z" };
+    expect(shiftRange(absolute, 1, now, settings)).toEqual({
+      from: "2026-10-20T10:00:00.000Z",
+      to: "2026-10-20T12:00:00.000Z",
+    });
+    expect(shiftRange({ from: "later", to: "now" }, 1, now, settings)).toBeNull();
+  });
+
+  it("zooms out to twice the range, keeping a range that ends now ending now", () => {
+    expect(zoomOutRange({ from: "now-6h", to: "now" }, now, settings)).toEqual({
+      from: "now-12h",
+      to: "now",
+    });
+    expect(zoomOutRange({ from: "now-12h", to: "now-6h" }, now, settings)).toEqual({
+      from: "now-15h",
+      to: "now-3h",
+    });
+    // Never past now when it ended before now.
+    expect(zoomOutRange({ from: "now-2h", to: "now-30m" }, now, settings)).toEqual({
+      from: "now-3h",
+      to: "now",
+    });
+    expect(zoomOutRange({ from: "now/w", to: "now/w" }, now, settings)).toEqual({
+      from: "now-1w/w",
+      to: "now/w",
+    });
+    const absolute = { from: "2026-10-20T08:00:00.000Z", to: "2026-10-20T10:00:00.000Z" };
+    expect(zoomOutRange(absolute, now, settings)).toEqual({
+      from: "2026-10-20T07:00:00.000Z",
+      to: "2026-10-20T11:00:00.000Z",
+    });
+  });
+});
+
+describe("copy and paste, lengths and the now delay", () => {
+  const now = local(2026, 10, 20, 14);
+
+  it("copies a range as JSON and pastes it back, or two times in one line", () => {
+    const range = { from: "now-6h", to: "now" };
+    expect(rangeFromClipboard(rangeToClipboard(range), now)).toEqual(range);
+    expect(rangeFromClipboard("now-1d/d to now-1d/d", now)).toEqual({
+      from: "now-1d/d",
+      to: "now-1d/d",
+    });
+    // A local time typed without a zone is stored in UTC, as the picker stores it.
+    expect(rangeFromClipboard("2026-10-20T08:00, 2026-10-20T10:00", now)).toEqual({
+      from: "2026-10-20T06:00:00.000Z",
+      to: "2026-10-20T08:00:00.000Z",
+    });
+    for (const text of ["", "hello", '{"from": 1}', '{"from":"now","to":"now-1h"}']) {
+      expect(rangeFromClipboard(text, now), text).toBeNull();
+    }
+  });
+
+  it("reads and writes lengths in seconds", () => {
+    expect(parseDuration("30s")).toBe(30);
+    expect(parseDuration("5m")).toBe(300);
+    expect(parseDuration("1d")).toBe(86_400);
+    for (const text of ["", "0m", "5", "1w", "-1m", "123456s"]) {
+      expect(parseDuration(text), text).toBeNull();
+    }
+    expect([90, 300, 3600, 86_400, 5400].map(formatDuration)).toEqual([
+      "90s",
+      "5m",
+      "1h",
+      "1d",
+      "90m",
+    ]);
+  });
+
+  it("moves now back by the delay", () => {
+    expect(delayedNow(now, "5m")).toBe(now - 5 * 60_000);
+    expect(delayedNow(now, undefined)).toBe(now);
+    expect(delayedNow(now, "soon")).toBe(now);
   });
 });

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
-import { fillQuery, panelAction } from "../support/ui";
+import { fillQuery, panelAction, startEditing, toolbarAction } from "../support/ui";
 import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
@@ -166,11 +166,38 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 }
 
+test("time picker, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await page
+    .getByRole("button", {
+      name: t("dashboards.time.buttonLabel", { range: t("dashboards.time.last6h") }),
+    })
+    .click();
+  const picker = page.getByRole("dialog", { name: t("dashboards.time.title") });
+  await picker.getByRole("button", { name: t("toolbar.calendar.pickStart") }).click();
+  await expect(picker.locator(".calendar")).toBeVisible();
+  // The picture shows the picker as it opens, without the focus ring in its search field.
+  await shoot(page, "time-picker-dark");
+  await page.context().close();
+});
+
+test("dashboard, phone", async ({ browser }) => {
+  const page = await openPage(browser, "light", { width: 360, height: 780 });
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await shoot(page, "dashboard-phone");
+  await page.context().close();
+});
+
 /** The full-page panel editor on the demo's time series, its chart drawn. */
 async function panelEditor(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
   await dashboardReady(page);
-  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await startEditing(page);
   await panelAction(page, "Sales in the selected region", "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await expect(editor.locator(".cm-content").first()).toBeVisible();
@@ -190,11 +217,8 @@ test("panel editor, dark", async ({ browser }) => {
 async function newPanel(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
   await dashboardReady(page);
-  await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await page
-    .getByRole("button", { name: t("dashboards.addPanel") })
-    .first()
-    .click();
+  await startEditing(page);
+  await toolbarAction(page, "toolbar.add", "dashboards.addPanel");
   const editor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });
   await expect(editor.locator(".cm-content").first()).toBeVisible();
   await expect(editor.getByRole("radio").first()).toBeVisible();

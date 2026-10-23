@@ -189,6 +189,12 @@ const MODEL_FIELDS = [
   "rows",
   "annotations",
   "links",
+  "timeZone",
+  "weekStart",
+  "fiscalYearStartMonth",
+  "nowDelay",
+  "refreshIntervals",
+  "sharedCursor",
 ];
 const PANEL_FIELDS = [
   "id",

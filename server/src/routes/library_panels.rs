@@ -126,6 +126,12 @@ fn as_dashboard(content: &Value) -> ApiResult<model::DashboardModel> {
         rows: Vec::new(),
         annotations: Vec::new(),
         links: Vec::new(),
+        time_zone: None,
+        week_start: None,
+        fiscal_year_start_month: None,
+        now_delay: None,
+        refresh_intervals: Vec::new(),
+        shared_cursor: None,
     })
 }
 

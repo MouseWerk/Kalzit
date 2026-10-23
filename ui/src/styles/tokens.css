@@ -536,3 +536,11 @@
     --size-splitter: 0.75rem;
   }
 }
+
+/* The dashboard toolbar and its time range popover. */
+@layer tokens {
+  :root {
+    /* Quick ranges and the absolute range side by side. */
+    --size-time-picker: 44rem;
+  }
+}

@@ -17,6 +17,12 @@ async function panelAction(user: ReturnType<typeof renderApp>["user"], name: str
   await user.click(await screen.findByRole("menuitem", { name }));
 }
 
+/** Opens the dashboard's overflow menu and picks an entry. */
+async function moreAction(user: ReturnType<typeof renderApp>["user"], name: string) {
+  await user.click(await screen.findByRole("button", { name: "More" }));
+  await user.click(await screen.findByRole("menuitem", { name }));
+}
+
 /** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
 async function fill(user: ReturnType<typeof renderApp>["user"], field: HTMLElement, text: string) {
   await user.click(field);
@@ -516,11 +522,14 @@ describe("dashboard view", () => {
 
   it("gives viewers view mode only", async () => {
     setup("viewer");
-    renderApp("/dashboards/d-sales");
+    const { user } = renderApp("/dashboards/d-sales");
     await screen.findByRole("heading", { level: 1, name: "Sales" });
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
-    expect(screen.getByRole("link", { name: "History" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const menu = screen.getByRole("menu", { name: "More" });
+    expect(within(menu).getByRole("menuitem", { name: "History" })).toBeTruthy();
+    expect(within(menu).queryByRole("menuitem", { name: "Delete…" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Settings…" })).toBeNull();
   });
 
   it("changes the time range, and the queries follow with absolute times", async () => {
@@ -597,18 +606,20 @@ describe("editing a dashboard", () => {
     expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
   });
 
-  it("puts Done where Edit was, so a second click there does not add a panel", async () => {
+  it("ends the toolbar with Edit, then with Done and Save, so a second click adds nothing", async () => {
     setup();
     const { user } = renderApp("/dashboards/d-sales");
     const edit = await screen.findByRole("button", { name: "Edit" });
     const tools = edit.parentElement as HTMLElement;
-    const position = [...tools.children].indexOf(edit);
+    expect(tools.lastElementChild).toBe(edit);
     await user.click(edit);
     const done = await screen.findByRole("button", { name: "Done" });
-    expect([...tools.children].indexOf(done)).toBe(position);
-    expect(within(tools).getByRole("button", { name: "Add panel" })).not.toBe(
-      tools.children[position],
-    );
+    const save = screen.getByRole("button", { name: "Save…" });
+    expect([...tools.children].slice(-2)).toEqual([done, save]);
+    // Nothing unsaved: Save stays disabled, and adding is behind its own menu.
+    expect(save.hasAttribute("disabled")).toBe(true);
+    await user.click(within(tools).getByRole("button", { name: "Add" }));
+    expect(screen.getByRole("menuitem", { name: "Add panel" })).toBeTruthy();
   });
 
   it("adds a panel with a query from the panel editor", async () => {
@@ -901,15 +912,21 @@ describe("rights and refusals", () => {
   ])("opens the access dialog for a %s", async (_, path, title) => {
     setup("admin");
     const { user } = renderApp(path);
-    await user.click(await screen.findByRole("button", { name: "Access…" }));
+    if (path.startsWith("/dashboards/")) {
+      await moreAction(user, "Access…");
+    } else {
+      await user.click(await screen.findByRole("button", { name: "Access…" }));
+    }
     expect(await screen.findByRole("dialog", { name: title })).toBeTruthy();
   });
 
   it("offers no access dialog to a viewer without the right to share", async () => {
     setup("viewer");
-    renderApp("/dashboards/d-sales");
+    const { user } = renderApp("/dashboards/d-sales");
     await screen.findByRole("heading", { level: 1, name: "Sales" });
     expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.queryByRole("menuitem", { name: "Access…" })).toBeNull();
   });
 
   it("passes the query's abort signal to the request", async () => {
@@ -962,7 +979,7 @@ describe("history and trash", () => {
   it("moves a dashboard to the trash and restores it from there", async () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
-    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await moreAction(user, "Delete…");
     const dialog = screen.getByRole("dialog", { name: "Delete dashboard?" });
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Trash" })).toBeTruthy();
@@ -990,7 +1007,8 @@ describe("history and trash", () => {
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     await user.click(within(nav).getByRole("link", { name: "Dashboards" }));
     await user.click(await screen.findByRole("link", { name: "Sales" }));
-    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await screen.findByRole("heading", { level: 1, name: "Sales" });
+    await moreAction(user, "Delete…");
     await user.click(
       within(screen.getByRole("dialog", { name: "Delete dashboard?" })).getByRole("button", {
         name: "Delete",

@@ -1,0 +1,73 @@
+@layer components {
+  /* Quiet icon buttons: square, no fill until hovered, the icon in the text color. */
+
+  .icon-button {
+    min-width: var(--control-height);
+    padding-inline: var(--space-2);
+  }
+
+  .icon-button__text {
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .icon-button[aria-expanded="true"],
+  .icon-button[aria-pressed="true"] {
+    background: var(--bg-active);
+  }
+
+  /*
+   * Tooltips: under the control, its right edge on the control's, shown on hover and on keyboard
+   * focus. Hidden with display, so a tooltip that is not shown takes no room and never widens
+   * the page on a phone.
+   */
+
+  .tip-anchor {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .tip {
+    position: absolute;
+    inset-block-start: calc(100% + var(--space-1));
+    inset-inline-end: 0;
+    z-index: var(--z-menu);
+    display: none;
+    align-items: center;
+    gap: var(--space-2);
+    width: max-content;
+    max-width: var(--size-tooltip-max);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-tight);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .tip-anchor--start .tip {
+    inset-inline: 0 auto;
+  }
+
+  .tip__keys {
+    display: inline-flex;
+    gap: var(--space-1);
+  }
+
+  /* Dismissed with Escape, or covered by the menu its button opened: not shown. */
+  @media (hover: hover) {
+    .tip-anchor:hover:not([data-tip-dismissed], :has(> [aria-expanded="true"])) > .tip {
+      display: inline-flex;
+    }
+  }
+
+  .tip-anchor:has(> :focus-visible):not([data-tip-dismissed], :has(> [aria-expanded="true"]))
+    > .tip {
+    display: inline-flex;
+  }
+}

@@ -5,6 +5,7 @@ export type Change =
   | { kind: "title"; from: string; to: string }
   | { kind: "timeRange" }
   | { kind: "refresh" }
+  | { kind: "timeOptions" }
   | { kind: "variables" }
   | { kind: "panelAdded"; title: string }
   | { kind: "panelRemoved"; title: string }
@@ -27,8 +28,21 @@ export function diffModels(before: DashboardModel, after: DashboardModel): Chang
   if (!same(before.timeRange, after.timeRange)) {
     changes.push({ kind: "timeRange" });
   }
-  if (before.refreshSeconds !== after.refreshSeconds) {
+  if (
+    before.refreshSeconds !== after.refreshSeconds ||
+    !same(before.refreshIntervals, after.refreshIntervals)
+  ) {
     changes.push({ kind: "refresh" });
+  }
+  const timeOptions = (m: DashboardModel) => [
+    m.timeZone,
+    m.weekStart,
+    m.fiscalYearStartMonth,
+    m.nowDelay,
+    m.sharedCursor,
+  ];
+  if (!same(timeOptions(before), timeOptions(after))) {
+    changes.push({ kind: "timeOptions" });
   }
   if (!same(before.variables, after.variables)) {
     changes.push({ kind: "variables" });
