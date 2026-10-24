@@ -7,7 +7,7 @@ import {
   fieldOptionsFor,
   toneClass,
 } from "../fieldConfig/fieldConfig";
-import { timeField, toNumber } from "../frame";
+import { distinctSeriesNames, frameName, timeField, toNumber } from "../frame";
 
 /** Time points a state panel works with at most; longer results are thinned to this. */
 export const MAX_STATE_POINTS = 500;
@@ -70,78 +70,114 @@ export function stateTone(text: string): "ok" | "warn" | "critical" | "neutral" 
   }
   return undefined;
 }
+
+/** A frame's points in time order: time and the row index that holds its values. */
+function timeOrder(frame: Frame): { time: number; index: number }[] {
+  const time = timeField(frame);
+  return (time?.values ?? [])
+    .map((raw, index) => ({ time: toNumber(raw), index }))
+    .filter((p): p is { time: number; index: number } => p.time !== null)
+    .sort((a, b) => a.time - b.time);
+}
+
 /**
- * Every field except time becomes a row of states over the frame's time points. A value's color
- * comes, in this order, from its mapping, the thresholds, the field's color, the state word it is
- * (stateTone, unless `stateWords` is off), and else the palette in the order values first appear,
- * the same color for the same text in every row.
+ * Every field except time of every frame with a time field becomes a row of states, so a panel
+ * with one query per service shows one row per service. The rows share the time points of all
+ * frames; where a frame has no point of its own, its row holds its last state, as a state lasts
+ * until it changes (and has none before its first point); with `hold` off it has no value there.
+ * A value's color comes, in this order, from its mapping, the thresholds, the field's color, the
+ * state word it is (stateTone, unless `stateWords` is off), and else the palette in the order
+ * values first appear, the same color for the same text in every row.
  */
 export function stateData(
   frames: readonly Frame[],
   config: FieldConfig,
   language: string,
   stateWords = true,
+  /**
+   * A row holds its last state between its own points (state timeline). Without it (status
+   * history) a row has a cell only at its own query's points, never a copy at another's time.
+   */
+  hold = true,
 ): StateData | null {
-  const frame = frames.find(
-    (f) => timeField(f) !== undefined && f.fields.some((field) => field.type !== "time"),
-  );
-  const time = frame === undefined ? undefined : timeField(frame);
-  if (frame === undefined || time === undefined) {
+  const sources = frames
+    .filter((f) => timeField(f) !== undefined && f.fields.some((field) => field.type !== "time"))
+    .map((frame) => ({ frame, points: timeOrder(frame) }));
+  if (sources.length === 0) {
     return null;
   }
-  const sorted = time.values
-    .map((raw, index) => ({ time: toNumber(raw), index }))
-    .filter((p): p is { time: number; index: number } => p.time !== null)
-    .sort((a, b) => a.time - b.time);
+  const all = [...new Set(sources.flatMap((s) => s.points.map((p) => p.time)))].sort(
+    (a, b) => a - b,
+  );
   // Far more points than pixels: each stretch keeps its last value, so a long result draws as
   // fast as a short one. A state shorter than one stretch can drop out; zooming in shows it.
-  const order =
-    sorted.length <= MAX_STATE_POINTS
-      ? sorted
+  const times =
+    all.length <= MAX_STATE_POINTS
+      ? all
       : Array.from(
           { length: MAX_STATE_POINTS },
           (_, i) =>
-            sorted[
-              Math.min(
-                sorted.length - 1,
-                Math.floor(((i + 1) * sorted.length) / MAX_STATE_POINTS) - 1,
-              )
-            ] as { time: number; index: number },
+            all[
+              Math.min(all.length - 1, Math.floor(((i + 1) * all.length) / MAX_STATE_POINTS) - 1)
+            ] as number,
         );
   const palette = new Map<string, number>();
   const legend = new Map<string, StateValue>();
-  const rows = frame.fields
-    .filter((field) => field.type !== "time")
-    .map((field) => {
-      const options = fieldOptionsFor(field, config);
-      const values = order.map(({ index }) => {
-        const raw = field.values[index];
-        if (raw === null || raw === undefined) {
-          return null;
-        }
-        const display = displayValue(raw, field.type, options, language);
-        const text = displayText(display);
-        let colorClass: string;
-        const known = stateWords && options.color === undefined ? stateTone(text) : undefined;
-        if (display.tone !== undefined) {
-          colorClass = toneClass(display.tone);
-        } else if (known !== undefined) {
-          colorClass = toneClass(known);
-        } else {
-          if (!palette.has(text)) palette.set(text, palette.size);
-          colorClass = toneClass(options.color, palette.get(text));
-        }
-        const value = { text, colorClass };
-        if (legend.size < MAX_LEGEND_VALUES && !legend.has(`${text}|${colorClass}`)) {
-          legend.set(`${text}|${colorClass}`, value);
-        }
-        return value;
+  const rows = sources.flatMap(({ frame, points }) => {
+    // The frame's row index in effect at each shared time point: its last point at or before it.
+    const at: (number | null)[] = [];
+    let next = 0;
+    for (const time of times) {
+      while (next < points.length && (points[next] as { time: number }).time <= time) next++;
+      const last = next === 0 ? undefined : (points[next - 1] as { time: number; index: number });
+      at.push(last === undefined || (!hold && last.time !== time) ? null : last.index);
+    }
+    return frame.fields
+      .filter((field) => field.type !== "time")
+      .map((field) => {
+        const options = fieldOptionsFor(field, config);
+        const values = at.map((index) => {
+          const raw = index === null ? null : field.values[index];
+          if (raw === null || raw === undefined) {
+            return null;
+          }
+          const display = displayValue(raw, field.type, options, language);
+          const text = displayText(display);
+          let colorClass: string;
+          const known = stateWords && options.color === undefined ? stateTone(text) : undefined;
+          if (display.tone !== undefined) {
+            colorClass = toneClass(display.tone);
+          } else if (known !== undefined) {
+            colorClass = toneClass(known);
+          } else {
+            if (!palette.has(text)) palette.set(text, palette.size);
+            colorClass = toneClass(options.color, palette.get(text));
+          }
+          const value = { text, colorClass };
+          if (legend.size < MAX_LEGEND_VALUES && !legend.has(`${text}|${colorClass}`)) {
+            legend.set(`${text}|${colorClass}`, value);
+          }
+          return value;
+        });
+        return {
+          row: { name: displayNameOf(field, options), values },
+          named: {
+            name: displayNameOf(field, options),
+            field,
+            ...(frameName(frame) === undefined ? {} : { refId: frameName(frame) as string }),
+            fixed: options.displayName !== undefined,
+          },
+        };
       });
-      return { name: displayNameOf(field, options), values };
-    });
-  return { times: order.map((p) => p.time), rows, legend: [...legend.values()] };
+  });
+  // Rows of several queries with the same field name are told apart like series (amount (B)).
+  const names = distinctSeriesNames(rows.map((r) => r.named));
+  return {
+    times,
+    rows: rows.map((r, i) => ({ ...r.row, name: names[i] ?? r.row.name })),
+    legend: [...legend.values()],
+  };
 }
-
 export interface Segment {
   value: StateValue;
   from: number;

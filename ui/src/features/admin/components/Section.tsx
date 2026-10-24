@@ -53,13 +53,16 @@ export function Section({
   }
   return (
     <section className="admin-section" aria-labelledby={titleId}>
-      <div className="admin-section__header">
-        <div className="admin-section__heading">
-          {back}
-          <h1 id={titleId}>{heading ?? t(title)}</h1>
-          {lead === undefined ? null : <p className="admin-section__lead">{t(lead)}</p>}
+      {/* The back link sits above the header row, so the actions line up with the heading. */}
+      <div className="admin-section__top">
+        {back}
+        <div className="admin-section__header">
+          <div className="admin-section__heading">
+            <h1 id={titleId}>{heading ?? t(title)}</h1>
+            {lead === undefined ? null : <p className="admin-section__lead">{t(lead)}</p>}
+          </div>
+          {actions === undefined ? null : <div className="admin-section__actions">{actions}</div>}
         </div>
-        {actions === undefined ? null : <div className="admin-section__actions">{actions}</div>}
       </div>
       {children}
     </section>

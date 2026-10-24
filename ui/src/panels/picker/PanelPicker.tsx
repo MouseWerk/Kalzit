@@ -37,7 +37,7 @@ export function PanelPicker({
           return (
             <label
               key={panel.type}
-              // The whole description, also where the card shows only its first line.
+              // The whole description, also where the card shows only its first two lines.
               title={accepts && panel.description !== undefined ? t(panel.description) : undefined}
               className={
                 panel.type === value ? "picker__card picker__card--current" : "picker__card"
