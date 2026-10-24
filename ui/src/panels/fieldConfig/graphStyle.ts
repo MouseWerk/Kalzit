@@ -107,6 +107,22 @@ function integer(value: unknown, min: number, max: number): number | undefined {
     : undefined;
 }
 
+/** Control characters, as Rust's `char::is_control` sees them (C0, DEL and C1). */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it removes
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * A stack group as the server keeps it: without control characters (which it refuses), at most
+ * `stackGroupChars` long; empty is no group.
+ */
+export function stackGroupOf(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const group = [...value.replace(CONTROL, "")].slice(0, GRAPH_LIMITS.stackGroupChars).join("");
+  return group === "" ? undefined : group;
+}
+
 /** Reads the graph style keys of stored field options; wrong types and bounds are dropped. */
 export function parseGraphStyle(value: Record<string, unknown>): GraphStyleOptions {
   const L = GRAPH_LIMITS;
@@ -124,12 +140,7 @@ export function parseGraphStyle(value: Record<string, unknown>): GraphStyleOptio
     ["connectGapsBelow", integer(value.connectGapsBelow, L.minDuration, L.maxDuration)],
     ["breakAfter", integer(value.breakAfter, L.minDuration, L.maxDuration)],
     ["stack", choice(STACKINGS, value.stack)],
-    [
-      "stackGroup",
-      typeof value.stackGroup === "string" && value.stackGroup !== ""
-        ? value.stackGroup.slice(0, L.stackGroupChars)
-        : undefined,
-    ],
+    ["stackGroup", stackGroupOf(value.stackGroup)],
     ["barAlignment", choice(BAR_ALIGNMENTS, value.barAlignment)],
     ["barWidth", integer(value.barWidth, L.minBarWidth, L.maxBarWidth)],
     ["comparison", typeof value.comparison === "boolean" ? value.comparison : undefined],

@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { Api, regionDashboard, SQL, unique } from "./support/api";
+import { DENSE_ROWS } from "./support/fixture-db";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
 import { panelAction } from "./support/ui";
@@ -342,4 +343,141 @@ test("dragging a panel makes no long task over 50 ms at 4x CPU throttling", asyn
       .toBeGreaterThan(100);
   }
   expect(Math.min(...rounds)).toBeLessThan(BUDGET_MS);
+});
+
+/** The calibration script's time at full speed on the reference machine. */
+const REFERENCE_CALIBRATION_1X_MS = 56;
+/**
+ * The longest task while three 100,000-point charts (hatched, hue gradient, stacked to 100 %) are
+ * built and drawn again on the canvas: 58 to 67 ms on the reference machine; the budget leaves
+ * room for a busy runner and grows with the calibration on a slower one.
+ */
+const STYLES_TASK_MS = 150;
+
+/**
+ * Counts, on each chart canvas, how often uPlot clears it, which it does once per draw
+ * (`data-draws`). A chart built again brings a new canvas, which starts without a count.
+ */
+function installDrawCounter(): void {
+  const clear = CanvasRenderingContext2D.prototype.clearRect;
+  CanvasRenderingContext2D.prototype.clearRect = function (
+    this: CanvasRenderingContext2D,
+    ...args
+  ) {
+    const canvas = this.canvas;
+    if (canvas.closest?.(".ts__uplot") !== null) {
+      canvas.dataset.draws = String(Number(canvas.dataset.draws ?? "0") + 1);
+    }
+    return clear.apply(this, args);
+  };
+}
+
+/** How many chart canvases there are and how many of them drew since their counts were zeroed. */
+function drawnCanvases(page: Page): Promise<{ canvases: number; drawn: number }> {
+  return page.evaluate(() => {
+    const canvases = [...document.querySelectorAll<HTMLCanvasElement>(".ts__uplot canvas")];
+    return {
+      canvases: canvases.length,
+      drawn: canvases.filter((canvas) => Number(canvas.dataset.draws ?? "0") > 0).length,
+    };
+  });
+}
+
+/** The most values any field of a query answer holds. */
+function mostValues(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((most: number, item) => Math.max(most, mostValues(item)), 0);
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const own = Array.isArray(record.values) ? record.values.length : 0;
+    return Math.max(own, ...Object.values(record).map(mostValues));
+  }
+  return 0;
+}
+
+test("three 100,000-point charts with hatch, gradient and stacking draw again within budget", async ({
+  page,
+  browser,
+  world,
+}) => {
+  const target = (sql: string) => [{ refId: "A", datasourceId: world.sourceId, query: { sql } }];
+  const panel = (id: string, title: string, y: number, sql: string, defaults: object) => ({
+    id,
+    type: "timeseries",
+    title,
+    grid: { x: 0, y, w: 24, h: 6 },
+    targets: target(sql),
+    fieldConfig: { defaults, overrides: [] },
+  });
+  const owner = await Api.owner();
+  const id = await owner.createDashboard({
+    schemaVersion: 1,
+    title: unique("Dichte"),
+    timeRange: { from: "now-30h", to: "now" },
+    variables: [],
+    panels: [
+      panel("hatch", "Hatched", 0, "SELECT ts AS time, a FROM dense ORDER BY ts", {
+        fill: "hatch",
+        gradientMode: "opacity",
+      }),
+      panel("hue", "Hue gradient", 6, "SELECT ts AS time, a, b FROM dense ORDER BY ts", {
+        fill: "solid",
+        gradientMode: "hue",
+      }),
+      panel("stacked", "Stacked to 100 %", 12, "SELECT ts AS time, a, b FROM dense ORDER BY ts", {
+        stack: "percent",
+        fill: "solid",
+      }),
+    ],
+  });
+  await owner.dispose();
+  await page.addInitScript(installDrawCounter);
+  // Every panel's answer, to check that each chart really holds 100,000 points.
+  const answers: Promise<number>[] = [];
+  page.on("response", (response) => {
+    if (/\/panels\/[^/]+\/query$/.test(new URL(response.url()).pathname)) {
+      answers.push(response.json().then(mostValues));
+    }
+  });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  await expect(page.locator(".ts__uplot canvas")).toHaveCount(3, { timeout: 30_000 });
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 30_000 });
+  const points = await Promise.all(answers);
+  // At least one answer per panel (a refresh may add more), each with every point.
+  expect(points.length).toBeGreaterThanOrEqual(3);
+  expect(points.every((count) => count === DENSE_ROWS)).toBe(true);
+  const calibration = await calibrate(page);
+  const budget = STYLES_TASK_MS * Math.max(1, calibration / REFERENCE_CALIBRATION_1X_MS);
+  const rounds: number[] = [];
+  // A theme change builds every chart again and draws it on the canvas: paths, the hatch tile,
+  // the gradients and the stacked fills, at full speed. Each round must draw all three.
+  for (let round = 0; round < ROUNDS; round++) {
+    await page.evaluate(() => {
+      for (const canvas of document.querySelectorAll<HTMLCanvasElement>(".ts__uplot canvas")) {
+        canvas.dataset.draws = "0";
+      }
+    });
+    await browser.startTracing(page, {
+      categories: ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"],
+    });
+    await page.evaluate(
+      (theme) => {
+        document.documentElement.dataset.theme = theme;
+      },
+      round % 2 === 0 ? "dark" : "light",
+    );
+    // Every one of the three charts drew again, not one chart three times.
+    await expect.poll(() => drawnCanvases(page)).toEqual({ canvases: 3, drawn: 3 });
+    await page.waitForTimeout(300);
+    const task = longestTask(await browser.stopTracing());
+    rounds.push(task);
+    process.stdout.write(
+      `budget: three 100k-point styled charts drawn again, round ${round + 1}: longest task ${task.toFixed(0)} ms (budget ${budget.toFixed(0)} ms, calibration ${calibration.toFixed(1)} ms)\n`,
+    );
+  }
+  await expect(page.locator(".ts__uplot canvas")).toHaveCount(3);
+  expect(Math.min(...rounds)).toBeGreaterThan(0);
+  expect(Math.min(...rounds)).toBeLessThan(budget);
 });

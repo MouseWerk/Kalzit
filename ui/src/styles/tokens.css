@@ -555,6 +555,8 @@
     --chart-mono-compare: light-dark(oklch(55% 0.008 286), oklch(64% 0.006 286));
     --chart-hatch-alpha: 0.5;
     --chart-hatch-width: 1;
+    /* Room between hatch lines in px (the reference's 9 px at 1.5x). */
+    --chart-hatch-spacing: 6;
     --chart-fade-to: 0.15;
     --chart-mask: oklch(100% 0 0);
   }
