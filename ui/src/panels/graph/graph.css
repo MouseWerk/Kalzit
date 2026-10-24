@@ -54,6 +54,15 @@
     overflow: hidden;
   }
 
+  /*
+   * In a dashboard panel the panel's own size decides: a drawing taller than the panel was cut off
+   * at its bottom edge (the lowest row of a hierarchy lost its labels). Explore and the editor keep
+   * the minimum above.
+   */
+  .panel-card .graph__stage {
+    min-height: 0;
+  }
+
   .graph__stage:focus-visible {
     outline: var(--focus-outline);
     outline-offset: var(--focus-ring-offset);
@@ -204,6 +213,10 @@
     .graph__body {
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(var(--size-graph-min), 1fr) auto;
+    }
+
+    .panel-card .graph__body {
+      grid-template-rows: minmax(0, 1fr) auto;
     }
 
     .graph__details {

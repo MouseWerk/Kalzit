@@ -95,4 +95,28 @@ describe("state tones", () => {
   it("uses the palette when known state words are switched off", () => {
     expect(colorOf({ defaults: {}, overrides: [] }, false)).toEqual(["series-1", "series-2"]);
   });
+
+  it("shows one row per query and holds each state until its query reports a new one", () => {
+    const api: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 20] },
+        { name: "api", type: "string", values: ["ok", "down"] },
+      ],
+    };
+    const search: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [10] },
+        { name: "search", type: "string", values: ["degraded"] },
+      ],
+    };
+    const data = stateData([api, search], { defaults: {}, overrides: [] }, "en");
+    expect(data?.times).toEqual([0, 10, 20]);
+    expect(data?.rows.map((r) => r.name)).toEqual(["api", "search"]);
+    expect(data?.rows[0]?.values.map((v) => v?.text)).toEqual(["ok", "ok", "down"]);
+    expect(data?.rows[1]?.values.map((v) => v?.text ?? null)).toEqual([
+      null,
+      "degraded",
+      "degraded",
+    ]);
+  });
 });
