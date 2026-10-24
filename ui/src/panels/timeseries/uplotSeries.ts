@@ -263,7 +263,11 @@ export function uplotSeries(
         : {}),
     }) as uPlot.Series.PathBuilder;
   } else {
-    options.paths = linePaths(style);
+    const line = linePaths(style);
+    options.paths =
+      fill !== undefined && data.current.baselines[index] !== null
+        ? stackedFill(line, index, style.interpolation, data)
+        : line;
   }
   if (style.drawStyle !== "bars" && (style.connectGaps !== "never" || style.breakAfter !== null)) {
     options.gaps = (u, seriesIdx, idx0, idx1, nullGaps) => {
@@ -285,21 +289,59 @@ export function uplotSeries(
 }
 
 /**
- * Bands that fill each stacked line to the series it stands on, not to zero. Where that series has
- * no value the band has no edge, so the fill (and uPlot's line clip with it) breaks there.
+ * A stacked line's fill: from its line down to its own baseline (the running sum of its side
+ * below it), point by point, so a value that changes sides fills on its side and never across
+ * zero to another series. The line itself comes from the interpolation's builder; the baseline is
+ * walked back in the same steps for stepped lines and straight otherwise, thinned to one point per
+ * pixel column. Missing values are skipped; uPlot's gap clip breaks the fill there with the line.
  */
-export function uplotBands(styles: readonly SeriesStyle[], stacked: StackedData): uPlot.Band[] {
-  const bands: uPlot.Band[] = [];
-  stacked.below.forEach((below, index) => {
-    if (
-      below !== -1 &&
-      styles[index]?.drawStyle === "line" &&
-      styles[below]?.drawStyle === "line" &&
-      styles[index]?.fill !== "none"
-    ) {
-      // Below zero the band fills up toward the series above it, which is nearer to zero.
-      bands.push({ series: [index + 1, below + 1], dir: stacked.down[index] ? 1 : -1 });
+export function stackedFill(
+  line: uPlot.Series.PathBuilder,
+  index: number,
+  interpolation: SeriesStyle["interpolation"],
+  data: { current: StackedData },
+): uPlot.Series.PathBuilder {
+  return (u, seriesIdx, idx0, idx1) => {
+    const paths = line(u, seriesIdx, idx0, idx1);
+    const base = data.current.baselines[index];
+    const stroke = paths?.stroke;
+    if (paths === null || !(stroke instanceof Path2D) || base === null || base === undefined) {
+      return paths;
     }
-  });
-  return bands;
+    const xs = u.data[0] as ArrayLike<number>;
+    const ys = u.data[seriesIdx] as ArrayLike<number | null | undefined>;
+    let last = idx1;
+    while (last >= idx0 && (ys[last] === null || ys[last] === undefined)) last--;
+    let first = idx0;
+    while (first <= last && (ys[first] === null || ys[first] === undefined)) first++;
+    if (first > last) {
+      return paths;
+    }
+    const x = (i: number) => u.valToPos(xs[i] as number, "x", true);
+    const y = (i: number) => u.valToPos(base[i] as number, "y", true);
+    const fill = new Path2D(stroke);
+    fill.lineTo(x(last), y(last));
+    let next = last;
+    let column = Math.round(x(last));
+    for (let i = last - 1; i >= first; i--) {
+      if (ys[i] === null || ys[i] === undefined) continue;
+      if (interpolation === "stepAfter") {
+        // The value of i holds until the next point: up or down there, then back across.
+        fill.lineTo(x(next), y(i));
+        fill.lineTo(x(i), y(i));
+      } else if (interpolation === "stepBefore") {
+        fill.lineTo(x(i), y(next));
+        fill.lineTo(x(i), y(i));
+      } else {
+        const px = Math.round(x(i));
+        if (px === column && i !== first) continue;
+        column = px;
+        fill.lineTo(x(i), y(i));
+      }
+      next = i;
+    }
+    fill.closePath();
+    paths.fill = fill;
+    return paths;
+  };
 }

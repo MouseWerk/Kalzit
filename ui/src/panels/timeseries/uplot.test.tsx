@@ -1,5 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type uPlot from "uplot";
 import { describe, expect, it, vi } from "vitest";
 import { setLanguage } from "../../i18n/i18n";
 import type { FieldOptions } from "../fieldConfig/fieldConfig";
@@ -10,7 +11,7 @@ import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import type { Series } from "./series";
 import { resolveStyles } from "./styles";
 import { UplotTimeSeriesChart } from "./UplotTimeSeriesChart";
-import { cached } from "./uplotSeries";
+import { cached, stackedFill } from "./uplotSeries";
 
 // jsdom has no canvas, so uPlot itself is replaced by a recorder: these tests check what the chart
 // hands to uPlot (data, colors from the theme tokens, sizes) and the shared keyboard readout.
@@ -373,7 +374,7 @@ describe("graph styles", () => {
       styled("last week", [2, 2, 1], { comparison: true }),
     ]);
     expect(list[0]?.dash).toBeUndefined();
-    expect(list[1]?.dash).toEqual([6, 5]);
+    expect(list[1]?.dash).toEqual([7, 6]);
     expect(list[1]?.fill).toBeUndefined();
     const swatches = [...document.querySelectorAll(".viz-legend .ts__swatch")].map(
       (s) => s.className,
@@ -416,7 +417,7 @@ describe("graph styles", () => {
   it("draws line styles and widths", () => {
     const pick = (options: FieldOptions) =>
       draw([styled("a", [1, 2], options), styled("b", [1, 2], {})]).series[0];
-    expect(pick({ lineStyle: "dashed", lineWidth: 2 })?.dash).toEqual([6, 5]);
+    expect(pick({ lineStyle: "dashed", lineWidth: 2 })?.dash).toEqual([7, 6]);
     const dotted = pick({ lineStyle: "dotted", lineWidth: 4 });
     expect(dotted?.dash).toEqual([0, 10]);
     expect(dotted?.cap).toBe("round");
@@ -464,28 +465,63 @@ describe("graph styles", () => {
       [11, 22, 33],
       [5, 5, 5],
     ]);
-    expect(bands).toEqual([{ series: [2, 1], dir: -1 }]);
+    // No bands: each stacked line fills to its own baseline through its path builder.
+    expect(bands).toBeUndefined();
+    expect(list.map((s) => s.paths?.builder)).toEqual([undefined, undefined, "linear"]);
     // Stacked lines fill by default; the unstacked series does not.
     expect(list.map((s) => typeof s.fill)).toEqual(["function", "function", "undefined"]);
   });
 
-  it("stacks incoming and outgoing apart: bands per side, below zero filling upward", () => {
-    const { bands, data } = draw([
-      styled("in", [1, 2], { stack: "normal" }),
-      styled("out", [-1, -2], { stack: "normal" }),
-      styled("in 2", [3, 3], { stack: "normal" }),
-      styled("out 2", [-3, -3], { stack: "normal" }),
+  it("keeps the chart when a stacked series changes sides with new data", () => {
+    created.length = 0;
+    const props = { timeRange: { from: 0, to: 10_000 }, title: "T", ...display("", false) };
+    const pair = (a: number[]) => [
+      styled("a", a, { stack: "normal" }),
+      styled("b", [3, 3], { stack: "normal" }),
+    ];
+    const { rerender } = render(<Uplot series={pair([5, 5])} {...props} />);
+    rerender(<Uplot series={pair([5, -5])} {...props} />);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.setDataCalls.at(-1)).toEqual([
+      [0, 1000],
+      [5, -5],
+      [8, 3],
     ]);
-    expect(data.slice(1)).toEqual([
-      [1, 2],
-      [-1, -2],
-      [4, 5],
-      [-4, -5],
-    ]);
-    expect(bands).toEqual([
-      { series: [3, 1], dir: -1 },
-      { series: [4, 2], dir: 1 },
-    ]);
+  });
+
+  it("fills a stacked line down to its baseline point by point, in steps for stepped lines", () => {
+    const calls: string[] = [];
+    class Path {
+      lineTo(x: number, y: number) {
+        calls.push(`L${x},${y}`);
+      }
+      closePath() {
+        calls.push("Z");
+      }
+    }
+    vi.stubGlobal("Path2D", Path);
+    // One px per ms and per unit of value, so canvas positions read as the data.
+    const u = {
+      data: [
+        [0, 10, 20],
+        [8, 3, null],
+      ],
+      valToPos: (value: number) => value,
+    } as unknown as Parameters<uPlot.Series.PathBuilder>[0];
+    const stacked = {
+      current: { ys: [], baselines: [null, Float64Array.from([5, 0, 0])], percent: false },
+    };
+    const line = () => ({ stroke: new Path() as unknown as Path2D });
+    const linear = stackedFill(line, 1, "linear", stacked)(u, 1, 0, 2);
+    expect(linear?.fill).toBeInstanceOf(Path);
+    // From the last value back along the baseline, the missing third point skipped.
+    expect(calls).toEqual(["L10,0", "L0,5", "Z"]);
+    calls.length = 0;
+    stackedFill(line, 1, "stepAfter", stacked)(u, 1, 0, 2);
+    expect(calls).toEqual(["L10,0", "L10,5", "L0,5", "Z"]);
+    // Not stacked: the line's own paths, untouched.
+    calls.length = 0;
+    expect(stackedFill(line, 0, "linear", stacked)(u, 1, 0, 2)?.fill).toBeUndefined();
   });
 
   it("makes a hatch or fill once per plot size, the threshold scheme also per value range", () => {

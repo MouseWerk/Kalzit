@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import uPlot from "uplot";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Frame } from "../../api/generated/shapes";
 import type { FieldConfig, FieldOptions } from "../fieldConfig/fieldConfig";
 import { getPanel } from "../registry";
@@ -46,6 +46,12 @@ class RecordingPath {
 
 beforeEach(() => {
   vi.stubGlobal("Path2D", RecordingPath);
+});
+
+afterEach(() => {
+  // The spy on the canvas context and the Path2D stub end with each test.
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function frame(count: number): Frame {
@@ -219,12 +225,37 @@ describe("budget: 100,000 points per graph style", () => {
         `time series: 100k points as ${name}: paths and fills in ${ms.toFixed(1)} ms\n`,
       );
       expect(drawn).toBe(2);
-      // A filled style made its gradient or pattern once per series and run, not per draw.
       const filled =
         options.fill !== undefined || options.stack !== undefined || options.drawStyle === "bars";
-      if (filled) {
-        expect(fills).toBe(2);
-        expect(calls.gradients + calls.patterns).toBeLessThanOrEqual(3 * 2 * 2);
+      expect(fills).toBe(filled ? 2 : 0);
+      // New data on a live dashboard moves the value axis but keeps the plot: a kept fill is not
+      // made again. Only the threshold scheme depends on the axis, and no style here uses it.
+      const series = buildSeries([big], "", config);
+      const styles = resolveStyles(series);
+      const data = chartData(series, styles);
+      const options2 = series.map((s, i) =>
+        uplotSeries(s.name, i, styles[i] as (typeof styles)[number], paint, {
+          current: data.stacked,
+        }),
+      );
+      const chart = chartFor([data.x, ...data.stacked.ys] as uPlot.AlignedData, options2);
+      Object.assign(chart, { ctx: context });
+      const made = () => calls.gradients + calls.patterns;
+      const fillOf = (s: uPlot.Series, i: number) =>
+        typeof s.fill === "function" ? s.fill(chart, i + 1) : undefined;
+      const before = made();
+      const first = options2.map(fillOf);
+      const afterFirst = made();
+      chart.scales.y = { ...chart.scales.y, min: (chart.scales.y?.min ?? 0) - 10 };
+      const second = options2.map(fillOf);
+      expect(made()).toBe(afterFirst);
+      expect(second).toEqual(first);
+      second.forEach((fill, i) => {
+        if (typeof fill === "object") expect(fill).toBe(first[i]);
+      });
+      // The hatch and the hue gradient are objects the first draw really made.
+      if (options.fill === "hatch" || options.gradientMode === "hue") {
+        expect(afterFirst).toBeGreaterThan(before);
       }
       expect(ms).toBeLessThan(CI ? 300 : 120);
     },

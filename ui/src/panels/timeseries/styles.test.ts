@@ -133,8 +133,8 @@ describe("graph style defaults", () => {
 
   it("draws dashes and dots that grow with the line", () => {
     expect(dashFor("solid", 2)).toEqual([]);
-    expect(dashFor("dashed", 1)).toEqual([4.5, 3.75]);
-    expect(dashFor("dashed", 2)).toEqual([6, 5]);
+    expect(dashFor("dashed", 1)).toEqual([5.25, 4.5]);
+    expect(dashFor("dashed", 2)).toEqual([7, 6]);
     expect(dashFor("dotted", 2)).toEqual([0, 5]);
   });
 });
@@ -156,7 +156,6 @@ describe("stacking", () => {
       [11, 20, null, 44],
       [111, 220, 303, null],
     ]);
-    expect(result.below).toEqual([-1, 0, 1]);
     expect([...(result.baselines[2] ?? [])]).toEqual([11, 20, 3, 44]);
     expect(result.percent).toBe(false);
   });
@@ -192,12 +191,40 @@ describe("stacking", () => {
       [13, -7, 1],
       [-6, -8, -10],
     ]);
-    // Bars stand on the sum of their own side.
+    // Bars stand and fills end on the sum of their own side, point by point.
     expect([...(result.baselines[2] ?? [])]).toEqual([10, -5, 0]);
     expect([...(result.baselines[3] ?? [])]).toEqual([-5, -7, -9]);
-    // Lines fill to the nearest earlier series on their side, below zero upward.
-    expect(result.down).toEqual([false, true, false, true]);
-    expect(result.below).toEqual([-1, -1, 0, 1]);
+  });
+
+  it("fills a series above one that changes sides from zero, never across it", () => {
+    const result = stackData(
+      [
+        [5, -5],
+        [3, 3],
+      ],
+      styles([{ stack: "normal" }, { stack: "normal" }]),
+    );
+    expect(result.ys).toEqual([
+      [5, -5],
+      [8, 3],
+    ]);
+    // At the second point the first series went below zero, so the second stands on zero.
+    expect([...(result.baselines[1] ?? [])]).toEqual([5, 0]);
+  });
+
+  it("stacks over a series without any value as if it were not there", () => {
+    const result = stackData(
+      [
+        [null, null],
+        [2, 4],
+      ],
+      styles([{ stack: "normal" }, { stack: "normal" }]),
+    );
+    expect(result.ys).toEqual([
+      [null, null],
+      [2, 4],
+    ]);
+    expect([...(result.baselines[1] ?? [])]).toEqual([0, 0]);
   });
 
   it("stacks to 100 % of the absolute values, so +5 and -5 are +50 % and -50 %", () => {
@@ -226,7 +253,6 @@ describe("stacking", () => {
       ]),
     );
     expect(result.ys).toEqual([[1], [2], [3], [5]]);
-    expect(result.below).toEqual([-1, -1, -1, 0]);
     expect(result.baselines[2]).toBeNull();
   });
 });

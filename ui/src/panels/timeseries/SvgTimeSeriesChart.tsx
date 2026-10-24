@@ -89,10 +89,28 @@ function SeriesMarks({
   const d = linePath(xs, ys, scale, right, style.interpolation);
   const first = xs[ys.findIndex((y) => y !== null)];
   const last = xs[ys.findLastIndex((y) => y !== null)];
+  // A stacked line fills to its own baseline, walked back; others fill to zero.
+  const back =
+    base === null
+      ? null
+      : linePath(
+          [...xs].reverse(),
+          ys.map((y, i) => (y === null ? null : (base[i] ?? 0))).reverse(),
+          scale,
+          right,
+          // Walked backward, a step after the point is a step before it.
+          style.interpolation === "stepAfter"
+            ? "stepBefore"
+            : style.interpolation === "stepBefore"
+              ? "stepAfter"
+              : style.interpolation,
+        ).replaceAll("M", "L");
   const area =
     style.fill === "none" || d === "" || first === undefined || last === undefined
       ? null
-      : `${d}V${zero.toFixed(1)}H${scale.x(first).toFixed(1)}Z`;
+      : back === null
+        ? `${d}V${zero.toFixed(1)}H${scale.x(first).toFixed(1)}Z`
+        : `${d}${back}Z`;
   return (
     <>
       {area === null ? null : (

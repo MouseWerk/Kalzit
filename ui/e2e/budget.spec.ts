@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { Api, regionDashboard, SQL, unique } from "./support/api";
+import { DENSE_ROWS } from "./support/fixture-db";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
 import { panelAction } from "./support/ui";
@@ -353,8 +354,38 @@ const REFERENCE_CALIBRATION_1X_MS = 56;
  */
 const STYLES_TASK_MS = 150;
 
+/** Counts how often uPlot clears a chart canvas, which it does once per draw. */
+function installDrawCounter(): void {
+  const store = window as unknown as { __draws: number };
+  store.__draws = 0;
+  const clear = CanvasRenderingContext2D.prototype.clearRect;
+  CanvasRenderingContext2D.prototype.clearRect = function (
+    this: CanvasRenderingContext2D,
+    ...args
+  ) {
+    if (this.canvas.closest?.(".ts__uplot") !== null) {
+      store.__draws += 1;
+    }
+    return clear.apply(this, args);
+  };
+}
+
+/** The most values any field of a query answer holds. */
+function mostValues(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((most: number, item) => Math.max(most, mostValues(item)), 0);
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const own = Array.isArray(record.values) ? record.values.length : 0;
+    return Math.max(own, ...Object.values(record).map(mostValues));
+  }
+  return 0;
+}
+
 test("three 100,000-point charts with hatch, gradient and stacking draw again within budget", async ({
   page,
+  browser,
   world,
 }) => {
   const target = (sql: string) => [{ refId: "A", datasourceId: world.sourceId, query: { sql } }];
@@ -388,31 +419,49 @@ test("three 100,000-point charts with hatch, gradient and stacking draw again wi
     ],
   });
   await owner.dispose();
+  await page.addInitScript(installDrawCounter);
+  // Every panel's answer, to check that each chart really holds 100,000 points.
+  const answers: Promise<number>[] = [];
+  page.on("response", (response) => {
+    if (/\/panels\/[^/]+\/query$/.test(new URL(response.url()).pathname)) {
+      answers.push(response.json().then(mostValues));
+    }
+  });
   await signInOwner(page);
   await page.goto(`/dashboards/${id}`);
   await expect(page.locator(".ts__uplot canvas")).toHaveCount(3, { timeout: 30_000 });
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 30_000 });
+  const points = await Promise.all(answers);
+  expect(points).toEqual([DENSE_ROWS, DENSE_ROWS, DENSE_ROWS]);
   const calibration = await calibrate(page);
   const budget = STYLES_TASK_MS * Math.max(1, calibration / REFERENCE_CALIBRATION_1X_MS);
-  await observe(page);
   const rounds: number[] = [];
   // A theme change builds every chart again and draws it on the canvas: paths, the hatch tile,
-  // the gradients and the stacked bands, at full speed.
+  // the gradients and the stacked fills, at full speed. Each round must draw all three.
   for (let round = 0; round < ROUNDS; round++) {
-    await reset(page);
+    await page.evaluate(() => {
+      (window as unknown as { __draws: number }).__draws = 0;
+    });
+    await browser.startTracing(page, {
+      categories: ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"],
+    });
     await page.evaluate(
       (theme) => {
         document.documentElement.dataset.theme = theme;
       },
       round % 2 === 0 ? "dark" : "light",
     );
-    const { long } = await recorded(page);
-    const worst = Math.max(0, ...long);
-    rounds.push(worst);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __draws: number }).__draws))
+      .toBeGreaterThanOrEqual(3);
+    await page.waitForTimeout(300);
+    const task = longestTask(await browser.stopTracing());
+    rounds.push(task);
     process.stdout.write(
-      `budget: three 100k-point styled charts drawn again, round ${round + 1}: longest task ${worst.toFixed(0)} ms (budget ${budget.toFixed(0)} ms, calibration ${calibration.toFixed(1)} ms)\n`,
+      `budget: three 100k-point styled charts drawn again, round ${round + 1}: longest task ${task.toFixed(0)} ms (budget ${budget.toFixed(0)} ms, calibration ${calibration.toFixed(1)} ms)\n`,
     );
   }
   await expect(page.locator(".ts__uplot canvas")).toHaveCount(3);
+  expect(Math.min(...rounds)).toBeGreaterThan(0);
   expect(Math.min(...rounds)).toBeLessThan(budget);
 });

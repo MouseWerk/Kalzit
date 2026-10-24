@@ -308,9 +308,9 @@ tests cover new strokes and fills.
   (`ui/src/panels/timeseries/styles.ts`, tokens `--chart-mono`, `--chart-mono-compare`,
   `--chart-hatch-*`, `--chart-fade-to`, read by both the canvas and the SVG chart). Stacking
   keeps positive and negative values on separate sums per group, percent divides by the sum of
-  absolute values (0/0 is 0); a stacked line fills to the nearest earlier series on its side and
-  breaks where that series has no value. A gradient "scheme" colors the fill by the thresholds;
-  drawing threshold lines and areas on the chart is still open.
+  absolute values (0/0 is 0); a stacked line fills to its own per-point baseline (never across
+  zero) and breaks where it has no value itself. A gradient "scheme" colors the fill by the
+  thresholds; drawing threshold lines and areas on the chart is still open.
 - **P1-3b Axes.** Placement, label, width, soft min and max, scale (linear, log 2 and 10,
   symlog), centered zero, grid lines, one axis per unit.
   Acceptance: log scales handle zero and negative values without throwing; two units give two

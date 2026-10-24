@@ -10,7 +10,7 @@ import { type ChartData, chartData } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG, VALUE_AXIS_SIZE, valueAxisSize } from "./layout";
 import { MONO_CLASS, MONO_COMPARE_CLASS, type StackedData, styleKey } from "./styles";
-import { type Paint, uplotBands, uplotSeries } from "./uplotSeries";
+import { type Paint, uplotSeries } from "./uplotSeries";
 import "../panels.css";
 
 /** The palette, monochrome and tone classes, one probe each. */
@@ -70,8 +70,6 @@ function CursorLine({ x }: { x: number }) {
 const EMPTY_STACK: StackedData = {
   ys: [],
   baselines: [],
-  below: [],
-  down: [],
   percent: false,
 };
 
@@ -216,7 +214,6 @@ export function UplotTimeSeriesChart({
             : uplotSeries(s.name, index, style, paint, stackRef);
         }),
       ],
-      bands: uplotBands(styles, data.stacked),
     };
     const chart = new uPlot(options, aligned(data), target);
     chartRef.current = chart;
@@ -246,16 +243,6 @@ export function UplotTimeSeriesChart({
       chart.setData(chart.data);
     } else {
       const data = chartData(series, styles);
-      // A series that crossed to the other side of zero fills to another series now.
-      if (
-        data.stacked.below.join() !== stackRef.current.below.join() ||
-        data.stacked.down.join() !== stackRef.current.down.join()
-      ) {
-        chart.delBand(null);
-        for (const band of uplotBands(styles, data.stacked)) {
-          chart.addBand(band);
-        }
-      }
       stackRef.current = data.stacked;
       chart.setData(aligned(data));
     }
