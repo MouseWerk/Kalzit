@@ -738,12 +738,33 @@ describe("contrast in every theme", () => {
 
   const base = declarationsOf(":root");
   const contrast = declarationsOf(':root[data-theme="contrast"]');
+  // The vetted accent colors of the appearance settings, each over the base tokens.
+  const ACCENT_NAMES = ["copper", "blue", "teal", "green", "violet", "rose", "amber", "graphite"];
+  const accentThemes = ACCENT_NAMES.flatMap((accent) => {
+    const tokens = declarationsOf(
+      `:root:not([data-theme="contrast"])[data-accent="${accent}"], :root:not([data-theme="contrast"]) [data-accent="${accent}"]`,
+    );
+    return (["light", "dark"] as const).map((scheme) => ({
+      name: `${accent} accent (${scheme})`,
+      tokens: new Map([...base, ...tokens]),
+      scheme,
+      accentTokens: tokens.size,
+    }));
+  });
+
+  it("defines every vetted accent completely", () => {
+    for (const theme of accentThemes) {
+      expect(theme.accentTokens, theme.name).toBe(6);
+    }
+  });
+
   // light and dark use the base tokens with a fixed scheme; system uses them with either scheme.
   const themes = [
     { name: "light", tokens: base, scheme: "light" },
     { name: "dark", tokens: base, scheme: "dark" },
     { name: "contrast (light system)", tokens: new Map([...base, ...contrast]), scheme: "light" },
     { name: "contrast (dark system)", tokens: new Map([...base, ...contrast]), scheme: "dark" },
+    ...accentThemes,
   ] as const;
 
   function splitTopLevel(value: string): string[] {

@@ -134,6 +134,10 @@ export interface FakeServer {
     offline: boolean;
     /** The stored preferences (`/api/me/preferences`), as the server keeps them. */
     preferences: FakePreferences;
+    /** `GET /api/branding`, before and after sign-in (docs/api/settings-dashboards.md). */
+    branding: Record<string, unknown>;
+    /** `GET /api/orgs/{orgId}/appearance` for every organization. */
+    appearance: Record<string, unknown>;
   };
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
@@ -184,6 +188,24 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         weekStart: null,
         startDashboard: null,
         defaults: { language: "en", theme: "system" },
+      },
+      branding: {
+        productName: "Kalzit",
+        logo: null,
+        signIn: { welcome: "", notice: "" },
+        defaultTheme: "system",
+        defaultLanguage: "en",
+        accent: "copper",
+        density: "balanced",
+        fontSize: 14,
+      },
+      appearance: {
+        accent: "copper",
+        density: "balanced",
+        fontSize: 14,
+        startPage: "home",
+        timeZone: "browser",
+        weekStart: "monday",
       },
     },
     calls: [],
@@ -302,6 +324,9 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       }
       return preferences(method, input);
     }
+    if (path === "/api/branding" && method === "GET") {
+      return json(200, state.branding);
+    }
     if (path === "/api/me" && method === "GET") {
       return state.signedIn ? json(200, state.user) : error(401, "unauthenticated");
     }
@@ -329,6 +354,9 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       );
       if (membership === undefined) {
         return error(404, "not_found");
+      }
+      if (route.endsWith("/appearance") && route.split("/").length === 5 && method === "GET") {
+        return json(200, state.appearance);
       }
       const request: FakeRequest = {
         method,

@@ -42,6 +42,8 @@ const PATHS = {
   eyeOff:
     "M4 4l16 16M10.2 5.7A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-2.9 3.7M6.6 6.9C4 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9 9 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2",
   capsLock: "M12 4.5 4.5 12H8.5v3.5h7V12h4zM8.5 19.5h7",
+  // Settings: three sliders with their knobs.
+  settings: "M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4",
 } as const;
 
 /** Icons drawn filled instead of outlined (the starred state of a star). */

@@ -14,10 +14,19 @@ export interface TimeSettings {
   weekStart: WeekStart | null;
 }
 
+// The user's own choice, the organization's or server's default beneath it (settings,
+// `appearance.time_zone` and `appearance.week_start`), and what applies: the choice, else the
+// default.
+let chosen: TimeSettings = { timeZone: null, weekStart: null };
+let defaults: TimeSettings = { timeZone: null, weekStart: null };
 let current: TimeSettings = { timeZone: null, weekStart: null };
 const listeners = new Set<() => void>();
 
-function update(next: TimeSettings): void {
+function recompute(): void {
+  const next = {
+    timeZone: chosen.timeZone ?? defaults.timeZone,
+    weekStart: chosen.weekStart ?? defaults.weekStart,
+  };
   if (next.timeZone === current.timeZone && next.weekStart === current.weekStart) {
     return;
   }
@@ -25,6 +34,23 @@ function update(next: TimeSettings): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function update(next: TimeSettings): void {
+  chosen = next;
+  recompute();
+}
+
+/**
+ * The defaults for users who chose nothing: an IANA zone (or null for the browser's) and a first
+ * day of the week (null: Monday).
+ */
+export function setDefaultTimeSettings(next: TimeSettings): void {
+  defaults = {
+    timeZone: next.timeZone !== null && knownZone(next.timeZone) ? next.timeZone : null,
+    weekStart: next.weekStart,
+  };
+  recompute();
 }
 
 /** Whether the browser knows the zone; an unknown one falls back to the browser's own. */
@@ -38,11 +64,11 @@ function knownZone(zone: string): boolean {
 }
 
 export function setTimeZone(zone: string | null): void {
-  update({ ...current, timeZone: zone !== null && knownZone(zone) ? zone : null });
+  update({ ...chosen, timeZone: zone !== null && knownZone(zone) ? zone : null });
 }
 
 export function setWeekStart(start: WeekStart | null): void {
-  update({ ...current, weekStart: start });
+  update({ ...chosen, weekStart: start });
 }
 
 export function getTimeSettings(): TimeSettings {

@@ -1,9 +1,9 @@
-import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
+import { createRoute, lazyRouteComponent, redirect } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
 
-// The admin area's pages: the administration with its sections, and the user's own account
-// (self service for everyone, kept in this area because it shares the access model and texts).
-// They load on first use, so people who never open them do not download them.
+// The admin area's pages: the administration with its sections. The user's own account and the
+// settings sections moved to the settings page (features/settings); their old addresses
+// redirect there. They load on first use, so people who never open them do not download them.
 
 const adminRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -50,7 +50,14 @@ const roleRoute = createRoute({
 const orgSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/settings",
-  component: lazyRouteComponent(() => import("./org/OrgSettingsPage"), "OrgSettingsPage"),
+  // Organization settings live in the settings page now.
+  beforeLoad: () => {
+    throw redirect({
+      to: "/settings/$section",
+      params: { section: "organization" },
+      replace: true,
+    });
+  },
 });
 
 const auditRoute = createRoute({
@@ -74,19 +81,16 @@ const orgsRoute = createRoute({
 const serverSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/settings",
-  component: lazyRouteComponent(() => import("./server/ServerSettingsPage"), "ServerSettingsPage"),
+  // Server settings live in the settings page now.
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/$section", params: { section: "appearance" }, replace: true });
+  },
 });
 
 const serverAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/audit",
   component: lazyRouteComponent(() => import("./server/ServerAuditPage"), "ServerAuditPage"),
-});
-
-const accountRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "/account",
-  component: lazyRouteComponent(() => import("./account/AccountPage"), "AccountPage"),
 });
 
 export const adminRoutes = [
@@ -104,5 +108,4 @@ export const adminRoutes = [
     serverSettingsRoute,
     serverAuditRoute,
   ]),
-  accountRoute,
 ] as const;

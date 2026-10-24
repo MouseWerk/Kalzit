@@ -1,0 +1,322 @@
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { checkAccent } from "../../appearance/contrast";
+import { generatedUnion } from "../../test/generated";
+import { openAdmin, sent } from "../admin/test/openAdmin";
+import { buildIndex, search } from "./search";
+import { SECTIONS } from "./sections";
+
+function nav() {
+  return screen.findByRole("navigation", { name: "Settings sections" });
+}
+
+/** The row of a setting, once its section has loaded. */
+function row(id: string): Promise<HTMLElement> {
+  return waitFor(() => {
+    const element = document.getElementById(id);
+    if (element === null) {
+      throw new Error(`no row ${id}`);
+    }
+    return element;
+  });
+}
+
+describe("settings shell", () => {
+  it("groups the sections Server, Organization and Personal with export at the bottom", async () => {
+    await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const sections = await nav();
+    for (const name of [
+      "Appearance and brand",
+      "General",
+      "Network, HTTPS and proxy",
+      "Sessions and security",
+      "Sign-in (OIDC, LDAP)",
+      "Email",
+      "Data sources and targets",
+      "Storage and retention",
+      "Updates",
+      "Organization Analytical Engines",
+      "Profile and language",
+      "Keyboard shortcuts",
+      "Export / import settings",
+    ]) {
+      expect(within(sections).getByRole("link", { name }), name).toBeTruthy();
+    }
+    const current = within(sections).getByRole("link", { name: "Appearance and brand" });
+    expect(current.getAttribute("aria-current")).toBe("page");
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Appearance and brand" }),
+    ).toBeTruthy();
+  });
+
+  it("shows members only their personal sections and refuses server sections", async () => {
+    await openAdmin("/settings/appearance", { isServerAdmin: false, permissions: [] });
+    expect(await screen.findByText("You cannot open this section.")).toBeTruthy();
+    const sections = await nav();
+    expect(within(sections).queryByRole("link", { name: "Appearance and brand" })).toBeNull();
+    expect(within(sections).getByRole("link", { name: "Profile and language" })).toBeTruthy();
+    expect(within(sections).queryByRole("link", { name: "Export / import settings" })).toBeNull();
+  });
+
+  it("moves between sections with the arrow keys", async () => {
+    const { user } = await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const sections = await nav();
+    within(sections).getByRole("link", { name: "Appearance and brand" }).focus();
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement?.textContent).toBe("General");
+  });
+
+  it("finds a setting by a German word in the English UI and jumps to its row", async () => {
+    const { user } = await openAdmin("/settings/profile", { isServerAdmin: true });
+    const field = await screen.findByRole("combobox", { name: "Search settings" });
+    await user.type(field, "Aufbewahrung");
+    const results = screen.getByRole("listbox", { name: "Matching settings" });
+    expect(within(results).getByRole("option", { name: /Audit log retention/ })).toBeTruthy();
+    await user.clear(field);
+    await user.type(field, "max_rows{Enter}");
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Data sources and targets" }),
+    ).toBeTruthy();
+    await waitFor(async () =>
+      expect((await row("datasources.max_rows")).className).toContain("settings-row--found"),
+    );
+  });
+
+  it("says when nothing matches", async () => {
+    const { user } = await openAdmin("/settings/profile", { isServerAdmin: true });
+    await user.type(await screen.findByRole("combobox", { name: "Search settings" }), "zzqx");
+    expect(screen.getByText("No setting matches “zzqx”.")).toBeTruthy();
+  });
+
+  it("leads the old addresses to their sections", async () => {
+    await openAdmin("/admin/server/settings", { isServerAdmin: true });
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Appearance and brand" }),
+    ).toBeTruthy();
+  });
+
+  it("places every setting of the registry in a section", () => {
+    const placed = new Set(SECTIONS.flatMap((section) => section.keys ?? []));
+    expect(generatedUnion("SettingKey").filter((key) => !placed.has(key as never))).toEqual([]);
+  });
+
+  it("searches only sections the user may open", () => {
+    const access = {
+      permissions: { has: () => false, isServerAdmin: false, loaded: true },
+      orgId: undefined,
+    };
+    const index = buildIndex(SECTIONS, access);
+    expect(search(index, "smtp")).toEqual([]);
+    expect(search(index, "Tastenkürzel")[0]?.sectionId).toBe("shortcuts");
+  });
+});
+
+describe("server settings rows", () => {
+  it("shows the source of locked values as a badge", async () => {
+    await openAdmin("/settings/datasources", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Data sources and targets" });
+    const timeout = within(await row("datasources.query_timeout_secs"));
+    expect(timeout.getByText("from kalzit.toml · locked")).toBeTruthy();
+    expect(timeout.queryByRole("spinbutton")).toBeNull();
+    expect(within(await row("datasources.max_rows")).getByRole("spinbutton")).toBeTruthy();
+  });
+
+  it("names a value from the environment and one from the configuration only", async () => {
+    await openAdmin("/settings/storage", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Storage and retention" });
+    expect(
+      within(await row("audit.retention_days")).getByText("from the environment · locked"),
+    ).toBeTruthy();
+  });
+
+  it("applies the default theme at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    expect(
+      within(theme)
+        .getAllByRole("radio")
+        .map((r) => r.textContent),
+    ).toEqual(["Light", "Dark", "System", "High contrast"]);
+    await user.click(within(theme).getByRole("radio", { name: "Dark" }));
+    expect(await screen.findByText("“Default theme” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
+    expect(stored).toMatchObject({ value: "dark", version: 1 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: "system", version: 2 }));
+  });
+
+  it("saves a number on Enter once, and shows a rejected value at the field", async () => {
+    const { user, admin, server } = await openAdmin("/settings/datasources", {
+      isServerAdmin: true,
+    });
+    await screen.findByRole("heading", { level: 2, name: "Data sources and targets" });
+    const field = within(await row("datasources.max_rows")).getByRole(
+      "spinbutton",
+    ) as HTMLInputElement;
+    await user.clear(field);
+    await user.type(field, "5000{Enter}");
+    await waitFor(() =>
+      expect(admin.serverSettings.find((s) => s.key === "datasources.max_rows")?.value).toBe(5000),
+    );
+    await user.tab();
+    expect(sent(server, "PATCH")).toEqual(["/api/admin/settings/datasources.max_rows"]);
+    await user.clear(field);
+    await user.type(field, "0{Enter}");
+    expect(
+      await screen.findByText("The server did not accept this value. Check it and try again."),
+    ).toBeTruthy();
+  });
+
+  it("does not save on the Enter that confirms an input method's candidate", async () => {
+    const { user, server } = await openAdmin("/settings/datasources", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Data sources and targets" });
+    const field = within(await row("datasources.max_rows")).getByRole("spinbutton");
+    await user.clear(field);
+    await user.type(field, "7");
+    fireEvent.keyDown(field, { key: "Enter", isComposing: true });
+    expect(sent(server, "PATCH")).toEqual([]);
+  });
+
+  it("refuses a custom accent without enough contrast before sending it", async () => {
+    const { user, server } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        admin.serverSettings.push({
+          ...structuredClone(admin.serverSettings[2]),
+          key: "appearance.accent",
+          value: "copper",
+          default: "copper",
+        } as (typeof admin.serverSettings)[number]);
+      },
+    });
+    await user.click(await screen.findByRole("radio", { name: "Custom…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Custom accent color" });
+    const hex = within(dialog).getByRole("textbox", { name: "Color code" });
+    await user.clear(hex);
+    await user.type(hex, "#ffd400");
+    expect(within(dialog).getByText(/Too little contrast/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Use color" }));
+    expect(sent(server, "PATCH")).toEqual([]);
+    await user.clear(hex);
+    await user.type(hex, "#2563eb");
+    await user.click(within(dialog).getByRole("button", { name: "Use color" }));
+    await waitFor(() =>
+      expect(sent(server, "PATCH")).toEqual(["/api/admin/settings/appearance.accent"]),
+    );
+  });
+});
+
+describe("organization settings", () => {
+  it("chooses the default time range with the picker, with undo", async () => {
+    const { user, admin } = await openAdmin("/admin/settings");
+    const picker = await screen.findByRole("button", { name: "Default time range: Last 6 hours" });
+    await user.click(picker);
+    const dialog = await screen.findByRole("dialog", { name: "Time range" });
+    await user.click(within(dialog).getByRole("button", { name: "Last 24 hours" }));
+    expect(await screen.findByText("“Default time range” was saved.")).toBeTruthy();
+    expect(admin.orgSettings[0]).toMatchObject({ value: { from: "now-24h", to: "now" } });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() =>
+      expect(admin.orgSettings[0]).toMatchObject({
+        value: { from: "now-6h", to: "now" },
+        version: 2,
+      }),
+    );
+  });
+
+  it("names the setting and both values in the conflict dialog", async () => {
+    const { user, admin } = await openAdmin("/settings/organization");
+    const picker = await screen.findByRole("button", { name: "Default time range: Last 6 hours" });
+    Object.assign(admin.orgSettings[0] ?? {}, {
+      value: { from: "now-30d", to: "now" },
+      version: 2,
+    });
+    await user.click(picker);
+    const ranges = await screen.findByRole("dialog", { name: "Time range" });
+    await user.click(within(ranges).getByRole("button", { name: "Last 2 days" }));
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(within(dialog).getByText("Last 30 days")).toBeTruthy();
+    expect(within(dialog).getByText("Last 2 days")).toBeTruthy();
+  });
+
+  it("shows settings read-only without settings:write", async () => {
+    await openAdmin("/settings/organization", { permissions: ["settings:read"] });
+    await screen.findByRole("heading", { level: 2, name: "Organization Analytical Engines" });
+    const range = within(await row("org.dashboards.default_time_range"));
+    expect(range.getByText("read only")).toBeTruthy();
+    expect(range.getByText("Last 6 hours")).toBeTruthy();
+    expect(range.queryByRole("button")).toBeNull();
+  });
+});
+
+describe("export and import", () => {
+  it("imports a file after showing its changes, and undoes the import", async () => {
+    const { user, admin } = await openAdmin("/settings/transfer", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Export / import settings" });
+    const file = new File(
+      [
+        JSON.stringify({
+          format: "kalzit.settings",
+          formatVersion: 1,
+          scope: "server",
+          settings: {
+            "datasources.max_rows": 500,
+            "appearance.default_theme": "system",
+            "audit.retention_days": 9,
+          },
+        }),
+      ],
+      "settings.json",
+      { type: "application/json" },
+    );
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (input === null) {
+      throw new Error("no file input");
+    }
+    await user.upload(input, file);
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Will change")).toBeTruthy();
+    expect(within(table).getByText("Unchanged")).toBeTruthy();
+    expect(within(table).getByText("Locked")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Apply 1 changes" }));
+    expect(await screen.findByText("1 settings were imported.")).toBeTruthy();
+    const rows = admin.serverSettings.find((s) => s.key === "datasources.max_rows");
+    expect(rows).toMatchObject({ value: 500, version: 1 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(rows).toMatchObject({ value: 100000, version: 2 }));
+  });
+
+  it("refuses a file that is not JSON", async () => {
+    const { user } = await openAdmin("/settings/transfer", { isServerAdmin: true });
+    await screen.findByRole("heading", { level: 2, name: "Export / import settings" });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    await user.upload(
+      input as HTMLInputElement,
+      new File(["nope"], "x.json", { type: "application/json" }),
+    );
+    expect(await screen.findByText("The file is not valid JSON.")).toBeTruthy();
+  });
+});
+
+describe("accent contrast", () => {
+  it("matches the server's rules for the shared cases", () => {
+    // server/src/appearance.rs, CASES: color, passes, dark label.
+    const cases: [string, boolean, boolean][] = [
+      ["#2563eb", true, false],
+      ["#0f766e", true, false],
+      ["#1e3a8a", false, false],
+      ["#7c3aed", true, false],
+      ["#e5534b", true, true],
+      ["#ffffff", false, true],
+      ["#000000", false, false],
+      ["#808080", true, true],
+      ["#ffd400", false, true],
+    ];
+    for (const [hex, passes, dark] of cases) {
+      const check = checkAccent(hex);
+      expect(check?.passes, hex).toBe(passes);
+      expect(check?.darkLabel, hex).toBe(dark);
+    }
+    expect(checkAccent("red")).toBeNull();
+  });
+});

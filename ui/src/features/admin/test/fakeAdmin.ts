@@ -674,7 +674,10 @@ function handleOrg(
     if (id === undefined && method === "GET") {
       return page(state.orgSettings, params(search, PAGING), state.pageSize);
     }
-    return patchSetting(server, state.orgSettings, id, method, input);
+    return (
+      settingsExtras(server, state.orgSettings, "org", id, method, input) ??
+      patchSetting(server, state.orgSettings, id, method, input)
+    );
   }
   if (area === "audit" && id === undefined && method === "GET") {
     needs(state, "audit:read");
@@ -1089,6 +1092,82 @@ const SETTING_VALUES: Record<string, (value: unknown) => boolean> = {
     typeof value === "object" && value !== null && typeof (value as Input).rows === "number",
 };
 
+/**
+ * Export, import preview and batch (docs/api/settings-dashboards.md, "Export and import"): the
+ * export holds the editable settings, the batch applies all changes or none.
+ */
+function settingsExtras(
+  server: FakeServer,
+  settings: WireSetting[],
+  scope: "server" | "org",
+  id: string | undefined,
+  method: string,
+  input: unknown,
+): Response | undefined {
+  const locked = (setting: WireSetting) => !setting.editable || setting.source === "env" || setting.source === "file";
+  if (id === "export" && method === "GET") {
+    return json(200, {
+      format: "kalzit.settings",
+      formatVersion: 1,
+      scope,
+      exportedAt: T0,
+      settings: Object.fromEntries(
+        settings.filter((setting) => !locked(setting)).map((setting) => [setting.key, setting.value]),
+      ),
+    });
+  }
+  if (id === "import" && method === "POST") {
+    const document = body(input, ["document"]).document as Input;
+    if (document?.format !== "kalzit.settings" || document.scope !== scope) {
+      refuse("validation", "document");
+    }
+    const items = Object.entries((document.settings ?? {}) as Input).map(([key, value]) => {
+      const stored = settings.find((setting) => setting.key === key);
+      if (stored === undefined) {
+        return { key, status: "unknown", current: null, imported: value, version: 0 };
+      }
+      const status = locked(stored)
+        ? "locked"
+        : !(SETTING_VALUES[key]?.(value) ?? true)
+          ? "invalid"
+          : JSON.stringify(value) === JSON.stringify(stored.value)
+            ? "same"
+            : "change";
+      return { key, status, current: stored.value, imported: value, version: stored.version };
+    });
+    return json(200, { items, nextCursor: null });
+  }
+  if (id === "batch" && method === "POST") {
+    const changes = body(input, ["changes"]).changes as { key: string; value: unknown; version: number }[];
+    for (const change of changes) {
+      const stored = settings.find((setting) => setting.key === change.key);
+      if (stored === undefined) {
+        refuse("validation", "changes");
+      }
+      if (locked(stored)) {
+        refuse("conflict");
+      }
+      if (!(SETTING_VALUES[stored.key]?.(change.value) ?? true)) {
+        refuse("validation", "changes");
+      }
+      if (stored.version !== change.version) {
+        refuse("version_conflict", undefined, { current: { items: settings, nextCursor: null } });
+      }
+    }
+    const saved = changes.map((change) => {
+      const stored = settings.find((setting) => setting.key === change.key) as WireSetting;
+      stored.value = change.value;
+      stored.version += 1;
+      stored.source = "database";
+      stored.updatedAt = T0 + 10 * DAY;
+      stored.updatedBy = server.state.user.id;
+      return stored;
+    });
+    return json(200, { items: saved, nextCursor: null });
+  }
+  return undefined;
+}
+
 function patchSetting(
   server: FakeServer,
   settings: WireSetting[],
@@ -1259,7 +1338,10 @@ function handleServerAdmin(
     if (id === undefined && method === "GET") {
       return page(state.serverSettings, params(search, PAGING), state.pageSize);
     }
-    return patchSetting(server, state.serverSettings, id, method, input);
+    return (
+      settingsExtras(server, state.serverSettings, "server", id, method, input) ??
+      patchSetting(server, state.serverSettings, id, method, input)
+    );
   }
   if (area === "audit" && id === undefined && method === "GET") {
     return audit(state.audit, search, state.pageSize, true);

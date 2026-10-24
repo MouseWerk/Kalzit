@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { redirect } from "@tanstack/react-router";
 import type { Me } from "../api/auth";
+import { orgAppearanceQuery } from "../appearance/api";
 import { type Preferences, preferencesQuery } from "./preferences";
 
 /**
@@ -38,5 +39,23 @@ export async function redirectToStartDashboard(
       params: { dashboardId: start.dashboardId },
       replace: true,
     });
+  }
+  // Without a start dashboard of their own, members land where their organization says
+  // (setting `appearance.start_page`).
+  const orgId = me.orgs[0]?.id;
+  if (orgId === undefined) {
+    return;
+  }
+  let page: string;
+  try {
+    page = (await queryClient.ensureQueryData(orgAppearanceQuery(orgId))).startPage;
+  } catch {
+    return;
+  }
+  if (page === "dashboards") {
+    throw redirect({ to: "/dashboards", replace: true });
+  }
+  if (page === "explore") {
+    throw redirect({ to: "/explore", replace: true });
   }
 }

@@ -224,8 +224,10 @@ describe("user menu", () => {
     const account = within(menu).getByRole("menuitem", { name: "Your account" });
     expect(document.activeElement).toBe(account);
     await user.keyboard("{Enter}");
-    expect(await screen.findByRole("heading", { level: 1, name: "Your account" })).toBeTruthy();
-    expect(location().pathname).toBe("/account");
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Profile and language" }),
+    ).toBeTruthy();
+    expect(location().pathname).toBe("/settings/profile");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(menuButton);
   });
