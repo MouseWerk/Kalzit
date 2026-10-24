@@ -246,6 +246,33 @@ impl Config {
         Self::from_file(file.as_deref(), env)
     }
 
+    /// The data directory, read as leniently as possible, for when the configuration as a whole
+    /// did not load: the start of a new version that refuses the configuration must still find
+    /// the update plan and return (`updates::boot::after_config_error`). Environment first, then
+    /// `paths.data_dir` of the file (relative to its folder), then the default.
+    pub fn data_dir_hint(path: Option<&Path>) -> Option<PathBuf> {
+        if let Some(dir) = std::env::var_os("KALZIT_PATHS_DATA_DIR").filter(|d| !d.is_empty()) {
+            return std::path::absolute(PathBuf::from(dir)).ok();
+        }
+        let file = match path {
+            Some(p) => Some(p.to_path_buf()),
+            None => default_config_paths().into_iter().find(|p| p.is_file()),
+        };
+        if let Some(file) = file
+            && let Ok(text) = std::fs::read_to_string(&file)
+            && let Ok(doc) = toml::from_str::<toml::Table>(&text)
+            && let Some(dir) = doc.get("paths").and_then(|p| p.get("data_dir")).and_then(|d| d.as_str())
+        {
+            let dir = PathBuf::from(dir);
+            if dir.is_absolute() {
+                return Some(dir);
+            }
+            let base = std::path::absolute(&file).ok()?.parent()?.to_path_buf();
+            return Some(base.join(dir));
+        }
+        default_data_dir()
+    }
+
     /// Where the value of `section.key` came from.
     pub fn source(&self, key: &str) -> Source {
         if self.env_keys.contains(key) {
@@ -520,6 +547,20 @@ fn default_config_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_data_directory_is_found_in_a_configuration_that_does_not_load() {
+        if std::env::var_os("KALZIT_PATHS_DATA_DIR").is_some() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        std::fs::write(&file, "[paths]\ndata_dir = \"daten\"\n\n[unknown]\nkey = 1\n").unwrap();
+        assert!(Config::load(Some(&file)).is_err());
+        assert_eq!(Config::data_dir_hint(Some(&file)), Some(std::path::absolute(dir.path()).unwrap().join("daten")));
+        std::fs::write(&file, "not toml at all").unwrap();
+        assert_eq!(Config::data_dir_hint(Some(&file)), default_data_dir());
+    }
 
     fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()

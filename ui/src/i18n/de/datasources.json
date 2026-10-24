@@ -613,5 +613,8 @@
   "datasources.reason.updates.mode_not_systemd": "Dieser Server wurde nicht von systemd gestartet.",
   "datasources.reason.updates.mode_binary_not_writable": "Das Dienstkonto darf das Kalzit-Programm nicht ersetzen.",
   "datasources.reason.updates.mode_container": "Kalzit läuft in einem Container: aktualisiere stattdessen das Image.",
-  "datasources.reason.updates.mode_unsupported_platform": "Dieses System kann Updates nicht selbst installieren."
+  "datasources.reason.updates.mode_unsupported_platform": "Dieses System kann Updates nicht selbst installieren.",
+  "datasources.reason.updates.channel_mismatch": "Das ist eine Vorschau-Version; stell den Kanal auf Vorschau, um sie zu installieren.",
+  "datasources.reason.updates.disk_full": "Auf dem Laufwerk des Datenordners ist zu wenig Platz frei; {needed} Bytes werden gebraucht.",
+  "datasources.reason.updates.rollback_unsigned": "Zu Version {version} ist kein signiertes Manifest behalten, darum kann die Kommandozeile sie nicht prüfen. Kehre stattdessen über die Seite Updates zurück."
 }

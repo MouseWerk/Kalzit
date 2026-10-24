@@ -40,12 +40,18 @@ pub struct StagedInfo {
     pub notes_url: Option<String>,
 }
 
-/// The staged release, verified again from its files.
+/// The staged release, its signatures verified again. The package file itself is not trusted:
+/// installing copies it once and checks the copy against `package` (`install::place_binary`).
 #[derive(Debug)]
 pub struct Staged {
     pub version: String,
     pub manifest: Manifest,
+    /// This platform's signed entry.
+    pub package: Package,
     pub package_path: PathBuf,
+    /// The verified manifest and signature, kept with the version for a later return.
+    pub manifest_bytes: Vec<u8>,
+    pub signature_bytes: Vec<u8>,
 }
 
 /// The package of `manifest` for `platform`.
@@ -124,6 +130,7 @@ pub fn stage_upload(
     keys: &TrustedKeys,
     platform: &Platform,
     current: &semver::Version,
+    channel: signing::Channel,
 ) -> Result<StagedInfo, UpdateError> {
     let manifest_bytes = fs::read(dir.join(MANIFEST_FILE)).map_err(|_| UpdateError::UploadIncomplete("manifest"))?;
     let signature_bytes = fs::read(dir.join(SIGNATURE_FILE)).map_err(|_| UpdateError::UploadIncomplete("signature"))?;
@@ -151,24 +158,11 @@ pub fn stage_upload(
         return Err(UpdateError::SizeMismatch);
     }
     super::version_rules(current, &manifest)?;
+    super::channel_rule(channel, &manifest)?;
     finish(layout, dir, &manifest_bytes, &signature_bytes, &manifest, &package, "offline")
 }
 
-/// The first bytes of an offline package (`.kalzit-update`): this line, then the manifest, its
-/// signature and the package, each as a little-endian u64 length followed by its bytes.
-pub const BUNDLE_MAGIC: &[u8; 16] = b"KALZIT-UPDATE-1\n";
-/// The file name ending of offline packages.
-pub const BUNDLE_EXTENSION: &str = "kalzit-update";
-
-/// Writes an offline package of one release package.
-pub fn write_bundle(out: &mut impl io::Write, manifest: &[u8], signature: &[u8], package: &[u8]) -> io::Result<()> {
-    out.write_all(BUNDLE_MAGIC)?;
-    for part in [manifest, signature, package] {
-        out.write_all(&(part.len() as u64).to_le_bytes())?;
-        out.write_all(part)?;
-    }
-    out.flush()
-}
+pub use super::signing::{BUNDLE_EXTENSION, BUNDLE_MAGIC, write_bundle};
 
 /// Splits the offline package `bundle` into `dir` (manifest, signature, package), each within its
 /// limit. Nothing in it is trusted yet; `stage_upload` verifies it.
@@ -261,25 +255,30 @@ pub fn staged_info(layout: &Layout) -> Option<StagedInfo> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// Verifies the staged release again from its files: signatures, this platform's entry, size and
-/// hash of the package.
+/// Verifies the staged release's signatures again and finds this platform's entry. The manifest
+/// is read once into memory and verified there; the package is checked when it is copied.
 pub fn load(layout: &Layout, keys: &TrustedKeys, platform: &Platform) -> Result<Staged, UpdateError> {
     let dir = layout.staging();
     let info = staged_info(layout).ok_or_else(|| UpdateError::NotStaged(String::new()))?;
-    let manifest_bytes = fs::read(dir.join(MANIFEST_FILE)).map_err(|_| UpdateError::NotStaged(info.version.clone()))?;
-    let signature_bytes =
-        fs::read(dir.join(SIGNATURE_FILE)).map_err(|_| UpdateError::NotStaged(info.version.clone()))?;
+    let read = |name: &str, max: usize| -> Result<Vec<u8>, UpdateError> {
+        let mut bytes = Vec::new();
+        fs::File::open(dir.join(name))
+            .and_then(|f| f.take(max as u64 + 1).read_to_end(&mut bytes))
+            .map_err(|_| UpdateError::NotStaged(info.version.clone()))?;
+        Ok(bytes)
+    };
+    let manifest_bytes = read(MANIFEST_FILE, signing::MAX_MANIFEST_BYTES)?;
+    let signature_bytes = read(SIGNATURE_FILE, signing::MAX_SIGNATURE_BYTES)?;
     let manifest = signing::verify_manifest(keys, &manifest_bytes, &signature_bytes)?;
-    let package = select_package(&manifest, platform)?;
-    let package_path = dir.join(PACKAGE_FILE);
-    let (sha256, size) = hash_file(&package_path).map_err(|_| UpdateError::NotStaged(info.version.clone()))?;
-    if size != package.size {
-        return Err(UpdateError::SizeMismatch);
-    }
-    if sha256 != package.sha256 {
-        return Err(UpdateError::HashMismatch);
-    }
-    Ok(Staged { version: manifest.version.clone(), manifest, package_path })
+    let package = select_package(&manifest, platform)?.clone();
+    Ok(Staged {
+        version: manifest.version.clone(),
+        manifest,
+        package,
+        package_path: dir.join(PACKAGE_FILE),
+        manifest_bytes,
+        signature_bytes,
+    })
 }
 
 /// Removes the staged release.
@@ -293,7 +292,8 @@ pub fn discard(layout: &Layout) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::signing::tests::{keys_for, signed_manifest, test_key};
+    use super::super::signing::Channel;
+    use super::super::signing::tests::{keys_for, signed_manifest, signed_manifest_on, test_key};
     use super::*;
 
     fn linux() -> Platform {
@@ -320,14 +320,30 @@ mod tests {
             signed_manifest(&key, "2.0.0", &[("linux", "x64", b"linux binary"), ("windows", "x64", b"windows binary")]);
         let dir = layout.root().join("upload-1");
         upload(&dir, &manifest, &sig, b"linux binary");
-        let info = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0")).unwrap();
+        let info = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap();
         assert_eq!((info.version.as_str(), info.source.as_str(), info.size), ("2.0.0", "offline", 12));
         assert!(!dir.exists(), "the upload folder became the staging folder");
         let staged = load(&layout, &keys_for(&key), &linux()).unwrap();
-        assert_eq!(staged.version, "2.0.0");
-        // A package changed after staging is refused at install time.
-        fs::write(layout.staging().join(PACKAGE_FILE), b"linux binarY").unwrap();
-        assert!(matches!(load(&layout, &keys_for(&key), &linux()), Err(UpdateError::HashMismatch)));
+        assert_eq!((staged.version.as_str(), staged.package.size), ("2.0.0", 12));
+        // A changed manifest is refused when the release is loaded for installing.
+        let mut changed = manifest.clone();
+        changed.push(b' ');
+        fs::write(layout.staging().join(MANIFEST_FILE), changed).unwrap();
+        assert!(matches!(load(&layout, &keys_for(&key), &linux()), Err(UpdateError::SignatureInvalid)));
+    }
+
+    #[test]
+    fn a_preview_release_is_refused_on_the_stable_channel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = Layout::new(tmp.path());
+        let key = test_key(3);
+        let (manifest, sig) = signed_manifest_on(&key, "2.0.0-rc.1", Channel::Preview, &[("linux", "x64", b"rc")]);
+        let dir = layout.root().join("upload-1");
+        upload(&dir, &manifest, &sig, b"rc");
+        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap_err();
+        assert!(matches!(e, UpdateError::ChannelMismatch), "{e}");
+        let info = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Preview).unwrap();
+        assert_eq!(info.version, "2.0.0-rc.1");
     }
 
     #[test]
@@ -338,7 +354,7 @@ mod tests {
         let (manifest, sig) = signed_manifest(&key, "2.0.0", &[("linux", "x64", b"linux binary")]);
         let dir = layout.root().join("upload-1");
         upload(&dir, &manifest, &sig, b"linux binary with a backdoor");
-        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0")).unwrap_err();
+        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap_err();
         assert!(matches!(e, UpdateError::HashMismatch), "{e}");
         assert!(staged_info(&layout).is_none());
     }
@@ -352,11 +368,11 @@ mod tests {
             signed_manifest(&key, "2.0.0", &[("linux", "x64", b"linux binary"), ("windows", "x64", b"windows binary")]);
         let dir = layout.root().join("upload-1");
         upload(&dir, &manifest, &sig, b"windows binary");
-        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0")).unwrap_err();
+        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap_err();
         assert!(matches!(e, UpdateError::WrongPlatform { .. }), "{e}");
         let arm = Platform { os: "linux", arch: "arm64" };
         upload(&dir, &manifest, &sig, b"linux binary");
-        let e = stage_upload(&layout, &dir, &keys_for(&key), &arm, &v("1.0.0")).unwrap_err();
+        let e = stage_upload(&layout, &dir, &keys_for(&key), &arm, &v("1.0.0"), Channel::Stable).unwrap_err();
         assert!(matches!(e, UpdateError::WrongPlatform { .. }), "{e}");
     }
 
@@ -368,11 +384,11 @@ mod tests {
         let (manifest, sig) = signed_manifest(&key, "2.0.0", &[("linux", "x64", b"two")]);
         let dir = layout.root().join("upload-1");
         upload(&dir, &manifest, &sig, b"two");
-        stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0")).unwrap();
+        stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap();
         let (manifest, sig) = signed_manifest(&key, "0.9.0", &[("linux", "x64", b"old")]);
         let dir = layout.root().join("upload-2");
         upload(&dir, &manifest, &sig, b"old");
-        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0")).unwrap_err();
+        let e = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap_err();
         assert!(matches!(e, UpdateError::Downgrade { .. }), "{e}");
         assert_eq!(staged_info(&layout).unwrap().version, "2.0.0");
     }
@@ -390,7 +406,7 @@ mod tests {
         let dir = layout.root().join("upload-1");
         fs::create_dir_all(&dir).unwrap();
         split_bundle(&bundle, &dir).unwrap();
-        let info = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0")).unwrap();
+        let info = stage_upload(&layout, &dir, &keys_for(&key), &linux(), &v("1.0.0"), Channel::Stable).unwrap();
         assert_eq!(info.version, "2.0.0");
 
         // Cut short, extra bytes, a foreign file.
@@ -415,7 +431,8 @@ mod tests {
         let dir = layout.root().join("upload-1");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(MANIFEST_FILE), b"{}").unwrap();
-        let e = stage_upload(&layout, &dir, &keys_for(&test_key(3)), &linux(), &v("1.0.0")).unwrap_err();
+        let e =
+            stage_upload(&layout, &dir, &keys_for(&test_key(3)), &linux(), &v("1.0.0"), Channel::Stable).unwrap_err();
         assert!(matches!(e, UpdateError::UploadIncomplete("signature")), "{e}");
     }
 }

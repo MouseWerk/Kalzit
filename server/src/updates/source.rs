@@ -200,6 +200,7 @@ impl Fetcher {
             )));
         }
         super::version_rules(current, &manifest)?;
+        super::channel_rule(channel, &manifest)?;
         let package = select_package(&manifest, platform)?;
         let package_asset = asset(&package.file).filter(|a| a.size == package.size).ok_or_else(incomplete)?;
         Url::parse(&package_asset.browser_download_url).map_err(|_| incomplete())?;

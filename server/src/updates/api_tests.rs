@@ -200,9 +200,10 @@ async fn check_download_and_apply_hand_over_to_the_new_binary() {
     assert!(handover.restore.is_none());
     let plan = install::read_plan(t.state.updates.layout()).unwrap();
     assert_eq!((plan.to.as_str(), plan.state), ("99.1.0", install::PlanState::Swapped));
-    assert!(plan.backup.as_ref().is_some_and(|b| b.is_file()), "the database was backed up first");
-    let kept = install::kept_version(t.state.updates.layout(), env!("CARGO_PKG_VERSION")).unwrap();
-    assert_eq!(std::fs::read_to_string(kept.binary).unwrap(), "running binary");
+    let backup = plan.backup.as_deref().and_then(|b| install::backup_path(t.state.updates.layout(), b));
+    assert!(backup.is_some(), "the database was backed up first");
+    let kept = install::kept_binary(t.state.updates.layout(), env!("CARGO_PKG_VERSION"), &t.exe).unwrap();
+    assert_eq!(std::fs::read_to_string(kept).unwrap(), "running binary");
     assert_eq!(t.audit_actions().await, ["update.checked", "update.downloaded", "update.applied"]);
     t.finish().await;
 }
@@ -331,13 +332,14 @@ async fn returning_to_a_kept_version_swaps_back_and_restores_only_when_needed() 
     let t = T::new(None, Mode::Automatic).await;
     let layout = t.state.updates.layout().clone();
     let schema = install::schema_version(&t.state.db).await.unwrap();
-    let old = t.dir.path().join("old-binary");
+    let old = t.dir.path().join("old").join(t.exe.file_name().unwrap());
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
     std::fs::write(&old, "kept binary 0.0.9").unwrap();
     let backup = layout.backups().join("kalzit-0.0.8-1.db");
     std::fs::create_dir_all(layout.backups()).unwrap();
     std::fs::write(&backup, "backup").unwrap();
     install::keep_version(&layout, &old, "0.0.9", schema, None, 1).unwrap();
-    install::keep_version(&layout, &old, "0.0.8", schema - 1, Some(backup.clone()), 2).unwrap();
+    install::keep_version(&layout, &old, "0.0.8", schema - 1, Some("kalzit-0.0.8-1.db".into()), 2).unwrap();
 
     let s = t.get().await;
     let targets = s.body["rollbackTargets"].as_array().unwrap();
@@ -362,12 +364,13 @@ async fn a_return_across_a_schema_change_restores_the_backup_at_the_handover() {
     let t = T::new(None, Mode::Automatic).await;
     let layout = t.state.updates.layout().clone();
     let schema = install::schema_version(&t.state.db).await.unwrap();
-    let old = t.dir.path().join("old-binary");
+    let old = t.dir.path().join("old").join(t.exe.file_name().unwrap());
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
     std::fs::write(&old, "kept binary 0.0.8").unwrap();
     let backup = layout.backups().join("kalzit-0.0.8-1.db");
     std::fs::create_dir_all(layout.backups()).unwrap();
     std::fs::write(&backup, "backup").unwrap();
-    install::keep_version(&layout, &old, "0.0.8", schema - 1, Some(backup.clone()), 2).unwrap();
+    install::keep_version(&layout, &old, "0.0.8", schema - 1, Some("kalzit-0.0.8-1.db".into()), 2).unwrap();
     let r = t.post("/rollback", json!({ "version": "0.0.8", "restoreDatabase": true })).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let handover = t.state.updates.take_handover().unwrap();

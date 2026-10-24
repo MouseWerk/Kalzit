@@ -1498,6 +1498,9 @@ history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only
 | `updates.schedule_missed` | | the server was not running during the planned window |
 | `updates.upload_incomplete` | `part` | the upload lacks its `manifest`, `signature` or `package` |
 | `updates.upload_unknown_part` | `part` | the upload has an unknown or repeated part |
+| `updates.channel_mismatch` | | a preview release on the stable channel (`409`) |
+| `updates.disk_full` | `needed` | the data directory's disk has less than `needed` bytes free for the upload (`409`) |
+| `updates.rollback_unsigned` | `version` | the command line returns only to versions whose signed manifest was kept (`409`) |
 | `updates.mode_windows_service` | | Windows: installing needs the service integration; use `kalzit update apply` |
 | `updates.mode_not_systemd` | | Linux, not started by systemd |
 | `updates.mode_binary_not_writable` | | the service account cannot replace the binary |

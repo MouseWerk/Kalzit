@@ -139,8 +139,17 @@ export const checkUpdates = () => status("POST", "/check");
 export const downloadUpdate = (version: string) => status("POST", "/download", { version });
 export const applyUpdate = (version: string, acknowledgeNoBackup = false) =>
   status("POST", "/apply", acknowledgeNoBackup ? { version, acknowledgeNoBackup } : { version });
-export const scheduleUpdate = (version: string, at: number, until: number) =>
-  status("PUT", "/schedule", { version, at, until });
+export const scheduleUpdate = (
+  version: string,
+  at: number,
+  until: number,
+  acknowledgeNoBackup = false,
+) =>
+  status(
+    "PUT",
+    "/schedule",
+    acknowledgeNoBackup ? { version, at, until, acknowledgeNoBackup } : { version, at, until },
+  );
 export const unscheduleUpdate = () => status("DELETE", "/schedule");
 export const discardUpdate = () => status("DELETE", "/staged");
 export const skipUpdate = (version: string) => status("POST", "/skip", { version });

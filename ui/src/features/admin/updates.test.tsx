@@ -239,6 +239,31 @@ describe("updates page", () => {
     );
   });
 
+  it("plans on PostgreSQL only after the own backup is confirmed", async () => {
+    let calls: Call[] = [];
+    const { user } = await openAdmin("/admin/server/updates", {
+      isServerAdmin: true,
+      setup: () => {
+        calls = updatesRoutes(
+          status({ database: "postgres", backups: [] }),
+          (_, current) => current,
+        );
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: /^Plan for (today|tomorrow)/ }));
+    const dialog = screen.getByRole("dialog");
+    const plan = within(dialog).getByRole("button", { name: "Plan the update" });
+    expect((plan as HTMLButtonElement).disabled).toBe(true);
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(plan);
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({
+        version: "0.2.0",
+        acknowledgeNoBackup: true,
+      }),
+    );
+  });
+
   it("names the command where the server does not install on its own", async () => {
     await openAdmin("/admin/server/updates", {
       isServerAdmin: true,

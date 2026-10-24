@@ -131,13 +131,17 @@ pub fn free_space(path: &Path) -> Option<u64> {
 /// Runs `binary --version` and expects it to name `version`: the package is a program for this
 /// machine, not just signed bytes.
 pub async fn smoke_test(binary: &Path, version: &str) -> Result<(), UpdateError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| UpdateError::SmokeTestFailed(e.to_string()))?;
+    // An empty environment: the new binary sees no secrets key, database credentials or other
+    // KALZIT_* variables while it only prints its version. Windows needs its system folder.
+    let mut command = tokio::process::Command::new(binary);
+    command.arg("--version").env_clear().kill_on_drop(true);
+    #[cfg(windows)]
+    for name in ["SystemRoot", "windir"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
     }
-    let run = tokio::process::Command::new(binary).arg("--version").kill_on_drop(true).output();
+    let run = command.output();
     let output = match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => return Err(UpdateError::SmokeTestFailed(e.to_string())),

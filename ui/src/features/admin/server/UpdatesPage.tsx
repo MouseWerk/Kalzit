@@ -138,6 +138,8 @@ const MODE_TEXT: Record<string, MessageKey> = {
 
 type Confirm =
   | { kind: "install"; version: string }
+  /** Only on PostgreSQL: planning asks for the own backup up front. */
+  | { kind: "schedule"; version: string; at: number; until: number }
   | { kind: "rollback"; version: string; restore: boolean };
 
 /**
@@ -246,7 +248,9 @@ export function UpdatesPage() {
               onDownload={(version) => run(() => downloadUpdate(version))}
               onInstall={(version) => setConfirm({ kind: "install", version })}
               onSchedule={(version, at, until) =>
-                run(() => scheduleUpdate(version, at, until), t("admin.updates.scheduled"))
+                data.database === "postgres"
+                  ? setConfirm({ kind: "schedule", version, at, until })
+                  : run(() => scheduleUpdate(version, at, until), t("admin.updates.scheduled"))
               }
               onUnschedule={() => run(unscheduleUpdate)}
               onSkip={(version) => run(() => skipUpdate(version))}
@@ -283,6 +287,11 @@ export function UpdatesPage() {
           setConfirm(null);
           if (c.kind === "install") {
             run(() => applyUpdate(c.version, acknowledge));
+          } else if (c.kind === "schedule") {
+            run(
+              () => scheduleUpdate(c.version, c.at, c.until, acknowledge),
+              t("admin.updates.scheduled"),
+            );
           } else {
             run(() => rollbackTo(c.version, c.restore));
           }
@@ -1237,11 +1246,14 @@ function ConfirmDialog({
     return null;
   }
   const postgres = data.database === "postgres";
-  const needsAck = confirm.kind === "install" && postgres;
+  const installs = confirm.kind === "install" || confirm.kind === "schedule";
+  const needsAck = installs && postgres;
   const title =
     confirm.kind === "install"
       ? t("admin.updates.confirm.installTitle", { version: confirm.version })
-      : t("admin.updates.confirm.returnTitle", { version: confirm.version });
+      : confirm.kind === "schedule"
+        ? t("admin.updates.confirm.scheduleTitle", { version: confirm.version })
+        : t("admin.updates.confirm.returnTitle", { version: confirm.version });
   return (
     <Dialog
       open
@@ -1265,12 +1277,14 @@ function ConfirmDialog({
           >
             {confirm.kind === "install"
               ? t("admin.updates.installNow")
-              : t("admin.updates.history.returnTo")}
+              : confirm.kind === "schedule"
+                ? t("admin.updates.confirm.schedule")
+                : t("admin.updates.history.returnTo")}
           </button>
         </>
       }
     >
-      {confirm.kind === "install" ? (
+      {installs ? (
         <>
           <p>
             {t("admin.updates.confirm.installText", {

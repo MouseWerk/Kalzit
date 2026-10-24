@@ -25,6 +25,10 @@ use super::{Actor, Handover};
 use crate::app::AppState;
 use crate::config::Config;
 
+/// The longest and shortest trial, whatever the plan says.
+const MIN_TRIAL: u64 = 15;
+const MAX_TRIAL: u64 = 1800;
+
 /// What `kalzit serve` does after the guard.
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant, reason = "made once per start and matched at once")]
@@ -66,9 +70,51 @@ fn now_ms() -> i64 {
     crate::clock::SystemClock.now_ms()
 }
 
+/// The start of `kalzit serve` failed on the configuration. If this is the first start of a new
+/// version (a plan says so), Kalzit returns to the previous one, which accepted the
+/// configuration: `Some` is the binary to start instead. `data_dir` comes from
+/// `Config::data_dir_hint`, since the configuration itself did not load.
+pub fn after_config_error(data_dir: &std::path::Path, error: &str) -> Option<PathBuf> {
+    let layout = Layout::new(data_dir);
+    match guard_after_config_error(&layout, &super::current_version().to_string(), error, now_ms()) {
+        Boot::Relaunch(exe) => Some(exe),
+        Boot::Run(_) => None,
+    }
+}
+
+/// `after_config_error` for the running `version`, without the clock (tests).
+pub fn guard_after_config_error(layout: &Layout, version: &str, error: &str, now: i64) -> Boot {
+    let plan = match install::read_plan_checked(layout) {
+        Ok(Some(plan)) => plan,
+        Ok(None) => return Boot::Run(None),
+        Err(e) => {
+            tracing::error!("{e}");
+            return Boot::Run(None);
+        }
+    };
+    let trial = matches!(plan.state, PlanState::Swapped | PlanState::Trial | PlanState::RollbackRequested);
+    if plan.to != version || !trial {
+        return Boot::Run(None);
+    }
+    let _ = now;
+    return_to_previous(layout, plan, &format!("the new version refused the configuration: {error}"))
+}
+
 /// The guard's decision for the running `version`, without the watchdog (tests).
 pub fn guard_with(layout: &Layout, version: &str, now: i64) -> Boot {
-    let Some(mut plan) = install::read_plan(layout) else { return Boot::Run(None) };
+    let mut plan = match install::read_plan_checked(layout) {
+        Ok(Some(plan)) => plan,
+        Ok(None) => return Boot::Run(None),
+        Err(e) => {
+            // A switch is in progress, but nobody can tell which; the operator decides.
+            tracing::error!(
+                "{e}. An update may be half done: check that the binary is the version you want and \
+                 restore a backup from updates/backups if needed. The plan is set aside"
+            );
+            install::archive_plan(layout, now, "unreadable");
+            return Boot::Run(None);
+        }
+    };
     install::clean_leftovers(&plan.exe);
     if plan.to == version {
         match plan.state {
@@ -80,13 +126,13 @@ pub fn guard_with(layout: &Layout, version: &str, now: i64) -> Boot {
                     tracing::error!("cannot record the update trial, starting without it: {e}");
                     return Boot::Run(None);
                 }
+                let secs = plan.health_timeout_secs.clamp(MIN_TRIAL, MAX_TRIAL);
                 tracing::info!(
-                    "first start of {} after the update from {}: it has {} s to report healthy",
+                    "first start of {} after the update from {}: it has {secs} s to report healthy",
                     plan.to,
-                    plan.from,
-                    plan.health_timeout_secs
+                    plan.from
                 );
-                let deadline = Instant::now() + Duration::from_secs(plan.health_timeout_secs);
+                let deadline = Instant::now() + Duration::from_secs(secs);
                 let trial =
                     Trial { layout: layout.clone(), plan, deadline, state: Arc::new(Mutex::new(TrialState::Pending)) };
                 Boot::Run(Some(trial))
@@ -103,7 +149,7 @@ pub fn guard_with(layout: &Layout, version: &str, now: i64) -> Boot {
                     plan.from,
                     plan.exe.display()
                 );
-                install::archive_plan(layout, now);
+                install::archive_plan(layout, now, "stale");
                 Boot::Run(None)
             }
         }
@@ -116,14 +162,28 @@ pub fn guard_with(layout: &Layout, version: &str, now: i64) -> Boot {
             plan.from,
             plan.to
         );
-        install::archive_plan(layout, now);
+        install::archive_plan(layout, now, "stale");
         Boot::Run(None)
     }
 }
 
 fn return_to_previous(layout: &Layout, mut plan: Plan, reason: &str) -> Boot {
+    // PostgreSQL has no backup Kalzit could restore: once the new version changed the schema,
+    // the previous binary would not start on it. The new version stays, loudly.
+    if plan.database.is_none() && plan.migrated {
+        tracing::error!(
+            "{reason}. Kalzit does not return to {}: the new version already changed the PostgreSQL schema, \
+             which {} cannot use. {} keeps running; restore your pg_dump and install {} by hand to go back",
+            plan.from,
+            plan.from,
+            plan.to,
+            plan.from
+        );
+        install::archive_plan(layout, now_ms(), "kept-new");
+        return Boot::Run(None);
+    }
     tracing::error!("{reason}; returning to {}", plan.from);
-    match install::roll_back(&plan) {
+    match install::roll_back(layout, &plan) {
         Ok(()) => {
             plan.state = PlanState::RolledBack;
             plan.error = Some(reason.to_string());
@@ -137,9 +197,11 @@ fn return_to_previous(layout: &Layout, mut plan: Plan, reason: &str) -> Boot {
                 "returning to {} failed: {e}. The binary {} stays; restore it and the database from {} by hand",
                 plan.from,
                 plan.exe.display(),
-                plan.backup.as_ref().map_or_else(|| "your own backup".into(), |b| b.display().to_string())
+                plan.backup
+                    .as_deref()
+                    .map_or_else(|| "your own backup".to_string(), |b| format!("updates/backups/{b}"))
             );
-            install::archive_plan(layout, 0);
+            install::archive_plan(layout, now_ms(), "failed-return");
             Boot::Run(None)
         }
     }
@@ -179,6 +241,20 @@ impl Trial {
         });
     }
 
+    /// PostgreSQL: the started version changed the schema (`schema` is the schema now), so a
+    /// return could not work any more; the plan says so for the next start.
+    pub fn note_schema(&self, schema: i64) {
+        if self.plan.database.is_some() || schema == self.plan.schema {
+            return;
+        }
+        if let Some(mut plan) = install::read_plan(&self.layout) {
+            plan.migrated = true;
+            if let Err(e) = install::write_plan(&self.layout, &plan) {
+                tracing::error!("recording the schema change of the update failed: {e}");
+            }
+        }
+    }
+
     /// The health check passed: the plan goes, the installation is recorded.
     pub async fn confirm(&self, state: &AppState) -> Result<(), String> {
         {
@@ -208,7 +284,8 @@ impl Trial {
                 duration_ms: Some((state.clock.now_ms() - plan.created_at).max(0)),
             },
         );
-        install::prune(&self.layout, super::keep_versions(state).await);
+        let exe_name = plan.exe.file_name().unwrap_or_default().to_os_string();
+        install::prune(&self.layout, super::keep_versions(state).await, &plan.to, &exe_name);
         let actor = Actor { user_id: plan.actor.clone(), address: None };
         let summary = serde_json::json!({ "from": plan.from, "to": plan.to, "kind": plan.kind });
         super::record_audit(state, &actor, "update.installed", Some(&plan.to), summary).await.map_err(|e| e.message)
@@ -239,8 +316,9 @@ fn mark_failed(layout: &Layout, reason: &str) {
 }
 
 /// Ends this process at once and starts `exe` again. On Unix the image is replaced, which stops
-/// every thread (and with them every database write) in one step; Windows ends the process, and
-/// the next start returns.
+/// every thread (and with them every database write) in one step. Windows only ends the
+/// process: the return then happens at the next start (by an administrator, or a service
+/// wrapper that restarts Kalzit).
 fn restart_now(exe: &std::path::Path) -> ! {
     #[cfg(unix)]
     {
@@ -274,7 +352,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::updates::install::{PlanKind, Switch, prepare_update};
+    use crate::updates::install::{PlanKind, Switch, place_binary, prepare_update};
 
     struct Setup {
         _dir: tempfile::TempDir,
@@ -283,8 +361,9 @@ mod tests {
         database: PathBuf,
     }
 
-    /// An installation from 1.0.0 to 1.1.0 with fake binaries and a fake database.
-    fn installed() -> Setup {
+    /// An installation from 1.0.0 to 1.1.0 with fake binaries and a fake database (`None`:
+    /// PostgreSQL).
+    fn installed_with(sqlite: bool) -> Setup {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         let layout = Layout::new(&data);
@@ -298,6 +377,7 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, content).unwrap();
         }
+        let placed = place_binary(&new, &exe, &crate::updates::signing::sha256_hex(b"binary 1.1.0"), 12).unwrap();
         prepare_update(
             &layout,
             Switch {
@@ -305,9 +385,11 @@ mod tests {
                 from: "1.0.0".into(),
                 to: "1.1.0".into(),
                 exe: exe.clone(),
-                source: new,
-                backup: Some(backup),
-                database: Some(database.clone()),
+                exe_file: fs::File::open(&exe).unwrap(),
+                placed,
+                release: None,
+                backup: sqlite.then(|| "kalzit-1.0.0-1.db".to_string()),
+                database: sqlite.then(|| database.clone()),
                 schema: 9,
                 health_timeout_secs: 30,
                 actor: None,
@@ -320,6 +402,10 @@ mod tests {
         // The new version migrated the database.
         fs::write(&database, "data 1.1.0").unwrap();
         Setup { _dir: dir, layout, exe, database }
+    }
+
+    fn installed() -> Setup {
+        installed_with(true)
     }
 
     fn content(path: &Path) -> String {
@@ -361,6 +447,56 @@ mod tests {
         let Boot::Relaunch(_) = guard_with(&s.layout, "1.1.0", 3) else { panic!("no return") };
         assert_eq!(content(&s.exe), "binary 1.0.0");
         assert_eq!(install::read_plan(&s.layout).unwrap().error.as_deref(), Some("readyz answered 503"));
+    }
+
+    #[test]
+    fn a_new_version_that_refuses_the_configuration_returns() {
+        let s = installed();
+        let Boot::Relaunch(exe) = guard_after_config_error(&s.layout, "1.1.0", "unknown key x.y", 2) else {
+            panic!("no return")
+        };
+        assert_eq!(exe, s.exe);
+        assert_eq!(content(&s.exe), "binary 1.0.0");
+        let plan = install::read_plan(&s.layout).unwrap();
+        assert_eq!(plan.state, PlanState::RolledBack);
+        assert!(plan.error.unwrap().contains("unknown key x.y"));
+        // The previous version with the same configuration error is not an update problem.
+        assert!(matches!(guard_after_config_error(&s.layout, "1.0.0", "unknown key x.y", 3), Boot::Run(None)));
+    }
+
+    #[test]
+    fn a_configuration_error_without_a_switch_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(guard_after_config_error(&Layout::new(dir.path()), "1.0.0", "bad", 1), Boot::Run(None)));
+    }
+
+    #[test]
+    fn postgresql_after_a_schema_change_keeps_the_new_version() {
+        let s = installed_with(false);
+        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        trial.note_schema(10);
+        trial.fail("readyz answered 503").unwrap();
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 3), Boot::Run(None)), "no return");
+        assert_eq!(content(&s.exe), "binary 1.1.0");
+        assert!(install::read_plan(&s.layout).is_none(), "the plan is set aside");
+    }
+
+    #[test]
+    fn postgresql_without_a_schema_change_returns() {
+        let s = installed_with(false);
+        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        trial.note_schema(9);
+        trial.fail("readyz answered 503").unwrap();
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 3), Boot::Relaunch(_)));
+        assert_eq!(content(&s.exe), "binary 1.0.0");
+    }
+
+    #[test]
+    fn an_unreadable_plan_is_set_aside_loudly() {
+        let s = installed();
+        fs::write(s.layout.plan_file(), "{ not json").unwrap();
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 7), Boot::Run(None)));
+        assert!(s.layout.root().join("plan-7.unreadable.json").is_file());
     }
 
     #[test]

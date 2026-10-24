@@ -1,28 +1,22 @@
-//! Release manifests and their Ed25519 signatures (docs/ARCHITECTURE.md, "Updates").
+//! Verifying releases (docs/ARCHITECTURE.md, "Updates"). The format and the signed messages are
+//! in the `kalzit-release` crate, which `kalzit-sign` shares, so both sides cannot drift apart.
 //!
-//! A release carries one manifest (JSON) with a detached signature over its exact bytes, and
-//! every package in it carries its own signature over its version, platform, size and SHA-256.
 //! Only keys compiled into Kalzit are trusted: `COMPILED_KEYS`, plus the keys in the build-time
 //! variable `KALZIT_UPDATE_PUBLIC_KEYS` (comma-separated, base64). A signature names its key by
 //! id; an id that is not trusted is refused, never looked up elsewhere. Several trusted keys make
 //! a key rotation possible: a release signed with the new key is accepted by servers that ship
-//! both, and the old key is dropped a release later.
-//!
-//! Every signed message starts with its own context line, so a package signature can never pass
-//! as a manifest signature or the other way round.
+//! both, and the old key is dropped a release later. Listing a second key whose private half is
+//! kept offline lets the project revoke a leaked key with a release signed by the other one.
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use ed25519_dalek::VerifyingKey;
+
+pub use kalzit_release::{
+    BUNDLE_EXTENSION, BUNDLE_MAGIC, Channel, DetachedSignature, Highlight, MANIFEST_CONTEXT, MAX_HIGHLIGHTS, Manifest,
+    PACKAGE_CONTEXT, Package, highlights_from_notes, key_id, manifest_message, package_message, public_key_base64,
+    sha256_hex, sign_manifest, sign_package, signing_key_from_base64, write_bundle,
+};
 
 use super::UpdateError;
-
-/// Signed manifests start with this line.
-pub const MANIFEST_CONTEXT: &[u8] = b"kalzit-update-manifest-v1\n";
-/// Signed package descriptions start with this line.
-pub const PACKAGE_CONTEXT: &[u8] = b"kalzit-update-package-v1\n";
 
 /// PLACEHOLDER for the project's release public key: replace this value with the base64 public
 /// key printed by `kalzit-sign keygen` (docs/operations/updates.md, "Release key"). The text
@@ -32,7 +26,7 @@ pub const PACKAGE_CONTEXT: &[u8] = b"kalzit-update-package-v1\n";
 pub const RELEASE_KEY_PLACEHOLDER: &str = "PLACEHOLDER-SET-THE-KALZIT-RELEASE-PUBLIC-KEY";
 
 /// The trusted release keys, newest first. During a rotation both the new and the old key are
-/// listed; see the operator guide.
+/// listed; a second key kept offline makes revoking a leaked one possible (operator guide).
 pub const COMPILED_KEYS: &[&str] = &[RELEASE_KEY_PLACEHOLDER];
 
 /// Extra trusted keys given when Kalzit was built (`KALZIT_UPDATE_PUBLIC_KEYS`, comma-separated
@@ -76,7 +70,7 @@ impl TrustedKeys {
         Self(keys)
     }
 
-    /// Keys from base64 text (tests and the signing tool's own checks).
+    /// Keys from base64 text (tests).
     pub fn from_base64(keys: &[&str]) -> Result<Self, String> {
         keys.iter().map(|k| parse_public_key(k)).collect::<Result<Vec<_>, _>>().map(Self)
     }
@@ -95,134 +89,8 @@ impl TrustedKeys {
 }
 
 fn parse_public_key(text: &str) -> Result<TrustedKey, String> {
-    let bytes = BASE64.decode(text.trim()).map_err(|e| format!("not base64: {e}"))?;
-    let bytes: [u8; 32] = bytes.try_into().map_err(|_| "an Ed25519 public key has 32 bytes".to_string())?;
-    let key = VerifyingKey::from_bytes(&bytes).map_err(|e| format!("not an Ed25519 public key: {e}"))?;
-    if key.is_weak() {
-        return Err("a weak (small order) key cannot be trusted".into());
-    }
+    let key = kalzit_release::parse_public_key(text)?;
     Ok(TrustedKey { id: key_id(&key), key })
-}
-
-/// The id of a public key: the first 8 bytes of its SHA-256, in hex.
-pub fn key_id(key: &VerifyingKey) -> String {
-    hex::encode(&Sha256::digest(key.as_bytes())[..8])
-}
-
-/// A detached signature: which key made it, and the signature in base64.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DetachedSignature {
-    pub key_id: String,
-    pub signature: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Channel {
-    Stable,
-    Preview,
-}
-
-/// What a release offers. Unknown fields are ignored, so a later manifest format can add some;
-/// the signature covers the exact bytes either way.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Manifest {
-    /// 1.
-    pub format: u32,
-    /// "kalzit".
-    pub product: String,
-    pub version: String,
-    pub channel: Channel,
-    /// RFC 3339 date of the release.
-    #[serde(default)]
-    pub released_at: Option<String>,
-    /// The oldest installed version that may update to this one directly.
-    #[serde(default)]
-    pub minimum_version: Option<String>,
-    /// A short summary of the release notes (plain text).
-    #[serde(default)]
-    pub notes: String,
-    #[serde(default)]
-    pub notes_url: Option<String>,
-    /// The release notes' lines by section, for the Updates page.
-    #[serde(default)]
-    pub highlights: Vec<Highlight>,
-    pub packages: Vec<Package>,
-}
-
-/// One line of the release notes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Highlight {
-    /// `new`, `improved`, `fixed` or `security`.
-    pub kind: String,
-    pub text: String,
-}
-
-/// The most highlight lines a manifest may carry.
-const MAX_HIGHLIGHTS: usize = 200;
-
-/// The highlights of release notes in the format of `docs/releases/v<version>.md`: the lines of
-/// the sections "## New", "## Improved", "## Fixed" and "## Security"; other sections (the
-/// manual checklist) are left out.
-pub fn highlights_from_notes(markdown: &str) -> Vec<Highlight> {
-    let mut kind: Option<&str> = None;
-    let mut out = Vec::new();
-    for line in markdown.lines() {
-        let trimmed = line.trim();
-        if let Some(heading) = trimmed.strip_prefix("## ") {
-            kind = match heading.trim().to_ascii_lowercase().as_str() {
-                "new" => Some("new"),
-                "improved" => Some("improved"),
-                "fixed" => Some("fixed"),
-                "security" => Some("security"),
-                _ => None,
-            };
-            continue;
-        }
-        if let (Some(k), Some(text)) = (kind, trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* "))) {
-            let text: String = text.trim().chars().take(300).collect();
-            if !text.is_empty() && out.len() < MAX_HIGHLIGHTS {
-                out.push(Highlight { kind: k.to_string(), text });
-            }
-        }
-    }
-    out
-}
-
-/// One binary of a release.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Package {
-    /// `linux` or `windows`.
-    pub platform: String,
-    /// `x64` or `arm64`.
-    pub arch: String,
-    /// The asset's file name in the release.
-    pub file: String,
-    pub size: u64,
-    /// Lowercase hex.
-    pub sha256: String,
-    /// Over `package_message`.
-    pub signature: DetachedSignature,
-}
-
-/// What a package signature covers: the context line, then one `key=value` line per field.
-pub fn package_message(version: &str, platform: &str, arch: &str, file: &str, size: u64, sha256: &str) -> Vec<u8> {
-    let mut message = PACKAGE_CONTEXT.to_vec();
-    message.extend_from_slice(
-        format!("version={version}\nplatform={platform}\narch={arch}\nfile={file}\nsize={size}\nsha256={sha256}\n")
-            .as_bytes(),
-    );
-    message
-}
-
-fn manifest_message(manifest: &[u8]) -> Vec<u8> {
-    let mut message = MANIFEST_CONTEXT.to_vec();
-    message.extend_from_slice(manifest);
-    message
 }
 
 /// Checks `signature` over `message` with the trusted key it names. Verification is strict:
@@ -234,9 +102,7 @@ fn verify(keys: &TrustedKeys, message: &[u8], signature: &DetachedSignature) -> 
     let Some(key) = keys.find(&signature.key_id) else {
         return Err(UpdateError::UnknownKey(signature.key_id.chars().take(64).collect()));
     };
-    let bytes = BASE64.decode(signature.signature.trim()).map_err(|_| UpdateError::SignatureInvalid)?;
-    let bytes: [u8; 64] = bytes.try_into().map_err(|_| UpdateError::SignatureInvalid)?;
-    key.verify_strict(message, &Signature::from_bytes(&bytes)).map_err(|_| UpdateError::SignatureInvalid)
+    if kalzit_release::signature_matches(key, message, signature) { Ok(()) } else { Err(UpdateError::SignatureInvalid) }
 }
 
 /// Parses a detached signature file.
@@ -282,6 +148,10 @@ fn check_form(m: &Manifest) -> Result<(), UpdateError> {
     if m.notes.chars().count() > MAX_NOTES_CHARS {
         return bad("the release notes summary is too long");
     }
+    // The page links to it; only an https link to somewhere is shown.
+    if m.notes_url.as_deref().is_some_and(|u| !u.starts_with("https://") || u.len() > 2000) {
+        return bad("the release notes link is not an https URL");
+    }
     if m.packages.is_empty() {
         return bad("the manifest lists no package");
     }
@@ -313,36 +183,10 @@ fn check_form(m: &Manifest) -> Result<(), UpdateError> {
     Ok(())
 }
 
-/// Reads a signing key: the 32-byte Ed25519 seed in base64, as `kalzit-sign keygen` writes it.
-pub fn signing_key_from_base64(text: &str) -> Result<SigningKey, String> {
-    let bytes = BASE64.decode(text.trim()).map_err(|_| "the signing key is not base64".to_string())?;
-    let seed: [u8; 32] = bytes.try_into().map_err(|_| "the signing key must be 32 bytes".to_string())?;
-    Ok(SigningKey::from_bytes(&seed))
-}
-
-pub fn public_key_base64(key: &SigningKey) -> String {
-    BASE64.encode(key.verifying_key().as_bytes())
-}
-
-fn sign(key: &SigningKey, message: &[u8]) -> DetachedSignature {
-    DetachedSignature { key_id: key_id(&key.verifying_key()), signature: BASE64.encode(key.sign(message).to_bytes()) }
-}
-
-/// The detached signature of a manifest's exact bytes.
-pub fn sign_manifest(key: &SigningKey, manifest: &[u8]) -> DetachedSignature {
-    sign(key, &manifest_message(manifest))
-}
-
-/// A package entry with its signature.
-pub fn sign_package(key: &SigningKey, version: &str, platform: &str, arch: &str, file: &str, data: &[u8]) -> Package {
-    let sha256 = hex::encode(Sha256::digest(data));
-    let size = data.len() as u64;
-    let signature = sign(key, &package_message(version, platform, arch, file, size, &sha256));
-    Package { platform: platform.into(), arch: arch.into(), file: file.into(), size, sha256, signature }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
+    use ed25519_dalek::SigningKey;
+
     use super::*;
 
     /// A key made for the tests from a fixed seed; it signs nothing outside them.
@@ -360,6 +204,15 @@ pub(crate) mod tests {
         version: &str,
         packages: &[(&str, &str, &[u8])],
     ) -> (Vec<u8>, Vec<u8>) {
+        signed_manifest_on(key, version, Channel::Stable, packages)
+    }
+
+    pub(crate) fn signed_manifest_on(
+        key: &SigningKey,
+        version: &str,
+        channel: Channel,
+        packages: &[(&str, &str, &[u8])],
+    ) -> (Vec<u8>, Vec<u8>) {
         let packages = packages
             .iter()
             .map(|(platform, arch, data)| {
@@ -371,7 +224,7 @@ pub(crate) mod tests {
             format: 1,
             product: "kalzit".into(),
             version: version.into(),
-            channel: Channel::Stable,
+            channel,
             released_at: Some("2026-10-24T00:00:00Z".into()),
             minimum_version: None,
             notes: "Faster dashboards.".into(),
@@ -413,7 +266,7 @@ pub(crate) mod tests {
         let key = test_key(7);
         let (manifest, _) = signed_manifest(&key, "1.2.3", &[("linux", "x64", b"binary")]);
         let mut m: Manifest = serde_json::from_slice(&manifest).unwrap();
-        m.packages[0].sha256 = hex::encode(Sha256::digest(b"evil"));
+        m.packages[0].sha256 = sha256_hex(b"evil");
         let bytes = serde_json::to_vec(&m).unwrap();
         let sig = serde_json::to_vec(&sign_manifest(&key, &bytes)).unwrap();
         assert!(matches!(verify_manifest(&keys_for(&key), &bytes, &sig), Err(UpdateError::SignatureInvalid)));
@@ -442,11 +295,12 @@ pub(crate) mod tests {
     #[test]
     fn a_package_signature_does_not_pass_as_a_manifest_signature() {
         let key = test_key(7);
-        let message = package_message("1.2.3", "linux", "x64", "f", 1, &"0".repeat(64));
-        let as_manifest = sign(&key, &message);
+        let entry = sign_package(&key, "1.2.3", "linux", "x64", "f", b"x");
+        let message = package_message("1.2.3", "linux", "x64", "f", 1, &entry.sha256);
         // The same bytes signed in the package context do not verify as a manifest.
         let body = &message[PACKAGE_CONTEXT.len()..];
-        assert!(verify(&keys_for(&key), &manifest_message(body), &as_manifest).is_err());
+        assert!(verify(&keys_for(&key), &manifest_message(body), &entry.signature).is_err());
+        assert!(verify(&keys_for(&key), &message, &entry.signature).is_ok());
     }
 
     #[test]
@@ -475,7 +329,10 @@ pub(crate) mod tests {
             ("\"linux\"", "\"plan9\""),
             ("\"product\": \"kalzit\"", "\"product\": \"other\""),
             ("\"1.2.3\"", "\"one\""),
+            ("\"notesUrl\": null", "\"notesUrl\": \"javascript:alert(1)\""),
+            ("\"notesUrl\": null", "\"notesUrl\": \"http://example.com/notes\""),
         ] {
+            assert!(text.contains(from), "{from}");
             assert!(matches!(sign_raw(&text.replacen(from, to, 1)), Err(UpdateError::ManifestInvalid(_))), "{to}");
         }
     }
@@ -497,31 +354,5 @@ pub(crate) mod tests {
         }
         // The placeholder is never a key, so a build that still has it trusts no compiled key.
         assert!(parse_public_key(RELEASE_KEY_PLACEHOLDER).is_err());
-    }
-
-    #[test]
-    fn weak_keys_are_not_trusted() {
-        // The identity point (all zero but the first byte) has small order.
-        let mut identity = [0u8; 32];
-        identity[0] = 1;
-        assert!(parse_public_key(&BASE64.encode(identity)).is_err());
-    }
-
-    #[test]
-    fn release_notes_become_highlights_without_the_checklist() {
-        let notes = "# Kalzit 0.2.0\n\n## Improved\n\n- Faster typing\n- Axes\n\n## Fixed\n\n* Phone tables\n\n\
-                     ## Checklist for Windows (manual)\n\n- Install the service\n";
-        let h = highlights_from_notes(notes);
-        let lines: Vec<(&str, &str)> = h.iter().map(|h| (h.kind.as_str(), h.text.as_str())).collect();
-        assert_eq!(lines, [("improved", "Faster typing"), ("improved", "Axes"), ("fixed", "Phone tables")]);
-    }
-
-    #[test]
-    fn signing_keys_round_trip_through_base64() {
-        let key = test_key(9);
-        let text = BASE64.encode(key.to_bytes());
-        let back = signing_key_from_base64(&text).unwrap();
-        assert_eq!(public_key_base64(&back), public_key_base64(&key));
-        assert!(signing_key_from_base64("kurz").is_err());
     }
 }

@@ -152,8 +152,16 @@ async fn upload(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,
     Extension(info): Extension<RequestInfo>,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> ApiResult<Json<UpdateStatus>> {
+    // One upload at a time, and only with room for it; without a length, the largest allowed.
+    let incoming = headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(MAX_UPLOAD_BYTES as u64);
+    let _slot = state.updates.begin_upload(incoming)?;
     let layout = state.updates.layout().clone();
     let dir = staging::incoming_dir(&layout, &format!("upload-{}", super::new_id()))
         .map_err(|e| ApiError::from(UpdateError::InstallFailed(e.to_string())))?;
@@ -208,6 +216,9 @@ pub struct ScheduleBody {
     /// and starts after it does not install any more.
     #[serde(default)]
     until: Option<i64>,
+    /// PostgreSQL: the administrator backed the database up and confirms it now.
+    #[serde(default)]
+    acknowledge_no_backup: bool,
 }
 
 async fn schedule(
@@ -216,7 +227,8 @@ async fn schedule(
     Extension(info): Extension<RequestInfo>,
     JsonBody(body): JsonBody<ScheduleBody>,
 ) -> ApiResult<Json<UpdateStatus>> {
-    state.updates.schedule(&state, &body.version, body.at, body.until, &actor(&user, &info)).await?;
+    let ack = body.acknowledge_no_backup;
+    state.updates.schedule(&state, &body.version, body.at, body.until, ack, &actor(&user, &info)).await?;
     Ok(Json(state.updates.status(&state).await?))
 }
 

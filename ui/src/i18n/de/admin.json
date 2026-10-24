@@ -582,6 +582,8 @@
   "admin.updates.confirm.installText": "Kalzit legt eine Sicherung an, ersetzt sich und startet neu. Ist die neue Version nach {seconds} s nicht bereit, kehrt Kalzit von selbst zu {version} zurück.",
   "admin.updates.confirm.postgres": "Ich habe die PostgreSQL-Datenbank mit pg_dump gesichert.",
   "admin.updates.confirm.returnTitle": "Zu {version} zurückkehren?",
+  "admin.updates.confirm.scheduleTitle": "{version} für das Wartungsfenster planen?",
+  "admin.updates.confirm.schedule": "Update planen",
   "admin.updates.confirm.returnText": "Kalzit ersetzt sich durch die behaltene Version {version} und startet neu. Deine Daten bleiben, wie sie sind.",
   "admin.updates.confirm.returnRestore": "Die Datenbank hat sich seit {version} geändert. Die Rückkehr spielt die Sicherung vom Wechsel weg von {version} ein: alles, was sich seitdem geändert hat, geht verloren.",
   "admin.settings.updates.channel.label": "Update-Kanal",

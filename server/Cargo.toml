@@ -2,8 +2,6 @@
 name = "kalzit"
 version = "0.1.0"
 edition.workspace = true
-# The server; `kalzit-sign` (server/src/bin) is the release signing tool.
-default-run = "kalzit"
 license.workspace = true
 repository.workspace = true
 
@@ -21,6 +19,7 @@ clap = { version = "4.6.7", features = ["derive", "env"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 futures-util = "0.3.34"
 hex = "0.4.3"
+kalzit-release = { path = "../release" }
 ipnet = { version = "2.12.2", features = ["serde"] }
 mime_guess = "2.0.5"
 mongodb = { version = "3.9.1", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls", "dns-resolver", "socks5-proxy"] }

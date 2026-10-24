@@ -582,6 +582,8 @@
   "admin.updates.confirm.installText": "Kalzit makes a backup, replaces itself and restarts. If the new version is not healthy within {seconds} s, it returns to {version} on its own.",
   "admin.updates.confirm.postgres": "I backed up the PostgreSQL database with pg_dump.",
   "admin.updates.confirm.returnTitle": "Return to {version}?",
+  "admin.updates.confirm.scheduleTitle": "Plan {version} for the maintenance window?",
+  "admin.updates.confirm.schedule": "Plan the update",
   "admin.updates.confirm.returnText": "Kalzit replaces itself with the kept {version} and restarts. Your data stays as it is.",
   "admin.updates.confirm.returnRestore": "The database changed since {version}. Returning puts back the backup taken when {version} was left: everything changed since then is lost.",
   "admin.settings.updates.channel.label": "Update channel",

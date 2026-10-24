@@ -104,6 +104,12 @@ pub enum UpdateError {
     UploadIncomplete(&'static str),
     #[error("the upload has an unknown part {0}")]
     UploadUnknownPart(String),
+    #[error("this preview release is not offered on the stable channel")]
+    ChannelMismatch,
+    #[error("the data directory's disk has too little free space ({0} bytes are needed)")]
+    DiskFull(u64),
+    #[error("version {0} has no signed manifest kept, so the command line cannot check it; return from the web page")]
+    RollbackUnsigned(String),
 }
 
 impl UpdateError {
@@ -141,6 +147,9 @@ impl UpdateError {
             UpdateError::ScheduleMissed => "updates.schedule_missed",
             UpdateError::UploadIncomplete(_) => "updates.upload_incomplete",
             UpdateError::UploadUnknownPart(_) => "updates.upload_unknown_part",
+            UpdateError::ChannelMismatch => "updates.channel_mismatch",
+            UpdateError::DiskFull(_) => "updates.disk_full",
+            UpdateError::RollbackUnsigned(_) => "updates.rollback_unsigned",
         }
     }
 
@@ -166,7 +175,9 @@ impl UpdateError {
             | UpdateError::NotOffered(v)
             | UpdateError::NotStaged(v)
             | UpdateError::RollbackUnavailable(v)
-            | UpdateError::RollbackNeedsRestore(v) => vec![("version", v.clone())],
+            | UpdateError::RollbackNeedsRestore(v)
+            | UpdateError::RollbackUnsigned(v) => vec![("version", v.clone())],
+            UpdateError::DiskFull(needed) => vec![("needed", needed.to_string())],
             UpdateError::MinimumVersion(v) => vec![("minimum", v.clone())],
             UpdateError::SourceRefused(host) => vec![("host", host.clone())],
             UpdateError::ManualOnly(mode) => vec![("mode", mode.to_string())],
@@ -190,8 +201,10 @@ impl UpdateError {
             | UpdateError::RollbackRestoreUnsupported
             | UpdateError::AlreadyInstalled(_)
             | UpdateError::Downgrade { .. }
-            | UpdateError::MinimumVersion(_) => (StatusCode::CONFLICT, "conflict"),
-            UpdateError::TooLarge(_) => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
+            | UpdateError::MinimumVersion(_)
+            | UpdateError::ChannelMismatch
+            | UpdateError::DiskFull(_)
+            | UpdateError::RollbackUnsigned(_) => (StatusCode::CONFLICT, "conflict"),
             _ => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
         }
     }
@@ -272,6 +285,18 @@ pub struct Schedule {
     pub until: Option<i64>,
     /// Who planned it, for the audit log of the installation.
     pub by: Option<String>,
+    /// PostgreSQL: the administrator confirmed an own backup when planning.
+    #[serde(default)]
+    pub acknowledge_no_backup: bool,
+}
+
+/// One upload at a time; dropped when the upload ends.
+pub struct UploadSlot<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for UploadSlot<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -328,6 +353,7 @@ pub struct Updates {
     work: Arc<tokio::sync::Mutex<()>>,
     handover: Mutex<Option<Handover>>,
     handover_requested: tokio::sync::Notify,
+    uploading: std::sync::atomic::AtomicBool,
 }
 
 impl Updates {
@@ -356,11 +382,38 @@ impl Updates {
             work: Arc::new(tokio::sync::Mutex::new(())),
             handover: Mutex::new(None),
             handover_requested: tokio::sync::Notify::new(),
+            uploading: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+
+    /// Takes the one upload slot, after checking that the data directory's disk has room for an
+    /// upload of `incoming` bytes (twice: the upload, and the staged copy of the binary).
+    pub fn begin_upload(&self, incoming: u64) -> Result<UploadSlot<'_>, UpdateError> {
+        if lock(&self.handover).is_some() {
+            return Err(UpdateError::Pending);
+        }
+        if let Some(free) = platform::free_space(&self.data_dir) {
+            let needed = incoming.saturating_mul(2);
+            if free < needed {
+                return Err(UpdateError::DiskFull(needed));
+            }
+        }
+        self.uploading
+            .compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst)
+            .map_err(|_| UpdateError::Busy)?;
+        Ok(UploadSlot(&self.uploading))
+    }
+
+    fn exe_name(&self) -> std::ffi::OsString {
+        read(&self.exe)
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|n| n.to_os_string())
+            .unwrap_or_else(|| std::ffi::OsString::from(if cfg!(windows) { "kalzit.exe" } else { "kalzit" }))
     }
 
     pub fn current(&self) -> &semver::Version {
@@ -512,16 +565,23 @@ impl Updates {
     }
 
     /// Verifies and stages an uploaded release (`dir` holds `manifest.json`, `manifest.json.sig`
-    /// and `package`, written by the upload route).
+    /// and `package`, or one offline package, written by the upload route). The file work runs on
+    /// the blocking pool.
     pub async fn stage_upload(&self, state: &AppState, dir: &Path, actor: &Actor) -> ApiResult<()> {
         let _work = self.try_work()?;
-        let checked = staging::split_upload(dir)
-            .and_then(|()| staging::stage_upload(&self.layout, dir, &self.keys(), &self.platform, &self.current));
+        let channel = channel(state).await?;
+        let (layout, keys, platform, current, folder) =
+            (self.layout.clone(), self.keys(), self.platform, self.current.clone(), dir.to_path_buf());
+        let checked = blocking(move || {
+            staging::split_upload(&folder)
+                .and_then(|()| staging::stage_upload(&layout, &folder, &keys, &platform, &current, channel))
+        })
+        .await;
         let staged = match checked {
             Ok(staged) => staged,
             Err(e) => {
                 let version = staging::uploaded_version(dir).unwrap_or_default();
-                self.record_aborted(state, &version, "offline", &e, actor);
+                self.record_aborted(state, &version, "offline", &e, actor, false);
                 let summary = json!({ "error": e.reason() });
                 let _ = record_audit(state, actor, "update.upload_refused", None, summary).await;
                 return Err(e.into());
@@ -532,7 +592,15 @@ impl Updates {
     }
 
     /// A step that stopped before anything changed, in the history.
-    fn record_aborted(&self, state: &AppState, version: &str, source: &str, e: &UpdateError, actor: &Actor) {
+    fn record_aborted(
+        &self,
+        state: &AppState,
+        version: &str,
+        source: &str,
+        e: &UpdateError,
+        actor: &Actor,
+        scheduled: bool,
+    ) {
         install::push_history(
             &self.layout,
             install::HistoryEntry {
@@ -544,7 +612,7 @@ impl Updates {
                 reason: Some(e.to_string()),
                 reason_code: Some(e.reason().to_string()),
                 source: Some(source.to_string()),
-                scheduled: false,
+                scheduled,
                 actor: actor.user_id.clone(),
                 duration_ms: None,
             },
@@ -579,7 +647,7 @@ impl Updates {
         let _work = self.try_work()?;
         let now = state.clock.now_ms();
         let kind = install::BackupKind::Manual;
-        let backup = install::backup_database(
+        let file = install::backup_database(
             &state.db,
             &self.db_url,
             &self.layout,
@@ -590,8 +658,13 @@ impl Updates {
         )
         .await?
         .ok_or(UpdateError::BackupUnsupported)?;
-        install::prune(&self.layout, keep_versions(state).await);
-        let file = backup.file_name().map(|f| f.to_string_lossy().into_owned());
+        let (layout, keep, current, exe_name) =
+            (self.layout.clone(), keep_versions(state).await, self.current.to_string(), self.exe_name());
+        blocking(move || {
+            install::prune(&layout, keep, &current, &exe_name);
+            Ok(())
+        })
+        .await?;
         record_audit(state, actor, "update.backed_up", None, json!({ "file": file })).await
     }
 
@@ -600,7 +673,7 @@ impl Updates {
         install::list_backups(&self.layout)
             .into_iter()
             .find(|b| b.file == file)
-            .map(|b| self.layout.backups().join(b.file))
+            .and_then(|b| install::backup_path(&self.layout, &b.file))
     }
 
     pub async fn record_backup_download(&self, state: &AppState, file: &str, actor: &Actor) -> ApiResult<()> {
@@ -638,8 +711,9 @@ impl Updates {
                 self.request_handover(handover);
                 Ok(())
             }
-            // A PostgreSQL installation waiting for its confirmation has not failed.
-            Err(Failure::Update(UpdateError::BackupUnsupported)) => {
+            // A PostgreSQL installation waiting for its confirmation has not failed, unless it
+            // was planned: then nobody is there to confirm, and the history must say why.
+            Err(Failure::Update(UpdateError::BackupUnsupported)) if !scheduled => {
                 self.set_job(Job::Idle);
                 Err(UpdateError::BackupUnsupported.into())
             }
@@ -647,7 +721,7 @@ impl Updates {
                 let view = e.view();
                 self.set_job(Job::Failed { action: "apply", error: view.clone(), at: state.clock.now_ms() });
                 let source = staging::staged_info(&self.layout).map_or_else(|| "online".to_string(), |s| s.source);
-                self.record_aborted(state, version, &source, &e, actor);
+                self.record_aborted(state, version, &source, &e, actor, scheduled);
                 let summary = json!({ "version": version, "error": view.reason });
                 let _ = record_audit(state, actor, "update.apply_failed", Some(version), summary).await;
                 Err(e.into())
@@ -667,7 +741,8 @@ impl Updates {
         actor: &Actor,
         scheduled: bool,
     ) -> Result<Handover, Failure> {
-        let staged = staging::load(&self.layout, &self.keys(), &self.platform)?;
+        let (layout, keys, platform) = (self.layout.clone(), self.keys(), self.platform);
+        let staged = blocking(move || staging::load(&layout, &keys, &platform)).await?;
         if staged.version != version {
             return Err(UpdateError::NotStaged(version.to_string()).into());
         }
@@ -677,10 +752,15 @@ impl Updates {
             return Err(UpdateError::BackupUnsupported.into());
         }
         let exe = self.exe()?;
+        // The package is copied once next to the binary and checked there; the copy is what runs
+        // for the smoke test and what goes into place.
+        let (source, target, sha, size) =
+            (staged.package_path.clone(), exe.clone(), staged.package.sha256.clone(), staged.package.size);
+        let placed = blocking(move || install::place_binary(&source, &target, &sha, size)).await?;
         if *read(&self.smoke_test) {
-            platform::smoke_test(&staged.package_path, version).await?;
+            platform::smoke_test(placed.path(), version).await?;
         }
-        let source = staging::staged_info(&self.layout).map_or_else(|| "online".to_string(), |s| s.source);
+        let source_kind = staging::staged_info(&self.layout).map_or_else(|| "online".to_string(), |s| s.source);
         self.set_job(Job::Applying { version: version.to_string(), step: "backup" });
         let now = state.clock.now_ms();
         let schema = install::schema_version(&state.db).await.map_err(Failure::Api)?;
@@ -689,24 +769,25 @@ impl Updates {
             install::backup_database(&state.db, &self.db_url, &self.layout, &self.current, now, kind, None).await?;
         let keep = health_timeout(state).await?;
         self.set_job(Job::Applying { version: version.to_string(), step: "replace" });
-        let plan = install::prepare_update(
-            &self.layout,
-            install::Switch {
-                kind: PlanKind::Update,
-                from: self.current.to_string(),
-                to: staged.version.clone(),
-                exe: exe.clone(),
-                source: staged.package_path.clone(),
-                backup,
-                database: install::sqlite_file(&self.db_url),
-                schema,
-                health_timeout_secs: keep,
-                actor: actor.user_id.clone(),
-                now,
-                source_kind: source,
-                scheduled,
-            },
-        )?;
+        let switch = install::Switch {
+            kind: PlanKind::Update,
+            from: self.current.to_string(),
+            to: staged.version.clone(),
+            exe: exe.clone(),
+            exe_file: std::fs::File::open(&exe).map_err(|e| UpdateError::InstallFailed(e.to_string()))?,
+            placed,
+            release: Some((staged.manifest_bytes, staged.signature_bytes)),
+            backup,
+            database: install::sqlite_file(&self.db_url),
+            schema,
+            health_timeout_secs: keep,
+            actor: actor.user_id.clone(),
+            now,
+            source_kind,
+            scheduled,
+        };
+        let layout = self.layout.clone();
+        let plan = blocking(move || install::prepare_update(&layout, switch)).await?;
         let summary = json!({
             "from": plan.from, "to": plan.to, "backup": plan.backup.is_some(), "database": database.name(),
         });
@@ -753,8 +834,10 @@ impl Updates {
         restore_database: bool,
         actor: &Actor,
     ) -> Result<Handover, Failure> {
+        if version == self.current.to_string() {
+            return Err(UpdateError::RollbackUnavailable(version.to_string()).into());
+        }
         let target = install::kept_version(&self.layout, version)
-            .filter(|k| k.version != self.current.to_string())
             .ok_or_else(|| UpdateError::RollbackUnavailable(version.to_string()))?;
         let schema = install::schema_version(&state.db).await.map_err(Failure::Api)?;
         let database_file = install::sqlite_file(&self.db_url);
@@ -769,35 +852,43 @@ impl Updates {
             }
             let backup = target
                 .backup
-                .clone()
-                .filter(|b| b.is_file())
+                .as_deref()
+                .and_then(|name| install::backup_path(&self.layout, name))
                 .ok_or_else(|| UpdateError::RollbackUnavailable(version.into()))?;
             Some(backup)
         };
         let exe = self.exe()?;
+        let (layout, keys, platform, wanted, target_exe) =
+            (self.layout.clone(), self.keys(), self.platform, version.to_string(), exe.clone());
+        let placed = blocking(move || {
+            let kept = install::verify_kept(&layout, &wanted, &target_exe, &keys, &platform)?;
+            install::place_binary(&kept.path, &target_exe, &kept.sha256, kept.size)
+        })
+        .await?;
         let now = state.clock.now_ms();
         let kind = install::BackupKind::Switch;
         let backup =
             install::backup_database(&state.db, &self.db_url, &self.layout, &self.current, now, kind, None).await?;
         let keep = health_timeout(state).await?;
-        let plan = install::prepare_update(
-            &self.layout,
-            install::Switch {
-                kind: PlanKind::Rollback,
-                from: self.current.to_string(),
-                to: target.version.clone(),
-                exe: exe.clone(),
-                source: target.binary.clone(),
-                backup,
-                database: database_file.clone(),
-                schema,
-                health_timeout_secs: keep,
-                actor: actor.user_id.clone(),
-                now,
-                source_kind: "kept".into(),
-                scheduled: false,
-            },
-        )?;
+        let switch = install::Switch {
+            kind: PlanKind::Rollback,
+            from: self.current.to_string(),
+            to: target.version.clone(),
+            exe: exe.clone(),
+            exe_file: std::fs::File::open(&exe).map_err(|e| UpdateError::InstallFailed(e.to_string()))?,
+            placed,
+            release: None,
+            backup,
+            database: database_file.clone(),
+            schema,
+            health_timeout_secs: keep,
+            actor: actor.user_id.clone(),
+            now,
+            source_kind: "kept".into(),
+            scheduled: false,
+        };
+        let layout = self.layout.clone();
+        let plan = blocking(move || install::prepare_update(&layout, switch)).await?;
         let summary = json!({ "from": plan.from, "to": plan.to, "restoreDatabase": restore.is_some() });
         if let Err(e) = record_audit(state, actor, "update.rollback_started", Some(&plan.to), summary).await {
             tracing::warn!("recording the return in the audit log failed: {}", e.message);
@@ -813,6 +904,7 @@ impl Updates {
         version: &str,
         at: i64,
         until: Option<i64>,
+        acknowledge_no_backup: bool,
         actor: &Actor,
     ) -> ApiResult<()> {
         if let Mode::Manual(why) = self.mode() {
@@ -829,7 +921,12 @@ impl Updates {
         if staged.is_none() {
             return Err(UpdateError::NotStaged(version.to_string()).into());
         }
-        let schedule = Schedule { version: version.to_string(), at, until, by: actor.user_id.clone() };
+        // On PostgreSQL nobody is there to confirm an own backup when the time comes.
+        if install::database_kind(&self.db_url) == install::DatabaseKind::Postgres && !acknowledge_no_backup {
+            return Err(UpdateError::BackupUnsupported.into());
+        }
+        let schedule =
+            Schedule { version: version.to_string(), at, until, by: actor.user_id.clone(), acknowledge_no_backup };
         self.update_saved(|s| s.schedule = Some(schedule));
         let summary = json!({ "version": version, "at": at, "until": until });
         record_audit(state, actor, "update.scheduled", Some(version), summary).await
@@ -852,10 +949,11 @@ impl Updates {
                 let e = UpdateError::ScheduleMissed;
                 tracing::warn!("{e}");
                 self.set_job(Job::Failed { action: "apply", error: e.view(), at: now });
-                self.record_aborted(state, &schedule.version, "online", &e, &actor);
+                self.record_aborted(state, &schedule.version, "online", &e, &actor, true);
                 return;
             }
-            if let Err(e) = self.apply_as(state, &schedule.version, false, &actor, true).await {
+            let ack = schedule.acknowledge_no_backup;
+            if let Err(e) = self.apply_as(state, &schedule.version, ack, &actor, true).await {
                 tracing::warn!("the scheduled installation of {} failed: {}", schedule.version, e.message);
             }
             return;
@@ -878,7 +976,7 @@ impl Updates {
         let mode = self.mode();
         let schema = install::schema_version(&state.db).await?;
         let database = install::database_kind(&self.db_url);
-        let kept = install::kept_versions(&self.layout);
+        let kept = install::kept_versions(&self.layout, &self.exe_name());
         let current = self.current.to_string();
         let now = state.clock.now_ms();
         let rollback_targets = kept
@@ -887,7 +985,8 @@ impl Updates {
             .map(|k| RollbackTarget {
                 needs_database_restore: k.schema != schema,
                 restore_possible: k.schema == schema
-                    || (database != install::DatabaseKind::Postgres && k.backup.as_ref().is_some_and(|b| b.is_file())),
+                    || (database != install::DatabaseKind::Postgres
+                        && k.backup.as_deref().and_then(|b| install::backup_path(&self.layout, b)).is_some()),
                 version: k.version,
                 kept_at: k.kept_at,
             })
@@ -991,21 +1090,16 @@ impl Updates {
         if plan.state != install::PlanState::RolledBack || plan.from != self.current.to_string() {
             return;
         }
-        let now = state.clock.now_ms();
-        let entry = install::HistoryEntry {
-            version: plan.to.clone(),
-            from: Some(plan.from.clone()),
-            at: now,
-            kind: plan.kind,
-            outcome: install::Outcome::RolledBack,
-            reason: plan.error.clone(),
-            reason_code: None,
-            source: Some(plan.source.clone()),
-            scheduled: plan.scheduled,
-            actor: plan.actor.clone(),
-            duration_ms: Some((now - plan.created_at).max(0)),
-        };
-        install::push_history(&self.layout, entry);
+        let mut plan = plan;
+        // The history entry is written once; a failed audit write is tried again at the next
+        // start without a second entry.
+        if !plan.recorded {
+            install::push_history(&self.layout, install::returned_entry(&plan, state.clock.now_ms()));
+            plan.recorded = true;
+            if let Err(e) = install::write_plan(&self.layout, &plan) {
+                tracing::warn!("marking the return as recorded failed: {e}");
+            }
+        }
         let actor = Actor { user_id: plan.actor.clone(), address: None };
         let summary = json!({ "from": plan.from, "to": plan.to, "reason": plan.error });
         if record_audit(state, &actor, "update.rolled_back", Some(&plan.to), summary).await.is_ok() {
@@ -1045,6 +1139,23 @@ impl From<Failure> for ApiError {
 }
 
 /// Downgrades, the installed version and versions that need an intermediate step are refused.
+/// The stable channel takes only stable releases; preview takes both.
+pub fn channel_rule(channel: Channel, manifest: &signing::Manifest) -> Result<(), UpdateError> {
+    if channel == Channel::Stable && manifest.channel != Channel::Stable {
+        return Err(UpdateError::ChannelMismatch);
+    }
+    Ok(())
+}
+
+/// Runs file work (hashing, copying, restoring) on the blocking pool, off the request threads.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, UpdateError> + Send + 'static,
+) -> Result<T, UpdateError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|e| Err(UpdateError::InstallFailed(format!("a background step failed: {e}"))))
+}
+
 pub fn version_rules(current: &semver::Version, manifest: &signing::Manifest) -> Result<(), UpdateError> {
     let version = semver::Version::parse(&manifest.version)
         .map_err(|_| UpdateError::ManifestInvalid("the version is not a semantic version".into()))?;
@@ -1286,6 +1397,26 @@ mod tests {
             version_rules(&current, &manifest("2.0.0", Some("1.5.0"))),
             Err(UpdateError::MinimumVersion(_))
         ));
+    }
+
+    #[test]
+    fn one_upload_at_a_time_and_only_with_room_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let updates = Updates::new(dir.path(), "sqlite::memory:");
+        let first = updates.begin_upload(1).unwrap();
+        assert!(matches!(updates.begin_upload(1), Err(UpdateError::Busy)));
+        drop(first);
+        assert!(updates.begin_upload(1).is_ok());
+        assert!(matches!(updates.begin_upload(u64::MAX / 2), Err(UpdateError::DiskFull(_))));
+    }
+
+    #[test]
+    fn the_stable_channel_takes_only_stable_releases() {
+        let mut m = manifest("2.0.0", None);
+        assert!(channel_rule(Channel::Stable, &m).is_ok());
+        m.channel = Channel::Preview;
+        assert!(matches!(channel_rule(Channel::Stable, &m), Err(UpdateError::ChannelMismatch)));
+        assert!(channel_rule(Channel::Preview, &m).is_ok());
     }
 
     #[test]

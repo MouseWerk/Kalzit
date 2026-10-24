@@ -75,11 +75,11 @@ reason). `source` is `online`, `offline` or `kept` (a return).
 |---|---|---|
 | `POST /admin/updates/check` | | asks GitHub for the newest release of the channel; a failure is reported in `lastCheck.error`, not as an error answer |
 | `POST /admin/updates/download` | `{"version"}` | starts downloading the offered version in the background (`job.phase: downloading`); `409 updates.not_offered` without a check that offered it |
-| `POST /admin/updates/upload` | multipart | an offline release: one part `bundle` (a `.kalzit-update` file), or the parts `manifest`, `signature` and `package`; verified like a download, then staged |
+| `POST /admin/updates/upload` | multipart | an offline release: one part `bundle` (a `.kalzit-update` file), or the parts `manifest`, `signature` and `package`; verified like a download, then staged; one upload at a time (`409 updates.busy`), and only with twice its size free (`409 updates.disk_full`); a preview release on the stable channel is refused (`409 updates.channel_mismatch`) |
 | `DELETE /admin/updates/staged` | | removes the staged release and its plan |
 | `POST /admin/updates/skip` | `{"version"}` | hides the offered version until a newer one is offered |
 | `POST /admin/updates/apply` | `{"version", "acknowledgeNoBackup"?}` | installs the staged version now (see below) |
-| `PUT /admin/updates/schedule` | `{"version", "at", "until"?}` | installs the staged version at `at` (Unix ms, at most 7 days ahead); a server that was down at `at` and starts after `until` does not install (`updates.schedule_missed`) |
+| `PUT /admin/updates/schedule` | `{"version", "at", "until"?, "acknowledgeNoBackup"?}` | installs the staged version at `at` (Unix ms, at most 7 days ahead); a server that was down at `at` and starts after `until` does not install (`updates.schedule_missed`); on PostgreSQL the own backup is confirmed when planning (`409 updates.backup_unsupported` without) |
 | `DELETE /admin/updates/schedule` | | cancels the plan |
 | `POST /admin/updates/rollback` | `{"version", "restoreDatabase"?}` | returns to a kept version (see below) |
 | `POST /admin/updates/backups` | | backs up the SQLite database now (`409 updates.backup_unsupported` on PostgreSQL) |

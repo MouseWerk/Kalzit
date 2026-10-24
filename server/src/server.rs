@@ -164,6 +164,11 @@ pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
     updates.record_outcome(&state).await;
     crate::updates::spawn_background(state.clone());
     if let Some(trial) = trial {
+        // PostgreSQL: once the migrations of the new version ran, the previous binary cannot
+        // start on the schema; the plan says so before anything else can fail.
+        if let Ok(schema) = crate::updates::install::schema_version(&state.db).await {
+            trial.note_schema(schema);
+        }
         let addrs: Vec<SocketAddr> = running.http_addr.into_iter().chain(running.https_addr).collect();
         tokio::spawn(async move {
             match healthy_before(&state, &addrs, trial.deadline()).await {
