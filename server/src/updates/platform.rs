@@ -100,7 +100,10 @@ pub fn free_space(path: &Path) -> Option<u64> {
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         // SAFETY: `c` is a valid NUL-terminated path and `stat` a writable statvfs.
         let rc = unsafe { libc::statvfs(c.as_ptr(), &mut stat) };
-        (rc == 0).then(|| (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
+        // The field types differ between Unix systems (u32 on some, u64 on Linux x86_64).
+        #[allow(clippy::unnecessary_cast, reason = "the casts are needed where the fields are narrower")]
+        let free = (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64);
+        (rc == 0).then_some(free)
     }
     #[cfg(windows)]
     {

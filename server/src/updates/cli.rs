@@ -232,10 +232,10 @@ fn fix_ownership(config: &Config) {
     }
     while let Some(path) = paths.pop() {
         let Ok(m) = std::fs::symlink_metadata(&path) else { continue };
-        if m.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&path) {
-                paths.extend(entries.flatten().map(|e| e.path()));
-            }
+        if m.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&path)
+        {
+            paths.extend(entries.flatten().map(|e| e.path()));
         }
         if (m.uid(), m.gid()) != (uid, gid)
             && let Err(e) = std::os::unix::fs::lchown(&path, Some(uid), Some(gid))
