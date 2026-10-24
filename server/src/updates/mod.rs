@@ -536,7 +536,8 @@ impl Updates {
         let this = self.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            let _work = work;
+            // The step lock is released before the job reads idle (or failed) again, so whoever
+            // sees the finished job can start the next step at once.
             let progress = |done: u64, total: u64| {
                 this.set_job(Job::Downloading { version: offer.version.clone(), bytes_done: done, bytes_total: total });
             };
@@ -545,19 +546,21 @@ impl Updates {
             let now = state.clock.now_ms();
             match result {
                 Ok(staged) => {
-                    this.set_job(Job::Idle);
                     let summary = json!({ "version": staged.version, "size": staged.size, "sha256": staged.sha256 });
                     if let Err(e) =
                         record_audit(&state, &actor, "update.downloaded", Some(&staged.version), summary).await
                     {
                         tracing::warn!("recording the download in the audit log failed: {}", e.message);
                     }
+                    drop(work);
+                    this.set_job(Job::Idle);
                 }
                 Err(e) => {
                     tracing::warn!("downloading {} failed: {e}", offer.version);
                     let summary = json!({ "version": offer.version, "error": e.reason() });
-                    this.set_job(Job::Failed { action: "download", error: e.view(), at: now });
                     let _ = record_audit(&state, &actor, "update.download_failed", Some(&offer.version), summary).await;
+                    drop(work);
+                    this.set_job(Job::Failed { action: "download", error: e.view(), at: now });
                 }
             }
         });

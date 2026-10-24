@@ -143,7 +143,7 @@ jobs:
       - name: Run the test as root
         env:
           KALZIT_TEST_RIGHTS_DIR: /var/lib/kalzit-rights-test
-        run: sudo -E "${{ steps.build.outputs.binary }}" --ignored --test-threads=1 --nocapture
+        run: sudo env KALZIT_TEST_RIGHTS_DIR="$KALZIT_TEST_RIGHTS_DIR" "${{ steps.build.outputs.binary }}" --ignored --test-threads=1 --nocapture
 
   # Data sources against real servers. The passwords below belong to throwaway containers
   # reachable only from this job; they protect nothing and are not secrets. PostgreSQL uses a
