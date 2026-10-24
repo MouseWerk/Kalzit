@@ -538,3 +538,16 @@
     --size-splitter: 0.75rem;
   }
 }
+
+/*
+ * Bar chart, bar gauge, pie and text panels after the design blueprint: labels on pie slices
+ * (light on the darker light-theme palette, dark on the lighter dark-theme one), the legend
+ * beside a drawing, and the line height of panel text.
+ */
+@layer tokens {
+  :root {
+    --chart-label-on: light-dark(oklch(99% 0 0), oklch(18% 0.006 286));
+    --size-legend-side: 16rem;
+    --line-height-relaxed: 1.6;
+  }
+}

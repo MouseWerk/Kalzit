@@ -14,7 +14,9 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 ## What works today
 
 - **Dashboards** with folders, versions and a conflict dialog when two people save at once.
-  Panels: time series, stat, bar chart and table. Variables (fixed values, free text, values from
+  Panels: time series, stat, bar chart (grouped series, legend below or on the right), bar gauge,
+  gauge, pie and donut, table, text (Markdown), heatmap, histogram, state timeline and status
+  history. Variables (fixed values, free text, values from
   a query) reach the database as parameters, never as text in the query.
 - **Explore**: write a query, see the result in a matching visualization, inspect it and add it
   to a dashboard.
@@ -36,6 +38,8 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 |---|---|
 | ![Start page with the organization in numbers and dashboards as cards](docs/screenshots/start.png) | ![Dashboard in the dark theme](docs/screenshots/dashboard-dark.png) |
 | Start page | Dashboard, dark theme |
+| ![Text, grouped bar chart, bar gauge and pie panels in the dark theme](docs/screenshots/dashboard-panels-dark.png) | ![The same panels in the light theme](docs/screenshots/dashboard-panels-light.png) |
+| Text, bar chart, bar gauge and pie, dark theme | The same panels, light theme |
 | ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |

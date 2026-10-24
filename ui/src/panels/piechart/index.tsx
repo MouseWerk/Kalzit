@@ -25,7 +25,7 @@ import { labelWidth, useProbeFont } from "../measure";
 import { PiePreview } from "../picker/previews";
 import { Readout } from "../readout";
 import { reduceFrames } from "../reduce";
-import { EmptyPanel, emptyReason, SelectField } from "../shared";
+import { CheckboxField, EmptyPanel, emptyReason, SelectField } from "../shared";
 import { parseReducer, REDUCERS, type Reducer } from "../stat/reduce";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
@@ -33,13 +33,21 @@ import "../viz.css";
 
 export const PIE_TYPES = ["pie", "donut"] as const;
 export const PIE_LABELS = ["none", "percent", "name", "value"] as const;
+/** On the slices (where the text fits) or outside the circle next to them. */
+export const LABEL_PLACEMENTS = ["inside", "outside"] as const;
+/** The legend's columns: each slice's value and its share of the whole. */
+export const PIE_LEGEND_VALUES = ["value", "percent"] as const;
+export type PieLegendValue = (typeof PIE_LEGEND_VALUES)[number];
 
 export interface PieOptions {
   pieType: (typeof PIE_TYPES)[number];
   reducer: Reducer;
-  /** Text outside each slice. */
+  /** Text on or beside each slice. */
   labels: (typeof PIE_LABELS)[number];
+  labelPlacement: (typeof LABEL_PLACEMENTS)[number];
   legend: LegendOptions;
+  /** The legend's values, in this order. */
+  legendValues: PieLegendValue[];
   tooltip: TooltipOptions;
 }
 
@@ -49,7 +57,11 @@ function parseOptions(stored: unknown): PieOptions {
     pieType: PIE_TYPES.find((p) => p === value.pieType) ?? "pie",
     reducer: parseReducer(value.reducer),
     labels: PIE_LABELS.find((l) => l === value.labels) ?? "percent",
+    labelPlacement: LABEL_PLACEMENTS.find((p) => p === value.labelPlacement) ?? "inside",
     legend: parseLegend(value),
+    legendValues: Array.isArray(value.legendValues)
+      ? PIE_LEGEND_VALUES.filter((v) => (value.legendValues as unknown[]).includes(v))
+      : [...PIE_LEGEND_VALUES],
     tooltip: parseTooltip(value),
   };
 }
@@ -136,6 +148,29 @@ const LABEL_OFFSET = 10;
 const LABEL_HALF_HEIGHT = 8;
 const ACTIVE_SHIFT = 6;
 const MIN_RADIUS = 12;
+/** Height of a label's line, and the room kept around a label on its slice, in px. */
+const LABEL_HEIGHT = 14;
+const LABEL_ROOM = 8;
+/** A label on a pie sits at this share of the radius, where the slice is wide enough. */
+const INSIDE_AT = 0.64;
+
+/**
+ * Where a label goes on its slice, or null when it does not fit there: at the middle of the
+ * ring for a donut, a little outside the middle for a pie, so the slice is wide enough for the
+ * text along its arc and deep enough across it.
+ */
+export function insideLabel(
+  arc: { from: number; to: number },
+  inner: number,
+  outer: number,
+  textWidth: number,
+): { radius: number } | null {
+  const radius = inner > 0 ? (inner + outer) / 2 : outer * INSIDE_AT;
+  const along = Math.min(arc.to - arc.from, Math.PI) * radius;
+  const across = outer - inner;
+  const fits = along >= textWidth + LABEL_ROOM && across >= LABEL_HEIGHT + LABEL_ROOM;
+  return fits ? { radius } : null;
+}
 
 /**
  * The circle in the box's own pixels: as large as the box allows once the widest label fits
@@ -210,22 +245,30 @@ function PiePanel({
     angle += (slice.value / total) * Math.PI * 2;
     return { from, to: angle };
   });
-  // Labels for slices wide enough to carry one, measured to size the circle around them.
-  const labels = slices.map((slice, index) => {
+  const inside = options.labelPlacement === "inside";
+  // Labels for slices wide enough to carry one; outside ones are measured to size the circle
+  // around them, inside ones are kept only where they fit their slice.
+  const texts = slices.map((slice, index) => {
     const arc = arcs[index] as { from: number; to: number };
-    if (options.labels === "none" || arc.to - arc.from < 0.25) return null;
+    if (options.labels === "none" || (!inside && arc.to - arc.from < 0.25)) return null;
     return options.labels === "percent"
       ? percent.format(slice.value / total)
       : options.labels === "name"
         ? nameOf(slice)
         : valueText(slice);
   });
-  const widest = Math.max(
-    0,
-    ...labels.map((text) => (text === null ? 0 : labelWidth(text, labelFont))),
-  );
+  const widest = inside
+    ? 0
+    : Math.max(0, ...texts.map((text) => (text === null ? 0 : labelWidth(text, labelFont))));
   const { cx, cy, radius } = pieGeometry(width, height, widest);
   const inner = options.pieType === "donut" ? (radius * HOLE) / RADIUS : 0;
+  const labels = texts.map((text, index) => {
+    if (text === null) return null;
+    const arc = arcs[index] as { from: number; to: number };
+    if (!inside) return { text, radius: radius + LABEL_OFFSET };
+    const place = insideLabel(arc, inner, radius, labelWidth(text, labelFont));
+    return place === null ? null : { text, radius: place.radius };
+  });
 
   const items = slices.map((slice, index) => ({
     label: "",
@@ -240,10 +283,7 @@ function PiePanel({
   const legend = (
     <Legend
       options={options.legend}
-      columns={[
-        { key: "value", label: t("panels.pie.value") },
-        { key: "percent", label: t("panels.pie.percent") },
-      ]}
+      columns={options.legendValues.map((key) => ({ key, label: t(`panels.pie.${key}`) }))}
       items={slices.map((slice, index) => ({
         name: nameOf(slice),
         colorClass: classOf(slice, index),
@@ -279,23 +319,25 @@ function PiePanel({
                   />
                 );
               })}
-              {labels.map((text, index) => {
-                if (text === null) return null;
+              {labels.map((label, index) => {
+                if (label === null) return null;
                 const arc = arcs[index] as { from: number; to: number };
                 const mid = (arc.from + arc.to) / 2;
-                const r = radius + LABEL_OFFSET;
+                // An inside label moves out with its slice when that is active.
+                const r = label.radius + (inside && active === index ? ACTIVE_SHIFT : 0);
                 const x = cx + r * Math.sin(mid);
                 const y = cy - r * Math.cos(mid);
+                const anchor = inside || Math.abs(x - cx) < 8 ? "middle" : x > cx ? "start" : "end";
                 return (
                   <text
                     // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
                     key={index}
-                    className="pie__label"
+                    className={inside ? "pie__label pie__label--inside" : "pie__label"}
                     x={x.toFixed(2)}
                     y={y.toFixed(2)}
-                    textAnchor={Math.abs(x - cx) < 8 ? "middle" : x > cx ? "start" : "end"}
+                    textAnchor={anchor}
                   >
-                    {text}
+                    {label.text}
                   </text>
                 );
               })}
@@ -334,12 +376,42 @@ function PieEditor({ options, onChange }: PanelEditorProps<PieOptions>) {
         choices={PIE_LABELS.map((l) => [l, t(`panels.pie.labels.${l}`)])}
         onChange={(labels) => onChange({ ...options, labels })}
       />
+      {options.labels === "none" ? null : (
+        <SelectField
+          id={`${id}-placement`}
+          label={t("panels.pie.labelPlacement")}
+          hint={t("panels.pie.labelPlacementHint")}
+          value={options.labelPlacement}
+          choices={LABEL_PLACEMENTS.map((p) => [p, t(`panels.pie.labelPlacement.${p}`)])}
+          onChange={(labelPlacement) => onChange({ ...options, labelPlacement })}
+        />
+      )}
       <LegendTooltipEditor
         legend={options.legend}
         tooltip={options.tooltip}
         withValues={false}
         onChange={(legend, tooltip) => onChange({ ...options, legend, tooltip })}
       />
+      {options.legend.mode === "hidden" ? null : (
+        <fieldset className="viz-editor__group">
+          <legend className="field__label">{t("panels.legend.values")}</legend>
+          {PIE_LEGEND_VALUES.map((value) => (
+            <CheckboxField
+              key={value}
+              label={t(`panels.pie.${value}`)}
+              checked={options.legendValues.includes(value)}
+              onChange={(checked) =>
+                onChange({
+                  ...options,
+                  legendValues: PIE_LEGEND_VALUES.filter((v) =>
+                    v === value ? checked : options.legendValues.includes(v),
+                  ),
+                })
+              }
+            />
+          ))}
+        </fieldset>
+      )}
     </>
   );
 }

@@ -86,9 +86,23 @@ function editorOptions(type: string): unknown[] {
   if (type === "path") {
     return [{ caption: LONGEST, variable: "customer", variableProperty: LONGEST }];
   }
+  const parse = (stored: unknown) => PANELS.find((panel) => panel.type === type)?.options(stored);
   // State panels: known state words switched off, as the editor's check box stores it.
   if (type === "state-timeline" || type === "status-history") {
-    return [PANELS.find((panel) => panel.type === type)?.options({ colorStateWords: false })];
+    return [parse({ colorStateWords: false })];
+  }
+  // The other choice of each layout option, and a pie legend without values.
+  if (type === "bar") {
+    return [parse({ categoryLabels: "hidden", showValues: true })];
+  }
+  if (type === "bargauge") {
+    return [
+      parse({ valueDisplay: "color", namePlacement: "top" }),
+      parse({ valueDisplay: "hidden", namePlacement: "hidden" }),
+    ];
+  }
+  if (type === "piechart") {
+    return [parse({ labelPlacement: "outside", legendValues: [] })];
   }
   return [];
 }

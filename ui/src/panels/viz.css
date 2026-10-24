@@ -169,21 +169,16 @@
     font-size: var(--font-size-xs);
   }
 
-  .viz-layout--right .viz-legend {
-    flex: none;
-    max-width: 40%;
-    max-height: 100%;
+  /* On the right the legend stands beside the drawing. */
+  .viz-layout--right {
+    gap: var(--space-3);
   }
 
-  @container (max-width: 30rem) {
-    .viz-layout--right {
-      flex-direction: column;
-    }
-
-    .viz-layout--right .viz-legend {
-      max-width: none;
-      max-height: var(--size-legend-max);
-    }
+  .viz-layout--right .viz-legend {
+    flex: none;
+    align-self: center;
+    max-width: min(40%, var(--size-legend-side));
+    max-height: 100%;
   }
 
   .viz-legend--list {
@@ -195,13 +190,46 @@
     list-style: none;
   }
 
+  /* A list starts at the top, beside the drawing's first line; a table stays centered. */
   .viz-layout--right .viz-legend--list {
+    align-self: flex-start;
     flex-direction: column;
     flex-wrap: nowrap;
+    gap: var(--space-1);
+    padding: 0;
   }
 
   .viz-legend--table {
     max-height: var(--size-preview);
+  }
+
+  .viz-layout--right .viz-legend--table {
+    max-height: 100%;
+  }
+
+  /* A legend on the right needs room; in a narrow panel (a phone) it goes below. */
+  @container (max-width: 30rem) {
+    .viz-layout--right {
+      flex-direction: column;
+      gap: var(--space-1);
+    }
+
+    .viz-layout--right .viz-legend {
+      align-self: stretch;
+      max-width: none;
+      max-height: var(--size-legend-max);
+    }
+
+    /* Below the drawing a list wraps across the width again. */
+    .viz-layout--right .viz-legend--list {
+      flex-direction: row;
+      flex-wrap: wrap;
+      padding: var(--space-1) 0 0;
+    }
+
+    .viz-layout--right .viz-legend--table {
+      max-height: var(--size-preview);
+    }
   }
 
   .viz-legend__table {
@@ -211,15 +239,21 @@
 
   .viz-legend__table th,
   .viz-legend__table td {
-    padding: var(--space-px) var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-bottom: var(--border-width) solid var(--border);
     text-align: start;
     white-space: nowrap;
   }
 
+  .viz-legend__table tbody tr:last-child > * {
+    border-bottom: 0;
+  }
+
+  /* Sticky over the rows, in the card's own color so it shows no band. */
   .viz-legend__table thead th {
     position: sticky;
     inset-block-start: 0;
-    background: var(--bg-surface);
+    background: var(--bg-raised);
     color: var(--text-muted);
     font-weight: var(--font-weight-medium);
   }
@@ -267,6 +301,8 @@
     z-index: var(--z-sticky);
     display: grid;
     gap: var(--space-1);
+    /* As wide as its rows: next to the middle of a chart, shrinking to fit would hide names. */
+    width: max-content;
     max-width: var(--size-tooltip-max);
     padding: var(--space-2);
     border: var(--border-width) solid var(--border);
@@ -403,20 +439,37 @@
 
   /* Bar gauge */
 
+  /*
+   * Horizontal: one grid for all rows, so every bar starts at the same place after the longest
+   * name. The rows share the panel's height (--bargauge-row, from the code) up to a largest
+   * height, and the value grows with the bar.
+   */
+  .bargauge__box {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
   .bargauge__list {
     display: grid;
-    gap: var(--space-2);
-    height: 100%;
+    flex: 1;
+    grid-template-columns: minmax(var(--space-12), max-content) minmax(0, 1fr) auto;
+    grid-auto-rows: var(--bargauge-row, var(--size-bar-gauge));
+    gap: var(--space-2) var(--space-3);
+    min-height: 0;
     align-content: center;
+    overflow-y: auto;
     list-style: none;
   }
 
   .bargauge__item {
     display: grid;
-    grid-template-columns: minmax(var(--space-12), max-content) minmax(0, 1fr) auto;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    grid-template-rows: minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-px) var(--space-1);
+    min-height: 0;
     border-radius: var(--radius-sm);
     font-size: var(--font-size-sm);
   }
@@ -426,47 +479,139 @@
   }
 
   .bargauge__name {
-    color: var(--text-muted);
+    padding-inline-start: var(--space-1);
   }
 
   .bargauge__value {
+    padding-inline-end: var(--space-1);
     font-variant-numeric: tabular-nums;
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
     text-align: end;
     white-space: nowrap;
+  }
+
+  .bargauge__value--color {
+    color: var(--tone, var(--series-color));
+  }
+
+  .bargauge__unit {
+    color: var(--text-muted);
+    font-size: 0.6em;
+    font-weight: var(--font-weight-regular);
   }
 
   .bargauge__svg {
     display: block;
     width: 100%;
-    height: var(--size-bar-gauge);
+    height: 100%;
+    min-height: 0;
   }
 
+  .bargauge--name-hidden .bargauge__list {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  /* The name on a line above its bar: the bar and its value share the row below. */
+  .bargauge--name-top .bargauge__item {
+    grid-template-rows: auto minmax(0, 1fr);
+    row-gap: var(--space-px);
+  }
+
+  .bargauge--name-top .bargauge__list {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .bargauge--name-top .bargauge__name {
+    grid-column: 1 / -1;
+    padding-inline-start: 0;
+  }
+
+  /* Vertical: columns side by side, the value above and the name below each bar. */
   .bargauge--vertical .bargauge__list {
-    grid-auto-flow: column;
+    grid-template-columns: none;
     grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    grid-auto-rows: auto;
     align-content: stretch;
   }
 
   .bargauge--vertical .bargauge__item {
+    grid-column: auto;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
     justify-items: center;
+    gap: var(--space-1);
     height: 100%;
   }
 
   .bargauge--vertical .bargauge__name {
+    grid-column: auto;
     order: 3;
+    max-width: 100%;
+    padding: 0;
   }
 
   .bargauge--vertical .bargauge__value {
     order: 1;
+    padding: 0;
+    font-size: var(--font-size-lg);
   }
 
   .bargauge--vertical .bargauge__svg {
     order: 2;
     width: var(--size-bar-gauge);
     height: 100%;
+  }
+
+  /*
+   * Lane (horizontal, basic): no track and no value column; each value follows its bar's end.
+   * A bar is its share of the lane less the widest value (--bargauge-value-room, from the code),
+   * so the longest bar still leaves its value room.
+   */
+  .bargauge--lane .bargauge__list {
+    grid-template-columns: minmax(var(--space-12), max-content) minmax(0, 1fr);
+  }
+
+  .bargauge--lane.bargauge--name-hidden .bargauge__list,
+  .bargauge--lane.bargauge--name-top .bargauge__list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bargauge__lane {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 100%;
+    min-width: 0;
+  }
+
+  .bargauge__lane-bar {
+    display: block;
+    flex: none;
+    width: calc((100% - var(--bargauge-value-room, 0px)) * var(--share, 0));
+    height: 64%;
+  }
+
+  .bargauge--lane .bargauge__value {
+    padding: 0;
+    text-align: start;
+  }
+
+  /*
+   * Horizontal only: the value's size follows the bar's height (data-value-size, from the code),
+   * in the steps of the type scale.
+   */
+  .bargauge__box[data-value-size="md"] .bargauge__value {
+    font-size: var(--font-size-md);
+  }
+
+  .bargauge__box[data-value-size="lg"] .bargauge__value {
+    font-size: var(--font-size-lg);
+  }
+
+  .bargauge__box[data-value-size="xl"] .bargauge__value {
+    font-size: var(--font-size-xl);
   }
 
   .bargauge__track,
@@ -508,9 +653,10 @@
     max-height: 100%;
   }
 
+  /* The gaps between slices are the card showing through. */
   .pie__slice {
     fill: var(--series-color);
-    stroke: var(--bg-surface);
+    stroke: var(--bg-raised);
     stroke-width: 1.5;
   }
 
@@ -518,6 +664,13 @@
     fill: var(--text-muted);
     font-size: var(--font-size-xs);
     dominant-baseline: middle;
+  }
+
+  /* On a slice: the text color that stands out from the palette of the theme. */
+  .pie__label--inside {
+    fill: var(--chart-label-on);
+    font-weight: var(--font-weight-medium);
+    pointer-events: none;
   }
 
   /* Heatmap */
@@ -701,22 +854,28 @@
 
   /* Text */
 
+  /*
+   * Panel text reads like a short document: body size, a relaxed line height, a paragraph's gap
+   * between blocks, headings a step larger and tight to what follows them.
+   */
   .text-panel {
     display: grid;
     align-content: start;
-    gap: var(--space-2);
+    gap: var(--space-3);
     height: 100%;
     overflow: auto;
     font-size: var(--font-size-md);
-    line-height: var(--line-height);
-    overflow-wrap: anywhere;
+    line-height: var(--line-height-relaxed);
+    overflow-wrap: break-word;
   }
 
   .text-panel h3,
   .text-panel h4,
   .text-panel h5,
   .text-panel h6 {
+    margin-block-end: calc(var(--space-2) * -1);
     font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-tight);
   }
 
@@ -727,7 +886,17 @@
 
   .text-panel ul,
   .text-panel ol {
+    display: grid;
+    gap: var(--space-1);
     padding-inline-start: var(--space-5);
+  }
+
+  .text-panel li::marker {
+    color: var(--text-muted);
+  }
+
+  .text-panel strong {
+    font-weight: var(--font-weight-semibold);
   }
 
   .text-panel code,
@@ -769,6 +938,12 @@
 
   .text-panel a {
     color: var(--accent-text);
+    text-decoration-thickness: var(--border-width);
+    text-underline-offset: var(--space-px);
+  }
+
+  .text-panel a:hover {
+    text-decoration-thickness: var(--focus-ring-width);
   }
 
   .text-panel__table {

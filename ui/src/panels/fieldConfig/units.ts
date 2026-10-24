@@ -344,6 +344,30 @@ export function formatUnit(
   };
 }
 
+/** Thousands, millions, ... with the SI letters, the same in every language: 25 k, 1.5 M. */
+const AXIS_STEPS = powers(1000, SI_BIG, "");
+
+/**
+ * A tick label on a value axis: plain numbers (no unit, `none` or a custom suffix) of four digits
+ * and more are written compactly with an SI letter, so the axis stays narrow (200 k, not
+ * 200,000); every other unit formats as it does elsewhere, most of them already scale.
+ */
+export function formatAxisTick(
+  value: number,
+  unitId: string | undefined,
+  decimals: number | undefined,
+  language: string,
+): string {
+  const def = unitId === undefined || unitId === "" ? undefined : BY_ID.get(unitId);
+  const plainNumber = def === undefined || def.id === "none";
+  if (!plainNumber || !Number.isFinite(value) || Math.abs(value) < 10_000) {
+    return joinFormatted(formatUnit(value, unitId, decimals, language));
+  }
+  const { text, suffix } = scaled(AXIS_STEPS)(value, decimals, language);
+  const custom = def === undefined && unitId !== undefined ? customSuffix(unitId) : "";
+  return joinFormatted({ text, suffix: custom === "" ? suffix : `${suffix} ${custom}` });
+}
+
 /** Value and unit as one string, joined with a no-break space so they never wrap apart. */
 export function joinFormatted({ text, suffix }: Formatted): string {
   return suffix === "" || text === "" ? text : `${text}\u00a0${suffix}`;

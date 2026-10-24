@@ -6,13 +6,15 @@ import type { DocumentSet, Frame, GraphSet } from "../api/generated/shapes";
 import { sampleSchema } from "../documents/schema";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
+import { barSlots } from "./bar";
+import { gaugeItems, gaugeRows, valueSize } from "./bargauge";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { loadPatternEngine } from "./fieldConfig/pattern";
 import { generateGraph } from "./graph/test/generate";
 import { compareBounds, heatLevel, heatmapData } from "./heatmap";
 import { histogram } from "./histogram";
 import { PanelPicker } from "./picker/PanelPicker";
-import { pieSlices } from "./piechart";
+import { insideLabel, pieSlices } from "./piechart";
 import { getPanel, PANELS } from "./registry";
 import { mergeNarrow, segments, stateData } from "./state/stateData";
 import { filterRows, parseFilter, sortedRows } from "./table";
@@ -193,6 +195,12 @@ describe("every new panel", () => {
   });
 });
 
+/** Each bar's share of its lane, as the bar gauge hands it to CSS. */
+const shares = (root: Element) =>
+  [...root.querySelectorAll<SVGElement>(".bargauge__lane-bar")].map((bar) =>
+    bar.style.getPropertyValue("--share"),
+  );
+
 describe("gauge and bar gauge", () => {
   it("fills the arc by the value between min and max, colored by the thresholds", () => {
     const { container } = renderPanel(
@@ -251,6 +259,109 @@ describe("gauge and bar gauge", () => {
     expect(cells.filter((c) => c?.includes("tone--warn"))).toHaveLength(5);
     expect(cells.filter((c) => c?.includes("--off"))).toHaveLength(5);
   });
+
+  it("draws one bar per row of a result with names, all on one scale", () => {
+    const byRow: Frame = {
+      fields: [
+        { name: "framework", type: "string", values: ["Alpha", "Beta", "Gamma"] },
+        { name: "score", type: "number", values: [50, 100, 25] },
+      ],
+    };
+    const items = gaugeItems([byRow], NONE, "last", "en", "UTC");
+    expect(items.map((item) => [item.name, item.display.text, item.range])).toEqual([
+      ["Alpha", "50", { min: 0, max: 100 }],
+      ["Beta", "100", { min: 0, max: 100 }],
+      ["Gamma", "25", { min: 0, max: 100 }],
+    ]);
+    const { container } = renderPanel("bargauge", [byRow]);
+    const names = [...container.querySelectorAll(".bargauge__name")].map((n) => n.textContent);
+    expect(names).toEqual(["Alpha", "Beta", "Gamma"]);
+    const fills = shares(container);
+    expect(fills).toEqual(["0.5", "1", "0.25"]);
+  });
+
+  it("shares one scale between fields, so a reduced value does not fill every bar", () => {
+    const fields: Frame = {
+      fields: [
+        { name: "Nord", type: "number", values: [40] },
+        { name: "Süd", type: "number", values: [80] },
+      ],
+    };
+    const { container } = renderPanel("bargauge", [fields], { reducer: "last" });
+    const fills = shares(container);
+    expect(fills).toEqual(["0.5", "1"]);
+    // A field with a range of its own keeps it.
+    const own: FieldConfig = {
+      defaults: {},
+      overrides: [{ matcher: { type: "name", value: "Nord" }, properties: { max: 40 } }],
+    };
+    const { container: second } = renderPanel("bargauge", [fields], { reducer: "last" }, own);
+    expect(shares(second)).toEqual(["1", "1"]);
+  });
+
+  it("shares the height out to its rows and sizes the value to the bar", () => {
+    expect(gaugeRows(300, 7, "left")).toEqual({ row: 36, bar: 36 });
+    // Few rows stop at the largest height; the name above a bar takes a line of the row.
+    expect(gaugeRows(600, 2, "left").row).toBe(40);
+    expect(gaugeRows(600, 2, "top")).toEqual({ row: 58, bar: 40 });
+    expect(gaugeRows(100, 40, "left").row).toBe(20);
+    expect([16, 24, 30, 40].map(valueSize)).toEqual(["sm", "md", "lg", "xl"]);
+  });
+
+  it("shows the value in the bar's color or not at all, and the names above or not at all", () => {
+    const frame: Frame = { fields: [{ name: "v", type: "number", values: [75] }] };
+    const { container } = renderPanel("bargauge", [frame], {
+      valueDisplay: "color",
+      namePlacement: "top",
+    });
+    expect(container.querySelector(".bargauge__value--color")).not.toBeNull();
+    expect(container.querySelector(".bargauge--name-top")).not.toBeNull();
+    const { container: bare } = renderPanel("bargauge", [frame], {
+      valueDisplay: "hidden",
+      namePlacement: "hidden",
+    });
+    expect(bare.querySelector(".bargauge__item .bargauge__value")).toBeNull();
+    expect(bare.querySelector(".bargauge__name")).toBeNull();
+    // The readout still names the value.
+    expect(bare.querySelector("[role=group]")?.getAttribute("aria-label")).toBe("Panel");
+  });
+});
+
+describe("bar chart", () => {
+  const channels: Frame = {
+    fields: [
+      { name: "framework", type: "string", values: ["Alpha", "Beta"] },
+      { name: "online", type: "number", values: [120_000, 200_000] },
+      { name: "store", type: "number", values: [80_000, 50_000] },
+      { name: "partner", type: "number", values: [25_000, 40_000] },
+    ],
+  };
+
+  it("groups the series per category with a gap between the bars", () => {
+    expect(barSlots(100, 1)).toEqual({ offset: 10, width: 80, step: 80 });
+    const grouped = barSlots(120, 3);
+    expect(grouped.step).toBeCloseTo(32);
+    expect(grouped.width).toBeCloseTo(30);
+    // Bars too thin for a gap keep their whole width.
+    expect(barSlots(10, 3).width).toBeCloseTo(8 / 3);
+    const { container } = renderPanel("bar", [channels], {
+      legend: { mode: "list", placement: "right" },
+    });
+    expect(container.querySelectorAll(".bar__rect")).toHaveLength(6);
+    expect(container.querySelector(".viz-layout--right")).not.toBeNull();
+    expect([...container.querySelectorAll(".ts__legend-item")].map((i) => i.textContent)).toEqual([
+      "online",
+      "store",
+      "partner",
+    ]);
+  });
+
+  it("writes the value axis compactly and can hide the category names", () => {
+    const { container } = renderPanel("bar", [channels], { categoryLabels: "hidden" });
+    const labels = [...container.querySelectorAll(".ts__label")].map((l) => l.textContent);
+    expect(labels).toContain("200 k");
+    expect(labels).not.toContain("Alpha");
+  });
 });
 
 describe("pie chart", () => {
@@ -286,6 +397,34 @@ describe("pie chart", () => {
     renderPanel("piechart", [frame], { legend: { mode: "table", placement: "right" } });
     expect(screen.getByRole("columnheader", { name: "Percent" })).toBeTruthy();
     expect(screen.getByText("Other")).toBeTruthy();
+  });
+
+  it("puts labels on the slices only where they fit", () => {
+    // A quarter of a circle of 100 px has room for a short label; a sliver has not.
+    expect(insideLabel({ from: 0, to: Math.PI / 2 }, 0, 100, 30)).toEqual({ radius: 64 });
+    expect(insideLabel({ from: 0, to: 0.1 }, 0, 100, 30)).toBeNull();
+    // A thin ring has no depth for a line of text.
+    expect(insideLabel({ from: 0, to: Math.PI }, 92, 100, 10)).toBeNull();
+    expect(insideLabel({ from: 0, to: Math.PI }, 50, 100, 10)).toEqual({ radius: 75 });
+  });
+
+  it("lists the legend values chosen, in a table beside the circle", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "region", type: "string", values: ["Nord", "Süd"] },
+        { name: "sales", type: "number", values: [184_000, 46_000] },
+      ],
+    };
+    const { container } = renderPanel(
+      "piechart",
+      [frame],
+      { legend: { mode: "table", placement: "right" }, legendValues: ["value"] },
+      { defaults: { unit: "short" }, overrides: [] },
+    );
+    expect(screen.getByRole("columnheader", { name: "Value" })).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "Percent" })).toBeNull();
+    expect(screen.getByText("184K")).toBeTruthy();
+    expect(container.querySelectorAll(".pie__label--inside").length).toBeGreaterThan(0);
   });
 });
 

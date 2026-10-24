@@ -15,7 +15,7 @@ import {
 } from "./fieldConfig";
 import { parseLegend } from "./legendOptions";
 import { compilePattern, loadPatternEngine, MAX_TESTED_CHARS } from "./pattern";
-import { formatUnit, fromNow, joinFormatted, UNITS } from "./units";
+import { formatAxisTick, formatUnit, fromNow, joinFormatted, UNITS } from "./units";
 import { legacyUnit, upgradePanel } from "./upgrade";
 
 const NBSP = "\u00a0";
@@ -53,6 +53,19 @@ describe("units", () => {
     expect(shown(1234.5, "currency:USD", "en", 0)).toBe("$1,235");
     expect(shown(1_250_000, "short", "en")).toBe("1.3M");
     expect(shown(1_250_000, "short", "de")).toBe(`1,3${NBSP}Mio.`);
+  });
+
+  it("writes axis ticks of plain numbers with an SI letter, other units as they are", () => {
+    expect(formatAxisTick(25_000, undefined, undefined, "en")).toBe(`25${NBSP}k`);
+    expect(formatAxisTick(200_000, "none", undefined, "de")).toBe(`200${NBSP}k`);
+    expect(formatAxisTick(1_500_000, undefined, undefined, "de")).toBe(`1,5${NBSP}M`);
+    expect(formatAxisTick(-50_000, undefined, undefined, "en")).toBe(`-50${NBSP}k`);
+    // Below ten thousand the full number is short enough.
+    expect(formatAxisTick(2500, undefined, undefined, "en")).toBe("2,500");
+    expect(formatAxisTick(0, undefined, undefined, "en")).toBe("0");
+    expect(formatAxisTick(40_000, "suffix:€", undefined, "en")).toBe(`40${NBSP}k${NBSP}€`);
+    expect(formatAxisTick(40_000, "currency:EUR", 0, "en")).toBe("€40,000");
+    expect(formatAxisTick(2_000_000, "bytes", undefined, "en")).toBe(`1.91${NBSP}MiB`);
   });
 
   it("scales SI units and keeps temperatures as they are", () => {
