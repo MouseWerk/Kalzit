@@ -300,68 +300,69 @@ function AddPane({
     const plugin = getPanel(tile.type);
     return plugin === undefined ? [] : [{ ...tile, label: t(plugin.name) }];
   }).filter((tile) => matches(tile.label));
-  const groups: { key: string; title: MessageKey; entries: AddEntry[] }[] = [
+  const all: { key: string; title: MessageKey; entries: AddEntry[] }[] = [
     {
       key: "structure",
-      title: "toolbar.add.structure" as MessageKey,
+      title: "toolbar.add.structure",
       entries: [
         {
           key: "row",
-          icon: "rows" as IconName,
+          icon: "rows",
           label: t("toolbar.add.row"),
-          hint: "toolbar.add.rowHint" as MessageKey,
+          hint: "toolbar.add.rowHint",
           onSelect: actions.addRow,
         },
         {
           key: "text",
-          icon: "text" as IconName,
+          icon: "text",
           label: t("toolbar.add.text"),
-          hint: "toolbar.add.textHint" as MessageKey,
+          hint: "toolbar.add.textHint",
           onSelect: () => actions.addPanel("text"),
         },
       ],
     },
     {
       key: "reuse",
-      title: "toolbar.add.reuse" as MessageKey,
+      title: "toolbar.add.reuse",
       entries: [
         {
           key: "library",
-          icon: "library" as IconName,
+          icon: "library",
           label: t("toolbar.add.library"),
-          hint: "toolbar.add.libraryHint" as MessageKey,
+          hint: "toolbar.add.libraryHint",
           onSelect: actions.addLibraryPanel,
         },
       ],
     },
     {
       key: "dashboard",
-      title: "toolbar.add.dashboard" as MessageKey,
+      title: "toolbar.add.dashboard",
       entries: [
         {
           key: "variable",
-          icon: "filter" as IconName,
+          icon: "filter",
           label: t("toolbar.add.variable"),
-          hint: "toolbar.add.variableHint" as MessageKey,
+          hint: "toolbar.add.variableHint",
           onSelect: actions.settings,
         },
         {
           key: "annotations",
-          icon: "flag" as IconName,
+          icon: "flag",
           label: t("toolbar.add.annotations"),
-          hint: "toolbar.add.annotationsHint" as MessageKey,
+          hint: "toolbar.add.annotationsHint",
           onSelect: actions.settings,
         },
         {
           key: "link",
-          icon: "link" as IconName,
+          icon: "link",
           label: t("toolbar.add.link"),
-          hint: "toolbar.add.linkHint" as MessageKey,
+          hint: "toolbar.add.linkHint",
           onSelect: actions.settings,
         },
       ],
     },
-  ]
+  ];
+  const groups = all
     .map((group) => ({
       ...group,
       entries: group.entries.filter((e) => matches(`${e.label} ${t(e.hint)}`)),

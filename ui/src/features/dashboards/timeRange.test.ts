@@ -208,6 +208,17 @@ describe("fiscal years and quarters", () => {
     expect(autumn.ok && autumn.range.to + 1 - autumn.range.from).toBe(365 * 24 * HOUR);
   });
 
+  it("counts in the zone in effect, not the browser's", () => {
+    // New York while the browser is in Berlin: 1 April starts at local midnight in New York.
+    const york = { timeZone: "America/New_York", weekStart: null, fiscalYearStartMonth: 4 };
+    const start = resolveTime("now/fy", now, false, york);
+    expect(start).toBe(Date.UTC(2026, 3, 1, 4));
+    // Its quarter from January to March ends at New York's midnight, one hour short (DST).
+    const quarter = resolveRange({ from: "now/fQ", to: "now/fQ" }, now, york);
+    expect(quarter.ok && quarter.range.from).toBe(Date.UTC(2027, 0, 1, 5));
+    expect(quarter.ok && quarter.range.to + 1).toBe(Date.UTC(2027, 3, 1, 4));
+  });
+
   it("is part of the grammar like every other unit", () => {
     expect(isRelative("now-2fQ/fQ")).toBe(true);
     for (const text of ["now/f", "now-1fq", "now-1FY", "now/fy/d"]) {

@@ -50,6 +50,8 @@ interface DashboardToolbarProps {
   onRange: (range: TextRange) => void;
   userId: string;
   dashboardZone: boolean;
+  /** The dashboard's now delay, for the time picker's preview. */
+  nowDelay: string | undefined;
   /** The time shortcuts listen while the toolbar is the page's. */
   shortcuts: boolean;
   refreshSeconds: number;
@@ -80,6 +82,7 @@ export function DashboardToolbar({
   onRange,
   userId,
   dashboardZone,
+  nowDelay,
   shortcuts,
   refreshSeconds,
   onRefreshSeconds,
@@ -191,6 +194,7 @@ export function DashboardToolbar({
           onChange={onRange}
           userId={userId}
           dashboardZone={dashboardZone}
+          nowDelay={nowDelay}
           shortcuts={shortcuts}
         />
         <RefreshControl

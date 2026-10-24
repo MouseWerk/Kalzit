@@ -1,9 +1,3 @@
-/*
- * The layer order again: this sheet can load before styles/index.css (a shared chunk's styles
- * come first), and the first statement fixes the order for the whole page.
- */
-@layer reset, tokens, base, components, utilities;
-
 @layer components {
   /* Notifications: one toast at the bottom of the window, above dialogs and menus. */
 
@@ -583,8 +577,8 @@
     border-block-end: var(--border-width) solid var(--border);
   }
 
-  /* A control after the trail (the dashboard's star) sits on its line. */
-  .breadcrumbs:has(> .tip-anchor) {
+  /* A control after the trail (the dashboard's star) sits on its line, outside the landmark. */
+  .breadcrumbs-row {
     display: flex;
     align-items: center;
     gap: var(--space-1);
@@ -600,7 +594,11 @@
     color: var(--text-muted);
   }
 
-  .breadcrumbs:has(> .tip-anchor) > .breadcrumbs__list {
+  .breadcrumbs-row .breadcrumbs {
+    min-width: 0;
+  }
+
+  .breadcrumbs-row .breadcrumbs__list {
     flex-wrap: nowrap;
     min-width: 0;
     overflow: hidden;

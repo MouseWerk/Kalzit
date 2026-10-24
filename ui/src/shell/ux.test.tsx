@@ -1,6 +1,6 @@
 import { defaultKeymap } from "@codemirror/commands";
 import { EditorView, keymap } from "@codemirror/view";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Toaster } from "../components/Toaster";
@@ -171,6 +171,22 @@ describe("search with /", () => {
     expect(search.parentElement?.querySelector(".tip")?.textContent).toBe("Search (/ or Ctrl+K)");
     await user.click(search);
     expect(await screen.findByRole("dialog", { name: /command|palette/i })).toBeTruthy();
+  });
+
+  it("offers in New only what the role may create", async () => {
+    setup("editor");
+    const { user } = renderApp("/");
+    await user.click(await screen.findByRole("button", { name: "New" }));
+    expect(
+      within(screen.getByRole("menu", { name: "New" }))
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["New dashboard", "New folder", "Import dashboard"]);
+    cleanup();
+    setup("viewer");
+    renderApp("/");
+    await screen.findByRole("button", { name: "Help" });
+    expect(screen.queryByRole("button", { name: "New" })).toBeNull();
   });
 
   it("offers New and Help in the top bar", async () => {

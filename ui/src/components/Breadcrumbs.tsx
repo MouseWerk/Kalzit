@@ -29,7 +29,7 @@ export function Breadcrumbs({
   if (crumbs.length === 0) {
     return null;
   }
-  const trail = (
+  const nav = (
     <nav className="breadcrumbs" aria-label={t("shell.breadcrumbs")}>
       <ol className="breadcrumbs__list">
         {crumbs.map((crumb, index) => {
@@ -54,9 +54,18 @@ export function Breadcrumbs({
           );
         })}
       </ol>
-      {extra}
     </nav>
   );
+  // A control after the trail stays outside the navigation landmark, which holds links only.
+  const trail =
+    extra === undefined ? (
+      nav
+    ) : (
+      <div className="breadcrumbs-row">
+        {nav}
+        {extra}
+      </div>
+    );
   return slot === null ? trail : createPortal(trail, slot);
 }
 

@@ -449,6 +449,9 @@ function DashboardView({
     () => applyTimeOverride(userTime, timeOverride),
     [userTime, timeOverride],
   );
+  // Whether the zone in effect is the dashboard's own: it set one the browser knows.
+  const dashboardZone =
+    timeOverride?.timeZone !== undefined && timeSettings.timeZone === timeOverride.timeZone;
   useLayoutEffect(() => {
     setTimeOverride(timeOverride);
     return () => setTimeOverride(null);
@@ -764,11 +767,9 @@ function DashboardView({
   }
 
   // The type chosen in the rail's Add pane for the panel about to be added.
-  const pendingType = useRef<string | undefined>(undefined);
+  const [pendingType, setPendingType] = useState<string | undefined>(undefined);
 
-  function newPanel(): PanelModel {
-    const type = pendingType.current ?? "timeseries";
-    pendingType.current = undefined;
+  function newPanel(type = "timeseries"): PanelModel {
     return {
       id: newPanelId(),
       type,
@@ -783,7 +784,8 @@ function DashboardView({
 
   // Adding a panel: one made now (or the one kept from a reload), outside the draft.
   const startFresh = useEffectEvent(() => {
-    const panel = keptEditor?.key === NEW_PANEL ? keptEditor.panel : newPanel();
+    const panel = keptEditor?.key === NEW_PANEL ? keptEditor.panel : newPanel(pendingType);
+    setPendingType(undefined);
     setFresh(panel);
     opened.current = { id: panel.id, panel: undefined, fresh: true };
   });
@@ -795,7 +797,7 @@ function DashboardView({
 
   /** A new panel opens in the editor at its own address; it joins the dashboard on Apply. */
   function addPanel(type?: string) {
-    pendingType.current = type;
+    setPendingType(type);
     onDisplay({ editPanel: NEW_PANEL });
   }
 
@@ -1138,7 +1140,8 @@ function DashboardView({
                 value={textRange}
                 onChange={onRangeChange}
                 userId={userId}
-                dashboardZone={timeOverride?.timeZone !== undefined}
+                dashboardZone={dashboardZone}
+                nowDelay={model.nowDelay}
                 shortcuts
                 compact
               />
@@ -1333,7 +1336,8 @@ function DashboardView({
               range={textRange}
               onRange={onRangeChange}
               userId={userId}
-              dashboardZone={timeOverride?.timeZone !== undefined}
+              dashboardZone={dashboardZone}
+              nowDelay={model.nowDelay}
               shortcuts={dialog === null}
               refreshSeconds={refresh}
               onRefreshSeconds={setRefresh}
@@ -1466,7 +1470,10 @@ function DashboardView({
                     actions={{
                       ...toolbarActions,
                       addPanel,
-                      fullscreen: () => void document.documentElement.requestFullscreen?.(),
+                      fullscreen: () => {
+                        // Refused without a user gesture or by policy; nothing to tell then.
+                        document.documentElement.requestFullscreen?.().catch(() => undefined);
+                      },
                       info: () => setDialog({ kind: "info" }),
                     }}
                   />

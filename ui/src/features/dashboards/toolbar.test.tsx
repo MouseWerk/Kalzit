@@ -89,6 +89,25 @@ describe("time controls", () => {
     expect(await screen.findByText(/The clipboard holds no time range/)).toBeTruthy();
   });
 
+  it("says so when the browser offers no clipboard (plain HTTP)", async () => {
+    setup("viewer");
+    const { user, location } = renderApp("/dashboards/d-main");
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    try {
+      await user.keyboard("tc");
+      expect(await screen.findByText(/The time range could not be copied/)).toBeTruthy();
+      await user.keyboard("tv");
+      expect(await screen.findByText(/Nothing could be pasted/)).toBeTruthy();
+      expect(location().search).not.toHaveProperty("from");
+    } finally {
+      if (clipboard !== undefined) {
+        Object.defineProperty(navigator, "clipboard", clipboard);
+      }
+    }
+  });
+
   it("lists the time shortcuts in the shortcuts help", () => {
     const area = SHORTCUT_AREAS.find((a) => a.title === "shell.shortcuts.area.time");
     expect(area?.shortcuts.map((s) => s.keys[0]?.join(" "))).toEqual([

@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { Icon } from "../../components/Icon";
 import { IconButton, WithTooltip } from "../../components/IconButton";
 import { type Translate, useI18n } from "../../i18n/i18n";
+import { readClipboard, writeClipboard } from "../../lib/clipboard";
 import { useEscapeLayer } from "../../lib/layers";
 import {
   getTimeSettings,
@@ -23,6 +24,7 @@ import { wallOf } from "../../lib/zonedTime";
 import { Calendar, type Day, dayText } from "./Calendar";
 import { readRecentRanges, rememberRange } from "./recentRanges";
 import {
+  delayedNow,
   isRelative,
   PRESETS,
   type Preset,
@@ -97,6 +99,36 @@ function zoneOffset(language: string, zone: string | null): string {
 }
 
 /** The zone's name and offset, as the picker's footer shows it: "Europe/Berlin, GMT+2". */
+/**
+ * Copying and pasting a range, shared by the picker and the t c / t v shortcuts: a toast says
+ * what happened, also where the browser offers no clipboard (plain HTTP).
+ */
+export function useRangeClipboard() {
+  const { t } = useI18n();
+  return {
+    async copy(range: TextRange): Promise<void> {
+      if (await writeClipboard(rangeToClipboard(range))) {
+        showToast({ message: t("toolbar.time.copied") });
+      } else {
+        showErrorToast(t("toolbar.time.copyFailed"));
+      }
+    },
+    /** The pasted range, or null after saying why there is none. */
+    async paste(): Promise<TextRange | null> {
+      const text = await readClipboard();
+      if (text === null) {
+        showErrorToast(t("toolbar.time.pasteFailed"));
+        return null;
+      }
+      const range = rangeFromClipboard(text, Date.now());
+      if (range === null) {
+        showErrorToast(t("toolbar.time.pasteInvalid"));
+      }
+      return range;
+    },
+  };
+}
+
 function zoneText(language: string, zone: string | null): string {
   const name = zone ?? new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offset = zoneOffset(language, zone);
@@ -114,6 +146,8 @@ interface TimeRangePickerProps {
   dashboardZone?: boolean;
   /** Shows the zone's offset in the button, after the range. */
   showZone?: boolean;
+  /** The dashboard's now delay ("1m"): the preview of a typed range resolves with it. */
+  nowDelay?: string | undefined;
 }
 
 /**
@@ -128,6 +162,7 @@ export function TimeRangePicker({
   userId,
   dashboardZone = false,
   showZone = false,
+  nowDelay,
 }: TimeRangePickerProps) {
   const { t, language, timeZone } = useI18n();
   const [open, setOpen] = useState(false);
@@ -169,6 +204,7 @@ export function TimeRangePicker({
           value={value}
           userId={userId}
           dashboardZone={dashboardZone}
+          nowDelay={nowDelay}
           onClose={(returnFocus) => {
             setOpen(false);
             if (returnFocus) {
@@ -195,6 +231,7 @@ function RangePopover({
   value,
   userId,
   dashboardZone,
+  nowDelay,
   onClose,
   onApply,
 }: {
@@ -203,6 +240,7 @@ function RangePopover({
   value: TextRange;
   userId: string | undefined;
   dashboardZone: boolean;
+  nowDelay: string | undefined;
   onClose: (returnFocus: boolean) => void;
   onApply: (range: TextRange) => void;
 }) {
@@ -223,7 +261,9 @@ function RangePopover({
   const [calendar, setCalendar] = useState<"from" | "to" | null>(null);
   const [recent] = useState(() => (userId === undefined ? [] : readRecentRanges(userId)));
   const current = presetOf(value);
-  const now = Date.now();
+  const clipboard = useRangeClipboard();
+  // "Now" as the dashboard reads it, so the preview shows the range its queries will get.
+  const now = delayedNow(Date.now(), nowDelay, settings);
   const resolved = resolveRange({ from: normalize(from), to: normalize(to) }, now, settings);
   const format = new Intl.DateTimeFormat(language, {
     dateStyle: "medium",
@@ -254,11 +294,16 @@ function RangePopover({
     popover.style.setProperty("--popover-right", `${Math.max(window.innerWidth - box.right, 0)}px`);
   }, [anchor]);
 
+  // The search takes focus, except on a touch screen, where it would open the soft keyboard over
+  // the list the person came for.
   useLayoutEffect(() => {
-    searchRef.current?.focus();
+    if (window.matchMedia?.("(pointer: coarse)").matches !== true) {
+      searchRef.current?.focus();
+    }
   }, []);
 
-  // A click outside closes it without pulling focus back; so does a resize.
+  // A click outside closes it without pulling focus back; so does a change of the window's width.
+  // A change of its height alone (a phone's soft keyboard) leaves it open.
   useEffect(() => {
     function onPointerDown(event: PointerEvent) {
       const target = event.target;
@@ -270,7 +315,13 @@ function RangePopover({
         onClose(false);
       }
     }
-    const onResize = () => onClose(false);
+    let width = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth !== width) {
+        width = window.innerWidth;
+        onClose(false);
+      }
+    };
     document.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("resize", onResize);
     return () => {
@@ -315,28 +366,15 @@ function RangePopover({
   }
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(rangeToClipboard(value));
-      showToast({ message: t("toolbar.time.copied") });
-    } catch {
-      showErrorToast(t("toolbar.time.copyFailed"));
-    }
+    await clipboard.copy(value);
   }
 
+  // A pasted range is applied like a chosen one, so it joins the recent ranges too.
   async function paste() {
-    let text = "";
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      showErrorToast(t("toolbar.time.pasteFailed"));
-      return;
+    const range = await clipboard.paste();
+    if (range !== null) {
+      onApply(range);
     }
-    const range = rangeFromClipboard(text, Date.now());
-    if (range === null) {
-      showErrorToast(t("toolbar.time.pasteInvalid"));
-      return;
-    }
-    onApply(range);
   }
 
   const today = wallOf(now, settings.timeZone);
@@ -558,6 +596,8 @@ interface TimeControlsProps {
   shortcuts?: boolean;
   /** Only the range button (the panel editor's bar); the shortcuts still work. */
   compact?: boolean;
+  /** The dashboard's now delay, for the picker's preview. */
+  nowDelay?: string | undefined;
 }
 
 /**
@@ -571,9 +611,11 @@ export function TimeControls({
   dashboardZone = false,
   shortcuts = false,
   compact = false,
+  nowDelay,
 }: TimeControlsProps) {
   const { t } = useI18n();
   const settings = useTimeSettings();
+  const clipboard = useRangeClipboard();
 
   function apply(next: TextRange | null) {
     if (next !== null) {
@@ -593,23 +635,17 @@ export function TimeControls({
         apply(zoomOutRange(value, Date.now(), settings));
         break;
       case "copy":
-        navigator.clipboard.writeText(rangeToClipboard(value)).then(
-          () => showToast({ message: t("toolbar.time.copied") }),
-          () => showErrorToast(t("toolbar.time.copyFailed")),
-        );
+        void clipboard.copy(value);
         break;
       case "paste":
-        navigator.clipboard.readText().then(
-          (text) => {
-            const range = rangeFromClipboard(text, Date.now());
-            if (range === null) {
-              showErrorToast(t("toolbar.time.pasteInvalid"));
-            } else {
-              onChange(range);
+        void clipboard.paste().then((range) => {
+          if (range !== null) {
+            if (userId !== undefined) {
+              rememberRange(userId, range);
             }
-          },
-          () => showErrorToast(t("toolbar.time.pasteFailed")),
-        );
+            onChange(range);
+          }
+        });
         break;
     }
   }
@@ -622,6 +658,7 @@ export function TimeControls({
         onChange={onChange}
         userId={userId}
         dashboardZone={dashboardZone}
+        nowDelay={nowDelay}
       />
     );
   }
@@ -641,6 +678,7 @@ export function TimeControls({
         onChange={onChange}
         userId={userId}
         dashboardZone={dashboardZone}
+        nowDelay={nowDelay}
         showZone
       />
       <IconButton

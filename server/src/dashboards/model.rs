@@ -17,7 +17,9 @@ use serde_json::Value;
 ///   library panel references and multi-value variables. Those are optional and empty by default
 ///   and version 1 had none of them, so the one step `v1_to_v2` only converts `transformations`.
 ///   A library panel slot (`libraryPanelId`) has no steps, targets or links of its own; the
-///   library panel holds them (the slot rule in `validate`).
+///   library panel holds them (the slot rule in `validate`). The dashboard time options
+///   (`timeZone` ... `sharedCursor`) joined version 2 later, optional and left out while unset; a
+///   server from before them refuses a model that sets one (docs/api/settings-dashboards.md).
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.
@@ -757,9 +759,9 @@ pub fn check_url(what: &str, url: &str) -> Result<(), String> {
 fn check_time_options(model: &DashboardModel) -> Result<(), String> {
     if let Some(zone) = &model.time_zone
         && zone != "browser"
-        && !crate::routes::preferences::is_time_zone_name(zone)
+        && zone.parse::<chrono_tz::Tz>().is_err()
     {
-        return Err("model.timeZone must be \"browser\" or a time zone name such as Europe/Berlin".into());
+        return Err("model.timeZone must be \"browser\" or a known time zone such as Europe/Berlin".into());
     }
     if let Some(month) = model.fiscal_year_start_month
         && !(1..=12).contains(&month)
@@ -1195,6 +1197,7 @@ mod tests {
         for (key, value, expect) in [
             ("timeZone", json!("Europe/../etc"), "model.timeZone"),
             ("timeZone", json!(""), "model.timeZone"),
+            ("timeZone", json!("Europe/Atlantis"), "model.timeZone"),
             ("weekStart", json!("friday"), "unknown variant"),
             ("fiscalYearStartMonth", json!(0), "fiscalYearStartMonth"),
             ("fiscalYearStartMonth", json!(13), "fiscalYearStartMonth"),

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CrosshairContext, createCrosshair, type SharedCursorMode } from "./crosshair";
 import { DEFAULT_LEGEND } from "./fieldConfig/legendOptions";
@@ -59,71 +59,96 @@ function Chart({ title, name }: { title: string; name: string }) {
   );
 }
 
-function renderPair(mode: SharedCursorMode | null) {
-  const charts = (
+function renderPair(mode: SharedCursorMode | null, withRevenue = true) {
+  const store = mode === null ? null : createCrosshair(mode);
+  const charts = (withOrders: boolean, withSecond: boolean) => (
     <>
-      <Chart title="Orders" name="orders" />
-      <Chart title="Revenue" name="revenue" />
+      {withOrders ? <Chart title="Orders" name="orders" /> : null}
+      {withSecond ? <Chart title="Revenue" name="revenue" /> : null}
     </>
   );
-  const { unmount } = render(
-    mode === null ? (
-      charts
+  const tree = (withOrders: boolean) =>
+    store === null ? (
+      charts(withOrders, withRevenue)
     ) : (
-      <CrosshairContext value={createCrosshair(mode)}>{charts}</CrosshairContext>
-    ),
-  );
+      <CrosshairContext value={store}>{charts(withOrders, withRevenue)}</CrosshairContext>
+    );
+  const { unmount, rerender } = render(tree(true));
   return {
     orders: screen.getByRole("group", { name: "Orders" }),
-    revenue: screen.getByRole("group", { name: "Revenue" }),
+    revenue: () => screen.getByRole("group", { name: "Revenue" }),
+    /** The next frame, in which the store applies what the pointer did. */
+    frame: () => act(() => store?.flush()),
+    removeOrders: () => rerender(tree(false)),
+    store,
     unmount,
   };
 }
 
 describe("shared cursor", () => {
-  it("draws the time under the pointer in the other time panels in the same render", () => {
-    const { orders, revenue } = renderPair("crosshair");
+  it("draws the time under the pointer in the other time panels in the next frame", () => {
+    const { orders, revenue, frame } = renderPair("crosshair");
     fireEvent.pointerMove(orders, { clientX: 300, clientY: 50 });
+    frame();
     // The middle of the plot is 50,000 ms in both; the other chart draws its line there.
-    const line = revenue.querySelector<HTMLElement>(".ts__cursor-line");
+    const line = revenue().querySelector<HTMLElement>(".ts__cursor-line");
     expect(line).not.toBeNull();
     expect(line?.style.getPropertyValue("--cursor-x")).toBe("300px");
     // A crosshair alone: no values in the other panel.
-    expect(revenue.querySelector(".ts__tooltip")).toBeNull();
+    expect(revenue().querySelector(".ts__tooltip")).toBeNull();
     expect(orders.querySelector(".ts__tooltip")).not.toBeNull();
     fireEvent.pointerLeave(orders);
-    expect(revenue.querySelector(".ts__cursor-line")).toBeNull();
+    frame();
+    expect(revenue().querySelector(".ts__cursor-line")).toBeNull();
   });
 
   it("shows the values too with the tooltip setting", () => {
-    const { orders, revenue } = renderPair("tooltip");
+    const { orders, revenue, frame } = renderPair("tooltip");
     fireEvent.pointerMove(orders, { clientX: 300, clientY: 50 });
-    const tooltip = revenue.querySelector(".ts__tooltip");
+    frame();
+    const tooltip = revenue().querySelector(".ts__tooltip");
     expect(tooltip?.textContent).toContain("revenue");
     expect(tooltip?.textContent).toContain("2");
   });
 
+  it("takes the time away with the panel that published it", () => {
+    const { orders, revenue, frame, removeOrders, store } = renderPair("crosshair");
+    fireEvent.pointerMove(orders, { clientX: 300, clientY: 50 });
+    frame();
+    expect(revenue().querySelector(".ts__cursor-line")).not.toBeNull();
+    removeOrders();
+    frame();
+    expect(store?.get().time).toBeNull();
+    expect(revenue().querySelector(".ts__cursor-line")).toBeNull();
+  });
+
   it("keeps every panel to itself when the dashboard does not share the cursor", () => {
     for (const mode of ["off", null] as const) {
-      const { orders, revenue, unmount } = renderPair(mode);
+      const { orders, revenue, frame, unmount } = renderPair(mode);
       fireEvent.pointerMove(orders, { clientX: 300, clientY: 50 });
+      frame();
       expect(orders.querySelector(".ts__cursor-line")).not.toBeNull();
-      expect(revenue.querySelector(".ts__cursor-line")).toBeNull();
+      expect(revenue().querySelector(".ts__cursor-line")).toBeNull();
       unmount();
     }
   });
 
-  it("clears only what the leaving panel published", () => {
+  it("applies pointer moves once per frame and clears only what the leaving panel published", () => {
     const store = createCrosshair("crosshair");
     const seen: (number | null)[] = [];
     store.subscribe(() => seen.push(store.get().time));
+    store.set("a", 5);
     store.set("a", 10);
     store.set("b", null);
+    expect(seen).toEqual([]);
+    store.flush();
     expect(store.get()).toEqual({ time: 10, source: "a" });
     store.set("b", 20);
     store.set("a", null);
+    store.flush();
     expect(store.get()).toEqual({ time: 20, source: "b" });
     store.set("b", null);
+    store.flush();
     expect(store.get()).toEqual({ time: null, source: null });
     expect(seen).toEqual([10, 20, null]);
   });

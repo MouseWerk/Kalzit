@@ -405,6 +405,19 @@ interface DashboardModel {
                                                 // 20; offered for the automatic refresh
   sharedCursor?: "off" | "crosshair" | "tooltip"; // the pointer's time in every time panel
 }
+```
+
+- `timeZone` must name a zone of the IANA time zone database the server ships (`chrono-tz`), or
+  be `browser`.
+- `fQ` and `fy` count from the dashboard's `fiscalYearStartMonth`. Where a range is stored outside
+  a dashboard (a panel's `timeFrom` inside the dashboard still uses it; a server setting such as
+  `dashboards.default_time_range`, Explore), the fiscal year starts in January, so `fy` equals
+  `y` there.
+- The time options came after `schemaVersion` 2 without a new version: a server before them
+  refuses a model that sets any of them (unknown field). Rolling back to such a server needs the
+  dashboards saved without the options first (unset every time option in the settings).
+
+```ts
 interface Variable {
   name: string;                                 // letters, digits, _; not starting with a digit; unique
   type: "query" | "custom" | "constant" | "textbox" | "interval";

@@ -426,7 +426,7 @@ async fn time_options_are_stored_and_checked(t: TestApp) {
     }
     // Each one is checked on save, with its place named.
     for (key, value, expect) in [
-        ("timeZone", json!("Mars/Olympus Mons"), "model.timeZone"),
+        ("timeZone", json!("Mars/Olympus_Mons"), "model.timeZone"),
         ("fiscalYearStartMonth", json!(13), "model.fiscalYearStartMonth"),
         ("nowDelay", json!("1w"), "model.nowDelay"),
         ("refreshIntervals", json!([60, 10]), "model.refreshIntervals[1]"),
