@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { CrosshairContext, createCrosshair, type SharedCursorMode } from "./crosshair";
 import { DEFAULT_LEGEND } from "./fieldConfig/legendOptions";
 import type { Series } from "./timeseries/series";
+import { resolveStyles } from "./timeseries/styles";
 import { UplotTimeSeriesChart } from "./timeseries/UplotTimeSeriesChart";
 
 // jsdom has no canvas: uPlot is a stand-in with a plot from 50 to 550 px for 0 to 100,000 ms.
 vi.mock("uplot", () => {
+  const builder = () => () => Object.assign(() => null, {});
   class FakeUplot {
     static pxRatio = 1;
+    static paths = { linear: builder(), spline: builder(), stepped: builder(), bars: builder() };
     bbox = { left: 50, top: 0, width: 500, height: 200 };
     width: number;
     height: number;
@@ -41,12 +44,13 @@ const series = (name: string, values: number[]): Series => ({
 });
 
 function Chart({ title, name }: { title: string; name: string }) {
+  const drawn = [series(name, [1, 2, 3])];
   return (
     <UplotTimeSeriesChart
-      series={[series(name, [1, 2, 3])]}
+      series={drawn}
+      styles={resolveStyles(drawn)}
       timeRange={{ from: 0, to: 100_000 }}
       title={title}
-      lineWidth={1}
       legend={{ ...DEFAULT_LEGEND, mode: "hidden" }}
       tooltip="all"
       format={(_index, value) => String(value)}
