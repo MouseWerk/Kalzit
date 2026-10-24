@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Start page</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1000px; font-size: 13px; padding: 24px 28px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+
+<header style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+<h1 style="margin: 0; font-size: 28px; font-weight: 500; letter-spacing: -0.01em">Willkommen zurück, Maurice</h1>
+<div style="flex: 1"></div>
+<a href="PanelEditor.dc.html" style="height: 34px; padding: 0 14px; border-radius: 8px; background: #d79a6b; color: #1a1209; font-weight: 600; display: flex; align-items: center; box-sizing: border-box">Neues Dashboard</a>
+<a href="Explore.dc.html" style="height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid #2a2a2e; display: flex; align-items: center; box-sizing: border-box">Explore öffnen</a>
+</header>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<a href="Main.dc.html" style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; display: flex; overflow: hidden; color: #ececef"><div style="flex: 1; padding: 16px 18px"><span style="color: #a6a6ae">Dashboards</span><p style="margin: 10px 0 0; font-size: 32px; font-weight: 500">14</p></div><div style="width: 92px; border-left: 1px solid #2a2a2e; background: #161618"></div></a>
+<a href="#" style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; display: flex; overflow: hidden; color: #ececef"><div style="flex: 1; padding: 16px 18px"><span style="color: #a6a6ae">Datenquellen</span><p style="margin: 10px 0 0; font-size: 32px; font-weight: 500">6</p></div><div style="width: 92px; border-left: 1px solid #2a2a2e; background: #161618"></div></a>
+<a href="#" style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; display: flex; overflow: hidden; color: #ececef"><div style="flex: 1; padding: 16px 18px"><span style="color: #a6a6ae">Mitglieder</span><p style="margin: 10px 0 0; font-size: 32px; font-weight: 500">8</p></div><div style="width: 92px; border-left: 1px solid #2a2a2e; background: #161618"></div></a>
+<a href="#" style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; display: flex; overflow: hidden; color: #ececef"><div style="flex: 1; padding: 16px 18px"><span style="color: #a6a6ae">Änderungen, 7 Tage</span><p style="margin: 10px 0 0; font-size: 32px; font-weight: 500">42</p></div><div style="width: 92px; border-left: 1px solid #2a2a2e; background: #161618; display: grid; place-items: center"><svg width="64" height="30" viewBox="0 0 64 30" aria-hidden="true"><path d="M2 24 L12 20 L22 22 L32 12 L42 16 L52 6 L62 8" fill="none" stroke="#dcdce0" stroke-width="1.6"></path></svg></div></a>
+</div><section style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center"><span style="color: #8f8f97; margin-right: 4px">Schnellstart</span><a href="PanelEditor.dc.html" style="padding: 8px 14px; border-radius: 999px; background: #1b1b1e; border: 1px solid #2a2a2e; color: #ececef" style-hover="background: #232327">+ Panel erstellen</a><a href="DataSourceNew.dc.html" style="padding: 8px 14px; border-radius: 999px; background: #1b1b1e; border: 1px solid #2a2a2e; color: #ececef" style-hover="background: #232327">+ Datenquelle verbinden</a><a href="Explore.dc.html" style="padding: 8px 14px; border-radius: 999px; background: #1b1b1e; border: 1px solid #2a2a2e; color: #ececef" style-hover="background: #232327">Daten erkunden</a><a href="Updates.dc.html" style="padding: 8px 14px; border-radius: 999px; background: #1b1b1e; border: 1px solid #2a2a2e; color: #ececef" style-hover="background: #232327">Updates prüfen</a></section>
+
+<section style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; padding: 18px 20px">
+<header style="display: flex; align-items: center"><h2 style="margin: 0; font-size: 15px; font-weight: 500">Favoriten</h2><div style="flex: 1"></div><a href="#" style="color: #a6a6ae">Alle Dashboards</a></header>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px">
+<article style="background: #18181b; border: 1px solid #29292c; border-radius: 12px; padding: 14px">
+<div style="height: 90px; border-radius: 8px; background: #232327; display: grid; place-items: center"><svg width="120" height="50" viewBox="0 0 120 50" aria-hidden="true"><path d="M4 40 C30 36 40 22 60 24 S90 10 116 12" fill="none" stroke="#6f6f76" stroke-width="2"></path></svg></div>
+<h3 style="margin: 12px 0 4px; font-size: 14px; font-weight: 500">Umsatz nach Region</h3><p style="margin: 0; color: #8f8f97">Vertrieb · vor 2 Stunden geöffnet</p>
+<div style="display: flex; gap: 8px; margin-top: 12px"><a href="Main.dc.html" style="flex: 1; height: 32px; border-radius: 8px; background: #232327; border: 1px solid #333338; display: grid; place-items: center">Öffnen</a><button style="flex: 1; height: 32px; border-radius: 8px; background: transparent; border: 0; color: #a6a6ae">Bearbeiten</button></div>
+</article>
+<article style="background: #18181b; border: 1px solid #29292c; border-radius: 12px; padding: 14px">
+<div style="height: 90px; border-radius: 8px; background: #232327"></div>
+<h3 style="margin: 12px 0 4px; font-size: 14px; font-weight: 500">Lager und Logistik</h3><p style="margin: 0; color: #8f8f97">Betrieb · gestern</p>
+<div style="display: flex; gap: 8px; margin-top: 12px"><a href="Main.dc.html" style="flex: 1; height: 32px; border-radius: 8px; background: #232327; border: 1px solid #333338; display: grid; place-items: center">Öffnen</a><button style="flex: 1; height: 32px; border-radius: 8px; background: transparent; border: 0; color: #a6a6ae">Bearbeiten</button></div>
+</article>
+<article style="background: #18181b; border: 1px solid #29292c; border-radius: 12px; padding: 14px">
+<div style="height: 90px; border-radius: 8px; background: #232327"></div>
+<h3 style="margin: 12px 0 4px; font-size: 14px; font-weight: 500">Kunden-Graph</h3><p style="margin: 0; color: #8f8f97">Analyse · vor 3 Tagen</p>
+<div style="display: flex; gap: 8px; margin-top: 12px"><a href="Main.dc.html" style="flex: 1; height: 32px; border-radius: 8px; background: #232327; border: 1px solid #333338; display: grid; place-items: center">Öffnen</a><button style="flex: 1; height: 32px; border-radius: 8px; background: transparent; border: 0; color: #a6a6ae">Bearbeiten</button></div>
+</article>
+</div>
+</section><section style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; padding: 18px 20px"><header style="display: flex; align-items: center"><h2 style="margin: 0; font-size: 15px; font-weight: 500">Zuletzt geöffnet</h2><div style="flex: 1"></div><a href="#" style="color: #a6a6ae">Verlauf</a></header><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 10px; margin-top: 14px"><a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: #18181b; border: 1px solid #29292c; border-radius: 10px; color: #ececef"><span style="font-weight: 500">Umsatz nach Region</span><span style="color: #8f8f97; font-size: 12px">Vertrieb · vor 2 Std.</span></a><a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: #18181b; border: 1px solid #29292c; border-radius: 10px; color: #ececef"><span style="font-weight: 500">Lager und Logistik</span><span style="color: #8f8f97; font-size: 12px">Betrieb · gestern</span></a><a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: #18181b; border: 1px solid #29292c; border-radius: 10px; color: #ececef"><span style="font-weight: 500">Kunden-Graph</span><span style="color: #8f8f97; font-size: 12px">Analyse · vor 3 Tagen</span></a><a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: #18181b; border: 1px solid #29292c; border-radius: 10px; color: #ececef"><span style="font-weight: 500">Systemstatus</span><span style="color: #8f8f97; font-size: 12px">Betrieb · vor 1 Woche</span></a></div></section>
+
+<section style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; padding: 18px 20px">
+<h2 style="margin: 0 0 12px; font-size: 15px; font-weight: 500">Zuletzt geändert</h2>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+<li style="display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid #232327"><span style="color: #8f8f97; width: 90px">10:42</span>Lea Hoffmann hat „Umsatz nach Region“ gespeichert</li>
+<li style="display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid #232327"><span style="color: #8f8f97; width: 90px">09:15</span>Jonas Becker hat die Datenquelle „Shop (PostgreSQL)“ geändert</li>
+<li style="display: flex; gap: 10px; padding: 10px 0"><span style="color: #8f8f97; width: 90px">gestern</span>Sofia Wagner ist der Organisation beigetreten</li>
+</ul>
+</section><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 14px"><section style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; padding: 18px 20px"><h2 style="margin: 0 0 12px; font-size: 15px; font-weight: 500">Datenquellen-Status</h2><ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px"><li style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #4fb477"></span>Shop (PostgreSQL)<span style="margin-left: auto; color: #8f8f97">12 ms</span></li><li style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #d9a441"></span>Kunden-Graph<span style="margin-left: auto; color: #8f8f97">840 ms</span></li><li style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #e05d5d"></span>Monitoring<span style="margin-left: auto; color: #8f8f97">nicht erreichbar</span></li></ul></section><section style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; padding: 18px 20px"><h2 style="margin: 0 0 12px; font-size: 15px; font-weight: 500">Hinweise</h2><ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px"><li style="padding: 10px 12px; background: #18181b; border: 1px solid #29292c; border-radius: 10px">Kalzit 0.2.0 ist verfügbar <a href="Updates.dc.html" style="color: #d79a6b; margin-left: 6px">Ansehen</a></li><li style="padding: 10px 12px; background: #18181b; border: 1px solid #29292c; border-radius: 10px">Monitoring ist seit 1 Woche nicht erreichbar <a href="DataSources.dc.html" style="color: #d79a6b; margin-left: 6px">Prüfen</a></li><li style="padding: 10px 12px; background: #18181b; border: 1px solid #29292c; border-radius: 10px">Preislisten wird in keinem Dashboard genutzt</li></ul></section></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

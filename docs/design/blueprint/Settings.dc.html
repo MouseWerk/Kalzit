@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Server settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1000px; font-size: 13px; display: flex; flex-wrap: wrap">
+
+<nav aria-label="Settings sections" style="flex: 0 0 260px; border-right: 1px solid #222226; padding: 20px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; background: #111113">
+<h1 style="margin: 0 0 12px 6px; font-size: 17px; font-weight: 600">Einstellungen</h1>
+<label style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; margin-bottom: 10px">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+<input type="search" placeholder="Einstellung suchen" aria-label="Search settings" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; outline: none"></label>
+<span style="padding: 8px 8px 4px; color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">SERVER</span>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; background: #1d1d21; border: 1px solid #2c2c31; color: #ffffff; font-weight: 500">Darstellung und Marke</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Allgemein</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Netzwerk, HTTPS und Proxy</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Sitzungen und Sicherheit</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Anmeldung (OIDC, LDAP)</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">E-Mail</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Datenquellen und Ziele</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Speicher und Aufbewahrung</a>
+<a href="Updates.dc.html" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae; display: flex; align-items: center">Updates<span style="margin-left: auto; padding: 1px 7px; border-radius: 999px; background: #232327; color: #ececef; font-size: 11px">1 neu</span></a>
+<span style="padding: 12px 8px 4px; color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">PERSÖNLICH</span>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Profil und Sprache</a>
+<a href="#" style="padding: 7px 10px; border-radius: 7px; color: #a6a6ae">Tastenkürzel</a>
+<div style="flex: 1"></div>
+<a href="#" style="padding: 7px 10px; color: #8f8f97">Einstellungen exportieren / importieren</a>
+</nav>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 24px 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px; max-width: 1180px">
+<header>
+<h2 style="margin: 0; font-size: 22px; font-weight: 500">Darstellung und Marke</h2>
+<p style="margin: 6px 0 0; color: #a6a6ae">Änderungen gelten sofort für alle, mit Rückgängig. Werte aus Datei oder Umgebung sind gesperrt.</p>
+</header>
+
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: 18px; align-items: start">
+<div style="display: flex; flex-direction: column; gap: 12px">
+
+<section style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px">
+<div style="display: flex; gap: 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #232327">
+<div style="flex: 1"><h3 style="margin: 0; font-size: 13px; font-weight: 500">Standard-Design</h3><p style="margin: 4px 0 0; color: #8f8f97">Für Konten ohne eigene Wahl.</p></div>
+<div role="radiogroup" aria-label="Default theme" style="display: flex; border: 1px solid #2a2a2e; border-radius: 8px; overflow: hidden"><button role="radio" aria-checked="false" style="padding: 6px 12px; background: transparent; border: 0; color: #a6a6ae">Hell</button><button role="radio" aria-checked="true" style="padding: 6px 12px; background: #232327; border: 0; color: #ffffff">Dunkel</button><button role="radio" aria-checked="false" style="padding: 6px 12px; background: transparent; border: 0; color: #a6a6ae">System</button><button role="radio" aria-checked="false" style="padding: 6px 12px; background: transparent; border: 0; color: #a6a6ae">Kontrast</button></div>
+</div>
+<div style="display: flex; gap: 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #232327">
+<div style="flex: 1"><h3 style="margin: 0; font-size: 13px; font-weight: 500">Akzentfarbe</h3><p style="margin: 4px 0 0; color: #8f8f97">Nur für Hauptaktionen; Kontrast wird geprüft.</p></div>
+<div style="display: flex; gap: 8px"><button aria-label="Copper" style="width: 26px; height: 26px; border-radius: 50%; background: #d79a6b; border: 2px solid #ececef"></button><button aria-label="Blue" style="width: 26px; height: 26px; border-radius: 50%; background: #6aa3d8; border: 2px solid transparent"></button><button aria-label="Green" style="width: 26px; height: 26px; border-radius: 50%; background: #4fb477; border: 2px solid transparent"></button><button aria-label="Custom colour" style="height: 26px; padding: 0 10px; border-radius: 999px; background: #18181b; border: 1px solid #2a2a2e; color: #c9c9cf">Eigene …</button></div>
+</div>
+<div style="display: flex; gap: 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #232327">
+<div style="flex: 1"><h3 style="margin: 0; font-size: 13px; font-weight: 500">Logo und Name</h3><p style="margin: 4px 0 0; color: #8f8f97">Erscheint in der Sidebar, auf der Anmeldeseite und im Browser-Tab.</p></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Logo hochladen</button>
+</div>
+<div style="display: flex; gap: 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #232327">
+<div style="flex: 1"><h3 style="margin: 0; font-size: 13px; font-weight: 500">Dichte</h3><p style="margin: 4px 0 0; color: #8f8f97">Abstände in Listen, Panels und Formularen.</p></div>
+<select style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; font: inherit; padding: 0 10px"><option>Ausgewogen</option><option>Kompakt</option><option>Großzügig</option></select>
+</div>
+<div style="display: flex; gap: 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid #232327">
+<div style="flex: 1"><h3 style="margin: 0; font-size: 13px; font-weight: 500">Standard-Sprache</h3><span style="display: inline-block; margin-top: 6px; padding: 1px 7px; border-radius: 999px; background: #232327; color: #a6a6ae; font-size: 11px">aus kalzit.toml · gesperrt</span></div>
+<select disabled="" style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; font: inherit; padding: 0 10px"><option>Deutsch</option></select>
+</div>
+<div style="display: flex; gap: 16px; align-items: center; padding: 14px 16px">
+<div style="flex: 1"><h3 style="margin: 0; font-size: 13px; font-weight: 500">Anmeldeseite</h3><p style="margin: 4px 0 0; color: #8f8f97">Eigener Begrüßungstext und Hinweis (z. B. Datenschutz).</p></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Bearbeiten</button>
+</div>
+</section>
+</div>
+
+<aside aria-label="Live preview" style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; padding: 18px">
+<h3 style="margin: 0 0 10px; font-size: 12px; font-weight: 500; color: #8f8f97">VORSCHAU</h3>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden; display: flex; height: 320px">
+<div style="width: 130px; background: #0e0e10; border-right: 1px solid #222226; padding: 12px; display: flex; flex-direction: column; gap: 8px"><span style="height: 22px; border-radius: 4px; background: #232327"></span><span style="height: 14px; border-radius: 3px; background: #1d1d21"></span><span style="height: 14px; border-radius: 3px; background: #18181b"></span><span style="height: 14px; border-radius: 3px; background: #18181b"></span><span style="height: 14px; border-radius: 3px; background: #18181b"></span></div>
+<div style="flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px"><span style="height: 18px; width: 60%; border-radius: 3px; background: #232327"></span><div style="flex: 1; border-radius: 6px; background: #18181b; border: 1px solid #2a2a2e"></div><span style="height: 32px; width: 130px; border-radius: 6px; background: #d79a6b"></span></div>
+</div>
+<p style="margin: 10px 0 0; color: #8f8f97; font-size: 13px">Kontrast der Akzentfarbe: 7,1:1 auf Dunkel, 4,8:1 auf Hell</p>
+</aside>
+</div>
+
+<div role="status" style="position: relative; align-self: flex-start; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px; background: #232327; border: 1px solid #333338">Akzentfarbe geändert<button style="background: transparent; border: 0; color: #ececef; text-decoration: underline">Rückgängig</button></div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
