@@ -84,16 +84,21 @@ function timeOrder(frame: Frame): { time: number; index: number }[] {
  * Every field except time of every frame with a time field becomes a row of states, so a panel
  * with one query per service shows one row per service. The rows share the time points of all
  * frames; where a frame has no point of its own, its row holds its last state, as a state lasts
- * until it changes (and has none before its first point). A value's color comes, in this order,
- * from its mapping, the thresholds, the field's color, the state word it is (stateTone, unless
- * `stateWords` is off), and else the palette in the order values first appear, the same color for
- * the same text in every row.
+ * until it changes (and has none before its first point); with `hold` off it has no value there.
+ * A value's color comes, in this order, from its mapping, the thresholds, the field's color, the
+ * state word it is (stateTone, unless `stateWords` is off), and else the palette in the order
+ * values first appear, the same color for the same text in every row.
  */
 export function stateData(
   frames: readonly Frame[],
   config: FieldConfig,
   language: string,
   stateWords = true,
+  /**
+   * A row holds its last state between its own points (state timeline). Without it (status
+   * history) a row has a cell only at its own query's points, never a copy at another's time.
+   */
+  hold = true,
 ): StateData | null {
   const sources = frames
     .filter((f) => timeField(f) !== undefined && f.fields.some((field) => field.type !== "time"))
@@ -124,7 +129,8 @@ export function stateData(
     let next = 0;
     for (const time of times) {
       while (next < points.length && (points[next] as { time: number }).time <= time) next++;
-      at.push(next === 0 ? null : (points[next - 1] as { index: number }).index);
+      const last = next === 0 ? undefined : (points[next - 1] as { time: number; index: number });
+      at.push(last === undefined || (!hold && last.time !== time) ? null : last.index);
     }
     return frame.fields
       .filter((field) => field.type !== "time")
