@@ -1,7 +1,6 @@
 import { getRouteApi, Outlet } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useAppearanceSync } from "../appearance/api";
-import { Icon } from "../components/Icon";
 import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
 import { useI18n } from "../i18n/i18n";
