@@ -132,7 +132,7 @@ test("sign-in", async ({ browser }) => {
 test("start page", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);
-  // The demo dashboard starred and opened once, so both card rows show it.
+  // The demo dashboard starred and opened once, so the favorites and the recent row show it.
   const dashboard = `/api/orgs/${demo.owner.orgId}/dashboards/${demo.dashboardId}`;
   expect((await page.request.put(`${dashboard}/star`)).ok()).toBe(true);
   expect((await page.request.post(`${dashboard}/views`)).ok()).toBe(true);
@@ -141,7 +141,8 @@ test("start page", async ({ browser }) => {
     page.getByRole("heading", { name: t("home.welcome", { name: DEMO_OWNER.name }) }),
   ).toBeVisible();
   await expect(page.locator(".stat-tile__skeleton")).toHaveCount(0);
-  await expect(page.locator(".dash-card")).toHaveCount(2);
+  await expect(page.locator(".dash-card")).toHaveCount(1);
+  await expect(page.locator(".recent-card")).toHaveCount(1);
   await shoot(page, "start");
   await page.context().close();
 });

@@ -298,14 +298,17 @@ describe("start page", () => {
       { dashboardId: "d-people", at: 3 },
     );
     renderApp("/");
-    const starred = await screen.findByRole("region", { name: "Starred dashboards" });
+    const starred = await screen.findByRole("region", { name: "Favorites" });
     const link = await within(starred).findByRole("link", { name: "Sales overview" });
     expect(link.getAttribute("href")).toBe("/dashboards/d-sales");
-    // A card: its folder, and the star already set for a starred dashboard.
+    // A card: its folder, Open, and the star already set for a favorite.
     const card = link.closest("li") as HTMLElement;
     expect(card.textContent).toContain("Operations");
-    expect(within(card).getByRole("button", { name: "Starred" }).getAttribute("aria-pressed")).toBe(
-      "true",
+    expect(
+      within(card).getByRole("button", { name: "Favorite" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(within(card).getByRole("link", { name: "Open" }).getAttribute("href")).toBe(
+      "/dashboards/d-sales",
     );
     expect(within(card).getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
       "/dashboards/d-sales?edit=true",
@@ -316,6 +319,8 @@ describe("start page", () => {
     expect(within(recent).queryByRole("link", { name: /Salaries/ })).toBeNull();
     const actions = screen.getByRole("region", { name: "Quick actions" });
     expect(within(actions).getByRole("link", { name: "New dashboard" })).toBeTruthy();
+    const quick = screen.getByRole("region", { name: "Quick start" });
+    expect(within(quick).getByRole("button", { name: /^Search/ })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
   });
 
@@ -334,6 +339,15 @@ describe("start page", () => {
         .getAttribute("href"),
     ).toBe("/admin/members");
     expect(within(stats).getByRole("link", { name: /^Changes, 7 days/ })).toBeTruthy();
+  });
+
+  it("lists the latest changes for who may read the audit log", async () => {
+    setup("owner");
+    renderApp("/");
+    const changes = await screen.findByRole("region", { name: "Recently changed" });
+    expect(
+      within(changes).getByRole("link", { name: "All in the audit log" }).getAttribute("href"),
+    ).toBe("/admin/audit");
   });
 
   it("shows a viewer only the numbers it may see", async () => {
@@ -428,7 +442,7 @@ describe("start page", () => {
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     await user.click(within(nav).getByRole("link", { name: "Home" }));
     await waitFor(() => expect(location().pathname).toBe("/"));
-    expect(await screen.findByRole("region", { name: "Starred dashboards" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Favorites" })).toBeTruthy();
   });
 });
 
