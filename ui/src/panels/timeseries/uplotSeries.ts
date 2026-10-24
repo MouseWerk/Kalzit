@@ -292,8 +292,13 @@ export function uplotSeries(
  * A stacked line's fill: from its line down to its own baseline (the running sum of its side
  * below it), point by point, so a value that changes sides fills on its side and never across
  * zero to another series. The line itself comes from the interpolation's builder; the baseline is
- * walked back in the same steps for stepped lines and straight otherwise, thinned to one point per
- * pixel column. Missing values are skipped; uPlot's gap clip breaks the fill there with the line.
+ * walked back in the same steps for stepped lines and straight otherwise, thinned like the linear
+ * path to the first, lowest, highest and last point per pixel column. Missing values are skipped;
+ * uPlot's gap clip breaks the fill there with the line.
+ *
+ * Known limitation: a smooth line stacked on a smooth line has its baseline walked straight. With
+ * a point per pixel or more (where the smooth line is drawn straight anyway) that is exact; with
+ * sparse points the fill's lower edge cuts the curve below it in chords, a sliver at most.
  */
 export function stackedFill(
   line: uPlot.Series.PathBuilder,
@@ -320,25 +325,46 @@ export function stackedFill(
     const x = (i: number) => u.valToPos(xs[i] as number, "x", true);
     const y = (i: number) => u.valToPos(base[i] as number, "y", true);
     const fill = new Path2D(stroke);
-    fill.lineTo(x(last), y(last));
-    let next = last;
-    let column = Math.round(x(last));
-    for (let i = last - 1; i >= first; i--) {
-      if (ys[i] === null || ys[i] === undefined) continue;
-      if (interpolation === "stepAfter") {
-        // The value of i holds until the next point: up or down there, then back across.
-        fill.lineTo(x(next), y(i));
+    const missing = (i: number) => ys[i] === null || ys[i] === undefined;
+    if (interpolation === "stepAfter" || interpolation === "stepBefore") {
+      fill.lineTo(x(last), y(last));
+      let next = last;
+      for (let i = last - 1; i >= first; i--) {
+        if (missing(i)) continue;
+        if (interpolation === "stepAfter") {
+          // The value of i holds until the next point: up or down there, then back across.
+          fill.lineTo(x(next), y(i));
+        } else {
+          fill.lineTo(x(i), y(next));
+        }
         fill.lineTo(x(i), y(i));
-      } else if (interpolation === "stepBefore") {
-        fill.lineTo(x(i), y(next));
-        fill.lineTo(x(i), y(i));
-      } else {
-        const px = Math.round(x(i));
-        if (px === column && i !== first) continue;
-        column = px;
-        fill.lineTo(x(i), y(i));
+        next = i;
       }
-      next = i;
+    } else {
+      // Per pixel column the first, lowest, highest and last point, in walking order.
+      let column = Number.NaN;
+      let group: number[] = [];
+      const flush = () => {
+        for (const i of [...new Set(group)].sort((a, b) => b - a)) {
+          fill.lineTo(x(i), y(i));
+        }
+        group = [];
+      };
+      for (let i = last; i >= first; i--) {
+        if (missing(i)) continue;
+        const px = Math.round(x(i));
+        if (px !== column) {
+          flush();
+          column = px;
+          group = [i, i, i, i];
+          continue;
+        }
+        const [, low = i, high = i] = group;
+        if ((base[i] as number) < (base[low] as number)) group[1] = i;
+        if ((base[i] as number) > (base[high] as number)) group[2] = i;
+        group[3] = i;
+      }
+      flush();
     }
     fill.closePath();
     paths.fill = fill;

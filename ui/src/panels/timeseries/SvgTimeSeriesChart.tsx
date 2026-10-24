@@ -28,6 +28,55 @@ function tokenNumber(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * The fill under a line as SVG, one closed shape per run of present values, so a missing value
+ * leaves a gap in the fill as in the line. A stacked line fills to its own baseline, walked back;
+ * others fill to zero (`zero` is its y in px).
+ */
+export function areaPath(
+  xs: readonly number[],
+  ys: readonly (number | null)[],
+  base: Float64Array | null,
+  scale: Scale,
+  right: number,
+  interpolation: SeriesStyle["interpolation"],
+  zero: number,
+): string {
+  // Walked backward, a step after the point is a step before it.
+  const backward =
+    interpolation === "stepAfter"
+      ? "stepBefore"
+      : interpolation === "stepBefore"
+        ? "stepAfter"
+        : interpolation;
+  const shapes: string[] = [];
+  let start = -1;
+  for (let i = 0; i <= ys.length; i++) {
+    const present = i < ys.length && ys[i] !== null && ys[i] !== undefined;
+    if (present && start === -1) {
+      start = i;
+    } else if (!present && start !== -1) {
+      const runX = xs.slice(start, i);
+      const top = linePath(runX, ys.slice(start, i), scale, right, interpolation);
+      if (base === null) {
+        const left = scale.x(runX[0] as number).toFixed(1);
+        shapes.push(`${top}V${zero.toFixed(1)}H${left}Z`);
+      } else {
+        const back = linePath(
+          [...runX].reverse(),
+          Array.from(base.subarray(start, i)).reverse(),
+          scale,
+          right,
+          backward,
+        ).replace("M", "L");
+        shapes.push(`${top}${back}Z`);
+      }
+      start = -1;
+    }
+  }
+  return shapes.join("");
+}
+
 /** The marks of one series: bars, points or a line with its fill. */
 function SeriesMarks({
   look: style,
@@ -87,30 +136,10 @@ function SeriesMarks({
     );
   }
   const d = linePath(xs, ys, scale, right, style.interpolation);
-  const first = xs[ys.findIndex((y) => y !== null)];
-  const last = xs[ys.findLastIndex((y) => y !== null)];
-  // A stacked line fills to its own baseline, walked back; others fill to zero.
-  const back =
-    base === null
-      ? null
-      : linePath(
-          [...xs].reverse(),
-          ys.map((y, i) => (y === null ? null : (base[i] ?? 0))).reverse(),
-          scale,
-          right,
-          // Walked backward, a step after the point is a step before it.
-          style.interpolation === "stepAfter"
-            ? "stepBefore"
-            : style.interpolation === "stepBefore"
-              ? "stepAfter"
-              : style.interpolation,
-        ).replaceAll("M", "L");
   const area =
-    style.fill === "none" || d === "" || first === undefined || last === undefined
+    style.fill === "none" || d === ""
       ? null
-      : back === null
-        ? `${d}V${zero.toFixed(1)}H${scale.x(first).toFixed(1)}Z`
-        : `${d}${back}Z`;
+      : areaPath(xs, ys, base, scale, right, style.interpolation, zero);
   return (
     <>
       {area === null ? null : (

@@ -354,20 +354,33 @@ const REFERENCE_CALIBRATION_1X_MS = 56;
  */
 const STYLES_TASK_MS = 150;
 
-/** Counts how often uPlot clears a chart canvas, which it does once per draw. */
+/**
+ * Counts, on each chart canvas, how often uPlot clears it, which it does once per draw
+ * (`data-draws`). A chart built again brings a new canvas, which starts without a count.
+ */
 function installDrawCounter(): void {
-  const store = window as unknown as { __draws: number };
-  store.__draws = 0;
   const clear = CanvasRenderingContext2D.prototype.clearRect;
   CanvasRenderingContext2D.prototype.clearRect = function (
     this: CanvasRenderingContext2D,
     ...args
   ) {
-    if (this.canvas.closest?.(".ts__uplot") !== null) {
-      store.__draws += 1;
+    const canvas = this.canvas;
+    if (canvas.closest?.(".ts__uplot") !== null) {
+      canvas.dataset.draws = String(Number(canvas.dataset.draws ?? "0") + 1);
     }
     return clear.apply(this, args);
   };
+}
+
+/** How many chart canvases there are and how many of them drew since their counts were zeroed. */
+function drawnCanvases(page: Page): Promise<{ canvases: number; drawn: number }> {
+  return page.evaluate(() => {
+    const canvases = [...document.querySelectorAll<HTMLCanvasElement>(".ts__uplot canvas")];
+    return {
+      canvases: canvases.length,
+      drawn: canvases.filter((canvas) => Number(canvas.dataset.draws ?? "0") > 0).length,
+    };
+  });
 }
 
 /** The most values any field of a query answer holds. */
@@ -432,7 +445,9 @@ test("three 100,000-point charts with hatch, gradient and stacking draw again wi
   await expect(page.locator(".ts__uplot canvas")).toHaveCount(3, { timeout: 30_000 });
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 30_000 });
   const points = await Promise.all(answers);
-  expect(points).toEqual([DENSE_ROWS, DENSE_ROWS, DENSE_ROWS]);
+  // At least one answer per panel (a refresh may add more), each with every point.
+  expect(points.length).toBeGreaterThanOrEqual(3);
+  expect(points.every((count) => count === DENSE_ROWS)).toBe(true);
   const calibration = await calibrate(page);
   const budget = STYLES_TASK_MS * Math.max(1, calibration / REFERENCE_CALIBRATION_1X_MS);
   const rounds: number[] = [];
@@ -440,7 +455,9 @@ test("three 100,000-point charts with hatch, gradient and stacking draw again wi
   // the gradients and the stacked fills, at full speed. Each round must draw all three.
   for (let round = 0; round < ROUNDS; round++) {
     await page.evaluate(() => {
-      (window as unknown as { __draws: number }).__draws = 0;
+      for (const canvas of document.querySelectorAll<HTMLCanvasElement>(".ts__uplot canvas")) {
+        canvas.dataset.draws = "0";
+      }
     });
     await browser.startTracing(page, {
       categories: ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"],
@@ -451,9 +468,8 @@ test("three 100,000-point charts with hatch, gradient and stacking draw again wi
       },
       round % 2 === 0 ? "dark" : "light",
     );
-    await expect
-      .poll(() => page.evaluate(() => (window as unknown as { __draws: number }).__draws))
-      .toBeGreaterThanOrEqual(3);
+    // Every one of the three charts drew again, not one chart three times.
+    await expect.poll(() => drawnCanvases(page)).toEqual({ canvases: 3, drawn: 3 });
     await page.waitForTimeout(300);
     const task = longestTask(await browser.stopTracing());
     rounds.push(task);
