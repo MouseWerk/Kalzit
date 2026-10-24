@@ -2,6 +2,7 @@ import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
+import { valueAxis } from "../axis";
 import {
   displayNameOf,
   displayText,
@@ -29,7 +30,6 @@ import { labelWidth, useProbeFont } from "../measure";
 import { BarPreview } from "../picker/previews";
 import { Readout, type ReadoutItem } from "../readout";
 import { CheckboxField, EmptyPanel, emptyReason, SelectField } from "../shared";
-import { niceTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
 import "../viz.css";
@@ -68,8 +68,10 @@ const AXIS_GAP = 8;
 /** Room below the plot for the category names. */
 const AXIS_BOTTOM = 24;
 const PAD = 8;
-/** Room above a bar for its value. */
+/** Room above a bar (or below a negative one) for its value. */
 const VALUE_ROOM = 14;
+/** From a bar's end to the middle of its value's line, in px. */
+const VALUE_OFFSET = 6;
 /** The room kept between two category labels, in px. */
 const LABEL_GAP = 12;
 /** Share of a category's width its bars take; the rest separates the categories. */
@@ -160,18 +162,20 @@ function BarPanel({
     if (v < low) low = v;
     if (v > high) high = v;
   }
-  const ticks = niceTicks(config.defaults.min ?? low, config.defaults.max ?? high, 4);
-  const yMin = config.defaults.min ?? ticks[0] ?? 0;
-  const yMax = config.defaults.max ?? ticks.at(-1) ?? 1;
+  const axis = valueAxis(low, high, 4, config.defaults);
+  const yMin = axis.min;
+  const yMax = axis.max;
   const axisOptions = data.series[0]?.options ?? config.defaults;
   const axisUnit = axisOptions.unit === "none" ? undefined : axisOptions.unit;
-  const inRange = ticks.filter((tick) => tick >= yMin && tick <= yMax);
-  const tickText = axisTickFormat(inRange, axisUnit, axisOptions.decimals, language);
-  const axisTicks = inRange.map((tick) => ({ tick, text: tickText(tick) }));
+  const tickText = axisTickFormat(axis.ticks, axisUnit, axisOptions.decimals, language);
+  const axisTicks = axis.ticks.map((tick) => ({ tick, text: tickText(tick) }));
   // The value axis is as wide as its widest label, so short labels leave the bars more room.
   const axisLeft =
     Math.ceil(Math.max(0, ...axisTicks.map(({ text }) => labelWidth(text, labelFont)))) + AXIS_GAP;
-  const bottom = options.categoryLabels === "hidden" ? PAD : AXIS_BOTTOM;
+  // Values below negative bars need room above the category names (or the bottom edge).
+  const bottom =
+    (options.categoryLabels === "hidden" ? PAD : AXIS_BOTTOM) +
+    (options.showValues && low < 0 ? VALUE_ROOM : 0);
   const plotWidth = Math.max(width - axisLeft - PAD, 10);
   // Values above the bars need room under the top edge.
   const top = options.showValues ? PAD + VALUE_ROOM : PAD;
@@ -292,7 +296,11 @@ function BarPanel({
                               <text
                                 className="ts__label"
                                 x={x + slots.width / 2}
-                                y={value < 0 ? barBottom + VALUE_ROOM / 2 + 4 : barTop - 6}
+                                y={
+                                  value < 0
+                                    ? barBottom + VALUE_ROOM - VALUE_OFFSET
+                                    : barTop - VALUE_OFFSET
+                                }
                                 textAnchor="middle"
                               >
                                 {text}

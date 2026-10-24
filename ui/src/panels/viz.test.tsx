@@ -6,6 +6,7 @@ import type { DocumentSet, Frame, GraphSet } from "../api/generated/shapes";
 import { sampleSchema } from "../documents/schema";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
+import { valueAxis } from "./axis";
 import { barSlots } from "./bar";
 import { gaugeItems, gaugeRows, MAX_GAUGE_ROWS, valueSize } from "./bargauge";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
@@ -404,6 +405,44 @@ describe("bar chart", () => {
       "store",
       "partner",
     ]);
+  });
+
+  it("rounds open axis ends outward, so no bar is cut off, and keeps fixed ends", () => {
+    expect(valueAxis(0, 120, 4)).toEqual({ ticks: [0, 50, 100, 150], min: 0, max: 150 });
+    expect(valueAxis(-37, 100, 4)).toEqual({ ticks: [-50, 0, 50, 100], min: -50, max: 100 });
+    expect(valueAxis(0, 184_000, 4).max).toBe(200_000);
+    expect(valueAxis(0, 120, 4, { max: 130 })).toEqual({
+      ticks: [0, 50, 100],
+      min: 0,
+      max: 130,
+    });
+    expect(valueAxis(0, 0, 4)).toEqual({ ticks: [0], min: 0, max: 1 });
+    expect(valueAxis(-5, -5, 4)).toEqual({ ticks: [-5], min: -5, max: 1 });
+  });
+
+  it("draws negative bars below zero at their size, with their values below them", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "region", type: "string", values: ["Nord", "Süd"] },
+        { name: "change", type: "number", values: [-37, 120] },
+      ],
+    };
+    const { container } = renderPanel("bar", [frame], { showValues: true });
+    const labels = [...container.querySelectorAll(".ts__label")].map((l) => l.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["-50", "150"]));
+    const [negative, positive] = [...container.querySelectorAll(".bar__rect")].map((r) => ({
+      y: Number(r.getAttribute("y")),
+      height: Number(r.getAttribute("height")),
+    }));
+    // -37 and 120 on an axis from -50 to 150: their heights keep that ratio.
+    expect((negative?.height ?? 0) / (positive?.height ?? 1)).toBeCloseTo(37 / 120, 2);
+    const value = [...container.querySelectorAll(".ts__label")].find(
+      (l) => l.textContent === "-37",
+    );
+    expect(value).toBeDefined();
+    expect(Number(value?.getAttribute("y"))).toBeGreaterThan(
+      (negative?.y ?? 0) + (negative?.height ?? 0),
+    );
   });
 
   it("writes the value axis compactly and can hide the category names", () => {
