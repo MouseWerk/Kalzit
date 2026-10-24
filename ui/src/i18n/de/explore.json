@@ -23,5 +23,6 @@
   "explore.add.pick": "Dashboard wählen",
   "explore.add.pickRequired": "Wähle ein Dashboard.",
   "explore.add.submit": "Panel hinzufügen",
-  "explore.add.message": "Panel aus Explore hinzugefügt"
+  "explore.add.message": "Panel aus Explore hinzugefügt",
+  "explore.aside": "Schritte und Aktionen"
 }
