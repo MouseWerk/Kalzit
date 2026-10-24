@@ -48,6 +48,8 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | New panel, dark theme | New panel on a phone |
 | ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
+| ![Time series graph styles: a monochrome hatched series, a dashed comparison, bars, points, steps and stacked series](docs/screenshots/graph-styles-light.png) | ![Time series graph styles in the dark theme](docs/screenshots/graph-styles-dark.png) |
+| Graph styles | Graph styles, dark theme |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
 
