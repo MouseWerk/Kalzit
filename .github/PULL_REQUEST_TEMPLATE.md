@@ -4,7 +4,7 @@
 
 ## Checklist
 
-- [ ] The branch is named `m<n>/<topic>`, `fix/<topic>` or `docs/<topic>` and targets `main`.
+- [ ] The branch is named `m<n>/<topic>`, `fix/<topic>`, `feat/<topic>`, `ux/<topic>` or `docs/<topic>` and targets `main`.
 - [ ] The title is a plain English sentence; it becomes the commit subject on squash merge.
 - [ ] Tests cover the change; a fix has a test that fails without it.
 - [ ] Server checks pass: `cargo fmt --all --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`.

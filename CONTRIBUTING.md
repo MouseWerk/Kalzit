@@ -19,7 +19,8 @@ By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Security 
 ## Workflow
 
 1. Create a branch from `main`: `m<n>/<topic>` for milestone work (`m2/change-streams`),
-   `fix/<topic>` for fixes, `docs/<topic>` for documentation.
+   `fix/<topic>` for fixes, `feat/<topic>` for features outside a milestone, `ux/<topic>` for
+   interface polish, `docs/<topic>` for documentation.
 2. Make the change, with tests (a fix comes with a test that fails without it).
 3. Run the checks below locally.
 4. Open a pull request into `main` and fill in the template.
