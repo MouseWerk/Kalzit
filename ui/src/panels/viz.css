@@ -570,10 +570,15 @@
     height: 100%;
   }
 
+  /*
+   * The track is bounded by its row: an SVG's own 150 px height otherwise sized it, so with several
+   * rows the tracks ran past their names, and the time axis drew its labels below the panel.
+   */
   .state__row,
   .state__axis {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 4fr);
+    grid-template-rows: minmax(0, 1fr);
     align-items: center;
     gap: var(--space-2);
     min-height: 0;

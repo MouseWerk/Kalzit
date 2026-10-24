@@ -10,7 +10,7 @@ import { type ChartData, chartData } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG, VALUE_AXIS_SIZE, valueAxisSize } from "./layout";
 import { MONO_CLASS, MONO_COMPARE_CLASS, type StackedData, styleKey } from "./styles";
-import { type Paint, uplotBands, uplotSeries } from "./uplotSeries";
+import { type Paint, uplotSeries } from "./uplotSeries";
 import "../panels.css";
 
 /** The palette, monochrome and tone classes, one probe each. */
@@ -67,7 +67,11 @@ function CursorLine({ x }: { x: number }) {
   return <div className="ts__cursor-line" ref={ref} aria-hidden="true" />;
 }
 
-const EMPTY_STACK: StackedData = { ys: [], baselines: [], below: [], percent: false };
+const EMPTY_STACK: StackedData = {
+  ys: [],
+  baselines: [],
+  percent: false,
+};
 
 function aligned(data: ChartData): uPlot.AlignedData {
   return [data.x, ...data.stacked.ys] as uPlot.AlignedData;
@@ -134,8 +138,11 @@ export function UplotTimeSeriesChart({
     for (const tone of TONES) {
       tones[tone] = probeColor(probes, `.tone--${tone}`);
     }
+    // The hatch and the fade come from the tokens the SVG chart uses too, so the two never drift.
     const hatchAlpha = probeNumber(probes, "--chart-hatch-alpha", 0.5);
     const hatchWidth = probeNumber(probes, "--chart-hatch-width", 1);
+    const hatchSpacing = probeNumber(probes, "--chart-hatch-spacing", 6);
+    const fadeTo = probeNumber(probes, "--chart-fade-to", 0.15);
     // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
     // Ticks and labels on the wall clock of the user's time zone.
     const zone = zoneOption(timeZone);
@@ -199,13 +206,14 @@ export function UplotTimeSeriesChart({
             tones,
             hatchAlpha,
             hatchWidth,
+            hatchSpacing,
+            fadeTo,
           };
           return style === undefined
             ? { label: s.name }
             : uplotSeries(s.name, index, style, paint, stackRef);
         }),
       ],
-      bands: uplotBands(styles, data.stacked),
     };
     const chart = new uPlot(options, aligned(data), target);
     chartRef.current = chart;

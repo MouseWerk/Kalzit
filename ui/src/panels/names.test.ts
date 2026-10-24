@@ -95,4 +95,80 @@ describe("state tones", () => {
   it("uses the palette when known state words are switched off", () => {
     expect(colorOf({ defaults: {}, overrides: [] }, false)).toEqual(["series-1", "series-2"]);
   });
+
+  it("shows one row per query and holds each state until its query reports a new one", () => {
+    const api: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 20] },
+        { name: "api", type: "string", values: ["ok", "down"] },
+      ],
+    };
+    const search: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [10] },
+        { name: "search", type: "string", values: ["degraded"] },
+      ],
+    };
+    const data = stateData([api, search], { defaults: {}, overrides: [] }, "en");
+    expect(data?.times).toEqual([0, 10, 20]);
+    expect(data?.rows.map((r) => r.name)).toEqual(["api", "search"]);
+    expect(data?.rows[0]?.values.map((v) => v?.text)).toEqual(["ok", "ok", "down"]);
+    expect(data?.rows[1]?.values.map((v) => v?.text ?? null)).toEqual([
+      null,
+      "degraded",
+      "degraded",
+    ]);
+  });
+
+  it("gives status history no cell where a query has no point of its own", () => {
+    const fast: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 10, 20] },
+        { name: "api", type: "string", values: ["ok", "ok", "down"] },
+      ],
+    };
+    const slow: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0, 20] },
+        { name: "batch", type: "string", values: ["ok", "degraded"] },
+      ],
+    };
+    const data = stateData([fast, slow], { defaults: {}, overrides: [] }, "en", true, false);
+    expect(data?.rows[1]?.values.map((v) => v?.text ?? null)).toEqual(["ok", null, "degraded"]);
+  });
+
+  it("tells rows of two queries with the same field apart by their reference ids", () => {
+    const a: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0] },
+        { name: "status", type: "string", values: ["ok"] },
+      ],
+    };
+    const b: Frame = {
+      fields: [
+        { name: "time", type: "time", values: [0] },
+        { name: "status", type: "string", values: ["down"] },
+      ],
+    };
+    nameFrame(a, "A");
+    nameFrame(b, "B");
+    const data = stateData([a, b], { defaults: {}, overrides: [] }, "en");
+    expect(data?.rows.map((r) => r.name)).toEqual(["status (A)", "status (B)"]);
+  });
+
+  it("names labelled state fields by the label that differs, after the metric name", () => {
+    const up = (instance: string): Frame => ({
+      fields: [
+        { name: "time", type: "time", values: [0] },
+        {
+          name: `up{instance="${instance}", job="node"}`,
+          type: "string",
+          values: ["ok"],
+          labels: { __name__: "up", instance, job: "node" },
+        },
+      ],
+    });
+    const data = stateData([up("a"), up("b")], { defaults: {}, overrides: [] }, "en");
+    expect(data?.rows.map((r) => r.name)).toEqual(["up a", "up b"]);
+  });
 });

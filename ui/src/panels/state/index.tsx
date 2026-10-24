@@ -167,7 +167,7 @@ function StatusHistoryPanel({
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<StateOptions>) {
   const { language, timeZone } = useI18n();
-  const data = stateData(frames, fieldConfig, language, options.colorStateWords);
+  const data = stateData(frames, fieldConfig, language, options.colorStateWords, false);
   if (data === null || data.times.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
   }

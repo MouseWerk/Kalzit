@@ -28,7 +28,10 @@ export interface SeriesStyle {
   /** CSS px. */
   lineWidth: number;
   lineStyle: LineStyle;
-  /** Dash and gap lengths in CSS px, empty for a solid line. */
+  /**
+   * Dash and gap lengths in CSS px, empty for a solid line; 7 and 6 at 2 px, as the blueprint
+   * draws a comparison series.
+   */
   dash: number[];
   fill: Fill;
   /** 0 to 1. */
@@ -72,7 +75,7 @@ export function dashFor(lineStyle: LineStyle, lineWidth: number): number[] {
   const unit = Math.max(lineWidth, 1.5);
   switch (lineStyle) {
     case "dashed":
-      return [3 * unit, 2.5 * unit];
+      return [3.5 * unit, 3 * unit];
     case "dotted":
       return [0, 2.5 * unit];
     default:
@@ -162,18 +165,25 @@ export function styleKey(styles: readonly SeriesStyle[]): string {
 export interface StackedData {
   /** Values as drawn: stacked series hold their running sums, others their own values. */
   ys: (number | null)[][];
-  /** Per series, the running sum below it at each point (for bars), or null when not stacked. */
+  /**
+   * Per series, the running sum of its side below it at each point, or null when not stacked:
+   * where its bars stand and its fill ends, point by point.
+   */
   baselines: (Float64Array | null)[];
-  /** Per series, the series index (0-based) it is stacked on, or -1. */
-  below: number[];
   /** Whether any series stacks to 100 %. */
   percent: boolean;
 }
 
 /**
- * Stacks series by their stack mode and group, in series order. Only values at the same time are
- * summed; a series without a value at a time stays a gap there, and the series above it stack on
- * what is present. Percent stacking divides by the total of the values present at that time.
+ * Stacks series by their stack mode and group, in series order. Positive values stack up from
+ * zero and negative values down from zero, each side on its own running sum, so a group of
+ * incoming and outgoing traffic reads as two stacks. Only values at the same time are summed; a
+ * series without a value at a time stays a gap there, and the series above it stack on what is
+ * present. Percent stacking divides by the sum of the absolute values present at that time, so
+ * +5 and -5 become +50 % and -50 %; a time whose values are all zero gives 0 % (0/0 is 0).
+ * A stacked line fills down to its own baseline, point by point, so a series that changes sides
+ * fills on the side each value is on; where the series itself has no value its fill breaks, as
+ * its line does.
  */
 export function stackData(
   ys: readonly (number | null)[][],
@@ -192,43 +202,46 @@ export function stackData(
   const out: StackedData = {
     ys: [...ys],
     baselines: ys.map(() => null),
-    below: ys.map(() => -1),
     percent: false,
   };
   for (const [key, members] of groups) {
     const percent = key.startsWith("percent");
     out.percent ||= percent;
     const length = ys[members[0] as number]?.length ?? 0;
+    // The sum of absolute values per time, for percent.
     const totals = new Float64Array(length);
     if (percent) {
       for (const member of members) {
         const values = ys[member] ?? [];
         for (let i = 0; i < length; i++) {
           const v = values[i];
-          if (v !== null && v !== undefined) totals[i] = (totals[i] as number) + v;
+          if (v !== null && v !== undefined) totals[i] = (totals[i] as number) + Math.abs(v);
         }
       }
     }
-    const sums = new Float64Array(length);
-    members.forEach((member, position) => {
+    const up = new Float64Array(length);
+    const down = new Float64Array(length);
+    for (const member of members) {
       const values = ys[member] ?? [];
-      const base = Float64Array.from(sums);
+      const base = new Float64Array(length);
       const stacked: (number | null)[] = new Array(length);
       for (let i = 0; i < length; i++) {
         const v = values[i];
         if (v === null || v === undefined) {
           stacked[i] = null;
+          base[i] = up[i] as number;
           continue;
         }
         const total = totals[i] as number;
         const part = percent ? (total === 0 ? 0 : (v / total) * 100) : v;
-        sums[i] = (sums[i] as number) + part;
-        stacked[i] = sums[i] as number;
+        const side = part < 0 ? down : up;
+        base[i] = side[i] as number;
+        side[i] = (side[i] as number) + part;
+        stacked[i] = side[i] as number;
       }
       out.ys[member] = stacked;
       out.baselines[member] = base;
-      out.below[member] = position === 0 ? -1 : (members[position - 1] as number);
-    });
+    }
   }
   return out;
 }

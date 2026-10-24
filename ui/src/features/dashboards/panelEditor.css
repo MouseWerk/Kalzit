@@ -339,12 +339,14 @@
     overflow: auto;
   }
 
-  /* In the narrow pane each visualization's description keeps to one line; the card's tooltip
-     holds all of it. */
+  /* In the narrow pane each visualization's description keeps to two lines (one cut most of them
+     mid-word); the card's tooltip holds all of it. */
   .options-pane .picker__hint {
+    display: -webkit-box;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 
   .options-pane {

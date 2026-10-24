@@ -659,6 +659,37 @@
     text-decoration: underline;
   }
 
+  /*
+   * Text disclosures (macros, a file's columns, where a library panel is used): a quiet chevron
+   * that turns when open, instead of the browser's filled triangle.
+   */
+  summary:not([class]) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  summary:not([class])::-webkit-details-marker {
+    display: none;
+  }
+
+  summary:not([class])::before {
+    content: "";
+    width: var(--size-chevron);
+    height: var(--size-chevron);
+    border-style: solid;
+    border-width: 0 var(--border-width-strong) var(--border-width-strong) 0;
+    color: var(--text-muted);
+    transform: rotate(-45deg);
+    transition: transform var(--duration-fast) var(--easing);
+  }
+
+  details[open] > summary:not([class])::before {
+    transform: rotate(45deg);
+  }
+
   /* Page header */
 
   .page {
