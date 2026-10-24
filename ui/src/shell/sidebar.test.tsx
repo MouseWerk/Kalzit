@@ -246,7 +246,7 @@ describe("sub-pages in the navigation", () => {
     const list = await within(nav).findByRole("list", { name: "Administration sections" });
     expect(within(list).queryByRole("list", { name: "Organization" })).toBeNull();
     const server = within(list).getByRole("list", { name: "Server" });
-    expect(within(server).getAllByRole("link")).toHaveLength(4);
+    expect(within(server).getAllByRole("link")).toHaveLength(5);
   });
 
   it("keeps the current group's sub-pages reachable when the layout narrows", async () => {

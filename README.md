@@ -132,6 +132,10 @@ never returned by the API.
 - Users and organizations for server administrators; an audit log with configurable retention.
 - Local accounts with Argon2id passwords, sessions you can see and end, and a sign-in rate
   limit.
+- Updates from signed GitHub releases or an offline package: verified with Ed25519 before
+  anything is installed, a database backup first, an automatic return when the new version does
+  not start healthy, planning for a maintenance window and a history with returns to kept
+  versions ([operator guide](docs/operations/updates.md)).
 - Interface in English and German, light, dark and high contrast themes, keyboard shortcuts and a
   command palette (Ctrl+K).
 
@@ -183,8 +187,8 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Dashboard on a phone | |
 | ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
 | Settings, dark theme | Settings, light theme |
-| ![Settings on a phone](docs/screenshots/settings-phone.png) | |
-| Settings on a phone | |
+| ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |
+| Settings on a phone | Updates |
 
 ## Quick start
 
@@ -391,7 +395,10 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 - [docs/api/](docs/api): the HTTP API: [access](docs/api/access.md),
   [data sources and queries](docs/api/datasources.md),
   [settings and dashboards](docs/api/settings-dashboards.md),
-  [dashboard features](docs/api/dashboard-features.md), [shell](docs/api/shell.md).
+  [dashboard features](docs/api/dashboard-features.md), [shell](docs/api/shell.md),
+  [updates](docs/api/updates.md).
+- [docs/operations/updates.md](docs/operations/updates.md): installing updates online and offline,
+  returning to an earlier version, the release key and its rotation.
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface, in German and English.
 - [docs/design/feel.md](docs/design/feel.md) and [docs/design/depth.md](docs/design/depth.md):
   look and feel, and the depth of options.

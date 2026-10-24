@@ -127,7 +127,12 @@ function SectionBody({ section }: { section: SectionDef }) {
         </div>
       );
     case "updates":
-      return <UpdatesPlaceholder />;
+      return (
+        <>
+          <UpdatesPlaceholder />
+          <ServerSettings section={section} />
+        </>
+      );
     case "profile":
       return (
         <div className="settings-profile">
@@ -145,10 +150,7 @@ function SectionBody({ section }: { section: SectionDef }) {
   }
 }
 
-/**
- * The entry of the update page another part of Kalzit builds (branch feat/updates). Until it
- * arrives the section says so; it never invents a version or a count.
- */
+/** The way to the Updates page (`/admin/server/updates`), which has the update settings too. */
 function UpdatesPlaceholder() {
   const { t } = useI18n();
   return (
@@ -157,7 +159,9 @@ function UpdatesPlaceholder() {
         <Icon name="activity" />
         <div>
           <h3 className="settings-row__title">{t("settings.updates.text")}</h3>
-          <p className="settings-row__description">{t("settings.updates.pending")}</p>
+          <Link to="/admin/server/updates" className="settings-planned__link">
+            {t("settings.updates.open")}
+          </Link>
         </div>
       </div>
     </div>

@@ -24,6 +24,7 @@ pub mod setup;
 pub mod support;
 pub mod table;
 pub mod teams;
+pub mod updates;
 
 use serde::Serialize;
 
@@ -56,6 +57,7 @@ pub fn all() -> Vec<table::RouteDef> {
         me::routes(),
         home::routes(),
         preferences::routes(),
+        updates::routes(),
     ]
     .into_iter()
     .flatten()

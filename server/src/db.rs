@@ -17,6 +17,12 @@ use tokio_util::sync::CancellationToken;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+/// The newest migration this build carries (what `updates::install::schema_version` answers once
+/// they all ran).
+pub fn latest_migration() -> i64 {
+    MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0)
+}
+
 /// How long a SQLite statement waits for a lock another connection holds before the request
 /// answers `503 busy`. Locks are normally held for milliseconds; this covers a slow disk or a
 /// burst of writers (the CI runners on Windows are both).
@@ -242,7 +248,7 @@ pub async fn scope_requests(req: axum::extract::Request, next: axum::middleware:
 
 /// The database file of a SQLite URL (as `config::sqlite_url` writes them), `None` for other
 /// databases and for an in-memory one.
-fn sqlite_file(url: &str) -> Option<PathBuf> {
+pub fn sqlite_file(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("sqlite:")?;
     let rest = rest.strip_prefix("//").unwrap_or(rest);
     let path = rest.split('?').next().unwrap_or(rest);

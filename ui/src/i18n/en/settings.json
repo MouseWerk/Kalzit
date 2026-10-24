@@ -125,7 +125,7 @@
   "settings.planned.email": "Sending mail over SMTP comes with milestone M5, for invitations and forgotten passwords. Server, port, encryption and sender will be saved together with one Save button after a test mail.",
   "settings.planned.signinPage": "Design the sign-in page",
   "settings.updates.text": "Checking for and installing new versions has its own page.",
-  "settings.updates.pending": "The update page is being built and arrives in a later version.",
+  "settings.updates.open": "Open Updates",
   "settings.transfer.export": "Export",
   "settings.transfer.exportServer": "Server settings",
   "settings.transfer.exportServerHint": "Everything on this server you may change, without values from kalzit.toml or the environment.",

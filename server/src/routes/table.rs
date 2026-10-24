@@ -37,7 +37,7 @@ where
 }
 
 impl RouteDef {
-    /// Caps the request body of this route below the server-wide default; a larger body answers
+    /// Sets the request body limit of this route (below or above axum's default of 2 MiB); a larger body answers
     /// `413 payload_too_large` before the handler reads it.
     pub fn body_limit(mut self, bytes: usize) -> Self {
         self.handler = self.handler.layer(axum::extract::DefaultBodyLimit::max(bytes));

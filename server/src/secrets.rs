@@ -613,20 +613,27 @@ impl fmt::Display for Rotation {
 /// leaves both keys loadable and resumes with the same new key.
 pub async fn rotate(config: &Config) -> Result<Rotation> {
     let data_dir = &config.paths.data_dir;
-    let lock = open_lock(data_dir)?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => {
-            bail!("a Kalzit server is running on this data directory; stop it first")
-        }
-        Err(std::fs::TryLockError::Error(e)) => return Err(e).context("locking the secrets key"),
-    }
+    let _lock = hold_exclusive(data_dir)?;
     let keyring = Keyring::load(data_dir)?;
     let db = crate::db::connect(&config.database_url(), 1).await?;
     let new_key = std::env::var(NEW_KEY_ENV).ok().filter(|v| !v.trim().is_empty());
     let rotation = rotate_with(&db, keyring, data_dir, new_key.as_deref()).await;
     db.close().await;
     rotation
+}
+
+/// Holds the data directory for a command that needs the server stopped (`secrets rotate`,
+/// `update apply`): a running server holds the lock shared, so this fails while one runs, and no
+/// server starts while the returned file is open.
+pub fn hold_exclusive(data_dir: &Path) -> Result<std::fs::File> {
+    let lock = open_lock(data_dir)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(lock),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            bail!("a Kalzit server is running on this data directory; stop it first")
+        }
+        Err(std::fs::TryLockError::Error(e)) => Err(e).context("locking the secrets key"),
+    }
 }
 
 async fn rotate_with(db: &sqlx::AnyPool, keyring: Keyring, data_dir: &Path, new_key: Option<&str>) -> Result<Rotation> {

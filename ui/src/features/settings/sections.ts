@@ -185,6 +185,13 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.updates.label",
     lead: "settings.section.updates.lead",
     keywords: "settings.section.updates.keywords",
+    keys: [
+      "updates.channel",
+      "updates.check_daily",
+      "updates.window",
+      "updates.keep_versions",
+      "updates.health_timeout_secs",
+    ],
     visible: serverAdmin,
   },
   {

@@ -21,6 +21,8 @@ use crate::clock::SystemClock;
 use crate::config::Config;
 use crate::net::{self, ListenerTls, RequestInfo};
 use crate::routes::health;
+use crate::updates::Handover;
+use crate::updates::boot::Trial;
 use crate::{db, tls};
 
 /// Time in-flight requests get to finish after a stop signal.
@@ -105,15 +107,37 @@ fn close_budget(hard_deadline: Option<Instant>, now: Instant) -> Duration {
     }
 }
 
-/// Runs the server until Ctrl+C or SIGTERM.
-pub async fn run(config: Config) -> Result<()> {
+/// How a run ended.
+#[derive(Debug)]
+pub enum Outcome {
+    /// A stop signal: the process ends.
+    Stopped,
+    /// An update or a return: once everything is closed, `updates::boot::handover` starts the
+    /// next binary.
+    Handover(Handover),
+}
+
+/// Runs the server until Ctrl+C or SIGTERM, or until an update hands over to another binary.
+/// `trial` is the first start of a new version (`updates::boot`): it confirms once the server
+/// is healthy, and hands back for a return when it is not.
+pub async fn run(config: Config, trial: Option<Trial>) -> Result<Outcome> {
     // A mistyped or invalid KALZIT_SETTING_* variable stops the start instead of being ignored.
     // Names and values that are not UTF-8 cannot be settings; `Config::load` refuses such
     // KALZIT_* variables already.
     let vars = std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
     crate::settings::check_environment(vars).map_err(anyhow::Error::msg)?;
     let setup_code = std::env::var("KALZIT_SETUP_TOKEN").ok().filter(|s| !s.trim().is_empty());
-    let running = start(config, setup_code).await?;
+    let running = match start(config, setup_code).await {
+        Ok(running) => running,
+        Err(e) => {
+            // A new version that cannot start (a failed migration) returns to the previous one.
+            if let Some(handover) = trial.as_ref().and_then(|t| t.fail(&format!("the start failed: {e:#}"))) {
+                tracing::error!("{e:#}");
+                return Ok(Outcome::Handover(handover));
+            }
+            return Err(e);
+        }
+    };
     let handles = running.handles.clone();
     let hard_deadline = running.hard_deadline.clone();
     tokio::spawn(async move {
@@ -126,8 +150,85 @@ pub async fn run(config: Config) -> Result<()> {
             handle.graceful_shutdown(Some(grace));
         }
     });
+    let state = running.state.clone();
+    let updates = state.updates.clone();
+    let handles = running.handles.clone();
+    let waiting = updates.clone();
+    tokio::spawn(async move {
+        waiting.handover_requested().await;
+        tracing::info!("stopping to hand over to another version");
+        for handle in handles {
+            handle.graceful_shutdown(Some(SHUTDOWN_GRACE));
+        }
+    });
+    updates.record_outcome(&state).await;
+    crate::updates::spawn_background(state.clone());
+    if let Some(trial) = trial {
+        // PostgreSQL: once the migrations of the new version ran, the previous binary cannot
+        // start on the schema; the plan says so before anything else can fail.
+        if let Ok(schema) = crate::updates::install::schema_version(&state.db).await {
+            trial.note_schema(schema);
+        }
+        let addrs: Vec<SocketAddr> = running.http_addr.into_iter().chain(running.https_addr).collect();
+        tokio::spawn(async move {
+            match healthy_before(&state, &addrs, trial.deadline()).await {
+                Ok(()) => {
+                    if let Err(e) = trial.confirm(&state).await {
+                        tracing::warn!("confirming the update: {e}");
+                    }
+                }
+                Err(reason) => {
+                    if let Some(handover) = trial.fail(&reason) {
+                        state.updates.request_handover(handover);
+                    }
+                }
+            }
+        });
+    }
     running.wait().await?;
     tracing::info!("stopped");
+    Ok(match updates.take_handover() {
+        Some(handover) => Outcome::Handover(handover),
+        None => Outcome::Stopped,
+    })
+}
+
+/// Waits until the server is healthy: `/readyz` answers through the real router and every
+/// listener accepts connections. Gives up shortly before `deadline`, leaving the watchdog
+/// room.
+async fn healthy_before(state: &AppState, addrs: &[SocketAddr], deadline: Instant) -> Result<(), String> {
+    let give_up = deadline.checked_sub(Duration::from_secs(2)).unwrap_or(deadline);
+    let mut last;
+    loop {
+        match check_health(state, addrs).await {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e,
+        }
+        if Instant::now() + Duration::from_millis(500) >= give_up {
+            return Err(format!("not healthy in time: {last}"));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+async fn check_health(state: &AppState, addrs: &[SocketAddr]) -> Result<(), String> {
+    let request = Request::builder().uri("/readyz").body(axum::body::Body::empty()).map_err(|e| e.to_string())?;
+    let Ok(response) = router(state.clone()).oneshot(request).await;
+    if response.status() != StatusCode::OK {
+        return Err(format!("/readyz answered {}", response.status()));
+    }
+    for addr in addrs {
+        // A wildcard address is reached through the loopback interface.
+        let target = match addr.ip() {
+            ip if ip.is_unspecified() && ip.is_ipv4() => SocketAddr::from(([127, 0, 0, 1], addr.port())),
+            ip if ip.is_unspecified() => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, addr.port())),
+            _ => *addr,
+        };
+        tokio::time::timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(target))
+            .await
+            .map_err(|_| format!("{target} did not accept a connection in time"))?
+            .map_err(|e| format!("{target} refused a connection: {e}"))?;
+    }
     Ok(())
 }
 

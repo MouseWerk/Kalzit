@@ -76,6 +76,15 @@ const PATHS = {
   help: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM9.75 9.5a2.25 2.25 0 1 1 3.4 1.95c-.7.4-1.15.9-1.15 1.8v.25M12 16.25v.25",
   // Settings: three sliders with their knobs.
   settings: "M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4",
+  // Updates: download and upload a package, look again, plan for later, a verified signature.
+  download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  upload: "M12 15V4M7 9l5-5 5 5M5 20h14",
+  refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  clock: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zM12 8v4l3 2",
+  shieldCheck: "M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6zM9 12l2 2 4-4",
+  external: "M7 17 17 7M9 7h8v8",
+  database:
+    "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
 } as const;
 
 /** Icons drawn filled instead of outlined (the starred state of a star). */
