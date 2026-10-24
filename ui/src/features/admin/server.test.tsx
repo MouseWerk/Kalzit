@@ -260,7 +260,7 @@ describe("administration overview", () => {
       within(org)
         .getAllByRole("link")
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/admin/settings", "/admin/audit"]);
+    ).toEqual(["/settings/organization", "/admin/audit"]);
     const server = screen.getByRole("region", { name: "Server" });
     expect(within(server).getAllByRole("link")).toHaveLength(5);
   });

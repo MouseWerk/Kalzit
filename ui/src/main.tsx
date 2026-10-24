@@ -1,6 +1,7 @@
 import "./styles/index.css";
 // Applies the stored theme and language to <html> before the first render.
 import "./theme/theme";
+import "./appearance/look";
 import "./i18n/i18n";
 
 import { StrictMode } from "react";

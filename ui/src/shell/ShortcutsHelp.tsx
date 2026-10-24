@@ -81,10 +81,53 @@ function keyName(key: string): string {
   return keyLabel(key);
 }
 
+/** Every shortcut by area: in the help dialog and on the settings page. */
+export function ShortcutsList() {
+  const { t } = useI18n();
+  const baseId = useId();
+  return (
+    <div className="shortcuts">
+      {SHORTCUT_AREAS.map((area, index) => (
+        <section
+          key={area.title}
+          className="shortcuts__area"
+          aria-labelledby={`${baseId}-${index}`}
+        >
+          <h3 id={`${baseId}-${index}`} className="shortcuts__title">
+            {t(area.title)}
+          </h3>
+          <dl className="shortcuts__list">
+            {area.shortcuts.map((shortcut) => (
+              <div key={shortcut.label} className="shortcuts__row">
+                <dt className="shortcuts__keys">
+                  {shortcut.keys.map((combo, comboIndex) => (
+                    <Fragment key={combo.join("+")}>
+                      {comboIndex === 0 ? null : (
+                        <span className="shortcuts__or">{t("shell.shortcuts.or")}</span>
+                      )}
+                      <span className="shortcuts__combo">
+                        {combo.map((key) => (
+                          <kbd key={key} className="kbd">
+                            {keyName(key)}
+                          </kbd>
+                        ))}
+                      </span>
+                    </Fragment>
+                  ))}
+                </dt>
+                <dd className="shortcuts__label">{t(shortcut.label)}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /** The keyboard shortcuts help, opened with ? or from the command palette. */
 export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const baseId = useId();
   return (
     <Dialog
       open
@@ -97,42 +140,7 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
         </button>
       }
     >
-      <div className="shortcuts">
-        {SHORTCUT_AREAS.map((area, index) => (
-          <section
-            key={area.title}
-            className="shortcuts__area"
-            aria-labelledby={`${baseId}-${index}`}
-          >
-            <h3 id={`${baseId}-${index}`} className="shortcuts__title">
-              {t(area.title)}
-            </h3>
-            <dl className="shortcuts__list">
-              {area.shortcuts.map((shortcut) => (
-                <div key={shortcut.label} className="shortcuts__row">
-                  <dt className="shortcuts__keys">
-                    {shortcut.keys.map((combo, comboIndex) => (
-                      <Fragment key={combo.join("+")}>
-                        {comboIndex === 0 ? null : (
-                          <span className="shortcuts__or">{t("shell.shortcuts.or")}</span>
-                        )}
-                        <span className="shortcuts__combo">
-                          {combo.map((key) => (
-                            <kbd key={key} className="kbd">
-                              {keyName(key)}
-                            </kbd>
-                          ))}
-                        </span>
-                      </Fragment>
-                    ))}
-                  </dt>
-                  <dd className="shortcuts__label">{t(shortcut.label)}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        ))}
-      </div>
+      <ShortcutsList />
     </Dialog>
   );
 }

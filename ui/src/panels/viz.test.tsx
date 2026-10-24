@@ -6,13 +6,16 @@ import type { DocumentSet, Frame, GraphSet } from "../api/generated/shapes";
 import { sampleSchema } from "../documents/schema";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
+import { valueAxis } from "./axis";
+import { barSlots } from "./bar";
+import { gaugeItems, gaugeRows, MAX_GAUGE_ROWS, valueSize } from "./bargauge";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { loadPatternEngine } from "./fieldConfig/pattern";
 import { generateGraph } from "./graph/test/generate";
 import { compareBounds, heatLevel, heatmapData } from "./heatmap";
 import { histogram } from "./histogram";
 import { PanelPicker } from "./picker/PanelPicker";
-import { pieSlices } from "./piechart";
+import { insideLabel, pieSlices } from "./piechart";
 import { getPanel, PANELS } from "./registry";
 import { mergeNarrow, segments, stateData } from "./state/stateData";
 import { filterRows, parseFilter, sortedRows } from "./table";
@@ -193,6 +196,12 @@ describe("every new panel", () => {
   });
 });
 
+/** Each bar's share of its lane, as the bar gauge hands it to CSS. */
+const shares = (root: Element) =>
+  [...root.querySelectorAll<SVGElement>(".bargauge__lane-bar")].map((bar) =>
+    bar.style.getPropertyValue("--share"),
+  );
+
 describe("gauge and bar gauge", () => {
   it("fills the arc by the value between min and max, colored by the thresholds", () => {
     const { container } = renderPanel(
@@ -251,6 +260,197 @@ describe("gauge and bar gauge", () => {
     expect(cells.filter((c) => c?.includes("tone--warn"))).toHaveLength(5);
     expect(cells.filter((c) => c?.includes("--off"))).toHaveLength(5);
   });
+
+  it("draws one bar per row of a result with names, all on one scale", () => {
+    const byRow: Frame = {
+      fields: [
+        { name: "framework", type: "string", values: ["Alpha", "Beta", "Gamma"] },
+        { name: "score", type: "number", values: [50, 100, 25] },
+      ],
+    };
+    const { items, truncated, dropped } = gaugeItems([byRow], NONE, "last", "en", "UTC");
+    expect([truncated, dropped]).toEqual([false, false]);
+    expect(items.map((item) => [item.name, item.display.text, item.range])).toEqual([
+      ["Alpha", "50", { min: 0, max: 100 }],
+      ["Beta", "100", { min: 0, max: 100 }],
+      ["Gamma", "25", { min: 0, max: 100 }],
+    ]);
+    const { container } = renderPanel("bargauge", [byRow]);
+    const names = [...container.querySelectorAll(".bargauge__item .bargauge__name")].map(
+      (n) => n.textContent,
+    );
+    expect(names).toEqual(["Alpha", "Beta", "Gamma"]);
+    const fills = shares(container);
+    expect(fills).toEqual(["0.5", "1", "0.25"]);
+  });
+
+  it("shares one scale between fields, so a reduced value does not fill every bar", () => {
+    const fields: Frame = {
+      fields: [
+        { name: "Nord", type: "number", values: [40] },
+        { name: "Süd", type: "number", values: [80] },
+      ],
+    };
+    const { container } = renderPanel("bargauge", [fields], { reducer: "last" });
+    const fills = shares(container);
+    expect(fills).toEqual(["0.5", "1"]);
+    // A field with a range of its own keeps it.
+    const own: FieldConfig = {
+      defaults: {},
+      overrides: [{ matcher: { type: "name", value: "Nord" }, properties: { max: 40 } }],
+    };
+    const { container: second } = renderPanel("bargauge", [fields], { reducer: "last" }, own);
+    expect(shares(second)).toEqual(["1", "1"]);
+  });
+
+  it("shares a scale only between fields of one unit; percentages keep 0 to 100", () => {
+    const mixed: Frame = {
+      fields: [
+        { name: "cpu", type: "number", values: [60] },
+        { name: "memory", type: "number", values: [6e9] },
+        { name: "disk", type: "number", values: [3e9] },
+      ],
+    };
+    const units: FieldConfig = {
+      defaults: { unit: "bytes" },
+      overrides: [{ matcher: { type: "name", value: "cpu" }, properties: { unit: "percent" } }],
+    };
+    const { container } = renderPanel("bargauge", [mixed], { reducer: "last" }, units);
+    expect(shares(container)).toEqual(["0.6", "1", "0.5"]);
+  });
+
+  it("draws at most a hundred rows and says so, and names results it leaves out", () => {
+    const many: Frame = {
+      fields: [
+        { name: "host", type: "string", values: Array.from({ length: 150 }, (_, i) => `h${i}`) },
+        { name: "load", type: "number", values: Array.from({ length: 150 }, (_, i) => i) },
+      ],
+    };
+    const gauge = gaugeItems([many], NONE, "last", "en", "UTC");
+    expect([gauge.items.length, gauge.truncated]).toEqual([MAX_GAUGE_ROWS, true]);
+    renderPanel("bargauge", [many]);
+    expect(screen.getByText("Only the first 100 rows are shown as bars.")).toBeTruthy();
+    const other: Frame = { fields: [{ name: "v", type: "number", values: [1] }] };
+    expect(gaugeItems([many, other], NONE, "last", "en", "UTC").dropped).toBe(true);
+  });
+
+  it("lays out its rows once data arrives after an empty first result", () => {
+    const plugin = getPanel("bargauge") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    const draw = (frames: Frame[]) => (
+      <Panel frames={frames} options={plugin.options({})} timeRange={RANGE} title="Panel" />
+    );
+    const { container, rerender } = render(draw([]));
+    expect(container.querySelector(".bargauge__list")).toBeNull();
+    rerender(draw([{ fields: [{ name: "v", type: "number", values: [5] }] }]));
+    const list = container.querySelector<HTMLElement>(".bargauge__list");
+    expect(list?.style.getPropertyValue("--bargauge-row")).toMatch(/^\d+px$/);
+    expect(
+      container.querySelector(".bargauge__box")?.getAttribute("data-value-size"),
+    ).not.toBeNull();
+  });
+
+  it("shares the height out to its rows and sizes the value to the bar", () => {
+    expect(gaugeRows(300, 7, "left")).toEqual({ row: 36, bar: 36 });
+    // Few rows stop at the largest height; the name above a bar takes a line of the row.
+    expect(gaugeRows(600, 2, "left").row).toBe(40);
+    expect(gaugeRows(600, 2, "top")).toEqual({ row: 58, bar: 40 });
+    expect(gaugeRows(100, 40, "left").row).toBe(20);
+    expect([16, 24, 30, 40].map(valueSize)).toEqual(["sm", "md", "lg", "xl"]);
+  });
+
+  it("shows the value in the bar's color or not at all, and the names above or not at all", () => {
+    const frame: Frame = { fields: [{ name: "v", type: "number", values: [75] }] };
+    const { container } = renderPanel("bargauge", [frame], {
+      valueDisplay: "color",
+      namePlacement: "top",
+    });
+    expect(container.querySelector(".bargauge__value--color")).not.toBeNull();
+    expect(container.querySelector(".bargauge--name-top")).not.toBeNull();
+    const { container: bare } = renderPanel("bargauge", [frame], {
+      valueDisplay: "hidden",
+      namePlacement: "hidden",
+    });
+    expect(bare.querySelector(".bargauge__item .bargauge__value")).toBeNull();
+    expect(bare.querySelector(".bargauge__item .bargauge__name")).toBeNull();
+    // The readout still names the value.
+    expect(bare.querySelector("[role=group]")?.getAttribute("aria-label")).toBe("Panel");
+  });
+});
+
+describe("bar chart", () => {
+  const channels: Frame = {
+    fields: [
+      { name: "framework", type: "string", values: ["Alpha", "Beta"] },
+      { name: "online", type: "number", values: [120_000, 200_000] },
+      { name: "store", type: "number", values: [80_000, 50_000] },
+      { name: "partner", type: "number", values: [25_000, 40_000] },
+    ],
+  };
+
+  it("groups the series per category with a gap between the bars", () => {
+    expect(barSlots(100, 1)).toEqual({ offset: 10, width: 80, step: 80 });
+    const grouped = barSlots(120, 3);
+    expect(grouped.step).toBeCloseTo(32);
+    expect(grouped.width).toBeCloseTo(30);
+    // Bars too thin for a gap keep their whole width.
+    expect(barSlots(10, 3).width).toBeCloseTo(8 / 3);
+    const { container } = renderPanel("bar", [channels], {
+      legend: { mode: "list", placement: "right" },
+    });
+    expect(container.querySelectorAll(".bar__rect")).toHaveLength(6);
+    expect(container.querySelector(".viz-layout--right")).not.toBeNull();
+    expect([...container.querySelectorAll(".ts__legend-item")].map((i) => i.textContent)).toEqual([
+      "online",
+      "store",
+      "partner",
+    ]);
+  });
+
+  it("rounds open axis ends outward, so no bar is cut off, and keeps fixed ends", () => {
+    expect(valueAxis(0, 120, 4)).toEqual({ ticks: [0, 50, 100, 150], min: 0, max: 150 });
+    expect(valueAxis(-37, 100, 4)).toEqual({ ticks: [-50, 0, 50, 100], min: -50, max: 100 });
+    expect(valueAxis(0, 184_000, 4).max).toBe(200_000);
+    expect(valueAxis(0, 120, 4, { max: 130 })).toEqual({
+      ticks: [0, 50, 100],
+      min: 0,
+      max: 130,
+    });
+    expect(valueAxis(0, 0, 4)).toEqual({ ticks: [0], min: 0, max: 1 });
+    expect(valueAxis(-5, -5, 4)).toEqual({ ticks: [-5], min: -5, max: 1 });
+  });
+
+  it("draws negative bars below zero at their size, with their values below them", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "region", type: "string", values: ["Nord", "Süd"] },
+        { name: "change", type: "number", values: [-37, 120] },
+      ],
+    };
+    const { container } = renderPanel("bar", [frame], { showValues: true });
+    const labels = [...container.querySelectorAll(".ts__label")].map((l) => l.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["-50", "150"]));
+    const [negative, positive] = [...container.querySelectorAll(".bar__rect")].map((r) => ({
+      y: Number(r.getAttribute("y")),
+      height: Number(r.getAttribute("height")),
+    }));
+    // -37 and 120 on an axis from -50 to 150: their heights keep that ratio.
+    expect((negative?.height ?? 0) / (positive?.height ?? 1)).toBeCloseTo(37 / 120, 2);
+    const value = [...container.querySelectorAll(".ts__label")].find(
+      (l) => l.textContent === "-37",
+    );
+    expect(value).toBeDefined();
+    expect(Number(value?.getAttribute("y"))).toBeGreaterThan(
+      (negative?.y ?? 0) + (negative?.height ?? 0),
+    );
+  });
+
+  it("writes the value axis compactly and can hide the category names", () => {
+    const { container } = renderPanel("bar", [channels], { categoryLabels: "hidden" });
+    const labels = [...container.querySelectorAll(".ts__label")].map((l) => l.textContent);
+    expect(labels).toContain("200 k");
+    expect(labels).not.toContain("Alpha");
+  });
 });
 
 describe("pie chart", () => {
@@ -286,6 +486,37 @@ describe("pie chart", () => {
     renderPanel("piechart", [frame], { legend: { mode: "table", placement: "right" } });
     expect(screen.getByRole("columnheader", { name: "Percent" })).toBeTruthy();
     expect(screen.getByText("Other")).toBeTruthy();
+  });
+
+  it("puts labels on the slices only where they fit", () => {
+    // A quarter of a circle of 100 px has room for a short label; a sliver has not.
+    expect(insideLabel({ from: 0, to: Math.PI / 2 }, 0, 100, 30)).toEqual({ radius: 64 });
+    expect(insideLabel({ from: 0, to: 0.1 }, 0, 100, 30)).toBeNull();
+    // A thin ring has no depth for a line of text.
+    expect(insideLabel({ from: 0, to: Math.PI }, 92, 100, 10)).toBeNull();
+    expect(insideLabel({ from: 0, to: Math.PI }, 50, 100, 10)).toEqual({ radius: 75 });
+    // Horizontal text runs along a slice at twelve o'clock but across one at three o'clock.
+    expect(insideLabel({ from: -0.8, to: 0.8 }, 0, 100, 80)).toEqual({ radius: 64 });
+    expect(insideLabel({ from: Math.PI / 2 - 0.8, to: Math.PI / 2 + 0.8 }, 0, 100, 80)).toBeNull();
+  });
+
+  it("lists the legend values chosen, in a table beside the circle", () => {
+    const frame: Frame = {
+      fields: [
+        { name: "region", type: "string", values: ["Nord", "Süd"] },
+        { name: "sales", type: "number", values: [184_000, 46_000] },
+      ],
+    };
+    const { container } = renderPanel(
+      "piechart",
+      [frame],
+      { legend: { mode: "table", placement: "right" }, legendValues: ["value"] },
+      { defaults: { unit: "short" }, overrides: [] },
+    );
+    expect(screen.getByRole("columnheader", { name: "Value" })).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "Percent" })).toBeNull();
+    expect(screen.getByText("184K")).toBeTruthy();
+    expect(container.querySelectorAll(".pie__label--inside").length).toBeGreaterThan(0);
   });
 });
 

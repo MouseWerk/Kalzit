@@ -321,7 +321,8 @@ fn running_binary() -> Result<PathBuf> {
 /// `updates.health_timeout_secs` from the environment or the database, else its default.
 async fn health_timeout(db: &sqlx::AnyPool) -> u64 {
     let key = "updates.health_timeout_secs";
-    let ok = |v: &serde_json::Value| crate::settings::validate(key, v).is_ok();
+    let Some(def) = crate::settings::find(key, crate::settings::Scope::Server) else { return 60 };
+    let ok = |v: &serde_json::Value| crate::settings::validate(def, v).is_ok();
     if let Ok(raw) = std::env::var(crate::settings::env_var_name(key))
         && let Ok(value) = serde_json::from_str::<serde_json::Value>(raw.trim())
         && ok(&value)

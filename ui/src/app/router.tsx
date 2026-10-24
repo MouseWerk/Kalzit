@@ -4,6 +4,7 @@ import { adminRoutes } from "../features/admin/routes";
 import { dashboardsRoutes } from "../features/dashboards/routes";
 import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
+import { settingsRoutes } from "../features/settings/routes";
 import { HomePage } from "../pages/HomePage";
 import { PendingPage } from "../pages/StatusPages";
 import { redirectToStartDashboard } from "../preferences/startDashboard";
@@ -28,6 +29,7 @@ const routeTree = rootRoute.addChildren([
     ...exploreRoutes,
     ...datasourcesRoutes,
     ...adminRoutes,
+    ...settingsRoutes,
   ]),
 ]);
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {

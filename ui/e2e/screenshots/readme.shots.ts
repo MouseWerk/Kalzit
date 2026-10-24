@@ -5,7 +5,7 @@ import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
 import { fillQuery, panelAction } from "../support/ui";
-import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
+import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -166,6 +166,22 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 }
 
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`panel types, ${colorScheme}`, async ({ browser }) => {
+    const page = await openPage(browser, colorScheme);
+    await signIn(page);
+    await page.goto(`/dashboards/${demo.galleryId}`);
+    await expect(page.getByRole("heading", { name: GALLERY_TITLE })).toBeVisible();
+    await expect(page.locator(".bar__rect")).toHaveCount(12);
+    await expect(page.locator(".bargauge__fill")).toHaveCount(4);
+    await expect(page.locator(".pie__slice")).toHaveCount(4);
+    await expect(page.locator(".text-panel a")).toBeVisible();
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `dashboard-panels-${colorScheme}`);
+    await page.context().close();
+  });
+}
+
 /** The full-page panel editor on the demo's time series, its chart drawn. */
 async function panelEditor(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
@@ -296,8 +312,10 @@ test("account", async ({ browser }) => {
   // Every picture signed in once; two sessions (this browser and one other) look like real use.
   expect((await page.request.post("/api/me/sessions/revoke-others")).ok()).toBe(true);
   const other = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
-  await page.goto("/account");
-  await expect(page.getByRole("heading", { name: t("admin.account.title") })).toBeVisible();
+  await page.goto("/settings/profile");
+  await expect(
+    page.getByRole("heading", { name: t("settings.section.profile.label") }),
+  ).toBeVisible();
   const sessions = page.getByRole("list", { name: t("admin.account.sessions") });
   await expect(sessions).toBeVisible();
   // Scrolled so the sessions list is whole, not cut at the bottom edge.
@@ -307,6 +325,29 @@ test("account", async ({ browser }) => {
   await expect(sessions.getByRole("listitem")).toHaveCount(2);
   await shoot(page, "account");
   await other.dispose();
+  await page.context().close();
+});
+
+for (const colorScheme of ["dark", "light"] as const) {
+  test(`settings, ${colorScheme}`, async ({ browser }) => {
+    const page = await openPage(browser, colorScheme);
+    await signIn(page);
+    await page.goto("/settings/appearance");
+    await expect(
+      page.getByRole("heading", { name: t("settings.section.appearance.label") }),
+    ).toBeVisible();
+    await expect(page.locator(".settings-row").first()).toBeVisible();
+    await shoot(page, `settings-${colorScheme}`);
+    await page.context().close();
+  });
+}
+
+test("settings, phone", async ({ browser }) => {
+  const page = await openPage(browser, "dark", { width: 360, height: 780 });
+  await signIn(page);
+  await page.goto("/settings/appearance");
+  await expect(page.locator(".settings-row").first()).toBeVisible();
+  await shoot(page, "settings-phone");
   await page.context().close();
 });
 

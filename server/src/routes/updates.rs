@@ -29,7 +29,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/admin/updates", Access::ServerAdmin, status),
         route(Method::POST, "/admin/updates/check", Access::ServerAdmin, check),
         route(Method::POST, "/admin/updates/download", Access::ServerAdmin, download),
-        route(Method::POST, "/admin/updates/upload", Access::ServerAdmin, upload).with_body_limit(MAX_UPLOAD_BYTES),
+        route(Method::POST, "/admin/updates/upload", Access::ServerAdmin, upload).body_limit(MAX_UPLOAD_BYTES),
         route(Method::DELETE, "/admin/updates/staged", Access::ServerAdmin, discard),
         route(Method::POST, "/admin/updates/apply", Access::ServerAdmin, apply),
         route(Method::PUT, "/admin/updates/schedule", Access::ServerAdmin, schedule),

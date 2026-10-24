@@ -37,10 +37,10 @@ where
 }
 
 impl RouteDef {
-    /// Raises the body limit of this route above axum's default of 2 MiB (an upload). The access
-    /// rule still runs first, before any of the body is read.
-    pub fn with_body_limit(mut self, max_bytes: usize) -> Self {
-        self.handler = self.handler.layer(axum::extract::DefaultBodyLimit::max(max_bytes));
+    /// Sets the request body limit of this route (below or above axum's default of 2 MiB); a larger body answers
+    /// `413 payload_too_large` before the handler reads it.
+    pub fn body_limit(mut self, bytes: usize) -> Self {
+        self.handler = self.handler.layer(axum::extract::DefaultBodyLimit::max(bytes));
         self
     }
 }

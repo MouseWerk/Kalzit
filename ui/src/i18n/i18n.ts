@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { getBrand, subscribeBrand } from "../appearance/brand";
 import { readPreference, writePreference } from "../lib/storage";
 import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
 import { de, en } from "./catalogs";
@@ -100,6 +101,9 @@ export function useI18n(): {
 } {
   const language = useSyncExternalStore(subscribe, getLanguage, getLanguage);
   const time = useSyncExternalStore(subscribeTimeSettings, getTimeSettings, getTimeSettings);
-  const t: Translate = (key, params) => translate(language, key, params);
+  const brand = useSyncExternalStore(subscribeBrand, getBrand, getBrand);
+  // `{product}` is the product name an admin may set (window titles and the like).
+  const t: Translate = (key, params) =>
+    translate(language, key, { product: brand.productName, ...params });
   return { language, t, timeZone: time.timeZone, weekStart: time.weekStart };
 }

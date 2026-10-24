@@ -226,6 +226,7 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "user.": "admin.auditArea.user",
   "org.": "admin.auditArea.org",
   "settings.": "admin.auditArea.settings",
+  "branding.": "admin.auditArea.branding",
   "folder.": "admin.auditArea.folder",
   "dashboard.": "admin.auditArea.dashboard",
   "datasource.": "admin.auditArea.datasource",

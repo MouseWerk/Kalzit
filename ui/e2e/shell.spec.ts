@@ -63,11 +63,9 @@ const SECTIONS = [
   ["admin.members.title", "/admin/members"],
   ["admin.teams.title", "/admin/teams"],
   ["admin.roles.title", "/admin/roles"],
-  ["admin.orgSettings.title", "/admin/settings"],
   ["admin.audit.title", "/admin/audit"],
   ["admin.users.title", "/admin/server/users"],
   ["admin.orgs.title", "/admin/server/organizations"],
-  ["admin.serverSettings.title", "/admin/server/settings"],
   ["admin.serverAudit.title", "/admin/server/audit"],
 ] as const;
 
