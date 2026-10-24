@@ -17,6 +17,8 @@ export interface Demo {
   sourceName: string;
   dashboardId: string;
   dashboardTitle: string;
+  /** The dashboard of bar chart, bar gauge, pie and text panels. */
+  galleryId: string;
 }
 
 const SALES_BY_REGION =
@@ -91,6 +93,7 @@ export async function seedDemo(setupToken: string): Promise<Demo> {
       },
     ],
   });
+  const galleryId = await owner.createDashboard(galleryDashboard(sourceId));
   // A few more dashboards, so the list looks like one in use.
   for (const [title, region] of [
     ["Region North", "Nord"],
@@ -115,5 +118,77 @@ export async function seedDemo(setupToken: string): Promise<Demo> {
       ],
     });
   }
-  return { owner, sourceId, sourceName, dashboardId, dashboardTitle };
+  return { owner, sourceId, sourceName, dashboardId, dashboardTitle, galleryId };
+}
+
+export const GALLERY_TITLE = "Sales overview";
+
+const NOTES = [
+  "Sales of the **last six hours** per region, from the shop database.",
+  "",
+  "- Online, store and partner sales are summed per region",
+  "- The bar gauge shows the *average* order per region",
+  "- The pie shows each region's share of all sales",
+  "",
+  "Questions about the numbers? See the [sales handbook](https://kalzit.dev) or ask the controlling team.",
+].join("\n");
+
+/**
+ * The bar chart, bar gauge, pie and text panels side by side: grouped bars with the legend on
+ * the right, one gauge bar per region, a pie with labels on its slices and a legend table.
+ */
+export function galleryDashboard(sourceId: string): Record<string, unknown> {
+  const target = (sql: string) => [{ refId: "A", datasourceId: sourceId, query: { sql } }];
+  const range = "$__timeFilter(ts)";
+  return {
+    schemaVersion: 1,
+    title: GALLERY_TITLE,
+    timeRange: { from: "now-6h", to: "now" },
+    variables: [],
+    panels: [
+      {
+        id: "notes",
+        type: "text",
+        title: "About this dashboard",
+        grid: { x: 0, y: 0, w: 8, h: 9 },
+        targets: [],
+        options: { mode: "markdown", content: NOTES },
+      },
+      {
+        id: "channels",
+        type: "bar",
+        title: "Sales per region and channel",
+        grid: { x: 8, y: 0, w: 16, h: 9 },
+        targets: target(
+          `SELECT region, ROUND(SUM(amount) * 12) AS online, ROUND(SUM(amount) * 8) AS store, ROUND(SUM(amount) * 5) AS partner FROM sales WHERE ${range} GROUP BY region ORDER BY region`,
+        ),
+        options: { legend: { mode: "list", placement: "right", values: [] } },
+      },
+      {
+        id: "average",
+        type: "bargauge",
+        title: "Average order per region",
+        grid: { x: 0, y: 9, w: 12, h: 9 },
+        targets: target(
+          `SELECT region, ROUND(AVG(amount), 1) AS average FROM sales WHERE ${range} GROUP BY region ORDER BY region`,
+        ),
+        options: { reducer: "last", displayMode: "basic", orientation: "horizontal" },
+      },
+      {
+        id: "share",
+        type: "piechart",
+        title: "Share of sales",
+        grid: { x: 12, y: 9, w: 12, h: 9 },
+        targets: target(
+          `SELECT region, ROUND(SUM(amount) * 25) AS total FROM sales WHERE ${range} GROUP BY region ORDER BY region`,
+        ),
+        options: {
+          labels: "percent",
+          legend: { mode: "table", placement: "right", values: [] },
+          legendValues: ["value"],
+        },
+        fieldConfig: { defaults: { unit: "short" }, overrides: [] },
+      },
+    ],
+  };
 }

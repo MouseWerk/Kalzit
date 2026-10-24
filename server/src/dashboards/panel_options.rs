@@ -237,6 +237,11 @@ choice!(DisplayMode { Basic = "basic", Lcd = "lcd" });
 choice!(Orientation { Horizontal = "horizontal", Vertical = "vertical" });
 choice!(PieType { Pie = "pie", Donut = "donut" });
 choice!(PieLabels { None = "none", Percent = "percent", Name = "name", Value = "value" });
+choice!(LabelPlacement { Inside = "inside", Outside = "outside" });
+choice!(PieLegendValue { Value = "value", Percent = "percent" });
+choice!(CategoryLabels { Auto = "auto", Hidden = "hidden" });
+choice!(ValueDisplay { Text = "text", Color = "color", Hidden = "hidden" });
+choice!(NamePlacement { Left = "left", Top = "top", Hidden = "hidden" });
 choice!(HeatmapMode { Calculate = "calculate", Buckets = "buckets" });
 choice!(HeatmapScale { Linear = "linear", Sqrt = "sqrt" });
 choice!(TextFormat { Markdown = "markdown", Plain = "plain" });
@@ -307,6 +312,7 @@ struct StatOptions {
 #[allow(dead_code)]
 struct BarOptions {
     show_values: Option<bool>,
+    category_labels: Option<CategoryLabels>,
     legend: Option<Legend>,
     tooltip: Option<Tooltip>,
     unit: Option<String>,
@@ -336,6 +342,8 @@ struct BarGaugeOptions {
     reducer: Option<Reducer>,
     display_mode: Option<DisplayMode>,
     orientation: Option<Orientation>,
+    value_display: Option<ValueDisplay>,
+    name_placement: Option<NamePlacement>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,7 +353,9 @@ struct PieOptions {
     pie_type: Option<PieType>,
     reducer: Option<Reducer>,
     labels: Option<PieLabels>,
+    label_placement: Option<LabelPlacement>,
     legend: Option<Legend>,
+    legend_values: Option<Vec<PieLegendValue>>,
     tooltip: Option<Tooltip>,
 }
 
@@ -665,6 +675,12 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         "bargauge" => parse::<BarGaugeOptions>("options", options).map(|_| ()),
         "piechart" => {
             let o: PieOptions = parse("options", options)?;
+            if let Some(values) = &o.legend_values {
+                let kinds: Vec<_> = values.iter().map(std::mem::discriminant).collect();
+                if kinds.iter().enumerate().any(|(i, kind)| kinds[..i].contains(kind)) {
+                    return Err("options.legendValues takes each value once".into());
+                }
+            }
             check_legend(o.legend.as_ref())
         }
         "heatmap" => {
@@ -773,11 +789,15 @@ mod tests {
             ),
             ("stat", json!({ "reducer": "last", "unit": "B", "sparkline": true })),
             ("bar", json!({ "showValues": true, "legend": legend, "tooltip": tooltip })),
+            ("bar", json!({ "categoryLabels": "hidden" })),
             ("table", json!({ "columnFilters": true, "pagination": true, "pageSize": 50 })),
             ("table", json!({})),
             ("gauge", json!({ "reducer": "mean", "showThresholdMarkers": false })),
             ("bargauge", json!({ "reducer": "last", "displayMode": "lcd", "orientation": "vertical" })),
+            ("bargauge", json!({ "valueDisplay": "color", "namePlacement": "top" })),
             ("piechart", json!({ "pieType": "donut", "reducer": "sum", "labels": "name", "legend": legend })),
+            ("piechart", json!({ "labelPlacement": "outside", "legendValues": ["value"] })),
+            ("piechart", json!({ "legendValues": ["percent", "value"] })),
             (
                 "heatmap",
                 json!({ "mode": "buckets", "xBuckets": 40, "yBuckets": 10, "scale": "sqrt", "tooltip": tooltip }),
@@ -894,6 +914,13 @@ mod tests {
             ("text", json!({ "content": "x".repeat(MAX_CONTENT_CHARS + 1) }), "options.content"),
             ("text", json!({ "html": "<script>" }), "unknown field"),
             ("gauge", json!({ "reducer": "median" }), "options"),
+            ("bar", json!({ "categoryLabels": "rotated" }), "options"),
+            ("bargauge", json!({ "valueDisplay": "glow" }), "options"),
+            ("bargauge", json!({ "namePlacement": "right" }), "options"),
+            ("piechart", json!({ "labelPlacement": "center" }), "options"),
+            ("piechart", json!({ "legendValues": ["max"] }), "options"),
+            ("piechart", json!({ "legendValues": ["value", "percent", "value"] }), "options.legendValues"),
+            ("piechart", json!({ "legendValues": ["percent", "percent"] }), "options.legendValues"),
         ] {
             let err = check(kind, &options, &json!({})).unwrap_err();
             assert!(err.contains(expect), "{kind} {options}: {err}");

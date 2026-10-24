@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
+import { valueAxis } from "../axis";
 import {
   displayNameOf,
   EMPTY_FIELD_CONFIG,
@@ -23,7 +24,6 @@ import { toNumber, valueFields } from "../frame";
 import { HistogramPreview } from "../picker/previews";
 import { Readout, type ReadoutItem } from "../readout";
 import { CheckboxField, EmptyPanel, emptyReason, NumberField } from "../shared";
-import { niceTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
 import "../viz.css";
@@ -151,8 +151,8 @@ function HistogramPanel({
   const buckets = data.edges.length - 1;
   let top = 0;
   for (const s of data.series) for (const c of s.counts) if (c > top) top = c;
-  const ticks = niceTicks(0, Math.max(top, 1), 4);
-  const yMax = ticks.at(-1) ?? 1;
+  // Rounded up to the next tick, so the highest bucket is never cut off.
+  const { ticks, max: yMax } = valueAxis(0, Math.max(top, 1), 4);
   const plotWidth = Math.max(width - AXIS_LEFT - PAD, 10);
   const plotHeight = Math.max(height - AXIS_BOTTOM - PAD, 10);
   const y = (v: number) => PAD + plotHeight - (v / (yMax || 1)) * plotHeight;

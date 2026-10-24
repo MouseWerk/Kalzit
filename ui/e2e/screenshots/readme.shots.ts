@@ -5,7 +5,7 @@ import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
 import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
-import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
+import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -205,6 +205,21 @@ test("dashboard, phone", async ({ browser }) => {
   await shoot(page, "dashboard-phone");
   await page.context().close();
 });
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`panel types, ${colorScheme}`, async ({ browser }) => {
+    const page = await openPage(browser, colorScheme);
+    await signIn(page);
+    await page.goto(`/dashboards/${demo.galleryId}`);
+    await expect(page.getByRole("heading", { name: GALLERY_TITLE })).toBeVisible();
+    await expect(page.locator(".bar__rect")).toHaveCount(12);
+    await expect(page.locator(".bargauge__fill")).toHaveCount(4);
+    await expect(page.locator(".pie__slice")).toHaveCount(4);
+    await expect(page.locator(".text-panel a")).toBeVisible();
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `dashboard-panels-${colorScheme}`);
+    await page.context().close();
+  });
+}
 
 /** The full-page panel editor on the demo's time series, its chart drawn. */
 async function panelEditor(page: Page): Promise<void> {

@@ -487,7 +487,9 @@
     "options": {
       "reducer": "last",
       "displayMode": "basic",
-      "orientation": "horizontal"
+      "orientation": "horizontal",
+      "valueDisplay": "text",
+      "namePlacement": "left"
     },
     "fieldConfig": {
       "defaults": {},
@@ -499,7 +501,9 @@
     "options": {
       "reducer": "last",
       "displayMode": "basic",
-      "orientation": "horizontal"
+      "orientation": "horizontal",
+      "valueDisplay": "text",
+      "namePlacement": "left"
     },
     "fieldConfig": {
       "defaults": {
@@ -574,7 +578,9 @@
     "options": {
       "reducer": "last",
       "displayMode": "basic",
-      "orientation": "horizontal"
+      "orientation": "horizontal",
+      "valueDisplay": "text",
+      "namePlacement": "left"
     },
     "fieldConfig": {
       "defaults": {
@@ -638,9 +644,38 @@
     }
   },
   {
+    "type": "bargauge",
+    "options": {
+      "reducer": "last",
+      "displayMode": "basic",
+      "orientation": "horizontal",
+      "valueDisplay": "color",
+      "namePlacement": "top"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "bargauge",
+    "options": {
+      "reducer": "last",
+      "displayMode": "basic",
+      "orientation": "horizontal",
+      "valueDisplay": "hidden",
+      "namePlacement": "hidden"
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
     "type": "bar",
     "options": {
       "showValues": false,
+      "categoryLabels": "auto",
       "legend": {
         "mode": "list",
         "placement": "bottom",
@@ -659,6 +694,7 @@
     "type": "bar",
     "options": {
       "showValues": false,
+      "categoryLabels": "auto",
       "legend": {
         "mode": "list",
         "placement": "bottom",
@@ -740,6 +776,7 @@
     "type": "bar",
     "options": {
       "showValues": false,
+      "categoryLabels": "auto",
       "legend": {
         "mode": "list",
         "placement": "bottom",
@@ -808,6 +845,25 @@
           }
         }
       ]
+    }
+  },
+  {
+    "type": "bar",
+    "options": {
+      "showValues": true,
+      "categoryLabels": "hidden",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
     }
   },
   {
@@ -971,11 +1027,16 @@
       "pieType": "pie",
       "reducer": "last",
       "labels": "percent",
+      "labelPlacement": "inside",
       "legend": {
         "mode": "list",
         "placement": "bottom",
         "values": []
       },
+      "legendValues": [
+        "value",
+        "percent"
+      ],
       "tooltip": {
         "mode": "all"
       }
@@ -991,11 +1052,16 @@
       "pieType": "pie",
       "reducer": "last",
       "labels": "percent",
+      "labelPlacement": "inside",
       "legend": {
         "mode": "list",
         "placement": "bottom",
         "values": []
       },
+      "legendValues": [
+        "value",
+        "percent"
+      ],
       "tooltip": {
         "mode": "all"
       }
@@ -1074,11 +1140,16 @@
       "pieType": "pie",
       "reducer": "last",
       "labels": "percent",
+      "labelPlacement": "inside",
       "legend": {
         "mode": "list",
         "placement": "bottom",
         "values": []
       },
+      "legendValues": [
+        "value",
+        "percent"
+      ],
       "tooltip": {
         "mode": "all"
       }
@@ -1142,6 +1213,28 @@
           }
         }
       ]
+    }
+  },
+  {
+    "type": "piechart",
+    "options": {
+      "pieType": "pie",
+      "reducer": "last",
+      "labels": "percent",
+      "labelPlacement": "outside",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "legendValues": [],
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
     }
   },
   {

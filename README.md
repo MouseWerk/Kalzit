@@ -52,8 +52,10 @@ off, never a hidden conversion in the backend.
 
 - Folders, version history with restore, trash, and a conflict dialog when two people save at
   once.
-- Visualizations for frames: time series, stat, bar chart, table, gauge, bar gauge, pie and donut,
-  heatmap, histogram, state timeline, status history and text (Markdown with variables).
+- Visualizations for frames: time series, stat, bar chart (grouped series, legend below or on the
+  right), table, gauge, bar gauge (one bar per row, value after the bar), pie and donut (labels on
+  the slices), heatmap, histogram, state timeline, status history and text (Markdown with
+  variables).
 - Visualizations for documents: document list with an expandable tree, single document card,
   schema (field paths with types and coverage) and field distribution.
 - Visualizations for graphs: network (WebGL), hierarchy and path panels; expand a node's
@@ -165,6 +167,8 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Dashboards | Your account and sessions |
 | ![Time series graph styles: a monochrome hatched series, a dashed comparison, bars, points, steps and stacked series](docs/screenshots/graph-styles-light.png) | ![Time series graph styles in the dark theme](docs/screenshots/graph-styles-dark.png) |
 | Time series graph styles | Graph styles, dark theme |
+| ![Text, grouped bar chart, bar gauge and pie panels in the light theme](docs/screenshots/dashboard-panels-light.png) | ![The same panels in the dark theme](docs/screenshots/dashboard-panels-dark.png) |
+| Text, bar chart, bar gauge and pie | The same panels, dark theme |
 | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Panel editor on a phone | Sign in |
 | ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
