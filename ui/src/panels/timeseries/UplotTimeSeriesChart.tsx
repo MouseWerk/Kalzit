@@ -67,7 +67,13 @@ function CursorLine({ x }: { x: number }) {
   return <div className="ts__cursor-line" ref={ref} aria-hidden="true" />;
 }
 
-const EMPTY_STACK: StackedData = { ys: [], baselines: [], below: [], percent: false };
+const EMPTY_STACK: StackedData = {
+  ys: [],
+  baselines: [],
+  below: [],
+  down: [],
+  percent: false,
+};
 
 function aligned(data: ChartData): uPlot.AlignedData {
   return [data.x, ...data.stacked.ys] as uPlot.AlignedData;
@@ -134,8 +140,11 @@ export function UplotTimeSeriesChart({
     for (const tone of TONES) {
       tones[tone] = probeColor(probes, `.tone--${tone}`);
     }
+    // The hatch and the fade come from the tokens the SVG chart uses too, so the two never drift.
     const hatchAlpha = probeNumber(probes, "--chart-hatch-alpha", 0.5);
     const hatchWidth = probeNumber(probes, "--chart-hatch-width", 1);
+    const hatchSpacing = probeNumber(probes, "--chart-hatch-spacing", 6);
+    const fadeTo = probeNumber(probes, "--chart-fade-to", 0.15);
     // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
     // Ticks and labels on the wall clock of the user's time zone.
     const zone = zoneOption(timeZone);
@@ -199,6 +208,8 @@ export function UplotTimeSeriesChart({
             tones,
             hatchAlpha,
             hatchWidth,
+            hatchSpacing,
+            fadeTo,
           };
           return style === undefined
             ? { label: s.name }
@@ -235,6 +246,16 @@ export function UplotTimeSeriesChart({
       chart.setData(chart.data);
     } else {
       const data = chartData(series, styles);
+      // A series that crossed to the other side of zero fills to another series now.
+      if (
+        data.stacked.below.join() !== stackRef.current.below.join() ||
+        data.stacked.down.join() !== stackRef.current.down.join()
+      ) {
+        chart.delBand(null);
+        for (const band of uplotBands(styles, data.stacked)) {
+          chart.addBand(band);
+        }
+      }
       stackRef.current = data.stacked;
       chart.setData(aligned(data));
     }

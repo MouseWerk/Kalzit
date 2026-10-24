@@ -343,3 +343,76 @@ test("dragging a panel makes no long task over 50 ms at 4x CPU throttling", asyn
   }
   expect(Math.min(...rounds)).toBeLessThan(BUDGET_MS);
 });
+
+/** The calibration script's time at full speed on the reference machine. */
+const REFERENCE_CALIBRATION_1X_MS = 56;
+/**
+ * The longest task while three 100,000-point charts (hatched, hue gradient, stacked to 100 %) are
+ * built and drawn again on the canvas: 58 to 67 ms on the reference machine; the budget leaves
+ * room for a busy runner and grows with the calibration on a slower one.
+ */
+const STYLES_TASK_MS = 150;
+
+test("three 100,000-point charts with hatch, gradient and stacking draw again within budget", async ({
+  page,
+  world,
+}) => {
+  const target = (sql: string) => [{ refId: "A", datasourceId: world.sourceId, query: { sql } }];
+  const panel = (id: string, title: string, y: number, sql: string, defaults: object) => ({
+    id,
+    type: "timeseries",
+    title,
+    grid: { x: 0, y, w: 24, h: 6 },
+    targets: target(sql),
+    fieldConfig: { defaults, overrides: [] },
+  });
+  const owner = await Api.owner();
+  const id = await owner.createDashboard({
+    schemaVersion: 1,
+    title: unique("Dichte"),
+    timeRange: { from: "now-30h", to: "now" },
+    variables: [],
+    panels: [
+      panel("hatch", "Hatched", 0, "SELECT ts AS time, a FROM dense ORDER BY ts", {
+        fill: "hatch",
+        gradientMode: "opacity",
+      }),
+      panel("hue", "Hue gradient", 6, "SELECT ts AS time, a, b FROM dense ORDER BY ts", {
+        fill: "solid",
+        gradientMode: "hue",
+      }),
+      panel("stacked", "Stacked to 100 %", 12, "SELECT ts AS time, a, b FROM dense ORDER BY ts", {
+        stack: "percent",
+        fill: "solid",
+      }),
+    ],
+  });
+  await owner.dispose();
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  await expect(page.locator(".ts__uplot canvas")).toHaveCount(3, { timeout: 30_000 });
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 30_000 });
+  const calibration = await calibrate(page);
+  const budget = STYLES_TASK_MS * Math.max(1, calibration / REFERENCE_CALIBRATION_1X_MS);
+  await observe(page);
+  const rounds: number[] = [];
+  // A theme change builds every chart again and draws it on the canvas: paths, the hatch tile,
+  // the gradients and the stacked bands, at full speed.
+  for (let round = 0; round < ROUNDS; round++) {
+    await reset(page);
+    await page.evaluate(
+      (theme) => {
+        document.documentElement.dataset.theme = theme;
+      },
+      round % 2 === 0 ? "dark" : "light",
+    );
+    const { long } = await recorded(page);
+    const worst = Math.max(0, ...long);
+    rounds.push(worst);
+    process.stdout.write(
+      `budget: three 100k-point styled charts drawn again, round ${round + 1}: longest task ${worst.toFixed(0)} ms (budget ${budget.toFixed(0)} ms, calibration ${calibration.toFixed(1)} ms)\n`,
+    );
+  }
+  await expect(page.locator(".ts__uplot canvas")).toHaveCount(3);
+  expect(Math.min(...rounds)).toBeLessThan(budget);
+});

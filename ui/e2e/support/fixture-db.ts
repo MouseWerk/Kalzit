@@ -12,6 +12,26 @@ function sqliteTime(ms: number): string {
   return new Date(ms).toISOString().replace("T", " ").replace("Z", "");
 }
 
+/** Rows of the `dense` table: as many points as one query may return by default. */
+export const DENSE_ROWS = 100_000;
+
+/**
+ * A reading every second over the last 100,000 seconds (about 28 hours), for the drawing budget
+ * of the time series styles: `a` above zero, `b` below, so stacks have both sides.
+ */
+function writeDense(db: DatabaseSync, now: number): void {
+  db.exec("CREATE TABLE dense (ts DATETIME NOT NULL, a REAL NOT NULL, b REAL NOT NULL)");
+  const insert = db.prepare("INSERT INTO dense (ts, a, b) VALUES (?, ?, ?)");
+  const start = Math.floor(now / 1000) * 1000 - (DENSE_ROWS - 1) * 1000;
+  db.exec("BEGIN");
+  for (let i = 0; i < DENSE_ROWS; i++) {
+    const a = 120 + 80 * Math.sin(i / 3000) + (i % 13);
+    const b = -(60 + 40 * Math.cos(i / 2000) + (i % 7));
+    insert.run(sqliteTime(start + i * 1000), Math.round(a * 10) / 10, Math.round(b * 10) / 10);
+  }
+  db.exec("COMMIT");
+}
+
 /**
  * Writes the fixture database: sales per region every five minutes over the last six hours, so
  * Explore's default range (the last hour) and a dashboard's (the last six hours) both find rows.
@@ -39,6 +59,7 @@ export function writeSalesDatabase(file: string, now = Date.now()): void {
       });
     }
     db.exec("COMMIT");
+    writeDense(db, now);
   } finally {
     db.close();
   }
