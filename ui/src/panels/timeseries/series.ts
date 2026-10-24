@@ -68,12 +68,14 @@ export interface Extent {
 }
 
 /** The smallest and largest finite value over all series, or null when there is none. */
-export function valueExtent(series: readonly Series[]): Extent | null {
+export function valueExtent(
+  series: readonly { values: ArrayLike<number | null> }[],
+): Extent | null {
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (const { values } of series) {
     for (let i = 0; i < values.length; i++) {
-      const value = values[i] as number;
+      const value = values[i] ?? Number.NaN;
       if (value < min) min = value;
       if (value > max) max = value;
     }
@@ -93,7 +95,21 @@ export interface Scale {
  * without a value breaks the line instead of bridging the gap.
  */
 export function seriesPath(series: Series, scale: Scale, width: number): string {
-  const { times, values } = series;
+  return linePath(series.times, series.values, scale, width);
+}
+
+/**
+ * `seriesPath` over any times and values (null or NaN where there is none), joined as the
+ * interpolation says: straight, or in steps (before: up then across, after: across then up).
+ * The SVG chart draws a smooth line straight; it shows only while uPlot loads.
+ */
+export function linePath(
+  times: ArrayLike<number>,
+  values: ArrayLike<number | null>,
+  scale: Scale,
+  width: number,
+  interpolation: "linear" | "smooth" | "stepBefore" | "stepAfter" = "linear",
+): string {
   const parts: string[] = [];
   let penDown = false;
   let column = Number.NaN;
@@ -110,14 +126,22 @@ export function seriesPath(series: Series, scale: Scale, width: number): string 
     for (const index of indexes) {
       const x = scale.x(times[index] as number).toFixed(1);
       const y = scale.y(values[index] as number).toFixed(1);
-      parts.push(`${penDown ? "L" : "M"}${x} ${y}`);
+      if (!penDown) {
+        parts.push(`M${x} ${y}`);
+      } else if (interpolation === "stepAfter") {
+        parts.push(`H${x}V${y}`);
+      } else if (interpolation === "stepBefore") {
+        parts.push(`V${y}H${x}`);
+      } else {
+        parts.push(`L${x} ${y}`);
+      }
       penDown = true;
     }
     first = -1;
   };
 
   for (let i = 0; i < times.length; i++) {
-    const value = values[i] as number;
+    const value = values[i] ?? Number.NaN;
     const time = times[i] as number;
     if (Number.isNaN(value) || Number.isNaN(time)) {
       flush();

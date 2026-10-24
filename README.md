@@ -58,6 +58,9 @@ off, never a hidden conversion in the backend.
   schema (field paths with types and coverage) and field distribution.
 - Visualizations for graphs: network (WebGL), hierarchy and path panels; expand a node's
   neighbourhood step by step and undo each step.
+- Time series graph styles: lines, bars or points, smooth or stepped lines, dashed or dotted
+  lines, fills and hatching with gradients, stacking (also to 100 %) and muted comparison series,
+  each settable per series through an override.
 - Field options for every panel: units per language, decimals, thresholds, value mappings,
   colors, display names and overrides; legends and tooltips.
 - Variables from fixed values, free text or a query, sent to the database as parameters, never
@@ -160,6 +163,8 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
 | Dashboards | Your account and sessions |
+| ![Time series graph styles: a monochrome hatched series, a dashed comparison, bars, points, steps and stacked series](docs/screenshots/graph-styles-light.png) | ![Time series graph styles in the dark theme](docs/screenshots/graph-styles-dark.png) |
+| Time series graph styles | Graph styles, dark theme |
 | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Panel editor on a phone | Sign in |
 

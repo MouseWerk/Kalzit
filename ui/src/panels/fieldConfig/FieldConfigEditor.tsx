@@ -17,6 +17,7 @@ import {
   type Tone,
   type ValueMapping,
 } from "./fieldConfig";
+import { GraphStyleEditor } from "./GraphStyleEditor";
 import { patternStatus, usePatternEngine } from "./pattern";
 import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
@@ -367,6 +368,11 @@ function OptionsFields({
   const mappings = options.mappings ?? [];
   return (
     <>
+      {groups.includes("graphStyle") ? (
+        <Section title={t("panels.section.graphStyle")}>
+          <GraphStyleEditor options={options} onChange={onChange} />
+        </Section>
+      ) : null}
       {groups.includes("standard") ? (
         <Section title={t("panels.section.standard")}>
           <UnitPicker

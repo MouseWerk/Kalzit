@@ -18,7 +18,10 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await page.getByLabel(t("datasources.form.name")).fill(source);
   await page.getByLabel(t("datasources.settings.path")).fill(join(fixturesDir(), "sales.db"));
   await page.getByRole("button", { name: t("datasources.form.create") }).click();
-  await expect(page.getByRole("heading", { name: t("datasources.edit.title") })).toBeVisible();
+  // Exactly: the add page's heading contains this one.
+  await expect(
+    page.getByRole("heading", { name: t("datasources.edit.title"), exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: t("datasources.health.test"), exact: true }).click();
   const health = page.locator(".ds-health-region");
   await expect(health).toContainText(pattern("datasources.health.ok"));
