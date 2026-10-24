@@ -730,3 +730,60 @@
     --chart-hatch-width: 1.5;
   }
 }
+
+/*
+ * Bar chart, bar gauge, pie and text panels after the design blueprint. styles.test.ts holds
+ * every pair below to 4.5:1 in every theme:
+ * - `--*-on`: text on a fill of that color (a label on a pie slice), black or white, whichever
+ *   stands out from that color in the scheme.
+ * - `--*-text`: the color as text on the panel surfaces (a bar gauge's value in its bar's
+ *   color), the palette's hue at a lightness that reads as text.
+ * The legend beside a drawing, the bar gauge's bar within its row, the unit after a value, the
+ * underline of links in panel text and its line height follow.
+ */
+@layer tokens {
+  :root {
+    --chart-1-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+    --chart-2-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-3-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-4-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+    --chart-5-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-6-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-7-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-8-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --tone-ok-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --tone-warn-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+    --tone-critical-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --tone-neutral-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+
+    --chart-1-text: light-dark(oklch(46% 0.1 241), var(--chart-1));
+    --chart-2-text: var(--chart-2);
+    --chart-3-text: light-dark(oklch(46% 0.116 249), oklch(74% 0.12 249));
+    --chart-4-text: light-dark(oklch(46% 0.12 35), oklch(74% 0.14 28));
+    --chart-5-text: var(--chart-5);
+    --chart-6-text: light-dark(oklch(31.2% 0.119 326), oklch(76% 0.13 349));
+    --chart-7-text: light-dark(oklch(44% 0.09 88), var(--chart-7));
+    --chart-8-text: light-dark(oklch(28% 0.006 286), oklch(76% 0.006 286));
+    --tone-ok-text: light-dark(oklch(44% 0.11 160), var(--tone-ok));
+    --tone-warn-text: light-dark(oklch(46% 0.1 74), var(--tone-warn));
+    --tone-critical-text: light-dark(oklch(33% 0.14 27), oklch(74% 0.15 27));
+
+    --size-legend-side: 16rem;
+    /* A bar gauge's bar takes this share of its row; the rest is air between the bars. */
+    --size-bargauge-bar: 64%;
+    /* The unit after a large value: a step smaller than the number. */
+    --font-size-unit: 0.6em;
+    --link-underline: 1px;
+    --link-underline-hover: 2px;
+    --line-height-relaxed: 1.6;
+  }
+
+  /* High contrast keeps black and white labels and the strongest text variants. */
+  :root[data-theme="contrast"] {
+    /* The neutral fill is near black on light here. */
+    --tone-neutral-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-3-text: light-dark(oklch(40% 0.116 249), oklch(80% 0.1 249));
+    --chart-4-text: light-dark(oklch(40% 0.12 35), oklch(80% 0.12 28));
+    --tone-critical-text: light-dark(oklch(30% 0.14 27), oklch(80% 0.12 27));
+  }
+}
