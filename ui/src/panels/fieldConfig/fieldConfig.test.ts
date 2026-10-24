@@ -15,7 +15,7 @@ import {
 } from "./fieldConfig";
 import { parseLegend } from "./legendOptions";
 import { compilePattern, loadPatternEngine, MAX_TESTED_CHARS } from "./pattern";
-import { formatAxisTick, formatUnit, fromNow, joinFormatted, UNITS } from "./units";
+import { axisTickFormat, formatUnit, fromNow, joinFormatted, UNITS } from "./units";
 import { legacyUnit, upgradePanel } from "./upgrade";
 
 const NBSP = "\u00a0";
@@ -55,17 +55,37 @@ describe("units", () => {
     expect(shown(1_250_000, "short", "de")).toBe(`1,3${NBSP}Mio.`);
   });
 
-  it("writes axis ticks of plain numbers with an SI letter, other units as they are", () => {
-    expect(formatAxisTick(25_000, undefined, undefined, "en")).toBe(`25${NBSP}k`);
-    expect(formatAxisTick(200_000, "none", undefined, "de")).toBe(`200${NBSP}k`);
-    expect(formatAxisTick(1_500_000, undefined, undefined, "de")).toBe(`1,5${NBSP}M`);
-    expect(formatAxisTick(-50_000, undefined, undefined, "en")).toBe(`-50${NBSP}k`);
-    // Below ten thousand the full number is short enough.
-    expect(formatAxisTick(2500, undefined, undefined, "en")).toBe("2,500");
-    expect(formatAxisTick(0, undefined, undefined, "en")).toBe("0");
-    expect(formatAxisTick(40_000, "suffix:€", undefined, "en")).toBe(`40${NBSP}k${NBSP}€`);
-    expect(formatAxisTick(40_000, "currency:EUR", 0, "en")).toBe("€40,000");
-    expect(formatAxisTick(2_000_000, "bytes", undefined, "en")).toBe(`1.91${NBSP}MiB`);
+  it("writes axis ticks of plain numbers with one SI letter per axis, other units as they are", () => {
+    const axis = (ticks: number[], unit?: string, decimals?: number, language = "en") =>
+      ticks.map(axisTickFormat(ticks, unit, decimals, language));
+    expect(axis([0, 50_000, 100_000, 150_000, 200_000])).toEqual([
+      "0",
+      `50${NBSP}k`,
+      `100${NBSP}k`,
+      `150${NBSP}k`,
+      `200${NBSP}k`,
+    ]);
+    // One decision per axis: 7,500 is not written in full next to 10 k.
+    expect(axis([0, 2500, 5000, 7500, 10_000, 12_500])).toEqual([
+      "0",
+      `2.5${NBSP}k`,
+      `5${NBSP}k`,
+      `7.5${NBSP}k`,
+      `10${NBSP}k`,
+      `12.5${NBSP}k`,
+    ]);
+    // The step decides the digits, not the field's decimals: three ticks, three labels.
+    expect(axis([1_000_000, 1_250_000, 1_500_000], undefined, 0, "de")).toEqual([
+      `1${NBSP}M`,
+      `1,25${NBSP}M`,
+      `1,5${NBSP}M`,
+    ]);
+    expect(axis([-50_000, 0, 50_000], "none")).toEqual([`-50${NBSP}k`, "0", `50${NBSP}k`]);
+    // Below ten thousand the full numbers are short enough.
+    expect(axis([0, 2500, 5000])).toEqual(["0", "2,500", "5,000"]);
+    expect(axis([0, 40_000], "suffix:€")).toEqual(["0", `40${NBSP}k${NBSP}€`]);
+    expect(axis([40_000], "currency:EUR", 0)).toEqual(["€40,000"]);
+    expect(axis([2_000_000], "bytes")).toEqual([`1.91${NBSP}MiB`]);
   });
 
   it("scales SI units and keeps temperatures as they are", () => {

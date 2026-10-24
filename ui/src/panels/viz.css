@@ -9,6 +9,8 @@
     --tone-bg: var(--tone-ok-bg);
     --series-color: var(--tone-ok);
     --series-bg: var(--tone-ok-bg);
+    --series-on: var(--tone-ok-on);
+    --series-text: var(--tone-ok-text);
   }
 
   .tone--warn {
@@ -16,6 +18,8 @@
     --tone-bg: var(--tone-warn-bg);
     --series-color: var(--tone-warn);
     --series-bg: var(--tone-warn-bg);
+    --series-on: var(--tone-warn-on);
+    --series-text: var(--tone-warn-text);
   }
 
   .tone--critical {
@@ -23,6 +27,8 @@
     --tone-bg: var(--tone-critical-bg);
     --series-color: var(--tone-critical);
     --series-bg: var(--tone-critical-bg);
+    --series-on: var(--tone-critical-on);
+    --series-text: var(--tone-critical-text);
   }
 
   .tone--neutral {
@@ -30,6 +36,8 @@
     --tone-bg: var(--bg-active);
     --series-color: var(--border-strong);
     --series-bg: var(--bg-active);
+    --series-on: var(--tone-neutral-on);
+    --series-text: var(--text-muted);
   }
 
   .tone--chart-1,
@@ -38,6 +46,8 @@
     --tone-bg: var(--chart-1-bg);
     --series-color: var(--chart-1);
     --series-bg: var(--chart-1-bg);
+    --series-on: var(--chart-1-on);
+    --series-text: var(--chart-1-text);
   }
 
   .tone--chart-2,
@@ -46,6 +56,8 @@
     --tone-bg: var(--chart-2-bg);
     --series-color: var(--chart-2);
     --series-bg: var(--chart-2-bg);
+    --series-on: var(--chart-2-on);
+    --series-text: var(--chart-2-text);
   }
 
   .tone--chart-3,
@@ -54,6 +66,8 @@
     --tone-bg: var(--chart-3-bg);
     --series-color: var(--chart-3);
     --series-bg: var(--chart-3-bg);
+    --series-on: var(--chart-3-on);
+    --series-text: var(--chart-3-text);
   }
 
   .tone--chart-4,
@@ -62,6 +76,8 @@
     --tone-bg: var(--chart-4-bg);
     --series-color: var(--chart-4);
     --series-bg: var(--chart-4-bg);
+    --series-on: var(--chart-4-on);
+    --series-text: var(--chart-4-text);
   }
 
   .tone--chart-5,
@@ -70,6 +86,8 @@
     --tone-bg: var(--chart-5-bg);
     --series-color: var(--chart-5);
     --series-bg: var(--chart-5-bg);
+    --series-on: var(--chart-5-on);
+    --series-text: var(--chart-5-text);
   }
 
   .tone--chart-6,
@@ -78,6 +96,8 @@
     --tone-bg: var(--chart-6-bg);
     --series-color: var(--chart-6);
     --series-bg: var(--chart-6-bg);
+    --series-on: var(--chart-6-on);
+    --series-text: var(--chart-6-text);
   }
 
   .tone--chart-7,
@@ -86,6 +106,8 @@
     --tone-bg: var(--chart-7-bg);
     --series-color: var(--chart-7);
     --series-bg: var(--chart-7-bg);
+    --series-on: var(--chart-7-on);
+    --series-text: var(--chart-7-text);
   }
 
   .tone--chart-8,
@@ -94,6 +116,8 @@
     --tone-bg: var(--chart-8-bg);
     --series-color: var(--chart-8);
     --series-bg: var(--chart-8-bg);
+    --series-on: var(--chart-8-on);
+    --series-text: var(--chart-8-text);
   }
 
   .heat-1 {
@@ -445,10 +469,27 @@
    * height, and the value grows with the bar.
    */
   .bargauge__box {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  /* Measuring probes: laid out at their real size, never seen or hit. */
+  .bargauge__probe {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  /* Drawn like a value, so measuring it gives the values' font. */
+  .bargauge__probe--value {
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-medium);
   }
 
   .bargauge__list {
@@ -492,12 +533,12 @@
   }
 
   .bargauge__value--color {
-    color: var(--tone, var(--series-color));
+    color: var(--series-text, var(--text));
   }
 
   .bargauge__unit {
     color: var(--text-muted);
-    font-size: 0.6em;
+    font-size: var(--font-size-unit);
     font-weight: var(--font-weight-regular);
   }
 
@@ -590,7 +631,7 @@
     display: block;
     flex: none;
     width: calc((100% - var(--bargauge-value-room, 0px)) * var(--share, 0));
-    height: 64%;
+    height: var(--size-bargauge-bar);
   }
 
   .bargauge--lane .bargauge__value {
@@ -602,15 +643,15 @@
    * Horizontal only: the value's size follows the bar's height (data-value-size, from the code),
    * in the steps of the type scale.
    */
-  .bargauge__box[data-value-size="md"] .bargauge__value {
+  .bargauge__box[data-value-size="md"] :is(.bargauge__value, .bargauge__probe--value) {
     font-size: var(--font-size-md);
   }
 
-  .bargauge__box[data-value-size="lg"] .bargauge__value {
+  .bargauge__box[data-value-size="lg"] :is(.bargauge__value, .bargauge__probe--value) {
     font-size: var(--font-size-lg);
   }
 
-  .bargauge__box[data-value-size="xl"] .bargauge__value {
+  .bargauge__box[data-value-size="xl"] :is(.bargauge__value, .bargauge__probe--value) {
     font-size: var(--font-size-xl);
   }
 
@@ -666,9 +707,9 @@
     dominant-baseline: middle;
   }
 
-  /* On a slice: the text color that stands out from the palette of the theme. */
+  /* On a slice: black or white, whichever stands out from that slice's color (--series-on). */
   .pie__label--inside {
-    fill: var(--chart-label-on);
+    fill: var(--series-on, var(--text));
     font-weight: var(--font-weight-medium);
     pointer-events: none;
   }
@@ -860,13 +901,14 @@
    */
   .text-panel {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: var(--space-3);
     height: 100%;
     overflow: auto;
     font-size: var(--font-size-md);
     line-height: var(--line-height-relaxed);
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
   }
 
   .text-panel h3,
@@ -938,12 +980,12 @@
 
   .text-panel a {
     color: var(--accent-text);
-    text-decoration-thickness: var(--border-width);
+    text-decoration-thickness: var(--link-underline);
     text-underline-offset: var(--space-px);
   }
 
   .text-panel a:hover {
-    text-decoration-thickness: var(--focus-ring-width);
+    text-decoration-thickness: var(--link-underline-hover);
   }
 
   .text-panel__table {

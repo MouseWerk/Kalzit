@@ -172,6 +172,7 @@
   "panels.bargauge.namePlacement.top": "Above the bar",
   "panels.bargauge.namePlacement.hidden": "Hidden",
   "panels.bargauge.truncated": "Only the first {count} rows are shown as bars.",
+  "panels.bargauge.dropped": "Only the first result is shown, with its first value field.",
   "panels.bar.categoryLabels": "Category names",
   "panels.bar.categoryLabels.auto": "As many as fit",
   "panels.bar.categoryLabels.hidden": "Hidden",

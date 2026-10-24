@@ -56,6 +56,14 @@ export const LCD_CELLS = 20;
 /** Bars beyond this many rows are left out with a note: each must stay a readable line. */
 export const MAX_GAUGE_ROWS = 100;
 
+export interface GaugeItems {
+  items: ReducedItem[];
+  /** Rows beyond MAX_GAUGE_ROWS were left out. */
+  truncated: boolean;
+  /** Bars come from the rows of one result; further results with values are not shown. */
+  dropped: boolean;
+}
+
 /**
  * The bars: a result of categories (a text field, no time, several rows) gives one bar per row
  * of its first value field, named by the text, all on the field's range, as the pie takes its
@@ -67,7 +75,7 @@ export function gaugeItems(
   reducer: Reducer,
   language: string,
   zone: string | null,
-): ReducedItem[] {
+): GaugeItems {
   const byRow = frames.find(
     (f) =>
       rowCount(f) > 1 &&
@@ -78,17 +86,18 @@ export function gaugeItems(
   const label = byRow?.fields.find((field) => field.type === "string");
   const field = byRow === undefined ? undefined : valueFields(byRow)[0];
   if (byRow === undefined || label === undefined || field === undefined) {
-    return onOneScale(
+    const items = onOneScale(
       reduceFrames(frames, config, reducer, language, zone),
       reducer,
       language,
       zone,
     );
+    return { items, truncated: false, dropped: false };
   }
   const options = fieldOptionsFor(field, config);
   const range = defaultRange(field, options);
   const count = Math.min(rowCount(byRow), MAX_GAUGE_ROWS);
-  return Array.from({ length: count }, (_, row) => ({
+  const items = Array.from({ length: count }, (_, row) => ({
     frame: byRow,
     field,
     options,
@@ -98,12 +107,24 @@ export function gaugeItems(
     range,
     index: row,
   }));
+  return {
+    items,
+    truncated: rowCount(byRow) > MAX_GAUGE_ROWS,
+    dropped:
+      valueFields(byRow).length > 1 ||
+      frames.some((f) => f !== byRow && valueFields(f).length > 0 && rowCount(f) > 0),
+  };
 }
 
+/** Units whose range is fixed by the unit itself (0 to 100, 0 to 1), never shared with others. */
+const OWN_RANGE_UNITS = new Set(["percent", "percentunit"]);
+
 /**
- * Bars side by side are compared, so fields without a min or max of their own share one scale:
- * from the lowest to the highest of their ranges. Otherwise each field would fill its own bar
- * (a reduced last value is often its field's maximum) and every bar would look full.
+ * Bars side by side are compared, so fields of the same unit without a min or max of their own
+ * share one scale: from the lowest to the highest of their ranges. Otherwise each field would
+ * fill its own bar (a reduced last value is often its field's maximum) and every bar would look
+ * full. Fields of different units are never put on one scale (60 % next to 6 GB would leave the
+ * percent bar empty), and percentages keep their own 0 to 100.
  */
 function onOneScale(
   items: ReducedItem[],
@@ -111,20 +132,26 @@ function onOneScale(
   language: string,
   zone: string | null,
 ): ReducedItem[] {
-  const free = items.filter(
-    (item) => item.options.min === undefined && item.options.max === undefined,
-  );
-  if (free.length < 2) {
-    return items;
+  const groups = new Map<string, ReducedItem[]>();
+  for (const item of items) {
+    const unit = item.options.unit ?? "";
+    if (item.options.min !== undefined || item.options.max !== undefined) continue;
+    if (OWN_RANGE_UNITS.has(unit)) continue;
+    groups.set(unit, [...(groups.get(unit) ?? []), item]);
   }
-  const min = Math.min(...free.map((item) => item.range.min));
-  // A sum can pass the largest single value, which is where a field's own range ends.
-  const max = Math.max(...free.flatMap((item) => [item.range.max, item.display.numeric ?? 0]));
+  const shared = new Map<ReducedItem, { min: number; max: number }>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const min = Math.min(...group.map((item) => item.range.min));
+    // A sum can pass the largest single value, which is where a field's own range ends.
+    const max = Math.max(...group.flatMap((item) => [item.range.max, item.display.numeric ?? 0]));
+    for (const item of group) shared.set(item, { min, max });
+  }
   return items.map((item) => {
-    if (!free.includes(item)) {
+    const range = shared.get(item);
+    if (range === undefined) {
       return item;
     }
-    const range = { min, max };
     // The thresholds in percent read the range, so the value is shown again on the shared one.
     const display =
       item.display.numeric === null
@@ -158,16 +185,24 @@ export function lcdCells(item: ReducedItem): { lit: boolean; tone: Tone | undefi
   });
 }
 
-/** Height of one row of a horizontal bar gauge, in px: the panel's height shared out. */
+/** The least and largest height of a horizontal bar gauge's row, in px. */
 const ROW_MIN = 20;
 const ROW_MAX = 40;
-/** The gap between rows (--space-2) and the name line above a bar (--font-size-sm high). */
-const ROW_GAP = 8;
-const NAME_LINE = 18;
-/** Room between a bar's end and its value, in px (--space-2). */
-const VALUE_GAP = 8;
 /** Spare room after the widest value: canvas measuring may run before the web font is drawn. */
 const VALUE_SLACK = 4;
+
+/**
+ * Lengths the layout takes from the stylesheet, in px: the gap between rows, the line of a name
+ * above its bar, and the gap between a bar's end and its value. Read once the rows are drawn;
+ * until then (and where nothing is laid out, as in the tests) these stand in for them.
+ */
+export interface GaugeMetrics {
+  rowGap: number;
+  nameLine: number;
+  valueGap: number;
+}
+
+export const FALLBACK_METRICS: GaugeMetrics = { rowGap: 8, nameLine: 18, valueGap: 8 };
 
 /**
  * Row and bar height of a horizontal bar gauge: the rows share the panel's height between a
@@ -177,11 +212,12 @@ export function gaugeRows(
   height: number,
   count: number,
   namePlacement: BarGaugeOptions["namePlacement"],
+  metrics: GaugeMetrics = FALLBACK_METRICS,
 ): { row: number; bar: number } {
-  const shared = count > 0 ? (height - ROW_GAP * (count - 1)) / count : height;
-  const least = namePlacement === "top" ? ROW_MIN + NAME_LINE : ROW_MIN;
-  const row = Math.floor(Math.min(Math.max(shared, least), ROW_MAX + least - ROW_MIN));
-  return { row, bar: namePlacement === "top" ? row - NAME_LINE : row };
+  const shared = count > 0 ? (height - metrics.rowGap * (count - 1)) / count : height;
+  const name = namePlacement === "top" ? metrics.nameLine : 0;
+  const row = Math.floor(Math.min(Math.max(shared, ROW_MIN + name), ROW_MAX + name));
+  return { row, bar: row - name };
 }
 
 /**
@@ -242,22 +278,48 @@ function Bar({ item, options }: { item: ReducedItem; options: BarGaugeOptions })
   );
 }
 
-/** The font of the values, read again whenever their size step changes. */
-function useValueFont(
-  probe: RefObject<HTMLElement | null>,
+const px = (value: string) => {
+  const number = Number.parseFloat(value);
+  return Number.isFinite(number) ? number : undefined;
+};
+
+/**
+ * The values' font and the layout's lengths, read from the drawn list and its probes. Read
+ * again when the value's size step changes; the body mounts only with rows, so the list is
+ * there the first time this runs.
+ */
+function useGaugeMetrics(
+  list: RefObject<HTMLElement | null>,
+  valueProbe: RefObject<HTMLElement | null>,
+  nameProbe: RefObject<HTMLElement | null>,
   size: string | undefined,
-): string | null {
-  const [font, setFont] = useState<string | null>(null);
+): { font: string | null; metrics: GaugeMetrics } {
+  const [read, setRead] = useState<{ font: string | null; metrics: GaugeMetrics }>({
+    font: null,
+    metrics: FALLBACK_METRICS,
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: the size step changes the probe's font
   useLayoutEffect(() => {
-    const element = probe.current;
-    if (element === null) {
+    const listElement = list.current;
+    const value = valueProbe.current;
+    if (listElement === null || value === null) {
       return;
     }
-    const style = getComputedStyle(element);
-    setFont(`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`);
-  }, [probe, size]);
-  return font;
+    const valueStyle = getComputedStyle(value);
+    const lane = listElement.querySelector(".bargauge__lane");
+    const nameHeight = nameProbe.current?.getBoundingClientRect().height ?? 0;
+    setRead({
+      font: `${valueStyle.fontWeight} ${valueStyle.fontSize} ${valueStyle.fontFamily}`,
+      metrics: {
+        rowGap: px(getComputedStyle(listElement).rowGap) ?? FALLBACK_METRICS.rowGap,
+        nameLine: nameHeight > 0 ? Math.ceil(nameHeight) : FALLBACK_METRICS.nameLine,
+        valueGap:
+          (lane === null ? undefined : px(getComputedStyle(lane).columnGap)) ??
+          FALLBACK_METRICS.valueGap,
+      },
+    });
+  }, [list, valueProbe, nameProbe, size]);
+  return read;
 }
 
 /** A bar of the lane layout: as long as its share of what is left after the widest value. */
@@ -277,14 +339,41 @@ function BarGaugePanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<BarGaugeOptions>) {
-  const { t, language, timeZone } = useI18n();
+  const { language, timeZone } = useI18n();
+  const gauge = gaugeItems(frames, fieldConfig, options.reducer, language, timeZone);
+  // Without any row there is nothing to reduce, even when the fields are there.
+  if (gauge.items.length === 0 || emptyReason(frames, "noValues") === "noData") {
+    return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
+  }
+  return <GaugeBody gauge={gauge} options={options} title={title} />;
+}
+
+/**
+ * The drawn gauge, a component of its own: it mounts with its rows, so its size and font are
+ * measured from the start even when the panel first showed no data.
+ */
+function GaugeBody({
+  gauge,
+  options,
+  title,
+}: {
+  gauge: GaugeItems;
+  options: BarGaugeOptions;
+  title: string;
+}) {
+  const { t } = useI18n();
+  const { items } = gauge;
   const listRef = useRef<HTMLUListElement>(null);
-  const probeRef = useRef<HTMLSpanElement>(null);
+  const valueProbeRef = useRef<HTMLSpanElement>(null);
+  const nameProbeRef = useRef<HTMLSpanElement>(null);
   const { height } = useElementSize(listRef);
-  const items = gaugeItems(frames, fieldConfig, options.reducer, language, timeZone);
-  const { row, bar } = gaugeRows(height, items.length, options.namePlacement);
-  const size = options.orientation === "horizontal" ? valueSize(bar) : undefined;
-  const valueFont = useValueFont(probeRef, size);
+  const [size, setSize] = useState<ReturnType<typeof valueSize> | undefined>(undefined);
+  const { font, metrics } = useGaugeMetrics(listRef, valueProbeRef, nameProbeRef, size);
+  const { row, bar } = gaugeRows(height, items.length, options.namePlacement, metrics);
+  const nextSize = options.orientation === "horizontal" ? valueSize(bar) : undefined;
+  if (nextSize !== size) {
+    setSize(nextSize);
+  }
   // Horizontal bars in the basic style stand on no track: each value follows its bar's end, and
   // the longest bar leaves room for the widest value.
   const lane = options.orientation === "horizontal" && options.displayMode === "basic";
@@ -299,21 +388,15 @@ function BarGaugePanel({
               item.display.suffix === ""
                 ? shownValue(item)
                 : `${shownValue(item)} ${item.display.suffix}`,
-              valueFont,
+              font,
             ),
           ),
         );
-  const valueRoom = widest === 0 ? 0 : Math.ceil(widest) + VALUE_GAP + VALUE_SLACK;
+  const valueRoom = widest === 0 ? 0 : Math.ceil(widest) + metrics.valueGap + VALUE_SLACK;
   useStyleVars(listRef, {
     "--bargauge-row": `${row}px`,
     "--bargauge-value-room": `${valueRoom}px`,
   });
-  // Without any row there is nothing to reduce, even when the fields are there.
-  if (items.length === 0 || emptyReason(frames, "noValues") === "noData") {
-    return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
-  }
-  const truncated =
-    frames.some((f) => rowCount(f) > MAX_GAUGE_ROWS) && items.length === MAX_GAUGE_ROWS;
   return (
     <Readout
       title={title}
@@ -322,7 +405,7 @@ function BarGaugePanel({
       className={`bargauge bargauge--${options.orientation} bargauge--name-${options.namePlacement}${lane ? " bargauge--lane" : ""}`}
     >
       {(active, hover) => (
-        <div className="bargauge__box" data-value-size={size}>
+        <div className="bargauge__box" data-value-size={nextSize}>
           <ul className="bargauge__list" ref={listRef}>
             {items.map((item, index) => {
               const tone = item.display.tone ?? item.options.color;
@@ -376,17 +459,21 @@ function BarGaugePanel({
               );
             })}
           </ul>
-          {/* Measures the values at their drawn size, so the longest bar leaves them room. */}
+          {/* Measure the values at their drawn size and a name's line, from the stylesheet. */}
           <span
-            className="bargauge__value bargauge__probe visually-hidden"
-            ref={probeRef}
+            className="bargauge__probe bargauge__probe--value"
+            ref={valueProbeRef}
             aria-hidden="true"
           />
-          {truncated ? (
+          <span className="bargauge__probe" ref={nameProbeRef} aria-hidden="true">
+            M
+          </span>
+          {gauge.truncated ? (
             <p className="panel-note">
               {t("panels.bargauge.truncated", { count: MAX_GAUGE_ROWS })}
             </p>
           ) : null}
+          {gauge.dropped ? <p className="panel-note">{t("panels.bargauge.dropped")}</p> : null}
         </div>
       )}
     </Readout>

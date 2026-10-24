@@ -834,6 +834,23 @@ describe("contrast in every theme", () => {
     ...["--chart-mono", "--chart-mono-compare"].map(
       (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
     ),
+    // Labels on pie slices: the label color of each series and tone on its own fill.
+    ...[
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`--chart-${n}-on`, `--chart-${n}`]),
+      ["--tone-ok-on", "--tone-ok"],
+      ["--tone-warn-on", "--tone-warn"],
+      ["--tone-critical-on", "--tone-critical"],
+      ["--tone-neutral-on", "--border-strong"],
+    ].map(([on, fill]) => [on, [fill], TEXT] as [string, string[], number]),
+    // A series or tone color as text, such as a bar gauge's value in its bar's color.
+    ...[
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `--chart-${n}-text`),
+      "--tone-ok-text",
+      "--tone-warn-text",
+      "--tone-critical-text",
+    ].map(
+      (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], TEXT] as [string, string[], number],
+    ),
   ];
 
   // Chart series must be told apart by everyone: every pair at least SERIES_APART and series that

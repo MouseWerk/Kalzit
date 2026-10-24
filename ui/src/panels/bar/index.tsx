@@ -22,7 +22,7 @@ import {
   seriesStats,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { formatAxisTick } from "../fieldConfig/units";
+import { axisTickFormat } from "../fieldConfig/units";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { formatValue, rowCount, toNumber, valueFields } from "../frame";
 import { labelWidth, useProbeFont } from "../measure";
@@ -165,12 +165,9 @@ function BarPanel({
   const yMax = config.defaults.max ?? ticks.at(-1) ?? 1;
   const axisOptions = data.series[0]?.options ?? config.defaults;
   const axisUnit = axisOptions.unit === "none" ? undefined : axisOptions.unit;
-  const axisTicks = ticks
-    .filter((tick) => tick >= yMin && tick <= yMax)
-    .map((tick) => ({
-      tick,
-      text: formatAxisTick(tick, axisUnit, axisOptions.decimals, language),
-    }));
+  const inRange = ticks.filter((tick) => tick >= yMin && tick <= yMax);
+  const tickText = axisTickFormat(inRange, axisUnit, axisOptions.decimals, language);
+  const axisTicks = inRange.map((tick) => ({ tick, text: tickText(tick) }));
   // The value axis is as wide as its widest label, so short labels leave the bars more room.
   const axisLeft =
     Math.ceil(Math.max(0, ...axisTicks.map(({ text }) => labelWidth(text, labelFont)))) + AXIS_GAP;
@@ -219,7 +216,7 @@ function BarPanel({
       const value = stats[key];
       values[key] = Number.isNaN(value) ? "" : displayText(shown(s, value));
     }
-    return { name: s.name, colorClass: toneClass(s.options.color, index), values };
+    return { name: s.name, colorClass: colorOf(s.options.color, index), values };
   });
   // One series needs no legend: the title names it.
   const legend =
@@ -277,7 +274,8 @@ function BarPanel({
                         const tone = display.tone ?? s.options.color;
                         const x = x0 + index * slots.step;
                         const text = options.showValues ? displayText(display) : "";
-                        // A value is written above its bar only where it fits the bar's width.
+                        // A value is written at its bar's end (above, or below a negative bar) only
+                        // where it fits the bar's width.
                         const fits = text !== "" && labelWidth(text, labelFont) <= slots.step;
                         return (
                           // biome-ignore lint/suspicious/noArrayIndexKey: series order is fixed
@@ -294,7 +292,7 @@ function BarPanel({
                               <text
                                 className="ts__label"
                                 x={x + slots.width / 2}
-                                y={barTop - 6}
+                                y={value < 0 ? barBottom + VALUE_ROOM / 2 + 4 : barTop - 6}
                                 textAnchor="middle"
                               >
                                 {text}

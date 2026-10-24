@@ -59,8 +59,15 @@ function parseOptions(stored: unknown): PieOptions {
     labels: PIE_LABELS.find((l) => l === value.labels) ?? "percent",
     labelPlacement: LABEL_PLACEMENTS.find((p) => p === value.labelPlacement) ?? "inside",
     legend: parseLegend(value),
+    // In the stored order, each once; the server refuses repeats.
     legendValues: Array.isArray(value.legendValues)
-      ? PIE_LEGEND_VALUES.filter((v) => (value.legendValues as unknown[]).includes(v))
+      ? [
+          ...new Set(
+            (value.legendValues as unknown[]).filter((v): v is PieLegendValue =>
+              PIE_LEGEND_VALUES.some((known) => known === v),
+            ),
+          ),
+        ]
       : [...PIE_LEGEND_VALUES],
     tooltip: parseTooltip(value),
   };
@@ -156,8 +163,9 @@ const INSIDE_AT = 0.64;
 
 /**
  * Where a label goes on its slice, or null when it does not fit there: at the middle of the
- * ring for a donut, a little outside the middle for a pie, so the slice is wide enough for the
- * text along its arc and deep enough across it.
+ * ring for a donut, a little outside the middle for a pie. The label is horizontal text, so its
+ * box (with a little room around it) is tested corner by corner: every corner has to lie inside
+ * the ring and within the slice's angles, wherever on the circle the slice is.
  */
 export function insideLabel(
   arc: { from: number; to: number },
@@ -166,9 +174,24 @@ export function insideLabel(
   textWidth: number,
 ): { radius: number } | null {
   const radius = inner > 0 ? (inner + outer) / 2 : outer * INSIDE_AT;
-  const along = Math.min(arc.to - arc.from, Math.PI) * radius;
-  const across = outer - inner;
-  const fits = along >= textWidth + LABEL_ROOM && across >= LABEL_HEIGHT + LABEL_ROOM;
+  const mid = (arc.from + arc.to) / 2;
+  const x = radius * Math.sin(mid);
+  const y = -radius * Math.cos(mid);
+  const halfWidth = (textWidth + LABEL_ROOM) / 2;
+  const halfHeight = (LABEL_HEIGHT + LABEL_ROOM) / 2;
+  const whole = arc.to - arc.from >= Math.PI * 2 - 1e-9;
+  const TURN = Math.PI * 2;
+  const inside = (px: number, py: number) => {
+    const distance = Math.hypot(px, py);
+    if (distance > outer || distance < inner) return false;
+    if (whole) return true;
+    // Angles clockwise from twelve o'clock, as the slices are drawn.
+    const angle = (((Math.atan2(px, -py) - arc.from) % TURN) + TURN) % TURN;
+    return angle <= arc.to - arc.from;
+  };
+  const fits = [-1, 1].every((sx) =>
+    [-1, 1].every((sy) => inside(x + sx * halfWidth, y + sy * halfHeight)),
+  );
   return fits ? { radius } : null;
 }
 
@@ -332,7 +355,11 @@ function PiePanel({
                   <text
                     // biome-ignore lint/suspicious/noArrayIndexKey: slices keep their order
                     key={index}
-                    className={inside ? "pie__label pie__label--inside" : "pie__label"}
+                    className={
+                      inside
+                        ? `pie__label pie__label--inside ${classOf(slices[index] as Slice, index)}`
+                        : "pie__label"
+                    }
                     x={x.toFixed(2)}
                     y={y.toFixed(2)}
                     textAnchor={anchor}
@@ -403,9 +430,10 @@ function PieEditor({ options, onChange }: PanelEditorProps<PieOptions>) {
               onChange={(checked) =>
                 onChange({
                   ...options,
-                  legendValues: PIE_LEGEND_VALUES.filter((v) =>
-                    v === value ? checked : options.legendValues.includes(v),
-                  ),
+                  // The order stays as chosen; a checked value joins at the end.
+                  legendValues: checked
+                    ? [...options.legendValues.filter((v) => v !== value), value]
+                    : options.legendValues.filter((v) => v !== value),
                 })
               }
             />

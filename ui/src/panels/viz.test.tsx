@@ -7,7 +7,7 @@ import { sampleSchema } from "../documents/schema";
 import type { PanelModel } from "../features/dashboards/model";
 import { PanelBody } from "../features/dashboards/PanelCard";
 import { barSlots } from "./bar";
-import { gaugeItems, gaugeRows, valueSize } from "./bargauge";
+import { gaugeItems, gaugeRows, MAX_GAUGE_ROWS, valueSize } from "./bargauge";
 import { DEFAULT_THRESHOLDS, type FieldConfig } from "./fieldConfig/fieldConfig";
 import { loadPatternEngine } from "./fieldConfig/pattern";
 import { generateGraph } from "./graph/test/generate";
@@ -267,14 +267,17 @@ describe("gauge and bar gauge", () => {
         { name: "score", type: "number", values: [50, 100, 25] },
       ],
     };
-    const items = gaugeItems([byRow], NONE, "last", "en", "UTC");
+    const { items, truncated, dropped } = gaugeItems([byRow], NONE, "last", "en", "UTC");
+    expect([truncated, dropped]).toEqual([false, false]);
     expect(items.map((item) => [item.name, item.display.text, item.range])).toEqual([
       ["Alpha", "50", { min: 0, max: 100 }],
       ["Beta", "100", { min: 0, max: 100 }],
       ["Gamma", "25", { min: 0, max: 100 }],
     ]);
     const { container } = renderPanel("bargauge", [byRow]);
-    const names = [...container.querySelectorAll(".bargauge__name")].map((n) => n.textContent);
+    const names = [...container.querySelectorAll(".bargauge__item .bargauge__name")].map(
+      (n) => n.textContent,
+    );
     expect(names).toEqual(["Alpha", "Beta", "Gamma"]);
     const fills = shares(container);
     expect(fills).toEqual(["0.5", "1", "0.25"]);
@@ -299,6 +302,53 @@ describe("gauge and bar gauge", () => {
     expect(shares(second)).toEqual(["1", "1"]);
   });
 
+  it("shares a scale only between fields of one unit; percentages keep 0 to 100", () => {
+    const mixed: Frame = {
+      fields: [
+        { name: "cpu", type: "number", values: [60] },
+        { name: "memory", type: "number", values: [6e9] },
+        { name: "disk", type: "number", values: [3e9] },
+      ],
+    };
+    const units: FieldConfig = {
+      defaults: { unit: "bytes" },
+      overrides: [{ matcher: { type: "name", value: "cpu" }, properties: { unit: "percent" } }],
+    };
+    const { container } = renderPanel("bargauge", [mixed], { reducer: "last" }, units);
+    expect(shares(container)).toEqual(["0.6", "1", "0.5"]);
+  });
+
+  it("draws at most a hundred rows and says so, and names results it leaves out", () => {
+    const many: Frame = {
+      fields: [
+        { name: "host", type: "string", values: Array.from({ length: 150 }, (_, i) => `h${i}`) },
+        { name: "load", type: "number", values: Array.from({ length: 150 }, (_, i) => i) },
+      ],
+    };
+    const gauge = gaugeItems([many], NONE, "last", "en", "UTC");
+    expect([gauge.items.length, gauge.truncated]).toEqual([MAX_GAUGE_ROWS, true]);
+    renderPanel("bargauge", [many]);
+    expect(screen.getByText("Only the first 100 rows are shown as bars.")).toBeTruthy();
+    const other: Frame = { fields: [{ name: "v", type: "number", values: [1] }] };
+    expect(gaugeItems([many, other], NONE, "last", "en", "UTC").dropped).toBe(true);
+  });
+
+  it("lays out its rows once data arrives after an empty first result", () => {
+    const plugin = getPanel("bargauge") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    const draw = (frames: Frame[]) => (
+      <Panel frames={frames} options={plugin.options({})} timeRange={RANGE} title="Panel" />
+    );
+    const { container, rerender } = render(draw([]));
+    expect(container.querySelector(".bargauge__list")).toBeNull();
+    rerender(draw([{ fields: [{ name: "v", type: "number", values: [5] }] }]));
+    const list = container.querySelector<HTMLElement>(".bargauge__list");
+    expect(list?.style.getPropertyValue("--bargauge-row")).toMatch(/^\d+px$/);
+    expect(
+      container.querySelector(".bargauge__box")?.getAttribute("data-value-size"),
+    ).not.toBeNull();
+  });
+
   it("shares the height out to its rows and sizes the value to the bar", () => {
     expect(gaugeRows(300, 7, "left")).toEqual({ row: 36, bar: 36 });
     // Few rows stop at the largest height; the name above a bar takes a line of the row.
@@ -321,7 +371,7 @@ describe("gauge and bar gauge", () => {
       namePlacement: "hidden",
     });
     expect(bare.querySelector(".bargauge__item .bargauge__value")).toBeNull();
-    expect(bare.querySelector(".bargauge__name")).toBeNull();
+    expect(bare.querySelector(".bargauge__item .bargauge__name")).toBeNull();
     // The readout still names the value.
     expect(bare.querySelector("[role=group]")?.getAttribute("aria-label")).toBe("Panel");
   });
@@ -406,6 +456,9 @@ describe("pie chart", () => {
     // A thin ring has no depth for a line of text.
     expect(insideLabel({ from: 0, to: Math.PI }, 92, 100, 10)).toBeNull();
     expect(insideLabel({ from: 0, to: Math.PI }, 50, 100, 10)).toEqual({ radius: 75 });
+    // Horizontal text runs along a slice at twelve o'clock but across one at three o'clock.
+    expect(insideLabel({ from: -0.8, to: 0.8 }, 0, 100, 80)).toEqual({ radius: 64 });
+    expect(insideLabel({ from: Math.PI / 2 - 0.8, to: Math.PI / 2 + 0.8 }, 0, 100, 80)).toBeNull();
   });
 
   it("lists the legend values chosen, in a table beside the circle", () => {

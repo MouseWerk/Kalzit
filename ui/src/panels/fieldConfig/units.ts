@@ -346,26 +346,46 @@ export function formatUnit(
 
 /** Thousands, millions, ... with the SI letters, the same in every language: 25 k, 1.5 M. */
 const AXIS_STEPS = powers(1000, SI_BIG, "");
+/** From this largest tick on (five digits), plain numbers are written compactly. */
+const AXIS_COMPACT_FROM = 10_000;
 
 /**
- * A tick label on a value axis: plain numbers (no unit, `none` or a custom suffix) of four digits
- * and more are written compactly with an SI letter, so the axis stays narrow (200 k, not
- * 200,000); every other unit formats as it does elsewhere, most of them already scale.
+ * The tick labels of one value axis. Plain numbers (no unit, `none` or a custom suffix) are
+ * written compactly with one SI letter for the whole axis when its largest tick has five digits
+ * or more (200 k, not 200,000), with as many fraction digits as the step between ticks needs
+ * (1 M, 1.25 M, 1.5 M); the field's decimals are for values, not for that. Every other unit
+ * formats as it does elsewhere; most of them already scale.
  */
-export function formatAxisTick(
-  value: number,
+export function axisTickFormat(
+  ticks: readonly number[],
   unitId: string | undefined,
   decimals: number | undefined,
   language: string,
-): string {
+): (value: number) => string {
   const def = unitId === undefined || unitId === "" ? undefined : BY_ID.get(unitId);
   const plainNumber = def === undefined || def.id === "none";
-  if (!plainNumber || !Number.isFinite(value) || Math.abs(value) < 10_000) {
-    return joinFormatted(formatUnit(value, unitId, decimals, language));
+  const largest = Math.max(0, ...ticks.filter(Number.isFinite).map(Math.abs));
+  if (!plainNumber || largest < AXIS_COMPACT_FROM) {
+    return (value) => joinFormatted(formatUnit(value, unitId, decimals, language));
   }
-  const { text, suffix } = scaled(AXIS_STEPS)(value, decimals, language);
+  let index = 0;
+  AXIS_STEPS.forEach(([factor], i) => {
+    if (largest >= factor) index = i;
+  });
+  const [factor, letter] = AXIS_STEPS[index] as [number, string];
+  const sorted = [...ticks].filter(Number.isFinite).sort((a, b) => a - b);
+  const steps = sorted.slice(1).map((tick, i) => tick - (sorted[i] as number));
+  const step = Math.min(...steps.filter((s) => s > 0), largest) / factor;
+  // The fewest fraction digits that write the step exactly (2.5 needs one, 0.25 two).
+  let digits = 0;
+  while (digits < 3 && Math.abs(step * 10 ** digits - Math.round(step * 10 ** digits)) > 1e-6) {
+    digits++;
+  }
+  const format = numberFormat(language, { maximumFractionDigits: digits });
   const custom = def === undefined && unitId !== undefined ? customSuffix(unitId) : "";
-  return joinFormatted({ text, suffix: custom === "" ? suffix : `${suffix} ${custom}` });
+  const suffix = custom === "" ? letter : `${letter} ${custom}`;
+  return (value) =>
+    value === 0 ? format.format(0) : joinFormatted({ text: format.format(value / factor), suffix });
 }
 
 /** Value and unit as one string, joined with a no-break space so they never wrap apart. */

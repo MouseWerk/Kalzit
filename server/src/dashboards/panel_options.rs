@@ -675,8 +675,11 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
         "bargauge" => parse::<BarGaugeOptions>("options", options).map(|_| ()),
         "piechart" => {
             let o: PieOptions = parse("options", options)?;
-            if o.legend_values.as_ref().is_some_and(|v| v.len() > 2) {
-                return Err("options.legendValues takes at most 2 entries".into());
+            if let Some(values) = &o.legend_values {
+                let kinds: Vec<_> = values.iter().map(std::mem::discriminant).collect();
+                if kinds.iter().enumerate().any(|(i, kind)| kinds[..i].contains(kind)) {
+                    return Err("options.legendValues takes each value once".into());
+                }
             }
             check_legend(o.legend.as_ref())
         }
@@ -794,6 +797,7 @@ mod tests {
             ("bargauge", json!({ "valueDisplay": "color", "namePlacement": "top" })),
             ("piechart", json!({ "pieType": "donut", "reducer": "sum", "labels": "name", "legend": legend })),
             ("piechart", json!({ "labelPlacement": "outside", "legendValues": ["value"] })),
+            ("piechart", json!({ "legendValues": ["percent", "value"] })),
             (
                 "heatmap",
                 json!({ "mode": "buckets", "xBuckets": 40, "yBuckets": 10, "scale": "sqrt", "tooltip": tooltip }),
@@ -916,6 +920,7 @@ mod tests {
             ("piechart", json!({ "labelPlacement": "center" }), "options"),
             ("piechart", json!({ "legendValues": ["max"] }), "options"),
             ("piechart", json!({ "legendValues": ["value", "percent", "value"] }), "options.legendValues"),
+            ("piechart", json!({ "legendValues": ["percent", "percent"] }), "options.legendValues"),
         ] {
             let err = check(kind, &options, &json!({})).unwrap_err();
             assert!(err.contains(expect), "{kind} {options}: {err}");

@@ -72,4 +72,40 @@ test.describe("360 px wide", () => {
     expect(overflow.offenders).toEqual([]);
     expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);
   });
+
+  test("text with a long word or address wraps instead of scrolling sideways", async ({
+    page,
+    world,
+  }) => {
+    const owner = await Api.owner();
+    const id = await owner.createDashboard({
+      schemaVersion: 1,
+      title: "Long words",
+      timeRange: { from: "now-6h", to: "now" },
+      variables: [],
+      panels: [
+        {
+          id: "notes",
+          type: "text",
+          title: "Notes",
+          grid: { x: 0, y: 0, w: 24, h: 6 },
+          targets: [],
+          options: {
+            mode: "markdown",
+            content: `See https://kalzit.dev/${"a".repeat(120)} and Donaudampfschifffahrtsgesellschaftskapitänsmützenabzeichen for ${world.sourceName}.`,
+          },
+        },
+      ],
+    });
+    await owner.dispose();
+    await signInOwner(page);
+    await page.goto(`/dashboards/${id}`);
+    const text = page.locator(".text-panel");
+    await expect(text).toContainText("Donaudampf");
+    const { scroll, client } = await text.evaluate((el) => ({
+      scroll: el.scrollWidth,
+      client: el.clientWidth,
+    }));
+    expect(scroll).toBeLessThanOrEqual(client);
+  });
 });

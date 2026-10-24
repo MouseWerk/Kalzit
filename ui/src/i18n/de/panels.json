@@ -172,6 +172,7 @@
   "panels.bargauge.namePlacement.top": "Über dem Balken",
   "panels.bargauge.namePlacement.hidden": "Ausgeblendet",
   "panels.bargauge.truncated": "Nur die ersten {count} Zeilen werden als Balken gezeigt.",
+  "panels.bargauge.dropped": "Nur das erste Ergebnis wird gezeigt, mit seinem ersten Wertfeld.",
   "panels.bar.categoryLabels": "Kategorienamen",
   "panels.bar.categoryLabels.auto": "So viele, wie Platz haben",
   "panels.bar.categoryLabels.hidden": "Ausgeblendet",
