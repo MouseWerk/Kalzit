@@ -596,9 +596,12 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   `rolledBack` and starts the previous version, which records the return once (the plan's
   `recorded` flag keeps a failed audit write from adding a second history entry). A new version
   that refuses the configuration returns the same way: `main` finds the data directory with
-  `Config::data_dir_hint` when the configuration does not load. On PostgreSQL the trial notes
-  when the new version changed the schema (`migrated`); after that Kalzit keeps the new version
-  instead of starting a previous binary that could not use the schema, and says so in the log. The
+  `Config::data_dir_hint` when the configuration does not load. On PostgreSQL, when the new build
+  carries migrations newer than the schema of the previous version, the plan is marked `migrated`
+  before the first start opens the database (they may run, or partly run, before anything could
+  report it), and the trial marks it too when it sees the schema change; a marked plan keeps the
+  new version instead of starting a previous binary that could not use the schema, and says so in
+  the log. Plan changes of the trial and its watchdog go through one lock. The
   return always runs in a fresh process, before anything opens the database. A plan that fits
   neither version is set aside (`plan-<time>.stale.json`), one that cannot be read or has another
   format too (`plan-<time>.unreadable.json`), loudly.
@@ -610,9 +613,15 @@ docs/operations/updates.md). Server administrators only; every step is audited (
   exclusively); the next start runs the same trial. These commands usually run as root or an
   Administrator: on Unix, as root on a data directory another account owns, they touch the data
   directory only with that account's user, group and supplementary group ids and switch back to
-  root just for the copy into the binary's folder, the smoke test and the rename; on Windows they
-  refuse links and junctions below `updates/`. The command line returns only to kept versions
-  whose signed manifest was kept.
+  root just for the copy into the binary's folder, the smoke test and the rename (the
+  supplementary groups are reduced to the owner's group, and an `updates/` folder of another owner
+  than the data directory is refused); files from the data directory are opened as regular files
+  only (`O_NOFOLLOW`, `O_NONBLOCK`, checked with `fstat`). On Windows they refuse links and
+  junctions below `updates/`; the service account could still swap such a folder between that
+  check and its use, which Kalzit's own Windows service integration (M5) is meant to close. The
+  command line returns only to versions installed through an update (in the history) whose
+  signed manifest was kept. The CI job `update-rights` runs the switch as root against a real
+  service account.
 - **Kept versions and history.** The newest `updates.keep_versions` (3) previous binaries (never
   the running version's folder) stay with their backups; manual backups ("Back up now") are kept
   to the same count. A return to a kept version swaps only the binary when the schema version
@@ -754,9 +763,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   the script knows it. On pushes to `main` and in the merge queue every flag is on: the queue
   tests each pull request fully on top of `main`.
 
-  `server`, `postgres` and `datasources` need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
+  `server`, `postgres`, `datasources` and `update-rights` (the privilege switch of the update command
+  line, run with sudo against a `kalzit` account) need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
   `audit` needs `audit`. The required checks keep reporting when their area did not change:
-  `postgres`, `datasources` and `audit` are skipped as a whole (GitHub counts a skipped job as
+  `postgres`, `datasources`, `update-rights` and `audit` are skipped as a whole (GitHub counts a skipped job as
   passed), while the matrix jobs `server (<os>)`, `ui (<os>)` and `e2e (<os>)` start and skip
   every step, because a matrix job skipped as a whole reports one check without the matrix
   value and leaves the required `server (ubuntu-latest)` and the others waiting. If `changes`

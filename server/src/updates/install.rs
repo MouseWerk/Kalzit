@@ -88,6 +88,38 @@ fn create_fresh(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
 
+/// Opens a file the service account may control (in the data directory) for reading: a link in
+/// its place is refused rather than followed (Unix `O_NOFOLLOW`, Windows a reparse point opened
+/// as itself), opening does not block on a FIFO (`O_NONBLOCK`), and what was opened must be a
+/// regular file.
+pub fn open_regular(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.file_type().is_file() || meta.file_type().is_symlink() {
+        return Err(io::Error::other(format!("{} is not a regular file", path.display())));
+    }
+    Ok(file)
+}
+
+fn read_regular(path: &Path) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    open_regular(path)?.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// Unix: readable and writable by the owner only.
 fn private(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
@@ -392,7 +424,7 @@ pub fn restore_database(backup: &Path, database: &Path) -> io::Result<()> {
     let name = database.file_name().ok_or_else(|| io::Error::other("the database path has no file name"))?;
     let tmp = database.with_file_name(format!("{}.restore", name.to_string_lossy()));
     {
-        let mut source = fs::File::open(backup)?;
+        let mut source = open_regular(backup)?;
         let mut out = create_fresh(&tmp)?;
         io::copy(&mut source, &mut out)?;
         out.sync_all()?;
@@ -483,7 +515,7 @@ impl Drop for PlacedBinary {
 /// in a folder only whoever may replace the binary can write. The copy gets the old binary's
 /// permissions on Unix.
 pub fn place_binary(source: &Path, exe: &Path, sha256: &str, size: u64) -> Result<PlacedBinary, UpdateError> {
-    let input = fs::File::open(source).map_err(|e| UpdateError::InstallFailed(e.to_string()))?;
+    let input = open_regular(source).map_err(|e| UpdateError::InstallFailed(e.to_string()))?;
     place_from(input, exe, sha256, size)
 }
 
@@ -691,7 +723,7 @@ pub fn verify_kept(
     if !fs::symlink_metadata(&path).map(|m| m.file_type().is_file()).unwrap_or(false) {
         return Err(unavailable());
     }
-    let signed = match (fs::read(dir.join(MANIFEST_RECORD)), fs::read(dir.join(SIGNATURE_RECORD))) {
+    let signed = match (read_regular(&dir.join(MANIFEST_RECORD)), read_regular(&dir.join(SIGNATURE_RECORD))) {
         (Ok(manifest), Ok(signature)) => signing::verify_manifest(keys, &manifest, &signature)
             .ok()
             .filter(|m| m.version == version)
@@ -765,8 +797,6 @@ pub struct Switch {
     pub exe: PathBuf,
     /// The running binary, opened for keeping it.
     pub exe_file: fs::File,
-    /// The binary of `to`, copied and checked next to `exe`.
-    pub placed: PlacedBinary,
     /// The signed manifest and signature of `to` (an update), recorded with its version.
     pub release: Option<(Vec<u8>, Vec<u8>)>,
     /// The file name of the backup just taken.
@@ -783,11 +813,11 @@ pub struct Switch {
 }
 
 /// Keeps the running binary, records the release, writes the plan, then moves the checked copy
-/// into place. The plan comes first: a start that finds it with the old binary still in place
-/// sets it aside, while the new binary always finds its plan.
-pub fn prepare_update(layout: &Layout, s: Switch) -> Result<Plan, UpdateError> {
+/// `placed` into place. The plan comes first: a start that finds it with the old binary still in
+/// place sets it aside, while the new binary always finds its plan.
+pub fn prepare_update(layout: &Layout, s: Switch, placed: PlacedBinary) -> Result<Plan, UpdateError> {
     let exe = s.exe.clone();
-    let (plan, placed) = record_switch(layout, s)?;
+    let plan = record_switch(layout, s)?;
     if let Err(e) = placed.commit(&exe) {
         remove_plan(layout);
         return Err(UpdateError::InstallFailed(e.to_string()));
@@ -796,9 +826,10 @@ pub fn prepare_update(layout: &Layout, s: Switch) -> Result<Plan, UpdateError> {
 }
 
 /// Everything of `prepare_update` but the last step: the kept binary, the release record and the
-/// plan are written, and the checked copy is handed back for `PlacedBinary::commit` (which the
-/// command line runs with other rights). If the commit fails, remove the plan.
-pub fn record_switch(layout: &Layout, s: Switch) -> Result<(Plan, PlacedBinary), UpdateError> {
+/// plan are written. The caller keeps the checked copy and commits it (the command line does that
+/// with other rights, and drops it with them when this fails); if the commit fails, it removes
+/// the plan.
+pub fn record_switch(layout: &Layout, s: Switch) -> Result<Plan, UpdateError> {
     let failed = |e: io::Error| UpdateError::InstallFailed(e.to_string());
     let kept =
         keep_version_from(layout, s.exe_file, &s.exe, &s.from, s.schema, s.backup.clone(), s.now).map_err(failed)?;
@@ -827,10 +858,10 @@ pub fn record_switch(layout: &Layout, s: Switch) -> Result<(Plan, PlacedBinary),
         recorded: false,
     };
     write_plan(layout, &plan).map_err(failed)?;
-    Ok((plan, s.placed))
+    Ok(plan)
 }
 
-/// Returns from a failed switch: the database backup (SQLite) and the previous binary go back,
+// Returns from a failed switch: the database backup (SQLite) and the previous binary go back,
 /// the binary only after its copy matched the hash recorded when it was kept. Runs at a start,
 /// before the database opens.
 pub fn roll_back(layout: &Layout, plan: &Plan) -> Result<(), String> {
@@ -927,14 +958,20 @@ mod tests {
         signing::sha256_hex(content.as_bytes())
     }
 
-    fn switch(exe: &Path, source: &Path, content: &str, backup: Option<String>, database: Option<PathBuf>) -> Switch {
-        Switch {
+    fn switch(
+        exe: &Path,
+        source: &Path,
+        content: &str,
+        backup: Option<String>,
+        database: Option<PathBuf>,
+    ) -> (Switch, PlacedBinary) {
+        let placed = place_binary(source, exe, &sha(content), content.len() as u64).unwrap();
+        let s = Switch {
             kind: PlanKind::Update,
             from: "1.0.0".into(),
             to: "1.1.0".into(),
             exe: exe.to_path_buf(),
             exe_file: fs::File::open(exe).unwrap(),
-            placed: place_binary(source, exe, &sha(content), content.len() as u64).unwrap(),
             release: Some((b"{}".to_vec(), b"{}".to_vec())),
             backup,
             database,
@@ -944,7 +981,12 @@ mod tests {
             now: 1000,
             source_kind: "online".into(),
             scheduled: false,
-        }
+        };
+        (s, placed)
+    }
+
+    fn update(layout: &Layout, (s, placed): (Switch, PlacedBinary)) -> Plan {
+        prepare_update(layout, s, placed).unwrap()
     }
 
     #[test]
@@ -955,7 +997,7 @@ mod tests {
         let new = dir.path().join("new-kalzit");
         fake_binary(&exe, "old");
         fake_binary(&new, "new");
-        let plan = prepare_update(&layout, switch(&exe, &new, "new", None, None)).unwrap();
+        let plan = update(&layout, switch(&exe, &new, "new", None, None));
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
         let previous = kept_binary(&layout, "1.0.0", &exe).unwrap();
         assert_eq!(fs::read_to_string(&previous).unwrap(), "old");
@@ -1019,7 +1061,7 @@ mod tests {
         fake_binary(&database.with_file_name("kalzit.db-wal"), "wal of 1.1.0");
         fake_binary(&backup, "data of 1.0.0");
         let s = switch(&exe, &new, "new", Some("kalzit-1.0.0-1.db".into()), Some(database.clone()));
-        let plan = prepare_update(&layout, s).unwrap();
+        let plan = update(&layout, s);
         roll_back(&layout, &plan).unwrap();
         assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
         assert_eq!(fs::read_to_string(&database).unwrap(), "data of 1.0.0");
@@ -1035,7 +1077,7 @@ mod tests {
         let new = dir.path().join("new-kalzit");
         fake_binary(&exe, "old");
         fake_binary(&new, "new");
-        let plan = prepare_update(&layout, switch(&exe, &new, "new", None, None)).unwrap();
+        let plan = update(&layout, switch(&exe, &new, "new", None, None));
         fs::write(kept_binary(&layout, "1.0.0", &exe).unwrap(), "planted").unwrap();
         assert!(roll_back(&layout, &plan).is_err());
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");

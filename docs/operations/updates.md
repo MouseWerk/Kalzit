@@ -88,8 +88,12 @@ it reads from the data directory, which the service account can write, is truste
   the data directory (lock, database, backup, kept versions, plan) with that account's user and
   group ids, and switches back to root only to copy into the binary's folder, run the smoke test
   and rename. Files it creates in the data directory belong to the service account.
+- Files from the data directory are opened only as regular files, never through a link.
 - On Windows the folders below `updates/` are checked not to be links or junctions before they are
-  used. The copy into the binary's folder and its hash check protect the binary itself.
+  used. The copy into the binary's folder and its hash check protect the binary itself. The service
+  account could still swap such a folder for a junction between that check and its use; until
+  Kalzit's own Windows service integration runs these steps as the service account, keep the
+  service account a virtual account (`NT SERVICE\Kalzit`) that nothing else uses.
 
 ## Offline installations
 
@@ -117,8 +121,9 @@ hash:
   Kalzit asks first.
 
 From the command line: `kalzit update rollback <version>` (add `--restore-database` when asked),
-with Kalzit stopped. The command line returns only to versions whose signed manifest was kept
-(versions installed through an update); a version installed by hand is returned to from the page.
+with Kalzit stopped. The command line returns only to versions installed through an update
+(listed in the history) whose signed manifest was kept; a version installed by hand is returned
+to from the page.
 On PostgreSQL, a return across a schema change needs your own `pg_restore` of a dump from that time.
 
 ### When a new version is not healthy
@@ -142,11 +147,11 @@ Kalzit cannot back up a PostgreSQL database. Run `pg_dump` before you install an
 the page (or pass `--acknowledge-no-backup`); a planned installation asks for the same confirmation
 when you plan it, and one planned without it is not installed and shows in the history.
 
-If a new version fails its trial **after** its migrations changed the schema, Kalzit does not
-return: the previous binary could not start on the newer schema. The new version keeps running,
-the log says so, and the plan is moved aside as `plan-<time>.kept-new.json`. To go back, restore
-your dump and install the previous version by hand. If the new version fails before changing the
-schema, Kalzit returns as on SQLite.
+If the new version brings database migrations, Kalzit does not return on PostgreSQL once its
+trial began: the migrations may have run, or partly run, and the previous binary could not start
+on the newer schema. A failed new version keeps running, the log says so, and the plan is moved
+aside as `plan-<time>.kept-new.json`. To go back, restore your dump and install the previous
+version by hand. A new version without new migrations returns as on SQLite.
 
 ## Backups
 

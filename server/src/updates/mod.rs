@@ -775,7 +775,6 @@ impl Updates {
             to: staged.version.clone(),
             exe: exe.clone(),
             exe_file: std::fs::File::open(&exe).map_err(|e| UpdateError::InstallFailed(e.to_string()))?,
-            placed,
             release: Some((staged.manifest_bytes, staged.signature_bytes)),
             backup,
             database: install::sqlite_file(&self.db_url),
@@ -787,7 +786,7 @@ impl Updates {
             scheduled,
         };
         let layout = self.layout.clone();
-        let plan = blocking(move || install::prepare_update(&layout, switch)).await?;
+        let plan = blocking(move || install::prepare_update(&layout, switch, placed)).await?;
         let summary = json!({
             "from": plan.from, "to": plan.to, "backup": plan.backup.is_some(), "database": database.name(),
         });
@@ -876,7 +875,6 @@ impl Updates {
             to: target.version.clone(),
             exe: exe.clone(),
             exe_file: std::fs::File::open(&exe).map_err(|e| UpdateError::InstallFailed(e.to_string()))?,
-            placed,
             release: None,
             backup,
             database: database_file.clone(),
@@ -888,7 +886,7 @@ impl Updates {
             scheduled: false,
         };
         let layout = self.layout.clone();
-        let plan = blocking(move || install::prepare_update(&layout, switch)).await?;
+        let plan = blocking(move || install::prepare_update(&layout, switch, placed)).await?;
         let summary = json!({ "from": plan.from, "to": plan.to, "restoreDatabase": restore.is_some() });
         if let Err(e) = record_audit(state, actor, "update.rollback_started", Some(&plan.to), summary).await {
             tracing::warn!("recording the return in the audit log failed: {}", e.message);

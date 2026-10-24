@@ -262,7 +262,7 @@ pub fn load(layout: &Layout, keys: &TrustedKeys, platform: &Platform) -> Result<
     let info = staged_info(layout).ok_or_else(|| UpdateError::NotStaged(String::new()))?;
     let read = |name: &str, max: usize| -> Result<Vec<u8>, UpdateError> {
         let mut bytes = Vec::new();
-        fs::File::open(dir.join(name))
+        super::install::open_regular(&dir.join(name))
             .and_then(|f| f.take(max as u64 + 1).read_to_end(&mut bytes))
             .map_err(|_| UpdateError::NotStaged(info.version.clone()))?;
         Ok(bytes)

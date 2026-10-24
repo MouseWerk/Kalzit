@@ -115,6 +115,36 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access postgres -- --nocapture
 
+  # The privilege switch of `kalzit update apply|rollback` (server/tests/update_rights.rs): run as
+  # root on a data directory a service account owns, which needs sudo, so it is ignored elsewhere.
+  update-rights:
+    name: update rights (sudo)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - name: Build the test as the runner user
+        id: build
+        shell: bash
+        run: |
+          cargo test --locked -p kalzit --test update_rights --no-run 2>&1 | tee build.log
+          binary="$(grep -oE 'target/debug/deps/update_rights-[0-9a-f]+' build.log | head -1)"
+          test -x "$binary"
+          echo "binary=$binary" >> "$GITHUB_OUTPUT"
+      - name: A service account and its private data directory
+        run: |
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin kalzit
+          sudo install -d -o kalzit -g kalzit -m 0700 /var/lib/kalzit-rights-test
+      - name: Run the test as root
+        env:
+          KALZIT_TEST_RIGHTS_DIR: /var/lib/kalzit-rights-test
+        run: sudo -E "${{ steps.build.outputs.binary }}" --ignored --test-threads=1 --nocapture
+
   # Data sources against real servers. The passwords below belong to throwaway containers
   # reachable only from this job; they protect nothing and are not secrets. PostgreSQL uses a
   # password here (unlike the job above) so password handling and scrubbing are exercised.

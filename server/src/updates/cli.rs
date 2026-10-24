@@ -7,24 +7,29 @@
 //! the data directory belongs to the service account. So nothing read from the data directory
 //! is trusted for what it does with those rights:
 //!
-//! - A binary (the staged package, a kept version) is opened once and copied into the binary's
-//!   own folder, which the service account cannot write, and the copy is checked against the
-//!   release's signed SHA-256 before it runs (smoke test) or replaces anything. A return takes
-//!   only a kept version whose signed manifest was kept with it.
+//! - A binary (the staged package, a kept version) is opened once, as a regular file and never
+//!   through a link, and copied into the binary's own folder, which the service account cannot
+//!   write; the copy is checked against the release's signed SHA-256 before it runs (smoke test)
+//!   or replaces anything. A return takes only a version installed through an update (listed in
+//!   the history) whose signed manifest was kept with it.
 //! - On Unix, run as root on a data directory another account owns, every access to the data
 //!   directory (the lock, the database, backups, kept versions, the plan) runs with that
-//!   account's user and group ids; only the copy into the binary's folder, the smoke test and
-//!   the final rename run as root. A link planted in the data directory leads nowhere the
-//!   service account could not go itself, and the files created there belong to it.
+//!   account's effective user id and group id, the supplementary groups reduced to that one group;
+//!   only the copy into the binary's folder, the smoke test and the final rename run as root. A
+//!   link planted in the data directory leads nowhere the service account could not go itself,
+//!   and the files created there belong to it.
 //! - On Windows an Administrator has no such switch: the folders written below `updates/` are
-//!   checked not to be links or junctions before they are used.
+//!   checked not to be links or junctions before they are used. The service account itself could
+//!   still swap such a folder for a junction between that check and its use (a race only that
+//!   account can run); Kalzit's own Windows service integration (M5) is meant to close it by
+//!   running these steps as the service account.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::json;
 
-use super::install::{self, DatabaseKind, Layout, PlanKind, PlanState, Switch};
+use super::install::{self, DatabaseKind, Layout, Outcome, PlanKind, PlanState, Switch};
 use super::platform::{self, Platform};
 use super::signing::TrustedKeys;
 use super::{current_version, staging, version_rules};
@@ -61,6 +66,20 @@ pub fn status(config: &Config) -> String {
     out
 }
 
+/// The data directory checked and locked with the owner's rights.
+fn enter(data_dir: &Path, rights: &Rights) -> Result<(Layout, std::fs::File)> {
+    rights.as_owner()?;
+    // Unix: the same check as at a start, with the owner's rights: the folder belongs to the
+    // account and is closed to others.
+    #[cfg(unix)]
+    crate::data_dir::prepare(data_dir)?;
+    let layout = Layout::new(data_dir);
+    let lock = crate::secrets::hold_exclusive(data_dir)?;
+    plain_folders(&layout)?;
+    settle_previous_plan(&layout)?;
+    Ok((layout, lock))
+}
+
 /// Installs the staged release with the server stopped.
 pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<String> {
     let data_dir = &config.paths.data_dir;
@@ -68,11 +87,7 @@ pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<Strin
     // Opened with this command's own rights, before anything else: the binary to keep.
     let exe = running_binary()?;
     let exe_file = std::fs::File::open(&exe).with_context(|| format!("opening {}", exe.display()))?;
-    rights.as_owner()?;
-    let layout = Layout::new(data_dir);
-    let _lock = crate::secrets::hold_exclusive(data_dir)?;
-    plain_folders(data_dir, &layout)?;
-    settle_previous_plan(&layout)?;
+    let (layout, _lock) = enter(data_dir, &rights)?;
     let current = current_version();
     let staged = staging::load(&layout, &TrustedKeys::compiled(), &Platform::current())?;
     version_rules(&current, &staged.manifest)?;
@@ -85,7 +100,7 @@ pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<Strin
         );
     }
     // The package, opened with the owner's rights, is copied and checked with this command's.
-    let package = std::fs::File::open(&staged.package_path).context("opening the staged package")?;
+    let package = install::open_regular(&staged.package_path).context("opening the staged package")?;
     rights.as_self()?;
     let placed = install::place_from(package, &exe, &staged.package.sha256, staged.package.size)?;
     platform::smoke_test(placed.path(), &staged.version).await?;
@@ -98,7 +113,7 @@ pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<Strin
         let backup =
             install::backup_database(&db, &url, &layout, &current, now, install::BackupKind::Switch, None).await?;
         let timeout = health_timeout(&db).await;
-        let (plan, placed) = install::record_switch(
+        let plan = install::record_switch(
             &layout,
             Switch {
                 kind: PlanKind::Update,
@@ -106,7 +121,6 @@ pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<Strin
                 to: staged.version.clone(),
                 exe: exe.clone(),
                 exe_file,
-                placed,
                 release: Some((staged.manifest_bytes.clone(), staged.signature_bytes.clone())),
                 backup,
                 database: install::sqlite_file(&url),
@@ -119,18 +133,20 @@ pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<Strin
             },
         )?;
         audit(&db, "update.applied", &plan.to, json!({ "from": plan.from, "to": plan.to, "via": "cli" })).await;
-        anyhow::Ok((plan, placed))
+        anyhow::Ok(plan)
     }
     .await;
     db.close().await;
-    let (plan, placed) = outcome?;
-    rights.as_self()?;
-    let committed = placed.commit(&exe);
-    rights.as_owner()?;
-    if let Err(e) = committed {
-        install::remove_plan(&layout);
-        bail!("putting the new binary in place failed: {e}");
-    }
+    let plan = match outcome {
+        Ok(plan) => plan,
+        Err(e) => {
+            // The copy lies in the binary's folder: only this command's own rights remove it.
+            rights.as_self()?;
+            drop(placed);
+            return Err(e);
+        }
+    };
+    finish(&rights, &layout, placed, &exe)?;
     staging::discard(&layout).ok();
     rights.as_self()?;
     Ok(format!(
@@ -140,21 +156,47 @@ pub async fn apply(config: &Config, acknowledge_no_backup: bool) -> Result<Strin
     ))
 }
 
-/// Returns to a kept version with the server stopped. Only a kept version whose signed manifest
-/// was kept with it qualifies: its binary is checked against the signed SHA-256.
+/// Moves the checked copy into place with this command's own rights. Afterwards it takes the
+/// owner's rights again; if that fails after a good commit, the switch is done anyway and only
+/// a warning says what was left. If the commit fails, the plan goes.
+fn finish(rights: &Rights, layout: &Layout, placed: install::PlacedBinary, exe: &Path) -> Result<()> {
+    rights.as_self()?;
+    let committed = placed.commit(exe);
+    let owner = rights.as_owner();
+    match (committed, owner) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(e)) => {
+            eprintln!("kalzit: warning: the binary is in place, but cleaning up in the data directory failed: {e:#}");
+            Ok(())
+        }
+        (Err(e), Ok(())) => {
+            install::remove_plan(layout);
+            bail!("putting the new binary in place failed: {e}")
+        }
+        (Err(e), Err(owner)) => bail!(
+            "putting the new binary in place failed ({e}), and the plan in {} could not be removed ({owner:#}); \
+             remove it before you start Kalzit",
+            layout.plan_file().display()
+        ),
+    }
+}
+
+/// Returns to a kept version with the server stopped. Only a version installed through an update
+/// (in the history) whose signed manifest was kept qualifies: its binary is checked against the
+/// signed SHA-256.
 pub async fn rollback(config: &Config, version: &str, restore_database: bool) -> Result<String> {
     let data_dir = &config.paths.data_dir;
     let rights = Rights::detect(data_dir)?;
     let exe = running_binary()?;
     let exe_file = std::fs::File::open(&exe).with_context(|| format!("opening {}", exe.display()))?;
-    rights.as_owner()?;
-    let layout = Layout::new(data_dir);
-    let _lock = crate::secrets::hold_exclusive(data_dir)?;
-    plain_folders(data_dir, &layout)?;
-    settle_previous_plan(&layout)?;
+    let (layout, _lock) = enter(data_dir, &rights)?;
     let current = current_version();
     if version == current.to_string() {
         bail!("{version} is the installed version");
+    }
+    let installed = install::history(&layout).iter().any(|h| h.version == version && h.outcome == Outcome::Installed);
+    if !installed {
+        bail!("{version} was not installed through an update here; `kalzit update status` lists the kept versions");
     }
     let target = install::kept_version(&layout, version)
         .ok_or_else(|| anyhow!("version {version} is not kept; `kalzit update status` lists the kept ones"))?;
@@ -164,7 +206,7 @@ pub async fn rollback(config: &Config, version: &str, restore_database: bool) ->
     }
     let url = config.database_url();
     let database = install::sqlite_file(&url);
-    let binary = std::fs::File::open(&kept.path).context("opening the kept binary")?;
+    let binary = install::open_regular(&kept.path).context("opening the kept binary")?;
     rights.as_self()?;
     let placed = install::place_from(binary, &exe, &kept.sha256, kept.size)?;
     rights.as_owner()?;
@@ -191,7 +233,7 @@ pub async fn rollback(config: &Config, version: &str, restore_database: bool) ->
         let backup =
             install::backup_database(&db, &url, &layout, &current, now, install::BackupKind::Switch, None).await?;
         let timeout = health_timeout(&db).await;
-        let (plan, placed) = install::record_switch(
+        let plan = install::record_switch(
             &layout,
             Switch {
                 kind: PlanKind::Rollback,
@@ -199,7 +241,6 @@ pub async fn rollback(config: &Config, version: &str, restore_database: bool) ->
                 to: target.version.clone(),
                 exe: exe.clone(),
                 exe_file,
-                placed,
                 release: None,
                 backup,
                 database: database.clone(),
@@ -213,24 +254,27 @@ pub async fn rollback(config: &Config, version: &str, restore_database: bool) ->
         )?;
         let summary = json!({ "from": plan.from, "to": plan.to, "restoreDatabase": restore.is_some(), "via": "cli" });
         audit(&db, "update.rollback_started", &plan.to, summary).await;
-        anyhow::Ok((plan, placed, restore))
+        anyhow::Ok((plan, restore))
     }
     .await;
     db.close().await;
-    let (plan, placed, restore) = outcome?;
+    let (plan, restore) = match outcome {
+        Ok(done) => done,
+        Err(e) => {
+            rights.as_self()?;
+            drop(placed);
+            return Err(e);
+        }
+    };
     if let (Some(backup), Some(database)) = (restore, database)
         && let Err(e) = install::restore_database(&backup, &database)
     {
         install::remove_plan(&layout);
+        rights.as_self()?;
+        drop(placed);
         bail!("restoring the database failed, nothing was switched: {e}");
     }
-    rights.as_self()?;
-    let committed = placed.commit(&exe);
-    rights.as_owner()?;
-    if let Err(e) = committed {
-        install::remove_plan(&layout);
-        bail!("putting the kept binary in place failed: {e}");
-    }
+    finish(&rights, &layout, placed, &exe)?;
     rights.as_self()?;
     Ok(format!("{} is back in place of {}. Start Kalzit now.", plan.to, plan.from))
 }
@@ -252,7 +296,7 @@ fn settle_previous_plan(layout: &Layout) -> Result<()> {
 }
 
 /// The folders written below the data directory must be real folders, not links or junctions.
-fn plain_folders(data_dir: &Path, layout: &Layout) -> Result<()> {
+fn plain_folders(layout: &Layout) -> Result<()> {
     for dir in [layout.root().to_path_buf(), layout.versions(), layout.backups(), layout.staging()] {
         let Ok(meta) = std::fs::symlink_metadata(&dir) else { continue };
         if !meta.file_type().is_dir() {
@@ -266,7 +310,6 @@ fn plain_folders(data_dir: &Path, layout: &Layout) -> Result<()> {
             }
         }
     }
-    let _ = data_dir;
     Ok(())
 }
 
@@ -321,11 +364,13 @@ async fn audit(db: &sqlx::AnyPool, action: &str, version: &str, summary: serde_j
 }
 
 /// The rights the command works with in the data directory. On Unix, when it runs as root and
-/// the data directory belongs to another account, it switches its effective user, group and
-/// supplementary groups to that account for everything in the data directory (`as_owner`) and
-/// back for the binary's folder (`as_self`). Elsewhere both are no-ops. Dropped, it is back to
-/// its own rights.
-struct Rights {
+/// the data directory belongs to another account, it switches its effective user id and group
+/// id to that account and its supplementary groups to just that group for everything in the
+/// data directory (`as_owner`), and back for the binary's folder (`as_self`). Elsewhere both are
+/// no-ops. Dropped, it is back to its own rights. Public for the privilege test
+/// (`server/tests/update_rights.rs`), not an API.
+#[doc(hidden)]
+pub struct Rights {
     #[cfg(unix)]
     switch: Option<UnixSwitch>,
 }
@@ -338,16 +383,24 @@ struct UnixSwitch {
 }
 
 impl Rights {
-    fn detect(data_dir: &Path) -> Result<Self> {
+    /// Decides by the owner of the data directory; an `updates/` folder of another owner (a
+    /// root-owned data directory with a service-owned `updates/`, or the other way round) is
+    /// refused, since it is unclear whose rights apply.
+    pub fn detect(data_dir: &Path) -> Result<Self> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            // SAFETY: geteuid has no preconditions.
-            if unsafe { libc::geteuid() } != 0 {
-                return Ok(Self { switch: None });
-            }
             let meta = std::fs::metadata(data_dir).with_context(|| format!("reading {}", data_dir.display()))?;
-            if meta.uid() == 0 {
+            if let Ok(updates) = std::fs::symlink_metadata(Layout::new(data_dir).root())
+                && (updates.uid(), updates.gid()) != (meta.uid(), meta.gid())
+            {
+                bail!(
+                    "{} belongs to another account than the data directory; give both to the account Kalzit runs as",
+                    Layout::new(data_dir).root().display()
+                );
+            }
+            // SAFETY: geteuid has no preconditions.
+            if unsafe { libc::geteuid() } != 0 || meta.uid() == 0 {
                 return Ok(Self { switch: None });
             }
             // SAFETY: a null buffer with size 0 asks for the number of groups.
@@ -368,8 +421,20 @@ impl Rights {
         }
     }
 
+    /// Whether the command switches rights at all (root on another account's data directory).
+    pub fn switches(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.switch.is_some()
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     /// The data directory owner's rights.
-    fn as_owner(&self) -> Result<()> {
+    pub fn as_owner(&self) -> Result<()> {
         #[cfg(unix)]
         if let Some(s) = &self.switch {
             // SAFETY: plain system calls on values read from the system; checked below.
@@ -387,7 +452,7 @@ impl Rights {
     }
 
     /// This command's own rights.
-    fn as_self(&self) -> Result<()> {
+    pub fn as_self(&self) -> Result<()> {
         #[cfg(unix)]
         if let Some(s) = &self.switch {
             // SAFETY: plain system calls; the saved set-user-id is still root, so this succeeds.
@@ -419,9 +484,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let layout = Layout::new(dir.path());
         std::fs::create_dir_all(layout.versions()).unwrap();
-        assert!(plain_folders(dir.path(), &layout).is_ok());
+        assert!(plain_folders(&layout).is_ok());
         std::fs::write(layout.versions().join("1.0.0"), "not a folder").unwrap();
-        assert!(plain_folders(dir.path(), &layout).is_err());
+        assert!(plain_folders(&layout).is_err());
     }
 
     #[test]
@@ -456,5 +521,14 @@ mod tests {
         // Any other plan still blocks it.
         install::write_plan(&layout, &install::Plan { state: PlanState::Trial, ..plan }).unwrap();
         assert!(settle_previous_plan(&layout).is_err());
+    }
+
+    #[test]
+    fn without_root_nothing_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let rights = Rights::detect(dir.path()).unwrap();
+        if !cfg!(unix) || !rights.switches() {
+            assert!(rights.as_owner().is_ok() && rights.as_self().is_ok());
+        }
     }
 }

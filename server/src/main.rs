@@ -76,10 +76,17 @@ fn main() -> ExitCode {
             // previous version, which accepted it.
             if matches!(cli.command, None | Some(Command::Serve))
                 && let Some(data_dir) = Config::data_dir_hint(cli.config.as_deref())
-                && let Some(exe) = boot::after_config_error(&data_dir, &format!("{e:#}"))
             {
-                eprintln!("kalzit: returning to the previous version");
-                return kalzit::updates::platform::relaunch(&exe);
+                // The configured logging did not load; what the return reports goes to stderr.
+                init_logging(&LogConfig::default());
+                if let Some(exe) = boot::after_config_error(&data_dir, &format!("{e:#}")) {
+                    eprintln!(
+                        "kalzit: this version refused the configuration after an update; returning to the previous \
+                         version ({})",
+                        exe.display()
+                    );
+                    return kalzit::updates::platform::relaunch(&exe);
+                }
             }
             return ExitCode::from(2);
         }

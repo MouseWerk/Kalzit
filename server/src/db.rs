@@ -17,6 +17,12 @@ use tokio_util::sync::CancellationToken;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+/// The newest migration this build carries (what `updates::install::schema_version` answers once
+/// they all ran).
+pub fn latest_migration() -> i64 {
+    MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0)
+}
+
 /// How long a SQLite statement waits for a lock another connection holds before the request
 /// answers `503 busy`. Locks are normally held for milliseconds; this covers a slow disk or a
 /// burst of writers (the CI runners on Windows are both).

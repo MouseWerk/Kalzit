@@ -58,7 +58,7 @@ pub struct Trial {
 
 pub fn guard(config: &Config) -> Boot {
     let layout = Layout::new(&config.paths.data_dir);
-    let boot = guard_with(&layout, &super::current_version().to_string(), now_ms());
+    let boot = guard_with(&layout, &super::current_version().to_string(), crate::db::latest_migration(), now_ms());
     if let Boot::Run(Some(trial)) = &boot {
         trial.spawn_watchdog();
     }
@@ -101,7 +101,8 @@ pub fn guard_after_config_error(layout: &Layout, version: &str, error: &str, now
 }
 
 /// The guard's decision for the running `version`, without the watchdog (tests).
-pub fn guard_with(layout: &Layout, version: &str, now: i64) -> Boot {
+/// `latest_schema` is the newest migration this build carries.
+pub fn guard_with(layout: &Layout, version: &str, latest_schema: i64, now: i64) -> Boot {
     let mut plan = match install::read_plan_checked(layout) {
         Ok(Some(plan)) => plan,
         Ok(None) => return Boot::Run(None),
@@ -120,6 +121,13 @@ pub fn guard_with(layout: &Layout, version: &str, now: i64) -> Boot {
         match plan.state {
             PlanState::Swapped => {
                 plan.state = PlanState::Trial;
+                // PostgreSQL: this build carries migrations the previous one does not know, and
+                // they run before anything could report that they did (or only partly did). So
+                // the plan assumes the schema changed from the start; a failed trial keeps this
+                // version rather than starting one that could not use the database.
+                if plan.database.is_none() && latest_schema > plan.schema {
+                    plan.migrated = true;
+                }
                 if let Err(e) = install::write_plan(layout, &plan) {
                     // Without the trial mark a crash would not lead back; run without a trial
                     // rather than not at all.
@@ -245,6 +253,11 @@ impl Trial {
     /// return could not work any more; the plan says so for the next start.
     pub fn note_schema(&self, schema: i64) {
         if self.plan.database.is_some() || schema == self.plan.schema {
+            return;
+        }
+        // Under the trial's lock, so the watchdog's change of the plan cannot interleave.
+        let s = lock(&self.state);
+        if *s != TrialState::Pending {
             return;
         }
         if let Some(mut plan) = install::read_plan(&self.layout) {
@@ -386,7 +399,6 @@ mod tests {
                 to: "1.1.0".into(),
                 exe: exe.clone(),
                 exe_file: fs::File::open(&exe).unwrap(),
-                placed,
                 release: None,
                 backup: sqlite.then(|| "kalzit-1.0.0-1.db".to_string()),
                 database: sqlite.then(|| database.clone()),
@@ -397,6 +409,7 @@ mod tests {
                 source_kind: "online".into(),
                 scheduled: false,
             },
+            placed,
         )
         .unwrap();
         // The new version migrated the database.
@@ -415,7 +428,7 @@ mod tests {
     #[test]
     fn the_first_start_of_the_new_version_is_a_trial() {
         let s = installed();
-        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 9, 2) else { panic!("no trial") };
         assert_eq!(trial.plan().to, "1.1.0");
         assert_eq!(install::read_plan(&s.layout).unwrap().state, PlanState::Trial);
     }
@@ -423,28 +436,28 @@ mod tests {
     #[test]
     fn a_start_after_an_unconfirmed_trial_returns() {
         let s = installed();
-        let Boot::Run(Some(_)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        let Boot::Run(Some(_)) = guard_with(&s.layout, "1.1.0", 9, 2) else { panic!("no trial") };
         // The trial process died without confirming; the next start of the new binary returns.
-        let Boot::Relaunch(exe) = guard_with(&s.layout, "1.1.0", 3) else { panic!("no return") };
+        let Boot::Relaunch(exe) = guard_with(&s.layout, "1.1.0", 9, 3) else { panic!("no return") };
         assert_eq!(exe, s.exe);
         assert_eq!(content(&s.exe), "binary 1.0.0");
         assert_eq!(content(&s.database), "data 1.0.0");
         let plan = install::read_plan(&s.layout).unwrap();
         assert_eq!(plan.state, PlanState::RolledBack);
         // The previous version starts normally and keeps the plan for its record.
-        assert!(matches!(guard_with(&s.layout, "1.0.0", 4), Boot::Run(None)));
+        assert!(matches!(guard_with(&s.layout, "1.0.0", 9, 4), Boot::Run(None)));
         assert!(install::read_plan(&s.layout).is_some());
     }
 
     #[test]
     fn a_failed_health_check_returns_at_the_next_start() {
         let s = installed();
-        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 9, 2) else { panic!("no trial") };
         let handover = trial.fail("readyz answered 503").unwrap();
         assert_eq!(handover.exe, s.exe);
         assert!(trial.fail("again").is_none(), "a trial fails once");
         assert_eq!(install::read_plan(&s.layout).unwrap().state, PlanState::RollbackRequested);
-        let Boot::Relaunch(_) = guard_with(&s.layout, "1.1.0", 3) else { panic!("no return") };
+        let Boot::Relaunch(_) = guard_with(&s.layout, "1.1.0", 9, 3) else { panic!("no return") };
         assert_eq!(content(&s.exe), "binary 1.0.0");
         assert_eq!(install::read_plan(&s.layout).unwrap().error.as_deref(), Some("readyz answered 503"));
     }
@@ -473,21 +486,41 @@ mod tests {
     #[test]
     fn postgresql_after_a_schema_change_keeps_the_new_version() {
         let s = installed_with(false);
-        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 9, 2) else { panic!("no trial") };
         trial.note_schema(10);
         trial.fail("readyz answered 503").unwrap();
-        assert!(matches!(guard_with(&s.layout, "1.1.0", 3), Boot::Run(None)), "no return");
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 9, 3), Boot::Run(None)), "no return");
         assert_eq!(content(&s.exe), "binary 1.1.0");
         assert!(install::read_plan(&s.layout).is_none(), "the plan is set aside");
     }
 
     #[test]
+    fn postgresql_with_newer_migrations_keeps_the_new_version_even_after_a_crash() {
+        // The build carries migration 10, the previous version ran 9: the migrations may have
+        // run (or partly run) before the process died, so there is no return.
+        let s = installed_with(false);
+        let Boot::Run(Some(_)) = guard_with(&s.layout, "1.1.0", 10, 2) else { panic!("no trial") };
+        assert!(install::read_plan(&s.layout).unwrap().migrated);
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 10, 3), Boot::Run(None)), "no return");
+        assert_eq!(content(&s.exe), "binary 1.1.0");
+    }
+
+    #[test]
+    fn sqlite_with_newer_migrations_still_returns_with_its_backup() {
+        let s = installed();
+        let Boot::Run(Some(_)) = guard_with(&s.layout, "1.1.0", 10, 2) else { panic!("no trial") };
+        assert!(!install::read_plan(&s.layout).unwrap().migrated);
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 10, 3), Boot::Relaunch(_)));
+        assert_eq!(content(&s.database), "data 1.0.0");
+    }
+
+    #[test]
     fn postgresql_without_a_schema_change_returns() {
         let s = installed_with(false);
-        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 2) else { panic!("no trial") };
+        let Boot::Run(Some(trial)) = guard_with(&s.layout, "1.1.0", 9, 2) else { panic!("no trial") };
         trial.note_schema(9);
         trial.fail("readyz answered 503").unwrap();
-        assert!(matches!(guard_with(&s.layout, "1.1.0", 3), Boot::Relaunch(_)));
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 9, 3), Boot::Relaunch(_)));
         assert_eq!(content(&s.exe), "binary 1.0.0");
     }
 
@@ -495,7 +528,7 @@ mod tests {
     fn an_unreadable_plan_is_set_aside_loudly() {
         let s = installed();
         fs::write(s.layout.plan_file(), "{ not json").unwrap();
-        assert!(matches!(guard_with(&s.layout, "1.1.0", 7), Boot::Run(None)));
+        assert!(matches!(guard_with(&s.layout, "1.1.0", 9, 7), Boot::Run(None)));
         assert!(s.layout.root().join("plan-7.unreadable.json").is_file());
     }
 
@@ -503,7 +536,7 @@ mod tests {
     fn a_plan_that_does_not_fit_is_set_aside() {
         let s = installed();
         // The old binary still runs (the swap never happened as planned).
-        assert!(matches!(guard_with(&s.layout, "1.0.0", 5), Boot::Run(None)));
+        assert!(matches!(guard_with(&s.layout, "1.0.0", 9, 5), Boot::Run(None)));
         assert!(install::read_plan(&s.layout).is_none());
         assert!(s.layout.root().join("plan-5.stale.json").is_file());
     }
@@ -511,6 +544,6 @@ mod tests {
     #[test]
     fn without_a_plan_nothing_happens() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(matches!(guard_with(&Layout::new(dir.path()), "1.0.0", 1), Boot::Run(None)));
+        assert!(matches!(guard_with(&Layout::new(dir.path()), "1.0.0", 9, 1), Boot::Run(None)));
     }
 }
