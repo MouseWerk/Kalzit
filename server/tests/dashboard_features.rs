@@ -258,6 +258,7 @@ on_both_databases! {
     library_panels_in_restricted_folders,
     library_panels_check_panel_options,
     hidden_targets_are_kept_but_not_run,
+    time_options_are_stored_and_checked,
 }
 
 fn model(title: &str) -> Value {
@@ -398,6 +399,49 @@ async fn tags_find_dashboards_and_the_validate_route_checks_models(t: TestApp) {
     assert_eq!((saved.code(), saved.field()), ("validation", "model"));
     let nothing_stored = t.post("~/dashboards/validate", json!({ "model": plain("x"), "extra": 1 }), &viewer).await;
     assert_eq!(nothing_stored.code(), "validation");
+}
+
+async fn time_options_are_stored_and_checked(t: TestApp) {
+    let mut timed = plain("Geschäftsjahr");
+    timed["timeRange"] = json!({ "from": "now-1fy/fy", "to": "now-1fy/fy" });
+    timed["timeZone"] = json!("Europe/Zurich");
+    timed["weekStart"] = json!("sunday");
+    timed["fiscalYearStartMonth"] = json!(7);
+    timed["nowDelay"] = json!("2m");
+    timed["refreshIntervals"] = json!([15, 60, 600]);
+    timed["sharedCursor"] = json!("crosshair");
+    let id = t.dashboard(None, timed.clone(), &t.owner).await;
+    let stored = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
+    assert_eq!(stored.status, StatusCode::OK, "{}", stored.body);
+    for key in
+        ["timeRange", "timeZone", "weekStart", "fiscalYearStartMonth", "nowDelay", "refreshIntervals", "sharedCursor"]
+    {
+        assert_eq!(stored.body["model"][key], timed[key], "{key}");
+    }
+    // Without them the stored model stays as it was: nothing is added.
+    let other = t.dashboard(None, plain("Ohne"), &t.owner).await;
+    let model = t.get(&format!("~/dashboards/{other}"), &t.owner).await.body["model"].clone();
+    for key in ["timeZone", "weekStart", "fiscalYearStartMonth", "nowDelay", "refreshIntervals", "sharedCursor"] {
+        assert!(model.get(key).is_none(), "{key}: {model}");
+    }
+    // Each one is checked on save, with its place named.
+    for (key, value, expect) in [
+        ("timeZone", json!("Mars/Olympus Mons"), "model.timeZone"),
+        ("fiscalYearStartMonth", json!(13), "model.fiscalYearStartMonth"),
+        ("nowDelay", json!("1w"), "model.nowDelay"),
+        ("refreshIntervals", json!([60, 10]), "model.refreshIntervals[1]"),
+        ("sharedCursor", json!("everywhere"), "unknown variant `everywhere`"),
+    ] {
+        let mut bad = plain("Falsch");
+        bad[key] = value;
+        let refused = t.put(&format!("~/dashboards/{id}"), json!({ "model": bad, "version": 1 }), &t.owner).await;
+        assert_eq!((refused.code(), refused.field()), ("validation", "model"), "{key}: {}", refused.body);
+        assert!(refused.message().contains(expect), "{key}: {}", refused.body);
+    }
+    let mut odd_range = plain("Falsch");
+    odd_range["timeRange"] = json!({ "from": "now-1fq", "to": "now" });
+    let refused = t.post("~/dashboards", json!({ "model": odd_range }), &t.owner).await;
+    assert_eq!((refused.code(), refused.field()), ("validation", "model"));
 }
 
 async fn annotations_follow_the_dashboard_access(t: TestApp) {

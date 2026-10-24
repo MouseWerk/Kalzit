@@ -7,7 +7,17 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { isApiError } from "../../api/client";
 import { Breadcrumbs, type Crumb, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
@@ -15,13 +25,24 @@ import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
+import {
+  applyTimeOverride,
+  getUserTimeSettings,
+  setTimeOverride,
+  subscribeTimeSettings,
+  type TimeOverride,
+  type TimeSettings,
+} from "../../lib/timeSettings";
+import { showErrorToast, showToast } from "../../lib/toasts";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
-import { StarButton, useRecordView } from "../../shell/StarButton";
+import { useRecordView } from "../../shell/StarButton";
+import { AccessDialog } from "../admin/access";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { AnnotationDialog } from "./AnnotationDialog";
-import { AccessButton } from "./accessIntegration";
+import { mayManageAccess } from "./accessIntegration";
 import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
 import {
   createDashboard,
@@ -40,11 +61,13 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardLinks } from "./DashboardLinks";
+import { DashboardToolbar } from "./DashboardToolbar";
 import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
 import { moveRow, panelsOf, placeInSection, sectionBottom } from "./layout";
 import {
+  BROWSER_ZONE,
   clickTargets,
   type DashboardModel,
   newPanelId,
@@ -56,11 +79,11 @@ import {
 import { PanelCard } from "./PanelCard";
 import { type EditorSnapshot, PanelEditor } from "./PanelEditor";
 import { panelRange } from "./panelTime";
-import { REFRESH_CHOICES } from "./refresh";
+import { RefreshControl } from "./RefreshControl";
 import type { DashboardSearch } from "./routes";
 import { ConflictDialog, SaveDialog } from "./SaveDialogs";
 import { SettingsDialog } from "./SettingsDialog";
-import { TimeRangePicker } from "./TimeRangePicker";
+import { TimeControls } from "./TimeRangePicker";
 import {
   CopyPanelDialog,
   JsonModelDialog,
@@ -70,7 +93,7 @@ import {
   RowDialog,
   SaveAsDialog,
 } from "./ToolDialogs";
-import { resolveRange, type TextRange } from "./timeRange";
+import { delayedNow, resolveRange, type TextRange } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import { initialVariables, VariablesBar } from "./Variables";
@@ -116,6 +139,25 @@ export interface DisplayState {
   editPanel?: string | undefined;
   /** Opening the editor replaces the current history entry instead of adding one. */
   replace?: boolean | undefined;
+}
+
+/** The dashboard's own time options as an override of the viewer's preferences, or null. */
+function timeOverrideOf(
+  timeZone: string | undefined,
+  weekStart: TimeSettings["weekStart"] | undefined,
+  fiscalYearStartMonth: number | undefined,
+): TimeOverride | null {
+  const override: TimeOverride = {};
+  if (timeZone !== undefined) {
+    override.timeZone = timeZone === BROWSER_ZONE ? null : timeZone;
+  }
+  if (weekStart != null) {
+    override.weekStart = weekStart;
+  }
+  if (fiscalYearStartMonth !== undefined) {
+    override.fiscalYearStartMonth = fiscalYearStartMonth;
+  }
+  return Object.keys(override).length === 0 ? null : override;
 }
 
 /** `editPanel` for a panel being added: the editor at `/dashboards/$id/panels/new`. */
@@ -270,6 +312,7 @@ type DialogState =
   | { kind: "annotate"; time: number; panelId: string | null }
   | { kind: "mark"; mark: DashboardMark }
   | { kind: "discardPanel"; fresh: boolean }
+  | { kind: "access" }
   | null;
 
 /**
@@ -345,7 +388,7 @@ function DashboardView({
   onDisplay: (patch: Partial<DisplayState>) => void;
   controls?: ReactNode;
 }) {
-  const { t, timeZone, weekStart } = useI18n();
+  const { t } = useI18n();
   const permissions = useOrgPermissions();
   // For the breadcrumbs; without folders:read the trail starts at the list.
   const folders = useQuery({
@@ -382,6 +425,26 @@ function DashboardView({
     }
   }, [draft]);
   const model = draft ?? dashboard.model;
+  // The dashboard's own time zone, week start and fiscal year apply to everything on the page
+  // while it is open (the draft's, so a change in the settings shows at once); the range below
+  // resolves with them from the first render on.
+  const userTime = useSyncExternalStore(
+    subscribeTimeSettings,
+    getUserTimeSettings,
+    getUserTimeSettings,
+  );
+  const timeOverride = useMemo(
+    () => timeOverrideOf(model.timeZone, model.weekStart, model.fiscalYearStartMonth),
+    [model.timeZone, model.weekStart, model.fiscalYearStartMonth],
+  );
+  const timeSettings = useMemo(
+    () => applyTimeOverride(userTime, timeOverride),
+    [userTime, timeOverride],
+  );
+  useLayoutEffect(() => {
+    setTimeOverride(timeOverride);
+    return () => setTimeOverride(null);
+  }, [timeOverride]);
   const rows = model.rows ?? [];
   // Library panels added or changed in this session, on top of those the dashboard answered.
   const [extraLibrary, setExtraLibrary] = useState<Record<string, LinkedPanel>>({});
@@ -522,6 +585,11 @@ function DashboardView({
 
   // The range and what the cards run with keep their identity while they stay the same, so an
   // edit of the draft (a panel moved) does not hand every card new props.
+  // "Now" for this run: the clock, minus the dashboard's now delay.
+  const now = useMemo(
+    () => delayedNow(clock.now, model.nowDelay, timeSettings),
+    [clock.now, model.nowDelay, timeSettings],
+  );
   const textRange: TextRange = useMemo(
     () =>
       draft === null && display.from !== undefined && display.to !== undefined
@@ -530,8 +598,8 @@ function DashboardView({
     [draft, display.from, display.to, model.timeRange],
   );
   const resolved = useMemo(
-    () => resolveRange(textRange, clock.now, { timeZone, weekStart }),
-    [textRange, clock.now, timeZone, weekStart],
+    () => resolveRange(textRange, now, timeSettings),
+    [textRange, now, timeSettings],
   );
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
 
@@ -605,7 +673,7 @@ function DashboardView({
           rows,
           (row) => (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]),
           resolved.range,
-          clock.now,
+          now,
         )
       : [],
     saved: dashboard.model,
@@ -1032,10 +1100,14 @@ function DashboardView({
           refresh={clock.run}
           toolbar={
             <>
-              <TimeRangePicker value={textRange} onChange={onRangeChange} />
-              <button type="button" className="button button--secondary" onClick={tick}>
-                {t("dashboards.refresh")}
-              </button>
+              <TimeControls
+                value={textRange}
+                onChange={onRangeChange}
+                userId={userId}
+                dashboardZone={timeOverride?.timeZone !== undefined}
+                shortcuts
+              />
+              <RefreshControl onRefresh={tick} />
             </>
           }
           range={resolved.range}
@@ -1098,46 +1170,50 @@ function DashboardView({
     .filter((c) => c !== "")
     .join(" ");
 
-  const moreMenu = (
-    <details className="tool-menu">
-      <summary className="button button--secondary">{t("dashboardTools.more")}</summary>
-      <div className="tool-menu__list">
-        <button
-          type="button"
-          className="button button--ghost"
-          onClick={() => onDisplay({ mode: "kiosk" })}
-        >
-          {t("dashboardTools.view.kiosk")}
-        </button>
-        <button
-          type="button"
-          className="button button--ghost"
-          onClick={() => onDisplay({ mode: "tv" })}
-        >
-          {t("dashboardTools.view.tv")}
-        </button>
-        <button type="button" className="button button--ghost" onClick={() => void exportJson()}>
-          {t("dashboardTools.export")}
-        </button>
-        <button
-          type="button"
-          className="button button--ghost"
-          onClick={() => setDialog({ kind: "json", readOnly: true })}
-        >
-          {t("dashboardTools.json.view")}
-        </button>
-        {permissions.has("dashboards:write") || canEdit ? (
-          <button
-            type="button"
-            className="button button--ghost"
-            onClick={() => setDialog({ kind: "saveAs" })}
-          >
-            {t("dashboardTools.saveAs.button")}
-          </button>
-        ) : null}
-      </div>
-    </details>
-  );
+  // Time panels share the pointer's time as the dashboard says; one store per setting.
+  const sharedCursor = model.sharedCursor ?? "off";
+  const crosshair = useMemo(() => createCrosshair(sharedCursor), [sharedCursor]);
+  const canAccess = mayManageAccess("dashboard", dashboard.access?.permissions, permissions);
+  const toolbarActions = {
+    edit: () => setDraft(dashboard.model),
+    leaveEdit: () => (dirty ? setDialog({ kind: "discard" }) : setDraft(null)),
+    save: () => setDialog({ kind: "save" }),
+    addPanel,
+    addRow,
+    addLibraryPanel: () => setDialog({ kind: "libraryPick" }),
+    // From view mode the settings start edit mode: they change the draft.
+    settings: () => {
+      setDraft((current) => current ?? dashboard.model);
+      setDialog({ kind: "settings" });
+    },
+    json: () => setDialog({ kind: "json", readOnly: draft === null }),
+    exportJson: () => void exportJson(),
+    copyLink: () => void copyLink(),
+    saveAs: () => setDialog({ kind: "saveAs" }),
+    history: () =>
+      void navigate({
+        to: "/dashboards/$dashboardId/versions",
+        params: { dashboardId: dashboard.id },
+      }),
+    access: () => setDialog({ kind: "access" }),
+    remove: () => setDialog({ kind: "delete" }),
+    kiosk: () => onDisplay({ mode: "kiosk" }),
+    tv: () => onDisplay({ mode: "tv" }),
+    exitMode: () => onDisplay({ mode: "normal" }),
+  };
+
+  /** The address of this dashboard with the time range on screen, for sharing. */
+  async function copyLink() {
+    const url = new URL(`/dashboards/${dashboard.id}`, window.location.origin);
+    url.searchParams.set("from", textRange.from);
+    url.searchParams.set("to", textRange.to);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      showToast({ message: t("toolbar.share.linkCopied") });
+    } catch {
+      showErrorToast(t("toolbar.share.linkFailed"));
+    }
+  }
 
   return (
     <div className={className}>
@@ -1158,126 +1234,33 @@ function DashboardView({
             <Breadcrumbs crumbs={[...trail, { label: dashboardTitle }]} />
           ) : null}
           {mode === "kiosk" ? null : (
-            <div className="dashboard__bar">
-              <h1 className="dashboard__title truncate" id={headingId}>
-                {model.title === "" ? t("dashboards.untitled") : model.title}
-              </h1>
-              <div className="dashboard__tools">
-                {controls}
-                {resolved.ok ? null : (
-                  <span className="field__error">
-                    {t(`dashboards.time.error.${resolved.error}`)}
-                  </span>
-                )}
-                <TimeRangePicker value={textRange} onChange={onRangeChange} />
-                <button type="button" className="button button--secondary" onClick={tick}>
-                  {t("dashboards.refresh")}
-                </button>
-                <label className="visually-hidden" htmlFor={`${headingId}-refresh`}>
-                  {t("dashboards.refresh.auto")}
-                </label>
-                <select
-                  id={`${headingId}-refresh`}
-                  className="select"
-                  value={refresh}
-                  onChange={(event) => setRefresh(Number(event.currentTarget.value))}
-                  title={t("dashboards.refresh.auto")}
-                >
-                  {REFRESH_CHOICES.map((choice) => (
-                    <option key={choice.seconds} value={choice.seconds}>
-                      {t(choice.label)}
-                    </option>
-                  ))}
-                </select>
-                {mode === "tv" ? (
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    onClick={() => onDisplay({ mode: "normal" })}
-                  >
-                    {t("dashboardTools.view.exit")}
-                  </button>
-                ) : draft === null ? (
-                  <>
-                    <StarButton orgId={orgId} dashboardId={dashboard.id} />
-                    {/* Secondary: copper is for Save, the one main action while editing. */}
-                    {canEdit ? (
-                      <button
-                        type="button"
-                        className="button button--secondary"
-                        onClick={() => setDraft(dashboard.model)}
-                      >
-                        <Icon name="edit" />
-                        {t("dashboards.edit")}
-                      </button>
-                    ) : null}
-                    <Link
-                      to="/dashboards/$dashboardId/versions"
-                      params={{ dashboardId: dashboard.id }}
-                      className="button button--secondary"
-                    >
-                      {t("dashboards.versions")}
-                    </Link>
-                    <AccessButton
-                      allowed={dashboard.access?.permissions}
-                      resource={{ kind: "dashboard", id: dashboard.id, name: dashboard.title }}
-                    />
-                    {canDelete && !inTrash ? (
-                      <button
-                        type="button"
-                        className="button button--secondary"
-                        onClick={() => setDialog({ kind: "delete" })}
-                      >
-                        {t("dashboards.delete")}
-                      </button>
-                    ) : null}
-                    {moreMenu}
-                  </>
-                ) : (
-                  <>
-                    {/*
-                     * "Done" takes the place of "Edit", so a second click on that spot leaves edit
-                     * mode instead of adding a panel by accident.
-                     */}
-                    <button
-                      type="button"
-                      className="button button--secondary"
-                      onClick={() => (dirty ? setDialog({ kind: "discard" }) : setDraft(null))}
-                    >
-                      {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
-                    </button>
-                    <button type="button" className="button button--secondary" onClick={addPanel}>
-                      {t("dashboards.addPanel")}
-                    </button>
-                    <button type="button" className="button button--secondary" onClick={addRow}>
-                      {t("dashboardTools.rows.add")}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--secondary"
-                      onClick={() => setDialog({ kind: "libraryPick" })}
-                    >
-                      {t("libraryPanels.add")}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--secondary"
-                      onClick={() => setDialog({ kind: "settings" })}
-                    >
-                      {t("dashboards.settings")}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--primary"
-                      onClick={() => setDialog({ kind: "save" })}
-                      disabled={!dirty}
-                    >
-                      {t("dashboards.save")}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
+            <DashboardToolbar
+              orgId={orgId}
+              dashboardId={dashboard.id}
+              title={dashboardTitle}
+              headingId={headingId}
+              mode={mode}
+              editing={draft !== null}
+              dirty={dirty}
+              can={{
+                edit: canEdit,
+                remove: canDelete && !inTrash,
+                access: canAccess,
+                saveAs: permissions.has("dashboards:write") || canEdit,
+              }}
+              controls={controls}
+              rangeError={resolved.ok ? undefined : t(`dashboards.time.error.${resolved.error}`)}
+              range={textRange}
+              onRange={onRangeChange}
+              userId={userId}
+              dashboardZone={timeOverride?.timeZone !== undefined}
+              shortcuts={dialog === null}
+              refreshSeconds={refresh}
+              onRefreshSeconds={setRefresh}
+              refreshIntervals={model.refreshIntervals}
+              onRefresh={tick}
+              actions={toolbarActions}
+            />
           )}
           {inTrash && mode === "normal" ? (
             <div className="dashboard__mode" role="status">
@@ -1346,7 +1329,7 @@ function DashboardView({
                       query={{
                         orgId,
                         dashboardId: dashboard.id,
-                        range: panelRange(alone, resolved.range, clock.now),
+                        range: panelRange(alone, resolved.range, now),
                         variables: editorValues(alone, rows, values),
                         saved: dashboard.model.variables,
                         source: "stored",
@@ -1380,25 +1363,27 @@ function DashboardView({
                 </EmptyState>
               ) : (
                 <PanelHostContext value={host}>
-                  <DashboardGrid
-                    panels={model.panels}
-                    rows={rows}
-                    libraryPanels={library}
-                    now={clock.now}
-                    query={gridQuery}
-                    storedPanels={dashboard.model.panels}
-                    collapsed={(row) =>
-                      openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
-                    }
-                    onToggleRow={(row) =>
-                      setOpenRows((current) => {
-                        const open = current[row.id] ?? !row.collapsed;
-                        return { ...current, [row.id]: !open };
-                      })
-                    }
-                    view={viewActions}
-                    edit={editActions}
-                  />
+                  <CrosshairContext value={crosshair}>
+                    <DashboardGrid
+                      panels={model.panels}
+                      rows={rows}
+                      libraryPanels={library}
+                      now={now}
+                      query={gridQuery}
+                      storedPanels={dashboard.model.panels}
+                      collapsed={(row) =>
+                        openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
+                      }
+                      onToggleRow={(row) =>
+                        setOpenRows((current) => {
+                          const open = current[row.id] ?? !row.collapsed;
+                          return { ...current, [row.id]: !open };
+                        })
+                      }
+                      view={viewActions}
+                      edit={editActions}
+                    />
+                  </CrosshairContext>
                 </PanelHostContext>
               )}
             </>
@@ -1671,6 +1656,13 @@ function DashboardView({
         >
           {t("dashboards.delete.text", { title: model.title })}
         </ConfirmDialog>
+      ) : null}
+      {dialog?.kind === "access" ? (
+        <AccessDialog
+          open
+          onClose={() => setDialog(null)}
+          resource={{ type: "dashboard", id: dashboard.id, name: dashboard.title }}
+        />
       ) : null}
       {save.isError && dialog === null && !isApiError(save.error, "version_conflict") ? (
         <FormAlert>{saveErrorText(t, save.error)}</FormAlert>

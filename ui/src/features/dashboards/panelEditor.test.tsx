@@ -166,7 +166,8 @@ describe("the panel editor page", () => {
     expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
     expect(screen.getByText(/^Edit mode\. /)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Add panel" }));
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add panel" }));
     const added = await screen.findByRole("region", { name: "New panel" });
     expect(location().pathname).toBe("/dashboards/d-main/panels/new");
     await user.click(within(added).getByRole("button", { name: "Discard" }));
@@ -364,7 +365,8 @@ describe("adding and leaving panels", () => {
     const { stored } = setup();
     const { user, location } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Add panel" }));
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add panel" }));
     const editor = await screen.findByRole("region", { name: "New panel" });
     expect(location().pathname).toBe("/dashboards/d-main/panels/new");
     // The visualization comes first, open; a first query is ready on the first source.

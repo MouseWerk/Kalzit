@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { SQL } from "./api";
 import { type Language, t } from "./i18n";
 import { expect, type World } from "./test";
-import { fillQuery, panelAction } from "./ui";
+import { fillQuery, panelAction, startEditing, toolbarButton } from "./ui";
 
 /** A main page, or a state of one (a result, a dialog), for the layout and accessibility checks. */
 export interface MainPage {
@@ -37,7 +37,7 @@ export const MAIN_PAGES: readonly MainPage[] = [
     path: (w) => `/dashboards/${w.dashboardId}`,
     ready: async (page, world, language) => {
       await dashboardReady(page, world);
-      await page.getByRole("button", { name: t("dashboards.edit", {}, language) }).click();
+      await startEditing(page, language);
       await panelAction(page, "Sales", "dashboards.panel.editNamed", language);
       // A page of its own, at its own address.
       const editor = page.getByRole("region", {
@@ -52,10 +52,42 @@ export const MAIN_PAGES: readonly MainPage[] = [
     path: (w) => `/dashboards/${w.dashboardId}`,
     ready: async (page, world, language) => {
       await dashboardReady(page, world);
-      await page.getByRole("button", { name: t("dashboards.edit", {}, language) }).click();
-      await page.getByRole("button", { name: t("dashboards.settings", {}, language) }).click();
+      await startEditing(page, language);
+      await toolbarButton(page, "dashboards.settings", language);
       await dialog(page, "dashboards.settings.title", language);
       await expect(page.getByRole("dialog").locator(".cm-editor")).toBeVisible();
+    },
+  },
+  {
+    name: "dashboard time picker",
+    path: (w) => `/dashboards/${w.dashboardId}`,
+    ready: async (page, world, language) => {
+      await dashboardReady(page, world);
+      await page
+        .getByRole("button", {
+          name: t(
+            "dashboards.time.buttonLabel",
+            { range: t("dashboards.time.last6h", {}, language) },
+            language,
+          ),
+        })
+        .click();
+      await dialog(page, "dashboards.time.title", language);
+      await page
+        .getByRole("button", { name: t("toolbar.calendar.pickStart", {}, language) })
+        .click();
+      await expect(page.locator(".calendar")).toBeVisible();
+    },
+  },
+  {
+    name: "dashboard menu",
+    path: (w) => `/dashboards/${w.dashboardId}`,
+    ready: async (page, world, language) => {
+      await dashboardReady(page, world);
+      await page
+        .getByRole("button", { name: t("toolbar.more", {}, language), exact: true })
+        .click();
+      await expect(page.getByRole("menu", { name: t("toolbar.more", {}, language) })).toBeVisible();
     },
   },
   {
