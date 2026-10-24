@@ -10,6 +10,7 @@ import {
   type FieldConfig,
   type FieldOptions,
   fieldOptionsFor,
+  type Tone,
   toneClass,
 } from "../fieldConfig/fieldConfig";
 import { Legend, WithLegend } from "../fieldConfig/Legend";
@@ -188,6 +189,10 @@ function BarPanel({
   const longest = Math.max(...data.categories.map((category) => labelWidth(category, labelFont)));
   const labelEvery = Math.max(Math.ceil((longest + LABEL_GAP) / group), 1);
   const truncated = frames.some((f) => rowCount(f) > MAX_BARS);
+  // One series without a color of its own is drawn in the monochrome look (feel.md section 8);
+  // several keep the palette.
+  const colorOf = (tone: Tone | undefined, index: number) =>
+    tone === undefined && data.series.length === 1 ? "series-mono" : toneClass(tone, index);
   const shown = (s: BarSeries, value: number) =>
     displayValue(value, "number", s.options, language, {
       min: yMin,
@@ -202,7 +207,7 @@ function BarPanel({
       return {
         name: s.name,
         value: display === null ? t("dashboards.panels.noValue") : displayText(display),
-        colorClass: toneClass(display?.tone ?? s.options.color, index),
+        colorClass: colorOf(display?.tone ?? s.options.color, index),
       };
     }),
   }));
@@ -278,7 +283,7 @@ function BarPanel({
                           // biome-ignore lint/suspicious/noArrayIndexKey: series order is fixed
                           <g key={index}>
                             <rect
-                              className={`bar__rect ${toneClass(tone, index)}`}
+                              className={`bar__rect ${colorOf(tone, index)}`}
                               x={x}
                               y={barTop}
                               width={slots.width}
