@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
@@ -295,6 +295,169 @@ test("account", async ({ browser }) => {
   await expect(sessions.getByRole("listitem")).toHaveCount(2);
   await shoot(page, "account");
   await other.dispose();
+  await page.context().close();
+});
+
+/** Orders as a shop's document store keeps them: a nested customer and an array of items. */
+const ORDERS = [
+  [
+    "A-1041",
+    "Nord",
+    "Hamburg",
+    "paid",
+    [
+      ["Desk lamp", 2, 39.9],
+      ["Cable set", 1, 12.5],
+    ],
+  ],
+  ["A-1042", "Süd", "München", "shipped", [["Office chair", 1, 249]]],
+  [
+    "A-1043",
+    "West",
+    "Köln",
+    "paid",
+    [
+      ["Monitor arm", 1, 89],
+      ["Desk lamp", 1, 39.9],
+    ],
+  ],
+  ["A-1044", "Ost", "Leipzig", "open", [["Notebook stand", 3, 29.5]]],
+  [
+    "A-1045",
+    "Nord",
+    "Bremen",
+    "shipped",
+    [
+      ["Keyboard", 1, 79],
+      ["Mouse", 1, 35],
+    ],
+  ],
+  ["A-1046", "West", "Düsseldorf", "paid", [["Office chair", 2, 249]]],
+] as const;
+
+function writeOrders(path: string): void {
+  const documents = ORDERS.map(([number, region, city, status, items], index) => ({
+    number,
+    status,
+    createdAt: new Date(SCREENSHOT_NOW - (ORDERS.length - index) * 3_600_000).toISOString(),
+    customer: { region, city, newsletter: index % 2 === 0 },
+    items: items.map(([name, quantity, price]) => ({ name, quantity, price })),
+    total:
+      Math.round(items.reduce((sum, [, quantity, price]) => sum + quantity * price, 0) * 100) / 100,
+  }));
+  writeFileSync(path, JSON.stringify(documents, null, 2));
+}
+
+/**
+ * A dashboard on a JSON file of orders: the documents as a tree, their schema and the
+ * distribution of one field, the documents kept as documents. A dashboard rather than Explore,
+ * since Explore would show the file's path in this machine's run folder.
+ */
+test("dashboard, documents", async ({ browser }) => {
+  const files = process.env.KALZIT_E2E_FILES ?? "";
+  expect(files).not.toBe("");
+  const path = join(files, "orders.json");
+  writeOrders(path);
+  // A session of its own: the account picture signed out every other session, the demo's too.
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  const created = await owner.context.post(`/api/orgs/${owner.orgId}/datasources`, {
+    data: { name: "Orders (JSON)", kind: "file", settings: { path }, secrets: {} },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const { id: sourceId } = (await created.json()) as { id: string };
+  const target = [{ refId: "A", datasourceId: sourceId, query: {} }];
+  const dashboardId = await owner.createDashboard({
+    schemaVersion: 2,
+    title: "Orders",
+    timeRange: { from: "now-6h", to: "now" },
+    variables: [],
+    panels: [
+      {
+        id: "orders",
+        type: "documents",
+        title: "Orders as documents",
+        grid: { x: 0, y: 0, w: 14, h: 16 },
+        targets: target,
+        options: {},
+      },
+      {
+        id: "schema",
+        type: "schema",
+        title: "Fields of the orders",
+        grid: { x: 14, y: 0, w: 10, h: 9 },
+        targets: target,
+        options: {},
+      },
+      {
+        id: "status",
+        type: "distribution",
+        title: "Order status",
+        grid: { x: 14, y: 9, w: 10, h: 7 },
+        targets: target,
+        options: { path: "status" },
+      },
+    ],
+  });
+  await owner.dispose();
+
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${dashboardId}`);
+  await expect(page.getByRole("heading", { name: "Orders", exact: true })).toBeVisible();
+  await expect(page.getByRole("tree").first()).toBeVisible();
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await shoot(page, "dashboard-documents-dark");
+  await page.context().close();
+});
+
+test("panel editor, analysis steps", async ({ browser }) => {
+  const sql =
+    "SELECT ts AS time, amount FROM sales WHERE region = 'West' AND $__timeFilter(ts) ORDER BY ts";
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  const dashboardId = await owner.createDashboard({
+    // Version 2 reads `transformations` as analysis steps; version 1 would drop them.
+    schemaVersion: 2,
+    title: "Sales analysis",
+    timeRange: { from: "now-6h", to: "now" },
+    variables: [],
+    panels: [
+      {
+        id: "smooth",
+        type: "timeseries",
+        title: "Sales West with moving average and trend",
+        grid: { x: 0, y: 0, w: 24, h: 10 },
+        targets: [{ refId: "A", datasourceId: demo.sourceId, query: { sql } }],
+        transformations: [
+          {
+            id: "avg",
+            type: "movingAverage",
+            frame: "A",
+            field: "amount",
+            window: 12,
+            name: "moving average",
+          },
+          {
+            id: "trend",
+            type: "trend",
+            frame: "A",
+            field: "amount",
+            output: "fitted",
+            name: "trend",
+          },
+        ],
+        options: { unit: "EUR" },
+      },
+    ],
+  });
+  await owner.dispose();
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${dashboardId}/panels/smooth/edit`);
+  const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
+  await expect(editor.locator(".uplot")).toHaveCount(1);
+  await editor.getByRole("tab", { name: new RegExp(`^${t("analysis.steps.title")}`) }).click();
+  await expect(editor.locator('[aria-busy="true"]')).toHaveCount(0);
+  await shoot(page, "panel-editor-steps-dark");
   await page.context().close();
 });
 
