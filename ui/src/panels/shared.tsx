@@ -185,21 +185,35 @@ export function CheckboxField({
   label,
   checked,
   onChange,
+  hint,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  /** A line under the box saying what the option does. */
+  hint?: string;
 }) {
   const id = useId();
-  return (
+  const box = (
     <label className="checkbox" htmlFor={id}>
       <input
         id={id}
         type="checkbox"
         checked={checked}
+        aria-describedby={hint === undefined ? undefined : `${id}-hint`}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
       {label}
     </label>
+  );
+  return hint === undefined ? (
+    box
+  ) : (
+    <div className="field">
+      {box}
+      <p className="field__hint" id={`${id}-hint`}>
+        {hint}
+      </p>
+    </div>
   );
 }

@@ -3,6 +3,7 @@ import { getRouteApi, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
+import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
@@ -100,7 +101,8 @@ function DataSourceList({
 
   const toolbar = trash ? (
     <div className="toolbar">
-      <Link to="/data-sources" search={{}} className="versions__back">
+      <Link to="/data-sources" search={{}} className="back-link">
+        <Icon name="back" />
         {t("datasources.trash.back")}
       </Link>
     </div>
@@ -111,7 +113,7 @@ function DataSourceList({
           {t("datasources.add")}
         </Link>
       ) : null}
-      <Link to="/data-sources" search={{ trash: true }} className="versions__back">
+      <Link to="/data-sources" search={{ trash: true }} className="button button--ghost">
         {t("datasources.trash.link")}
       </Link>
     </div>

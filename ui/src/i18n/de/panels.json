@@ -308,5 +308,7 @@
   "panels.graph.stackGroup": "Stapelgruppe",
   "panels.graph.stackGroupHint": "Reihen derselben Gruppe werden aufeinander gestapelt; je Reihe in einer Abweichung festlegen.",
   "panels.graph.comparison": "Vergleichsreihe: gedämpft und gestrichelt",
-  "panels.checkingPattern": "Das Muster wird geprüft…"
+  "panels.checkingPattern": "Das Muster wird geprüft…",
+  "panels.state.colorStateWords": "Bekannte Zustandswörter einfärben",
+  "panels.state.colorStateWordsHint": "Ein Wert, der ein Zustandswort ist, bekommt dessen Farbe: ok, up, gesund, erfolgreich und bestanden gut; Warnung, eingeschränkt und ausstehend Warnung; Fehler, fehlgeschlagen, ausgefallen, kritisch und offline Gefahr; unbekannt neutral. Eine Wertzuordnung, Schwellenwerte oder eine Feldfarbe gehen vor."
 }

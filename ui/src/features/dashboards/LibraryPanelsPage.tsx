@@ -4,6 +4,7 @@ import { useState } from "react";
 import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
+import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
@@ -63,7 +64,8 @@ function LibraryList({ orgId }: { orgId: string }) {
   return (
     <>
       <div className="browser__header">
-        <Link to="/dashboards" className="button button--ghost">
+        <Link to="/dashboards" className="back-link">
+          <Icon name="back" />
           {t("dashboards.backToList")}
         </Link>
         <div className="browser__search">

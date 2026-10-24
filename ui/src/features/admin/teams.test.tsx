@@ -43,7 +43,7 @@ describe("teams", () => {
 
   it("manages the members of a team and their team role, with undo", async () => {
     const { user, admin } = await openAdmin("/admin/teams/t1");
-    expect(await screen.findByRole("heading", { level: 2, name: "Analysts" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Analysts" })).toBeTruthy();
     const members = await screen.findByRole("list", { name: "Members" });
     const role = within(members).getByRole("combobox", { name: "Team role of Grace Hopper" });
     await user.selectOptions(role, "member");
@@ -92,7 +92,7 @@ describe("teams", () => {
 
   it("renames a team", async () => {
     const { user, admin } = await openAdmin("/admin/teams/t1");
-    await screen.findByRole("heading", { level: 2, name: "Analysts" });
+    await screen.findByRole("heading", { level: 1, name: "Analysts" });
     await user.click(screen.getByRole("button", { name: "Rename…" }));
     const field = within(screen.getByRole("dialog", { name: "Rename team" })).getByLabelText(
       "Team name",
@@ -101,7 +101,7 @@ describe("teams", () => {
     await user.clear(field);
     await user.type(field, "Data team");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "Data team" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Data team" })).toBeTruthy();
     expect(admin.teams[0]?.name).toBe("Data team");
   });
 

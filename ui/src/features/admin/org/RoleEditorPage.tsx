@@ -11,6 +11,7 @@ import {
 } from "react";
 import { isApiError } from "../../../api/client";
 import { characterCount, trimWhitespace } from "../../../auth/validation";
+import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
 import {
@@ -57,7 +58,8 @@ export function RoleEditorPage({ roleId }: { roleId: string }) {
   const role = roles.data?.find((candidate) => candidate.id === roleId);
 
   const back = (
-    <Link to="/admin/roles" className="admin-back">
+    <Link to="/admin/roles" className="back-link">
+      <Icon name="back" />
       {t("admin.roles.back")}
     </Link>
   );

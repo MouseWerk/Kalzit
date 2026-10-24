@@ -34,7 +34,7 @@ describe("roles", () => {
 
   it("shows a built-in role read-only, grouped by area with what each permission allows", async () => {
     await openAdmin("/admin/roles/editor");
-    expect(await screen.findByRole("heading", { level: 2, name: "Editor" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Editor" })).toBeTruthy();
     expect(screen.getByText(/Built-in roles cannot be changed/)).toBeTruthy();
     const group = screen.getByRole("group", { name: "Dashboards and folders" });
     const write = within(group).getByRole("checkbox", { name: "dashboards:write" });
@@ -53,12 +53,12 @@ describe("roles", () => {
     const { user, admin, location } = await openAdmin("/admin/roles");
     await screen.findByRole("list", { name: "Roles" });
     await user.click(screen.getByRole("link", { name: "New role" }));
-    await screen.findByRole("heading", { level: 2, name: "New role" });
+    await screen.findByRole("heading", { level: 1, name: "New role" });
     await user.type(screen.getByLabelText("Name"), "Publisher");
     await user.type(screen.getByLabelText("Description"), "Shares dashboards");
     await user.click(screen.getByRole("checkbox", { name: "dashboards:share" }));
     await user.click(screen.getByRole("button", { name: "Create role" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "Publisher" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Publisher" })).toBeTruthy();
     const created = admin.roles.find((role) => role.name === "Publisher");
     expect(created?.permissions).toEqual(["dashboards:share"]);
     expect(location().pathname).toBe(`/admin/roles/${created?.id}`);

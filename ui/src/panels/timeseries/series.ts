@@ -8,7 +8,7 @@ import {
   type FieldOptions,
   fieldOptionsFor,
 } from "../fieldConfig/fieldConfig";
-import { timeField, toNumber, valueFields } from "../frame";
+import { distinctSeriesNames, frameName, timeField, toNumber, valueFields } from "../frame";
 
 /** One line: times ascending (Unix ms) and values, NaN where the row has no value. */
 export interface Series {
@@ -30,6 +30,7 @@ export function buildSeries(
   config: FieldConfig = EMPTY_FIELD_CONFIG,
 ): Series[] {
   const series: Series[] = [];
+  const refIds: (string | undefined)[] = [];
   for (const frame of frames) {
     const time = timeField(frame);
     if (time === undefined) {
@@ -47,9 +48,18 @@ export function buildSeries(
       }
       const options = fieldOptionsFor(field, config);
       series.push({ name: displayNameOf(field, options, legend), times, values, field, options });
+      refIds.push(frameName(frame));
     }
   }
-  return series;
+  const names = distinctSeriesNames(
+    series.map((s, index) => ({
+      name: s.name,
+      field: s.field as Field,
+      ...(refIds[index] === undefined ? {} : { refId: refIds[index] }),
+      fixed: s.options?.displayName !== undefined || legend.trim() !== "",
+    })),
+  );
+  return series.map((s, index) => ({ ...s, name: names[index] ?? s.name }));
 }
 
 export interface Extent {

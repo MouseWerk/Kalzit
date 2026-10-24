@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 /** The regions of the fixture, in the order a sorted query answers them. */
@@ -41,4 +42,21 @@ export function writeSalesDatabase(file: string, now = Date.now()): void {
   } finally {
     db.close();
   }
+}
+
+/** The rows of the CSV fixture: region and amount, written the way German Excel exports them. */
+export const CSV_REGIONS = [
+  ["Nord", "1.234,5"],
+  ["Ost", "98,25"],
+  ["Süd", "310"],
+] as const;
+
+/**
+ * Writes the CSV fixture for the file source: semicolon-separated with a decimal comma, as a
+ * German spreadsheet saves it, so the source's automatic delimiter and decimal reading are tested
+ * with a real file.
+ */
+export function writeRegionsCsv(file: string): void {
+  const lines = ["region;amount", ...CSV_REGIONS.map((row) => row.join(";"))];
+  writeFileSync(file, `${lines.join("\n")}\n`, "utf8");
 }

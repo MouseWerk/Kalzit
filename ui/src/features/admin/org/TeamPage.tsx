@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
+import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
 import {
   adminKeys,
@@ -150,7 +151,8 @@ export function TeamPage({ teamId }: { teamId: string }) {
   });
 
   const back = (
-    <Link to="/admin/teams" className="admin-back">
+    <Link to="/admin/teams" className="back-link">
+      <Icon name="back" />
       {t("admin.teams.back")}
     </Link>
   );

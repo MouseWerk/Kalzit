@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { type MessageKey, useI18n } from "../../../i18n/i18n";
+import { useI18n } from "../../../i18n/i18n";
 import { schemaQuery } from "../api";
 import {
   familyOf,
@@ -18,8 +18,12 @@ import {
   SQL_MACROS,
   sqlCompletions,
 } from "./completion";
+import { FileQueryEditor } from "./FileQueryEditor";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
+import { HttpJsonQueryEditor } from "./HttpJsonQueryEditor";
+import { MacroHelp } from "./MacroHelp";
 import { MongoQueryEditor, type PreviewRun } from "./MongoQueryEditor";
+import { SearchQueryEditor } from "./SearchQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -57,6 +61,12 @@ export function QueryEditor(props: QueryEditorProps) {
       return <CypherQueryEditor {...props} />;
     case "gsql":
       return <GsqlQueryEditor {...props} />;
+    case "search":
+      return <SearchQueryEditor {...props} />;
+    case "file":
+      return <FileQueryEditor {...props} />;
+    case "http":
+      return <HttpJsonQueryEditor {...props} />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }
@@ -65,32 +75,6 @@ export function QueryEditor(props: QueryEditorProps) {
 function useSchema(orgId: string, datasourceId: string) {
   const schema = useQuery(schemaQuery(orgId, datasourceId));
   return { schema: schema.data, failed: schema.isError };
-}
-
-function MacroHelp({
-  macros,
-  lead,
-}: {
-  macros: { name: string; help: MessageKey }[];
-  lead: MessageKey;
-}) {
-  const { t } = useI18n();
-  return (
-    <details className="query-editor__help">
-      <summary>{t("datasources.editor.macros")}</summary>
-      <p className="field__hint">{t(lead)}</p>
-      <dl className="query-editor__macros">
-        {macros.map((macro) => (
-          <div key={macro.name}>
-            <dt>
-              <code>{macro.name}</code>
-            </dt>
-            <dd>{t(macro.help)}</dd>
-          </div>
-        ))}
-      </dl>
-    </details>
-  );
 }
 
 function SqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: QueryEditorProps) {

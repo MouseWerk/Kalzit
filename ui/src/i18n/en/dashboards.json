@@ -217,6 +217,7 @@
   "dashboards.variables.nameInvalid": "Use letters, digits and underscores, starting with a letter.",
   "dashboards.variables.nameTaken": "Another variable already has this name.",
   "dashboards.time.title": "Time range",
+  "dashboards.time.buttonFor": "{name}: {range}",
   "dashboards.time.buttonLabel": "Time range: {range}",
   "dashboards.time.presets": "Quick ranges",
   "dashboards.time.from": "From",
