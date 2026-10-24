@@ -68,25 +68,6 @@ export function setLanguage(language: Language): void {
   }
 }
 
-/**
- * The server's default language for a visitor who never chose one in this browser (the sign-in
- * page), in place of the browser's own. It applies without being remembered.
- */
-export function applyDefaultLanguage(language: unknown): void {
-  if (
-    !isLanguage(language) ||
-    readPreference(LANGUAGE_STORAGE_KEY) !== null ||
-    language === current
-  ) {
-    return;
-  }
-  current = language;
-  applyToDocument(language);
-  for (const listener of listeners) {
-    listener();
-  }
-}
-
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => {

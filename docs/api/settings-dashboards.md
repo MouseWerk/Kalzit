@@ -230,8 +230,9 @@ was `default`, so undo never stores a copy of the default.
 ### `GET /branding`
 
 Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
-null, signIn: {welcome, notice}, defaultTheme, defaultLanguage, accent, density, fontSize}` with
-the server's values.
+null, signIn: {welcome, notice}, defaultTheme, accent, density, fontSize}` with the server's
+values. The sign-in page applies `defaultTheme` when the visitor chose no theme in this browser;
+the language stays the browser's until sign-in.
 
 ### `GET /branding/logo`
 

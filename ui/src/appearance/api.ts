@@ -1,7 +1,6 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { expectShape, isRecord, request } from "../api/client";
-import { applyDefaultLanguage } from "../i18n/i18n";
 import { setDefaultTimeSettings, WEEK_STARTS, type WeekStart } from "../lib/timeSettings";
 import { applyDefaultTheme } from "../theme/theme";
 import { DEFAULT_PRODUCT_NAME, logoUrlFor, setBrand } from "./brand";
@@ -19,7 +18,6 @@ export interface Branding {
   logo: { contentType: string; sha256: string } | null;
   signIn: { welcome: string; notice: string };
   defaultTheme: string;
-  defaultLanguage: string;
   accent: unknown;
   density: unknown;
   fontSize: unknown;
@@ -52,7 +50,6 @@ export async function fetchBranding(): Promise<Branding> {
         : null,
     signIn: { welcome: text(signIn.welcome), notice: text(signIn.notice) },
     defaultTheme: text(value.defaultTheme, "system"),
-    defaultLanguage: text(value.defaultLanguage, "de"),
     accent: value.accent,
     density: value.density,
     fontSize: value.fontSize,
@@ -104,10 +101,11 @@ export function useBrandingSync(): Branding | undefined {
     if (branding.data !== undefined) {
       applyBranding(branding.data);
       setLook(lookFrom(branding.data));
-      // Before sign-in there are no account preferences: the server's defaults stand in for a
-      // visitor who chose nothing in this browser.
+      // Before sign-in there are no account preferences: the server's default theme stands in
+      // for a visitor who chose none in this browser. The language stays the browser's own,
+      // which says more about an unknown visitor; after sign-in the server's default applies
+      // to accounts without a language of their own.
       applyDefaultTheme(branding.data.defaultTheme);
-      applyDefaultLanguage(branding.data.defaultLanguage);
     }
   }, [branding.data]);
   return branding.data;

@@ -194,7 +194,6 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         logo: null,
         signIn: { welcome: "", notice: "" },
         defaultTheme: "system",
-        defaultLanguage: "en",
         accent: "copper",
         density: "balanced",
         fontSize: 14,
