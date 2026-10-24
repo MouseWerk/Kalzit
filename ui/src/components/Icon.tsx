@@ -59,6 +59,22 @@ const PATHS = {
   paste: "M8 5H5.5v15h13V5H16M9 3.5h6v3H9z",
   calendar: "M4.5 6h15v14h-15zM4.5 10h15M8.5 3.5v4M15.5 3.5v4",
   code: "M9 7 4.5 12 9 17M15 7l4.5 5-4.5 5",
+  rows: "M4.5 5h15v4h-15zM4.5 11.5h15M4.5 15.5h15M4.5 19.5h15",
+  library: "M5 4.5h4v15H5zM11 4.5h4v15h-4zM16.5 5.4l3.4-.9 2.6 14-3.4.9z",
+  outline: "M4.5 6h2M9.5 6h10M6.5 12h2M11.5 12h8M6.5 18h2M11.5 18h8",
+  plusSquare: "M4.5 4.5h15v15h-15zM12 8.5v7M8.5 12h7",
+  barChart: "M5.5 19.5V11M10 19.5V5.5M14.5 19.5V9M19 19.5V13",
+  table: "M4.5 5h15v14h-15zM4.5 10h15M4.5 14.5h15M10 10v9",
+  gauge: "M4.5 16a7.5 7.5 0 1 1 15 0M12 16l3.5-4",
+  pie: "M12 3.5v8.5h8.5A8.5 8.5 0 1 1 12 3.5z",
+  network:
+    "M6 4a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM18 6a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM9 16a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM8 6.5l8 1M6.5 8l2 8",
+  stat: "M5 19.5h14M7 15.5V8.5l-1.5 1M11 8.5h4l-3.5 7",
+  text: "M5 6h14M5 10.5h14M5 15h9",
+  filter: "M4.5 5h15l-6 7.5v6l-3 1.5v-7.5z",
+  flag: "M6 20.5V4M6 4.5h11l-2.5 4 2.5 4H6",
+  link: "M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1",
+  help: "M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM9.75 9.5a2.25 2.25 0 1 1 3.4 1.95c-.7.4-1.15.9-1.15 1.8v.25M12 16.25v.25",
 } as const;
 
 /** Icons drawn filled instead of outlined (the starred state of a star). */

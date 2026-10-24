@@ -158,13 +158,38 @@ describe("search with /", () => {
     expect((within(dialog).getByRole("combobox") as HTMLInputElement).value).toBe("/");
   });
 
-  it("shows / on the sidebar's search entry and names both shortcuts", async () => {
+  it("shows the search in the top bar with its key cap and names both shortcuts", async () => {
     setup();
-    renderApp("/");
+    const { user } = renderApp("/");
     const search = await screen.findByRole("button", { name: "Search" });
+    expect(search.closest(".top-bar")).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: "Main navigation" }).contains(search)).toBe(
+      false,
+    );
     expect(search.getAttribute("aria-keyshortcuts")).toBe("/ Control+K");
-    expect(search.getAttribute("title")).toBe("Search (/ or Ctrl+K)");
-    expect(search.textContent).toContain("/");
+    expect(search.textContent).toContain("Ctrl+K");
+    expect(search.parentElement?.querySelector(".tip")?.textContent).toBe("Search (/ or Ctrl+K)");
+    await user.click(search);
+    expect(await screen.findByRole("dialog", { name: /command|palette/i })).toBeTruthy();
+  });
+
+  it("offers New and Help in the top bar", async () => {
+    setup("owner");
+    const { user, location } = renderApp("/");
+    await user.click(await screen.findByRole("button", { name: "New" }));
+    const menu = screen.getByRole("menu", { name: "New" });
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["New dashboard", "New folder", "Import dashboard", "Add data source"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "New folder" }));
+    await waitFor(() => expect(location().pathname).toBe("/dashboards"));
+    expect(await screen.findByRole("dialog", { name: "New folder" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Help" }));
+    await user.click(screen.getByRole("menuitem", { name: /Keyboard shortcuts/ }));
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
   });
 });
 

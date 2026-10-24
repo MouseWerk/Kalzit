@@ -245,6 +245,28 @@ describe("dashboard view", () => {
     await waitFor(() => expect(requests).toHaveLength(3));
   });
 
+  it("reads query variables for the panel editor opened by its address", async () => {
+    const server = setup("editor");
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "city", type: "query", datasourceId: PG_ID, query: { sql: "SELECT city" } },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [{ value: "graz", label: "Graz" }];
+    renderApp("/dashboards/d-sales/panels/p-orders/edit");
+    await screen.findByRole("region", { name: "Edit panel" });
+    await waitFor(() => expect(server.areas.dashboards.variableRequests).toHaveLength(1));
+    // No filter bar in the editor; the value is there for the preview all the same.
+    expect(screen.queryByRole("combobox", { name: "city" })).toBeNull();
+    await waitFor(() =>
+      expect(server.calls.some((c) => JSON.stringify(c.body ?? "").includes('"city":"graz"'))).toBe(
+        true,
+      ),
+    );
+  });
+
   it("offers custom options stored as value and label, and opens with the first", async () => {
     const server = setup("viewer");
     const stored = storedSales(server);
@@ -606,20 +628,24 @@ describe("editing a dashboard", () => {
     expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
   });
 
-  it("ends the toolbar with Edit, then with Done and Save, so a second click adds nothing", async () => {
+  it("puts Edit, then Done and Save, before the overflow menu, so a second click adds nothing", async () => {
     setup();
     const { user } = renderApp("/dashboards/d-sales");
     const edit = await screen.findByRole("button", { name: "Edit" });
     const tools = edit.parentElement as HTMLElement;
-    expect(tools.lastElementChild).toBe(edit);
+    expect([...tools.children].at(-2)).toBe(edit);
     await user.click(edit);
     const done = await screen.findByRole("button", { name: "Done" });
     const save = screen.getByRole("button", { name: "Save…" });
-    expect([...tools.children].slice(-2)).toEqual([done, save]);
-    // Nothing unsaved: Save stays disabled, and adding is behind its own menu.
+    expect([...tools.children].slice(-3, -1)).toEqual([done, save]);
+    // Nothing unsaved: Save stays disabled, and adding is on the rail, not in the toolbar.
     expect(save.hasAttribute("disabled")).toBe(true);
-    await user.click(within(tools).getByRole("button", { name: "Add" }));
-    expect(screen.getByRole("menuitem", { name: "Add panel" })).toBeTruthy();
+    expect(within(tools).queryByRole("button", { name: "Add panel" })).toBeNull();
+    const rail = screen.getByRole("complementary", { name: "Dashboard tools" });
+    await user.click(within(rail).getByRole("button", { name: "Add" }));
+    const add = screen.getByRole("region", { name: "Add" });
+    expect(within(add).getByRole("button", { name: "Time series" })).toBeTruthy();
+    expect(within(add).getByRole("button", { name: /^Row\s*Groups/ })).toBeTruthy();
   });
 
   it("adds a panel with a query from the panel editor", async () => {

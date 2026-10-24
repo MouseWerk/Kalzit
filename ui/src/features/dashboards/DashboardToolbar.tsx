@@ -1,16 +1,15 @@
 import type { ReactNode } from "react";
 import { Icon } from "../../components/Icon";
-import { IconButton } from "../../components/IconButton";
+import { WithTooltip } from "../../components/IconButton";
+import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
-import { StarButton } from "../../shell/StarButton";
 import { useWideLayout } from "../../shell/sidebarState";
 import { RefreshControl } from "./RefreshControl";
 import { TimeControls } from "./TimeRangePicker";
-import { ToolbarMenu, type ToolbarMenuEntry } from "./ToolbarMenu";
 import type { TextRange } from "./timeRange";
 import "./toolbar.css";
 
-/** What the toolbar can start; the page decides what each does. */
+/** What the toolbar and the rail can start; the page decides what each does. */
 export interface ToolbarActions {
   edit: () => void;
   /** Leaves edit mode: asks first when something changed. */
@@ -33,8 +32,7 @@ export interface ToolbarActions {
 }
 
 interface DashboardToolbarProps {
-  orgId: string;
-  dashboardId: string;
+  /** The dashboard's name: the page's heading, read by screen readers (the trail shows it). */
   title: string;
   headingId: string;
   mode: "normal" | "tv";
@@ -44,6 +42,8 @@ interface DashboardToolbarProps {
   can: { edit: boolean; remove: boolean; access: boolean; saveAs: boolean };
   /** The playlist's controls, before the time range. */
   controls?: ReactNode;
+  /** The filter bar (variables and links), at the start of the row. */
+  filters?: ReactNode;
   /** Why the range does not resolve, shown before the picker. */
   rangeError?: string | undefined;
   range: TextRange;
@@ -60,15 +60,13 @@ interface DashboardToolbarProps {
 }
 
 /**
- * The dashboard's header: the title with its star on the left; on the right the time range,
- * refresh, quiet icon buttons with tooltips and one overflow menu, and Edit as a secondary
- * button (Save is the one copper button, in edit mode). One row on wide screens; on a phone the
- * title row keeps the overflow menu and the time controls take a second row, with every other
- * action in the menu.
+ * The dashboard's toolbar row, under the top bar that names the dashboard in its trail: the star
+ * on the left; on the right the time range with its neighbors, refresh and share as split
+ * buttons, one overflow menu and Edit (Save is the one copper button, in edit mode). Adding
+ * panels, settings, export and the outline are on the rail at the canvas' right edge. On a phone
+ * the rail's actions and Edit move into the overflow menu.
  */
 export function DashboardToolbar({
-  orgId,
-  dashboardId,
   title,
   headingId,
   mode,
@@ -76,6 +74,7 @@ export function DashboardToolbar({
   dirty,
   can,
   controls,
+  filters,
   rangeError,
   range,
   onRange,
@@ -92,7 +91,7 @@ export function DashboardToolbar({
   const wide = useWideLayout();
   const tv = mode === "tv";
 
-  const share: ToolbarMenuEntry[] = [
+  const shareEntries: ToolbarMenuEntry[] = [
     { key: "link", label: t("toolbar.share.copyLink"), icon: "copy", onSelect: actions.copyLink },
     {
       key: "export",
@@ -107,23 +106,10 @@ export function DashboardToolbar({
       onSelect: actions.json,
     },
   ];
-  const view: ToolbarMenuEntry[] = [
-    {
-      key: "kiosk",
-      label: t("dashboardTools.view.kiosk"),
-      icon: "expand",
-      onSelect: actions.kiosk,
-    },
-    { key: "tv", label: t("dashboardTools.view.tv"), icon: "screen", onSelect: actions.tv },
-  ];
-  const add: ToolbarMenuEntry[] = [
-    { key: "panel", label: t("dashboards.addPanel"), icon: "plus", onSelect: actions.addPanel },
-    { key: "row", label: t("dashboardTools.rows.add"), onSelect: actions.addRow },
-    { key: "library", label: t("libraryPanels.add"), onSelect: actions.addLibraryPanel },
-  ];
 
   const more: ToolbarMenuEntry[] = [];
   if (!wide) {
+    // The rail's actions and Edit, which a phone has no room for.
     if (editing) {
       more.push(
         {
@@ -133,25 +119,16 @@ export function DashboardToolbar({
         },
         { key: "leave-sep", kind: "separator" },
         { key: "add-heading", kind: "heading", label: t("toolbar.add") },
-        ...add,
+        { key: "panel", label: t("dashboards.addPanel"), icon: "plus", onSelect: actions.addPanel },
+        { key: "row", label: t("dashboardTools.rows.add"), onSelect: actions.addRow },
+        { key: "library", label: t("libraryPanels.add"), onSelect: actions.addLibraryPanel },
         { key: "add-sep", kind: "separator" },
-        {
-          key: "settings",
-          label: t("dashboards.settings"),
-          icon: "settings",
-          onSelect: actions.settings,
-        },
       );
     } else if (can.edit) {
       more.push({ key: "edit", label: t("dashboards.edit"), icon: "edit", onSelect: actions.edit });
     }
-    more.push(
-      { key: "share-sep", kind: "separator" },
-      ...share.map((entry) => ({ ...entry, key: `share-${entry.key}` })),
-      ...view,
-    );
   }
-  if (!editing && can.edit && wide) {
+  if (can.edit) {
     more.push({
       key: "settings",
       label: t("dashboards.settings"),
@@ -159,12 +136,16 @@ export function DashboardToolbar({
       onSelect: actions.settings,
     });
   }
-  more.push({
-    key: "history",
-    label: t("dashboards.versions"),
-    icon: "history",
-    onSelect: actions.history,
-  });
+  more.push(
+    {
+      key: "kiosk",
+      label: t("dashboardTools.view.kiosk"),
+      icon: "expand",
+      onSelect: actions.kiosk,
+    },
+    { key: "tv", label: t("dashboardTools.view.tv"), icon: "screen", onSelect: actions.tv },
+    { key: "history", label: t("dashboards.versions"), icon: "history", onSelect: actions.history },
+  );
   if (can.access) {
     more.push({
       key: "access",
@@ -194,92 +175,76 @@ export function DashboardToolbar({
     );
   }
 
-  const time = (
-    <div className="dash-toolbar__time">
-      {controls}
-      {rangeError === undefined ? null : <span className="field__error">{rangeError}</span>}
-      <TimeControls
-        value={range}
-        onChange={onRange}
-        userId={userId}
-        dashboardZone={dashboardZone}
-        shortcuts={shortcuts}
-      />
-      <RefreshControl
-        onRefresh={onRefresh}
-        seconds={refreshSeconds}
-        onSeconds={onRefreshSeconds}
-        intervals={refreshIntervals}
-      />
-    </div>
-  );
-
-  const save = (
-    <button
-      type="button"
-      className="button button--primary"
-      onClick={actions.save}
-      disabled={!dirty}
-    >
-      {t("dashboards.save")}
-    </button>
-  );
-
-  const moreMenu = tv ? null : <ToolbarMenu label={t("toolbar.more")} icon="more" entries={more} />;
-
   return (
     <div className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
-      <div className="dash-toolbar__heading">
-        <h1 className="dashboard__title truncate" id={headingId}>
-          {title}
-        </h1>
-        {tv ? null : <StarButton orgId={orgId} dashboardId={dashboardId} compact />}
-        {wide ? null : (
-          <span className="dash-toolbar__push">
-            {editing ? save : null}
-            {moreMenu}
-          </span>
-        )}
+      <h1 className="visually-hidden" id={headingId}>
+        {title}
+      </h1>
+      <div className="dash-toolbar__start">
+        {filters}
+        {controls}
       </div>
       <div className="dash-toolbar__tools">
-        {time}
+        {rangeError === undefined ? null : <span className="field__error">{rangeError}</span>}
+        <TimeControls
+          value={range}
+          onChange={onRange}
+          userId={userId}
+          dashboardZone={dashboardZone}
+          shortcuts={shortcuts}
+        />
+        <RefreshControl
+          onRefresh={onRefresh}
+          seconds={refreshSeconds}
+          onSeconds={onRefreshSeconds}
+          intervals={refreshIntervals}
+        />
         {tv ? (
           <button type="button" className="button button--secondary" onClick={actions.exitMode}>
             {t("dashboardTools.view.exit")}
           </button>
         ) : (
           <>
-            {wide && editing ? (
-              <>
-                <ToolbarMenu label={t("toolbar.add")} icon="plus" entries={add} />
-                <IconButton
-                  icon="settings"
-                  label={t("dashboards.settings")}
-                  onClick={actions.settings}
-                />
-              </>
-            ) : null}
-            {wide ? (
-              <>
-                <ToolbarMenu label={t("toolbar.share")} icon="share" entries={share} />
-                <ToolbarMenu label={t("toolbar.view")} icon="screen" entries={view} />
-                {moreMenu}
-              </>
-            ) : null}
-            {editing && wide ? (
-              <>
-                {/*
-                 * "Done" takes the place of "Edit", so a second click on that spot leaves edit
-                 * mode instead of adding a panel by accident.
-                 */}
+            {/* biome-ignore lint/a11y/useSemanticElements: a pair of buttons, not a set of form fields */}
+            <div className="split-control" role="group" aria-label={t("toolbar.share")}>
+              <WithTooltip label={t("toolbar.share.copyLink")}>
                 <button
                   type="button"
-                  className="button button--secondary"
-                  onClick={actions.leaveEdit}
+                  className="button button--ghost icon-button split-control__main"
+                  aria-label={t("toolbar.shareButton")}
+                  onClick={actions.copyLink}
                 >
-                  {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
+                  <Icon name="share" />
+                  <span className="dash-toolbar__text">{t("toolbar.shareButton")}</span>
                 </button>
-                {save}
+              </WithTooltip>
+              <ToolbarMenu
+                label={t("toolbar.shareOptions")}
+                icon="chevronDown"
+                className="split-control__menu"
+                entries={shareEntries}
+              />
+            </div>
+            {editing ? (
+              <>
+                {wide ? (
+                  // "Done" takes the place of "Edit", so a second click on that spot never adds.
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    onClick={actions.leaveEdit}
+                  >
+                    {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={actions.save}
+                  disabled={!dirty}
+                >
+                  {t("dashboards.save")}
+                </button>
               </>
             ) : can.edit && wide ? (
               // Secondary: copper is for Save, the one main action while editing.
@@ -288,6 +253,7 @@ export function DashboardToolbar({
                 {t("dashboards.edit")}
               </button>
             ) : null}
+            <ToolbarMenu label={t("toolbar.more")} icon="more" entries={more} />
           </>
         )}
       </div>

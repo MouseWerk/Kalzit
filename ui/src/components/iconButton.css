@@ -16,6 +16,59 @@
     background: var(--bg-active);
   }
 
+  /* Split controls: a main button and the menu beside it, close together as one control. */
+
+  .split-control {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .split-control__menu {
+    min-width: auto;
+    padding-inline: var(--space-1);
+  }
+
+  /* Menus of a toolbar: drawn in the window under their button. */
+
+  .toolbar-menu {
+    position: static;
+  }
+
+  .toolbar-menu__list,
+  .toolbar-menu__list.menu {
+    position: fixed;
+    inset: var(--menu-top, 0) var(--menu-right, 0) auto auto;
+    width: max-content;
+    min-width: var(--size-field);
+    max-width: var(--size-menu-max);
+    margin-block-start: var(--space-1);
+  }
+
+  .toolbar-menu__check {
+    display: inline-flex;
+    flex: none;
+    width: var(--icon-size);
+  }
+
+  .toolbar-menu__label {
+    flex: 1;
+  }
+
+  .toolbar-menu__key {
+    margin-inline-start: auto;
+  }
+
+  .toolbar-menu__item--danger {
+    color: var(--danger-text);
+  }
+
+  .toolbar-menu__separator {
+    margin: var(--space-1) 0;
+    border: 0;
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
   /*
    * Tooltips: under the control, its right edge on the control's, shown on hover and on keyboard
    * focus. Hidden with display, so a tooltip that is not shown takes no room and never widens

@@ -1,4 +1,5 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../i18n/i18n";
 import { useCrumbSlot } from "../shell/shellContext";
@@ -15,7 +16,14 @@ export interface Crumb {
  * with `aria-current`. The page's own heading stays the h1. Inside the app shell the trail sits
  * in the content header, right after the sidebar toggle; elsewhere where it is rendered.
  */
-export function Breadcrumbs({ crumbs }: { crumbs: readonly Crumb[] }) {
+export function Breadcrumbs({
+  crumbs,
+  extra,
+}: {
+  crumbs: readonly Crumb[];
+  /** A control right after the current page's name (the dashboard's star). */
+  extra?: ReactNode;
+}) {
   const { t } = useI18n();
   const slot = useCrumbSlot();
   if (crumbs.length === 0) {
@@ -46,6 +54,7 @@ export function Breadcrumbs({ crumbs }: { crumbs: readonly Crumb[] }) {
           );
         })}
       </ol>
+      {extra}
     </nav>
   );
   return slot === null ? trail : createPortal(trail, slot);

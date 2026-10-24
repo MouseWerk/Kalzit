@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { getTimeSettings } from "../../lib/timeSettings";
 import { SHORTCUT_AREAS } from "../../shell/ShortcutsHelp";
@@ -283,5 +283,33 @@ describe("the dashboard's time options", () => {
     expect(diffModels(before, { ...before, refreshIntervals: [30] })).toEqual([
       { kind: "refresh" },
     ]);
+  });
+});
+
+describe("the rail", () => {
+  it("offers export and the outline, and folds away for this account until shown again", async () => {
+    setup("viewer");
+    const { user } = renderApp("/dashboards/d-main");
+    const rail = await screen.findByRole("complementary", { name: "Dashboard tools" });
+    expect(within(rail).getByRole("button", { name: "Export as JSON" })).toBeTruthy();
+    expect(within(rail).queryByRole("button", { name: "Add" })).toBeNull();
+    const outlineButton = within(rail).getByRole("button", { name: "Outline" });
+    await user.click(outlineButton);
+    expect(outlineButton.getAttribute("aria-expanded")).toBe("true");
+    const outline = within(rail).getByRole("navigation", { name: "Outline" });
+    await user.click(within(outline).getByRole("button", { name: "Orders" }));
+    await user.click(within(rail).getByRole("button", { name: "Info" }));
+    const info = screen.getByRole("dialog", { name: "About this dashboard" });
+    expect(within(info).getByText("Panels").nextElementSibling?.textContent).toBe("1");
+    await user.keyboard("{Escape}");
+    await user.click(within(rail).getByRole("button", { name: "Filters" }));
+    expect(screen.queryByRole("region", { name: "Variables" })).toBeNull();
+    await user.click(within(rail).getByRole("button", { name: "Fold the tools away" }));
+    expect(within(rail).queryByRole("button", { name: "Export as JSON" })).toBeNull();
+    cleanup();
+    renderApp("/dashboards/d-main");
+    const again = await screen.findByRole("complementary", { name: "Dashboard tools" });
+    expect(within(again).getByRole("button", { name: "Show the tools" })).toBeTruthy();
+    expect(within(again).queryByRole("button", { name: "Export as JSON" })).toBeNull();
   });
 });

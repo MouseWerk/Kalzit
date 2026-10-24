@@ -544,5 +544,9 @@
   :root {
     /* Quick ranges and the absolute range side by side. */
     --size-time-picker: 44rem;
+    /* The search field in the top bar. */
+    --size-top-search: 18rem;
+    /* The rail's Add pane: three visualization tiles abreast. */
+    --size-add-pane: 15rem;
   }
 }

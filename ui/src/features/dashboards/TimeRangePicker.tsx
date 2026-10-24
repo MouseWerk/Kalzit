@@ -87,13 +87,19 @@ function toStored(text: string, settings: TimeSettings): string {
   return time === null ? value : toStoredAbsolute(time);
 }
 
-/** The zone's name and offset, as the picker's footer shows it: "Europe/Berlin, UTC+2". */
-function zoneText(language: string, zone: string | null): string {
-  const name = zone ?? new Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const offset =
+/** The zone's offset from UTC now, as the browser writes it: "GMT+2". */
+function zoneOffset(language: string, zone: string | null): string {
+  return (
     new Intl.DateTimeFormat(language, { timeZoneName: "shortOffset", ...zoneOption(zone) })
       .formatToParts(Date.now())
-      .find((part) => part.type === "timeZoneName")?.value ?? "";
+      .find((part) => part.type === "timeZoneName")?.value ?? ""
+  );
+}
+
+/** The zone's name and offset, as the picker's footer shows it: "Europe/Berlin, GMT+2". */
+function zoneText(language: string, zone: string | null): string {
+  const name = zone ?? new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = zoneOffset(language, zone);
   return offset === "" ? name : `${name}, ${offset}`;
 }
 
@@ -106,6 +112,8 @@ interface TimeRangePickerProps {
   userId?: string | undefined;
   /** Whether the zone in effect is the dashboard's own (named in the footer). */
   dashboardZone?: boolean;
+  /** Shows the zone's offset in the button, after the range. */
+  showZone?: boolean;
 }
 
 /**
@@ -119,6 +127,7 @@ export function TimeRangePicker({
   name,
   userId,
   dashboardZone = false,
+  showZone = false,
 }: TimeRangePickerProps) {
   const { t, language, timeZone } = useI18n();
   const [open, setOpen] = useState(false);
@@ -144,6 +153,9 @@ export function TimeRangePicker({
         >
           <Icon name="clock" />
           <span className="time-picker__label truncate">{label}</span>
+          {showZone ? (
+            <span className="time-picker__zone-tag">{zoneOffset(language, timeZone)}</span>
+          ) : null}
           <Icon name="chevronDown" className="time-picker__chevron" />
         </button>
       </WithTooltip>
@@ -541,6 +553,8 @@ interface TimeControlsProps {
   dashboardZone?: boolean;
   /** Listen for the time shortcuts (t and Left, Right, z, c, v). */
   shortcuts?: boolean;
+  /** Only the range button (the panel editor's bar); the shortcuts still work. */
+  compact?: boolean;
 }
 
 /**
@@ -553,6 +567,7 @@ export function TimeControls({
   userId,
   dashboardZone = false,
   shortcuts = false,
+  compact = false,
 }: TimeControlsProps) {
   const { t } = useI18n();
   const settings = useTimeSettings();
@@ -597,6 +612,16 @@ export function TimeControls({
   }
   useTimeShortcuts(shortcuts, run);
 
+  if (compact) {
+    return (
+      <TimeRangePicker
+        value={value}
+        onChange={onChange}
+        userId={userId}
+        dashboardZone={dashboardZone}
+      />
+    );
+  }
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a set of form fields
     <div className="time-controls" role="group" aria-label={t("toolbar.time.controls")}>
@@ -613,6 +638,7 @@ export function TimeControls({
         onChange={onChange}
         userId={userId}
         dashboardZone={dashboardZone}
+        showZone
       />
       <IconButton
         icon="chevron"

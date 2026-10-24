@@ -1,7 +1,7 @@
 import { IconButton } from "../../components/IconButton";
+import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { intervalLabel, intervalShort, refreshIntervals } from "./refresh";
-import { ToolbarMenu } from "./ToolbarMenu";
 import "./toolbar.css";
 
 interface RefreshControlProps {
@@ -12,18 +12,35 @@ interface RefreshControlProps {
   onSeconds?: (seconds: number) => void;
   /** The dashboard's own interval list. */
   intervals?: readonly number[] | undefined;
+  /** The icon alone, without the word (the panel editor's bar). */
+  compact?: boolean;
 }
 
 /**
  * Refresh as a split button: the icon runs the queries now, the part beside it chooses the
  * automatic refresh (showing the interval while one runs).
  */
-export function RefreshControl({ onRefresh, seconds, onSeconds, intervals }: RefreshControlProps) {
+export function RefreshControl({
+  onRefresh,
+  seconds,
+  onSeconds,
+  intervals,
+  compact = false,
+}: RefreshControlProps) {
   const { t } = useI18n();
   return (
     // biome-ignore lint/a11y/useSemanticElements: a pair of buttons, not a set of form fields
     <div className="split-control" role="group" aria-label={t("dashboards.refresh")}>
-      <IconButton icon="refresh" label={t("dashboards.refresh")} onClick={onRefresh} />
+      <IconButton
+        icon="refresh"
+        label={t("dashboards.refresh")}
+        text={
+          compact ? undefined : (
+            <span className="dash-toolbar__text">{t("dashboards.refresh")}</span>
+          )
+        }
+        onClick={onRefresh}
+      />
       {seconds === undefined || onSeconds === undefined ? null : (
         <ToolbarMenu
           icon="chevronDown"

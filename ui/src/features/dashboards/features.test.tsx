@@ -106,8 +106,12 @@ describe("rows", () => {
     const { server, stored } = setup("editor", withRows());
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Add" }));
-    await user.click(screen.getByRole("menuitem", { name: "Add row" }));
+    await user.click(
+      within(screen.getByRole("complementary", { name: "Dashboard tools" })).getByRole("button", {
+        name: "Add",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Row\s*Groups/ }));
     const handle = screen.getByRole("button", { name: "Move row “Details”" });
     // The way to move it is read with the handle, not only shown on hover.
     const hint = document.getElementById(handle.getAttribute("aria-describedby") ?? "");
@@ -638,7 +642,7 @@ describe("view modes", () => {
     try {
       setup("viewer", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
       const { user, location } = renderApp("/dashboards/d-main");
-      await user.click(await screen.findByRole("button", { name: "Full screen" }));
+      await user.click(await screen.findByRole("button", { name: "More" }));
       await user.click(screen.getByRole("menuitem", { name: "TV mode" }));
       await waitFor(() => expect(location().search).toMatchObject({ kiosk: "tv" }));
       const bar = screen
@@ -743,8 +747,12 @@ describe("library panels", () => {
     withLibrary(server);
     const { user } = renderApp("/dashboards/d-main");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
-    await user.click(screen.getByRole("button", { name: "Add" }));
-    await user.click(screen.getByRole("menuitem", { name: "Add library panel" }));
+    await user.click(
+      within(screen.getByRole("complementary", { name: "Dashboard tools" })).getByRole("button", {
+        name: "Add",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Library panel/ }));
     const dialog = screen.getByRole("dialog", { name: "Add library panel" });
     await user.click(await within(dialog).findByRole("radio", { name: /Revenue per day/ }));
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
@@ -1000,7 +1008,7 @@ describe("JSON, import and export", () => {
     Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
     setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
     const { user } = renderApp("/dashboards/d-main");
-    await user.click(await screen.findByRole("button", { name: "Share and export" }));
+    await user.click(await screen.findByRole("button", { name: "More ways to share" }));
     await user.click(screen.getByRole("menuitem", { name: "Export as JSON" }));
     await waitFor(() => expect(created).toHaveLength(1));
     const file = JSON.parse(await (created[0] as Blob).text());

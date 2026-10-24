@@ -1,8 +1,8 @@
 @layer components {
   /*
-   * The dashboard header: title and star on the left, the tools on the right, one row of
-   * control height on wide screens. On a phone the title row keeps Save and the overflow menu,
-   * the time controls take the second row.
+   * The dashboard's toolbar row under the top bar: the star on the left, the tools aligned to
+   * the right in one row of control height. On a phone the tools take the whole width and the
+   * time range button grows.
    */
 
   .dash-toolbar {
@@ -16,23 +16,16 @@
     min-height: var(--control-height);
   }
 
-  .dash-toolbar__heading {
+  .dash-toolbar__start {
     display: flex;
-    flex: 1 1 var(--size-sidebar-min);
     align-items: center;
     gap: var(--space-1);
     min-width: 0;
   }
 
-  .dash-toolbar__push {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    margin-inline-start: auto;
-  }
-
   .dash-toolbar__tools {
     display: flex;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
@@ -40,25 +33,10 @@
     min-width: 0;
   }
 
-  .dash-toolbar__time {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-
-  .time-controls,
-  .split-control {
+  .time-controls {
     display: inline-flex;
     align-items: center;
     min-width: 0;
-  }
-
-  /* The interval part of the refresh button sits close to it, as one control. */
-  .split-control__menu {
-    min-width: auto;
-    padding-inline: var(--space-1);
   }
 
   .time-picker__button {
@@ -76,20 +54,50 @@
     min-width: 0;
   }
 
+  .time-picker__zone-tag {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    white-space: nowrap;
+  }
+
   .time-picker__chevron {
     color: var(--text-muted);
   }
 
+  /*
+   * On a phone: the time controls take the first row across the width; the star, refresh,
+   * share, the overflow menu and Save follow in the second.
+   */
   @media (max-width: 48rem) {
-    .dash-toolbar__tools,
-    .dash-toolbar__time {
-      flex: 1 1 100%;
-      flex-wrap: nowrap;
+    .dash-toolbar {
       justify-content: flex-start;
+      gap: var(--space-1);
+    }
+
+    .dash-toolbar__tools {
+      display: contents;
+    }
+
+    /* Menus keep their place here (the shell moves its account menu to the end on phones). */
+    .dash-toolbar .menu-anchor {
+      order: 0;
+    }
+
+    /* The filters take the last row: they are choices, not actions. */
+    .dash-toolbar__start {
+      flex: 1 1 100%;
+      order: 1;
+    }
+
+    .dash-toolbar__tools > .field__error {
+      flex: 1 1 100%;
+      order: -2;
     }
 
     .time-controls {
-      flex: 1 1 auto;
+      flex: 1 1 100%;
+      order: -1;
     }
 
     .time-controls .tip-anchor:has(.time-picker__button) {
@@ -102,46 +110,247 @@
       max-width: none;
       justify-content: flex-start;
     }
+
+    /* Share and Refresh keep their icons; the words and the zone need room. */
+    .dash-toolbar__text,
+    .time-picker__zone-tag {
+      display: none;
+    }
   }
 
-  /* Menus of the toolbar: drawn in the window under their button. */
+  /*
+   * Bordered groups in the row: the time range with its neighbors and the split buttons, each
+   * one control with hairline dividers, as are Edit and the filters.
+   */
 
-  .toolbar-menu {
-    position: static;
+  /* The dividers are the group's hairline color showing through a hairline gap. */
+  .dash-toolbar .time-controls,
+  .dash-toolbar .split-control {
+    gap: var(--space-px);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--border);
   }
 
-  .toolbar-menu__list,
-  .toolbar-menu__list.menu {
-    position: fixed;
-    inset: var(--menu-top, 0) var(--menu-right, 0) auto auto;
-    width: max-content;
-    min-width: var(--size-field);
-    max-width: var(--size-menu-max);
-    margin-block-start: var(--space-1);
+  .dash-toolbar .time-controls .button,
+  .dash-toolbar .split-control .button {
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
   }
 
-  .toolbar-menu__check {
-    display: inline-flex;
-    flex: none;
-    width: var(--icon-size);
+  .dash-toolbar .time-controls .button:hover,
+  .dash-toolbar .split-control .button:hover,
+  .dash-toolbar .time-controls .button[aria-expanded="true"],
+  .dash-toolbar .split-control .button[aria-expanded="true"] {
+    background: var(--bg-hover);
   }
 
-  .toolbar-menu__label {
-    flex: 1;
+  /*
+   * The filter bar at the start of the row: each variable a label and its value joined in one
+   * bordered box; the dashboard's links after them.
+   */
+
+  .dash-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
   }
 
-  .toolbar-menu__key {
-    margin-inline-start: auto;
+  /*
+   * The canvas: the panels, and on wide screens the rail at its right edge, a bordered column
+   * as high as the canvas with its buttons in groups; its panes (outline, add) open beside it.
+   */
+
+  .dash-canvas {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-grid);
+    min-width: 0;
   }
 
-  .toolbar-menu__item--danger {
-    color: var(--danger-text);
+  .dash-canvas--rail {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .toolbar-menu__separator {
-    margin: var(--space-1) 0;
-    border: 0;
+  .dash-rail {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .dash-rail__column {
+    position: sticky;
+    inset-block-start: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+    min-height: min(100%, calc(100dvh - var(--space-16)));
+    padding: var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .dash-rail__group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding-block: var(--space-1);
+  }
+
+  .dash-rail__group + .dash-rail__group {
     border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .dash-rail__group--end {
+    margin-block-start: auto;
+  }
+
+  /* On the rail the tooltips open to the left, into the canvas. */
+  .dash-rail .tip {
+    inset-block-start: 50%;
+    inset-inline-end: calc(100% + var(--space-2));
+    translate: 0 -50%;
+  }
+
+  .dash-pane {
+    position: sticky;
+    inset-block-start: var(--space-2);
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    width: var(--size-column);
+    max-height: calc(100dvh - var(--space-4));
+    overflow-y: auto;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .dash-pane--add {
+    width: var(--size-add-pane);
+  }
+
+  .dash-pane__header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+
+  .dash-pane__name {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dash-pane__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .dash-pane__heading {
+    display: block;
+    padding-block-start: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-transform: uppercase;
+  }
+
+  .dash-pane__list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dash-pane__list--nested {
+    padding-inline-start: var(--space-3);
+  }
+
+  .dash-pane__item,
+  .dash-pane__entry {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    text-align: start;
+  }
+
+  .dash-pane__item {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dash-pane__entry {
+    padding-block: var(--space-2);
+  }
+
+  .dash-pane__entry-text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .dash-pane__entry-label {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .dash-pane__entry-hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .dash-pane__tiles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+  }
+
+  .dash-pane__tile {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-3) var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .dash-pane__tile > span {
+    max-width: 100%;
+    font-size: var(--font-size-xs);
+    text-align: center;
+  }
+
+  .dash-pane__item:hover,
+  .dash-pane__entry:hover,
+  .dash-pane__tile:hover {
+    background: var(--bg-hover);
+  }
+
+  .dash-pane__item:focus-visible,
+  .dash-pane__entry:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .dash-pane__empty {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   /*
@@ -386,5 +595,58 @@
 
   .calendar__day:focus-visible {
     outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  /* The variables in the filter bar (after the rules for inputs they refine). */
+
+  .dash-filters .variables {
+    gap: var(--space-2);
+  }
+
+  .dash-filters .variables__item {
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: var(--space-px);
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--border);
+  }
+
+  .dash-filters .variables__label {
+    display: flex;
+    align-items: center;
+    padding-inline: var(--space-3);
+    background: var(--bg-surface);
+  }
+
+  .dash-filters .variables__item > .select,
+  .dash-filters .variables__item > .input {
+    border-color: transparent;
+    border-radius: 0;
+    background-color: var(--bg-surface);
+  }
+
+  /* The rail's Info: terms and values in two columns. */
+
+  .dash-info {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+  }
+
+  .dash-info__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: var(--space-3);
+  }
+
+  .dash-info__term {
+    color: var(--text-muted);
+  }
+
+  .dash-info__value {
+    margin: 0;
+    overflow-wrap: anywhere;
   }
 }

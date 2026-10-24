@@ -109,7 +109,7 @@ test.describe("on a phone", () => {
     );
     await page.getByRole("button", { name: t("toolbar.more"), exact: true }).click();
     const menu = page.getByRole("menu", { name: t("toolbar.more") });
-    for (const key of ["dashboards.edit", "dashboardTools.export", "dashboardTools.view.tv"]) {
+    for (const key of ["dashboards.edit", "dashboards.versions", "dashboardTools.view.tv"]) {
       await expect(menu.getByRole("menuitem", { name: t(key), exact: true })).toBeVisible();
     }
     await page.keyboard.press("Escape");

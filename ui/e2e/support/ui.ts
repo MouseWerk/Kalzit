@@ -34,31 +34,11 @@ export async function panelAction(
 }
 
 /**
- * Picks an entry of a dashboard toolbar menu: `menu` is the i18n key of the menu button's name
- * ("toolbar.more", "toolbar.add"). On a phone the toolbar keeps only the overflow menu, which
- * then holds every entry; it is used when the named button is not shown.
- */
-export async function toolbarAction(
-  page: Page,
-  menu: string,
-  item: string,
-  language: Language = "en",
-): Promise<void> {
-  const button = page.getByRole("button", { name: t(menu, {}, language), exact: true });
-  if (await button.isVisible()) {
-    await button.click();
-  } else {
-    await page.getByRole("button", { name: t("toolbar.more", {}, language), exact: true }).click();
-  }
-  await page.getByRole("menuitem", { name: t(item, {}, language), exact: true }).click();
-}
-
-/**
  * Runs a toolbar action that is a button on wide screens and an entry of the overflow menu on a
  * phone: `key` is the i18n key of both names ("dashboards.edit", "dashboards.settings").
  */
 export async function toolbarButton(page: Page, key: string, language: Language = "en") {
-  const button = page.getByRole("button", { name: t(key, {}, language), exact: true });
+  const button = page.getByRole("button", { name: t(key, {}, language), exact: true }).first();
   if (await button.isVisible()) {
     await button.click();
   } else {
@@ -73,4 +53,22 @@ export async function startEditing(page: Page, language: Language = "en"): Promi
   await expect(
     page.getByRole("button", { name: t("dashboards.save", {}, language) }),
   ).toBeVisible();
+}
+
+/**
+ * Adds a panel while editing: the rail's Add pane on wide screens (any visualization), the
+ * overflow menu on a phone, where there is no rail.
+ */
+export async function addPanel(page: Page, language: Language = "en"): Promise<void> {
+  const rail = page.getByRole("complementary", { name: t("toolbar.rail", {}, language) });
+  if (await rail.isVisible()) {
+    await rail.getByRole("button", { name: t("toolbar.add", {}, language), exact: true }).click();
+    await page
+      .getByRole("region", { name: t("toolbar.add", {}, language) })
+      .getByRole("button", { name: t("toolbar.add.all", {}, language), exact: true })
+      .click();
+  } else {
+    await page.getByRole("button", { name: t("toolbar.more", {}, language), exact: true }).click();
+    await page.getByRole("menuitem", { name: t("dashboards.addPanel", {}, language) }).click();
+  }
 }

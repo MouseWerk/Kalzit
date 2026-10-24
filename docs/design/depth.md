@@ -291,8 +291,11 @@ Acceptance: the range grammar gains the fiscal units on UI and server with tests
 shift and zoom keep relative ranges relative where possible; keyboard shortcuts `t` plus arrows and
 `t z` work and appear in the help; shared crosshair draws the same time on every time-based panel
 within one frame; all icon buttons have names and tooltips; no accent states.
-Status (ux/dashboard-toolbar): built, except drag-to-zoom, which waits for the time series
-drawing of P1-3a. The shared cursor lives in `ChartShell` (`ui/src/panels/crosshair.ts`) rather
+Status (ux/dashboard-toolbar): built, with the app-wide top bar (trail, search, New, Help), the
+right-aligned toolbar row, the variables as a filter bar (ad hoc filters of P2-6 join it there)
+and the canvas rail (export, outline, fold; adding and settings in edit mode), except
+drag-to-zoom, which waits for the time series drawing of P1-3a, and pasting a panel from the
+clipboard into the rail's add actions (there is no panel clipboard yet). The shared cursor lives in `ChartShell` (`ui/src/panels/crosshair.ts`) rather
 than in uPlot's own cursor sync, because Kalzit draws its cursor and readout itself around both
 chart renderers and keeps uPlot's cursor off; it shares the time the same way, in one render.
 

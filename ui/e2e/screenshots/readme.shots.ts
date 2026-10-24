@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
-import { fillQuery, panelAction, startEditing, toolbarAction } from "../support/ui";
+import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
 import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
@@ -184,6 +184,19 @@ test("time picker, dark", async ({ browser }) => {
   await page.context().close();
 });
 
+test("dashboard in edit mode, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await startEditing(page);
+  const rail = page.getByRole("complementary", { name: t("toolbar.rail") });
+  await rail.getByRole("button", { name: t("toolbar.add"), exact: true }).click();
+  await expect(rail.getByRole("region", { name: t("toolbar.add") })).toBeVisible();
+  await shoot(page, "dashboard-edit-dark");
+  await page.context().close();
+});
+
 test("dashboard, phone", async ({ browser }) => {
   const page = await openPage(browser, "light", { width: 360, height: 780 });
   await signIn(page);
@@ -218,7 +231,7 @@ async function newPanel(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
   await dashboardReady(page);
   await startEditing(page);
-  await toolbarAction(page, "toolbar.add", "dashboards.addPanel");
+  await addPanel(page);
   const editor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });
   await expect(editor.locator(".cm-content").first()).toBeVisible();
   await expect(editor.getByRole("radio").first()).toBeVisible();

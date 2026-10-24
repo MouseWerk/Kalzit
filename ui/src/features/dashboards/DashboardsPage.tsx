@@ -69,10 +69,10 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
   const searchId = useId();
   const folders = useQuery(foldersQuery(orgId));
   const [creating, setCreating] = useState<"dashboard" | "folder" | "import" | null>(null);
-  // A link with `create=dashboard` opens the dialog once; the parameter is dropped right away.
+  // A link with `create` opens its dialog once; the parameter is dropped right away.
   useEffect(() => {
-    if (search.create === "dashboard") {
-      setCreating("dashboard");
+    if (search.create !== undefined) {
+      setCreating(search.create);
       void navigate({ search: (prev) => ({ ...prev, create: undefined }), replace: true });
     }
   }, [search.create, navigate]);

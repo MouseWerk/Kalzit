@@ -1,10 +1,10 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { Icon, type IconName } from "../../components/Icon";
-import { type ShortcutKeys, WithTooltip } from "../../components/IconButton";
-import { useMenuButton } from "../../shell/useMenuButton";
-import "../../shell/shellUx.css";
-import "./toolbar.css";
+import { useMenuButton } from "../shell/useMenuButton";
+import { Icon, type IconName } from "./Icon";
+import { type ShortcutKeys, WithTooltip } from "./IconButton";
+import "../shell/shellUx.css";
+import "./iconButton.css";
 
 /** One entry of a toolbar menu. */
 export type ToolbarMenuEntry =

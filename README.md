@@ -48,8 +48,10 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | New panel, dark theme | New panel on a phone |
 | ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
-| ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard on a phone with its two-row header](docs/screenshots/dashboard-phone.png) |
-| Time picker, dark theme | Dashboard on a phone |
+| ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
+| Time picker, dark theme | Dashboard in edit mode, dark theme |
+| ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | |
+| Dashboard on a phone | |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
 
