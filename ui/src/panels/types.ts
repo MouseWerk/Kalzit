@@ -30,8 +30,12 @@ export interface PanelPlugin<Options = Record<string, unknown>> {
   Preview?: () => ReactNode;
 }
 
-/** Groups of the field options editor, so each panel shows only what it uses. */
+/**
+ * Groups of the field options editor, so each panel shows only what it uses. `graphStyle` is how
+ * series are drawn, the time series' graph style (`fieldConfig/graphStyle.ts`).
+ */
 export type FieldOptionGroup =
+  | "graphStyle"
   | "standard"
   | "range"
   | "thresholds"
