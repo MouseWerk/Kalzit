@@ -226,5 +226,7 @@
   "panels.option.cellDisplay": "Zellendarstellung",
   "panels.option.link": "Link",
   "panels.option.width": "Spaltenbreite",
-  "panels.checkingPattern": "Das Muster wird geprüft…"
+  "panels.checkingPattern": "Das Muster wird geprüft…",
+  "panels.state.colorStateWords": "Bekannte Zustandswörter einfärben",
+  "panels.state.colorStateWordsHint": "Ein Wert, der ein Zustandswort ist, bekommt dessen Farbe: ok, up, gesund, erfolgreich und bestanden gut; Warnung, eingeschränkt und ausstehend Warnung; Fehler, fehlgeschlagen, ausgefallen, kritisch und offline Gefahr; unbekannt neutral. Eine Wertzuordnung, Schwellenwerte oder eine Feldfarbe gehen vor."
 }

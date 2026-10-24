@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
+import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
@@ -134,7 +135,8 @@ function TrashList({ orgId, canFolders }: { orgId: string; canFolders: boolean }
       })),
   ];
   const back = (
-    <Link to="/dashboards" className="versions__back">
+    <Link to="/dashboards" className="back-link">
+      <Icon name="back" />
       {t("dashboards.backToList")}
     </Link>
   );

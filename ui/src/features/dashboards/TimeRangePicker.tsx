@@ -83,10 +83,12 @@ function toStored(text: string): string {
 interface TimeRangePickerProps {
   value: TextRange;
   onChange: (range: TextRange) => void;
+  /** What the range is for, in the button's accessible name ("Default time range: ..."). */
+  name?: string;
 }
 
 /** The time range button and its dialog: quick choices, or from and to as text. */
-export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
+export function TimeRangePicker({ value, onChange, name }: TimeRangePickerProps) {
   const { t, language, timeZone } = useI18n();
   const [open, setOpen] = useState(false);
   const label = rangeLabel(t, language, value, timeZone);
@@ -96,7 +98,11 @@ export function TimeRangePicker({ value, onChange }: TimeRangePickerProps) {
         type="button"
         className="button button--secondary"
         onClick={() => setOpen(true)}
-        aria-label={t("dashboards.time.buttonLabel", { range: label })}
+        aria-label={
+          name === undefined
+            ? t("dashboards.time.buttonLabel", { range: label })
+            : t("dashboards.time.buttonFor", { name, range: label })
+        }
       >
         {label}
       </button>

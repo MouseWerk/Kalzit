@@ -217,6 +217,7 @@
   "dashboards.variables.nameInvalid": "Verwende Buchstaben, Ziffern und Unterstriche, beginnend mit einem Buchstaben.",
   "dashboards.variables.nameTaken": "Eine andere Variable hat schon diesen Namen.",
   "dashboards.time.title": "Zeitraum",
+  "dashboards.time.buttonFor": "{name}: {range}",
   "dashboards.time.buttonLabel": "Zeitraum: {range}",
   "dashboards.time.presets": "Schnellauswahl",
   "dashboards.time.from": "Von",

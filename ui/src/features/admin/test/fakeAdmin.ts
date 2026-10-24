@@ -1084,6 +1084,9 @@ const SETTING_VALUES: Record<string, (value: unknown) => boolean> = {
     value !== null &&
     typeof (value as Input).from === "string" &&
     typeof (value as Input).to === "string",
+  // A JSON setting as a newer server could add one (settings.test.tsx).
+  "future.limits": (value) =>
+    typeof value === "object" && value !== null && typeof (value as Input).rows === "number",
 };
 
 function patchSetting(

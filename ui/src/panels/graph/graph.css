@@ -10,10 +10,12 @@
     min-height: 0;
   }
 
+  /* The ghost buttons' text lines up with the summary below, not their padding's edge. */
   .graph__toolbar {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1);
+    margin-inline-start: var(--space-ghost-pull);
   }
 
   .graph__summary,
