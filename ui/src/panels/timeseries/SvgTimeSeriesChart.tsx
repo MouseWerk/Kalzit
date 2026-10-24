@@ -20,6 +20,14 @@ const MAX_MARKS = 2000;
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/** A number token of the theme, or the fallback where styles are not computed (tests). */
+function tokenNumber(name: string, fallback: number): number {
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(name),
+  );
+  return Number.isFinite(value) ? value : fallback;
+}
+
 /** The marks of one series: bars, points or a line with its fill. */
 function SeriesMarks({
   look: style,
@@ -165,6 +173,8 @@ export function SvgTimeSeriesChart({
       : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
   const hatched = styles.find((s) => s.fill === "hatch");
+  // The same token the canvas chart reads, so both hatch alike.
+  const hatchSpacing = hatched === undefined ? 0 : tokenNumber("--chart-hatch-spacing", 6);
 
   return (
     <ChartShell
@@ -186,12 +196,12 @@ export function SvgTimeSeriesChart({
               <pattern
                 id={ids.hatch}
                 className={hatched.colorClass}
-                width={6}
-                height={6}
+                width={hatchSpacing}
+                height={hatchSpacing}
                 patternUnits="userSpaceOnUse"
                 patternTransform="rotate(45)"
               >
-                <line className="ts__hatch" x1={0} y1={0} x2={0} y2={6} />
+                <line className="ts__hatch" x1={0} y1={0} x2={0} y2={hatchSpacing} />
               </pattern>
             )}
             <linearGradient id={`${ids.fade}-ramp`} x1={0} y1={0} x2={0} y2={1}>

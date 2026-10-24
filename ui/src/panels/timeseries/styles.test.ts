@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { FieldOptions } from "../fieldConfig/fieldConfig";
 import { parseFieldConfig } from "../fieldConfig/fieldConfig";
-import { formatDuration, parseDuration, parseGraphStyle } from "../fieldConfig/graphStyle";
+import {
+  formatDuration,
+  parseDuration,
+  parseGraphStyle,
+  stackGroupOf,
+} from "../fieldConfig/graphStyle";
 import { legacyLineWidth, upgradePanel } from "../fieldConfig/upgrade";
 import { parseColor, shiftHue, withAlpha } from "./canvasColor";
 import type { Series } from "./series";
@@ -171,6 +176,45 @@ describe("stacking", () => {
     expect(result.percent).toBe(true);
   });
 
+  it("stacks positive values up and negative values down from zero, each on its own sum", () => {
+    const result = stackData(
+      [
+        [10, 10, -4],
+        [-5, -5, -5],
+        [3, -2, 1],
+        [-1, -1, -1],
+      ],
+      styles([{ stack: "normal" }, { stack: "normal" }, { stack: "normal" }, { stack: "normal" }]),
+    );
+    expect(result.ys).toEqual([
+      [10, 10, -4],
+      [-5, -5, -9],
+      [13, -7, 1],
+      [-6, -8, -10],
+    ]);
+    // Bars stand on the sum of their own side.
+    expect([...(result.baselines[2] ?? [])]).toEqual([10, -5, 0]);
+    expect([...(result.baselines[3] ?? [])]).toEqual([-5, -7, -9]);
+    // Lines fill to the nearest earlier series on their side, below zero upward.
+    expect(result.down).toEqual([false, true, false, true]);
+    expect(result.below).toEqual([-1, -1, 0, 1]);
+  });
+
+  it("stacks to 100 % of the absolute values, so +5 and -5 are +50 % and -50 %", () => {
+    const result = stackData(
+      [
+        [5, -3, 0],
+        [-5, -1, 0],
+      ],
+      styles([{ stack: "percent" }, { stack: "percent" }]),
+    );
+    // A negative total stays below zero and reaches -100 %; all zero is 0 % (0/0 is 0).
+    expect(result.ys).toEqual([
+      [50, -75, 0],
+      [-50, -100, 0],
+    ]);
+  });
+
   it("keeps groups apart and leaves unstacked series alone", () => {
     const result = stackData(
       [[1], [2], [3], [4]],
@@ -286,6 +330,14 @@ describe("graph style options", () => {
         comparison: "yes",
       }),
     ).toEqual({});
+  });
+
+  it("drop control characters from a stack group, as the server refuses them", () => {
+    expect(parseGraphStyle({ stackGroup: "in\u0000\tbound\u007f\u0085" })).toEqual({
+      stackGroup: "inbound",
+    });
+    expect(parseGraphStyle({ stackGroup: "\n\r" })).toEqual({});
+    expect(stackGroupOf("ä".repeat(60))).toBe("ä".repeat(50));
   });
 
   it("are field options, so an override sets them per series", () => {

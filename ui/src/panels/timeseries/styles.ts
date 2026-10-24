@@ -164,16 +164,26 @@ export interface StackedData {
   ys: (number | null)[][];
   /** Per series, the running sum below it at each point (for bars), or null when not stacked. */
   baselines: (Float64Array | null)[];
-  /** Per series, the series index (0-based) it is stacked on, or -1. */
+  /**
+   * Per series, the series index (0-based) its line fills down to, or -1 for zero: the nearest
+   * earlier series of its group on the same side of zero (by the sign of its sum).
+   */
   below: number[];
+  /** Per series, whether it stacks below zero (the sum of its values is negative). */
+  down: boolean[];
   /** Whether any series stacks to 100 %. */
   percent: boolean;
 }
 
 /**
- * Stacks series by their stack mode and group, in series order. Only values at the same time are
- * summed; a series without a value at a time stays a gap there, and the series above it stack on
- * what is present. Percent stacking divides by the total of the values present at that time.
+ * Stacks series by their stack mode and group, in series order. Positive values stack up from
+ * zero and negative values down from zero, each side on its own running sum, so a group of
+ * incoming and outgoing traffic reads as two stacks. Only values at the same time are summed; a
+ * series without a value at a time stays a gap there, and the series above it stack on what is
+ * present. Percent stacking divides by the sum of the absolute values present at that time, so
+ * +5 and -5 become +50 % and -50 %; a time whose values are all zero gives 0 % (0/0 is 0).
+ * A stacked line fills down to the series it stands on (`below`); where that series has no value
+ * the fill has no lower edge and breaks there, as the line of a missing value does.
  */
 export function stackData(
   ys: readonly (number | null)[][],
@@ -193,42 +203,60 @@ export function stackData(
     ys: [...ys],
     baselines: ys.map(() => null),
     below: ys.map(() => -1),
+    down: ys.map(() => false),
     percent: false,
   };
   for (const [key, members] of groups) {
     const percent = key.startsWith("percent");
     out.percent ||= percent;
     const length = ys[members[0] as number]?.length ?? 0;
+    // The sum of absolute values per time, for percent.
     const totals = new Float64Array(length);
     if (percent) {
       for (const member of members) {
         const values = ys[member] ?? [];
         for (let i = 0; i < length; i++) {
           const v = values[i];
-          if (v !== null && v !== undefined) totals[i] = (totals[i] as number) + v;
+          if (v !== null && v !== undefined) totals[i] = (totals[i] as number) + Math.abs(v);
         }
       }
     }
-    const sums = new Float64Array(length);
-    members.forEach((member, position) => {
+    const up = new Float64Array(length);
+    const down = new Float64Array(length);
+    // The last series of each side, for the fill below the next one.
+    let lastUp = -1;
+    let lastDown = -1;
+    for (const member of members) {
       const values = ys[member] ?? [];
-      const base = Float64Array.from(sums);
+      const base = new Float64Array(length);
       const stacked: (number | null)[] = new Array(length);
+      let sum = 0;
       for (let i = 0; i < length; i++) {
         const v = values[i];
         if (v === null || v === undefined) {
           stacked[i] = null;
+          base[i] = up[i] as number;
           continue;
         }
         const total = totals[i] as number;
         const part = percent ? (total === 0 ? 0 : (v / total) * 100) : v;
-        sums[i] = (sums[i] as number) + part;
-        stacked[i] = sums[i] as number;
+        sum += part;
+        const side = part < 0 ? down : up;
+        base[i] = side[i] as number;
+        side[i] = (side[i] as number) + part;
+        stacked[i] = side[i] as number;
       }
       out.ys[member] = stacked;
       out.baselines[member] = base;
-      out.below[member] = position === 0 ? -1 : (members[position - 1] as number);
-    });
+      if (sum < 0) {
+        out.down[member] = true;
+        out.below[member] = lastDown;
+        lastDown = member;
+      } else {
+        out.below[member] = lastUp;
+        lastUp = member;
+      }
+    }
   }
   return out;
 }
