@@ -13,10 +13,11 @@ import { uplotSeries } from "./uplotSeries";
 /**
  * Performance budget of the graph styles (design: quality/performance.md), in the pattern of the
  * panels' budgets: 100,000 points per style, the best of a few runs, CI runners get more time.
- * Timed is all the work that grows with the points: building and stacking the series and
- * uPlot's own path builders (line, smooth, steps, bars, points, fills, gap refinement) for one
- * draw. jsdom has no canvas, so the paths go into a Path2D that records nothing; what the
- * browser does with a path is the same for every style and covered by the e2e budgets.
+ * Timed is the script work that grows with the points: building and stacking the series,
+ * uPlot's own path builders (line, smooth, steps, bars, points, gap refinement) and the fills
+ * (gradients, the hatch tile) through a recording 2D context. jsdom has no canvas, so nothing is
+ * rasterized here: paths go into a Path2D that records nothing. Drawing the hatched, gradient
+ * and stacked charts on a real canvas is timed in Chromium by `ui/e2e/budget.spec.ts`.
  */
 // uPlot reads the device pixel ratio through matchMedia when it loads; jsdom has none.
 vi.hoisted(() => {
@@ -139,36 +140,97 @@ const STYLES: [name: string, options: FieldOptions][] = [
   ["break after 2 s", { connectGaps: "always", breakAfter: 2000 }],
 ];
 
-describe("budget: 100,000 points per graph style", () => {
-  it.each(STYLES)("draws %s within budget", (name, options) => {
-    const config: FieldConfig = { defaults: options, overrides: [] };
-    const paint = { color: "", tones: {}, hatchAlpha: 0.5, hatchWidth: 1 };
-    let drawn = 0;
-    const ms = minOf(3, () => {
-      const series = buildSeries([big], "", config);
-      const styles = resolveStyles(series);
-      const data = chartData(series, styles);
-      const ref = { current: data.stacked };
-      const options = series.map((s, i) =>
-        uplotSeries(s.name, i, styles[i] as (typeof styles)[number], paint, ref),
-      );
-      const chart = chartFor([data.x, ...data.stacked.ys] as uPlot.AlignedData, options);
-      drawn = 0;
-      options.forEach((s, i) => {
-        const paths = s.paths?.(chart, i + 1, 0, POINTS - 1);
-        if (paths !== null && paths !== undefined) drawn++;
-        if (styles[i]?.showPoints === "always") {
-          uPlot.paths.points?.()(chart, i + 1, 0, POINTS - 1);
-          drawn++;
-        }
-      });
-    });
-    process.stdout.write(`time series: 100k points as ${name} in ${ms.toFixed(1)} ms\n`);
-    expect(drawn).toBe(2);
-    expect(ms).toBeLessThan(CI ? 300 : 120);
-  });
+/**
+ * A 2D context that records what is asked of it: gradients and patterns are made for real by the
+ * fill code (its color stops, the hatch tile's lines), only nothing is rasterized.
+ */
+function recordingContext(height: number) {
+  const calls = { gradients: 0, patterns: 0, strokes: 0 };
+  const context = {
+    canvas: { height },
+    lineWidth: 1,
+    strokeStyle: "" as unknown,
+    createLinearGradient: () => {
+      calls.gradients++;
+      return { addColorStop: () => undefined };
+    },
+    createPattern: () => {
+      calls.patterns++;
+      return {};
+    },
+    beginPath: () => undefined,
+    moveTo: () => undefined,
+    lineTo: () => undefined,
+    stroke: () => {
+      calls.strokes++;
+    },
+  };
+  return { context, calls };
+}
 
-  it.each(STYLES)("renders a panel drawing %s within budget", (_name, options) => {
+describe("budget: 100,000 points per graph style", () => {
+  it.each(STYLES)(
+    "builds the paths, fills and hatch of %s within budget (no rasterizing in jsdom)",
+    (name, options) => {
+      const config: FieldConfig = { defaults: options, overrides: [] };
+      const paint = {
+        color: "oklch(0.92 0.004 286)",
+        tones: {},
+        hatchAlpha: 0.5,
+        hatchWidth: 1,
+        hatchSpacing: 6,
+        fadeTo: 0.15,
+      };
+      const { context, calls } = recordingContext(PLOT.height);
+      // The hatch tile is a canvas of its own.
+      vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
+        () => recordingContext(PLOT.height).context as unknown as CanvasRenderingContext2D,
+      );
+      let drawn = 0;
+      let fills = 0;
+      const ms = minOf(3, () => {
+        const series = buildSeries([big], "", config);
+        const styles = resolveStyles(series);
+        const data = chartData(series, styles);
+        const ref = { current: data.stacked };
+        const options = series.map((s, i) =>
+          uplotSeries(s.name, i, styles[i] as (typeof styles)[number], paint, ref),
+        );
+        const chart = chartFor([data.x, ...data.stacked.ys] as uPlot.AlignedData, options);
+        Object.assign(chart, { ctx: context });
+        drawn = 0;
+        fills = 0;
+        options.forEach((s, i) => {
+          const paths = s.paths?.(chart, i + 1, 0, POINTS - 1);
+          if (paths !== null && paths !== undefined) drawn++;
+          if (styles[i]?.showPoints === "always") {
+            uPlot.paths.points?.()(chart, i + 1, 0, POINTS - 1);
+            drawn++;
+          }
+          // Two draws of the same plot: the second takes the kept fill.
+          if (typeof s.fill === "function") {
+            s.fill(chart, i + 1);
+            s.fill(chart, i + 1);
+            fills++;
+          }
+        });
+      });
+      process.stdout.write(
+        `time series: 100k points as ${name}: paths and fills in ${ms.toFixed(1)} ms\n`,
+      );
+      expect(drawn).toBe(2);
+      // A filled style made its gradient or pattern once per series and run, not per draw.
+      const filled =
+        options.fill !== undefined || options.stack !== undefined || options.drawStyle === "bars";
+      if (filled) {
+        expect(fills).toBe(2);
+        expect(calls.gradients + calls.patterns).toBeLessThanOrEqual(3 * 2 * 2);
+      }
+      expect(ms).toBeLessThan(CI ? 300 : 120);
+    },
+  );
+
+  it.each(STYLES)("renders the SVG fallback panel for %s within budget", (_name, options) => {
     const plugin = getPanel("timeseries") as AnyPanelPlugin;
     const { Panel } = plugin;
     const config: FieldConfig = { defaults: options, overrides: [] };

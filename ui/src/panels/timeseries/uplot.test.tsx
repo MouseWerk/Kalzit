@@ -10,6 +10,7 @@ import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import type { Series } from "./series";
 import { resolveStyles } from "./styles";
 import { UplotTimeSeriesChart } from "./UplotTimeSeriesChart";
+import { cached } from "./uplotSeries";
 
 // jsdom has no canvas, so uPlot itself is replaced by a recorder: these tests check what the chart
 // hands to uPlot (data, colors from the theme tokens, sizes) and the shared keyboard readout.
@@ -463,9 +464,52 @@ describe("graph styles", () => {
       [11, 22, 33],
       [5, 5, 5],
     ]);
-    expect(bands).toEqual([{ series: [2, 1] }]);
+    expect(bands).toEqual([{ series: [2, 1], dir: -1 }]);
     // Stacked lines fill by default; the unstacked series does not.
     expect(list.map((s) => typeof s.fill)).toEqual(["function", "function", "undefined"]);
+  });
+
+  it("stacks incoming and outgoing apart: bands per side, below zero filling upward", () => {
+    const { bands, data } = draw([
+      styled("in", [1, 2], { stack: "normal" }),
+      styled("out", [-1, -2], { stack: "normal" }),
+      styled("in 2", [3, 3], { stack: "normal" }),
+      styled("out 2", [-3, -3], { stack: "normal" }),
+    ]);
+    expect(data.slice(1)).toEqual([
+      [1, 2],
+      [-1, -2],
+      [4, 5],
+      [-4, -5],
+    ]);
+    expect(bands).toEqual([
+      { series: [3, 1], dir: -1 },
+      { series: [4, 2], dir: 1 },
+    ]);
+  });
+
+  it("makes a hatch or fill once per plot size, the threshold scheme also per value range", () => {
+    const counter = { made: 0 };
+    const plot = (min: number, height = 200) =>
+      ({
+        bbox: { top: 10, height },
+        ctx: { canvas: { height: 240 } },
+        scales: { y: { min, max: 100 } },
+      }) as unknown as Parameters<ReturnType<typeof cached>>[0];
+    const hatch = cached(() => "pattern", false, counter);
+    hatch(plot(0));
+    hatch(plot(5));
+    hatch(plot(9));
+    // New data moved the value axis; the hatch stays.
+    expect(counter.made).toBe(1);
+    hatch(plot(9, 180));
+    expect(counter.made).toBe(2);
+    const scheme = { made: 0 };
+    const gradient = cached(() => "gradient", true, scheme);
+    gradient(plot(0));
+    gradient(plot(0));
+    gradient(plot(5));
+    expect(scheme.made).toBe(2);
   });
 
   it("builds the chart again only when a style changes, not for new data", () => {

@@ -20,14 +20,14 @@ export interface Paint {
   hatchAlpha: number;
   /** Width of the hatch lines in CSS px (`--chart-hatch-width`). */
   hatchWidth: number;
+  /** Room between hatch lines in CSS px (`--chart-hatch-spacing`). */
+  hatchSpacing: number;
+  /** What the fading gradient keeps at the baseline (`--chart-fade-to`). */
+  fadeTo: number;
 }
 
-/** Room between hatch lines, CSS px (the reference's 9 px at 1.5x). */
-const HATCH_SPACING = 6;
 /** How far the hue gradient turns toward the baseline, in degrees. */
 const HUE_SHIFT = 50;
-/** What the opacity gradient keeps at the baseline. */
-const FADE_TO = 0.15;
 /** CSS px between points at least, before automatic points show. */
 const AUTO_POINT_SPACE = 24;
 
@@ -113,7 +113,7 @@ function gradientStyle(
     case "opacity": {
       const gradient = ctx.createLinearGradient(0, top, 0, bottom);
       gradient.addColorStop(0, withAlpha(paint.color, alpha));
-      gradient.addColorStop(1, withAlpha(paint.color, alpha * FADE_TO));
+      gradient.addColorStop(1, withAlpha(paint.color, alpha * paint.fadeTo));
       return gradient;
     }
     case "hue": {
@@ -135,7 +135,7 @@ function gradientStyle(
  */
 function hatchPattern(u: uPlot, style: SeriesStyle, paint: Paint): CanvasPattern | string {
   const ratio = uPlot.pxRatio;
-  const spacing = Math.max(1, Math.round(HATCH_SPACING * ratio));
+  const spacing = Math.max(1, Math.round(paint.hatchSpacing * ratio));
   const height = u.ctx.canvas.height;
   const tile = document.createElement("canvas");
   tile.width = spacing;
@@ -156,27 +156,39 @@ function hatchPattern(u: uPlot, style: SeriesStyle, paint: Paint): CanvasPattern
   return u.ctx.createPattern(tile, "repeat") ?? withAlpha(paint.color, paint.hatchAlpha);
 }
 
-/** A fill or stroke style made on first use and kept while the plot's geometry stays. */
-function cached<T>(make: (u: uPlot) => T): (u: uPlot) => T {
+/**
+ * A fill or stroke style made on first use and kept while what it depends on stays: the plot's
+ * place on the canvas, and for the threshold scheme also the value axis' ends. New data on a live
+ * dashboard keeps the size, so a hatch or a gradient is not made again on every draw.
+ */
+export function cached<T>(
+  make: (u: uPlot) => T,
+  byScale: boolean,
+  counter?: { made: number },
+): (u: uPlot) => T {
   let key = "";
   let value: T | undefined;
   return (u) => {
-    const scale = u.scales.y;
-    const next = `${u.bbox.top},${u.bbox.height},${u.ctx.canvas.height},${scale?.min},${scale?.max}`;
+    let next = `${u.bbox.top},${u.bbox.height},${u.ctx.canvas.height}`;
+    if (byScale) {
+      next += `,${u.scales.y?.min},${u.scales.y?.max}`;
+    }
     if (value === undefined || next !== key) {
       key = next;
       value = make(u);
+      if (counter !== undefined) counter.made++;
     }
     return value;
   };
 }
 
 function fillOf(style: SeriesStyle, paint: Paint): uPlot.Series.Fill | undefined {
+  const byScale = style.gradient === "scheme";
   switch (style.fill) {
     case "solid":
-      return cached((u) => gradientStyle(u, u.ctx, style, paint, style.fillOpacity));
+      return cached((u) => gradientStyle(u, u.ctx, style, paint, style.fillOpacity), byScale);
     case "hatch":
-      return cached((u) => hatchPattern(u, style, paint));
+      return cached((u) => hatchPattern(u, style, paint), byScale);
     default:
       return undefined;
   }
@@ -213,7 +225,7 @@ export function uplotSeries(
     label,
     stroke:
       style.gradient === "scheme" && style.thresholds !== undefined
-        ? cached((u) => schemeGradient(u, u.ctx, style, paint, () => 1))
+        ? cached((u) => schemeGradient(u, u.ctx, style, paint, () => 1), true)
         : paint.color,
     width: style.lineWidth,
     points: pointsOf(style, paint),
@@ -272,7 +284,10 @@ export function uplotSeries(
   return options;
 }
 
-/** Bands that fill each stacked line down to the series below it, not to zero. */
+/**
+ * Bands that fill each stacked line to the series it stands on, not to zero. Where that series has
+ * no value the band has no edge, so the fill (and uPlot's line clip with it) breaks there.
+ */
 export function uplotBands(styles: readonly SeriesStyle[], stacked: StackedData): uPlot.Band[] {
   const bands: uPlot.Band[] = [];
   stacked.below.forEach((below, index) => {
@@ -282,7 +297,8 @@ export function uplotBands(styles: readonly SeriesStyle[], stacked: StackedData)
       styles[below]?.drawStyle === "line" &&
       styles[index]?.fill !== "none"
     ) {
-      bands.push({ series: [index + 1, below + 1] });
+      // Below zero the band fills up toward the series above it, which is nearer to zero.
+      bands.push({ series: [index + 1, below + 1], dir: stacked.down[index] ? 1 : -1 });
     }
   });
   return bands;
