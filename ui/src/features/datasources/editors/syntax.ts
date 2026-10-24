@@ -453,3 +453,28 @@ export function tokenizeGsql(text: string): Token[] {
     GSQL_KEYWORD_SET.has(word.toLowerCase()) ? "keyword" : "plain",
   );
 }
+
+export const LUCENE_KEYWORDS = ["AND", "OR", "NOT", "TO"] as const;
+const LUCENE_KEYWORD_SET = new Set<string>(LUCENE_KEYWORDS);
+
+// Field names are words before a colon; values may be phrases, ranges and wildcards.
+const LUCENE_RULES: Rule[] = [
+  { kind: "string", pattern: /"(?:[^"\\]|\\.)*"?/y },
+  { kind: "macro", pattern: /\$__\w+|\$\{?\w+\}?/y },
+  { kind: "operator", pattern: /\\./y },
+  { kind: "plain", pattern: /\/(?:[^/\\\n]|\\.)*\/?/y },
+  { kind: "number", pattern: /-?\d+(\.\d+)?\b(?![\w:*?])/y },
+  { kind: "plain", pattern: /[A-Za-z_@][\w.@*?-]*/y },
+  { kind: "operator", pattern: /&&|\|\||[-+!():^~[\]{}*?]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+/** Lucene query strings: AND, OR, NOT and TO are keywords, a word before `:` a field name. */
+export function tokenizeLucene(text: string): Token[] {
+  return tokenize(text, LUCENE_RULES, (word, rest) => {
+    if (LUCENE_KEYWORD_SET.has(word)) {
+      return "keyword";
+    }
+    return /^\s*:/.test(rest) ? "label" : "plain";
+  });
+}

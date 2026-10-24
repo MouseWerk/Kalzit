@@ -4,6 +4,8 @@ import { isApiError } from "../../../api/client";
 import type { SettingKey } from "../../../api/generated/shapes";
 import { LANGUAGES, type MessageKey, useI18n } from "../../../i18n/i18n";
 import { THEMES } from "../../../theme/theme";
+import { rangeLabel, TimeRangePicker } from "../../dashboards/TimeRangePicker";
+import type { TextRange } from "../../dashboards/timeRange";
 import { isSetting, type Setting } from "../api";
 import { isKnownSetting, settingName, settingText } from "../catalog";
 import { errorText, SETTING_ERRORS } from "../errors";
@@ -30,6 +32,27 @@ const CHOICES: Partial<Record<SettingKey, readonly { value: string; label: Messa
     label: `theme.${theme}` as const,
   })),
 };
+
+/** Settings that hold a time range: chosen with the dashboards' time range picker, not as JSON. */
+const TIME_RANGE_SETTINGS: ReadonlySet<string> = new Set(["dashboards.default_time_range"]);
+
+function isTextRange(value: unknown): value is TextRange {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { from?: unknown }).from === "string" &&
+    typeof (value as { to?: unknown }).to === "string"
+  );
+}
+
+/** A value as the settings list shows it: a time range by its name, anything else as JSON. */
+function useShownValue(): (key: string, value: unknown) => string {
+  const { t, language, timeZone } = useI18n();
+  return (key, value) =>
+    TIME_RANGE_SETTINGS.has(key) && isTextRange(value)
+      ? rangeLabel(t, language, value, timeZone)
+      : formatValue(value);
+}
 
 /**
  * Settings apply as soon as a value is committed, with undo. Undo names the version the change
@@ -180,6 +203,7 @@ export function SettingsList({
  */
 export function SettingDescription({ setting }: { setting: Setting }) {
   const { t } = useI18n();
+  const shown = useShownValue();
   const text = settingText(t, setting);
   return (
     <>
@@ -189,7 +213,7 @@ export function SettingDescription({ setting }: { setting: Setting }) {
         </p>
       )}
       <p className="admin-setting__text">
-        {t("admin.settings.default", { value: formatValue(setting.default) })}
+        {t("admin.settings.default", { value: shown(setting.key, setting.default) })}
       </p>
     </>
   );
@@ -219,6 +243,7 @@ function SettingField({
   onCommit: (value: unknown) => void;
 }) {
   const { t } = useI18n();
+  const showValue = useShownValue();
   const id = useId();
   const descriptionId = `${id}-description`;
   const errorId = `${id}-error`;
@@ -265,8 +290,28 @@ function SettingField({
       <>
         {header}
         <output id={id} className="admin-setting__value" aria-describedby={descriptionId}>
-          <code>{formatValue(value)}</code>
+          <code>{showValue(setting.key, value)}</code>
         </output>
+      </>
+    );
+  }
+
+  if (TIME_RANGE_SETTINGS.has(setting.key) && isTextRange(value)) {
+    return (
+      <>
+        {header}
+        <div className="admin-setting__input">
+          <TimeRangePicker
+            value={value}
+            name={label ?? setting.key}
+            onChange={(range) => {
+              if (!pending) {
+                onCommit({ from: range.from, to: range.to });
+              }
+            }}
+          />
+          <FieldError id={errorId} error={error} />
+        </div>
       </>
     );
   }
@@ -431,6 +476,7 @@ function ConflictDialog({
   onOverwrite: () => void;
 }) {
   const { t } = useI18n();
+  const shown = useShownValue();
   const keepRef = useRef<HTMLButtonElement>(null);
   return (
     <Dialog
@@ -460,11 +506,11 @@ function ConflictDialog({
       <dl className="admin-conflict">
         <dt>{t("admin.conflict.stored")}</dt>
         <dd>
-          <code>{formatValue(conflict?.stored)}</code>
+          <code>{conflict === null ? "" : shown(conflict.key, conflict.stored)}</code>
         </dd>
         <dt>{t("admin.conflict.mine")}</dt>
         <dd>
-          <code>{formatValue(conflict?.mine)}</code>
+          <code>{conflict === null ? "" : shown(conflict.key, conflict.mine)}</code>
         </dd>
       </dl>
     </Dialog>

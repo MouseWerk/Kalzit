@@ -191,7 +191,28 @@ export interface GraphSourceSchema {
   queries: string[];
 }
 
-export type SourceSchema = SqlSchema | PromSchema | CollectionsSchema | GraphSourceSchema;
+/**
+ * Elasticsearch and OpenSearch: the indices matching the source's `index` (all when it is empty),
+ * without hidden ones, each with its mapped fields as dotted paths and their mapping types.
+ */
+export interface IndicesSchema {
+  kind: "indices";
+  indices: { name: string; columns: { name: string; type: string }[] }[];
+}
+
+/** JSON and NDJSON files and HTTP JSON: the sampled document schema of the first documents. */
+export interface FieldsSchema {
+  kind: "fields";
+  fields: FieldSchema[];
+}
+
+export type SourceSchema =
+  | SqlSchema
+  | PromSchema
+  | CollectionsSchema
+  | GraphSourceSchema
+  | IndicesSchema
+  | FieldsSchema;
 
 export interface DatasourceInput {
   name: string;
@@ -443,7 +464,28 @@ export async function fetchSchema(
   if (isRecord(value) && value.kind === "tables" && Array.isArray(value.tables)) {
     return { kind: "tables", tables: value.tables as SqlSchema["tables"] };
   }
+  if (isRecord(value) && value.kind === "indices" && Array.isArray(value.indices)) {
+    return { kind: "indices", indices: value.indices.flatMap(parseIndex) };
+  }
+  if (isRecord(value) && value.kind === "fields" && Array.isArray(value.fields)) {
+    return { kind: "fields", fields: value.fields.flatMap(parseFieldSchema) };
+  }
   return invalid("schema");
+}
+
+/** One index of the schema answer, its columns with their names and mapping types checked. */
+function parseIndex(item: unknown): IndicesSchema["indices"] {
+  if (!isRecord(item) || typeof item.name !== "string") {
+    return [];
+  }
+  const columns = Array.isArray(item.columns)
+    ? item.columns.flatMap((column) =>
+        isRecord(column) && typeof column.name === "string"
+          ? [{ name: column.name, type: typeof column.type === "string" ? column.type : "" }]
+          : [],
+      )
+    : [];
+  return [{ name: item.name, columns }];
 }
 
 const COLLECTION_TYPES = ["collection", "view", "timeseries"] as const;

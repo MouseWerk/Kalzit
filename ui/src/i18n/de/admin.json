@@ -192,7 +192,7 @@
   "admin.conflict.mine": "Dein Wert",
   "admin.conflict.keepStored": "Gespeicherten Wert behalten",
   "admin.conflict.overwrite": "Mit meinem überschreiben",
-  "admin.orgSettings.title": "Einstellungen der Organisation",
+  "admin.orgSettings.title": "Einstellungen",
   "admin.orgSettings.lead": "Einstellungen für alle in dieser Organisation. Änderungen gelten sofort.",
   "admin.audit.title": "Audit-Log",
   "admin.audit.lead": "Wer in dieser Organisation was wann geändert hat.",

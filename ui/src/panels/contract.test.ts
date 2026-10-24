@@ -86,6 +86,10 @@ function editorOptions(type: string): unknown[] {
   if (type === "path") {
     return [{ caption: LONGEST, variable: "customer", variableProperty: LONGEST }];
   }
+  // State panels: known state words switched off, as the editor's check box stores it.
+  if (type === "state-timeline" || type === "status-history") {
+    return [PANELS.find((panel) => panel.type === type)?.options({ colorStateWords: false })];
+  }
   return [];
 }
 

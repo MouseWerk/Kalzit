@@ -14,7 +14,6 @@
   "toolbar.refresh.everyHours": "Alle {n} Stunden",
   "toolbar.refresh.menuRunning": "Automatisch aktualisieren: {interval}",
   "toolbar.time.controls": "Zeitraum",
-  "toolbar.time.buttonFor": "{name}: {range}",
   "toolbar.time.back": "Zeitraum zurückschieben",
   "toolbar.time.forward": "Zeitraum vorschieben",
   "toolbar.time.zoomOut": "Herauszoomen: doppelter Zeitraum",

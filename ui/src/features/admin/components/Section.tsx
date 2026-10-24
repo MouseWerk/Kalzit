@@ -7,7 +7,7 @@ import { errorText } from "../errors";
 import "../admin.css";
 
 /**
- * One administration section: its heading, a lead line, actions on the right, then the content.
+ * One administration section, a page of its own: its heading (the page's h1), a lead line, actions on the right, then the content.
  * `allowed` false shows "No access" instead (someone who followed a link without the permission);
  * `undefined` while permissions load shows nothing, so the content never flashes.
  */
@@ -35,14 +35,20 @@ export function Section({
   useDocumentTitle(title);
   // The breadcrumbs end with this page's own name, such as the team's.
   usePublishCrumbTitle(heading);
-  if (allowed === undefined) {
-    return null;
-  }
-  if (!allowed) {
+  // The page keeps its heading while permissions load and when the section is not open to the
+  // user, so it never lacks an h1.
+  if (allowed === undefined || !allowed) {
     return (
-      <EmptyState icon="lock" title={t("admin.forbidden.title")}>
-        {t("admin.forbidden.section")}
-      </EmptyState>
+      <section className="admin-section" aria-labelledby={titleId}>
+        <div className="admin-section__heading">
+          <h1 id={titleId}>{heading ?? t(title)}</h1>
+        </div>
+        {allowed === false ? (
+          <EmptyState icon="lock" title={t("admin.forbidden.title")}>
+            {t("admin.forbidden.section")}
+          </EmptyState>
+        ) : null}
+      </section>
     );
   }
   return (
@@ -50,7 +56,7 @@ export function Section({
       <div className="admin-section__header">
         <div className="admin-section__heading">
           {back}
-          <h2 id={titleId}>{heading ?? t(title)}</h2>
+          <h1 id={titleId}>{heading ?? t(title)}</h1>
           {lead === undefined ? null : <p className="admin-section__lead">{t(lead)}</p>}
         </div>
         {actions === undefined ? null : <div className="admin-section__actions">{actions}</div>}

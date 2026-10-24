@@ -128,7 +128,7 @@ export function TimeRangePicker({
   const accessible =
     name === undefined
       ? t("dashboards.time.buttonLabel", { range: label })
-      : t("toolbar.time.buttonFor", { name, range: label });
+      : t("dashboards.time.buttonFor", { name, range: label });
   return (
     <>
       <WithTooltip label={t("dashboards.time.title")}>

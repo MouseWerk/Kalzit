@@ -1,4 +1,5 @@
 import type { TargetOutcome } from "../features/dashboards/results";
+import { nameFrame } from "../panels/frame";
 import { asSteps, type NamedInput, runSteps, type StepsRun } from "./steps";
 
 /**
@@ -19,5 +20,10 @@ export function runPanelSteps(
   transformations: readonly unknown[],
   outcomes: readonly TargetOutcome[],
 ): StepsRun {
-  return runSteps(asSteps(transformations), namedInputs(outcomes));
+  const run = runSteps(asSteps(transformations), namedInputs(outcomes));
+  // Panels receive bare frames; the query's reference id stays findable for series names.
+  for (const { name, frame } of run.frames) {
+    nameFrame(frame, name);
+  }
+  return run;
 }

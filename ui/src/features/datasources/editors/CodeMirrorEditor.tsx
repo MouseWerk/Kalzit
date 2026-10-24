@@ -26,6 +26,7 @@ import {
   tokenizeCypher,
   tokenizeGsql,
   tokenizeJson,
+  tokenizeLucene,
   tokenizePromql,
   tokenizeSql,
 } from "./syntax";
@@ -37,6 +38,7 @@ const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   json: tokenizeJson,
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,
+  lucene: tokenizeLucene,
 };
 
 /** Completion kinds as CodeMirror names its option icons. */

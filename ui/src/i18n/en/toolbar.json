@@ -14,7 +14,6 @@
   "toolbar.refresh.everyHours": "Every {n} hours",
   "toolbar.refresh.menuRunning": "Refresh automatically: {interval}",
   "toolbar.time.controls": "Time range",
-  "toolbar.time.buttonFor": "{name}: {range}",
   "toolbar.time.back": "Move the time range back",
   "toolbar.time.forward": "Move the time range forward",
   "toolbar.time.zoomOut": "Zoom out: twice the time range",

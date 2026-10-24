@@ -13,7 +13,7 @@ import {
 } from "../fieldConfig/legendOptions";
 import { StateTimelinePreview, StatusHistoryPreview } from "../picker/previews";
 import { Readout, type ReadoutItem } from "../readout";
-import { EmptyPanel, emptyReason } from "../shared";
+import { CheckboxField, EmptyPanel, emptyReason } from "../shared";
 import { timeTicks } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
@@ -23,11 +23,17 @@ import "../viz.css";
 export interface StateOptions {
   legend: LegendOptions;
   tooltip: TooltipOptions;
+  /** Colour known state words ("ok", "down", ...) by their meaning (stateTone); on by default. */
+  colorStateWords: boolean;
 }
 
 function parseOptions(stored: unknown): StateOptions {
   const value = isRecord(stored) ? stored : {};
-  return { legend: parseLegend(value), tooltip: parseTooltip(value) };
+  return {
+    legend: parseLegend(value),
+    tooltip: parseTooltip(value),
+    colorStateWords: value.colorStateWords !== false,
+  };
 }
 
 /** Status history shows at most this many columns. */
@@ -85,7 +91,7 @@ function StateTimelinePanel({
   const { language, timeZone } = useI18n();
   const gridRef = useRef<HTMLDivElement>(null);
   const { width } = useElementSize(gridRef);
-  const data = stateData(frames, fieldConfig, language);
+  const data = stateData(frames, fieldConfig, language, options.colorStateWords);
   if (data === null || data.times.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
   }
@@ -161,7 +167,7 @@ function StatusHistoryPanel({
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<StateOptions>) {
   const { language, timeZone } = useI18n();
-  const data = stateData(frames, fieldConfig, language);
+  const data = stateData(frames, fieldConfig, language, options.colorStateWords);
   if (data === null || data.times.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noTimeSeries")} />;
   }
@@ -233,13 +239,22 @@ function StatusHistoryPanel({
 }
 
 function StateEditor({ options, onChange }: PanelEditorProps<StateOptions>) {
+  const { t } = useI18n();
   return (
-    <LegendTooltipEditor
-      legend={options.legend}
-      tooltip={options.tooltip}
-      withValues={false}
-      onChange={(legend, tooltip) => onChange({ ...options, legend, tooltip })}
-    />
+    <>
+      <CheckboxField
+        label={t("panels.state.colorStateWords")}
+        hint={t("panels.state.colorStateWordsHint")}
+        checked={options.colorStateWords}
+        onChange={(colorStateWords) => onChange({ ...options, colorStateWords })}
+      />
+      <LegendTooltipEditor
+        legend={options.legend}
+        tooltip={options.tooltip}
+        withValues={false}
+        onChange={(legend, tooltip) => onChange({ ...options, legend, tooltip })}
+      />
+    </>
   );
 }
 

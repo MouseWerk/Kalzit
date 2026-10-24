@@ -246,8 +246,4 @@
   }
 
   /* A quiet back or secondary link next to a heading or toolbar. */
-  .versions__back {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
 }

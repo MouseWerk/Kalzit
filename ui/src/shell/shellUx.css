@@ -679,6 +679,20 @@
     grid-template-columns: repeat(auto-fit, minmax(min(var(--size-stat-min), 100%), 1fr));
   }
 
+  /*
+   * Phones: two tiles per row instead of four full-width ones stacked; the illustration well
+   * gives its room to the number.
+   */
+  @media (max-width: 30rem) {
+    .start__stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .start__stats .stat-tile__well {
+      display: none;
+    }
+  }
+
   .start__cards {
     grid-template-columns: repeat(auto-fill, minmax(min(var(--size-column), 100%), 1fr));
   }

@@ -303,6 +303,22 @@ type QueryResult =
   adds its own check there
   when it lands, and its default and editor options to the contract fixture
   (`ui/src/panels/contract.test.ts`); unknown types are left alone.
+- Series names (`distinctSeriesNames`, `ui/src/panels/frame.ts`): a series is named by its display
+  name, else its name template, else its field name with labels. Without a display name or
+  template, series with labels are named by the label values that differ between them in the
+  current result (after the metric name), and names that are still equal get their query's
+  reference id ("amount (A)"), else a number. These automatic names depend on the result: when a
+  series appears or disappears, the labels that differ and so the names can change. A display
+  name or a name template fixes them. The reference id travels beside the bare frames panels get
+  (`nameFrame`, a weak map filled by `runPanelSteps`), so the panel props stay one frame list.
+- State words (state timeline and status history, `stateTone` in
+  `ui/src/panels/state/stateData.ts`): a value's color comes, in this order, from a value
+  mapping, the thresholds, the field's color, a known state word, and else the palette. Only the
+  whole value counts ("down", not "Down Under" or "up-to-date"), in any case. Good: ok, up,
+  healthy, success, passed, gesund, erfolgreich, bestanden. Warning: warning, degraded, pending,
+  Warnung, eingeschränkt, ausstehend. Danger: down, error, failed, failure, critical, offline,
+  Fehler, fehlgeschlagen, ausgefallen, kritisch. Neutral: unknown, unbekannt. The panel option
+  `colorStateWords` (on by default) switches it off.
 
 ## Analysis steps and export
 

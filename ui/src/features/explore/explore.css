@@ -36,4 +36,9 @@
     background: var(--bg-raised);
     overflow: auto;
   }
+
+  /* A result that is only an error is as tall as the message, not an empty chart's frame. */
+  .explore__panel:has(> .panel-error:only-child) {
+    height: auto;
+  }
 }

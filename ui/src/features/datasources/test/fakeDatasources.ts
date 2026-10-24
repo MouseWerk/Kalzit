@@ -8,6 +8,7 @@ import {
 } from "../../../test/fakeServer";
 import { FAKE_GRAPH, FAKE_GRAPH_SCHEMA, graphOutcome, NEO4J_ID, TIGERGRAPH_ID } from "./fakeGraph";
 import { FAKE_MONGO_COLLECTIONS, mongoOutcome, parseMongo } from "./fakeMongo";
+import { FAKE_SOURCE_SCHEMAS, sourceKindSources, sourceOutcome } from "./fakeSources";
 
 /**
  * Fake routes for data sources and the free query route, written from docs/api/datasources.md
@@ -46,6 +47,7 @@ const TARGET_FIELDS = new Set([
   "authSource",
   "tls",
   "replicaSet",
+  "apiKeyHeader",
 ]);
 
 interface WireKind {
@@ -127,6 +129,57 @@ export const FAKE_KINDS: WireKind[] = [
       setting("basicAuthPassword", "string", { secret: true }),
       setting("bearerToken", "string", { secret: true }),
       setting("caCert", "text"),
+      ...COMMON,
+    ],
+  },
+  {
+    kind: "elasticsearch",
+    name: "Elasticsearch / OpenSearch",
+    shapes: ["documents", "frame"],
+    hintKey: "datasources.kinds.elasticsearch.hint",
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("basicAuthUser", "string"),
+      setting("basicAuthPassword", "string", { secret: true }),
+      setting("apiKey", "string", { secret: true }),
+      setting("bearerToken", "string", { secret: true }),
+      setting("caCert", "text"),
+      setting("index", "string"),
+      setting("timeField", "string", { default: "@timestamp" }),
+      ...COMMON,
+    ],
+  },
+  {
+    kind: "file",
+    name: "CSV/JSON file",
+    shapes: ["frame", "documents"],
+    hintKey: "datasources.kinds.file.hint",
+    settings: [
+      setting("path", "string", { required: true }),
+      setting("format", "select", { options: ["auto", "csv", "json", "ndjson"], default: "auto" }),
+      setting("delimiter", "select", {
+        options: ["auto", "comma", "semicolon", "tab", "pipe"],
+        default: "auto",
+      }),
+      setting("decimal", "select", { options: ["auto", "point", "comma"], default: "auto" }),
+      setting("header", "bool", { default: true }),
+      ...COMMON,
+    ],
+  },
+  {
+    kind: "http_json",
+    name: "HTTP JSON",
+    shapes: ["documents"],
+    hintKey: "datasources.kinds.http_json.hint",
+    settings: [
+      setting("url", "string", { required: true }),
+      setting("basicAuthUser", "string"),
+      setting("basicAuthPassword", "string", { secret: true }),
+      setting("bearerToken", "string", { secret: true }),
+      setting("apiKeyHeader", "string"),
+      setting("apiKey", "string", { secret: true }),
+      setting("caCert", "text"),
+      setting("documentsPath", "string"),
       ...COMMON,
     ],
   },
@@ -420,11 +473,22 @@ export async function answerQuery(
       return parsed;
     }
   }
+  // Search, file and HTTP JSON sources answer from their own fake, with the server's reasons.
+  const answered = sourceOutcome(source, item, range, variables);
+  if (answered !== undefined) {
+    return answered;
+  }
   const problem = queryFormProblem(source.kind, item.query);
   if (problem !== null) {
     return { error: { code: "query_rejected", message: problem } };
   }
   return state.respond(item, range, variables);
+}
+
+/** Adds the Elasticsearch, CSV file and HTTP JSON sources (ES_ID, FILE_ID, HTTP_ID) with schemas. */
+export function addSourceKinds(state: FakeDatasourcesState): void {
+  state.datasources.push(...sourceKindSources(Date.UTC(2026, 0, 12)));
+  Object.assign(state.schemas, FAKE_SOURCE_SCHEMAS);
 }
 
 /** Adds the TigerGraph source "Tiger" (graph `social`) with an installed query, for the tests. */

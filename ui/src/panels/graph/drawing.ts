@@ -19,6 +19,9 @@ export interface DrawState {
   neighbours: ReadonlySet<number>;
 }
 
+/** Space around a label's text on its background, in px. */
+const LABEL_BACKGROUND_PADDING = 2;
+
 /** What the renderer draws for one node, from the panel's state. */
 export function nodeDisplay(
   index: number,
@@ -52,6 +55,9 @@ export function nodeDisplay(
     ...data,
     color,
     labelColor: p.palette.text,
+    // A label on the canvas color stays readable where it crosses edges or a neighbour node.
+    labelBackgroundColor: p.palette.background,
+    labelBackgroundPadding: LABEL_BACKGROUND_PADDING,
     size: isSelected ? data.size * 1.4 : data.size,
     labelVisibility,
     // A hidden label is dropped, not only hidden: the renderer lays out the glyphs of every
