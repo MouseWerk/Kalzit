@@ -34,6 +34,8 @@ pub struct AppState {
     pub touches: Arc<crate::auth::session::Touches>,
     /// Exports making their file at the same time (`routes::export::MAX_EXPORTS`).
     pub exports: Arc<tokio::sync::Semaphore>,
+    /// Checks, downloads and installations of new versions (`updates`).
+    pub updates: Arc<crate::updates::Updates>,
 }
 
 impl AppState {
@@ -48,6 +50,7 @@ impl AppState {
         // The touches, plus one for each of the two hourly jobs.
         let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 2));
         let touches = Arc::new(crate::auth::session::Touches::new(background.clone(), touch_limit));
+        let updates = Arc::new(crate::updates::Updates::new(&config.paths.data_dir, &config.database_url()));
         Ok(Self {
             db,
             config: Arc::new(config),
@@ -59,6 +62,7 @@ impl AppState {
             background,
             touches,
             exports: Arc::new(tokio::sync::Semaphore::new(crate::routes::export::MAX_EXPORTS)),
+            updates,
         })
     }
 

@@ -144,11 +144,253 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Saved versions kept per dashboard; older ones are deleted on save. 0 keeps all.",
     },
     SettingDef {
+        key: "updates.channel",
+        scope: Scope::Server,
+        default: || json!("stable"),
+        ui_editable: true,
+        description: "Which releases updates offer: stable releases only, or previews too.",
+    },
+    SettingDef {
+        key: "updates.check_daily",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Look for a new version once a day (asks GitHub; off by default, nothing else is sent).",
+    },
+    SettingDef {
+        key: "updates.window",
+        scope: Scope::Server,
+        default: || json!("02:00-04:00"),
+        ui_editable: true,
+        description: "Maintenance window for planned installations, HH:MM-HH:MM in the administrator's local time.",
+    },
+    SettingDef {
+        key: "updates.keep_versions",
+        scope: Scope::Server,
+        default: || json!(3),
+        ui_editable: true,
+        description: "Previous versions kept with their database backups, for a return.",
+    },
+    SettingDef {
+        key: "updates.health_timeout_secs",
+        scope: Scope::Server,
+        default: || json!(60),
+        ui_editable: true,
+        description: "How long a new version has to report healthy before Kalzit returns to the previous one.",
+    },
+    SettingDef {
         key: "dashboards.default_time_range",
         scope: Scope::Org,
         default: || json!({ "from": "now-6h", "to": "now" }),
         ui_editable: true,
         description: "Time range of new dashboards in this organization.",
+    },
+    // Appearance and brand. The organization entries of the same keys start as "inherit" and then
+    // follow the server's value (`routes::branding`).
+    SettingDef {
+        key: "appearance.product_name",
+        scope: Scope::Server,
+        default: || json!("Kalzit"),
+        ui_editable: true,
+        description: "Name shown in the sidebar, on the sign-in page and in the window title.",
+    },
+    SettingDef {
+        key: "appearance.accent",
+        scope: Scope::Server,
+        default: || json!("copper"),
+        ui_editable: true,
+        description: "Accent color of primary actions and links: a vetted color or #rrggbb with enough contrast.",
+    },
+    SettingDef {
+        key: "appearance.density",
+        scope: Scope::Server,
+        default: || json!("balanced"),
+        ui_editable: true,
+        description: "Spacing and control height: compact, balanced or comfortable.",
+    },
+    SettingDef {
+        key: "appearance.font_size",
+        scope: Scope::Server,
+        default: || json!(14),
+        ui_editable: true,
+        description: "Size of body text in pixels; everything else scales with it.",
+    },
+    SettingDef {
+        key: "appearance.start_page",
+        scope: Scope::Server,
+        default: || json!("home"),
+        ui_editable: true,
+        description: "Page members land on when they have no start dashboard of their own.",
+    },
+    SettingDef {
+        key: "appearance.time_zone",
+        scope: Scope::Server,
+        default: || json!("browser"),
+        ui_editable: true,
+        description: "Time zone for users who have not chosen one: an IANA name, or browser for their own.",
+    },
+    SettingDef {
+        key: "appearance.week_start",
+        scope: Scope::Server,
+        default: || json!("monday"),
+        ui_editable: true,
+        description: "First day of the week for users who have not chosen one.",
+    },
+    SettingDef {
+        key: "signin.welcome",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "Welcome text on the sign-in page, plain text with emphasis and links.",
+    },
+    SettingDef {
+        key: "signin.notice",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "Notice on the sign-in page, such as a maintenance window or a usage policy.",
+    },
+    SettingDef {
+        key: "appearance.accent",
+        scope: Scope::Org,
+        default: || json!("inherit"),
+        ui_editable: true,
+        description: "Accent color in this organization; inherit follows the server.",
+    },
+    SettingDef {
+        key: "appearance.density",
+        scope: Scope::Org,
+        default: || json!("inherit"),
+        ui_editable: true,
+        description: "Density in this organization; inherit follows the server.",
+    },
+    SettingDef {
+        key: "appearance.font_size",
+        scope: Scope::Org,
+        default: || json!("inherit"),
+        ui_editable: true,
+        description: "Body text size in this organization; inherit follows the server.",
+    },
+    SettingDef {
+        key: "appearance.start_page",
+        scope: Scope::Org,
+        default: || json!("inherit"),
+        ui_editable: true,
+        description: "Start page in this organization; inherit follows the server.",
+    },
+    SettingDef {
+        key: "appearance.time_zone",
+        scope: Scope::Org,
+        default: || json!("inherit"),
+        ui_editable: true,
+        description: "Default time zone in this organization; inherit follows the server.",
+    },
+    SettingDef {
+        key: "appearance.week_start",
+        scope: Scope::Org,
+        default: || json!("inherit"),
+        ui_editable: true,
+        description: "First day of the week in this organization; inherit follows the server.",
+    },
+    // Network, TLS, proxies, security and logging live in the configuration only (a wrong value
+    // could lock the admin out); the settings page shows them read-only with their source.
+    SettingDef {
+        key: "server.http_addr",
+        scope: Scope::Server,
+        default: || json!("0.0.0.0:3000"),
+        ui_editable: false,
+        description: "Address and port of the HTTP listener; empty turns it off.",
+    },
+    SettingDef {
+        key: "server.https_addr",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: false,
+        description: "Address and port of the HTTPS listener; empty turns it off.",
+    },
+    SettingDef {
+        key: "server.public_url",
+        scope: Scope::Server,
+        default: || Value::Null,
+        ui_editable: false,
+        description: "The address users open; used for the origin check and links.",
+    },
+    SettingDef {
+        key: "server.redirect_http_to_https",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: false,
+        description: "With HTTPS on, plain HTTP answers with a redirect.",
+    },
+    SettingDef {
+        key: "tls.cert_file",
+        scope: Scope::Server,
+        default: || Value::Null,
+        ui_editable: false,
+        description: "Certificate chain of the HTTPS listener (PEM).",
+    },
+    SettingDef {
+        key: "tls.min_version",
+        scope: Scope::Server,
+        default: || json!("1.2"),
+        ui_editable: false,
+        description: "Oldest TLS version the HTTPS listener accepts.",
+    },
+    SettingDef {
+        key: "tls.reload_interval_secs",
+        scope: Scope::Server,
+        default: || json!(60),
+        ui_editable: false,
+        description: "How often the certificate files are checked for changes (0: never).",
+    },
+    SettingDef {
+        key: "security.trusted_proxies",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: false,
+        description: "Reverse proxies whose X-Forwarded headers are trusted.",
+    },
+    SettingDef {
+        key: "security.hsts",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: false,
+        description: "Strict-Transport-Security on HTTPS answers.",
+    },
+    SettingDef {
+        key: "security.hsts_max_age_secs",
+        scope: Scope::Server,
+        default: || json!(31_536_000),
+        ui_editable: false,
+        description: "How long browsers keep to HTTPS after a visit.",
+    },
+    SettingDef {
+        key: "security.login_max_failures",
+        scope: Scope::Server,
+        default: || json!(10),
+        ui_editable: false,
+        description: "Failed sign-ins per email and per address before further attempts are refused.",
+    },
+    SettingDef {
+        key: "security.login_window_secs",
+        scope: Scope::Server,
+        default: || json!(15 * 60),
+        ui_editable: false,
+        description: "The window in which failed sign-ins are counted.",
+    },
+    SettingDef {
+        key: "log.level",
+        scope: Scope::Server,
+        default: || json!("info"),
+        ui_editable: false,
+        description: "Log filter, such as info or kalzit=debug,info.",
+    },
+    SettingDef {
+        key: "log.format",
+        scope: Scope::Server,
+        default: || json!("text"),
+        ui_editable: false,
+        description: "Log format: text or json.",
     },
 ];
 
@@ -172,13 +414,58 @@ pub enum Source {
 
 /// What a setting accepts. Every registry entry has one (tested).
 enum Rule {
-    Int { min: i64, max: i64 },
+    Int {
+        min: i64,
+        max: i64,
+    },
+    IntOneOf(&'static [i64]),
     OneOf(&'static [&'static str]),
-    Strings { max_items: usize, max_chars: usize },
+    Strings {
+        max_items: usize,
+        max_chars: usize,
+    },
     TimeRange,
+    Bool,
+    /// `HH:MM-HH:MM`, two different times of day.
+    TimeWindow,
+    Text {
+        max_chars: usize,
+        multiline: bool,
+        required: bool,
+    },
+    Accent,
+    /// An IANA time zone name, or `browser`.
+    TimeZone,
+    /// Read from the configuration and never written here; the configuration checks it at start.
+    Configuration,
+    /// An organization's appearance: `inherit` (the server's value) or what the server accepts.
+    Inherit(Box<Rule>),
+}
+
+fn time_of_day(text: &str) -> Option<u32> {
+    let (h, m) = text.split_once(':')?;
+    if h.len() != 2 || m.len() != 2 {
+        return None;
+    }
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// The value of an organization's appearance setting that follows the server.
+pub const INHERIT: &str = "inherit";
+
+/// The rule of a setting in its scope.
+fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
+    if scope == Scope::Org && key.starts_with("appearance.") {
+        return Some(Rule::Inherit(Box::new(rule(key)?)));
+    }
+    rule(key)
 }
 
 fn rule(key: &str) -> Option<Rule> {
+    if config_backed(key).is_some() && !key.starts_with("sessions.") {
+        return Some(Rule::Configuration);
+    }
     Some(match key {
         "datasources.sqlite_dirs" | "datasources.allowed_targets" => Rule::Strings { max_items: 100, max_chars: 1024 },
         "datasources.file_dirs" => Rule::Strings { max_items: 100, max_chars: 1024 },
@@ -196,14 +483,70 @@ fn rule(key: &str) -> Option<Rule> {
         "sessions.idle_timeout_hours" => Rule::Int { min: 0, max: 10 * 365 * 24 },
         "dashboards.version_retention" => Rule::Int { min: 0, max: 100_000 },
         "dashboards.default_time_range" => Rule::TimeRange,
+        "appearance.product_name" => Rule::Text { max_chars: 40, multiline: false, required: true },
+        "appearance.accent" => Rule::Accent,
+        "appearance.density" => Rule::OneOf(crate::appearance::DENSITIES),
+        "appearance.font_size" => Rule::IntOneOf(crate::appearance::FONT_SIZES),
+        "appearance.start_page" => Rule::OneOf(crate::appearance::START_PAGES),
+        "appearance.time_zone" => Rule::TimeZone,
+        "appearance.week_start" => Rule::OneOf(crate::routes::preferences::WEEK_STARTS),
+        "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
+        "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
+        "updates.channel" => Rule::OneOf(&["stable", "preview"]),
+        "updates.check_daily" => Rule::Bool,
+        "updates.window" => Rule::TimeWindow,
+        "updates.keep_versions" => Rule::Int { min: 1, max: 20 },
+        // Long enough for migrations of a large database, short enough that a hang is noticed.
+        "updates.health_timeout_secs" => Rule::Int { min: 15, max: 1800 },
         _ => return None,
     })
 }
 
 /// Checks a value against the setting's rule; the message is for the `validation` error.
-pub fn validate(key: &str, value: &Value) -> Result<(), String> {
-    let Some(rule) = rule(key) else { return Err(format!("{key} has no validation rule")) };
+pub fn validate(def: &SettingDef, value: &Value) -> Result<(), String> {
+    let key = def.key;
+    let Some(rule) = rule_for(key, def.scope) else { return Err(format!("{key} has no validation rule")) };
+    check_rule(key, &rule, value)
+}
+
+fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
     match rule {
+        Rule::Inherit(inner) => {
+            if value.as_str() == Some(INHERIT) {
+                Ok(())
+            } else {
+                check_rule(key, inner, value).map_err(|e| format!("{e} (or {INHERIT})"))
+            }
+        }
+        Rule::Configuration => Err(format!("{key} is set in kalzit.toml or the environment")),
+        Rule::IntOneOf(allowed) => match value.as_i64() {
+            Some(n) if allowed.contains(&n) => Ok(()),
+            _ => Err(format!(
+                "{key} must be one of {}",
+                allowed.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            )),
+        },
+        Rule::Text { max_chars, multiline, required } => match value.as_str() {
+            Some(s) => crate::appearance::validate_text(s, *max_chars, *multiline, *required)
+                .map_err(|e| format!("{key}: {e}")),
+            None => Err(format!("{key} must be a text")),
+        },
+        Rule::Accent => match value.as_str() {
+            Some(s) => crate::appearance::validate_accent(s).map_err(|e| format!("{key}: {e}")),
+            None => Err(format!("{key} must be a text")),
+        },
+        Rule::TimeZone => match value.as_str() {
+            Some(s) if s == "browser" || crate::routes::preferences::is_time_zone_name(s) => Ok(()),
+            _ => Err(format!("{key} must be an IANA time zone name such as Europe/Berlin, or browser")),
+        },
+        Rule::Int { .. } | Rule::OneOf(_) | Rule::Strings { .. } | Rule::TimeRange | Rule::TimeWindow | Rule::Bool => {
+            check_basic(key, rule, value)
+        }
+    }
+}
+
+fn check_basic(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
+    match *rule {
         Rule::Int { min, max } => match value.as_i64() {
             Some(n) if (min..=max).contains(&n) => Ok(()),
             _ => Err(format!("{key} must be a whole number from {min} to {max}")),
@@ -229,26 +572,60 @@ pub fn validate(key: &str, value: &Value) -> Result<(), String> {
             Ok(())
         }
         Rule::TimeRange => crate::dashboards::model::check_time_range(value).map_err(|e| format!("{key}: {e}")),
+        Rule::TimeWindow => {
+            let window = value.as_str().and_then(|s| s.split_once('-'));
+            match window.and_then(|(a, b)| Some((time_of_day(a)?, time_of_day(b)?))) {
+                Some((a, b)) if a != b => Ok(()),
+                _ => Err(format!("{key} must be two different times like 02:00-04:00")),
+            }
+        }
+        Rule::Bool => match value {
+            Value::Bool(_) => Ok(()),
+            _ => Err(format!("{key} must be true or false")),
+        },
+        _ => Err(format!("{key} has no plain rule")),
     }
 }
 
-/// A setting that lives in the configuration: its environment variable and how to read it.
+/// A setting that lives in the configuration: how to read it. Its environment variable is
+/// `KALZIT_<SECTION>_<KEY>` (`config_env_var`).
 struct ConfigBacked {
-    env_var: &'static str,
     read: fn(&Config) -> Value,
 }
 
+/// `sessions.lifetime_hours` -> `KALZIT_SESSIONS_LIFETIME_HOURS`.
+fn config_env_var(key: &str) -> String {
+    format!("KALZIT_{}", key.replace('.', "_").to_ascii_uppercase())
+}
+
 fn config_backed(key: &str) -> Option<ConfigBacked> {
-    Some(match key {
-        "sessions.lifetime_hours" => {
-            ConfigBacked { env_var: "KALZIT_SESSIONS_LIFETIME_HOURS", read: |c| json!(c.sessions.lifetime_hours) }
+    let read: fn(&Config) -> Value = match key {
+        "sessions.lifetime_hours" => |c| json!(c.sessions.lifetime_hours),
+        "sessions.idle_timeout_hours" => |c| json!(c.sessions.idle_timeout_hours),
+        "server.http_addr" => |c| json!(c.server.http_addr),
+        "server.https_addr" => |c| json!(c.server.https_addr),
+        "server.public_url" => |c| json!(c.server.public_url),
+        "server.redirect_http_to_https" => |c| json!(c.server.redirect_http_to_https),
+        "tls.cert_file" => |c| json!(c.tls.cert_file.as_ref().map(|p| p.display().to_string())),
+        "tls.min_version" => |c| json!(c.tls.min_version),
+        "tls.reload_interval_secs" => |c| json!(c.tls.reload_interval_secs),
+        "security.trusted_proxies" => {
+            |c| json!(c.security.trusted_proxies.iter().map(ToString::to_string).collect::<Vec<_>>())
         }
-        "sessions.idle_timeout_hours" => ConfigBacked {
-            env_var: "KALZIT_SESSIONS_IDLE_TIMEOUT_HOURS",
-            read: |c| json!(c.sessions.idle_timeout_hours),
-        },
+        "security.hsts" => |c| json!(c.security.hsts),
+        "security.hsts_max_age_secs" => |c| json!(c.security.hsts_max_age_secs),
+        "security.login_max_failures" => |c| json!(c.security.login_max_failures),
+        "security.login_window_secs" => |c| json!(c.security.login_window_secs),
+        "log.level" => |c| json!(c.log.level),
+        "log.format" => |c| json!(c.log.format),
         _ => return None,
-    })
+    };
+    Some(ConfigBacked { read })
+}
+
+/// Whether a setting lives in the configuration (`kalzit.toml` and `KALZIT_<SECTION>_<KEY>`).
+pub fn is_configuration(key: &str) -> bool {
+    config_backed(key).is_some()
 }
 
 const SETTING_ENV_PREFIX: &str = "KALZIT_SETTING_";
@@ -291,7 +668,7 @@ fn check_environment_with(
         else {
             return Err(format!("unknown variable {name}: there is no such server setting"));
         };
-        validate(def.key, &parse_env_value(&raw)).map_err(|e| format!("{name}: {e}"))?;
+        validate(def, &parse_env_value(&raw)).map_err(|e| format!("{name}: {e}"))?;
     }
     Ok(())
 }
@@ -336,7 +713,7 @@ pub fn resolve(
         if let Some(backed) = config_backed(def.key) {
             // The configuration has merged file and environment already; the variable tells which.
             let value = (backed.read)(config);
-            let source = if env(backed.env_var).is_some() {
+            let source = if env(&config_env_var(def.key)).is_some() {
                 Source::Env
             } else if file_sets(def.key) {
                 Source::File
@@ -348,12 +725,12 @@ pub fn resolve(
         let name = env_var_name(def.key);
         if let Some(raw) = env(&name) {
             let value = parse_env_value(&raw);
-            validate(def.key, &value).map_err(|e| format!("{name}: {e}"))?;
+            validate(def, &value).map_err(|e| format!("{name}: {e}"))?;
             return Ok(row(value, Source::Env));
         }
     }
     if let Some(stored) = stored {
-        match validate(def.key, &stored.value) {
+        match validate(def, &stored.value) {
             Ok(()) => return Ok(row(stored.value.clone(), Source::Database)),
             // A rule tightened by an update must not break the server; the default applies until
             // an admin saves a valid value.
@@ -538,6 +915,50 @@ pub fn editable(def: &SettingDef, effective: &Effective) -> bool {
     def.ui_editable && matches!(effective.source, Source::Database | Source::Default)
 }
 
+/// Deletes a setting's stored value if its version is still `expected`, so the default applies
+/// again (rather than a stored copy of it). Answers false when someone else saved first; a setting
+/// never saved (`expected` 0) has nothing to delete and answers true. Same transaction and cache
+/// rules as `store`.
+pub async fn reset(conn: &mut sqlx::AnyConnection, org_id: Option<&str>, key: &str, expected: i64) -> ApiResult<bool> {
+    if expected == 0 {
+        let stored: Option<(i64,)> = match org_id {
+            None => {
+                sqlx::query_as("SELECT version FROM server_settings WHERE key = $1")
+                    .bind(key)
+                    .fetch_optional(&mut *conn)
+                    .await?
+            }
+            Some(org) => {
+                sqlx::query_as("SELECT version FROM org_settings WHERE org_id = $1 AND key = $2")
+                    .bind(org)
+                    .bind(key)
+                    .fetch_optional(&mut *conn)
+                    .await?
+            }
+        };
+        return Ok(stored.is_none());
+    }
+    let affected = match org_id {
+        None => {
+            sqlx::query("DELETE FROM server_settings WHERE key = $1 AND version = $2")
+                .bind(key)
+                .bind(expected)
+                .execute(&mut *conn)
+                .await?
+        }
+        Some(org) => {
+            sqlx::query("DELETE FROM org_settings WHERE org_id = $1 AND key = $2 AND version = $3")
+                .bind(org)
+                .bind(key)
+                .bind(expected)
+                .execute(&mut *conn)
+                .await?
+        }
+    }
+    .rows_affected();
+    Ok(affected == 1)
+}
+
 /// Writes a setting if its stored version is still `expected` (0: never saved). Answers the new
 /// version, or `None` when someone else saved first. Runs inside the caller's transaction, next
 /// to the audit entry; call `Cache::invalidate` after the commit.
@@ -619,17 +1040,74 @@ mod tests {
     fn keys_are_unique_and_namespaced() {
         let mut seen = std::collections::BTreeSet::new();
         for d in REGISTRY {
-            assert!(seen.insert(d.key), "{} twice", d.key);
+            assert!(seen.insert((d.key, d.scope == Scope::Server)), "{} twice in one scope", d.key);
             assert!(d.key.contains('.'), "{} needs an area prefix", d.key);
             assert!(!d.description.is_empty());
+            // A key in both scopes is an organization override of the server's value.
+            if d.scope == Scope::Org && find(d.key, Scope::Server).is_some() {
+                assert!(d.key.starts_with("appearance."), "{} is in both scopes", d.key);
+                assert_eq!((d.default)(), json!(INHERIT), "{} starts by following the server", d.key);
+            }
         }
     }
 
     #[test]
     fn every_setting_has_a_rule_its_default_passes() {
         for d in REGISTRY {
-            assert!(validate(d.key, &(d.default)()).is_ok(), "{}: {:?}", d.key, validate(d.key, &(d.default)()));
+            if is_configuration(d.key) && !d.key.starts_with("sessions.") {
+                // Checked by `config.rs` at start, never written here.
+                assert!(!d.ui_editable && validate(d, &(d.default)()).is_err(), "{}", d.key);
+                continue;
+            }
+            assert!(validate(d, &(d.default)()).is_ok(), "{}: {:?}", d.key, validate(d, &(d.default)()));
         }
+    }
+
+    /// Checks against the server setting of `key`, else its organization setting.
+    fn check(key: &str, value: &Value) -> Result<(), String> {
+        let def = find(key, Scope::Server).or_else(|| find(key, Scope::Org)).ok_or("unknown")?;
+        validate(def, value)
+    }
+
+    #[test]
+    fn appearance_settings_take_vetted_values() {
+        let org = |key: &str| find(key, Scope::Org).unwrap();
+        for (key, good, bad) in [
+            ("appearance.accent", json!("teal"), json!("pink")),
+            ("appearance.accent", json!("#2563eb"), json!("#ffffff")),
+            ("appearance.density", json!("compact"), json!("tight")),
+            ("appearance.font_size", json!(16), json!(17)),
+            ("appearance.start_page", json!("explore"), json!("/admin")),
+            ("appearance.time_zone", json!("Europe/Berlin"), json!("Europe/../etc")),
+            ("appearance.week_start", json!("sunday"), json!("friday")),
+            ("appearance.product_name", json!("Datenwerk"), json!("")),
+            ("signin.welcome", json!("Willkommen!\nMelde dich an."), json!("a\u{0007}")),
+        ] {
+            assert!(check(key, &good).is_ok(), "{key} refused {good}");
+            assert!(check(key, &bad).is_err(), "{key} accepted {bad}");
+        }
+        // Organizations may follow the server; the server itself has nothing to inherit from.
+        assert!(validate(org("appearance.accent"), &json!("inherit")).is_ok());
+        assert!(validate(org("appearance.accent"), &json!("#ffffff")).is_err());
+        assert!(validate(org("appearance.font_size"), &json!(15)).is_ok());
+        assert!(check("appearance.accent", &json!("inherit")).is_err());
+        assert!(check("appearance.product_name", &json!("x".repeat(41))).is_err());
+        assert!(check("appearance.product_name", &json!("Zwei\nZeilen")).is_err());
+    }
+
+    #[test]
+    fn configuration_values_are_read_with_their_source() {
+        let def = server_def("server.http_addr");
+        let mut config = Config::default();
+        config.server.http_addr = "127.0.0.1:8080".into();
+        let file = resolve(def, &|_: &str| None, &|key: &str| key == "server.http_addr", &config, None).unwrap();
+        assert_eq!((&file.value, file.source), (&json!("127.0.0.1:8080"), Source::File));
+        let env = |name: &str| (name == "KALZIT_SERVER_HTTP_ADDR").then(|| "x".to_string());
+        assert_eq!(resolve(def, &env, &|_: &str| false, &config, None).unwrap().source, Source::Env);
+        assert!(!editable(def, &file));
+        // Never through KALZIT_SETTING_*: the configuration's own variable applies.
+        let vars = vec![("KALZIT_SETTING_SERVER_HTTP_ADDR".to_string(), "x".to_string())];
+        assert!(check_environment(vars).is_err());
     }
 
     #[test]
@@ -734,22 +1212,22 @@ mod tests {
             ("dashboards.default_time_range", json!({ "from": "yesterday", "to": "now" })),
             ("dashboards.version_retention", json!(-1)),
         ] {
-            assert!(validate(key, &bad).is_err(), "{key} accepted {bad}");
+            assert!(check(key, &bad).is_err(), "{key} accepted {bad}");
         }
-        assert!(validate("datasources.sqlite_dirs", &json!(["D:/Daten/Ümlaut"])).is_ok());
-        assert!(validate("no.such", &json!(1)).is_err());
+        assert!(check("datasources.sqlite_dirs", &json!(["D:/Daten/Ümlaut"])).is_ok());
+        assert!(check("no.such", &json!(1)).is_err());
     }
 
     /// Matches `config.rs`: a session lasts at least an hour; idle timeout 0 means never.
     #[test]
     fn session_lifetime_needs_at_least_an_hour() {
         let max = 10 * 365 * 24;
-        assert!(validate("sessions.lifetime_hours", &json!(0)).is_err());
-        assert!(validate("sessions.lifetime_hours", &json!(1)).is_ok());
-        assert!(validate("sessions.lifetime_hours", &json!(max)).is_ok());
-        assert!(validate("sessions.lifetime_hours", &json!(max + 1)).is_err());
-        assert!(validate("sessions.idle_timeout_hours", &json!(0)).is_ok());
-        assert!(validate("sessions.idle_timeout_hours", &json!(max + 1)).is_err());
+        assert!(check("sessions.lifetime_hours", &json!(0)).is_err());
+        assert!(check("sessions.lifetime_hours", &json!(1)).is_ok());
+        assert!(check("sessions.lifetime_hours", &json!(max)).is_ok());
+        assert!(check("sessions.lifetime_hours", &json!(max + 1)).is_err());
+        assert!(check("sessions.idle_timeout_hours", &json!(0)).is_ok());
+        assert!(check("sessions.idle_timeout_hours", &json!(max + 1)).is_err());
     }
 
     #[test]

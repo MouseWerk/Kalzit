@@ -52,8 +52,10 @@ off, never a hidden conversion in the backend.
 
 - Folders, version history with restore, trash, and a conflict dialog when two people save at
   once.
-- Visualizations for frames: time series, stat, bar chart, table, gauge, bar gauge, pie and donut,
-  heatmap, histogram, state timeline, status history and text (Markdown with variables).
+- Visualizations for frames: time series, stat, bar chart (grouped series, legend below or on the
+  right), table, gauge, bar gauge (one bar per row, value after the bar), pie and donut (labels on
+  the slices), heatmap, histogram, state timeline, status history and text (Markdown with
+  variables).
 - Visualizations for documents: document list with an expandable tree, single document card,
   schema (field paths with types and coverage) and field distribution.
 - Visualizations for graphs: network (WebGL), hierarchy and path panels; expand a node's
@@ -119,11 +121,21 @@ never returned by the API.
   and grants on single folders, dashboards and data sources.
 - Viewers run only the stored queries of dashboards they may read; free queries need
   `datasources:query` (editor and up).
-- Server and organization settings in the administration, showing where each value comes from
-  (environment, configuration file or saved in Kalzit); users and organizations for server
-  administrators; an audit log with configurable retention.
+- Settings on one page for the server, the organization and yourself, with a search that finds
+  any setting in German or English and a link to every setting. Changes apply at once with undo;
+  values from the environment or `kalzit.toml` show locked with their source.
+- Appearance and brand through checked options, never custom CSS: default theme, accent color
+  (eight checked colors, or your own color when its contrast is high enough), product name and
+  logo, density, font size, start page, time zone and the sign-in page's welcome text and notice,
+  per server and per organization. Settings export and import as JSON with a preview of every
+  change.
+- Users and organizations for server administrators; an audit log with configurable retention.
 - Local accounts with Argon2id passwords, sessions you can see and end, and a sign-in rate
   limit.
+- Updates from signed GitHub releases or an offline package: verified with Ed25519 before
+  anything is installed, a database backup first, an automatic return when the new version does
+  not start healthy, planning for a maintenance window and a history with returns to kept
+  versions ([operator guide](docs/operations/updates.md)).
 - Interface in English and German, light, dark and high contrast themes, keyboard shortcuts and a
   command palette (Ctrl+K).
 
@@ -162,11 +174,21 @@ The images come from the real application with demo data (`npm run screenshots` 
 | ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
-| Dashboards | Your account and sessions |
+| Dashboards | Profile and sessions |
 | ![Time series graph styles: a monochrome hatched series, a dashed comparison, bars, points, steps and stacked series](docs/screenshots/graph-styles-light.png) | ![Time series graph styles in the dark theme](docs/screenshots/graph-styles-dark.png) |
 | Time series graph styles | Graph styles, dark theme |
+| ![Text, grouped bar chart, bar gauge and pie panels in the light theme](docs/screenshots/dashboard-panels-light.png) | ![The same panels in the dark theme](docs/screenshots/dashboard-panels-dark.png) |
+| Text, bar chart, bar gauge and pie | The same panels, dark theme |
 | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Panel editor on a phone | Sign in |
+| ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
+| Time picker, dark theme | Dashboard in edit mode, dark theme |
+| ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | |
+| Dashboard on a phone | |
+| ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
+| Settings, dark theme | Settings, light theme |
+| ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |
+| Settings on a phone | Updates |
 
 ## Quick start
 
@@ -373,7 +395,10 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 - [docs/api/](docs/api): the HTTP API: [access](docs/api/access.md),
   [data sources and queries](docs/api/datasources.md),
   [settings and dashboards](docs/api/settings-dashboards.md),
-  [dashboard features](docs/api/dashboard-features.md), [shell](docs/api/shell.md).
+  [dashboard features](docs/api/dashboard-features.md), [shell](docs/api/shell.md),
+  [updates](docs/api/updates.md).
+- [docs/operations/updates.md](docs/operations/updates.md): installing updates online and offline,
+  returning to an earlier version, the release key and its rotation.
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface, in German and English.
 - [docs/design/feel.md](docs/design/feel.md) and [docs/design/depth.md](docs/design/depth.md):
   look and feel, and the depth of options.

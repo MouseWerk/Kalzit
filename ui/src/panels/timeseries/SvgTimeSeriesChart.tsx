@@ -20,6 +20,63 @@ const MAX_MARKS = 2000;
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/** A number token of the theme, or the fallback where styles are not computed (tests). */
+function tokenNumber(name: string, fallback: number): number {
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(name),
+  );
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * The fill under a line as SVG, one closed shape per run of present values, so a missing value
+ * leaves a gap in the fill as in the line. A stacked line fills to its own baseline, walked back;
+ * others fill to zero (`zero` is its y in px).
+ */
+export function areaPath(
+  xs: readonly number[],
+  ys: readonly (number | null)[],
+  base: Float64Array | null,
+  scale: Scale,
+  right: number,
+  interpolation: SeriesStyle["interpolation"],
+  zero: number,
+): string {
+  // Walked backward, a step after the point is a step before it.
+  const backward =
+    interpolation === "stepAfter"
+      ? "stepBefore"
+      : interpolation === "stepBefore"
+        ? "stepAfter"
+        : interpolation;
+  const shapes: string[] = [];
+  let start = -1;
+  for (let i = 0; i <= ys.length; i++) {
+    const present = i < ys.length && ys[i] !== null && ys[i] !== undefined;
+    if (present && start === -1) {
+      start = i;
+    } else if (!present && start !== -1) {
+      const runX = xs.slice(start, i);
+      const top = linePath(runX, ys.slice(start, i), scale, right, interpolation);
+      if (base === null) {
+        const left = scale.x(runX[0] as number).toFixed(1);
+        shapes.push(`${top}V${zero.toFixed(1)}H${left}Z`);
+      } else {
+        const back = linePath(
+          [...runX].reverse(),
+          Array.from(base.subarray(start, i)).reverse(),
+          scale,
+          right,
+          backward,
+        ).replace("M", "L");
+        shapes.push(`${top}${back}Z`);
+      }
+      start = -1;
+    }
+  }
+  return shapes.join("");
+}
+
 /** The marks of one series: bars, points or a line with its fill. */
 function SeriesMarks({
   look: style,
@@ -79,12 +136,10 @@ function SeriesMarks({
     );
   }
   const d = linePath(xs, ys, scale, right, style.interpolation);
-  const first = xs[ys.findIndex((y) => y !== null)];
-  const last = xs[ys.findLastIndex((y) => y !== null)];
   const area =
-    style.fill === "none" || d === "" || first === undefined || last === undefined
+    style.fill === "none" || d === ""
       ? null
-      : `${d}V${zero.toFixed(1)}H${scale.x(first).toFixed(1)}Z`;
+      : areaPath(xs, ys, base, scale, right, style.interpolation, zero);
   return (
     <>
       {area === null ? null : (
@@ -165,6 +220,8 @@ export function SvgTimeSeriesChart({
       : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
   const hatched = styles.find((s) => s.fill === "hatch");
+  // The same token the canvas chart reads, so both hatch alike.
+  const hatchSpacing = hatched === undefined ? 0 : tokenNumber("--chart-hatch-spacing", 6);
 
   return (
     <ChartShell
@@ -186,12 +243,12 @@ export function SvgTimeSeriesChart({
               <pattern
                 id={ids.hatch}
                 className={hatched.colorClass}
-                width={6}
-                height={6}
+                width={hatchSpacing}
+                height={hatchSpacing}
                 patternUnits="userSpaceOnUse"
                 patternTransform="rotate(45)"
               >
-                <line className="ts__hatch" x1={0} y1={0} x2={0} y2={6} />
+                <line className="ts__hatch" x1={0} y1={0} x2={0} y2={hatchSpacing} />
               </pattern>
             )}
             <linearGradient id={`${ids.fade}-ramp`} x1={0} y1={0} x2={0} y2={1}>

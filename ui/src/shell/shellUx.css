@@ -218,72 +218,7 @@
     background: var(--border);
   }
 
-  /*
-   * The search entry of the sidebar, which opens the command palette: a row like the nav links,
-   * with "/" as its keycap.
-   */
-
-  .shell__search {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: var(--nav-row-height);
-    padding: 0 var(--space-1) 0 var(--space-2);
-    border: var(--border-width) solid transparent;
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-medium);
-    text-align: start;
-    transition:
-      background-color var(--duration-fast) var(--easing),
-      color var(--duration-fast) var(--easing);
-  }
-
-  .shell__search:hover {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
-
-  .shell__search:focus-visible {
-    outline-offset: calc(var(--focus-ring-width) * -1);
-  }
-
-  .shell__search-key .kbd {
-    min-width: var(--space-5);
-    background: var(--bg);
-  }
-
-  .shell__search-label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .shell[data-sidebar="collapsed"] .shell__search {
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .shell[data-sidebar="collapsed"] .shell__search-label,
-  .shell[data-sidebar="collapsed"] .shell__search-key {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
   @media (max-width: 48rem) {
-    .shell__search {
-      order: 1;
-    }
-
     /* The bar on top: the groups run on in one wrapping row, without dividers. */
     .shell__nav {
       display: flex;
@@ -293,16 +228,6 @@
 
     .shell__divider {
       display: none;
-    }
-
-    .shell__search-label,
-    .shell__search-key {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
     }
   }
 
@@ -640,37 +565,115 @@
     margin-block-end: 0;
   }
 
-  /* Search as a quiet field on the right of the content header, with its shortcut as a keycap. */
-  .shell__find {
+  /*
+   * The top bar's tools on the right: the search as a field-like button with its key cap, then
+   * New and Help as icon buttons. On a phone the search is an icon button too.
+   */
+
+  /* The bar spans the content's width, set off from the page by a hairline. */
+  .top-bar {
+    margin-inline: calc(var(--space-gutter) * -1);
+    padding: 0 var(--space-gutter) var(--space-3);
+    border-block-end: var(--border-width) solid var(--border);
+  }
+
+  /* A control after the trail (the dashboard's star) sits on its line, outside the landmark. */
+  .breadcrumbs-row {
     display: flex;
-    flex: 0 1 var(--size-column);
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .top-bar__new {
+    gap: var(--space-1);
+    border-color: var(--border);
+  }
+
+  .top-bar__caret {
+    color: var(--text-muted);
+  }
+
+  .breadcrumbs-row .breadcrumbs {
+    min-width: 0;
+  }
+
+  .breadcrumbs-row .breadcrumbs__list {
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  @media (max-width: 48rem) {
+    .top-bar {
+      margin-inline: calc(var(--space-4) * -1);
+      padding-inline: var(--space-4);
+    }
+
+    .top-bar__new .icon-button__text {
+      display: none;
+    }
+  }
+
+  .top-bar__tools {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .top-bar__search {
+    display: flex;
     align-items: center;
     gap: var(--space-2);
-    min-width: 0;
+    width: var(--size-top-search);
     min-height: var(--control-height);
-    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+    padding: 0 var(--space-1) 0 var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-surface);
     color: var(--text-muted);
-    font: inherit;
     font-size: var(--font-size-sm);
-    cursor: pointer;
-  }
-
-  .shell__find:hover {
-    background: var(--bg-hover);
-  }
-
-  .shell__find-label {
-    flex: 1;
     text-align: start;
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      color var(--duration-fast) var(--easing);
   }
 
-  /* Without a toggle (the bar on top) and without breadcrumbs, the header takes no room. */
+  .top-bar__search:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .top-bar__search-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .top-bar__search-key .kbd {
+    background: var(--bg);
+  }
+
   @media (max-width: 48rem) {
-    .shell__header:not(:has(.breadcrumbs)) {
-      display: none;
+    .top-bar__search {
+      justify-content: center;
+      width: var(--control-height);
+      padding: 0;
+      border-color: transparent;
+      background: transparent;
+    }
+
+    .top-bar__search-label,
+    .top-bar__search-key {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   }
 

@@ -3,6 +3,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import { useId } from "react";
 import { FormAlert } from "../components/FormAlert";
 import { LANGUAGES, type Translate, useI18n } from "../i18n/i18n";
+import { browserZone, timeZones } from "../lib/timeSettings";
 import { showErrorToast, showToast } from "../lib/toasts";
 import { useCurrentOrg } from "../org/useOrg";
 import { search } from "../shell/homeApi";
@@ -22,22 +23,6 @@ const appRoute = getRouteApi("/_app");
 
 /** Dashboards offered as start dashboard; more than this are found through search later. */
 const START_CHOICES = 200;
-
-/** The zones the browser knows, with UTC first (browsers list it under other names or not at all). */
-function timeZones(): string[] {
-  const supported = (Intl as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
-  let zones: string[] = [];
-  try {
-    zones = supported?.("timeZone") ?? [];
-  } catch {
-    // An engine without the list offers UTC alone.
-  }
-  return ["UTC", ...zones.filter((zone) => zone !== "UTC")];
-}
-
-function browserZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone;
-}
 
 /** What a patch changes, as the patch that takes it back. */
 function undoPatch(patch: PreferencesPatch, previous: Preferences): PreferencesPatch {

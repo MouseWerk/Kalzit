@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
-import { fillQuery, panelAction } from "../support/ui";
-import { DEMO_OWNER, type Demo, SCREENSHOT_NOW, seedDemo } from "./demo";
+import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
+import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
 
 const OUT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -166,11 +166,66 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 }
 
+test("time picker, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await page
+    .getByRole("button", {
+      name: t("dashboards.time.buttonLabel", { range: t("dashboards.time.last6h") }),
+    })
+    .click();
+  const picker = page.getByRole("dialog", { name: t("dashboards.time.title") });
+  await picker.getByRole("button", { name: t("toolbar.calendar.pickStart") }).click();
+  await expect(picker.locator(".calendar")).toBeVisible();
+  // The picture shows the picker as it opens, without the focus ring in its search field.
+  await shoot(page, "time-picker-dark");
+  await page.context().close();
+});
+
+test("dashboard in edit mode, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await startEditing(page);
+  const rail = page.getByRole("complementary", { name: t("toolbar.rail") });
+  await rail.getByRole("button", { name: t("toolbar.add"), exact: true }).click();
+  await expect(rail.getByRole("region", { name: t("toolbar.add") })).toBeVisible();
+  await shoot(page, "dashboard-edit-dark");
+  await page.context().close();
+});
+
+test("dashboard, phone", async ({ browser }) => {
+  const page = await openPage(browser, "light", { width: 360, height: 780 });
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await shoot(page, "dashboard-phone");
+  await page.context().close();
+});
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`panel types, ${colorScheme}`, async ({ browser }) => {
+    const page = await openPage(browser, colorScheme);
+    await signIn(page);
+    await page.goto(`/dashboards/${demo.galleryId}`);
+    await expect(page.getByRole("heading", { name: GALLERY_TITLE })).toBeVisible();
+    await expect(page.locator(".bar__rect")).toHaveCount(12);
+    await expect(page.locator(".bargauge__fill")).toHaveCount(4);
+    await expect(page.locator(".pie__slice")).toHaveCount(4);
+    await expect(page.locator(".text-panel a")).toBeVisible();
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `dashboard-panels-${colorScheme}`);
+    await page.context().close();
+  });
+}
+
 /** The full-page panel editor on the demo's time series, its chart drawn. */
 async function panelEditor(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
   await dashboardReady(page);
-  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await startEditing(page);
   await panelAction(page, "Sales in the selected region", "dashboards.panel.editNamed");
   const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
   await expect(editor.locator(".cm-content").first()).toBeVisible();
@@ -190,11 +245,8 @@ test("panel editor, dark", async ({ browser }) => {
 async function newPanel(page: Page): Promise<void> {
   await page.goto(`/dashboards/${demo.dashboardId}`);
   await dashboardReady(page);
-  await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await page
-    .getByRole("button", { name: t("dashboards.addPanel") })
-    .first()
-    .click();
+  await startEditing(page);
+  await addPanel(page);
   const editor = page.getByRole("region", { name: t("dashboards.editor.newTitle") });
   await expect(editor.locator(".cm-content").first()).toBeVisible();
   await expect(editor.getByRole("radio").first()).toBeVisible();
@@ -278,14 +330,28 @@ test("administration, members", async ({ browser }) => {
   await page.context().close();
 });
 
+test("updates", async ({ browser }) => {
+  const page = await openPage(browser);
+  await signIn(page);
+  // One backup, so the list shows what it holds.
+  expect((await page.request.post("/api/admin/updates/backups")).ok()).toBe(true);
+  await page.goto("/admin/server/updates");
+  const backups = page.getByRole("list", { name: t("admin.updates.backups.title") });
+  await expect(backups.getByRole("listitem").first()).toBeVisible();
+  await shoot(page, "updates");
+  await page.context().close();
+});
+
 test("account", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);
   // Every picture signed in once; two sessions (this browser and one other) look like real use.
   expect((await page.request.post("/api/me/sessions/revoke-others")).ok()).toBe(true);
   const other = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
-  await page.goto("/account");
-  await expect(page.getByRole("heading", { name: t("admin.account.title") })).toBeVisible();
+  await page.goto("/settings/profile");
+  await expect(
+    page.getByRole("heading", { name: t("settings.section.profile.label") }),
+  ).toBeVisible();
   const sessions = page.getByRole("list", { name: t("admin.account.sessions") });
   await expect(sessions).toBeVisible();
   // Scrolled so the sessions list is whole, not cut at the bottom edge.
@@ -295,6 +361,29 @@ test("account", async ({ browser }) => {
   await expect(sessions.getByRole("listitem")).toHaveCount(2);
   await shoot(page, "account");
   await other.dispose();
+  await page.context().close();
+});
+
+for (const colorScheme of ["dark", "light"] as const) {
+  test(`settings, ${colorScheme}`, async ({ browser }) => {
+    const page = await openPage(browser, colorScheme);
+    await signIn(page);
+    await page.goto("/settings/appearance");
+    await expect(
+      page.getByRole("heading", { name: t("settings.section.appearance.label") }),
+    ).toBeVisible();
+    await expect(page.locator(".settings-row").first()).toBeVisible();
+    await shoot(page, `settings-${colorScheme}`);
+    await page.context().close();
+  });
+}
+
+test("settings, phone", async ({ browser }) => {
+  const page = await openPage(browser, "dark", { width: 360, height: 780 });
+  await signIn(page);
+  await page.goto("/settings/appearance");
+  await expect(page.locator(".settings-row").first()).toBeVisible();
+  await shoot(page, "settings-phone");
   await page.context().close();
 });
 

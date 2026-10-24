@@ -85,6 +85,17 @@ describe("stylesheet integrity", () => {
     expect(first).toBe(`@layer ${LAYER_ORDER.join(", ")}`);
   });
 
+  it("names the layer order in the very first style sheet of the page", () => {
+    // Style chunks of shared modules load before styles/index.css; the first sheet that names a
+    // layer fixes the order, so index.html links public/layers.css before anything else.
+    const ui = resolve(SRC_DIR, "..");
+    const layers = stripComments(readFileSync(resolve(ui, "public/layers.css"), "utf8"));
+    expect(layers.trim().replace(/\s+/g, " ")).toBe(`@layer ${LAYER_ORDER.join(", ")};`);
+    const html = readFileSync(resolve(ui, "index.html"), "utf8");
+    const first = /<link rel="stylesheet"[^>]*>|<script[^>]*>/.exec(html)?.[0] ?? "";
+    expect(first).toBe('<link rel="stylesheet" href="/layers.css" />');
+  });
+
   it("puts every rule of a file into that file's layer, area styles into components", () => {
     for (const { name, rules } of rulesByFile) {
       if (name === INDEX_FILE) {
@@ -738,12 +749,33 @@ describe("contrast in every theme", () => {
 
   const base = declarationsOf(":root");
   const contrast = declarationsOf(':root[data-theme="contrast"]');
+  // The vetted accent colors of the appearance settings, each over the base tokens.
+  const ACCENT_NAMES = ["copper", "blue", "teal", "green", "violet", "rose", "amber", "graphite"];
+  const accentThemes = ACCENT_NAMES.flatMap((accent) => {
+    const tokens = declarationsOf(
+      `:root:not([data-theme="contrast"])[data-accent="${accent}"], :root:not([data-theme="contrast"]) [data-accent="${accent}"]`,
+    );
+    return (["light", "dark"] as const).map((scheme) => ({
+      name: `${accent} accent (${scheme})`,
+      tokens: new Map([...base, ...tokens]),
+      scheme,
+      accentTokens: tokens.size,
+    }));
+  });
+
+  it("defines every vetted accent completely", () => {
+    for (const theme of accentThemes) {
+      expect(theme.accentTokens, theme.name).toBe(6);
+    }
+  });
+
   // light and dark use the base tokens with a fixed scheme; system uses them with either scheme.
   const themes = [
     { name: "light", tokens: base, scheme: "light" },
     { name: "dark", tokens: base, scheme: "dark" },
     { name: "contrast (light system)", tokens: new Map([...base, ...contrast]), scheme: "light" },
     { name: "contrast (dark system)", tokens: new Map([...base, ...contrast]), scheme: "dark" },
+    ...accentThemes,
   ] as const;
 
   function splitTopLevel(value: string): string[] {
@@ -833,6 +865,23 @@ describe("contrast in every theme", () => {
     ),
     ...["--chart-mono", "--chart-mono-compare"].map(
       (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
+    ),
+    // Labels on pie slices: the label color of each series and tone on its own fill.
+    ...[
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`--chart-${n}-on`, `--chart-${n}`]),
+      ["--tone-ok-on", "--tone-ok"],
+      ["--tone-warn-on", "--tone-warn"],
+      ["--tone-critical-on", "--tone-critical"],
+      ["--tone-neutral-on", "--border-strong"],
+    ].map(([on, fill]) => [on, [fill], TEXT] as [string, string[], number]),
+    // A series or tone color as text, such as a bar gauge's value in its bar's color.
+    ...[
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `--chart-${n}-text`),
+      "--tone-ok-text",
+      "--tone-warn-text",
+      "--tone-critical-text",
+    ].map(
+      (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], TEXT] as [string, string[], number],
     ),
   ];
 

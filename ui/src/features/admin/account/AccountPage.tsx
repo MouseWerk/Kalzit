@@ -39,12 +39,21 @@ export function AccountPage() {
   useDocumentTitle("admin.account.title");
   return (
     <Page title={t("admin.account.title")} lead={t("admin.account.lead")}>
+      <AccountSections />
+    </Page>
+  );
+}
+
+/** The account's parts, also shown in the settings under "Profile and language". */
+export function AccountSections() {
+  return (
+    <>
       <ProfileSection />
       <PreferencesSection />
       <PasswordSection />
       <SessionsSection />
       <PermissionsSection />
-    </Page>
+    </>
   );
 }
 

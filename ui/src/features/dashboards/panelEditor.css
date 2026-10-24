@@ -24,10 +24,15 @@
     transform: scaleX(-1);
   }
 
+  /*
+   * The heading keeps its words whole ("Panel bearbeiten" runs long in German); only the
+   * panel's name after it is cut, so the bar wraps its tools before the heading gets narrow.
+   */
   .panel-editor__title {
     display: flex;
-    flex: 1 1 var(--size-field);
+    flex: 1 1 var(--size-column);
     align-items: baseline;
+    overflow: hidden;
     gap: var(--space-2);
     min-width: 0;
     margin: 0;
@@ -35,7 +40,13 @@
     font-weight: var(--font-weight-medium);
   }
 
+  .panel-editor__label {
+    flex: none;
+    white-space: nowrap;
+  }
+
   .panel-editor__name {
+    min-width: 0;
     overflow: hidden;
     color: var(--text-muted);
     font-size: var(--font-size-md);
@@ -380,8 +391,54 @@
     }
   }
 
-  /* Phones and small tablets: one column, preview, queries and options below each other. */
+  /*
+   * Phones and small tablets: the bar in two rows (back, heading, time range and refresh; then
+   * the editor's actions), the back button as an icon; then one column, preview, queries and
+   * options below each other.
+   */
   @media (max-width: 48rem) {
+    .panel-editor__bar {
+      gap: var(--space-2);
+    }
+
+    .panel-editor__title {
+      flex: 1 1 0;
+      font-size: var(--font-size-md);
+    }
+
+    .panel-editor__name {
+      display: none;
+    }
+
+    .panel-editor__label {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .panel-editor__back {
+      padding-inline: var(--space-2);
+    }
+
+    .panel-editor__back-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .panel-editor__tools {
+      flex-wrap: nowrap;
+      min-width: 0;
+    }
+
+    .panel-editor__actions {
+      flex: 1 1 100%;
+    }
+
     .editor-splits,
     .editor-splits--collapsed {
       grid-template-columns: minmax(0, 1fr);

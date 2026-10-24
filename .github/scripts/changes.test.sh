@@ -36,6 +36,7 @@ expect "false false false false false true"         "docs/a file with spaces.md"
 expect "true false true true false false"           server/src/main.rs
 expect "true false true true false false"           server/migrations/sqlite/0001_init.sql
 expect "true false true true false false"           Cargo.lock
+expect "true false true true false false"           release/src/main.rs
 expect "true false true true false false"           rust-toolchain
 expect "true false true true false false"           rust-toolchain.toml
 expect "true false true true false false"           .cargo/config.toml

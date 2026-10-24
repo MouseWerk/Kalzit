@@ -34,6 +34,14 @@ export function allowedWhen(access: AdminAccess, allowed: boolean): boolean | un
   return access.loaded ? allowed : undefined;
 }
 
+/**
+ * The address of a settings section, for the links of the administration that lead there. The
+ * section is a parameter of the settings route, which these links' type does not take.
+ */
+function settingsSection(section: "appearance" | "organization"): NonNullable<LinkProps["to"]> {
+  return `/settings/${section}` as NonNullable<LinkProps["to"]>;
+}
+
 export interface AdminSectionLink {
   to: NonNullable<LinkProps["to"]>;
   label: MessageKey;
@@ -65,7 +73,7 @@ export const ORG_SECTIONS: readonly AdminSectionLink[] = [
     visible: (access) => access.has("roles:read"),
   },
   {
-    to: "/admin/settings",
+    to: settingsSection("organization"),
     label: "admin.orgSettings.title",
     description: "admin.orgSettings.lead",
     visible: (access) => access.has("settings:read"),
@@ -92,9 +100,15 @@ export const SERVER_SECTIONS: readonly AdminSectionLink[] = [
     visible: (access) => access.isServerAdmin,
   },
   {
-    to: "/admin/server/settings",
+    to: settingsSection("appearance"),
     label: "admin.serverSettings.title",
     description: "admin.serverSettings.lead",
+    visible: (access) => access.isServerAdmin,
+  },
+  {
+    to: "/admin/server/updates",
+    label: "admin.updates.title",
+    description: "admin.updates.lead",
     visible: (access) => access.isServerAdmin,
   },
   {

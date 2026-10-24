@@ -16,6 +16,7 @@ everything else is M1.
 | `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
+| `server/src/updates/`, `release/` | Updates: signed releases, staging, installation, trial and return; the release format and the signing tool `kalzit-sign` (see "Updates"). |
 | `ui/` | React UI: `ui/src/features/<area>/` per area, `ui/src/panels/<type>/` per panel type. |
 | `ui/src/api/generated/` | Types generated from the server; a test fails when they are stale. |
 
@@ -268,8 +269,10 @@ type QueryResult =
   interface DashboardModel {
     schemaVersion: 2;
     title: string;
-    timeRange: { from: string; to: string };   // "now-6h", "now", or ISO times
+    timeRange: { from: string; to: string };   // "now-6h", "now-1fy/fy", "now", or ISO times
     refreshSeconds?: number;
+    // Time options, each optional: zone, week start, fiscal year start, now delay, refresh
+    // intervals and the shared cursor (docs/api/settings-dashboards.md).
     variables: Variable[];
     panels: {
       id: string; type: string; title: string;
@@ -359,6 +362,20 @@ type QueryResult =
   `KALZIT_SETTING_<KEY>` (key in upper snake case), checked at start (`settings::check_environment`).
   `Config::file_keys` records what `kalzit.toml` set, for the `file` source. The server deletes
   audit events past their retention every hour (`routes::audit::spawn_retention`).
+- Network, TLS, proxy, security and log values of the configuration are registry entries too
+  (`ui_editable: false`, read from `Config`), so the settings page shows them read-only with
+  their source. A key may exist in both scopes: the organization entries of `appearance.*` start
+  as `inherit` and follow the server's value (`GET /api/orgs/{orgId}/appearance` merges them).
+- Customization goes through vetted options only, never custom CSS: accent names the tokens
+  define per scheme, or a `#rrggbb` that passes the contrast rules of `appearance.rs` (mirrored in
+  `ui/src/appearance/contrast.ts`), density, font size and texts. The UI applies them as data
+  attributes on `<html>` that the tokens read; a custom accent is one custom property set through
+  the CSSOM, so the CSP stays `style-src 'self'`. The logo is stored in the database (raster
+  formats only, at most 256 KiB) and served same-origin at `GET /api/branding/logo`; `GET
+  /api/branding` is public, as the sign-in page shows it. The logo before the last upload or
+  removal is kept as a second row, which undo swaps back.
+- Settings export as JSON (only what the caller may change), import through a preview and a batch
+  that applies every change or none in one transaction (docs/api/settings-dashboards.md).
 - `audit_events`: written with `audit::record(&mut tx, &AuditEvent { .. })` inside the
   transaction of the change. Actions are `<area>.<verb>` (`setup.completed`, `auth.signed_in`,
   `auth.sign_in_failed`, `team.created`). Summaries hold ids and changed field names, never
@@ -429,7 +446,8 @@ type QueryResult =
 - Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
   `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback
   key file for data source secrets when no other key source is configured (`secrets.key` on
-  Linux, `secrets.key.dpapi` on Windows).
+  Linux, `secrets.key.dpapi` on Windows), and `updates/` (staged releases, kept binaries, database
+  backups, the update plan and history; see "Updates").
 - The database file is also checked for a network drive (see "Storage (SQLite)"): a data
   directory on a UNC path, a mapped network drive, NFS, CIFS/SMB or 9p is refused when the
   database opens. Backups and restores are under "Backups".
@@ -442,6 +460,7 @@ type QueryResult =
   [Service]
   User=kalzit
   ExecStart=/usr/local/bin/kalzit serve
+  Restart=on-failure
   StateDirectory=kalzit
   StateDirectoryMode=0700
   ConfigurationDirectory=kalzit
@@ -524,6 +543,114 @@ One place for everything a backup needs:
   that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
   Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
 
+## Updates
+
+Kalzit updates itself from the GitHub Releases of MouseWerk/Kalzit, or from the same signed
+package uploaded offline (`server/src/updates/`, API docs/api/updates.md, operator guide
+docs/operations/updates.md). Server administrators only; every step is audited (`update.*`).
+
+- **Trust.** A release has a manifest (JSON: version, channel, minimum version, release notes
+  summary, an `https` notes link and highlights, and per package platform, arch, file, size,
+  SHA-256) with a detached Ed25519 signature over its exact bytes, and each package entry carries
+  its own signature over version, platform, arch, file, size and SHA-256. Each signed message
+  starts with its own context line, so one cannot pass as the other. The format lives in the small
+  crate `release/` (`kalzit-release`), shared by the server and the signing tool `kalzit-sign`, so
+  both sides cannot drift apart. Signatures name their key by id (first 8 bytes of the key's
+  SHA-256); only keys compiled in are trusted (`signing::COMPILED_KEYS`, plus
+  `KALZIT_UPDATE_PUBLIC_KEYS` at build time), verified with `ed25519-dalek` (`verify_strict`, weak
+  keys refused). Several keys make a rotation possible, and a second key kept offline makes
+  revoking a leaked one possible. The first entry is a marked placeholder that is no key: until
+  the owner puts the real public keys there, a build verifies nothing and installs nothing.
+- **Release side.** The private key exists only on the owner's machine and as the secret
+  `KALZIT_RELEASE_SIGNING_KEY` of the GitHub environment `release` (required reviewers). The
+  release workflow (`.github/workflows/release.yml`, actions pinned to commits, checkouts without
+  credentials) releases only tags on `main`, builds the binaries, and builds only `kalzit-release`
+  in the job that holds the key.
+- **Source.** Checks list the releases of the channel (stable: not pre-release and no pre-release
+  version; preview: all) through the one HTTP client factory, with a target policy that allows only
+  `api.github.com`, `github.com`, `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com`, plus a hop check that refuses any other host and plain
+  HTTP on every redirect. Responses are size-limited (release list 8 MiB, manifest 256 KiB,
+  signature 4 KiB, package its signed size, at most 512 MiB). A manifest whose channel is preview
+  is refused on the stable channel. The last check is kept in `updates/state.json`; a daily check
+  runs only when `updates.check_daily` is on (off by default).
+- **Staging.** A download streams into `updates/incoming/` with its SHA-256 computed on the way and
+  stops past the signed size; only a verified release becomes `updates/staging/` (manifest,
+  signature, package, `staged.json`). Uploads (multipart: one `.kalzit-update` bundle, or the three
+  files; one at a time, with room for twice their size) go into `updates/upload-<id>/` with
+  per-part limits and pass the same checks; the package is matched to its manifest entry by hash
+  and must be this platform's. Downgrades, the installed version and releases whose
+  `minimumVersion` is above the installed one are refused. File work (splitting, hashing,
+  copying, restoring) runs on the blocking pool.
+- **Nothing in the data directory is trusted for what it does.** Installing verifies the staged
+  manifest again from memory, then copies the package once, from one open file, into the running
+  binary's own folder (`.kalzit.new`, `.kalzit.new.exe`) and checks the copy against the signed
+  size and SHA-256 (`install::place_binary`); only that copy runs for the smoke test (`--version`
+  with an empty environment) and is renamed over the binary. Kept binaries live at
+  `versions/<version>/<binary name>`, a path derived from the version and never read from JSON;
+  their SHA-256 is recorded when they are kept, and the signed manifest of every installed release
+  is recorded next to them, so a return checks the copy against the signed hash where there is
+  one (`install::verify_kept`). Backups are taken only by plain file name from `backups/`, never
+  through a link. Backups and their records have mode 0600 on Unix.
+- **Install.** Apply verifies, copies and smoke-tests as above, backs the SQLite database up with
+  `VACUUM INTO` (PostgreSQL: the administrator confirms an own `pg_dump`), keeps the running binary
+  in `versions/<from>/` with its schema version, backup and SHA-256, records the new release's
+  manifest, writes `updates/plan.json` (format 2) and then renames the checked copy into place (on
+  Windows the running binary moves aside first). The server stops gracefully, closes the database,
+  drops its runtime and hands over: on Unix it replaces its process image with the new binary
+  (`exec`), so systemd keeps the same main process and no privilege is needed; on Windows it
+  starts the binary as a child.
+- **Trial and return.** `updates::boot::guard` runs first at `kalzit serve`, before the database
+  opens. The new version's first start marks the plan `trial` and starts a watchdog thread; once
+  `/readyz` answers through the router and every listener accepts a connection, the plan is
+  removed and the installation recorded. A failed start (migrations), a failed health check or
+  the deadline (`updates.health_timeout_secs`, clamped to 15 to 1800 s) mark the plan
+  `rollbackRequested` and start the binary again (on Windows a hang only ends the process; the
+  return happens at the next start). That start, or any start that finds a `trial` plan (a
+  crash), restores the backup (WAL and shared memory files first, so the newer WAL is never
+  replayed) and the previous binary after its copy matched the recorded hash, marks the plan
+  `rolledBack` and starts the previous version, which records the return once (the plan's
+  `recorded` flag keeps a failed audit write from adding a second history entry). A new version
+  that refuses the configuration returns the same way: `main` finds the data directory with
+  `Config::data_dir_hint` when the configuration does not load. On PostgreSQL, when the new build
+  carries migrations newer than the schema of the previous version, the plan is marked `migrated`
+  before the first start opens the database (they may run, or partly run, before anything could
+  report it), and the trial marks it too when it sees the schema change; a marked plan keeps the
+  new version instead of starting a previous binary that could not use the schema, and says so in
+  the log. Plan changes of the trial and its watchdog go through one lock. The
+  return always runs in a fresh process, before anything opens the database. A plan that fits
+  neither version is set aside (`plan-<time>.stale.json`), one that cannot be read or has another
+  format too (`plan-<time>.unreadable.json`), loudly.
+- **Where it installs on its own** (`platform::detect_mode`): Linux under systemd
+  (`INVOCATION_ID`), outside containers, with the binary's folder writable by the service account.
+  Windows has no service integration yet (planned with the installer, M5), so there and
+  everywhere else the server downloads and verifies, and `kalzit update apply` / `kalzit update
+  rollback <version>` install with the server stopped (they hold the data directory lock
+  exclusively); the next start runs the same trial. These commands usually run as root or an
+  Administrator: on Unix, as root on a data directory another account owns, they touch the data
+  directory only with that account's user, group and supplementary group ids and switch back to
+  root just for the copy into the binary's folder, the smoke test and the rename (the
+  supplementary groups are reduced to the owner's group, and an `updates/` folder of another owner
+  than the data directory is refused); files from the data directory are opened as regular files
+  only (`O_NOFOLLOW`, `O_NONBLOCK`, checked with `fstat`). On Windows they refuse links and
+  junctions below `updates/`; the service account could still swap such a folder between that
+  check and its use, which Kalzit's own Windows service integration (M5) is meant to close. The
+  command line returns only to versions installed through an update (in the history) whose
+  signed manifest was kept. The CI job `update-rights` runs the switch as root against a real
+  service account.
+- **Kept versions and history.** The newest `updates.keep_versions` (3) previous binaries (never
+  the running version's folder) stay with their backups; manual backups ("Back up now") are kept
+  to the same count. A return to a kept version swaps only the binary when the schema version
+  (`MAX(version)` of `_sqlx_migrations`) is the same, otherwise it restores the backup taken when
+  that version was left, after the server stopped, which the request must confirm.
+  `updates/history.json` lists installations, returns and aborted steps (newest first, 50
+  entries); it lives outside the database, so a restore keeps it.
+- **Planning.** `PUT /admin/updates/schedule` stores a time and the end of the maintenance window
+  (`updates.window`, chosen in the administrator's local time in the UI; on PostgreSQL with the
+  confirmation of an own backup); a background loop (every 30 s, stopped with the server's
+  background tasks) installs when it is due, and gives up with `updates.schedule_missed` when the
+  server was down for the whole window. A planned installation that cannot run is in the history.
+
 ## Migrations
 
 Numbered and never edited after release (`engineering/data-and-apis.md`).
@@ -539,6 +666,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
 | 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 | 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
+| 0010 | the server's logo (appearance and brand) | ux/settings |
 
 ## M1 work streams
 
@@ -638,7 +766,7 @@ through `settings::get`; new registry entries are requested from the orchestrato
 
   | Flag | Set by |
   | --- | --- |
-  | `server` | `server/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `clippy.toml`, `rustfmt.toml`, `.cargo/`, `ui/src/api/generated/`, `docs/api/` |
+  | `server` | `server/`, `release/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `clippy.toml`, `rustfmt.toml`, `.cargo/`, `ui/src/api/generated/`, `docs/api/` |
   | `ui` | `ui/` (including `ui/e2e/`), `server/src/analysis/`, `ui/src/api/generated/`, `docs/api/`, `docs/glossary.md` |
   | `e2e` | `server` or `ui` |
   | `audit` | `server`, `ui/package.json`, `ui/package-lock.json` |
@@ -652,9 +780,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   the script knows it. On pushes to `main` and in the merge queue every flag is on: the queue
   tests each pull request fully on top of `main`.
 
-  `server`, `postgres` and `datasources` need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
+  `server`, `postgres`, `datasources` and `update-rights` (the privilege switch of the update command
+  line, run with sudo against a `kalzit` account) need `server`, `ui` needs `ui`, `e2e` needs `e2e`,
   `audit` needs `audit`. The required checks keep reporting when their area did not change:
-  `postgres`, `datasources` and `audit` are skipped as a whole (GitHub counts a skipped job as
+  `postgres`, `datasources`, `update-rights` and `audit` are skipped as a whole (GitHub counts a skipped job as
   passed), while the matrix jobs `server (<os>)`, `ui (<os>)` and `e2e (<os>)` start and skip
   every step, because a matrix job skipped as a whole reports one check without the matrix
   value and leaves the required `server (ubuntu-latest)` and the others waiting. If `changes`

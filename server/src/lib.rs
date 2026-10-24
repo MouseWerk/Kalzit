@@ -2,6 +2,7 @@
 
 pub mod analysis;
 pub mod app;
+pub mod appearance;
 pub mod audit;
 pub mod auth;
 pub mod authz;
@@ -22,4 +23,5 @@ pub mod server;
 pub mod settings;
 pub mod shapes;
 pub mod tls;
+pub mod updates;
 pub mod web;

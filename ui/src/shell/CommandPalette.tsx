@@ -151,12 +151,12 @@ export function CommandPalette({
     }
   }
   pages.push({
-    key: "page:/account",
+    key: "page:/settings/profile",
     label: t("admin.account.title"),
     icon: "home",
     group: "pages",
     score: 0,
-    run: goTo("/account"),
+    run: goTo("/settings/profile"),
   });
 
   const actions: PaletteItem[] = [];

@@ -81,6 +81,7 @@ mod tests {
         "tigergraph",
         "mongodb",
         "documents",
+        "updates",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
@@ -94,7 +95,16 @@ mod tests {
         "datasource.updated",
         "secrets.key",
         "secrets.lock",
+        "server.http_addr",
+        "server.https_addr",
+        "server.public_url",
+        "server.redirect_http_to_https",
         "settings.updated",
+        "updates.channel",
+        "updates.check_daily",
+        "updates.health_timeout_secs",
+        "updates.keep_versions",
+        "updates.window",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of

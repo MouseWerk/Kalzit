@@ -1,15 +1,17 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type uPlot from "uplot";
 import { describe, expect, it, vi } from "vitest";
 import { setLanguage } from "../../i18n/i18n";
 import type { FieldOptions } from "../fieldConfig/fieldConfig";
 import { DEFAULT_LEGEND } from "../fieldConfig/legendOptions";
 import { alignSeries } from "./align";
 import type { TimeSeriesChartProps } from "./ChartShell";
-import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
+import { areaPath, SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import type { Series } from "./series";
 import { resolveStyles } from "./styles";
 import { UplotTimeSeriesChart } from "./UplotTimeSeriesChart";
+import { cached, stackedFill } from "./uplotSeries";
 
 // jsdom has no canvas, so uPlot itself is replaced by a recorder: these tests check what the chart
 // hands to uPlot (data, colors from the theme tokens, sizes) and the shared keyboard readout.
@@ -372,7 +374,7 @@ describe("graph styles", () => {
       styled("last week", [2, 2, 1], { comparison: true }),
     ]);
     expect(list[0]?.dash).toBeUndefined();
-    expect(list[1]?.dash).toEqual([6, 5]);
+    expect(list[1]?.dash).toEqual([7, 6]);
     expect(list[1]?.fill).toBeUndefined();
     const swatches = [...document.querySelectorAll(".viz-legend .ts__swatch")].map(
       (s) => s.className,
@@ -415,7 +417,7 @@ describe("graph styles", () => {
   it("draws line styles and widths", () => {
     const pick = (options: FieldOptions) =>
       draw([styled("a", [1, 2], options), styled("b", [1, 2], {})]).series[0];
-    expect(pick({ lineStyle: "dashed", lineWidth: 2 })?.dash).toEqual([6, 5]);
+    expect(pick({ lineStyle: "dashed", lineWidth: 2 })?.dash).toEqual([7, 6]);
     const dotted = pick({ lineStyle: "dotted", lineWidth: 4 });
     expect(dotted?.dash).toEqual([0, 10]);
     expect(dotted?.cap).toBe("round");
@@ -463,9 +465,153 @@ describe("graph styles", () => {
       [11, 22, 33],
       [5, 5, 5],
     ]);
-    expect(bands).toEqual([{ series: [2, 1] }]);
+    // No bands: each stacked line fills to its own baseline through its path builder.
+    expect(bands).toBeUndefined();
+    expect(list.map((s) => s.paths?.builder)).toEqual([undefined, undefined, "linear"]);
     // Stacked lines fill by default; the unstacked series does not.
     expect(list.map((s) => typeof s.fill)).toEqual(["function", "function", "undefined"]);
+  });
+
+  it("keeps the chart when a stacked series changes sides with new data", () => {
+    created.length = 0;
+    const props = { timeRange: { from: 0, to: 10_000 }, title: "T", ...display("", false) };
+    const pair = (a: number[]) => [
+      styled("a", a, { stack: "normal" }),
+      styled("b", [3, 3], { stack: "normal" }),
+    ];
+    const { rerender } = render(<Uplot series={pair([5, 5])} {...props} />);
+    rerender(<Uplot series={pair([5, -5])} {...props} />);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.setDataCalls.at(-1)).toEqual([
+      [0, 1000],
+      [5, -5],
+      [8, 3],
+    ]);
+  });
+
+  it("fills the SVG fallback per run of values, so a gap stays a gap, stacked or not", () => {
+    const scale = { x: (t: number) => t, y: (v: number) => 100 - v };
+    const xs = [0, 10, 20, 30, 40];
+    const ys = [1, 2, null, 3, 4];
+    const toZero = areaPath(xs, ys, null, scale, 1000, "linear", 100);
+    expect(toZero).toBe("M0.0 99.0L10.0 98.0V100.0H0.0ZM30.0 97.0L40.0 96.0V100.0H30.0Z");
+    const stacked = areaPath(
+      xs,
+      ys,
+      Float64Array.from([1, 1, 1, 2, 2]),
+      scale,
+      1000,
+      "linear",
+      100,
+    );
+    expect(stacked).toBe(
+      "M0.0 99.0L10.0 98.0L10.0 99.0L0.0 99.0ZM30.0 97.0L40.0 96.0L40.0 98.0L30.0 98.0Z",
+    );
+  });
+
+  it("fills a stacked line down to its baseline point by point, in steps for stepped lines", () => {
+    const calls: string[] = [];
+    class Path {
+      lineTo(x: number, y: number) {
+        calls.push(`L${x},${y}`);
+      }
+      closePath() {
+        calls.push("Z");
+      }
+    }
+    vi.stubGlobal("Path2D", Path);
+    // One px per ms and per unit of value, so canvas positions read as the data.
+    const u = {
+      data: [
+        [0, 10, 20],
+        [8, 3, null],
+      ],
+      valToPos: (value: number) => value,
+    } as unknown as Parameters<uPlot.Series.PathBuilder>[0];
+    const stacked = {
+      current: { ys: [], baselines: [null, Float64Array.from([5, 0, 0])], percent: false },
+    };
+    const line = () => ({ stroke: new Path() as unknown as Path2D });
+    const linear = stackedFill(line, 1, "linear", stacked)(u, 1, 0, 2);
+    expect(linear?.fill).toBeInstanceOf(Path);
+    // From the last value back along the baseline, the missing third point skipped.
+    expect(calls).toEqual(["L10,0", "L0,5", "Z"]);
+    calls.length = 0;
+    stackedFill(line, 1, "stepAfter", stacked)(u, 1, 0, 2);
+    expect(calls).toEqual(["L10,0", "L10,5", "L0,5", "Z"]);
+    // Not stacked: the line's own paths, untouched.
+    calls.length = 0;
+    expect(stackedFill(line, 0, "linear", stacked)(u, 1, 0, 2)?.fill).toBeUndefined();
+
+    const walk = (
+      xs: number[],
+      ys: (number | null)[],
+      base: number[],
+      interpolation: Parameters<typeof stackedFill>[2],
+    ) => {
+      calls.length = 0;
+      const chart = {
+        data: [xs, ys],
+        valToPos: (value: number) => value,
+      } as unknown as Parameters<uPlot.Series.PathBuilder>[0];
+      const data = {
+        current: { ys: [], baselines: [null, Float64Array.from(base)], percent: false },
+      };
+      stackedFill(line, 1, interpolation, data)(chart, 1, 0, xs.length - 1);
+      return [...calls];
+    };
+    // A missing value in the middle is stepped over, straight and in steps before the point.
+    const middle = [
+      [0, 10, 20, 30],
+      [8, null, 3, 5],
+      [5, 0, 1, 2],
+    ] as const;
+    expect(walk([...middle[0]], [...middle[1]], [...middle[2]], "linear")).toEqual([
+      "L30,2",
+      "L20,1",
+      "L0,5",
+      "Z",
+    ]);
+    expect(walk([...middle[0]], [...middle[1]], [...middle[2]], "stepBefore")).toEqual([
+      "L30,2",
+      "L20,2",
+      "L20,1",
+      "L0,1",
+      "L0,5",
+      "Z",
+    ]);
+    // Five points in one pixel column keep the first, lowest, highest and last (not the 2).
+    expect(
+      walk([0, 0.1, 0.2, 0.3, 0.4, 10], [1, 1, 1, 1, 1, 1], [1, 4, 0, 2, 3, 3], "linear"),
+    ).toEqual(["L10,3", "L0.4,3", "L0.2,0", "L0.1,4", "L0,1", "Z"]);
+    // Known limitation: a smooth line's baseline is walked straight, as for a linear one.
+    expect(walk([...middle[0]], [...middle[1]], [...middle[2]], "smooth")).toEqual(
+      walk([...middle[0]], [...middle[1]], [...middle[2]], "linear"),
+    );
+  });
+
+  it("makes a hatch or fill once per plot size, the threshold scheme also per value range", () => {
+    const counter = { made: 0 };
+    const plot = (min: number, height = 200) =>
+      ({
+        bbox: { top: 10, height },
+        ctx: { canvas: { height: 240 } },
+        scales: { y: { min, max: 100 } },
+      }) as unknown as Parameters<ReturnType<typeof cached>>[0];
+    const hatch = cached(() => "pattern", false, counter);
+    hatch(plot(0));
+    hatch(plot(5));
+    hatch(plot(9));
+    // New data moved the value axis; the hatch stays.
+    expect(counter.made).toBe(1);
+    hatch(plot(9, 180));
+    expect(counter.made).toBe(2);
+    const scheme = { made: 0 };
+    const gradient = cached(() => "gradient", true, scheme);
+    gradient(plot(0));
+    gradient(plot(0));
+    gradient(plot(5));
+    expect(scheme.made).toBe(2);
   });
 
   it("builds the chart again only when a style changes, not for new data", () => {

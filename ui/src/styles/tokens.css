@@ -543,6 +543,180 @@
   }
 }
 
+/* The dashboard toolbar and its time range popover. */
+@layer tokens {
+  :root {
+    /* Quick ranges and the absolute range side by side. */
+    --size-time-picker: 44rem;
+    /* The search field in the top bar. */
+    --size-top-search: 18rem;
+    /* The rail's Add pane: three visualization tiles abreast. */
+    --size-add-pane: 15rem;
+  }
+}
+
+/*
+ * Appearance (settings "Appearance and brand"): the vetted accent colors, density and base font
+ * size, chosen by data attributes on <html> (or on a preview container) that
+ * ui/src/appearance/look.ts sets. Copper is the accent of the base tokens; the contrast theme keeps
+ * its own accent. A custom accent color arrives as --accent-custom through the CSSOM; its label
+ * color is picked by contrast (data-accent-on) and links keep the text color, since a free color
+ * may not reach 4.5:1 as text. styles.test.ts checks every vetted accent like the base tokens.
+ */
+@layer tokens {
+  :root {
+    --accent-custom: oklch(50% 0.1 52);
+    --font-size-root: 100%;
+  }
+
+  /* Copper again by name, so a swatch or preview shows it inside a page with another accent. */
+  :root:not([data-theme="contrast"])[data-accent="copper"],
+  :root:not([data-theme="contrast"]) [data-accent="copper"] {
+    --accent: light-dark(oklch(50% 0.1 52), oklch(79% 0.085 68));
+    --accent-hover: light-dark(oklch(45% 0.095 50), oklch(85% 0.07 72));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 62), oklch(33% 0.035 60));
+    --on-accent-busy: light-dark(oklch(33% 0.05 52), oklch(90% 0.03 72));
+    --accent-text: light-dark(oklch(47% 0.1 50), oklch(81% 0.08 70));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="blue"],
+  :root:not([data-theme="contrast"]) [data-accent="blue"] {
+    --accent: light-dark(oklch(48% 0.12 255), oklch(78% 0.09 255));
+    --accent-hover: light-dark(oklch(43% 0.12 255), oklch(84% 0.072 255));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 255), oklch(33% 0.035 255));
+    --on-accent-busy: light-dark(oklch(33% 0.05 255), oklch(90% 0.03 255));
+    --accent-text: light-dark(oklch(46% 0.12 255), oklch(80% 0.09 255));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="teal"],
+  :root:not([data-theme="contrast"]) [data-accent="teal"] {
+    --accent: light-dark(oklch(48% 0.08 195), oklch(78% 0.07 195));
+    --accent-hover: light-dark(oklch(43% 0.08 195), oklch(84% 0.056 195));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 195), oklch(33% 0.035 195));
+    --on-accent-busy: light-dark(oklch(33% 0.05 195), oklch(90% 0.03 195));
+    --accent-text: light-dark(oklch(46% 0.08 195), oklch(80% 0.07 195));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="green"],
+  :root:not([data-theme="contrast"]) [data-accent="green"] {
+    --accent: light-dark(oklch(48% 0.1 150), oklch(78% 0.1 150));
+    --accent-hover: light-dark(oklch(43% 0.1 150), oklch(84% 0.08 150));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 150), oklch(33% 0.035 150));
+    --on-accent-busy: light-dark(oklch(33% 0.05 150), oklch(90% 0.03 150));
+    --accent-text: light-dark(oklch(46% 0.1 150), oklch(80% 0.1 150));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="violet"],
+  :root:not([data-theme="contrast"]) [data-accent="violet"] {
+    --accent: light-dark(oklch(48% 0.13 295), oklch(78% 0.09 295));
+    --accent-hover: light-dark(oklch(43% 0.13 295), oklch(84% 0.072 295));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 295), oklch(33% 0.035 295));
+    --on-accent-busy: light-dark(oklch(33% 0.05 295), oklch(90% 0.03 295));
+    --accent-text: light-dark(oklch(46% 0.13 295), oklch(80% 0.09 295));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="rose"],
+  :root:not([data-theme="contrast"]) [data-accent="rose"] {
+    --accent: light-dark(oklch(48% 0.13 10), oklch(78% 0.09 10));
+    --accent-hover: light-dark(oklch(43% 0.13 10), oklch(84% 0.072 10));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 10), oklch(33% 0.035 10));
+    --on-accent-busy: light-dark(oklch(33% 0.05 10), oklch(90% 0.03 10));
+    --accent-text: light-dark(oklch(46% 0.13 10), oklch(80% 0.09 10));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="amber"],
+  :root:not([data-theme="contrast"]) [data-accent="amber"] {
+    --accent: light-dark(oklch(48% 0.1 75), oklch(78% 0.1 75));
+    --accent-hover: light-dark(oklch(43% 0.1 75), oklch(84% 0.08 75));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 75), oklch(33% 0.035 75));
+    --on-accent-busy: light-dark(oklch(33% 0.05 75), oklch(90% 0.03 75));
+    --accent-text: light-dark(oklch(46% 0.1 75), oklch(80% 0.1 75));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="graphite"],
+  :root:not([data-theme="contrast"]) [data-accent="graphite"] {
+    --accent: light-dark(oklch(48% 0.012 286), oklch(78% 0.01 286));
+    --accent-hover: light-dark(oklch(43% 0.012 286), oklch(84% 0.008 286));
+    --on-accent: light-dark(oklch(99.5% 0.002 80), oklch(18% 0.008 60));
+    --accent-busy: light-dark(oklch(89% 0.03 286), oklch(33% 0.035 286));
+    --on-accent-busy: light-dark(oklch(33% 0.05 286), oklch(90% 0.03 286));
+    --accent-text: light-dark(oklch(46% 0.012 286), oklch(80% 0.01 286));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent="custom"],
+  :root:not([data-theme="contrast"]) [data-accent="custom"] {
+    --accent: var(--accent-custom);
+    --accent-text: var(--text);
+    --accent-busy: color-mix(in oklch, var(--accent-custom) 35%, var(--bg));
+    --on-accent-busy: var(--text);
+  }
+
+  :root:not([data-theme="contrast"])[data-accent-on="light"],
+  :root:not([data-theme="contrast"]) [data-accent-on="light"] {
+    --on-accent: oklch(100% 0 0);
+    --accent-hover: color-mix(in oklch, var(--accent-custom) 85%, oklch(0% 0 0));
+  }
+
+  :root:not([data-theme="contrast"])[data-accent-on="dark"],
+  :root:not([data-theme="contrast"]) [data-accent-on="dark"] {
+    --on-accent: oklch(18% 0.008 60);
+    --accent-hover: color-mix(in oklch, var(--accent-custom) 85%, oklch(100% 0 0));
+  }
+
+  /* Density: control and row heights and the gaps of cards and pages. Balanced is the base. */
+  [data-density="compact"] {
+    --control-height: 1.75rem;
+    --nav-row-height: 1.75rem;
+    --size-row: 2rem;
+    --space-card: var(--space-3);
+    --space-cards: var(--space-2);
+    --space-gutter: var(--space-4);
+  }
+
+  [data-density="comfortable"] {
+    --control-height: 2.25rem;
+    --nav-row-height: 2.25rem;
+    --size-row: 2.5rem;
+    --space-card: var(--space-5);
+    --space-cards: var(--space-4);
+    --space-gutter: var(--space-8);
+  }
+
+  /*
+   * Base font size: body text is 14 px at 100 %; the root scales so that every rem follows, as the
+   * browser's own text zoom does (which still applies on top).
+   */
+  :root[data-font-size="13"] {
+    --font-size-root: 92.857%;
+  }
+
+  :root[data-font-size="15"] {
+    --font-size-root: 107.143%;
+  }
+
+  :root[data-font-size="16"] {
+    --font-size-root: 114.286%;
+  }
+
+  /* The settings page: navigation column, preview column, accent swatch and logo tile. */
+  :root {
+    --size-settings-nav: 16.25rem;
+    --size-settings-preview: 20rem;
+    --size-settings-main: 62.5rem;
+    --size-swatch: 1.625rem;
+    --size-logo-tile: 2.5rem;
+    --size-preview-height: 11.25rem;
+    --size-preview-rail: 4.375rem;
+  }
+}
+
 /*
  * Time series graph styles (docs/design/feel.md section 8): the monochrome main series, its
  * muted comparison series and the hatch under a lone series. High contrast draws both lines
@@ -555,6 +729,8 @@
     --chart-mono-compare: light-dark(oklch(55% 0.008 286), oklch(64% 0.006 286));
     --chart-hatch-alpha: 0.5;
     --chart-hatch-width: 1;
+    /* Room between hatch lines in px (the reference's 9 px at 1.5x). */
+    --chart-hatch-spacing: 6;
     --chart-fade-to: 0.15;
     --chart-mask: oklch(100% 0 0);
   }
@@ -564,5 +740,62 @@
     --chart-mono-compare: light-dark(oklch(38% 0.006 286), oklch(80% 0.004 286));
     --chart-hatch-alpha: 0.85;
     --chart-hatch-width: 1.5;
+  }
+}
+
+/*
+ * Bar chart, bar gauge, pie and text panels after the design blueprint. styles.test.ts holds
+ * every pair below to 4.5:1 in every theme:
+ * - `--*-on`: text on a fill of that color (a label on a pie slice), black or white, whichever
+ *   stands out from that color in the scheme.
+ * - `--*-text`: the color as text on the panel surfaces (a bar gauge's value in its bar's
+ *   color), the palette's hue at a lightness that reads as text.
+ * The legend beside a drawing, the bar gauge's bar within its row, the unit after a value, the
+ * underline of links in panel text and its line height follow.
+ */
+@layer tokens {
+  :root {
+    --chart-1-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+    --chart-2-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-3-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-4-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+    --chart-5-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-6-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-7-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-8-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --tone-ok-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --tone-warn-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+    --tone-critical-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --tone-neutral-on: light-dark(oklch(0% 0 0), oklch(0% 0 0));
+
+    --chart-1-text: light-dark(oklch(46% 0.1 241), var(--chart-1));
+    --chart-2-text: var(--chart-2);
+    --chart-3-text: light-dark(oklch(46% 0.116 249), oklch(74% 0.12 249));
+    --chart-4-text: light-dark(oklch(46% 0.12 35), oklch(74% 0.14 28));
+    --chart-5-text: var(--chart-5);
+    --chart-6-text: light-dark(oklch(31.2% 0.119 326), oklch(76% 0.13 349));
+    --chart-7-text: light-dark(oklch(44% 0.09 88), var(--chart-7));
+    --chart-8-text: light-dark(oklch(28% 0.006 286), oklch(76% 0.006 286));
+    --tone-ok-text: light-dark(oklch(44% 0.11 160), var(--tone-ok));
+    --tone-warn-text: light-dark(oklch(46% 0.1 74), var(--tone-warn));
+    --tone-critical-text: light-dark(oklch(33% 0.14 27), oklch(74% 0.15 27));
+
+    --size-legend-side: 16rem;
+    /* A bar gauge's bar takes this share of its row; the rest is air between the bars. */
+    --size-bargauge-bar: 64%;
+    /* The unit after a large value: a step smaller than the number. */
+    --font-size-unit: 0.6em;
+    --link-underline: 1px;
+    --link-underline-hover: 2px;
+    --line-height-relaxed: 1.6;
+  }
+
+  /* High contrast keeps black and white labels and the strongest text variants. */
+  :root[data-theme="contrast"] {
+    /* The neutral fill is near black on light here. */
+    --tone-neutral-on: light-dark(oklch(100% 0 0), oklch(0% 0 0));
+    --chart-3-text: light-dark(oklch(40% 0.116 249), oklch(80% 0.1 249));
+    --chart-4-text: light-dark(oklch(40% 0.12 35), oklch(80% 0.12 28));
+    --tone-critical-text: light-dark(oklch(30% 0.14 27), oklch(80% 0.12 27));
   }
 }

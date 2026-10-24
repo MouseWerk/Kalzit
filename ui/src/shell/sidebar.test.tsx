@@ -246,7 +246,7 @@ describe("sub-pages in the navigation", () => {
     const list = await within(nav).findByRole("list", { name: "Administration sections" });
     expect(within(list).queryByRole("list", { name: "Organization" })).toBeNull();
     const server = within(list).getByRole("list", { name: "Server" });
-    expect(within(server).getAllByRole("link")).toHaveLength(4);
+    expect(within(server).getAllByRole("link")).toHaveLength(5);
   });
 
   it("keeps the current group's sub-pages reachable when the layout narrows", async () => {
@@ -298,7 +298,7 @@ describe("flyout in the rail", () => {
   it("opens on keyboard focus, takes Tab into its links and closes on Escape", async () => {
     const { user, nav } = await openRail();
     const entry = within(nav).getByRole("link", { name: "Administration" });
-    act(() => within(nav).getByRole("link", { name: "Data sources" }).focus());
+    act(() => within(nav).getByRole("link", { name: "Settings" }).focus());
     await user.tab();
     expect(document.activeElement).toBe(entry);
     expect(entry.getAttribute("aria-expanded")).toBe("true");
@@ -342,7 +342,7 @@ describe("flyout in the rail", () => {
       if (how === "hover") {
         await user.hover(entry);
       } else {
-        act(() => within(nav).getByRole("link", { name: "Data sources" }).focus());
+        act(() => within(nav).getByRole("link", { name: "Settings" }).focus());
         await user.tab();
       }
       expect(within(nav).getByRole("list", { name: "Administration sections" })).toBeTruthy();
@@ -406,6 +406,7 @@ describe("flyout in the rail", () => {
     act(() => within(nav).getByRole("link", { name: "Dashboards" }).focus());
     await user.tab();
     // Entries with sub-pages show their flyout instead.
+    await user.tab();
     await user.tab();
     await user.tab();
     expect(document.activeElement).toBe(within(nav).getByRole("link", { name: "Administration" }));

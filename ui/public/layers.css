@@ -1,0 +1,6 @@
+/*
+ * The cascade layer order, loaded before every other style sheet (index.html links it first).
+ * Style chunks of shared modules can load before styles/index.css; whichever sheet names the
+ * layers first fixes their order for the page, so it has to be this one.
+ */
+@layer reset, tokens, base, components, utilities;

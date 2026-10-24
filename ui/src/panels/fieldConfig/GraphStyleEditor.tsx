@@ -15,6 +15,7 @@ import {
   parseDuration,
   SHOW_POINTS,
   STACKINGS,
+  stackGroupOf,
 } from "./graphStyle";
 
 /** A select whose first choice, "Auto", leaves the option unset. */
@@ -280,7 +281,7 @@ export function GraphStyleEditor({
           hint={t("panels.graph.stackGroupHint")}
           value={options.stackGroup ?? ""}
           maxLength={L.stackGroupChars}
-          onChange={(group) => set("stackGroup", group)}
+          onChange={(group) => set("stackGroup", stackGroupOf(group))}
         />
       ) : null}
       <CheckboxField

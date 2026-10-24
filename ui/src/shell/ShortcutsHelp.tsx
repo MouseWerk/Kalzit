@@ -8,6 +8,8 @@ interface Shortcut {
   /** Keys pressed together; "Mod" is Ctrl, or Cmd on macOS. Alternatives are separate entries. */
   keys: readonly (readonly string[])[];
   label: MessageKey;
+  /** The keys of a combination are pressed one after the other ("t", then "z"). */
+  sequence?: boolean;
 }
 
 interface Area {
@@ -56,6 +58,16 @@ export const SHORTCUT_AREAS: readonly Area[] = [
     ],
   },
   {
+    title: "shell.shortcuts.area.time",
+    shortcuts: [
+      { keys: [["t", "←"]], label: "shell.shortcuts.timeBack", sequence: true },
+      { keys: [["t", "→"]], label: "shell.shortcuts.timeForward", sequence: true },
+      { keys: [["t", "z"]], label: "shell.shortcuts.timeZoomOut", sequence: true },
+      { keys: [["t", "c"]], label: "shell.shortcuts.timeCopy", sequence: true },
+      { keys: [["t", "v"]], label: "shell.shortcuts.timePaste", sequence: true },
+    ],
+  },
+  {
     title: "shell.shortcuts.area.explore",
     shortcuts: [
       { keys: [["Mod", "Enter"]], label: "shell.shortcuts.run" },
@@ -81,10 +93,56 @@ function keyName(key: string): string {
   return keyLabel(key);
 }
 
+/** Every shortcut by area: in the help dialog and on the settings page. */
+export function ShortcutsList() {
+  const { t } = useI18n();
+  const baseId = useId();
+  return (
+    <div className="shortcuts">
+      {SHORTCUT_AREAS.map((area, index) => (
+        <section
+          key={area.title}
+          className="shortcuts__area"
+          aria-labelledby={`${baseId}-${index}`}
+        >
+          <h3 id={`${baseId}-${index}`} className="shortcuts__title">
+            {t(area.title)}
+          </h3>
+          <dl className="shortcuts__list">
+            {area.shortcuts.map((shortcut) => (
+              <div key={shortcut.label} className="shortcuts__row">
+                <dt className="shortcuts__keys">
+                  {shortcut.keys.map((combo, comboIndex) => (
+                    <Fragment key={combo.join("+")}>
+                      {comboIndex === 0 ? null : (
+                        <span className="shortcuts__or">{t("shell.shortcuts.or")}</span>
+                      )}
+                      <span className="shortcuts__combo">
+                        {combo.map((key, keyIndex) => (
+                          <Fragment key={key}>
+                            {shortcut.sequence === true && keyIndex > 0 ? (
+                              <span className="shortcuts__or">{t("shell.shortcuts.then")}</span>
+                            ) : null}
+                            <kbd className="kbd">{keyName(key)}</kbd>
+                          </Fragment>
+                        ))}
+                      </span>
+                    </Fragment>
+                  ))}
+                </dt>
+                <dd className="shortcuts__label">{t(shortcut.label)}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /** The keyboard shortcuts help, opened with ? or from the command palette. */
 export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const baseId = useId();
   return (
     <Dialog
       open
@@ -97,42 +155,7 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
         </button>
       }
     >
-      <div className="shortcuts">
-        {SHORTCUT_AREAS.map((area, index) => (
-          <section
-            key={area.title}
-            className="shortcuts__area"
-            aria-labelledby={`${baseId}-${index}`}
-          >
-            <h3 id={`${baseId}-${index}`} className="shortcuts__title">
-              {t(area.title)}
-            </h3>
-            <dl className="shortcuts__list">
-              {area.shortcuts.map((shortcut) => (
-                <div key={shortcut.label} className="shortcuts__row">
-                  <dt className="shortcuts__keys">
-                    {shortcut.keys.map((combo, comboIndex) => (
-                      <Fragment key={combo.join("+")}>
-                        {comboIndex === 0 ? null : (
-                          <span className="shortcuts__or">{t("shell.shortcuts.or")}</span>
-                        )}
-                        <span className="shortcuts__combo">
-                          {combo.map((key) => (
-                            <kbd key={key} className="kbd">
-                              {keyName(key)}
-                            </kbd>
-                          ))}
-                        </span>
-                      </Fragment>
-                    ))}
-                  </dt>
-                  <dd className="shortcuts__label">{t(shortcut.label)}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        ))}
-      </div>
+      <ShortcutsList />
     </Dialog>
   );
 }

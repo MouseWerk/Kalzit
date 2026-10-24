@@ -1,0 +1,256 @@
+import type { SettingKey } from "../../api/generated/shapes";
+import type { MessageKey } from "../../i18n/i18n";
+import type { OrgPermissions } from "../../org/useOrg";
+
+/**
+ * The sections of the settings page, in navigation order, and the rows each holds. A registry
+ * setting the server adds belongs in one section here (a test checks every key is placed).
+ */
+
+export type SettingsGroup = "server" | "org" | "personal";
+
+export type SectionKind =
+  | "settings"
+  | "appearance"
+  | "planned"
+  | "updates"
+  | "profile"
+  | "shortcuts"
+  | "transfer";
+
+export interface SettingsAccess {
+  permissions: OrgPermissions;
+  /** The organization the user works in, if any. */
+  orgId: string | undefined;
+}
+
+export interface SectionDef {
+  id: string;
+  group: SettingsGroup | "footer";
+  kind: SectionKind;
+  label: MessageKey;
+  lead: MessageKey;
+  /** Words people may search for, in the catalog of each language. */
+  keywords: MessageKey;
+  /** Registry rows, in display order. */
+  keys?: readonly SettingKey[];
+  /** For `planned` sections: the text that says what comes. */
+  planned?: MessageKey;
+  visible: (access: SettingsAccess) => boolean;
+}
+
+const serverAdmin = (access: SettingsAccess) => access.permissions.isServerAdmin;
+
+/** Extra rows of the appearance section that are not one registry setting. */
+export const LOGO_ROW = "appearance.logo";
+export const SIGN_IN_ROW = "signin.page";
+
+/** Rows of the appearance section, in the order of the design: theme, accent, logo and name, ... */
+export const APPEARANCE_ROWS = [
+  "appearance.default_theme",
+  "appearance.accent",
+  LOGO_ROW,
+  "appearance.product_name",
+  "appearance.density",
+  "appearance.font_size",
+  "appearance.default_language",
+  SIGN_IN_ROW,
+] as const;
+
+export const SECTIONS: readonly SectionDef[] = [
+  {
+    id: "appearance",
+    group: "server",
+    kind: "appearance",
+    label: "settings.section.appearance.label",
+    lead: "settings.section.appearance.lead",
+    keywords: "settings.section.appearance.keywords",
+    keys: [
+      "appearance.default_theme",
+      "appearance.accent",
+      "appearance.product_name",
+      "appearance.density",
+      "appearance.font_size",
+      "appearance.default_language",
+      "signin.welcome",
+      "signin.notice",
+    ],
+    visible: serverAdmin,
+  },
+  {
+    id: "general",
+    group: "server",
+    kind: "settings",
+    label: "settings.section.general.label",
+    lead: "settings.section.general.lead",
+    keywords: "settings.section.general.keywords",
+    keys: [
+      "appearance.start_page",
+      "appearance.time_zone",
+      "appearance.week_start",
+      "log.level",
+      "log.format",
+    ],
+    visible: serverAdmin,
+  },
+  {
+    id: "network",
+    group: "server",
+    kind: "settings",
+    label: "settings.section.network.label",
+    lead: "settings.section.network.lead",
+    keywords: "settings.section.network.keywords",
+    keys: [
+      "server.public_url",
+      "server.http_addr",
+      "server.https_addr",
+      "server.redirect_http_to_https",
+      "tls.cert_file",
+      "tls.min_version",
+      "tls.reload_interval_secs",
+      "security.trusted_proxies",
+    ],
+    visible: serverAdmin,
+  },
+  {
+    id: "security",
+    group: "server",
+    kind: "settings",
+    label: "settings.section.security.label",
+    lead: "settings.section.security.lead",
+    keywords: "settings.section.security.keywords",
+    keys: [
+      "sessions.lifetime_hours",
+      "sessions.idle_timeout_hours",
+      "security.hsts",
+      "security.hsts_max_age_secs",
+      "security.login_max_failures",
+      "security.login_window_secs",
+    ],
+    visible: serverAdmin,
+  },
+  {
+    id: "signin",
+    group: "server",
+    kind: "planned",
+    label: "settings.section.signin.label",
+    lead: "settings.section.signin.lead",
+    keywords: "settings.section.signin.keywords",
+    planned: "settings.planned.signin",
+    visible: serverAdmin,
+  },
+  {
+    id: "email",
+    group: "server",
+    kind: "planned",
+    label: "settings.section.email.label",
+    lead: "settings.section.email.lead",
+    keywords: "settings.section.email.keywords",
+    planned: "settings.planned.email",
+    visible: serverAdmin,
+  },
+  {
+    id: "datasources",
+    group: "server",
+    kind: "settings",
+    label: "settings.section.datasources.label",
+    lead: "settings.section.datasources.lead",
+    keywords: "settings.section.datasources.keywords",
+    keys: [
+      "datasources.allowed_targets",
+      "datasources.sqlite_dirs",
+      "datasources.file_dirs",
+      "datasources.query_timeout_secs",
+      "datasources.max_rows",
+      "datasources.max_response_bytes",
+      "datasources.max_parallel_queries",
+      "datasources.max_inflight_bytes",
+    ],
+    visible: serverAdmin,
+  },
+  {
+    id: "storage",
+    group: "server",
+    kind: "settings",
+    label: "settings.section.storage.label",
+    lead: "settings.section.storage.lead",
+    keywords: "settings.section.storage.keywords",
+    keys: ["audit.retention_days", "dashboards.version_retention"],
+    visible: serverAdmin,
+  },
+  {
+    id: "updates",
+    group: "server",
+    kind: "updates",
+    label: "settings.section.updates.label",
+    lead: "settings.section.updates.lead",
+    keywords: "settings.section.updates.keywords",
+    keys: [
+      "updates.channel",
+      "updates.check_daily",
+      "updates.window",
+      "updates.keep_versions",
+      "updates.health_timeout_secs",
+    ],
+    visible: serverAdmin,
+  },
+  {
+    id: "organization",
+    group: "org",
+    kind: "settings",
+    label: "settings.section.organization.labelPlain",
+    lead: "settings.section.organization.lead",
+    keywords: "settings.section.organization.keywords",
+    keys: [
+      "appearance.accent",
+      "appearance.density",
+      "appearance.font_size",
+      "appearance.start_page",
+      "appearance.time_zone",
+      "appearance.week_start",
+      "dashboards.default_time_range",
+    ],
+    visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
+  },
+  {
+    id: "profile",
+    group: "personal",
+    kind: "profile",
+    label: "settings.section.profile.label",
+    lead: "settings.section.profile.lead",
+    keywords: "settings.section.profile.keywords",
+    visible: () => true,
+  },
+  {
+    id: "shortcuts",
+    group: "personal",
+    kind: "shortcuts",
+    label: "settings.section.shortcuts.label",
+    lead: "settings.section.shortcuts.lead",
+    keywords: "settings.section.shortcuts.keywords",
+    visible: () => true,
+  },
+  {
+    id: "transfer",
+    group: "footer",
+    kind: "transfer",
+    label: "settings.section.transfer.label",
+    lead: "settings.section.transfer.lead",
+    keywords: "settings.section.transfer.keywords",
+    visible: (access) =>
+      access.permissions.isServerAdmin ||
+      (access.orgId !== undefined && access.permissions.has("settings:write")),
+  },
+];
+
+export function findSection(id: string): SectionDef | undefined {
+  return SECTIONS.find((section) => section.id === id);
+}
+
+/** The section a row lives in: its id and the row's element id. */
+export function rowId(section: SectionDef, key: string): string {
+  if (section.kind === "appearance" && (key === "signin.welcome" || key === "signin.notice")) {
+    return SIGN_IN_ROW;
+  }
+  return section.group === "org" ? `org.${key}` : key;
+}

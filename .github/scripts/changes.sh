@@ -2,7 +2,7 @@
 # Decides which CI areas a change touches and prints the flags as key=value lines for
 # $GITHUB_OUTPUT:
 #
-#   server     Rust code, manifests, toolchain and lint settings
+#   server     Rust code (the server and the release crate), manifests, toolchain and lint settings
 #   ui         the UI, including the e2e tests in ui/e2e
 #   e2e        server or ui
 #   audit      server, or the UI's dependency manifests
@@ -36,7 +36,7 @@ classify() {
     server/src/analysis/*)
       server=true
       ui=true ;;
-    server/* | Cargo.toml | Cargo.lock | rust-toolchain | rust-toolchain.toml | clippy.toml \
+    server/* | release/* | Cargo.toml | Cargo.lock | rust-toolchain | rust-toolchain.toml | clippy.toml \
       | .clippy.toml | rustfmt.toml | .rustfmt.toml | .cargo/*)
       server=true ;;
     # The server's tests compare the generated TypeScript types with the Rust shapes.

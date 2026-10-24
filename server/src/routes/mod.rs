@@ -4,6 +4,7 @@ pub mod admin_users;
 pub mod annotations;
 pub mod audit;
 pub mod auth;
+pub mod branding;
 pub mod dashboards;
 pub mod datasources;
 pub mod export;
@@ -23,6 +24,7 @@ pub mod setup;
 pub mod support;
 pub mod table;
 pub mod teams;
+pub mod updates;
 
 use serde::Serialize;
 
@@ -36,6 +38,7 @@ pub fn all() -> Vec<table::RouteDef> {
         auth::routes(),
         orgs::routes(),
         admin_settings::routes(),
+        branding::routes(),
         audit::routes(),
         folders::routes(),
         dashboards::routes(),
@@ -54,6 +57,7 @@ pub fn all() -> Vec<table::RouteDef> {
         me::routes(),
         home::routes(),
         preferences::routes(),
+        updates::routes(),
     ]
     .into_iter()
     .flatten()
@@ -155,7 +159,15 @@ mod access_guard {
     use crate::authz::Access;
 
     /// Routes anyone may call, as "METHOD path". Adding one here is a reviewed decision.
-    const PUBLIC: &[&str] = &["GET /setup", "POST /setup", "POST /auth/login", "POST /auth/logout"];
+    const PUBLIC: &[&str] = &[
+        "GET /setup",
+        "POST /setup",
+        "POST /auth/login",
+        "POST /auth/logout",
+        // What the sign-in page shows anyway: product name, logo, sign-in texts and default look.
+        "GET /branding",
+        "GET /branding/logo",
+    ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
         "GET /me",

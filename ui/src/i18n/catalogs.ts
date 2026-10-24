@@ -15,7 +15,9 @@ import deGraph from "./de/graph.json";
 import deLibraryPanels from "./de/libraryPanels.json";
 import dePanels from "./de/panels.json";
 import dePlaylists from "./de/playlists.json";
+import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
+import deToolbar from "./de/toolbar.json";
 import enAdmin from "./en/admin.json";
 import enAnalysis from "./en/analysis.json";
 import enAnnotations from "./en/annotations.json";
@@ -29,7 +31,9 @@ import enGraph from "./en/graph.json";
 import enLibraryPanels from "./en/libraryPanels.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
+import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
+import enToolbar from "./en/toolbar.json";
 
 const enDashboardFeatures = {
   ...enAnnotations,
@@ -55,7 +59,9 @@ export const en = {
   ...enPanels,
   ...enGraph,
   ...enShell,
+  ...enSettings,
   ...enDashboardFeatures,
+  ...enToolbar,
 };
 export const de = {
   ...deCore,
@@ -68,5 +74,7 @@ export const de = {
   ...dePanels,
   ...deGraph,
   ...deShell,
+  ...deSettings,
   ...deDashboardFeatures,
+  ...deToolbar,
 };
