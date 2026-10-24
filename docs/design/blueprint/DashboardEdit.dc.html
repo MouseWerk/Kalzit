@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard edit mode</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1000px; display: flex; flex-direction: column; font-size: 13px">
+
+<!-- Top bar -->
+<header style="height: 48px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 12px; padding: 0 16px; box-sizing: border-box; flex-wrap: wrap">
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8f8f97">
+<a href="#">Dashboards</a><span aria-hidden="true">/</span><a href="#">Vertrieb</a><span aria-hidden="true">/</span><span style="color: #ececef; font-weight: 500">Umsatz nach Region</span>
+<span style="margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #232327; color: #c9c9cf; font-size: 11px">Bearbeiten</span>
+</nav>
+<div style="flex: 1"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Einstellungen</button>
+<a href="Main.dc.html" style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf; display: flex; align-items: center; box-sizing: border-box">Bearbeiten beenden</a>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Dashboard speichern</button>
+</header>
+
+<div style="display: flex; flex: 1; min-height: 0; flex-wrap: wrap">
+
+<!-- Canvas -->
+<div style="flex: 999 1 560px; min-width: 0; padding: 16px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; align-content: start">
+
+<section style="grid-column: span 12; display: flex; align-items: center; gap: 10px; padding: 6px 4px; color: #c9c9cf; border-bottom: 1px solid #2a2a2e">
+<button aria-label="Collapse row" style="background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Überblick</h2><span style="color: #6f6f77; font-size: 12px">4 Panels</span>
+<div style="flex: 1"></div>
+<button aria-label="Row settings" style="background: transparent; border: 0; color: #8f8f97">Zeile</button>
+</section>
+
+<section style="grid-column: span 6; background: #1b1b1e; border: 1px solid #3a3a40; border-radius: 12px; padding: 12px 14px; min-height: 180px; position: relative">
+<header style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="color: #6f6f77; cursor: grab">⠿</span><h2 style="margin: 0; font-size: 13px; font-weight: 500">Umsatz über Zeit</h2><div style="flex: 1"></div><a href="PanelEditor.dc.html" style="font-size: 12px; color: #a6a6ae">Bearbeiten</a><button aria-label="Panel menu" style="width: 24px; height: 24px; background: transparent; border: 0; color: #8f8f97">⋮</button></header>
+<svg role="img" aria-label="Line chart preview" width="100%" height="120" viewBox="0 0 400 120" preserveAspectRatio="none" style="margin-top: 10px"><path d="M0 90 C60 80 90 60 140 62 S220 40 270 44 S340 20 400 26" fill="none" stroke="#dcdce0" stroke-width="2"></path></svg>
+<span aria-hidden="true" style="position: absolute; right: 6px; bottom: 6px; width: 10px; height: 10px; border-right: 2px solid #6f6f77; border-bottom: 2px solid #6f6f77"></span>
+</section>
+<section style="grid-column: span 6; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; min-height: 180px; position: relative">
+<header style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="color: #6f6f77">⠿</span><h2 style="margin: 0; font-size: 13px; font-weight: 500">Bestellungen je Region</h2></header>
+<div style="display: flex; align-items: flex-end; gap: 10px; height: 120px; margin-top: 10px"><div style="flex: 1; height: 80%; background: #6aa3d8; border-radius: 3px"></div><div style="flex: 1; height: 55%; background: #6aa3d8; border-radius: 3px"></div><div style="flex: 1; height: 65%; background: #6aa3d8; border-radius: 3px"></div><div style="flex: 1; height: 40%; background: #6aa3d8; border-radius: 3px"></div></div>
+</section>
+<section style="grid-column: span 4; border: 1px dashed #3a3a40; border-radius: 12px; min-height: 140px; display: grid; place-items: center; color: #8f8f97; background: #17171a">
+<div style="text-align: center"><p style="margin: 0 0 8px">Platzhalter beim Ziehen</p><span style="font-size: 12px; color: #6f6f77">Panels folgen der Maus und rasten beim Loslassen ein</span></div>
+</section>
+<section style="grid-column: span 8; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; min-height: 140px">
+<header style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="color: #6f6f77">⠿</span><h2 style="margin: 0; font-size: 13px; font-weight: 500">Je Region und Produkt</h2></header>
+<p style="margin: 16px 0 0; color: #8f8f97">Tabelle</p>
+</section>
+</div>
+
+<!-- Edit pane -->
+<aside aria-label="Edit pane" style="flex: 1 1 300px; max-width: 320px; border-left: 1px solid #222226; background: #111113; display: flex; min-height: 0">
+<div style="flex: 1; padding: 18px 16px; display: flex; flex-direction: column; gap: 18px; min-width: 0">
+<header style="display: flex; align-items: center; gap: 8px">
+<h2 style="margin: 0; font-size: 15px; font-weight: 600">Hinzufügen</h2>
+<div style="flex: 1"></div>
+<span style="color: #6f6f77; font-size: 11px">Klicken oder in die Fläche ziehen</span>
+</header>
+<label style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+<input type="search" placeholder="Was möchtest du hinzufügen?" aria-label="Search add menu" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; outline: none"></label>
+<section>
+<h3 style="margin: 0 0 8px; font-size: 11px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em">VISUALISIERUNG</h3>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px">
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 17l5-6 4 3 6-8 3 3"></path></svg>Zeitreihe</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 20V10M10 20V4M15 20v-7M20 20V8"></path></svg>Balken</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><text x="4" y="17" font-size="12" fill="currentColor" stroke="none">42</text></svg>Kennzahl</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1.5"></rect><path d="M3 10h18M9 10v9"></path></svg>Tabelle</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 16a8 8 0 0116 0M12 16l4-5"></path></svg>Gauge</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 4v8l6 5"></path></svg>Kreis</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="6" cy="7" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><circle cx="12" cy="18" r="2.5"></circle><path d="M8 8l8-1M7 9l4 7M17 8l-4 8"></path></svg>Graph</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 4H6a2 2 0 00-2 2v4l-2 2 2 2v4a2 2 0 002 2h2M16 4h2a2 2 0 012 2v4l2 2-2 2v4a2 2 0 01-2 2h-2"></path></svg>Dokumente</a>
+<a href="PanelEditor.dc.html" style="display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #a6a6ae; font-size: 12px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="5" cy="12" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="19" cy="12" r="1.4"></circle></svg>Alle 18</a>
+</div>
+</section>
+<section>
+<h3 style="margin: 0 0 8px; font-size: 11px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em">INHALT UND STRUKTUR</h3>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"></path></svg><span style="flex: 1">Zeile<span style="display: block; color: #8f8f97; font-size: 11px">Gruppiert Panels, einklappbar, wiederholbar</span></span></button>
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 6h14M5 10h14M5 14h9"></path><rect x="3" y="3" width="18" height="18" rx="2"></rect></svg><span style="flex: 1">Text<span style="display: block; color: #8f8f97; font-size: 11px">Markdown, Hinweise, Links</span></span></button>
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 14l-2 2 2 2M15 14l2 2-2 2"></path></svg><span style="flex: 1">Web-Einbettung<span style="display: block; color: #8f8f97; font-size: 11px">Seite per URL, nur von freigegebenen Adressen</span></span></button>
+</div>
+</section>
+<section>
+<h3 style="margin: 0 0 8px; font-size: 11px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em">WIEDERVERWENDEN</h3>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h4v16H5zM11 4h4v16h-4zM17 6l3 13"></path></svg><span style="flex: 1">Bibliotheks-Panel<span style="display: block; color: #8f8f97; font-size: 11px">Geteiltes Panel, überall gleich</span></span></button>
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"></rect><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-2"></path></svg><span style="flex: 1">Kopiertes Panel einfügen<span style="display: block; color: #8f8f97; font-size: 11px">„Umsatz je Kanal“ aus der Zwischenablage</span></span><span style="color: #6f6f77; font-size: 11px">Strg V</span></button>
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"></rect><rect x="13" y="13" width="8" height="8" rx="1.5"></rect><path d="M11 7h4a2 2 0 012 2v4"></path></svg><span style="flex: 1">Aus anderem Dashboard<span style="display: block; color: #8f8f97; font-size: 11px">Panels oder Zeilen übernehmen</span></span></button>
+</div>
+</section>
+<section>
+<h3 style="margin: 0 0 8px; font-size: 11px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em">ZUM DASHBOARD</h3>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8z"></path></svg><span style="flex: 1">Variable / Filter<span style="display: block; color: #8f8f97; font-size: 11px">Auswahl in der Filterleiste</span></span></button>
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3v18M7 8l5-5 5 5"></path></svg><span style="flex: 1">Annotationen<span style="display: block; color: #8f8f97; font-size: 11px">Ereignisse aus einer Abfrage markieren</span></span></button>
+<button style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: #ececef; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"></path></svg><span style="flex: 1">Link<span style="display: block; color: #8f8f97; font-size: 11px">Zu anderen Dashboards oder Seiten</span></span></button>
+</div>
+</section>
+</div>
+<div style="width: 44px; border-left: 1px solid #222226; display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 6px">
+<button aria-label="Add" style="width: 32px; height: 32px; border-radius: 7px; background: #1d1d21; border: 1px solid #2c2c31; color: #ffffff; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+<button aria-label="Outline" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h3M10 6h10M7 12h3M13 12h7M7 18h3M13 18h7"></path></svg></button>
+<button aria-label="Export" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg></button>
+<div style="width: 22px; height: 1px; background: #2a2a2e; margin: 4px 0"></div>
+<button aria-label="Collapse pane" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 12h10M11 8l4 4-4 4M19 5v14"></path></svg></button>
+</div>
+</aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

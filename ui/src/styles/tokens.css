@@ -110,6 +110,8 @@
     --space-half: 0.125rem;
 
     --border-width: 1px;
+    /* Strokes drawn with borders that must read as a line, such as a disclosure chevron. */
+    --border-width-strong: 1.5px;
 
     /*
      * Soft corners: controls and nav items a little round, cards and panels more so, the
@@ -432,6 +434,8 @@
     /* The workspace card on top of the sidebar and its mark tile. */
     --size-switcher: 2.75rem;
     --size-switcher-mark: 1.75rem;
+    /* The chevron of a text disclosure, drawn as two borders. */
+    --size-chevron: 0.4em;
     /* The icon tile of the setup checklist card. */
     --size-setup-tile: 2.5rem;
     /* Rows of lists and tables. */
@@ -698,5 +702,29 @@
     --size-logo-tile: 2.5rem;
     --size-preview-height: 11.25rem;
     --size-preview-rail: 4.375rem;
+  }
+}
+
+/*
+ * Time series graph styles (docs/design/feel.md section 8): the monochrome main series, its
+ * muted comparison series and the hatch under a lone series. High contrast draws both lines
+ * at full strength and the hatch denser, so it stays visible. The mask color is the opaque end
+ * of the SVG fade mask (read as luminance), never shown as a color.
+ */
+@layer tokens {
+  :root {
+    --chart-mono: light-dark(oklch(24% 0.006 286), oklch(92% 0.004 286));
+    --chart-mono-compare: light-dark(oklch(55% 0.008 286), oklch(64% 0.006 286));
+    --chart-hatch-alpha: 0.5;
+    --chart-hatch-width: 1;
+    --chart-fade-to: 0.15;
+    --chart-mask: oklch(100% 0 0);
+  }
+
+  :root[data-theme="contrast"] {
+    --chart-mono: light-dark(oklch(0% 0 0), oklch(100% 0 0));
+    --chart-mono-compare: light-dark(oklch(38% 0.006 286), oklch(80% 0.004 286));
+    --chart-hatch-alpha: 0.85;
+    --chart-hatch-width: 1.5;
   }
 }

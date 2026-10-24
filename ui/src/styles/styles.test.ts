@@ -847,10 +847,13 @@ describe("contrast in every theme", () => {
           TEXT,
         ] as [string, string[], number],
     ),
-    // Chart series are meaningful marks on the panel surfaces.
+    // Chart series are meaningful marks on the panel surfaces, the monochrome ones too.
     ...[1, 2, 3, 4, 5, 6, 7, 8].map(
       (n) =>
         [`--chart-${n}`, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
+    ),
+    ...["--chart-mono", "--chart-mono-compare"].map(
+      (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
     ),
   ];
 
@@ -859,6 +862,23 @@ describe("contrast in every theme", () => {
   // common deficiencies (perceivedDistance: OKLab distance x100 after simulation).
   const SERIES_APART = 6;
   const NEIGHBOURS_APART = 12;
+  // The monochrome look: the comparison line reads as quieter than the main line, and the hatch
+  // under a lone series stays visible, denser in high contrast.
+  for (const theme of themes) {
+    it(`sets the comparison line apart and keeps the hatch visible (${theme.name})`, () => {
+      const main = resolveColor(theme.tokens, theme.scheme, "--chart-mono");
+      const compare = resolveColor(theme.tokens, theme.scheme, "--chart-mono-compare");
+      expect(contrastRatio(main, compare)).toBeGreaterThanOrEqual(1.5);
+      const contrast = theme.name.startsWith("contrast");
+      expect(Number(theme.tokens.get("--chart-hatch-alpha"))).toBeGreaterThanOrEqual(
+        contrast ? 0.8 : 0.4,
+      );
+      expect(Number(theme.tokens.get("--chart-hatch-width"))).toBeGreaterThanOrEqual(
+        contrast ? 1.5 : 1,
+      );
+    });
+  }
+
   for (const scheme of ["light", "dark"] as const) {
     it(`keeps chart series distinguishable for every color vision (${scheme})`, () => {
       const series = [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>

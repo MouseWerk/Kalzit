@@ -337,10 +337,10 @@ describe("older panels", () => {
       options: {
         seriesName: "{{job}}",
         legend: { mode: "hidden", placement: "bottom", values: [] },
-        lineWidth: 2,
       },
-      // A unit typed by hand keeps its old meaning: written after the value, not scaled.
-      fieldConfig: { defaults: { unit: "suffix:ms" } },
+      // A unit typed by hand keeps its old meaning: written after the value, not scaled. The
+      // line width is a field option now.
+      fieldConfig: { defaults: { unit: "suffix:ms", lineWidth: 2 } },
     });
     expect(upgradePanel({ options: { unit: "Stück", sparkline: false }, fieldConfig: {} })).toEqual(
       {

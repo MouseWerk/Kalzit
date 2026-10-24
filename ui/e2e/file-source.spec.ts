@@ -43,9 +43,12 @@ test("the owner connects a CSV file and explores it with the file query editor",
     await page
       .getByRole("button", { name: t("datasources.form.create") })
       .click({ timeout: STEP_MS });
-    await expect(page.getByRole("heading", { name: t("datasources.edit.title") })).toBeVisible({
-      timeout: STEP_MS,
-    });
+    // The source is stored once the form has moved on to its page. Matched exactly: the add
+    // page's heading ("Add data source") contains this one and would pass before the create
+    // request has answered, and leaving the page then cancels the request.
+    await expect(
+      page.getByRole("heading", { name: t("datasources.edit.title"), exact: true }),
+    ).toBeVisible({ timeout: STEP_MS });
   });
 
   await test.step("open it in Explore", async () => {
