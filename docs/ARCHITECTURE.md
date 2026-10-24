@@ -16,6 +16,7 @@ everything else is M1.
 | `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
+| `server/src/updates/`, `server/src/bin/kalzit-sign.rs` | Updates: signed releases, staging, installation, trial and return; the release signing tool (see "Updates"). |
 | `ui/` | React UI: `ui/src/features/<area>/` per area, `ui/src/panels/<type>/` per panel type. |
 | `ui/src/api/generated/` | Types generated from the server; a test fails when they are stale. |
 
@@ -429,7 +430,8 @@ type QueryResult =
 - Contents: `kalzit.db` (the default SQLite database, `database.url` unset) with its `-wal` and
   `-shm` files, `setup-token.txt` until the first owner exists, `secrets.lock`, and the fallback
   key file for data source secrets when no other key source is configured (`secrets.key` on
-  Linux, `secrets.key.dpapi` on Windows).
+  Linux, `secrets.key.dpapi` on Windows), and `updates/` (staged releases, kept binaries, database
+  backups, the update plan and history; see "Updates").
 - The database file is also checked for a network drive (see "Storage (SQLite)"): a data
   directory on a UNC path, a mapped network drive, NFS, CIFS/SMB or 9p is refused when the
   database opens. Backups and restores are under "Backups".
@@ -442,6 +444,7 @@ type QueryResult =
   [Service]
   User=kalzit
   ExecStart=/usr/local/bin/kalzit serve
+  Restart=on-failure
   StateDirectory=kalzit
   StateDirectoryMode=0700
   ConfigurationDirectory=kalzit
@@ -523,6 +526,74 @@ One place for everything a backup needs:
   private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
   that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
   Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
+
+## Updates
+
+Kalzit updates itself from the GitHub Releases of MouseWerk/Kalzit, or from the same signed
+package uploaded offline (`server/src/updates/`, API docs/api/updates.md, operator guide
+docs/operations/updates.md). Server administrators only; every step is audited (`update.*`).
+
+- **Trust.** A release has a manifest (JSON: version, channel, minimum version, release notes
+  summary and highlights, and per package platform, arch, file, size, SHA-256) with a detached
+  Ed25519 signature over its exact bytes, and each package entry carries its own signature over
+  version, platform, arch, file, size and SHA-256. Each signed message starts with its own context
+  line, so one cannot pass as the other. Signatures name their key by id (first 8 bytes of the
+  key's SHA-256); only keys compiled in are trusted (`signing::COMPILED_KEYS`, plus
+  `KALZIT_UPDATE_PUBLIC_KEYS` at build time), verified with `ed25519-dalek` (`verify_strict`, weak
+  keys refused). Several keys make a rotation possible. The first entry is a marked placeholder
+  that is no key: until the owner puts the real public key there, a build verifies nothing and
+  installs nothing. The private key exists only on the owner's machine and as the repository
+  secret `KALZIT_RELEASE_SIGNING_KEY`; `kalzit-sign` (`server/src/bin/kalzit-sign.rs`) makes key
+  pairs, writes and signs manifests and offline packages, and the release workflow
+  (`.github/workflows/release.yml`) uses it on tags.
+- **Source.** Checks list the releases of the channel (stable: not pre-release and no pre-release
+  version; preview: all) through the one HTTP client factory, with a target policy that allows only
+  `api.github.com`, `github.com`, `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com`, plus a hop check that refuses any other host and plain
+  HTTP on every redirect. Responses are size-limited (release list 8 MiB, manifest 256 KiB,
+  signature 4 KiB, package its signed size, at most 512 MiB). The last check is kept in
+  `updates/state.json`; a daily check runs only when `updates.check_daily` is on (off by default).
+- **Staging.** A download streams into `updates/incoming/` with its SHA-256 computed on the way and
+  stops past the signed size; only a verified release becomes `updates/staging/` (manifest,
+  signature, package, `staged.json`). Uploads (multipart: one `.kalzit-update` bundle, or the three
+  files) go into `updates/upload-<id>/` with per-part limits and pass the same checks; the package
+  is matched to its manifest entry by hash and must be this platform's. Downgrades, the installed
+  version and releases whose `minimumVersion` is above the installed one are refused.
+- **Install.** Apply verifies the staged files again, runs the new binary with `--version` (it must
+  name its version), backs the SQLite database up with `VACUUM INTO` (PostgreSQL: the administrator
+  confirms an own `pg_dump`), copies the running binary to `updates/versions/<version>/` with its
+  schema version and backup, writes `updates/plan.json` and then swaps the binary (a copy next to
+  it, then a rename; on Windows the running binary moves aside first). The server stops gracefully,
+  closes the database, drops its runtime and hands over: on Unix it replaces its process image
+  with the new binary (`exec`), so systemd keeps the same main process and no privilege is needed;
+  on Windows it starts the binary as a child.
+- **Trial and return.** `updates::boot::guard` runs first at `kalzit serve`, before the database
+  opens. The new version's first start marks the plan `trial` and starts a watchdog thread; once
+  `/readyz` answers through the router and every listener accepts a connection, the plan is
+  removed and the installation recorded. A failed start (migrations), a failed health check or
+  the deadline (`updates.health_timeout_secs`) mark the plan `rollbackRequested` and start the
+  binary again; that start, or any start that finds a `trial` plan (a crash), restores the backup
+  (WAL and shared memory files first, so the newer WAL is never replayed) and the previous binary,
+  marks the plan `rolledBack` and starts the previous version, which records the return. The
+  return always runs in a fresh process, before anything opens the database. A plan that fits
+  neither version is set aside (`plan-<time>.stale.json`).
+- **Where it installs on its own** (`platform::detect_mode`): Linux under systemd
+  (`INVOCATION_ID`), outside containers, with the binary's folder writable by the service account.
+  Windows has no service integration yet (planned with the installer, M5), so there and
+  everywhere else the server downloads and verifies, and `kalzit update apply` / `kalzit update
+  rollback <version>` install with the server stopped (they hold the data directory lock
+  exclusively and give created files to the data directory's owner on Linux); the next start runs
+  the same trial.
+- **Kept versions and history.** The newest `updates.keep_versions` (3) previous binaries stay with
+  their backups; manual backups ("Back up now") are kept to the same count. A return to a kept
+  version swaps only the binary when the schema version (`MAX(version)` of `_sqlx_migrations`) is
+  the same, otherwise it restores the backup taken when that version was left, after the server
+  stopped, which the request must confirm. `updates/history.json` lists installations, returns and
+  aborted steps (newest first, 50 entries); it lives outside the database, so a restore keeps it.
+- **Planning.** `PUT /admin/updates/schedule` stores a time and the end of the maintenance window
+  (`updates.window`, chosen in the administrator's local time in the UI); a background loop (every
+  30 s, stopped with the server's background tasks) installs when it is due, and gives up with
+  `updates.schedule_missed` when the server was down for the whole window.
 
 ## Migrations
 

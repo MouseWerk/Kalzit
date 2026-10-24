@@ -278,6 +278,18 @@ test("administration, members", async ({ browser }) => {
   await page.context().close();
 });
 
+test("updates", async ({ browser }) => {
+  const page = await openPage(browser);
+  await signIn(page);
+  // One backup, so the list shows what it holds.
+  expect((await page.request.post("/api/admin/updates/backups")).ok()).toBe(true);
+  await page.goto("/admin/server/updates");
+  const backups = page.getByRole("list", { name: t("admin.updates.backups.title") });
+  await expect(backups.getByRole("listitem").first()).toBeVisible();
+  await shoot(page, "updates");
+  await page.context().close();
+});
+
 test("account", async ({ browser }) => {
   const page = await openPage(browser);
   await signIn(page);

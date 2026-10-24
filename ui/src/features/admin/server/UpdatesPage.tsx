@@ -169,7 +169,11 @@ export function UpdatesPage() {
   const act = useMutation({
     mutationFn: (run: () => Promise<UpdateStatus>) => run(),
     onSuccess: (data) => queryClient.setQueryData(updateKeys.status, data),
-    onError: (error) => notice.showError(failure(t, error)),
+    onError: (error) => {
+      notice.showError(failure(t, error));
+      // A refused step is in the history and may have changed the job.
+      void queryClient.invalidateQueries({ queryKey: updateKeys.status });
+    },
   });
   const run = (call: () => Promise<UpdateStatus>, done?: string) =>
     act.mutate(call, {
@@ -514,6 +518,7 @@ function ReleaseCard({
           version: offer.version,
           size: offer.size,
           sha256: offer.sha256,
+          keyId: offer.keyId,
           notes: offer.notes,
           notesUrl: offer.notesUrl,
           highlights: offer.highlights,
@@ -527,6 +532,7 @@ function ReleaseCard({
             version: staged.version,
             size: staged.size,
             sha256: staged.sha256,
+            keyId: staged.keyId,
             notes: staged.notes,
             notesUrl: staged.notesUrl,
             highlights: staged.highlights,
@@ -547,7 +553,13 @@ function ReleaseCard({
             <Icon name="check" />
           </span>
           <div>
-            <h2 className="updates-release__title">{t("admin.updates.upToDate")}</h2>
+            <h2 className="updates-release__title">
+              {t(
+                data.trustedKeys.length === 0
+                  ? "admin.updates.cannotVerify"
+                  : "admin.updates.upToDate",
+              )}
+            </h2>
             <p className="updates-muted">
               {data.trustedKeys.length === 0
                 ? t("admin.updates.noKey")
@@ -604,6 +616,9 @@ function ReleaseCard({
             <span className="updates-release__signed">
               <Icon name="shieldCheck" />
               {t("admin.updates.signed")}
+            </span>
+            <span className="updates-mono updates-muted">
+              {t("admin.updates.keyId", { id: release.keyId })}
             </span>
             <span className="updates-mono updates-muted" title={release.sha256}>
               sha256 {release.sha256.slice(0, 4)}…{release.sha256.slice(-3)}

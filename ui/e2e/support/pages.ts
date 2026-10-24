@@ -117,7 +117,9 @@ export const MAIN_PAGES: readonly MainPage[] = [
     path: () => "/admin/server/updates",
     ready: async (page, _world, language) => {
       await heading("admin.updates.title")(page, _world, language);
-      await expect(page.getByRole("region", { name: t("admin.updates.history.title", {}, language) })).toBeVisible();
+      await expect(
+        page.getByRole("region", { name: t("admin.updates.history.title", {}, language) }),
+      ).toBeVisible();
     },
   },
   {

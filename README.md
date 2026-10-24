@@ -30,6 +30,9 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
   permissions, plus access to single folders, dashboards and data sources. Every request is
   checked on the server.
 - **Administration**: users, organizations, server and organization settings, audit log.
+- **Updates**: signed releases from GitHub or as an offline package, verified before anything is
+  installed, with a database backup first and an automatic return when the new version does not
+  start healthy (docs/operations/updates.md).
 - Interface in English and German, with light, dark and high contrast themes.
 
 | | |
@@ -48,6 +51,8 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | New panel, dark theme | New panel on a phone |
 | ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
+| ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) | |
+| Updates | |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
 
