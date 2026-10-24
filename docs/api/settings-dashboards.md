@@ -126,12 +126,27 @@ Server settings:
 | `sessions.lifetime_hours` | `720` | read-only (configuration) |
 | `sessions.idle_timeout_hours` | `168` | read-only (configuration) |
 | `dashboards.version_retention` | `100` | whole number 0 to 100000; 0 keeps every version |
+| `appearance.product_name` | `"Kalzit"` | text of 1 to 40 characters, one line |
+| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"`, or `#rrggbb` with at least 3:1 against the lightest light surface (luminance 1.0) and the darkest dark surface (luminance 0.00481) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
+| `appearance.density` | `"balanced"` | `"compact"`, `"balanced"`, `"comfortable"` |
+| `appearance.font_size` | `14` | `13`, `14`, `15`, `16` (body text in pixels) |
+| `appearance.start_page` | `"home"` | `"home"`, `"dashboards"`, `"explore"` |
+| `appearance.time_zone` | `"browser"` | `"browser"` or an IANA name |
+| `appearance.week_start` | `"monday"` | `"monday"`, `"sunday"`, `"saturday"` |
+| `signin.welcome` | `""` | text up to 280 characters, line breaks allowed, no other control characters |
+| `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
+| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
+
+The sign-in texts are plain text with a few Markdown marks (`**strong**`, `*emphasis*`,
+`[text](https://...)` to http, https and mailto); the UI builds them from elements and never as
+HTML.
 
 Organization settings:
 
 | Key | Default | Accepts |
 |---|---|---|
 | `dashboards.default_time_range` | `{"from": "now-6h", "to": "now"}` | a time range as in the dashboard model; new dashboards without `timeRange` get it |
+| `appearance.accent`, `appearance.density`, `appearance.font_size`, `appearance.start_page`, `appearance.time_zone`, `appearance.week_start` | `"inherit"` | `"inherit"` (the server's value) or what the server setting of the same key accepts |
 
 ### `GET /admin/settings`
 
@@ -157,6 +172,75 @@ Permission `settings:read`. Answers `Page<Setting>` with every organization sett
 
 Permission `settings:write`. Same body, answer and errors as the server route; a server setting's
 key is `404 not_found`. Audited as `settings.updated` with the organization id.
+
+### Export and import
+
+`GET /admin/settings/export` (server administrators) and `GET /orgs/{orgId}/settings/export`
+(`settings:write`, since it holds only what the caller may change) answer
+
+```ts
+interface SettingsDocument {
+  format: "kalzit.settings";
+  formatVersion: 1;
+  scope: "server" | "org";
+  exportedAt: number;
+  settings: Record<string, unknown>; // every editable setting (not from env or file) with its value
+}
+```
+
+Secrets never live in the settings registry, so none can be exported.
+
+`POST /admin/settings/import/preview` and `POST /orgs/{orgId}/settings/import/preview` (same
+access) take `{"document": SettingsDocument}` and answer `Page<ImportItem>` without changing
+anything:
+
+```ts
+interface ImportItem {
+  key: string;
+  status: "change" | "same" | "locked" | "invalid" | "unknown";
+  current: unknown;   // null for an unknown key
+  imported: unknown;
+  version: number;    // what a batch must name
+  message?: string;   // English, for locked and invalid
+}
+```
+
+A document of another format, version or scope is `422 validation` with field `document`.
+
+`POST /admin/settings/batch` and `POST /orgs/{orgId}/settings/batch` (server administrators;
+`settings:write`) take `{"changes": [{"key", "value", "version"}]}` (1 to 200, each key once) and
+apply all of them or none, answering `Page<Setting>` with the new versions. Every entry is checked
+before anything is written: an unknown key or a refused value is `422 validation` with field
+`changes`, a locked setting `409 conflict`, a stale version `409 version_conflict` with
+`current: Page<Setting>` of the named keys. Each change is audited as `settings.updated` with
+`"batch": true` in the summary. Undo is another batch with the previous values and the new
+versions.
+
+## Appearance and brand
+
+### `GET /branding`
+
+Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
+null, signIn: {welcome, notice}, defaultTheme, defaultLanguage, accent, density, fontSize}` with
+the server's values.
+
+### `GET /branding/logo`
+
+Public. The logo's bytes with its content type, `ETag` (the SHA-256) and `Cache-Control:
+no-cache`; `If-None-Match` answers `304`. `404 not_found` without a logo. The UI adds
+`?v=<sha256 prefix>` so a new logo is a new address.
+
+### `PUT /admin/branding/logo`, `DELETE /admin/branding/logo`
+
+Server administrators. `PUT` takes `{"contentType": "image/png" | "image/jpeg" | "image/webp",
+"data": base64}` of at most 256 KiB; the bytes must carry the type's signature (SVG is refused, as
+it can hold scripts). Answers `{contentType, sha256}`. `DELETE` answers `204`, `404` without a
+logo. Audited as `branding.logo_updated` (type, size, version) and `branding.logo_removed`.
+
+### `GET /orgs/{orgId}/appearance`
+
+Any member. The organization's look: `{accent, density, fontSize, startPage, timeZone, weekStart}`,
+each the organization's own value or, where it is `inherit`, the server's.
 
 ## Audit log
 
@@ -200,7 +284,7 @@ Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
 
-Actions written by these routes: `settings.updated`, `folder.created`, `folder.updated`,
+Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `folder.created`, `folder.updated`,
 `folder.trashed`, `folder.restored`, `folder.purged`, `dashboard.created`, `dashboard.saved`,
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
 `audit.expired`.

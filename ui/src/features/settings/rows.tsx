@@ -217,9 +217,16 @@ export function SettingRow({
 
   let control: ReactNode;
   if (badge !== undefined) {
+    const shown = shownValue(t, setting.key, setting.value, { language, timeZone });
+    // Addresses, paths and numbers in the code font; words ("not set", "On") in the text font.
+    const raw =
+      shown === String(setting.value) || (Array.isArray(setting.value) && setting.value.length > 0);
     control = (
-      <output className="settings-value" aria-labelledby={titleId}>
-        {shownValue(t, setting.key, setting.value, { language, timeZone })}
+      <output
+        className={raw ? "settings-value settings-value--code" : "settings-value"}
+        aria-labelledby={titleId}
+      >
+        {shown}
       </output>
     );
   } else {

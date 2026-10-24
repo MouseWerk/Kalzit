@@ -101,28 +101,25 @@ function LookPreview({
   return (
     <aside className="settings-preview" aria-label={t("settings.preview.label")}>
       <h3 className="settings-preview__title">{t("settings.preview.title")}</h3>
-      {(["dark", "light"] as const).map((scheme) => (
-        <div
-          key={`${scheme}-${look.accent}-${look.density}`}
-          className="look-preview"
-          data-scheme={scheme}
-          ref={apply}
-          aria-hidden="true"
-        >
-          <div className="look-preview__rail">
-            <span className="look-preview__bar look-preview__bar--strong" />
-            <span className="look-preview__bar" />
-            <span className="look-preview__bar" />
-          </div>
-          <div className="look-preview__main">
-            <span className="look-preview__heading" />
-            <div className="look-preview__card">
-              <span className="look-preview__link">{t("settings.preview.link")}</span>
-            </div>
-            <span className="look-preview__button">{t("settings.preview.button")}</span>
-          </div>
+      <div
+        key={`${look.accent}-${look.density}`}
+        className="look-preview"
+        ref={apply}
+        aria-hidden="true"
+      >
+        <div className="look-preview__rail">
+          <span className="look-preview__bar look-preview__bar--strong" />
+          <span className="look-preview__bar" />
+          <span className="look-preview__bar" />
         </div>
-      ))}
+        <div className="look-preview__main">
+          <span className="look-preview__heading" />
+          <div className="look-preview__card">
+            <span className="look-preview__link">{t("settings.preview.link")}</span>
+          </div>
+          <span className="look-preview__button">{t("settings.preview.button")}</span>
+        </div>
+      </div>
       <p className="settings-hint">
         {isAccentName(look.accent)
           ? t("settings.preview.vetted")

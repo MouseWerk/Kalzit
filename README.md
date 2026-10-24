@@ -29,7 +29,10 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 - **Organizations, teams and roles**: owner, admin, editor, viewer and own roles from fine-grained
   permissions, plus access to single folders, dashboards and data sources. Every request is
   checked on the server.
-- **Administration**: users, organizations, server and organization settings, audit log.
+- **Settings**: one page for the server, the organization and yourself, with search and a link
+  to every setting; appearance and brand (theme, checked accent colors, logo and name, density,
+  font size, sign-in texts) and export and import as JSON.
+- **Administration**: users, organizations, roles and teams, audit log.
 - Interface in English and German, with light, dark and high contrast themes.
 
 | | |
@@ -39,7 +42,7 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
-| Dashboards | Your account: sessions |
+| Dashboards | Profile and sessions |
 | ![Data source kinds as cards with their logos](docs/screenshots/data-source-kinds-light.png) | ![Data source kinds in the dark theme](docs/screenshots/data-source-kinds-dark.png) |
 | Adding a data source | Adding a data source, dark theme |
 | ![The panel editor with the preview, the query and the options](docs/screenshots/panel-editor-dark.png) | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) |
@@ -48,6 +51,10 @@ more sources such as Elasticsearch, plugins and alerting. The plan is in
 | New panel, dark theme | New panel on a phone |
 | ![Explore with a time series](docs/screenshots/explore.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Explore | Sign in |
+| ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
+| Settings, dark theme | Settings, light theme |
+| ![Settings on a phone](docs/screenshots/settings-phone.png) | |
+| Settings on a phone | |
 
 The screenshots come from the real application with demo data (`npm run screenshots` in `ui/`).
 

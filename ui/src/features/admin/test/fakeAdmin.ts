@@ -1104,7 +1104,8 @@ function settingsExtras(
   method: string,
   input: unknown,
 ): Response | undefined {
-  const locked = (setting: WireSetting) => !setting.editable || setting.source === "env" || setting.source === "file";
+  const locked = (setting: WireSetting) =>
+    !setting.editable || setting.source === "env" || setting.source === "file";
   if (id === "export" && method === "GET") {
     return json(200, {
       format: "kalzit.settings",
@@ -1112,7 +1113,9 @@ function settingsExtras(
       scope,
       exportedAt: T0,
       settings: Object.fromEntries(
-        settings.filter((setting) => !locked(setting)).map((setting) => [setting.key, setting.value]),
+        settings
+          .filter((setting) => !locked(setting))
+          .map((setting) => [setting.key, setting.value]),
       ),
     });
   }
@@ -1138,7 +1141,11 @@ function settingsExtras(
     return json(200, { items, nextCursor: null });
   }
   if (id === "batch" && method === "POST") {
-    const changes = body(input, ["changes"]).changes as { key: string; value: unknown; version: number }[];
+    const changes = body(input, ["changes"]).changes as {
+      key: string;
+      value: unknown;
+      version: number;
+    }[];
     for (const change of changes) {
       const stored = settings.find((setting) => setting.key === change.key);
       if (stored === undefined) {

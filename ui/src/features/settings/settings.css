@@ -295,11 +295,14 @@
   .settings-value {
     max-width: 24rem;
     color: var(--text-muted);
+    overflow-wrap: anywhere;
+    text-align: end;
+  }
+
+  .settings-value--code {
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
     font-variant-ligatures: none;
-    overflow-wrap: anywhere;
-    text-align: end;
   }
 
   .settings-hint {
@@ -346,8 +349,9 @@
   /* Segmented choice (the theme): the chosen part carries a quiet fill and weight. */
   /* The parts stand on the border color with a hairline gap, so no part needs a side border. */
   .settings-segmented {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-auto-columns: auto;
+    grid-auto-flow: column;
     gap: var(--space-px);
     overflow: hidden;
     border: var(--border-width) solid var(--border-strong);
@@ -532,7 +536,7 @@
     text-transform: uppercase;
   }
 
-  /* A small page in one scheme: its own color-scheme, so the tokens resolve light or dark. */
+  /* A small page in the current theme, with the chosen accent and density on it. */
   .look-preview {
     display: flex;
     height: var(--size-preview-height);
@@ -541,14 +545,6 @@
     border-radius: var(--radius-md);
     background: var(--bg);
     color: var(--text);
-  }
-
-  .look-preview[data-scheme="light"] {
-    color-scheme: light;
-  }
-
-  .look-preview[data-scheme="dark"] {
-    color-scheme: dark;
   }
 
   .look-preview__rail {
@@ -698,8 +694,17 @@
       display: grid;
     }
 
-    .settings-row__control {
+    .settings-row__control,
+    .settings-accent,
+    .settings-swatches,
+    .settings-logo {
       justify-content: flex-start;
+    }
+
+    /* Two by two, so no part of the choice is left on a line of its own. */
+    .settings-segmented {
+      grid-template-columns: 1fr 1fr;
+      grid-auto-flow: row;
     }
 
     .settings-field {

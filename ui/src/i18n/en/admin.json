@@ -343,6 +343,7 @@
   "admin.auditArea.user": "All user changes",
   "admin.auditArea.org": "All organization changes",
   "admin.auditArea.settings": "All setting changes",
+  "admin.auditArea.branding": "All logo changes",
   "admin.auditArea.folder": "All folder changes",
   "admin.auditArea.dashboard": "All dashboard changes",
   "admin.auditArea.datasource": "All data source changes",
