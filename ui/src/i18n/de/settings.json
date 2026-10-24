@@ -125,7 +125,7 @@
   "settings.planned.email": "Der Mailversand über SMTP kommt mit Meilenstein M5, für Einladungen und vergessene Passwörter. Server, Port, Verschlüsselung und Absender werden nach einer Testmail gemeinsam mit einem Speichern-Knopf gesichert.",
   "settings.planned.signinPage": "Anmeldeseite gestalten",
   "settings.updates.text": "Neue Versionen suchen und installieren hat eine eigene Seite.",
-  "settings.updates.pending": "Die Update-Seite entsteht gerade und kommt mit einer späteren Version.",
+  "settings.updates.open": "Updates öffnen",
   "settings.transfer.export": "Exportieren",
   "settings.transfer.exportServer": "Server-Einstellungen",
   "settings.transfer.exportServerHint": "Alles auf diesem Server, was du ändern darfst, ohne Werte aus kalzit.toml oder der Umgebung.",

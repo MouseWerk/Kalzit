@@ -144,6 +144,41 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Saved versions kept per dashboard; older ones are deleted on save. 0 keeps all.",
     },
     SettingDef {
+        key: "updates.channel",
+        scope: Scope::Server,
+        default: || json!("stable"),
+        ui_editable: true,
+        description: "Which releases updates offer: stable releases only, or previews too.",
+    },
+    SettingDef {
+        key: "updates.check_daily",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Look for a new version once a day (asks GitHub; off by default, nothing else is sent).",
+    },
+    SettingDef {
+        key: "updates.window",
+        scope: Scope::Server,
+        default: || json!("02:00-04:00"),
+        ui_editable: true,
+        description: "Maintenance window for planned installations, HH:MM-HH:MM in the administrator's local time.",
+    },
+    SettingDef {
+        key: "updates.keep_versions",
+        scope: Scope::Server,
+        default: || json!(3),
+        ui_editable: true,
+        description: "Previous versions kept with their database backups, for a return.",
+    },
+    SettingDef {
+        key: "updates.health_timeout_secs",
+        scope: Scope::Server,
+        default: || json!(60),
+        ui_editable: true,
+        description: "How long a new version has to report healthy before Kalzit returns to the previous one.",
+    },
+    SettingDef {
         key: "dashboards.default_time_range",
         scope: Scope::Org,
         default: || json!({ "from": "now-6h", "to": "now" }),
@@ -390,6 +425,9 @@ enum Rule {
         max_chars: usize,
     },
     TimeRange,
+    Bool,
+    /// `HH:MM-HH:MM`, two different times of day.
+    TimeWindow,
     Text {
         max_chars: usize,
         multiline: bool,
@@ -402,6 +440,15 @@ enum Rule {
     Configuration,
     /// An organization's appearance: `inherit` (the server's value) or what the server accepts.
     Inherit(Box<Rule>),
+}
+
+fn time_of_day(text: &str) -> Option<u32> {
+    let (h, m) = text.split_once(':')?;
+    if h.len() != 2 || m.len() != 2 {
+        return None;
+    }
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
 }
 
 /// The value of an organization's appearance setting that follows the server.
@@ -445,6 +492,12 @@ fn rule(key: &str) -> Option<Rule> {
         "appearance.week_start" => Rule::OneOf(crate::routes::preferences::WEEK_STARTS),
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
         "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
+        "updates.channel" => Rule::OneOf(&["stable", "preview"]),
+        "updates.check_daily" => Rule::Bool,
+        "updates.window" => Rule::TimeWindow,
+        "updates.keep_versions" => Rule::Int { min: 1, max: 20 },
+        // Long enough for migrations of a large database, short enough that a hang is noticed.
+        "updates.health_timeout_secs" => Rule::Int { min: 15, max: 1800 },
         _ => return None,
     })
 }
@@ -486,7 +539,9 @@ fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
             Some(s) if s == "browser" || crate::routes::preferences::is_time_zone_name(s) => Ok(()),
             _ => Err(format!("{key} must be an IANA time zone name such as Europe/Berlin, or browser")),
         },
-        Rule::Int { .. } | Rule::OneOf(_) | Rule::Strings { .. } | Rule::TimeRange => check_basic(key, rule, value),
+        Rule::Int { .. } | Rule::OneOf(_) | Rule::Strings { .. } | Rule::TimeRange | Rule::TimeWindow | Rule::Bool => {
+            check_basic(key, rule, value)
+        }
     }
 }
 
@@ -517,6 +572,17 @@ fn check_basic(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
             Ok(())
         }
         Rule::TimeRange => crate::dashboards::model::check_time_range(value).map_err(|e| format!("{key}: {e}")),
+        Rule::TimeWindow => {
+            let window = value.as_str().and_then(|s| s.split_once('-'));
+            match window.and_then(|(a, b)| Some((time_of_day(a)?, time_of_day(b)?))) {
+                Some((a, b)) if a != b => Ok(()),
+                _ => Err(format!("{key} must be two different times like 02:00-04:00")),
+            }
+        }
+        Rule::Bool => match value {
+            Value::Bool(_) => Ok(()),
+            _ => Err(format!("{key} must be true or false")),
+        },
         _ => Err(format!("{key} has no plain rule")),
     }
 }

@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use kalzit::config::{Config, LogConfig};
+use kalzit::server::Outcome;
+use kalzit::updates::boot::{self, Boot};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -27,12 +30,37 @@ enum Command {
         #[command(subcommand)]
         action: SecretsCommand,
     },
+    /// Install updates from the command line (where the server does not install on its own).
+    Update {
+        #[command(subcommand)]
+        action: UpdateCommand,
+    },
 }
 
 #[derive(Subcommand)]
 enum SecretsCommand {
     /// Re-encrypt every stored secret with a new key. Stop the server first.
     Rotate,
+}
+
+#[derive(Subcommand)]
+enum UpdateCommand {
+    /// Show the installed version, the release ready to install and the kept versions.
+    Status,
+    /// Install the downloaded or uploaded release. Stop the server first, start it afterwards.
+    Apply {
+        /// PostgreSQL: you backed the database up yourself (Kalzit cannot).
+        #[arg(long)]
+        acknowledge_no_backup: bool,
+    },
+    /// Return to a kept version. Stop the server first, start it afterwards.
+    Rollback {
+        version: String,
+        /// Put back the database backup taken when that version was left (needed when the
+        /// database changed since; what changed since is lost).
+        #[arg(long)]
+        restore_database: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -44,6 +72,22 @@ fn main() -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             eprintln!("kalzit: configuration error: {e:#}");
+            // The first start of a new version that refuses the configuration returns to the
+            // previous version, which accepted it.
+            if matches!(cli.command, None | Some(Command::Serve))
+                && let Some(data_dir) = Config::data_dir_hint(cli.config.as_deref())
+            {
+                // The configured logging did not load; what the return reports goes to stderr.
+                init_logging(&LogConfig::default());
+                if let Some(exe) = boot::after_config_error(&data_dir, &format!("{e:#}")) {
+                    eprintln!(
+                        "kalzit: this version refused the configuration after an update; returning to the previous \
+                         version ({})",
+                        exe.display()
+                    );
+                    return kalzit::updates::platform::relaunch(&exe);
+                }
+            }
             return ExitCode::from(2);
         }
     };
@@ -57,13 +101,7 @@ fn main() -> ExitCode {
         }
         Command::Secrets { action: SecretsCommand::Rotate } => {
             init_logging(&config.log);
-            let runtime = match tokio::runtime::Runtime::new() {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("kalzit: cannot start the async runtime: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
+            let Some(runtime) = runtime() else { return ExitCode::FAILURE };
             match runtime.block_on(kalzit::secrets::rotate(&config)) {
                 Ok(rotation) => {
                     println!("{rotation}");
@@ -75,22 +113,60 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Serve => {
+        Command::Update { action } => {
             init_logging(&config.log);
-            let runtime = match tokio::runtime::Runtime::new() {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("kalzit: cannot start the async runtime: {e}");
-                    return ExitCode::FAILURE;
+            let Some(runtime) = runtime() else { return ExitCode::FAILURE };
+            let result = match action {
+                UpdateCommand::Status => Ok(kalzit::updates::cli::status(&config)),
+                UpdateCommand::Apply { acknowledge_no_backup } => {
+                    runtime.block_on(kalzit::updates::cli::apply(&config, acknowledge_no_backup))
+                }
+                UpdateCommand::Rollback { version, restore_database } => {
+                    runtime.block_on(kalzit::updates::cli::rollback(&config, &version, restore_database))
                 }
             };
-            match runtime.block_on(kalzit::server::run(config)) {
-                Ok(()) => ExitCode::SUCCESS,
+            match result {
+                Ok(text) => {
+                    println!("{}", text.trim_end());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("kalzit: {e:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Command::Serve => {
+            init_logging(&config.log);
+            // An update in progress decides first, before anything opens the database: the
+            // first start of a new version runs as a trial, a failed one returns.
+            let trial = match boot::guard(&config) {
+                Boot::Run(trial) => trial,
+                Boot::Relaunch(exe) => return kalzit::updates::platform::relaunch(&exe),
+            };
+            let Some(runtime) = runtime() else { return ExitCode::FAILURE };
+            let outcome = runtime.block_on(kalzit::server::run(config, trial));
+            // Every task and with it every handle on the data directory ends here, before another
+            // binary starts on it.
+            runtime.shutdown_timeout(Duration::from_secs(5));
+            match outcome {
+                Ok(Outcome::Stopped) => ExitCode::SUCCESS,
+                Ok(Outcome::Handover(handover)) => boot::handover(&handover),
                 Err(e) => {
                     tracing::error!("{e:#}");
                     ExitCode::FAILURE
                 }
             }
+        }
+    }
+}
+
+fn runtime() -> Option<tokio::runtime::Runtime> {
+    match tokio::runtime::Runtime::new() {
+        Ok(r) => Some(r),
+        Err(e) => {
+            eprintln!("kalzit: cannot start the async runtime: {e}");
+            None
         }
     }
 }

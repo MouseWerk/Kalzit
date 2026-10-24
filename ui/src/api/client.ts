@@ -185,7 +185,10 @@ export async function request(
   if (options?.signal !== undefined) {
     init.signal = options.signal;
   }
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    // An upload: the browser sets the multipart type with its boundary.
+    init.body = body;
+  } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }

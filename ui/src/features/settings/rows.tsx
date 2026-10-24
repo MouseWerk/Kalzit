@@ -48,6 +48,11 @@ function choicesOf(t: Translate, key: string): Choice[] | undefined {
       return START_PAGES.map((value) => ({ value, label: t(`settings.startPage.${value}`) }));
     case "appearance.week_start":
       return WEEK_STARTS.map((value) => ({ value, label: t(`settings.weekStart.${value}`) }));
+    case "updates.channel":
+      return [
+        { value: "stable", label: t("admin.updates.channel.stable") },
+        { value: "preview", label: t("admin.updates.channel.preview") },
+      ];
     case "log.format":
       return [
         { value: "text", label: "Text" },

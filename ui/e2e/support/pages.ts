@@ -119,6 +119,16 @@ export const MAIN_PAGES: readonly MainPage[] = [
   { name: "audit log", path: () => "/admin/audit", ready: heading("admin.audit.title") },
   { name: "users", path: () => "/admin/server/users", ready: heading("admin.users.title") },
   {
+    name: "updates",
+    path: () => "/admin/server/updates",
+    ready: async (page, _world, language) => {
+      await heading("admin.updates.title")(page, _world, language);
+      await expect(
+        page.getByRole("region", { name: t("admin.updates.history.title", {}, language) }),
+      ).toBeVisible();
+    },
+  },
+  {
     name: "organizations",
     path: () => "/admin/server/organizations",
     ready: heading("admin.orgs.title"),

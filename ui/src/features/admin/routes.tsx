@@ -94,6 +94,13 @@ const serverSettingsRoute = createRoute({
   },
 });
 
+// The settings navigation links here (`/admin/server/updates`).
+const updatesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/server/updates",
+  component: lazyRouteComponent(() => import("./server/UpdatesPage"), "UpdatesPage"),
+});
+
 const serverAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/audit",
@@ -113,6 +120,7 @@ export const adminRoutes = [
     usersRoute,
     orgsRoute,
     serverSettingsRoute,
+    updatesRoute,
     serverAuditRoute,
   ]),
 ] as const;
