@@ -246,7 +246,6 @@
   "dashboards.panels.empty.noValues": "No number fields in the result.",
   "dashboards.panels.unit": "Unit",
   "dashboards.panels.unitHint": "Shown after values, for example ms, % or EUR.",
-  "dashboards.panels.lineWidth": "Line width",
   "dashboards.panels.showLegend": "Show legend",
   "dashboards.panels.reducer": "Value",
   "dashboards.panels.reducer.last": "Last",

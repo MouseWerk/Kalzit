@@ -1,0 +1,127 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "DashboardEdit.dc.html": {
+      "expand": "fill",
+      "h": 1040,
+      "title": "Dashboard (edit mode)",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "DataSourceNew.dc.html": {
+      "expand": "fill",
+      "h": 1200,
+      "title": "Data sources (add and configure)",
+      "w": 1440,
+      "x": 0,
+      "y": 7120
+    },
+    "DataSources.dc.html": {
+      "expand": "fill",
+      "h": 1100,
+      "title": "Data sources (list)",
+      "w": 1440,
+      "x": 1520,
+      "y": 5520
+    },
+    "Explore.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "title": "Explore",
+      "w": 1440,
+      "x": 0,
+      "y": 4400
+    },
+    "Main.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "title": "Dashboard (view)",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "PanelEditor.dc.html": {
+      "expand": "fill",
+      "h": 1920,
+      "title": "Panel editor (full page)",
+      "w": 1440,
+      "x": 0,
+      "y": 2360
+    },
+    "Settings.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "title": "Server settings",
+      "w": 1440,
+      "x": 1520,
+      "y": 4400
+    },
+    "Start.dc.html": {
+      "expand": "fill",
+      "h": 1040,
+      "title": "Start page",
+      "w": 1440,
+      "x": 1520,
+      "y": 2360
+    },
+    "Updates.dc.html": {
+      "expand": "fill",
+      "h": 1480,
+      "title": "Updates (online and offline)",
+      "w": 1440,
+      "x": 0,
+      "y": 5520
+    },
+    "DashboardEditSelected.dc.html": {
+      "expand": "fill",
+      "h": 2240,
+      "title": "Dashboard (edit mode, panel selected)",
+      "w": 1440,
+      "x": 3040,
+      "y": 0
+    },
+    "DataChat.dc.html": {
+      "expand": "fill",
+      "h": 1400,
+      "title": "Fragen (data chat, preview)",
+      "w": 1440,
+      "x": 1520,
+      "y": 7120
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-24T09:00:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "title": {
+      "kind": "title1",
+      "maxW": 4480,
+      "text": "Kalzit design blueprint: dashboard, edit, panel editor, start, Explore",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "DashboardEdit.dc.html",
+    "DashboardEditSelected.dc.html",
+    "PanelEditor.dc.html",
+    "Start.dc.html",
+    "Explore.dc.html",
+    "Settings.dc.html",
+    "Updates.dc.html",
+    "DataSources.dc.html",
+    "DataSourceNew.dc.html",
+    "DataChat.dc.html"
+  ],
+  "pages": [],
+  "title": "Kalzit Design Blueprint"
+}

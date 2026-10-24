@@ -246,7 +246,6 @@
   "dashboards.panels.empty.noValues": "Keine Zahlenfelder im Ergebnis.",
   "dashboards.panels.unit": "Einheit",
   "dashboards.panels.unitHint": "Steht hinter den Werten, etwa ms, % oder EUR.",
-  "dashboards.panels.lineWidth": "Linienstärke",
   "dashboards.panels.showLegend": "Legende anzeigen",
   "dashboards.panels.reducer": "Wert",
   "dashboards.panels.reducer.last": "Letzter",

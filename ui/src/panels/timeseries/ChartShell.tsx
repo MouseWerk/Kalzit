@@ -12,20 +12,21 @@ import { useEscapeLayer } from "../../lib/layers";
 import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
 import { useSharedCursor } from "../crosshair";
-import { toneClass } from "../fieldConfig/fieldConfig";
 import { Legend, type LegendItem, WithLegend } from "../fieldConfig/Legend";
 import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
+import type { SeriesStyle } from "./styles";
 import "../panels.css";
 import "../viz.css";
 import { zoneOption } from "../../lib/timeSettings";
 
 export interface TimeSeriesChartProps {
   series: readonly Series[];
+  /** How each series is drawn, resolved from its graph style options (`styles.ts`). */
+  styles: readonly SeriesStyle[];
   timeRange: { from: number; to: number };
   title: string;
-  lineWidth: number;
   legend: LegendOptions;
   tooltip: TooltipMode;
   /** A value of series `index` as text, with its unit, decimals and mappings. */
@@ -39,11 +40,6 @@ export interface TimeSeriesChartProps {
 /** Series colors cycle through this many palette entries (`--chart-1` ... `--chart-8`). */
 export const SERIES_COLORS = 8;
 
-/** The color class of a series: its fixed color from the field options, else its palette entry. */
-export function seriesClass(series: Series, index: number): string {
-  return toneClass(series.options?.color, index);
-}
-
 /** Where the plot area lies inside the chart box, in CSS pixels. */
 export interface PlotArea {
   left: number;
@@ -52,6 +48,8 @@ export interface PlotArea {
 
 interface ChartShellProps {
   series: readonly Series[];
+  /** Each series' swatch in legend and tooltip comes from its style. */
+  styles: readonly SeriesStyle[];
   title: string;
   legend: LegendOptions;
   tooltip: TooltipMode;
@@ -75,6 +73,7 @@ interface ChartShellProps {
  */
 export function ChartShell({
   series,
+  styles,
   title,
   legend,
   tooltip,
@@ -205,7 +204,7 @@ export function ChartShell({
         values[key] = Number.isNaN(value) ? "" : format(index, value);
       }
     }
-    return { name: s.name, colorClass: seriesClass(s, index), values };
+    return { name: s.name, colorClass: styles[index]?.swatchClass ?? "", values };
   });
 
   return (
@@ -295,9 +294,7 @@ export function ChartShell({
               </div>
               {shown.map((row) => (
                 <div key={row.index} className="ts__tooltip-row">
-                  <span
-                    className={`ts__swatch ${seriesClass(series[row.index] as Series, row.index)}`}
-                  />
+                  <span className={`ts__swatch ${styles[row.index]?.swatchClass ?? ""}`} />
                   <span className="truncate">{row.name}</span>
                   <span className="ts__tooltip-value">
                     {Number.isNaN(row.value) ? "" : format(row.index, row.value)}

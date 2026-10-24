@@ -3,7 +3,6 @@
     "type": "timeseries",
     "options": {
       "seriesName": "",
-      "lineWidth": 1,
       "legend": {
         "mode": "list",
         "placement": "bottom",
@@ -22,7 +21,6 @@
     "type": "timeseries",
     "options": {
       "seriesName": "",
-      "lineWidth": 1,
       "legend": {
         "mode": "list",
         "placement": "bottom",
@@ -101,6 +99,80 @@
     }
   },
   {
+    "type": "timeseries",
+    "options": {
+      "seriesName": "",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "stat",
     "options": {
       "reducer": "last",
@@ -184,6 +256,75 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "stat",
+    "options": {
+      "reducer": "last",
+      "colorMode": "none",
+      "graphMode": "area",
+      "textMode": "auto"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -275,6 +416,73 @@
     }
   },
   {
+    "type": "gauge",
+    "options": {
+      "reducer": "last",
+      "showThresholdMarkers": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "bargauge",
     "options": {
       "reducer": "last",
@@ -356,6 +564,74 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "bargauge",
+    "options": {
+      "reducer": "last",
+      "displayMode": "basic",
+      "orientation": "horizontal"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -461,6 +737,80 @@
     }
   },
   {
+    "type": "bar",
+    "options": {
+      "showValues": false,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "table",
     "options": {
       "columnFilters": false,
@@ -542,6 +892,74 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "table",
+    "options": {
+      "columnFilters": false,
+      "pagination": false,
+      "pageSize": 50
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -651,6 +1069,82 @@
     }
   },
   {
+    "type": "piechart",
+    "options": {
+      "pieType": "pie",
+      "reducer": "last",
+      "labels": "percent",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "histogram",
     "options": {
       "combine": false,
@@ -744,6 +1238,80 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "histogram",
+    "options": {
+      "combine": false,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -845,6 +1413,78 @@
     }
   },
   {
+    "type": "heatmap",
+    "options": {
+      "mode": "calculate",
+      "xBuckets": 40,
+      "yBuckets": 10,
+      "scale": "linear",
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "state-timeline",
     "options": {
       "legend": {
@@ -938,6 +1578,80 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "state-timeline",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -1071,6 +1785,80 @@
       "tooltip": {
         "mode": "all"
       },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "status-history",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
       "colorStateWords": false
     },
     "fieldConfig": {
@@ -1158,6 +1946,70 @@
     }
   },
   {
+    "type": "documents",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "schema",
     "options": {},
     "fieldConfig": {
@@ -1231,6 +2083,70 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "schema",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -1320,6 +2236,72 @@
     }
   },
   {
+    "type": "distribution",
+    "options": {
+      "path": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "document",
     "options": {
       "titlePath": ""
@@ -1397,6 +2379,72 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -1500,6 +2548,82 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]
@@ -1691,6 +2815,82 @@
   {
     "type": "hierarchy",
     "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "off",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
       "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "colorBy": "label",
       "sizeBy": "size",
@@ -1858,6 +3058,74 @@
   {
     "type": "path",
     "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "path",
+    "options": {
       "caption": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "variable": "customer",
       "variableProperty": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -1947,6 +3215,73 @@
             "thresholds": null,
             "mappings": null,
             "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "text",
+    "options": {
+      "mode": "markdown",
+      "content": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
           }
         }
       ]

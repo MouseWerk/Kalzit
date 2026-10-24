@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard edit mode, panel selected</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit;cursor:pointer}
+summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
+details[open]>summary .chev{transform:rotate(90deg)}
+:focus{outline:none}:focus-visible{outline:2px solid #6f6f77;outline-offset:1px}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 2240px; display: flex; flex-direction: column; font-size: 13px">
+
+<!-- Top bar -->
+<header style="height: 48px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 12px; padding: 0 16px; box-sizing: border-box; flex-wrap: wrap">
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8f8f97">
+<a href="#">Dashboards</a><span aria-hidden="true">/</span><a href="#">Vertrieb</a><span aria-hidden="true">/</span><span style="color: #ececef; font-weight: 500">Umsatz nach Region</span>
+<span style="margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #232327; color: #c9c9cf; font-size: 11px">Bearbeiten</span>
+</nav>
+<div style="flex: 1"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Einstellungen</button>
+<a href="Main.dc.html" style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf; display: flex; align-items: center; box-sizing: border-box">Bearbeiten beenden</a>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Dashboard speichern</button>
+</header>
+
+<div style="display: flex; flex: 1; min-height: 0">
+
+<!-- Canvas -->
+<main aria-label="Dashboard canvas" style="flex: 1 1 auto; min-width: 0; padding: 16px 20px 24px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; align-content: start">
+
+<!-- Row: Überblick -->
+<section aria-label="Zeile Überblick" style="grid-column: span 12; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; color: #c9c9cf; border-bottom: 1px solid #222226">
+<button aria-label="Zeile einklappen" style="width: 22px; height: 22px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Überblick</h2><span style="color: #6f6f77; font-size: 12px">5 Panels</span>
+<div style="flex: 1"></div>
+<button aria-label="Zeileneinstellungen" style="width: 26px; height: 26px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg></button>
+</section>
+
+<!-- Selected panel -->
+<section aria-label="Panel Umsatz über Zeit, ausgewählt" aria-current="true" style="grid-column: span 6; background: #1b1b1e; border: 1px solid #3a3a40; border-radius: 12px; padding: 12px 14px 10px; height: 236px; box-sizing: border-box; position: relative; margin-top: 6px">
+<!-- Floating mini toolbar -->
+<div role="toolbar" aria-label="Panel-Aktionen" style="position: absolute; top: -17px; right: 12px; display: flex; align-items: center; gap: 2px; padding: 3px; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.45)">
+<a href="PanelEditor.dc.html" style="height: 24px; padding: 0 8px; border-radius: 6px; display: flex; align-items: center; gap: 6px; color: #ececef; font-size: 12px; background: #232327"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path><path d="M13.5 6.5l4 4"></path></svg>Bearbeiten</a>
+<button aria-label="Duplizieren" style="width: 26px; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></button>
+<button aria-label="Mehr" aria-haspopup="menu" style="width: 26px; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button>
+</div>
+<header style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="color: #6f6f77; cursor: grab; display: grid"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg></span><h2 style="margin: 0; font-size: 13px; font-weight: 600">Umsatz über Zeit</h2><span style="font-size: 11px; color: #8f8f97; padding: 1px 6px; border-radius: 999px; background: #232327">Letzte 7 Tage, 1 W. zurück</span></header>
+<div style="display: flex; gap: 14px; margin-top: 8px; font-size: 11px; color: #a6a6ae"><span style="display: flex; align-items: center; gap: 6px"><span style="width: 10px; height: 2px; background: #6aa3d8"></span>Umsatz</span><span style="display: flex; align-items: center; gap: 6px"><span style="width: 10px; height: 0; border-top: 2px dashed #8f8f97"></span>Vorjahr</span></div>
+<div style="display: flex; gap: 6px; margin-top: 6px">
+<div style="display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: #6f6f77; height: 128px; text-align: right; width: 34px"><span>300 k</span><span>200 k</span><span>100 k</span><span>0</span></div>
+<svg role="img" aria-label="Liniendiagramm Umsatz über Zeit" width="100%" height="128" viewBox="0 0 400 128" preserveAspectRatio="none" style="flex: 1"><path d="M0 4H400M0 45H400M0 86H400M0 127H400" stroke="#232327" stroke-width="1"></path><path d="M0 96 C50 92 80 84 120 80 S200 70 240 72 S320 58 400 54" fill="none" stroke="#8f8f97" stroke-width="1.5" stroke-dasharray="4 4"></path><path d="M0 90 C60 80 90 60 140 62 S220 40 270 44 S340 20 400 26" fill="none" stroke="#6aa3d8" stroke-width="2"></path></svg>
+</div>
+<div style="display: flex; justify-content: space-between; padding-left: 40px; font-size: 10px; color: #6f6f77; margin-top: 4px"><span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span></div>
+<!-- Resize handles -->
+<span aria-hidden="true" style="position: absolute; left: -4px; top: -4px; width: 7px; height: 7px; background: #141416; border: 1px solid #8f8f97; border-radius: 2px"></span>
+<span aria-hidden="true" style="position: absolute; right: -4px; top: -4px; width: 7px; height: 7px; background: #141416; border: 1px solid #8f8f97; border-radius: 2px"></span>
+<span aria-hidden="true" style="position: absolute; left: -4px; bottom: -4px; width: 7px; height: 7px; background: #141416; border: 1px solid #8f8f97; border-radius: 2px"></span>
+<span aria-hidden="true" style="position: absolute; right: -4px; bottom: -4px; width: 7px; height: 7px; background: #141416; border: 1px solid #8f8f97; border-radius: 2px; cursor: nwse-resize"></span>
+<span aria-hidden="true" style="position: absolute; right: -3px; top: calc(50% - 10px); width: 5px; height: 20px; background: #141416; border: 1px solid #8f8f97; border-radius: 3px; cursor: ew-resize"></span>
+<span aria-hidden="true" style="position: absolute; bottom: -3px; left: calc(50% - 10px); width: 20px; height: 5px; background: #141416; border: 1px solid #8f8f97; border-radius: 3px; cursor: ns-resize"></span>
+<span style="position: absolute; right: 12px; bottom: 10px; font-size: 10px; color: #8f8f97; font-family: 'JetBrains Mono', monospace; background: #232327; padding: 1px 5px; border-radius: 4px">6 × 8</span>
+</section>
+
+<section aria-label="Panel Bestellungen je Region" style="grid-column: span 6; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px 10px; height: 236px; box-sizing: border-box; margin-top: 6px; display: flex; flex-direction: column">
+<header style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="color: #4a4a52; display: grid"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg></span><h2 style="margin: 0; font-size: 13px; font-weight: 500">Bestellungen je Region</h2></header>
+<div style="flex: 1; display: flex; align-items: flex-end; gap: 18px; margin-top: 14px; padding: 0 8px; border-bottom: 1px solid #232327"><div style="flex: 1; height: 82%; background: #6aa3d8; border-radius: 3px 3px 0 0"></div><div style="flex: 1; height: 56%; background: #6aa3d8; border-radius: 3px 3px 0 0"></div><div style="flex: 1; height: 68%; background: #6aa3d8; border-radius: 3px 3px 0 0"></div><div style="flex: 1; height: 41%; background: #6aa3d8; border-radius: 3px 3px 0 0"></div></div>
+<div style="display: flex; gap: 18px; padding: 6px 8px 0; font-size: 11px; color: #8f8f97; text-align: center"><span style="flex: 1">Nord 1.284</span><span style="flex: 1">Süd 872</span><span style="flex: 1">West 1.061</span><span style="flex: 1">Ost 640</span></div>
+</section>
+
+<section aria-label="Panel Umsatz gesamt" style="grid-column: span 3; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 136px; box-sizing: border-box">
+<h2 style="margin: 0; font-size: 13px; font-weight: 500; color: #c9c9cf">Umsatz gesamt</h2>
+<p style="margin: 18px 0 4px; font-size: 28px; font-weight: 600; letter-spacing: -0.01em">1,84 Mio. €</p>
+<span style="font-size: 12px; color: #4fb477">+6,2 % zur Vorwoche</span>
+</section>
+<section aria-label="Panel Durchschnittlicher Bestellwert" style="grid-column: span 3; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 136px; box-sizing: border-box">
+<h2 style="margin: 0; font-size: 13px; font-weight: 500; color: #c9c9cf">Ø Bestellwert</h2>
+<p style="margin: 18px 0 4px; font-size: 28px; font-weight: 600; letter-spacing: -0.01em">86,40 €</p>
+<span style="font-size: 12px; color: #d9b45b">−1,1 % zur Vorwoche</span>
+</section>
+<section aria-label="Panel Je Region und Produkt" style="grid-column: span 6; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 136px; box-sizing: border-box">
+<h2 style="margin: 0 0 8px; font-size: 13px; font-weight: 500; color: #c9c9cf">Je Region und Produkt</h2>
+<table style="width: 100%; border-collapse: collapse; font-size: 12px; color: #c9c9cf">
+<thead><tr style="color: #8f8f97; text-align: left"><th style="font-weight: 500; padding: 3px 0; border-bottom: 1px solid #232327">Region</th><th style="font-weight: 500; border-bottom: 1px solid #232327">Produkt</th><th style="font-weight: 500; text-align: right; border-bottom: 1px solid #232327">Umsatz</th></tr></thead>
+<tbody><tr><td style="padding: 3px 0">Nord</td><td>Abo Pro</td><td style="text-align: right">412.300 €</td></tr><tr><td style="padding: 3px 0">West</td><td>Abo Pro</td><td style="text-align: right">351.900 €</td></tr><tr><td style="padding: 3px 0">Süd</td><td>Lizenz</td><td style="text-align: right">208.450 €</td></tr></tbody>
+</table>
+</section>
+
+<!-- Row: Details (collapsed) -->
+<section aria-label="Zeile Details, eingeklappt" style="grid-column: span 12; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; color: #c9c9cf; border-bottom: 1px solid #222226; margin-top: 4px">
+<button aria-label="Zeile ausklappen" aria-expanded="false" style="width: 22px; height: 22px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Details</h2><span style="color: #6f6f77; font-size: 12px">3 Panels, eingeklappt</span>
+</section>
+
+<!-- Row: Kundenbeziehungen -->
+<section aria-label="Zeile Kundenbeziehungen" style="grid-column: span 12; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; color: #c9c9cf; border-bottom: 1px solid #222226">
+<button aria-label="Zeile einklappen" style="width: 22px; height: 22px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Kundenbeziehungen</h2><span style="color: #6f6f77; font-size: 12px">2 Panels, 1 ausgeblendet</span>
+</section>
+<section aria-label="Panel Kunden und Händler" style="grid-column: span 12; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 248px; box-sizing: border-box; display: flex; flex-direction: column">
+<header style="display: flex; align-items: center; gap: 8px"><h2 style="margin: 0; font-size: 13px; font-weight: 500; color: #c9c9cf">Kunden und Händler</h2><span style="font-size: 11px; color: #8f8f97">Neo4j, 38 Knoten, 61 Kanten</span></header>
+<svg role="img" aria-label="Graph Kunden und Händler" width="100%" height="190" viewBox="0 0 900 190" preserveAspectRatio="xMidYMid meet" style="margin-top: 8px">
+<g stroke="#3a3a40" stroke-width="1.2"><path d="M450 95L300 50M450 95L310 150M450 95L610 45M450 95L600 150M300 50L170 70M310 150L180 135M610 45L750 60M600 150L740 140M750 60L740 140M170 70L180 135"></path></g>
+<g fill="#6aa3d8"><circle cx="450" cy="95" r="14"></circle></g>
+<g fill="#1b1b1e" stroke="#6aa3d8" stroke-width="1.6"><circle cx="300" cy="50" r="9"></circle><circle cx="310" cy="150" r="9"></circle><circle cx="610" cy="45" r="9"></circle><circle cx="600" cy="150" r="9"></circle></g>
+<g fill="#1b1b1e" stroke="#c9a46b" stroke-width="1.6"><circle cx="170" cy="70" r="7"></circle><circle cx="180" cy="135" r="7"></circle><circle cx="750" cy="60" r="7"></circle><circle cx="740" cy="140" r="7"></circle></g>
+<g fill="#a6a6ae" font-size="11" font-family="Inter, sans-serif"><text x="472" y="99">Nordwind GmbH</text><text x="250" y="34">Händler Kiel</text><text x="262" y="174">Händler Bremen</text><text x="620" y="30">Händler Leipzig</text><text x="612" y="174">Händler Dresden</text></g>
+</svg>
+</section>
+
+<!-- Row: Kanäle -->
+<section aria-label="Zeile Kanäle" style="grid-column: span 12; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; color: #c9c9cf; border-bottom: 1px solid #222226; margin-top: 4px">
+<button aria-label="Zeile einklappen" style="width: 22px; height: 22px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Kanäle</h2><span style="color: #6f6f77; font-size: 12px">3 Panels</span>
+</section>
+<section aria-label="Panel Umsatz je Kanal" style="grid-column: span 4; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 220px; box-sizing: border-box">
+<h2 style="margin: 0; font-size: 13px; font-weight: 500; color: #c9c9cf">Umsatz je Kanal</h2>
+<div style="display: flex; align-items: center; gap: 18px; margin-top: 18px">
+<svg role="img" aria-label="Kreisdiagramm Umsatz je Kanal" width="130" height="130" viewBox="0 0 42 42"><circle cx="21" cy="21" r="15.9" fill="none" stroke="#6aa3d8" stroke-width="6" stroke-dasharray="52 48" stroke-dashoffset="25"></circle><circle cx="21" cy="21" r="15.9" fill="none" stroke="#c9a46b" stroke-width="6" stroke-dasharray="28 72" stroke-dashoffset="73"></circle><circle cx="21" cy="21" r="15.9" fill="none" stroke="#8f8f97" stroke-width="6" stroke-dasharray="20 80" stroke-dashoffset="45"></circle></svg>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: #c9c9cf"><li style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #6aa3d8"></span>Online 52 %</li><li style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #c9a46b"></span>Händler 28 %</li><li style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #8f8f97"></span>Direkt 20 %</li></ul>
+</div>
+</section>
+<section aria-label="Panel Konversionsrate" style="grid-column: span 8; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 220px; box-sizing: border-box">
+<h2 style="margin: 0; font-size: 13px; font-weight: 500; color: #c9c9cf">Konversionsrate</h2>
+<div style="display: flex; gap: 6px; margin-top: 14px">
+<div style="display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: #6f6f77; height: 140px; text-align: right; width: 30px"><span>4 %</span><span>3 %</span><span>2 %</span><span>1 %</span></div>
+<svg role="img" aria-label="Liniendiagramm Konversionsrate" width="100%" height="140" viewBox="0 0 600 140" preserveAspectRatio="none" style="flex: 1"><path d="M0 4H600M0 49H600M0 94H600M0 139H600" stroke="#232327" stroke-width="1"></path><path d="M0 80 L60 72 L120 76 L180 60 L240 66 L300 50 L360 58 L420 44 L480 52 L540 38 L600 42" fill="none" stroke="#4fb477" stroke-width="2"></path></svg>
+</div>
+</section>
+<section aria-label="Panel Kampagnen" style="grid-column: span 12; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; height: 168px; box-sizing: border-box">
+<h2 style="margin: 0 0 8px; font-size: 13px; font-weight: 500; color: #c9c9cf">Kampagnen</h2>
+<table style="width: 100%; border-collapse: collapse; font-size: 12px; color: #c9c9cf">
+<thead><tr style="color: #8f8f97; text-align: left"><th style="font-weight: 500; padding: 4px 0; border-bottom: 1px solid #232327">Kampagne</th><th style="font-weight: 500; border-bottom: 1px solid #232327">Kanal</th><th style="font-weight: 500; text-align: right; border-bottom: 1px solid #232327">Klicks</th><th style="font-weight: 500; text-align: right; border-bottom: 1px solid #232327">Bestellungen</th><th style="font-weight: 500; text-align: right; border-bottom: 1px solid #232327">Umsatz</th></tr></thead>
+<tbody><tr><td style="padding: 4px 0">Herbstaktion</td><td>Online</td><td style="text-align: right">18.420</td><td style="text-align: right">612</td><td style="text-align: right">54.180 €</td></tr><tr><td style="padding: 4px 0">Händlerbonus Q4</td><td>Händler</td><td style="text-align: right">6.905</td><td style="text-align: right">341</td><td style="text-align: right">39.760 €</td></tr><tr><td style="padding: 4px 0">Newsletter Oktober</td><td>Direkt</td><td style="text-align: right">4.210</td><td style="text-align: right">128</td><td style="text-align: right">11.020 €</td></tr><tr><td style="padding: 4px 0">Messe Leipzig</td><td>Direkt</td><td style="text-align: right">980</td><td style="text-align: right">57</td><td style="text-align: right">8.940 €</td></tr></tbody>
+</table>
+</section>
+
+<button style="grid-column: span 12; height: 72px; border: 1px dashed #2a2a2e; border-radius: 12px; background: transparent; color: #8f8f97; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Panel oder Zeile hinzufügen</button>
+</main>
+
+<!-- Edit pane -->
+<aside aria-label="Bearbeitungsbereich" style="flex: 0 0 404px; width: 404px; border-left: 1px solid #222226; background: #111113; display: flex; box-sizing: border-box">
+<div style="width: 360px; display: flex; flex-direction: column; min-width: 0">
+
+<!-- Outline -->
+<section aria-label="Gliederung" style="padding: 14px 12px 12px; border-bottom: 1px solid #222226">
+<div style="display: flex; align-items: center; gap: 6px; padding: 0 4px; margin-bottom: 10px">
+<h2 style="margin: 0; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase">Gliederung</h2>
+<span style="font-size: 12px; color: #6f6f77">4 Zeilen, 13 Panels</span>
+<div style="flex: 1"></div>
+<button aria-label="Alle einklappen" title="Alle einklappen" style="width: 26px; height: 26px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"></path></svg></button>
+<button aria-label="Zeile hinzufügen" title="Zeile hinzufügen" style="width: 26px; height: 26px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+</div>
+<label style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; margin: 0 0 8px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #6f6f77"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.5-4.5"></path></svg><input aria-label="Panels filtern" placeholder="Panels filtern" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; font-size: 12px; outline: none"></label>
+
+<ul role="tree" aria-label="Dashboard-Gliederung" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px">
+
+<!-- Row Überblick, hover state with actions -->
+<li role="treeitem" aria-expanded="true">
+<div style="display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 4px 0 2px; border-radius: 7px; background: #1b1b1e; color: #ececef">
+<span aria-hidden="true" style="width: 14px; color: #6f6f77; display: grid; place-items: center; cursor: grab"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<button aria-label="Zeile einklappen" style="width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<span style="font-weight: 600; font-size: 13px">Überblick</span><span style="font-size: 11px; color: #8f8f97; padding: 0 6px; border-radius: 999px; background: #232327">5</span>
+<div style="flex: 1"></div>
+<button aria-label="Panel in Zeile hinzufügen" title="Panel hinzufügen" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+<button aria-label="Zeile ausblenden" title="Ausblenden" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+<button aria-label="Zeileneinstellungen" title="Zeileneinstellungen" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle></svg></button>
+<button aria-label="Weitere Zeilenaktionen" aria-haspopup="menu" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button>
+</div>
+<ul role="group" style="list-style: none; margin: 1px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px">
+<li role="treeitem" aria-selected="true" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; background: #232327; color: #ffffff">
+<span aria-hidden="true" style="width: 14px; color: #6f6f77; display: grid; place-items: center; cursor: grab"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Zeitreihe" style="color: #c9c9cf; flex: none"><path d="M3 17l5-6 4 3 8-9"></path><path d="M3 21h18"></path></svg>
+<span style="font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Umsatz über Zeit</span><span style="font-size: 11px; color: #8f8f97; font-family: 'JetBrains Mono', monospace">6×8</span></li>
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Balken" style="color: #8f8f97; flex: none"><path d="M5 20V11M10 20V5M15 20v-8M20 20V8"></path></svg>
+<span style="flex: 1">Bestellungen je Region</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">6×8</span></li>
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Kennzahl" style="color: #8f8f97; flex: none"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5"></path></svg>
+<span style="flex: 1">Umsatz gesamt</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">3×5</span></li>
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Kennzahl" style="color: #8f8f97; flex: none"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5"></path></svg>
+<span style="flex: 1">Ø Bestellwert</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">3×5</span></li>
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Tabelle" style="color: #8f8f97; flex: none"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M9 10v9"></path></svg>
+<span style="flex: 1">Je Region und Produkt</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">6×5</span></li>
+</ul>
+</li>
+
+<!-- Row Details, collapsed -->
+<li role="treeitem" aria-expanded="false" style="display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf; margin-top: 2px">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<button aria-label="Zeile ausklappen" style="width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+<span style="font-weight: 600">Details</span><span style="font-size: 11px; color: #8f8f97; padding: 0 6px; border-radius: 999px; background: #1d1d21">3</span>
+<div style="flex: 1"></div><span style="font-size: 11px; color: #6f6f77">eingeklappt</span>
+</li>
+
+<!-- Row Kundenbeziehungen -->
+<li role="treeitem" aria-expanded="true" style="margin-top: 2px">
+<div style="display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<button aria-label="Zeile einklappen" style="width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<span style="font-weight: 600">Kundenbeziehungen</span><span style="font-size: 11px; color: #8f8f97; padding: 0 6px; border-radius: 999px; background: #1d1d21">2</span>
+</div>
+<ul role="group" style="list-style: none; margin: 1px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px">
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Graph" style="color: #8f8f97; flex: none"><circle cx="6" cy="6" r="2.5"></circle><circle cx="18" cy="8" r="2.5"></circle><circle cx="10" cy="18" r="2.5"></circle><path d="M8.3 7l7.3.7M7 8.3l2.2 7.4M16.4 10l-4.6 6.2"></path></svg>
+<span style="flex: 1">Kunden und Händler</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">12×9</span></li>
+<li role="treeitem" aria-label="Hinweise, ausgeblendet" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #6f6f77">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Text" style="flex: none"><path d="M5 6h14M5 11h14M5 16h9"></path></svg>
+<span style="flex: 1; font-style: italic">Hinweise</span>
+<button aria-label="Hinweise einblenden" title="Ausgeblendet, einblenden" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"></path></svg></button></li>
+</ul>
+</li>
+
+<!-- Row Kanäle -->
+<li role="treeitem" aria-expanded="true" style="margin-top: 2px">
+<div style="display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<button aria-label="Zeile einklappen" style="width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<span style="font-weight: 600">Kanäle</span><span style="font-size: 11px; color: #8f8f97; padding: 0 6px; border-radius: 999px; background: #1d1d21">3</span>
+</div>
+<ul role="group" style="list-style: none; margin: 1px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px">
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Kreis" style="color: #8f8f97; flex: none"><path d="M12 3v9h9"></path><circle cx="12" cy="12" r="9"></circle></svg>
+<span style="flex: 1">Umsatz je Kanal</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">4×7</span></li>
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Zeitreihe" style="color: #8f8f97; flex: none"><path d="M3 17l5-6 4 3 8-9"></path><path d="M3 21h18"></path></svg>
+<span style="flex: 1">Konversionsrate</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">8×7</span></li>
+<li role="treeitem" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 2px; border-radius: 7px; color: #c9c9cf">
+<span aria-hidden="true" style="width: 14px; color: #3f3f46; display: grid; place-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"></circle><circle cx="15" cy="6" r="1.8"></circle><circle cx="9" cy="12" r="1.8"></circle><circle cx="15" cy="12" r="1.8"></circle><circle cx="9" cy="18" r="1.8"></circle><circle cx="15" cy="18" r="1.8"></circle></svg></span>
+<span style="width: 14px"></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-label="Tabelle" style="color: #8f8f97; flex: none"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M9 10v9"></path></svg>
+<span style="flex: 1">Kampagnen</span><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">12×6</span></li>
+</ul>
+</li>
+</ul>
+</section>
+
+<!-- Inspector -->
+<section aria-label="Ausgewähltes Panel" style="display: flex; flex-direction: column">
+<header style="padding: 14px 16px 12px; border-bottom: 1px solid #222226">
+<div style="font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 10px">Ausgewählt</div>
+<div style="display: flex; align-items: center; gap: 10px">
+<span aria-hidden="true" style="width: 32px; height: 32px; border-radius: 8px; background: #1b1b1e; border: 1px solid #2a2a2e; display: grid; place-items: center; color: #c9c9cf; flex: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 17l5-6 4 3 8-9"></path><path d="M3 21h18"></path></svg></span>
+<div style="flex: 1; min-width: 0">
+<h2 style="margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Umsatz über Zeit</h2>
+<div style="font-size: 12px; color: #8f8f97; margin-top: 2px">Zeitreihe in Überblick</div>
+</div>
+<button aria-label="Weitere Panelaktionen" aria-haspopup="menu" style="width: 28px; height: 28px; border-radius: 7px; background: transparent; border: 1px solid #2a2a2e; color: #a6a6ae; display: grid; place-items: center; padding: 0"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button>
+</div>
+<a href="PanelEditor.dc.html" style="margin-top: 12px; height: 30px; border-radius: 8px; border: 1px solid #2a2a2e; background: #18181b; color: #ececef; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px">Im Editor öffnen<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg><kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8f8f97; padding: 1px 5px; border: 1px solid #2a2a2e; border-radius: 4px">E</kbd></a>
+</header>
+
+<!-- Allgemein -->
+<details open style="border-bottom: 1px solid #222226">
+<summary style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase"><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>Allgemein</summary>
+<div style="padding: 0 16px 14px; display: flex; flex-direction: column; gap: 10px">
+<label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #a6a6ae">Titel<input value="Umsatz über Zeit" style="height: 30px; box-sizing: border-box; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; padding: 0 10px; font: inherit; font-size: 13px"></label>
+<label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #a6a6ae">Beschreibung<textarea rows="2" style="background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; padding: 7px 10px; font: inherit; font-size: 13px; resize: vertical">Netto-Umsatz pro Tag, alle Regionen, verglichen mit dem Vorjahr.</textarea></label>
+<div>
+<div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 12px; color: #a6a6ae">Links<div style="flex: 1"></div><button style="height: 22px; padding: 0 6px; border-radius: 6px; background: transparent; border: 0; color: #c9c9cf; font-size: 12px; display: flex; align-items: center; gap: 4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Link hinzufügen</button></div>
+<ul style="list-style: none; margin: 0; padding: 0; border: 1px solid #232327; border-radius: 8px">
+<li style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 6px 0 10px; color: #c9c9cf"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97; flex: none"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg><span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Vertriebsbericht im Wiki</span><button aria-label="Link entfernen" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #6f6f77; display: grid; place-items: center; padding: 0"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></li>
+<li style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 6px 0 10px; color: #c9c9cf; border-top: 1px solid #232327"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97; flex: none"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path></svg><span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Dashboard: Region im Detail</span><button aria-label="Link entfernen" style="width: 22px; height: 22px; border-radius: 6px; background: transparent; border: 0; color: #6f6f77; display: grid; place-items: center; padding: 0"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></li>
+</ul>
+</div>
+</div>
+</details>
+
+<!-- Layout -->
+<details open style="border-bottom: 1px solid #222226">
+<summary style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase"><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>Layout<span style="flex: 1"></span><span style="text-transform: none; letter-spacing: 0; color: #6f6f77; font-family: 'JetBrains Mono', monospace; font-size: 11px">6 × 8 bei 0, 1</span></summary>
+<div style="padding: 0 16px 14px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 10px">
+<span style="font-size: 12px; color: #a6a6ae">Breite</span>
+<div role="radiogroup" aria-label="Breite in Spalten" style="display: flex; padding: 2px; gap: 2px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px">
+<button role="radio" aria-checked="false" style="flex: 1; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; font-size: 12px">3</button>
+<button role="radio" aria-checked="false" style="flex: 1; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; font-size: 12px">4</button>
+<button role="radio" aria-checked="true" style="flex: 1; height: 24px; border-radius: 6px; background: #2a2a2e; border: 0; color: #ffffff; font-size: 12px; font-weight: 600">6</button>
+<button role="radio" aria-checked="false" style="flex: 1; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; font-size: 12px">8</button>
+<button role="radio" aria-checked="false" style="flex: 1; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; font-size: 12px">12</button>
+</div>
+<span style="font-size: 12px; color: #a6a6ae">Höhe</span>
+<div style="display: flex; align-items: center; gap: 8px">
+<div style="display: flex; align-items: center; height: 28px; width: 104px; box-sizing: border-box; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; overflow: hidden">
+<button aria-label="Höhe verringern" style="width: 28px; height: 100%; background: transparent; border: 0; border-right: 1px solid #232327; color: #a6a6ae; padding: 0">−</button>
+<input aria-label="Höhe in Rastereinheiten" value="8" inputmode="numeric" style="flex: 1; min-width: 0; height: 100%; background: transparent; border: 0; color: #ececef; text-align: center; font: inherit; font-family: 'JetBrains Mono', monospace; font-size: 12px">
+<button aria-label="Höhe erhöhen" style="width: 28px; height: 100%; background: transparent; border: 0; border-left: 1px solid #232327; color: #a6a6ae; padding: 0">+</button>
+</div>
+<span style="font-size: 12px; color: #6f6f77">Einheiten, 240 px</span>
+</div>
+<span style="font-size: 12px; color: #a6a6ae">Position</span>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px">
+<label style="display: flex; align-items: center; height: 28px; box-sizing: border-box; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; padding: 0 8px; gap: 8px"><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">X</span><input aria-label="Position X" value="0" inputmode="numeric" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; font-family: 'JetBrains Mono', monospace; font-size: 12px"></label>
+<label style="display: flex; align-items: center; height: 28px; box-sizing: border-box; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; padding: 0 8px; gap: 8px"><span style="font-size: 11px; color: #6f6f77; font-family: 'JetBrains Mono', monospace">Y</span><input aria-label="Position Y" value="1" inputmode="numeric" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; font-family: 'JetBrains Mono', monospace; font-size: 12px"></label>
+</div>
+</div>
+<label style="display: flex; align-items: center; justify-content: space-between; min-height: 28px; color: #c9c9cf"><span>Mit Zeile fixieren<span style="display: block; font-size: 11px; color: #6f6f77">Bleibt beim Scrollen unter der Zeilenüberschrift</span></span><span style="position: relative; width: 28px; height: 16px; flex: none"><input type="checkbox" role="switch" aria-label="Mit Zeile fixieren" style="position: absolute; inset: 0; margin: 0; opacity: 0"><span aria-hidden="true" style="display: block; width: 28px; height: 16px; border-radius: 999px; background: #232327; border: 1px solid #2a2a2e; box-sizing: border-box; position: relative"><span style="position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 999px; background: #6f6f77"></span></span></span></label>
+</div>
+</details>
+
+<!-- Daten -->
+<details open style="border-bottom: 1px solid #222226">
+<summary style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase"><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>Daten</summary>
+<div style="padding: 0 16px 14px; display: flex; flex-direction: column; gap: 10px">
+<a href="PanelEditor.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: #18181b; border: 1px solid #232327; color: #ececef">
+<span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 7px; background: #232327; display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #c9c9cf; flex: none">SQ</span>
+<span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">2 Abfragen, Vertrieb (SQLite)</span><span style="display: block; font-size: 11px; color: #8f8f97; margin-top: 1px">A umsatz_tag, B umsatz_vorjahr</span></span>
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97; flex: none"><path d="M9 6l6 6-6 6"></path></svg>
+</a>
+<div style="display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 10px">
+<span style="font-size: 12px; color: #a6a6ae">Aktualisieren</span>
+<div role="radiogroup" aria-label="Aktualisierung" style="display: flex; padding: 2px; gap: 2px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px">
+<button role="radio" aria-checked="true" style="flex: 1; height: 24px; border-radius: 6px; background: #2a2a2e; border: 0; color: #ffffff; font-size: 12px; font-weight: 600">Vom Dashboard</button>
+<button role="radio" aria-checked="false" style="flex: 1; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; font-size: 12px">Eigenes Intervall</button>
+</div>
+<span></span>
+<select aria-label="Eigenes Intervall" disabled style="height: 28px; background: #151517; border: 1px solid #232327; border-radius: 7px; color: #6f6f77; font: inherit; font-size: 12px; padding: 0 6px"><option>Dashboard: alle 1 Minute</option><option>30 Sekunden</option><option>5 Minuten</option><option>15 Minuten</option></select>
+</div>
+<label style="display: flex; align-items: center; justify-content: space-between; height: 28px; color: #c9c9cf">Zeitbereich überschreiben<span style="position: relative; width: 28px; height: 16px; flex: none"><input type="checkbox" role="switch" checked aria-label="Zeitbereich überschreiben" style="position: absolute; inset: 0; margin: 0; opacity: 0"><span aria-hidden="true" style="display: block; width: 28px; height: 16px; border-radius: 999px; background: #4a4a52; position: relative"><span style="position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 999px; background: #ececef"></span></span></span></label>
+<div style="display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 8px 10px; padding: 10px; border-radius: 8px; background: #151517; border: 1px solid #222226">
+<span style="font-size: 12px; color: #a6a6ae">Zeitbereich</span>
+<select aria-label="Relativer Zeitbereich" style="height: 28px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; font: inherit; font-size: 12px; padding: 0 6px"><option>Letzte 7 Tage</option><option>Letzte 24 Stunden</option><option>Letzte 30 Tage</option><option>Dieses Quartal</option></select>
+<span style="font-size: 12px; color: #a6a6ae">Verschiebung</span>
+<div style="display: flex; align-items: center; gap: 8px"><input aria-label="Relative Verschiebung" value="1w" style="width: 64px; height: 28px; box-sizing: border-box; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; padding: 0 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px"><span style="font-size: 12px; color: #6f6f77">1 Woche zurück</span></div>
+<span style="grid-column: span 2; font-size: 11px; color: #6f6f77">Gilt nur für dieses Panel; der Titel zeigt den Hinweis.</span>
+</div>
+</div>
+</details>
+
+<!-- Darstellung -->
+<details open style="border-bottom: 1px solid #222226">
+<summary style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase"><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>Darstellung</summary>
+<div style="padding: 0 16px 14px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; font-size: 12px; color: #a6a6ae">Visualisierung<span style="flex: 1"></span><span style="color: #ececef; font-weight: 500">Zeitreihe</span></div>
+<div role="radiogroup" aria-label="Visualisierung" style="display: flex; padding: 2px; gap: 2px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px">
+<button role="radio" aria-checked="true" aria-label="Zeitreihe" title="Zeitreihe" style="flex: 1; height: 28px; border-radius: 6px; background: #2a2a2e; border: 0; color: #ffffff; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 17l5-6 4 3 8-9"></path><path d="M3 21h18"></path></svg></button>
+<button role="radio" aria-checked="false" aria-label="Balken" title="Balken" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 20V11M10 20V5M15 20v-8M20 20V8"></path></svg></button>
+<button role="radio" aria-checked="false" aria-label="Kennzahl" title="Kennzahl" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5"></path></svg></button>
+<button role="radio" aria-checked="false" aria-label="Tabelle" title="Tabelle" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M9 10v9"></path></svg></button>
+<button role="radio" aria-checked="false" aria-label="Kreis" title="Kreis" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3v9h9"></path><circle cx="12" cy="12" r="9"></circle></svg></button>
+<button role="radio" aria-checked="false" aria-label="Graph" title="Graph" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="6" cy="6" r="2.5"></circle><circle cx="18" cy="8" r="2.5"></circle><circle cx="10" cy="18" r="2.5"></circle><path d="M8.3 7l7.3.7M7 8.3l2.2 7.4M16.4 10l-4.6 6.2"></path></svg></button>
+<button role="radio" aria-checked="false" aria-label="Text" title="Text" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 6h14M5 11h14M5 16h9"></path></svg></button>
+<button aria-label="Alle Visualisierungen" aria-haspopup="listbox" title="Alle Visualisierungen" style="flex: 1; height: 28px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center; padding: 0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg></button>
+</div>
+<div style="display: flex; flex-direction: column; margin-top: 4px">
+<label style="display: flex; align-items: center; justify-content: space-between; height: 30px; color: #c9c9cf">Titel anzeigen<span style="position: relative; width: 28px; height: 16px; flex: none"><input type="checkbox" role="switch" checked aria-label="Titel anzeigen" style="position: absolute; inset: 0; margin: 0; opacity: 0"><span aria-hidden="true" style="display: block; width: 28px; height: 16px; border-radius: 999px; background: #4a4a52; position: relative"><span style="position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 999px; background: #ececef"></span></span></span></label>
+<label style="display: flex; align-items: center; justify-content: space-between; height: 30px; color: #c9c9cf">Transparenter Hintergrund<span style="position: relative; width: 28px; height: 16px; flex: none"><input type="checkbox" role="switch" aria-label="Transparenter Hintergrund" style="position: absolute; inset: 0; margin: 0; opacity: 0"><span aria-hidden="true" style="display: block; width: 28px; height: 16px; border-radius: 999px; background: #232327; border: 1px solid #2a2a2e; box-sizing: border-box; position: relative"><span style="position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 999px; background: #6f6f77"></span></span></span></label>
+<label style="display: flex; align-items: center; justify-content: space-between; height: 30px; color: #c9c9cf">Rahmen<span style="position: relative; width: 28px; height: 16px; flex: none"><input type="checkbox" role="switch" checked aria-label="Rahmen" style="position: absolute; inset: 0; margin: 0; opacity: 0"><span aria-hidden="true" style="display: block; width: 28px; height: 16px; border-radius: 999px; background: #4a4a52; position: relative"><span style="position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 999px; background: #ececef"></span></span></span></label>
+</div>
+</div>
+</details>
+
+<!-- Verhalten -->
+<details open style="border-bottom: 1px solid #222226">
+<summary style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase"><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>Verhalten</summary>
+<div style="padding: 0 16px 14px; display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 10px">
+<span style="font-size: 12px; color: #a6a6ae">Wiederholen</span>
+<select aria-label="Wiederholen für Variable" style="height: 28px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; font: inherit; font-size: 12px; font-family: 'JetBrains Mono', monospace; padding: 0 6px"><option>$region</option><option>Nicht wiederholen</option><option>$produkt</option><option>$kanal</option></select>
+<span style="font-size: 12px; color: #a6a6ae">Richtung</span>
+<div style="display: flex; align-items: center; gap: 8px">
+<div role="radiogroup" aria-label="Richtung der Wiederholung" style="display: flex; flex: 1; padding: 2px; gap: 2px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px">
+<button role="radio" aria-checked="true" style="flex: 1; height: 24px; border-radius: 6px; background: #2a2a2e; border: 0; color: #ffffff; font-size: 12px; font-weight: 600">Horizontal</button>
+<button role="radio" aria-checked="false" style="flex: 1; height: 24px; border-radius: 6px; background: transparent; border: 0; color: #a6a6ae; font-size: 12px">Vertikal</button>
+</div>
+<select aria-label="Maximal pro Zeile" title="Maximal pro Zeile" style="width: 90px; height: 28px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; font: inherit; font-size: 12px; padding: 0 4px"><option>4 je Zeile</option><option>2 je Zeile</option><option>3 je Zeile</option><option>6 je Zeile</option></select>
+</div>
+<span style="font-size: 12px; color: #a6a6ae">Kachel-Link</span>
+<input aria-label="Kachel-Link" placeholder="URL oder Dashboard" value="/d/vertrieb-region?region=${region}" style="height: 28px; box-sizing: border-box; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; padding: 0 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; min-width: 0">
+<span style="font-size: 12px; color: #a6a6ae">Drilldown</span>
+<button aria-haspopup="dialog" style="height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 7px; color: #ececef; font-size: 12px; text-align: left; min-width: 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97; flex: none"><path d="M4 4v6a4 4 0 0 0 4 4h12M16 10l4 4-4 4"></path></svg><span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Explore mit Abfrage A</span><span style="color: #6f6f77; font-size: 11px">+1</span></button>
+</div>
+</details>
+
+<!-- Bibliothek -->
+<details open style="border-bottom: 1px solid #222226">
+<summary style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase"><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>Bibliothek<span style="flex: 1"></span><span style="text-transform: none; letter-spacing: 0; font-size: 11px; color: #8f8f97; padding: 1px 7px; border-radius: 999px; background: #1d1d21">Nicht verknüpft</span></summary>
+<div style="padding: 0 16px 14px; display: flex; flex-direction: column; gap: 8px">
+<p style="margin: 0; font-size: 12px; color: #8f8f97; line-height: 1.5">Als Bibliotheks-Panel wiederverwendbar in anderen Dashboards. Verknüpfte Kopien übernehmen jede Änderung.</p>
+<div style="display: flex; gap: 8px">
+<button style="flex: 1; height: 30px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h10l4 4v12H5z"></path><path d="M9 4v5h6M9 20v-6h6v6"></path></svg>Als Bibliotheks-Panel speichern</button>
+<button style="height: 30px; padding: 0 10px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf; font-size: 12px">Verknüpfen</button>
+</div>
+</div>
+</details>
+
+<!-- Actions -->
+<div role="group" aria-label="Panel-Aktionen" style="padding: 10px 8px 16px; display: flex; flex-direction: column; gap: 1px">
+<button style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; background: transparent; border: 0; color: #c9c9cf; font-size: 13px; text-align: left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg><span style="flex: 1">Duplizieren</span><kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8f8f97; padding: 1px 5px; border: 1px solid #2a2a2e; border-radius: 4px">Strg D</kbd></button>
+<button style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; background: transparent; border: 0; color: #c9c9cf; font-size: 13px; text-align: left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97"><rect x="8" y="3" width="8" height="4" rx="1"></rect><path d="M16 5h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2"></path></svg><span style="flex: 1">Kopieren</span><kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8f8f97; padding: 1px 5px; border: 1px solid #2a2a2e; border-radius: 4px">Strg C</kbd></button>
+<button aria-haspopup="menu" style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; background: transparent; border: 0; color: #c9c9cf; font-size: 13px; text-align: left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: #8f8f97"><path d="M4 6h16M4 12h10M4 18h7M17 15l3 3-3 3"></path></svg><span style="flex: 1">In Zeile verschieben</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="color: #6f6f77"><path d="M9 6l6 6-6 6"></path></svg></button>
+<div style="height: 1px; background: #222226; margin: 6px 8px"></div>
+<button style="display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 7px; background: transparent; border: 0; color: #f08a8a; font-size: 13px; text-align: left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg><span style="flex: 1">Löschen</span><kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8f8f97; padding: 1px 5px; border: 1px solid #2a2a2e; border-radius: 4px">Entf</kbd></button>
+</div>
+</section>
+</div>
+
+<!-- Rail -->
+<nav aria-label="Werkzeugleiste" style="width: 44px; border-left: 1px solid #222226; display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 6px; box-sizing: border-box">
+<button aria-label="Hinzufügen" title="Hinzufügen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+<button aria-label="Gliederung" aria-pressed="true" title="Gliederung" style="width: 32px; height: 32px; border-radius: 7px; background: #232327; border: 0; color: #ffffff; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h3M10 6h10M7 12h3M13 12h7M7 18h3M13 18h7"></path></svg></button>
+<button aria-label="Variablen" title="Variablen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 4c-2 0-3 1-3 3v2c0 1.5-1 3-2 3 1 0 2 1.5 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1.5 1 3 2 3-1 0-2 1.5-2 3v2c0 2-1 3-3 3"></path></svg></button>
+<button aria-label="Exportieren" title="Exportieren" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg></button>
+<div style="width: 22px; height: 1px; background: #2a2a2e; margin: 4px 0"></div>
+<button aria-label="Bereich einklappen" title="Bereich einklappen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 12h10M11 8l4 4-4 4M19 5v14"></path></svg></button>
+</nav>
+</aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2240}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

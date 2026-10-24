@@ -550,3 +550,27 @@
     --size-add-pane: 15rem;
   }
 }
+
+/*
+ * Time series graph styles (docs/design/feel.md section 8): the monochrome main series, its
+ * muted comparison series and the hatch under a lone series. High contrast draws both lines
+ * at full strength and the hatch denser, so it stays visible. The mask color is the opaque end
+ * of the SVG fade mask (read as luminance), never shown as a color.
+ */
+@layer tokens {
+  :root {
+    --chart-mono: light-dark(oklch(24% 0.006 286), oklch(92% 0.004 286));
+    --chart-mono-compare: light-dark(oklch(55% 0.008 286), oklch(64% 0.006 286));
+    --chart-hatch-alpha: 0.5;
+    --chart-hatch-width: 1;
+    --chart-fade-to: 0.15;
+    --chart-mask: oklch(100% 0 0);
+  }
+
+  :root[data-theme="contrast"] {
+    --chart-mono: light-dark(oklch(0% 0 0), oklch(100% 0 0));
+    --chart-mono-compare: light-dark(oklch(38% 0.006 286), oklch(80% 0.004 286));
+    --chart-hatch-alpha: 0.85;
+    --chart-hatch-width: 1.5;
+  }
+}

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard-Ansicht</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1000px; display: flex; flex-wrap: wrap; font-size: 13px">
+
+<!-- Sidebar -->
+<nav aria-label="Main" style="flex: 0 0 232px; background: #0e0e10; border-right: 1px solid #222226; padding: 12px 10px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px">
+<button style="display: flex; align-items: center; gap: 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 10px; padding: 8px 10px; color: #ececef; text-align: left">
+<span style="width: 28px; height: 28px; border-radius: 7px; background: #232327; display: grid; place-items: center" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ececef" stroke-width="1.6"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"></path></svg></span>
+<span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">MouseWerk</span><span style="color: #8f8f97; font-size: 11px">Admin</span></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.6" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path></svg>
+</button>
+<div style="height: 1px; background: #222226; margin: 10px 2px"></div>
+<a href="Start.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 11l8-7 8 7v9H4z"></path></svg>Start</a>
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #ffffff; background: #1d1d21; border: 1px solid #2c2c31; font-weight: 500"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>Dashboards</a>
+<a href="Explore.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M15 9l-2 5-4 1 2-5z"></path></svg>Explore</a>
+<a href="DataChat.dc.html" aria-label="Fragen (Beta)" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 12.5a7.5 7.5 0 01-11 6.6L4 20l1-4.2A7.5 7.5 0 1120 12.5z"></path><path d="M12 9l.9 2.1 2.1.9-2.1.9L12 15l-.9-2.1-2.1-.9 2.1-.9z"></path></svg><span style="flex: 1">Fragen</span><span style="padding: 1px 7px; border-radius: 999px; background: #1b1b1e; border: 1px solid #2a2a2e; color: #8f8f97; font-size: 10px; font-weight: 500; letter-spacing: 0.02em">Beta</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg>Datenquellen</a>
+<div style="height: 1px; background: #222226; margin: 10px 2px"></div>
+<span style="padding: 4px 10px; color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">ORGANISATION</span>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"></path><path d="M16 4.5a3.5 3.5 0 010 7M21 20c0-2.6-1.6-4.8-4-5.6"></path></svg>Mitglieder</a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"></path></svg>Einstellungen</a>
+<div style="display: flex; flex-direction: column; gap: 4px; margin-top: 10px"><div style="height: 1px; background: #222226; margin: 0 2px 6px"></div><span style="padding: 4px 10px; color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">ANGEHEFTET</span><a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="14" height="14" viewBox="0 0 24 24" fill="#6f6f77" stroke="#6f6f77" stroke-width="1.6" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"></path></svg><span style="flex: 1">Umsatz nach Region</span></a><a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="14" height="14" viewBox="0 0 24 24" fill="#6f6f77" stroke="#6f6f77" stroke-width="1.6" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"></path></svg><span style="flex: 1">Lager und Logistik</span></a><button style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; background: transparent; border: 1px dashed #333338; color: #a6a6ae; text-align: left" style-hover="background: #18181b">+ Dashboard anheften</button></div><div style="flex: 1"></div>
+<button style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: transparent; border: 0; color: #ececef; text-align: left; border-radius: 8px">
+<span style="width: 26px; height: 26px; border-radius: 50%; background: #2a2a2f; display: grid; place-items: center; font-size: 11px; font-weight: 600">LH</span>
+<span style="display: flex; flex-direction: column"><span style="font-weight: 500">Lea Hoffmann</span><span style="color: #8f8f97; font-size: 11px">lea@kalzit.test</span></span>
+</button>
+</nav>
+
+<!-- Main column -->
+<div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+
+<!-- Top bar -->
+<header style="height: 48px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 12px; padding: 0 16px; box-sizing: border-box; flex-wrap: wrap">
+<button aria-label="Collapse sidebar (Ctrl+B)" style="width: 30px; height: 30px; border-radius: 7px; background: transparent; border: 1px solid transparent; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8f8f97">
+<a href="#">Dashboards</a><span aria-hidden="true">/</span><a href="#">Vertrieb</a><span aria-hidden="true">/</span><span style="color: #ececef; font-weight: 500">Umsatz nach Region</span>
+<button aria-label="Star dashboard" style="background: transparent; border: 0; color: #8f8f97; padding: 2px; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"></path></svg></button>
+</nav>
+<div style="flex: 1"></div>
+<label style="display: flex; align-items: center; gap: 8px; width: 320px; max-width: 100%; height: 32px; padding: 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; box-sizing: border-box">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+<input type="search" placeholder="Suchen" aria-label="Search" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; outline: none">
+<span style="border: 1px solid #333338; border-radius: 5px; padding: 1px 6px; font-size: 11px; color: #8f8f97">Strg K</span>
+</label>
+<button aria-label="New" style="height: 32px; padding: 0 10px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf; display: flex; align-items: center; gap: 6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<button aria-label="Help" style="width: 32px; height: 32px; border-radius: 8px; background: transparent; border: 1px solid transparent; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.5a2.5 2.5 0 015 0c0 1.7-2.5 2-2.5 4M12 17h.01"></path></svg></button>
+</header>
+
+<!-- Toolbar -->
+<div style="display: flex; align-items: center; gap: 8px; padding: 12px 16px; flex-wrap: wrap">
+<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+<label style="display: flex; align-items: center; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden">
+<span style="padding: 0 10px; color: #8f8f97; border-right: 1px solid #2a2a2e; height: 100%; display: flex; align-items: center">Region</span>
+<select style="background: transparent; color: #ececef; border: 0; height: 100%; padding: 0 8px; font: inherit"><option>Nord</option><option>Ost</option></select>
+</label>
+<label style="display: flex; align-items: center; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden">
+<span style="padding: 0 10px; color: #8f8f97; border-right: 1px solid #2a2a2e; height: 100%; display: flex; align-items: center">Produkt</span>
+<select style="background: transparent; color: #ececef; border: 0; height: 100%; padding: 0 8px; font: inherit"><option>Alle</option></select>
+</label>
+<button style="height: 32px; padding: 0 10px; border-radius: 8px; background: transparent; border: 1px dashed #333338; color: #8f8f97; display: flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8z"></path></svg>Filter</button>
+</div>
+<div style="flex: 1"></div>
+<div style="display: flex; align-items: center; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden; background: #18181b">
+<button aria-label="Shift time range back" style="width: 32px; height: 100%; background: transparent; border: 0; border-right: 1px solid #2a2a2e; color: #c9c9cf; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"></path></svg></button>
+<button style="height: 100%; padding: 0 12px; background: transparent; border: 0; color: #ececef; display: flex; align-items: center; gap: 8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>Letzte 24 Stunden<span style="color: #8f8f97; font-size: 11px">Europe/Berlin</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<button aria-label="Shift time range forward" style="width: 32px; height: 100%; background: transparent; border: 0; border-left: 1px solid #2a2a2e; color: #c9c9cf; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"></path></svg></button>
+<button aria-label="Zoom out time range" style="width: 32px; height: 100%; background: transparent; border: 0; border-left: 1px solid #2a2a2e; color: #c9c9cf; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4M8 11h6"></path></svg></button>
+</div>
+<div style="display: flex; align-items: center; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden; background: #18181b">
+<button style="height: 100%; padding: 0 12px; background: transparent; border: 0; color: #ececef; display: flex; align-items: center; gap: 8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 12a8 8 0 11-2.3-5.7M20 4v5h-5"></path></svg>Aktualisieren</button>
+<button aria-label="Refresh interval" style="width: 30px; height: 100%; background: transparent; border: 0; border-left: 1px solid #2a2a2e; color: #c9c9cf; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
+<div style="display: flex; align-items: center; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden; background: #18181b">
+<button aria-label="Share" style="width: 34px; height: 100%; background: transparent; border: 0; color: #ececef; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"></path></svg></button>
+<button aria-label="Share options" style="width: 30px; height: 100%; background: transparent; border: 0; border-left: 1px solid #2a2a2e; color: #c9c9cf; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
+<a href="DashboardEdit.dc.html" style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef; display: flex; align-items: center; gap: 8px; box-sizing: border-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 00-4-4L4 16z"></path></svg>Bearbeiten</a>
+<button aria-label="More" style="width: 32px; height: 32px; border-radius: 8px; background: transparent; border: 1px solid transparent; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button>
+</div>
+
+<!-- Canvas + right rail -->
+<div style="display: flex; gap: 12px; padding: 0 16px 16px; flex: 1; min-height: 0">
+<div style="flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; align-content: start">
+
+<!-- Stat tiles -->
+<section style="grid-column: span 3; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; display: flex; overflow: hidden; min-height: 112px">
+<div style="flex: 1; padding: 14px 16px"><h2 style="margin: 0; font-size: 12px; font-weight: 500; color: #a6a6ae">Umsatz heute</h2><p style="margin: 10px 0 0; font-size: 30px; font-weight: 500; letter-spacing: -0.02em">48.215 €</p><p style="margin: 4px 0 0; color: #8f8f97; font-size: 12px">+6,2 % zum Vortag</p></div>
+<div style="width: 96px; border-left: 1px solid #2a2a2e; background: #161618; display: grid; place-items: center"><svg width="72" height="36" viewBox="0 0 72 36" aria-hidden="true"><path d="M2 28 L14 24 L26 26 L38 16 L50 18 L62 8 L70 10" fill="none" stroke="#dcdce0" stroke-width="1.6"></path></svg></div>
+</section>
+<section style="grid-column: span 3; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; display: flex; overflow: hidden">
+<div style="flex: 1; padding: 14px 16px"><h2 style="margin: 0; font-size: 12px; font-weight: 500; color: #a6a6ae">Bestellungen</h2><p style="margin: 10px 0 0; font-size: 30px; font-weight: 500; letter-spacing: -0.02em">1.284</p><p style="margin: 4px 0 0; color: #8f8f97; font-size: 12px">letzte 24 Stunden</p></div>
+<div style="width: 96px; border-left: 1px solid #2a2a2e; background: #161618; display: grid; place-items: center"><svg width="72" height="36" viewBox="0 0 72 36" aria-hidden="true"><path d="M2 20 L14 22 L26 14 L38 18 L50 10 L62 12 L70 6" fill="none" stroke="#dcdce0" stroke-width="1.6"></path></svg></div>
+</section>
+<section style="grid-column: span 3; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px">
+<h2 style="margin: 0; font-size: 12px; font-weight: 500; color: #a6a6ae">Auslastung Lager</h2>
+<div style="display: flex; align-items: center; gap: 14px; margin-top: 8px">
+<svg width="84" height="50" viewBox="0 0 84 50" aria-hidden="true"><path d="M6 46 A36 36 0 0 1 78 46" fill="none" stroke="#2a2a2e" stroke-width="8"></path><path d="M6 46 A36 36 0 0 1 64 18" fill="none" stroke="#dcdce0" stroke-width="8"></path></svg>
+<p style="margin: 0; font-size: 30px; font-weight: 500">72 %</p>
+</div>
+</section>
+<section style="grid-column: span 3; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px">
+<h2 style="margin: 0; font-size: 12px; font-weight: 500; color: #a6a6ae">Status Systeme</h2>
+<div style="display: flex; flex-direction: column; gap: 6px; margin-top: 10px">
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #4fb477"></span>Shop<span style="margin-left: auto; color: #8f8f97">ok</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #d9a441"></span>Lager-API<span style="margin-left: auto; color: #8f8f97">eingeschränkt</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #4fb477"></span>Zahlungen<span style="margin-left: auto; color: #8f8f97">ok</span></div>
+</div>
+</section>
+
+<!-- Time series -->
+<section style="grid-column: span 12; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px 10px">
+<header style="display: flex; align-items: center; gap: 8px"><h2 style="margin: 0; font-size: 13px; font-weight: 500">Umsatz über Zeit</h2><span style="color: #8f8f97; font-size: 12px">EUR · Region Nord</span><div style="flex: 1"></div><button aria-label="Panel menu" style="width: 26px; height: 26px; border-radius: 6px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="12" cy="19" r="1.6"></circle></svg></button></header>
+<svg role="img" aria-label="Line chart: revenue over the last 24 hours with previous-day comparison" width="100%" height="230" viewBox="0 0 1000 230" preserveAspectRatio="none" style="display: block; margin-top: 8px">
+<defs><pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="#34343a" stroke-width="1.2"></line></pattern></defs>
+<path d="M40 20H1000M40 70H1000M40 120H1000M40 170H1000" stroke="#232327" stroke-width="1"></path>
+<path d="M40 150 C90 150 110 120 160 118 S240 140 290 132 S380 90 430 88 S520 96 570 70 S660 60 710 72 S800 40 850 44 S940 70 1000 60 V200 H40Z" fill="url(#hatch)"></path>
+<path d="M40 165 C90 160 120 150 170 146 S260 150 300 140 S390 120 440 118 S530 110 580 100 S670 96 720 98 S820 80 870 82 S950 92 1000 88" fill="none" stroke="#6f6f76" stroke-width="2" stroke-dasharray="7 6"></path>
+<path d="M40 150 C90 150 110 120 160 118 S240 140 290 132 S380 90 430 88 S520 96 570 70 S660 60 710 72 S800 40 850 44 S940 70 1000 60" fill="none" stroke="#dcdce0" stroke-width="2.2"></path>
+</svg>
+<footer style="display: flex; gap: 16px; color: #a6a6ae; font-size: 12px; padding-top: 6px"><span style="display: flex; align-items: center; gap: 6px"><span style="width: 14px; height: 2px; background: #dcdce0"></span>Heute</span><span style="display: flex; align-items: center; gap: 6px"><span style="width: 14px; height: 0; border-top: 2px dashed #6f6f76"></span>Vortag</span></footer>
+</section>
+
+<!-- Grouped bars -->
+<section style="grid-column: span 7; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px">
+<header style="display: flex; align-items: center"><h2 style="margin: 0; font-size: 13px; font-weight: 500">Bestellungen je Region und Kanal</h2></header>
+<div style="display: flex; gap: 16px; margin-top: 10px">
+<svg role="img" aria-label="Grouped bar chart of orders per region and channel" width="100%" height="200" viewBox="0 0 560 200" preserveAspectRatio="none" style="flex: 1; min-width: 0">
+<path d="M30 20H560M30 70H560M30 120H560M30 170H560" stroke="#232327"></path>
+<g fill="#6aa3d8"><rect x="50" y="40" width="22" height="130" rx="2"></rect><rect x="180" y="70" width="22" height="100" rx="2"></rect><rect x="310" y="60" width="22" height="110" rx="2"></rect><rect x="440" y="95" width="22" height="75" rx="2"></rect></g>
+<g fill="#e3a35a"><rect x="76" y="90" width="22" height="80" rx="2"></rect><rect x="206" y="110" width="22" height="60" rx="2"></rect><rect x="336" y="100" width="22" height="70" rx="2"></rect><rect x="466" y="130" width="22" height="40" rx="2"></rect></g>
+<g fill="#9c8fd6"><rect x="102" y="140" width="22" height="30" rx="2"></rect><rect x="232" y="145" width="22" height="25" rx="2"></rect><rect x="362" y="135" width="22" height="35" rx="2"></rect><rect x="492" y="150" width="22" height="20" rx="2"></rect></g>
+<g fill="#8f8f97" font-size="11" font-family="Inter, sans-serif"><text x="70" y="190">Nord</text><text x="203" y="190">Ost</text><text x="333" y="190">Süd</text><text x="461" y="190">West</text><text x="0" y="24">300</text><text x="0" y="74">200</text><text x="0" y="124">100</text><text x="10" y="174">0</text></g>
+</svg>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; color: #c9c9cf; font-size: 12px; min-width: 96px">
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 14px; height: 3px; background: #6aa3d8"></span>Online</li>
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 14px; height: 3px; background: #e3a35a"></span>Filiale</li>
+<li style="display: flex; align-items: center; gap: 8px"><span style="width: 14px; height: 3px; background: #9c8fd6"></span>Telefon</li>
+</ul>
+</div>
+</section>
+
+<!-- Pie -->
+<section style="grid-column: span 5; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 500">Anteil je Produkt</h2>
+<div style="display: flex; gap: 16px; align-items: center; margin-top: 10px; flex-wrap: wrap">
+<svg role="img" aria-label="Pie chart: share per product" width="180" height="180" viewBox="0 0 180 180">
+<circle cx="90" cy="90" r="80" fill="#6aa3d8"></circle>
+<path d="M90 90 L90 10 A80 80 0 0 1 166 115 Z" fill="#e3a35a"></path>
+<path d="M90 90 L166 115 A80 80 0 0 1 60 164 Z" fill="#9c8fd6"></path>
+<g fill="#141416" font-size="13" font-weight="600" font-family="Inter, sans-serif"><text x="112" y="62">38 %</text><text x="102" y="138">27 %</text><text x="34" y="96">35 %</text></g>
+</svg>
+<table style="border-collapse: collapse; font-size: 12px; color: #c9c9cf; flex: 1; min-width: 160px">
+<thead><tr><th scope="col" style="text-align: left; color: #8f8f97; font-weight: 500; padding: 4px 0">Produkt</th><th scope="col" style="text-align: right; color: #8f8f97; font-weight: 500">Wert</th><th scope="col" style="text-align: right; color: #8f8f97; font-weight: 500">Anteil</th></tr></thead>
+<tbody>
+<tr><td style="padding: 5px 0"><span style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #e3a35a; margin-right: 8px"></span>Pro</td><td style="text-align: right">184 K</td><td style="text-align: right">38 %</td></tr>
+<tr><td style="padding: 5px 0"><span style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #6aa3d8; margin-right: 8px"></span>Basis</td><td style="text-align: right">169 K</td><td style="text-align: right">35 %</td></tr>
+<tr><td style="padding: 5px 0"><span style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #9c8fd6; margin-right: 8px"></span>Enterprise</td><td style="text-align: right">131 K</td><td style="text-align: right">27 %</td></tr>
+</tbody></table>
+</div>
+</section>
+
+<!-- Bar gauge -->
+<section style="grid-column: span 6; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px">
+<h2 style="margin: 0 0 12px; font-size: 13px; font-weight: 500">Marktanteil Browser</h2>
+<div style="display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 10px 12px; align-items: center">
+<span style="color: #a6a6ae">Chrome</span><div style="display: flex; align-items: center; gap: 10px"><div style="width: 78%; height: 22px; background: #6aa3d8; border-radius: 3px"></div><span style="font-size: 20px; font-weight: 500">50,3</span></div>
+<span style="color: #a6a6ae">Edge</span><div style="display: flex; align-items: center; gap: 10px"><div style="width: 28%; height: 22px; background: #6aa3d8; border-radius: 3px"></div><span style="font-size: 20px; font-weight: 500">17,5</span></div>
+<span style="color: #a6a6ae">Firefox</span><div style="display: flex; align-items: center; gap: 10px"><div style="width: 26%; height: 22px; background: #6aa3d8; border-radius: 3px"></div><span style="font-size: 20px; font-weight: 500">16,9</span></div>
+<span style="color: #a6a6ae">Safari</span><div style="display: flex; align-items: center; gap: 10px"><div style="width: 15%; height: 22px; background: #6aa3d8; border-radius: 3px"></div><span style="font-size: 20px; font-weight: 500">9,9</span></div>
+</div>
+</section>
+
+<!-- Table -->
+<section style="grid-column: span 6; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 14px 16px; overflow-x: auto">
+<h2 style="margin: 0 0 10px; font-size: 13px; font-weight: 500">Je Region und Produkt</h2>
+<table style="width: 100%; border-collapse: collapse; font-size: 12px">
+<thead><tr style="color: #8f8f97"><th scope="col" style="text-align: left; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #2a2a2e">Region</th><th scope="col" style="text-align: left; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #2a2a2e">Produkt</th><th scope="col" style="text-align: right; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #2a2a2e">Buchungen</th><th scope="col" style="text-align: right; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #2a2a2e">Schnitt</th></tr></thead>
+<tbody style="color: #ececef">
+<tr><td style="padding: 7px 8px; border-bottom: 1px solid #232327">Nord</td><td style="padding: 7px 8px; border-bottom: 1px solid #232327">Basis</td><td style="padding: 7px 8px; text-align: right; border-bottom: 1px solid #232327">96</td><td style="padding: 7px 8px; text-align: right; border-bottom: 1px solid #232327">56,2 €</td></tr>
+<tr><td style="padding: 7px 8px; border-bottom: 1px solid #232327">Nord</td><td style="padding: 7px 8px; border-bottom: 1px solid #232327">Pro</td><td style="padding: 7px 8px; text-align: right; border-bottom: 1px solid #232327">96</td><td style="padding: 7px 8px; text-align: right; border-bottom: 1px solid #232327">56,4 €</td></tr>
+<tr><td style="padding: 7px 8px; border-bottom: 1px solid #232327">Ost</td><td style="padding: 7px 8px; border-bottom: 1px solid #232327">Basis</td><td style="padding: 7px 8px; text-align: right; border-bottom: 1px solid #232327">96</td><td style="padding: 7px 8px; text-align: right; border-bottom: 1px solid #232327">101,6 €</td></tr>
+<tr><td style="padding: 7px 8px">Süd</td><td style="padding: 7px 8px">Enterprise</td><td style="padding: 7px 8px; text-align: right">96</td><td style="padding: 7px 8px; text-align: right">147,3 €</td></tr>
+</tbody></table>
+</section>
+</div>
+
+<!-- Right rail -->
+<aside aria-label="Dashboard tools" style="flex: 0 0 44px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 12px; display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 6px; align-self: stretch">
+<button aria-label="Gliederung" title="Gliederung" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h3M10 6h10M7 12h3M13 12h7M7 18h3M13 18h7"></path></svg></button>
+<button aria-label="Filter und Variablen" title="Filter und Variablen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 5h16l-6 8v5l-4 2v-7z"></path></svg></button>
+<button aria-label="Annotationen ein/aus" title="Annotationen ein/aus" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4v16M6 5h11l-2 4 2 4H6"></path></svg></button>
+<div style="width: 22px; height: 1px; background: #2a2a2e; margin: 4px 0"></div>
+<button aria-label="Teilen und Link kopieren" title="Teilen und Link kopieren" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></button>
+<button aria-label="Exportieren (PDF, PNG, JSON)" title="Exportieren (PDF, PNG, JSON)" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg></button>
+<button aria-label="Snapshot erstellen" title="Snapshot erstellen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4zM12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6"></path></svg></button>
+<div style="width: 22px; height: 1px; background: #2a2a2e; margin: 4px 0"></div>
+<button aria-label="Kiosk- und TV-Modus" title="Kiosk- und TV-Modus" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h18v11H3zM8 20h8M12 16v4"></path></svg></button>
+<button aria-label="Vollbild" title="Vollbild" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></button>
+<div style="width: 22px; height: 1px; background: #2a2a2e; margin: 4px 0"></div>
+<button aria-label="An Seitenleiste anheften" title="An Seitenleiste anheften" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"></path></svg></button>
+<button aria-label="Versionen und Verlauf" title="Versionen und Verlauf" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 7v5l3 2M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"></path></svg></button>
+<button aria-label="Dashboard-Infos" title="Dashboard-Infos" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 11v6M12 7.5v.5M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18"></path></svg></button>
+<div style="flex: 1"></div>
+<button aria-label="Dashboard-Einstellungen" title="Dashboard-Einstellungen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M19 12l2-1-1-3-2 .3-1.5-1.5L17 5l-3-1-1 2h-2L10 4 7 5l.5 2.3L6 8.8 4 8.5l-1 3 2 1v1l-2 1 1 3 2-.3 1.5 1.5L7 19l3 1 1-2h2l1 2 3-1-.5-2.3 1.5-1.5 2 .3 1-3-2-1z"></path></svg></button>
+<button aria-label="Leiste einklappen" title="Leiste einklappen" style="width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 0; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 12h10M11 8l4 4-4 4M19 5v14"></path></svg></button>
+</aside>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
