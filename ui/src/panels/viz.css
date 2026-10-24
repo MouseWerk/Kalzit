@@ -1038,9 +1038,10 @@
     font-size: var(--font-size-xs);
   }
 
+  /* Check boxes a row apart, so each keeps a 24 px target (WCAG 2.5.8). */
   .viz-editor__group {
     display: grid;
-    gap: var(--space-1);
+    gap: var(--space-3);
     padding: 0;
     border: 0;
   }

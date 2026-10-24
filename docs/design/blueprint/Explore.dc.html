@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Explore</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1000px; font-size: 13px; display: flex; flex-direction: column">
+
+<header style="height: 52px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 10px; padding: 0 16px; box-sizing: border-box; flex-wrap: wrap">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600">Explore</h1>
+<select aria-label="Data source" style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; font: inherit; padding: 0 10px"><option>Shop (MongoDB)</option></select>
+<div style="flex: 1"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Verlauf</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Teilen</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Letzte 7 Tage</button>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Ausführen</button>
+</header>
+
+<div style="display: flex; flex: 1; gap: 12px; padding: 16px; flex-wrap: wrap; min-height: 0">
+<section aria-label="Query" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">Pipeline · Collection „orders“</span></header>
+<pre style="margin: 0; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #d6d6db; background: #141416">[
+  { "$match": { "createdAt": "$__timeFilter" } },
+  { "$group": { "_id": "$status", "n": { "$sum": 1 } } }
+]</pre>
+</article>
+<div role="tablist" style="display: flex; gap: 4px; border-bottom: 1px solid #2a2a2e">
+<button role="tab" aria-selected="true" style="padding: 8px 12px; background: transparent; border: 0; border-bottom: 2px solid #ececef; color: #ffffff">Dokumente</button>
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Schema</button>
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Tabelle (Projektion)</button>
+<div style="flex: 1"></div><span style="color: #8f8f97; padding: 8px 0">312 Dokumente · 18 ms</span>
+</div>
+<div style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.8">
+<div><span style="color: #8f8f97">▾</span> <span style="color: #c9c9cf">{</span> _id: <span style="color: #e3a35a">"6720ab…"</span></div>
+<div style="padding-left: 22px">status: <span style="color: #e3a35a">"shipped"</span> <button style="margin-left: 8px; font-family: Inter, sans-serif; font-size: 11px; background: #232327; border: 1px solid #333338; color: #c9c9cf; border-radius: 6px; padding: 1px 8px">Filtern</button></div>
+<div style="padding-left: 22px">total: <span style="color: #6aa3d8">129.90</span></div>
+<div style="padding-left: 22px"><span style="color: #8f8f97">▸</span> items: [3]</div>
+<div style="padding-left: 22px"><span style="color: #8f8f97">▸</span> customer: {4}</div>
+<div><span style="color: #8f8f97">▸</span> <span style="color: #c9c9cf">{</span> _id: <span style="color: #e3a35a">"6720ac…"</span> … }</div>
+</div>
+</section>
+<aside aria-label="Analysis steps" style="flex: 1 1 300px; max-width: 340px; background: #111113; border: 1px solid #222226; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Schritte</h2>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">1 · In Tabelle projizieren</strong><p style="margin: 6px 0 0; color: #8f8f97">status, total, createdAt</p></div>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">2 · Gruppieren</strong><p style="margin: 6px 0 0; color: #8f8f97">nach status · Summe total</p></div>
+<button style="height: 32px; border-radius: 8px; background: transparent; border: 1px dashed #333338; color: #a6a6ae">+ Schritt hinzufügen</button>
+<div style="flex: 1"></div>
+<button style="height: 34px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Zum Dashboard hinzufügen</button>
+<button style="height: 34px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Exportieren (CSV, JSON, Excel)</button>
+</aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in Kalzit does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Security problems do not belong here: please report them privately
+        as described in SECURITY.md.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see? Include error messages as text.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Kalzit version or commit
+      description: The output of `kalzit --version`, or the commit you built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Server operating system
+      options:
+        - Windows
+        - Linux
+        - Both
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Kalzit's own database
+      options:
+        - SQLite (default)
+        - PostgreSQL
+        - Not sure
+  - type: input
+    id: datasource
+    attributes:
+      label: Data source involved
+      description: For example PostgreSQL 17, MongoDB 8, Neo4j 5. Leave empty if none.
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: For example Edge 141 on Windows 11.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log or screenshots
+      description: Remove passwords, tokens and other secrets before posting.
+      render: text

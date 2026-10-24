@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Datenquelle hinzufügen</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit;cursor:pointer}
+input,select{font:inherit}
+.tile:hover{background:#1d1d21}
+.lb{display:flex;flex-direction:column;gap:6px;color:#a6a6ae;font-size:12px;min-width:0}
+.in{height:32px;box-sizing:border-box;background:#141416;border:1px solid #2a2a2e;border-radius:7px;color:#ececef;padding:0 10px;font-size:13px;width:100%;min-width:0}
+.in:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible{outline:1px solid #6f6f77;outline-offset:1px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px}
+.sec{border-top:1px solid #222226}
+.sec>summary{list-style:none;display:flex;align-items:center;gap:12px;padding:12px 20px;cursor:pointer}
+.sec>summary::-webkit-details-marker{display:none}
+.sec>summary:hover{background:#1d1d21}
+.sec[open]>summary .chev{transform:rotate(90deg)}
+.chip{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;background:#232327;color:#c9c9cf;font-size:12px;white-space:nowrap}
+.hint{color:#8f8f97;font-size:12px;margin:0}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 1200px; font-size: 13px; padding: 24px 28px 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+<!-- Page header with stepper -->
+<header style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap">
+<div>
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; color: #8f8f97; font-size: 12px"><a href="DataSources.dc.html" style="color: #8f8f97">Verwaltung</a><span aria-hidden="true">/</span><a href="DataSources.dc.html" style="color: #8f8f97">Datenquellen</a><span aria-hidden="true">/</span><span style="color: #c9c9cf">Neu</span></nav>
+<h1 style="margin: 6px 0 0; font-size: 22px; font-weight: 500; letter-spacing: -0.01em">Datenquelle hinzufügen</h1>
+<p style="margin: 4px 0 0; color: #a6a6ae">Wähle eine Art, richte die Verbindung ein und teste sie. Quellen sind immer nur lesend.</p>
+</div>
+<div style="flex: 1"></div>
+<ol aria-label="Schritte" style="list-style: none; margin: 0; padding: 4px; display: flex; align-items: center; gap: 4px; background: #111113; border: 1px solid #2a2a2e; border-radius: 999px">
+<li aria-label="Art, erledigt" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 6px; border-radius: 999px; color: #a6a6ae"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 50%; background: #232327; display: grid; place-items: center; color: #c9c9cf"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>Art</li>
+<li aria-hidden="true" style="width: 16px; height: 1px; background: #2a2a2e"></li>
+<li aria-current="step" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 6px; border-radius: 999px; background: #232327; color: #ececef; font-weight: 600"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 50%; background: #ececef; color: #141416; display: grid; place-items: center; font-size: 11px; font-weight: 600">2</span>Verbindung</li>
+<li aria-hidden="true" style="width: 16px; height: 1px; background: #2a2a2e"></li>
+<li style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 6px; border-radius: 999px; color: #8f8f97"><span aria-hidden="true" style="width: 16px; height: 16px; border-radius: 50%; border: 1px solid #3a3a40; display: grid; place-items: center; font-size: 11px">3</span>Testen und speichern</li>
+</ol>
+</header>
+
+<div style="display: flex; gap: 20px; align-items: flex-start">
+
+<!-- LEFT: kind picker + options per type -->
+<div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 20px">
+
+<section aria-label="Art wählen" style="background: #111113; border: 1px solid #2a2a2e; border-radius: 14px; padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 12px">
+<h2 style="margin: 0; font-size: 14px; font-weight: 600">Art</h2>
+<span style="color: #8f8f97; font-size: 12px">16 Arten</span>
+<div style="flex: 1"></div>
+<label style="display: flex; align-items: center; gap: 8px; height: 32px; width: 300px; padding: 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; box-sizing: border-box">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+<input type="search" placeholder="Suchen, z. B. Postgres, Mongo, CSV" aria-label="Arten durchsuchen" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; outline: none; font-size: 13px">
+<kbd style="font-family: inherit; font-size: 11px; color: #6f6f77; border: 1px solid #2a2a2e; border-radius: 4px; padding: 0 5px">/</kbd></label>
+</div>
+
+<div role="radiogroup" aria-label="Datenquellen-Art" style="display: flex; flex-direction: column; gap: 14px">
+
+<div>
+<h3 style="margin: 0 0 8px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase">Tabellen (SQL)</h3>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<button role="radio" aria-checked="true" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #232327; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #18181b; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #6e9fd0; font-weight: 700; font-size: 11px">Pg</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 600">PostgreSQL</span><span style="display: block; color: #8f8f97; font-size: 12px">inkl. TimescaleDB</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9c9cf" stroke-width="1.8" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #4fa3bd; font-weight: 700; font-size: 11px">My</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">MySQL / MariaDB</span><span style="display: block; color: #8f8f97; font-size: 12px">ab 8.0 / 10.6</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #d3767a; font-weight: 700; font-size: 11px">MS</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">SQL Server</span><span style="display: block; color: #8f8f97; font-size: 12px">ab 2017, Azure SQL</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #7fa7c4; font-weight: 700; font-size: 11px">Sq</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">SQLite</span><span style="display: block; color: #8f8f97; font-size: 12px">Datei, freigegebene Ordner</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #e4cf5c; font-weight: 700; font-size: 11px">CH</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">ClickHouse</span><span style="display: block; color: #8f8f97; font-size: 12px">HTTP und native</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #e07a6a; font-weight: 700; font-size: 11px">Or</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Oracle</span><span style="display: block; color: #8f8f97; font-size: 12px">ab 19c</span></span></button>
+</div>
+</div>
+
+<div>
+<h3 style="margin: 0 0 8px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase">Metriken und Suche</h3>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #e8795a; font-weight: 700; font-size: 11px">Pr</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Prometheus</span><span style="display: block; color: #8f8f97; font-size: 12px">PromQL, Mimir, Thanos</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #e2b357; font-weight: 700; font-size: 11px">Lk</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Loki</span><span style="display: block; color: #8f8f97; font-size: 12px">Logs, LogQL</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #3fc0b5; font-weight: 700; font-size: 11px">Es</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Elasticsearch</span><span style="display: block; color: #8f8f97; font-size: 12px">und OpenSearch</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #9b8cf0; font-weight: 700; font-size: 11px">Ix</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">InfluxDB</span><span style="display: block; color: #8f8f97; font-size: 12px">Flux, InfluxQL, SQL</span></span></button>
+</div>
+</div>
+
+<div>
+<h3 style="margin: 0 0 8px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase">Dokumente und Graphen</h3>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #5fb85f; font-weight: 700; font-size: 11px">Mo</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">MongoDB</span><span style="display: block; color: #8f8f97; font-size: 12px">Dokumente, Pipelines</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #4c9cf5; font-weight: 700; font-size: 11px">N4</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Neo4j</span><span style="display: block; color: #8f8f97; font-size: 12px">Graph, Cypher</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #e86fa0; font-weight: 700; font-size: 11px">Mg</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Memgraph</span><span style="display: block; color: #8f8f97; font-size: 12px">Graph, Cypher</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #f0a35a; font-weight: 700; font-size: 11px">TG</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">TigerGraph</span><span style="display: block; color: #8f8f97; font-size: 12px">Graph, GSQL</span></span></button>
+</div>
+</div>
+
+<div>
+<h3 style="margin: 0 0 8px; font-size: 12px; font-weight: 500; color: #8f8f97; letter-spacing: 0.04em; text-transform: uppercase">Dateien und APIs</h3>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #c9c9cf"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg></span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">Datei</span><span style="display: block; color: #8f8f97; font-size: 12px">CSV, JSON, NDJSON</span></span></button>
+<button class="tile" role="radio" aria-checked="false" style="display: flex; gap: 10px; align-items: center; height: 48px; padding: 0 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left"><span aria-hidden="true" style="width: 28px; height: 28px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #c9c9cf" class="mono">{}</span><span style="flex: 1; min-width: 0"><span style="display: block; font-weight: 500">REST API</span><span style="display: block; color: #8f8f97; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">HTTP JSON, nur GET, Auth, Seiten</span></span></button>
+</div>
+</div>
+
+</div>
+</section>
+
+<!-- Options per type -->
+<section aria-label="Optionen je Typ" style="background: #111113; border: 1px solid #2a2a2e; border-radius: 14px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #222226">
+<h2 style="margin: 0; font-size: 14px; font-weight: 600">Optionen je Typ</h2>
+<span class="hint">Erweiterte Einstellungen, die die anderen Arten zusätzlich zu Verbindung, TLS, Pool und Zugriff haben.</span>
+</header>
+<dl style="margin: 0; display: grid; grid-template-columns: 150px minmax(0, 1fr)">
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">MongoDB</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">mongodb+srv (SRV)</span><span class="chip">Replica Set</span><span class="chip">Read Preference</span><span class="chip">authSource</span><span class="chip">Auth-Mechanismus (SCRAM, X.509, AWS)</span><span class="chip">maxTimeMS</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">Neo4j / Memgraph</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Schema bolt:// oder neo4j://</span><span class="chip">Datenbank</span><span class="chip">Routing (Cluster)</span><span class="chip">Lese-Zugriffsmodus</span><span class="chip">Transaktions-Timeout</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">TigerGraph</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Graph-Name</span><span class="chip">REST++ / GSQL-Port</span><span class="chip">Secret oder Token</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">Prometheus</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Scrape-Intervall</span><span class="chip">HTTP-Methode GET / POST</span><span class="chip">Eigene Header</span><span class="chip">Exemplars</span><span class="chip">Typ (Mimir, Thanos)</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">Loki</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Max. Zeilen</span><span class="chip">Tenant-ID (X-Scope-OrgID)</span><span class="chip">Abgeleitete Felder</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">Elasticsearch</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Index-Muster</span><span class="chip">Zeitfeld</span><span class="chip">Version / OpenSearch</span><span class="chip">Max. gleichzeitige Shards</span><span class="chip">API-Key</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">InfluxDB</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Abfragesprache</span><span class="chip">Organisation</span><span class="chip">Bucket</span><span class="chip">Token</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500; border-bottom: 1px solid #1f1f23">MySQL / SQL Server</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #1f1f23"><span class="chip">Zeichensatz</span><span class="chip">Windows-Auth / Entra ID</span><span class="chip">Encrypt / TrustServerCertificate</span><span class="chip">ApplicationIntent=ReadOnly</span></dd>
+<dt style="padding: 10px 18px; color: #ececef; font-weight: 500">REST API</dt>
+<dd style="margin: 0; padding: 8px 18px 8px 0; display: flex; flex-wrap: wrap; gap: 6px"><span class="chip">Basis-URL</span><span class="chip">API-Key-Header</span><span class="chip">Bearer</span><span class="chip">Basic</span><span class="chip">OAuth2 Client Credentials</span><span class="chip">Header</span><span class="chip">Query-Parameter</span><span class="chip">Seiten (Cursor, Offset, Link)</span><span class="chip">JSON-Pfad zu Zeilen</span><span class="chip">Rate-Limit</span></dd>
+</dl>
+</section>
+
+</div>
+
+<!-- RIGHT: PostgreSQL configuration -->
+<form aria-label="PostgreSQL konfigurieren" style="flex: 0 0 584px; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 14px; display: flex; flex-direction: column; overflow: hidden">
+
+<header style="display: flex; gap: 12px; align-items: center; padding: 16px 20px">
+<span aria-hidden="true" style="width: 36px; height: 36px; flex: none; border-radius: 9px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #6e9fd0; font-weight: 700">Pg</span>
+<div style="flex: 1; min-width: 0"><h2 style="margin: 0; font-size: 15px; font-weight: 600">PostgreSQL verbinden</h2><span style="color: #8f8f97; font-size: 12px">Schritt 2 von 3 · Treiber für PostgreSQL 12 bis 17, TimescaleDB, Aurora</span></div>
+<span class="chip" style="gap: 6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>Nur lesend</span>
+</header>
+
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; padding: 0 20px 16px">
+<label class="lb">Name<input class="in" value="Shop (Produktion)"></label>
+<label class="lb">Kennung<input class="in mono" value="shop-prod"></label>
+</div>
+
+<!-- Verbindung (open) -->
+<details class="sec" open>
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600">Verbindung</span><span style="flex: 1"></span><span class="hint">db.intern:5432 / shop</span></summary>
+<div style="padding: 2px 20px 18px; display: flex; flex-direction: column; gap: 12px">
+<div role="tablist" aria-label="Eingabeart" style="display: inline-flex; align-self: flex-start; padding: 3px; gap: 2px; background: #141416; border: 1px solid #2a2a2e; border-radius: 8px">
+<button type="button" role="tab" aria-selected="true" style="height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: #2a2a2e; color: #ececef; font-weight: 600; font-size: 12px">Felder</button>
+<button type="button" role="tab" aria-selected="false" style="height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: #a6a6ae; font-size: 12px">Verbindungs-String</button>
+</div>
+<div role="tabpanel" aria-label="Felder" style="display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 0.8fr); gap: 12px">
+<label class="lb">Host<input class="in" value="db.intern"></label>
+<label class="lb">Port<input class="in" value="5432"></label>
+<label class="lb">Datenbank<input class="in" value="shop"></label>
+</div>
+<div aria-label="Verbindungs-String" style="display: flex; flex-direction: column; gap: 6px">
+<span style="color: #a6a6ae; font-size: 12px">Als Verbindungs-String</span>
+<div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 6px 0 10px; background: #141416; border: 1px solid #2a2a2e; border-radius: 7px">
+<code class="mono" style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c9c9cf">postgres://kalzit_read:<span style="color: #6f6f77">••••••••</span>@db.intern:5432/shop?sslmode=verify-full&amp;application_name=kalzit</code>
+<button type="button" aria-label="Kopieren" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: #8f8f97; display: grid; place-items: center"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg></button>
+</div>
+<p class="hint" style="display: flex; gap: 6px; align-items: flex-start"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="flex: none; margin-top: 1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>Felder und String bleiben synchron. Unbekannte Parameter landen unter Verhalten. Passwörter und Schlüssel werden verschlüsselt gespeichert und nie wieder angezeigt.</p>
+</div>
+</div>
+</details>
+
+<!-- Authentifizierung (open) -->
+<details class="sec" open>
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600">Authentifizierung</span><span style="flex: 1"></span><span class="hint">Passwort · kalzit_read</span></summary>
+<div style="padding: 2px 20px 18px; display: flex; flex-direction: column; gap: 12px">
+<div role="radiogroup" aria-label="Methode" style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+<button type="button" role="radio" aria-checked="true" style="height: 30px; border: 1px solid #2a2a2e; border-radius: 7px; background: #232327; color: #ececef; font-weight: 600; font-size: 12px">Passwort</button>
+<button type="button" role="radio" aria-checked="false" style="height: 30px; border: 1px solid #2a2a2e; border-radius: 7px; background: #18181b; color: #a6a6ae; font-size: 12px">Client-Zertifikat</button>
+<button type="button" role="radio" aria-checked="false" style="height: 30px; border: 1px solid #2a2a2e; border-radius: 7px; background: #18181b; color: #a6a6ae; font-size: 12px">Kerberos / GSSAPI</button>
+<button type="button" role="radio" aria-checked="false" style="height: 30px; border: 1px solid #2a2a2e; border-radius: 7px; background: #18181b; color: #a6a6ae; font-size: 12px">IAM / Cloud-Token</button>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<label class="lb">Benutzer<input class="in" value="kalzit_read"></label>
+<label class="lb">Passwort
+<span style="position: relative; display: block"><input class="in" type="password" value="placeholder" style="padding-right: 76px"><span style="position: absolute; right: 8px; top: 7px; font-size: 11px; color: #8f8f97; display: inline-flex; gap: 4px; align-items: center"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>gespeichert</span></span></label>
+</div>
+<p class="hint">Client-Zertifikat nutzt die Dateien aus TLS. Kerberos braucht einen Service-Principal auf dem Server, IAM holt kurzlebige Tokens von AWS RDS, Azure Entra ID oder Google Cloud SQL.</p>
+</div>
+</details>
+
+<!-- TLS (collapsed) -->
+<details class="sec">
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600; width: 132px">TLS</span><span style="flex: 1; min-width: 0; display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap"><span class="chip mono">verify-full</span><span class="chip">CA: intern-ca.pem</span><span class="chip">Server: db.intern</span></span></summary>
+<div style="padding: 2px 20px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<label class="lb">sslmode<select class="in"><option>verify-full</option><option>verify-ca</option><option>require</option><option>prefer</option><option>disable</option></select></label>
+<label class="lb">Servername (SNI)<input class="in" value="db.intern"></label>
+<label class="lb">CA-Zertifikat<input class="in" type="file" aria-label="CA-Zertifikat hochladen"></label>
+<label class="lb">Client-Zertifikat und Schlüssel<input class="in" type="file" aria-label="Client-Zertifikat hochladen"></label>
+</div>
+</details>
+
+<!-- Pool und Grenzen (collapsed) -->
+<details class="sec">
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600; width: 132px">Pool und Grenzen</span><span style="flex: 1; min-width: 0; display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap"><span class="chip">10 Verbindungen</span><span class="chip">Abfrage 30 s</span><span class="chip">max. 100.000 Zeilen</span></span></summary>
+<div style="padding: 2px 20px 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+<label class="lb">Max. Verbindungen<input class="in" value="10"></label>
+<label class="lb">Leerlauf-Timeout<input class="in" value="5 min"></label>
+<label class="lb">Verbindungs-Timeout<input class="in" value="10 s"></label>
+<label class="lb">Abfrage-Timeout<input class="in" value="30 s"></label>
+<label class="lb">statement_timeout<input class="in" value="25 s"></label>
+<label class="lb">Max. Zeilen<input class="in" value="100000"></label>
+</div>
+</details>
+
+<!-- Verhalten (collapsed) -->
+<details class="sec">
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600; width: 132px">Verhalten</span><span style="flex: 1; min-width: 0; display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap"><span class="chip">Nur lesend erzwungen</span><span class="chip mono">public, sales</span><span class="chip">Europe/Berlin</span></span></summary>
+<div style="padding: 2px 20px 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<label class="lb">Schema / search_path<input class="in mono" value="public, sales"></label>
+<label class="lb">Zeitzone<input class="in" value="Europe/Berlin"></label>
+<label class="lb">Zeitspalte (Hinweis)<input class="in mono" value="created_at"></label>
+<label class="lb">Min. Intervall<input class="in" value="1m"></label>
+<label class="lb" style="grid-column: 1 / -1">Makros<input class="in mono" value="$__timeFilter, $__interval, $__timeGroup aktiv"></label>
+<p class="hint" style="grid-column: 1 / -1">Nur lesend wird serverseitig erzwungen (default_transaction_read_only, Schreibbefehle werden abgelehnt) und lässt sich nicht abschalten.</p>
+</div>
+</details>
+
+<!-- Netzwerk (collapsed) -->
+<details class="sec">
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600; width: 132px">Netzwerk</span><span style="flex: 1; min-width: 0; display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap"><span class="chip">SSH-Tunnel über bastion.intern:22</span></span></summary>
+<div style="padding: 2px 20px 18px; display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr); gap: 12px">
+<label class="lb">Tunnel-Host<input class="in" value="bastion.intern"></label>
+<label class="lb">Port<input class="in" value="22"></label>
+<label class="lb">Benutzer<input class="in" value="tunnel"></label>
+<label class="lb" style="grid-column: 1 / -1">Privater Schlüssel<input class="in" type="file" aria-label="SSH-Schlüssel hochladen"></label>
+</div>
+</details>
+
+<!-- Zugriff (collapsed) -->
+<details class="sec">
+<summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.8" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="font-weight: 600; width: 132px">Zugriff</span><span style="flex: 1; min-width: 0; display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap"><span class="chip">Besitzer: Data Platform</span><span class="chip">3 Teams</span></span></summary>
+<div style="padding: 2px 20px 18px">
+<ul style="list-style: none; margin: 0; padding: 0; border: 1px solid #232327; border-radius: 8px">
+<li style="display: flex; align-items: center; gap: 10px; padding: 8px 12px"><span style="flex: 1">Data Platform</span><span class="chip">Besitzer</span></li>
+<li style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid #232327"><span style="flex: 1">Vertrieb</span><select class="in" aria-label="Recht für Vertrieb" style="width: 130px; height: 28px"><option>Lesen</option><option>Abfragen</option></select></li>
+<li style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid #232327"><span style="flex: 1">Controlling</span><select class="in" aria-label="Recht für Controlling" style="width: 130px; height: 28px"><option>Abfragen</option><option>Lesen</option></select></li>
+</ul>
+</div>
+</details>
+
+<!-- Test status + actions -->
+<footer style="margin-top: auto; border-top: 1px solid #222226; background: #18181b; padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 12px">
+<div role="status" style="display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 12px; border-radius: 10px; background: #141416; border: 1px solid #2a2a2e">
+<span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #4fb477"></span>
+<span style="font-weight: 500">Verbindung erfolgreich</span>
+<span class="hint">vor 4 s</span>
+<span></span>
+<span style="display: flex; flex-wrap: wrap; gap: 6px 14px; color: #a6a6ae; font-size: 12px"><span>12 ms</span><span>PostgreSQL 16.4</span><span>TLS 1.3, Zertifikat gültig</span><span>Benutzer darf nur lesen</span><span>42 Tabellen sichtbar</span></span>
+<span></span>
+</div>
+<div style="display: flex; gap: 10px; align-items: center">
+<a href="DataSources.dc.html" style="color: #a6a6ae; padding: 0 4px">Abbrechen</a>
+<div style="flex: 1"></div>
+<button type="button" style="height: 34px; padding: 0 16px; border-radius: 8px; background: #232327; border: 1px solid #2a2a2e; color: #ececef; display: inline-flex; align-items: center; gap: 8px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 12h4l3-7 4 14 3-7h2"></path></svg>Testen</button>
+<button type="submit" style="height: 34px; padding: 0 20px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Speichern</button>
+</div>
+</footer>
+
+</form>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

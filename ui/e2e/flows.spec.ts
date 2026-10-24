@@ -147,6 +147,46 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();
 });
 
+test("a time series drawn as stacked bars is saved with its graph style", async ({
+  page,
+  world,
+}) => {
+  const owner = await Api.owner();
+  const id = await owner.createDashboard(regionDashboard(unique("Stil"), world.sourceId));
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  await page.getByRole("button", { name: t("dashboards.edit") }).click();
+  await panelAction(page, "Sales", "dashboards.panel.editNamed");
+  const editor = page.getByRole("region", { name: t("dashboards.editor.title") });
+  await expect(editor.locator(".uplot")).toHaveCount(1);
+  await editor.getByText(t("panels.section.graphStyle"), { exact: true }).first().click();
+  await editor
+    .getByLabel(t("panels.graph.drawStyle"), { exact: true })
+    .first()
+    .selectOption({ label: t("panels.graph.drawStyle.bars") });
+  await editor
+    .getByLabel(t("panels.graph.stack"), { exact: true })
+    .first()
+    .selectOption({ label: t("panels.graph.stack.normal") });
+  // The bar options appear for bars, the gap options leave.
+  await expect(editor.getByLabel(t("panels.graph.barWidth")).first()).toBeVisible();
+  await expect(editor.getByLabel(t("panels.graph.connectGaps"))).toHaveCount(0);
+  await editor.getByRole("button", { name: t("dashboards.editor.back") }).click();
+  await page.getByRole("button", { name: t("dashboards.save") }).click();
+  const save = page.getByRole("dialog", { name: t("dashboards.save.title") });
+  await save.getByRole("button", { name: t("dashboards.save.submit") }).click();
+  await expect(save).toBeHidden();
+  const stored = await owner.context.get(`/api/orgs/${owner.orgId}/dashboards/${id}`);
+  const body = (await stored.json()) as {
+    model: { panels: { fieldConfig?: { defaults?: Record<string, unknown> } }[] };
+  };
+  expect(body.model.panels[0]?.fieldConfig?.defaults).toMatchObject({
+    drawStyle: "bars",
+    stack: "normal",
+  });
+  await owner.dispose();
+});
+
 test("the panel editor keeps its changes over a reload and asks before the back button drops them", async ({
   page,
   world,
