@@ -42,6 +42,15 @@ const PATHS = {
   eyeOff:
     "M4 4l16 16M10.2 5.7A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-2.9 3.7M6.6 6.9C4 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9 9 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2",
   capsLock: "M12 4.5 4.5 12H8.5v3.5h7V12h4zM8.5 19.5h7",
+  // Updates: download and upload a package, look again, plan for later, a verified signature.
+  download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  upload: "M12 15V4M7 9l5-5 5 5M5 20h14",
+  refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  clock: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zM12 8v4l3 2",
+  shieldCheck: "M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6zM9 12l2 2 4-4",
+  external: "M7 17 17 7M9 7h8v8",
+  database:
+    "M4.5 6c0-1.66 3.36-3 7.5-3s7.5 1.34 7.5 3-3.36 3-7.5 3-7.5-1.34-7.5-3zM4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3",
 } as const;
 
 /** Icons drawn filled instead of outlined (the starred state of a star). */

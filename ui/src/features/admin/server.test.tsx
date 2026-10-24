@@ -262,7 +262,7 @@ describe("administration overview", () => {
         .map((link) => link.getAttribute("href")),
     ).toEqual(["/admin/settings", "/admin/audit"]);
     const server = screen.getByRole("region", { name: "Server" });
-    expect(within(server).getAllByRole("link")).toHaveLength(4);
+    expect(within(server).getAllByRole("link")).toHaveLength(5);
   });
 
   it("marks the current section in the section navigation", async () => {

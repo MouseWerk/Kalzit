@@ -85,8 +85,7 @@ fn multipart_error(e: MultipartError) -> ApiError {
         .param("detail", detail)
 }
 
-/// The file an uploaded offline package (`bundle`) is written to before it is split.
-const BUNDLE_FILE: &str = "upload.kalzit-update";
+use staging::UPLOAD_BUNDLE_FILE as BUNDLE_FILE;
 
 /// Writes the parts into `dir`, each within its limit: either one offline package (`bundle`, a
 /// `.kalzit-update` file), or `manifest`, `signature` and `package` on their own.
@@ -118,18 +117,7 @@ async fn receive(multipart: &mut Multipart, dir: &std::path::Path) -> ApiResult<
         }
         out.sync_all().await.map_err(failed)?;
     }
-    if seen.contains(BUNDLE_FILE) {
-        let bundle = dir.join(BUNDLE_FILE);
-        let target = dir.to_path_buf();
-        let split = tokio::task::spawn_blocking(move || {
-            let result = staging::split_bundle(&bundle, &target);
-            let _ = std::fs::remove_file(&bundle);
-            result
-        })
-        .await
-        .map_err(|e| ApiError::internal("splitting an update package", e))?;
-        split?;
-    }
+    // `Updates::stage_upload` splits a bundle, so a broken one is refused like any other upload.
     Ok(())
 }
 

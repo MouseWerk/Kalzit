@@ -205,6 +205,20 @@ pub fn split_bundle(bundle: &Path, dir: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
+/// Where the upload route writes an offline package before it is split.
+pub const UPLOAD_BUNDLE_FILE: &str = "upload.kalzit-update";
+
+/// Splits an uploaded offline package in `dir` into its parts, if the upload was one.
+pub fn split_upload(dir: &Path) -> Result<(), UpdateError> {
+    let bundle = dir.join(UPLOAD_BUNDLE_FILE);
+    if !bundle.is_file() {
+        return Ok(());
+    }
+    let result = split_bundle(&bundle, dir);
+    let _ = fs::remove_file(&bundle);
+    result
+}
+
 /// The version an upload claims, for the history of a refused one (read without trusting it).
 pub fn uploaded_version(dir: &Path) -> Option<String> {
     let bytes = fs::read(dir.join(MANIFEST_FILE)).ok()?;

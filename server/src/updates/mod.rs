@@ -515,7 +515,9 @@ impl Updates {
     /// and `package`, written by the upload route).
     pub async fn stage_upload(&self, state: &AppState, dir: &Path, actor: &Actor) -> ApiResult<()> {
         let _work = self.try_work()?;
-        let staged = match staging::stage_upload(&self.layout, dir, &self.keys(), &self.platform, &self.current) {
+        let checked = staging::split_upload(dir)
+            .and_then(|()| staging::stage_upload(&self.layout, dir, &self.keys(), &self.platform, &self.current));
+        let staged = match checked {
             Ok(staged) => staged,
             Err(e) => {
                 let version = staging::uploaded_version(dir).unwrap_or_default();
