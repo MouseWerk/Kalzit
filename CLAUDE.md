@@ -63,6 +63,8 @@ where it is more specific.
 - Match the surrounding style and comment density. No emojis anywhere.
 - UI texts go through the i18n catalogs; the translation check must pass.
 - Use the design tokens; no one-off colors or sizes.
+- The UI follows the design blueprint in `docs/design/blueprint/` (owner-approved); read the board
+  for a screen before changing it.
 - No accent-colored borders, outlines, left bars, glows or gradient borders for selected, active or
   current states (graph node selection included); quiet neutral tint and text weight instead.
   Focus visible only on `:focus-visible`, neutral. No colored bars on the left anywhere.
