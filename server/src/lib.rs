@@ -2,6 +2,7 @@
 
 pub mod analysis;
 pub mod app;
+pub mod appearance;
 pub mod audit;
 pub mod auth;
 pub mod authz;

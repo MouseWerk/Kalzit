@@ -124,9 +124,10 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
               ))}
             </MenuGroup>
             <hr className="menu__separator" />
-            {/* The own account: name, password, sessions (features/admin/account). */}
+            {/* The own account: name, password, sessions (settings, "Profile and language"). */}
             <Link
-              to="/account"
+              to="/settings/$section"
+              params={{ section: "profile" }}
               role="menuitem"
               tabIndex={-1}
               className="menu__item"

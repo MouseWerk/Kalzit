@@ -134,6 +134,10 @@ export interface FakeServer {
     offline: boolean;
     /** The stored preferences (`/api/me/preferences`), as the server keeps them. */
     preferences: FakePreferences;
+    /** `GET /api/branding`, before and after sign-in (docs/api/settings-dashboards.md). */
+    branding: Record<string, unknown>;
+    /** `GET /api/orgs/{orgId}/appearance` for every organization. */
+    appearance: Record<string, unknown>;
   };
   calls: { method: string; path: string; body: unknown }[];
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
@@ -184,6 +188,23 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         weekStart: null,
         startDashboard: null,
         defaults: { language: "en", theme: "system" },
+      },
+      branding: {
+        productName: "Kalzit",
+        logo: null,
+        signIn: { welcome: "", notice: "" },
+        defaultTheme: "system",
+        accent: "copper",
+        density: "balanced",
+        fontSize: 14,
+      },
+      appearance: {
+        accent: "copper",
+        density: "balanced",
+        fontSize: 14,
+        startPage: "home",
+        timeZone: "browser",
+        weekStart: "monday",
       },
     },
     calls: [],
@@ -302,6 +323,36 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       }
       return preferences(method, input);
     }
+    if (path === "/api/branding" && method === "GET") {
+      return json(200, state.branding);
+    }
+    if (path.startsWith("/api/admin/branding/logo") && state.signedIn && state.user.isServerAdmin) {
+      // The logo and the one before it, which undo swaps back (docs/api/settings-dashboards.md).
+      const current = state.branding.logo ?? null;
+      if (path === "/api/admin/branding/logo" && method === "PUT") {
+        const logo = {
+          contentType: String(input.contentType),
+          sha256: `sha${server.calls.length}`,
+        };
+        Object.assign(state, { previousLogo: current });
+        state.branding.logo = logo;
+        return json(200, logo);
+      }
+      if (path === "/api/admin/branding/logo" && method === "DELETE") {
+        if (current === null) {
+          return error(404, "not_found");
+        }
+        Object.assign(state, { previousLogo: current });
+        state.branding.logo = null;
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/api/admin/branding/logo/restore" && method === "POST") {
+        const previous = (state as { previousLogo?: unknown }).previousLogo ?? null;
+        Object.assign(state, { previousLogo: current });
+        state.branding.logo = previous;
+        return json(200, previous);
+      }
+    }
     if (path === "/api/me" && method === "GET") {
       return state.signedIn ? json(200, state.user) : error(401, "unauthenticated");
     }
@@ -329,6 +380,9 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       );
       if (membership === undefined) {
         return error(404, "not_found");
+      }
+      if (route.endsWith("/appearance") && route.split("/").length === 5 && method === "GET") {
+        return json(200, state.appearance);
       }
       const request: FakeRequest = {
         method,

@@ -114,7 +114,7 @@ export function LoginPage() {
   const signedOut = announced && signIn.isIdle;
 
   return (
-    <AuthLayout title={t("login.title")} lead={t("login.lead")}>
+    <AuthLayout title={t("login.title")} lead={t("login.lead")} signInTexts>
       <div className="auth__status" role="status">
         {signedOut ? (
           <p className="notice auth__notice">

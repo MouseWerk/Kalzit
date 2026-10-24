@@ -94,6 +94,10 @@ mod tests {
         "datasource.updated",
         "secrets.key",
         "secrets.lock",
+        "server.http_addr",
+        "server.https_addr",
+        "server.public_url",
+        "server.redirect_http_to_https",
         "settings.updated",
     ];
 

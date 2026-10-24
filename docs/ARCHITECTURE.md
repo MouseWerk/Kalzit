@@ -361,6 +361,20 @@ type QueryResult =
   `KALZIT_SETTING_<KEY>` (key in upper snake case), checked at start (`settings::check_environment`).
   `Config::file_keys` records what `kalzit.toml` set, for the `file` source. The server deletes
   audit events past their retention every hour (`routes::audit::spawn_retention`).
+- Network, TLS, proxy, security and log values of the configuration are registry entries too
+  (`ui_editable: false`, read from `Config`), so the settings page shows them read-only with
+  their source. A key may exist in both scopes: the organization entries of `appearance.*` start
+  as `inherit` and follow the server's value (`GET /api/orgs/{orgId}/appearance` merges them).
+- Customization goes through vetted options only, never custom CSS: accent names the tokens
+  define per scheme, or a `#rrggbb` that passes the contrast rules of `appearance.rs` (mirrored in
+  `ui/src/appearance/contrast.ts`), density, font size and texts. The UI applies them as data
+  attributes on `<html>` that the tokens read; a custom accent is one custom property set through
+  the CSSOM, so the CSP stays `style-src 'self'`. The logo is stored in the database (raster
+  formats only, at most 256 KiB) and served same-origin at `GET /api/branding/logo`; `GET
+  /api/branding` is public, as the sign-in page shows it. The logo before the last upload or
+  removal is kept as a second row, which undo swaps back.
+- Settings export as JSON (only what the caller may change), import through a preview and a batch
+  that applies every change or none in one transaction (docs/api/settings-dashboards.md).
 - `audit_events`: written with `audit::record(&mut tx, &AuditEvent { .. })` inside the
   transaction of the change. Actions are `<area>.<verb>` (`setup.completed`, `auth.signed_in`,
   `auth.sign_in_failed`, `team.created`). Summaries hold ids and changed field names, never
@@ -541,6 +555,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0007 | setup lock (one row once setup ran) | fix/sqlite-contention |
 | 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 | 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
+| 0010 | the server's logo (appearance and brand) | ux/settings |
 
 ## M1 work streams
 

@@ -6,8 +6,11 @@ import { openAdmin } from "./test/openAdmin";
 describe("own account", () => {
   it("is open to every member, including viewers", async () => {
     await openAdmin("/account", { permissions: ["dashboards:read"] });
-    expect(await screen.findByRole("heading", { level: 1, name: "Your account" })).toBeTruthy();
-    expect(document.title).toBe("Your account – Kalzit");
+    // The account lives in the settings now; its old address leads there.
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Profile and language" }),
+    ).toBeTruthy();
+    expect(document.title).toBe("Profile and language – Kalzit");
   });
 
   it("saves the name when the field is left, updates the shell and undoes it", async () => {

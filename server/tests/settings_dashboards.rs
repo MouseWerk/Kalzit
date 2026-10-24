@@ -313,6 +313,16 @@ on_both_databases! {
     restricting_through_an_admin_grant_keeps_access: |_| {};
     moving_a_folder_to_the_top_level_needs_the_org_wide_right: |_| {};
     dashboards_moved_out_of_restriction_stay_hidden_once_purged: |_| {};
+    appearance_settings_reach_branding_and_organizations: |_| {};
+    the_logo_is_validated_stored_and_served_same_origin: |_| {};
+    logo_changes_can_be_undone: |_| {};
+    server_routes_refuse_organization_admins_and_org_writes_refuse_viewers: |_| {};
+    a_reset_in_a_batch_brings_the_default_back: |_| {};
+    // As if kalzit.toml set the lifetime, which then stays out of the export.
+    settings_export_and_import_through_a_preview_and_one_batch: |c| {
+        c.sessions.lifetime_hours = 10;
+        c.file_keys.insert("sessions.lifetime_hours".into());
+    };
 }
 
 /// Lock contention on SQLite is never a 500. Another connection holds the database's write lock
@@ -1889,4 +1899,342 @@ async fn old_versions_beyond_the_retention_are_dropped(t: TestApp) {
     let numbers: Vec<i64> =
         versions.body["items"].as_array().unwrap().iter().map(|v| v["version"].as_i64().unwrap()).collect();
     assert_eq!(numbers, [4, 3]);
+}
+
+async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
+    // Before anyone signs in, the sign-in page reads the brand.
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.status, StatusCode::OK, "{}", public.body);
+    assert_eq!(
+        (&public.body["productName"], &public.body["accent"], &public.body["fontSize"], &public.body["logo"]),
+        (&json!("Kalzit"), &json!("copper"), &json!(14), &Value::Null)
+    );
+
+    // A free color below 3:1 on light surfaces is refused, with the numbers in the message.
+    let pale =
+        t.patch("/admin/settings/appearance.accent", json!({ "value": "#ffd400", "version": 0 }), &t.owner).await;
+    assert_eq!((pale.code(), pale.field()), ("validation", "value"), "{}", pale.body);
+    assert!(pale.body["error"]["message"].as_str().unwrap().contains(":1"), "{}", pale.body);
+    for (key, value) in [
+        ("appearance.accent", json!("#2563eb")),
+        ("appearance.product_name", json!("Datenwerk")),
+        ("appearance.density", json!("compact")),
+        ("appearance.time_zone", json!("Europe/Berlin")),
+        ("signin.notice", json!("Wartung am **Samstag**.\nDanke!")),
+    ] {
+        let r = t.patch(&format!("/admin/settings/{key}"), json!({ "value": value, "version": 0 }), &t.owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
+    }
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(
+        (&public.body["productName"], &public.body["accent"], &public.body["density"]),
+        (&json!("Datenwerk"), &json!("#2563eb"), &json!("compact"))
+    );
+    assert_eq!(public.body["signIn"]["notice"], json!("Wartung am **Samstag**.\nDanke!"));
+
+    // An organization follows the server until it sets its own value; every member reads it.
+    let viewer = t.member("Vera", "viewer").await;
+    let look = t.get("~/appearance", &viewer).await;
+    assert_eq!(look.status, StatusCode::OK, "{}", look.body);
+    assert_eq!(
+        (&look.body["accent"], &look.body["timeZone"], &look.body["startPage"]),
+        (&json!("#2563eb"), &json!("Europe/Berlin"), &json!("home"))
+    );
+    let list = t.get("~/settings", &t.owner).await;
+    assert_eq!(setting(&list, "appearance.accent")["value"], json!("inherit"));
+    let own = t.patch("~/settings/appearance.accent", json!({ "value": "teal", "version": 0 }), &t.owner).await;
+    assert_eq!(own.status, StatusCode::OK, "{}", own.body);
+    let start =
+        t.patch("~/settings/appearance.start_page", json!({ "value": "dashboards", "version": 0 }), &t.owner).await;
+    assert_eq!(start.status, StatusCode::OK, "{}", start.body);
+    let look = t.get("~/appearance", &viewer).await;
+    assert_eq!((&look.body["accent"], &look.body["startPage"]), (&json!("teal"), &json!("dashboards")));
+    let back = t.patch("~/settings/appearance.accent", json!({ "value": "inherit", "version": 1 }), &t.owner).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+    assert_eq!(t.get("~/appearance", &viewer).await.body["accent"], json!("#2563eb"));
+    // Organization admins change their organization, never the server's brand.
+    let admin = t.member("Anton", "admin").await;
+    let r = t.patch("/admin/settings/appearance.accent", json!({ "value": "teal", "version": 1 }), &admin).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = t.patch("~/settings/appearance.density", json!({ "value": "comfortable", "version": 0 }), &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let product = t.patch("~/settings/appearance.product_name", json!({ "value": "X", "version": 0 }), &t.owner).await;
+    assert_eq!(product.code(), "not_found", "the product name is a server setting");
+}
+
+/// A tiny PNG: the signature and an IHDR chunk are all the check reads.
+fn png() -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(&[0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+    bytes
+}
+
+async fn the_logo_is_validated_stored_and_served_same_origin(t: TestApp) {
+    use base64::Engine;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    assert_eq!(t.send(Method::GET, "/api/branding/logo", None, None).await.status, StatusCode::NOT_FOUND);
+    for (body, field) in [
+        (json!({ "contentType": "image/svg+xml", "data": b64(b"<svg/>") }), "contentType"),
+        (json!({ "contentType": "image/png", "data": b64(&[0xff, 0xd8, 0xff, 0xe0]) }), "data"),
+        (json!({ "contentType": "image/png", "data": "kein base64!" }), "data"),
+        (json!({ "contentType": "image/png", "data": b64(&[png(), vec![0; 256 * 1024]].concat()) }), "data"),
+    ] {
+        let r = t.put("/admin/branding/logo", body, &t.owner).await;
+        assert_eq!((r.code(), r.field()), ("validation", field), "{}", r.body);
+    }
+    let saved =
+        t.put("/admin/branding/logo", json!({ "contentType": "image/png", "data": b64(&png()) }), &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let sha = saved.body["sha256"].as_str().unwrap().to_string();
+    let branding = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(branding.body["logo"], json!({ "contentType": "image/png", "sha256": sha }));
+
+    let fetch = |etag: Option<String>| {
+        let mut req = Request::builder().uri("/api/branding/logo").header(header::HOST, "kalzit.test");
+        if let Some(tag) = etag {
+            req = req.header(header::IF_NONE_MATCH, tag);
+        }
+        t.app.clone().oneshot(req.body(Body::empty()).unwrap())
+    };
+    let res = fetch(None).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "image/png");
+    assert_eq!(res.headers()["x-content-type-options"], "nosniff");
+    let etag = res.headers()[header::ETAG].to_str().unwrap().to_string();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes.to_vec(), png());
+    assert_eq!(fetch(Some(etag)).await.unwrap().status(), StatusCode::NOT_MODIFIED);
+
+    let org_admin = t.member("Erika", "admin").await;
+    assert_eq!(t.delete("/admin/branding/logo", &org_admin).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.delete("/admin/branding/logo", &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.delete("/admin/branding/logo", &t.owner).await.code(), "not_found");
+    assert!(t.send(Method::GET, "/api/branding", None, None).await.body["logo"].is_null());
+    let actions = t.actions().await;
+    assert!(
+        actions.iter().any(|a| a == "branding.logo_updated") && actions.iter().any(|a| a == "branding.logo_removed")
+    );
+}
+
+async fn settings_export_and_import_through_a_preview_and_one_batch(t: TestApp) {
+    t.patch("/admin/settings/audit.retention_days", json!({ "value": 90, "version": 0 }), &t.owner).await;
+    let export = t.get("/admin/settings/export", &t.owner).await;
+    assert_eq!(export.status, StatusCode::OK, "{}", export.body);
+    assert_eq!((&export.body["format"], &export.body["formatVersion"]), (&json!("kalzit.settings"), &json!(1)));
+    let exported = export.body["settings"].as_object().unwrap();
+    assert_eq!(exported["audit.retention_days"], json!(90));
+    // Only what the caller may change: the file's session lifetime and the network stay out.
+    for locked in ["sessions.lifetime_hours", "server.http_addr", "security.trusted_proxies"] {
+        assert!(!exported.contains_key(locked), "{locked} exported");
+    }
+
+    let mut document = export.body.clone();
+    document["settings"]["audit.retention_days"] = json!(30);
+    document["settings"]["appearance.density"] = json!("comfortable");
+    document["settings"]["appearance.accent"] = json!("#ffffff");
+    document["settings"]["sessions.lifetime_hours"] = json!(5);
+    document["settings"]["no.such"] = json!(1);
+    let preview = t.post("/admin/settings/import/preview", json!({ "document": document }), &t.owner).await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.body);
+    let status = |key: &str| {
+        preview.body["items"].as_array().unwrap().iter().find(|i| i["key"] == key).unwrap()["status"].clone()
+    };
+    assert_eq!(status("audit.retention_days"), json!("change"));
+    assert_eq!(status("appearance.density"), json!("change"));
+    assert_eq!(status("appearance.accent"), json!("invalid"));
+    assert_eq!(status("sessions.lifetime_hours"), json!("locked"));
+    assert_eq!(status("no.such"), json!("unknown"));
+    assert_eq!(status("datasources.max_rows"), json!("same"));
+
+    // One bad entry and nothing changes.
+    let bad = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [
+                { "key": "audit.retention_days", "value": 30, "version": 1 },
+                { "key": "appearance.accent", "value": "#ffffff", "version": 0 },
+            ] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!((bad.code(), bad.field()), ("validation", "changes"), "{}", bad.body);
+    let stale = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [
+                { "key": "audit.retention_days", "value": 30, "version": 0 },
+                { "key": "appearance.density", "value": "comfortable", "version": 0 },
+            ] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(stale.code(), "version_conflict", "{}", stale.body);
+    assert_eq!(stale.body["current"]["items"].as_array().unwrap().len(), 2);
+    assert_eq!(kalzit::settings::get(&t.state, "appearance.density").await.unwrap(), json!("balanced"));
+
+    let applied = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [
+                { "key": "audit.retention_days", "value": 30, "version": 1 },
+                { "key": "appearance.density", "value": "comfortable", "version": 0 },
+            ] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    assert_eq!(applied.body["items"][0]["version"], json!(2));
+    assert_eq!(kalzit::settings::get(&t.state, "appearance.density").await.unwrap(), json!("comfortable"));
+    // Undo is another batch with the previous values and the new versions.
+    let undo = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [
+                { "key": "audit.retention_days", "value": 90, "version": 2 },
+                { "key": "appearance.density", "value": "balanced", "version": 1 },
+            ] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(undo.status, StatusCode::OK, "{}", undo.body);
+    assert_eq!(kalzit::settings::get(&t.state, "audit.retention_days").await.unwrap(), json!(90));
+    let locked = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [{ "key": "sessions.lifetime_hours", "value": 5, "version": 0 }] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(locked.code(), "conflict");
+    let summaries: Vec<(String,)> =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'settings.updated' AND summary LIKE '%batch%'")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(summaries.len(), 4);
+
+    // A server export is no organization export, and organization exports need settings:write.
+    let wrong = t.post("~/settings/import/preview", json!({ "document": export.body }), &t.owner).await;
+    assert_eq!((wrong.code(), wrong.field()), ("validation", "document"));
+    let not_settings = t.post("/admin/settings/import/preview", json!({ "document": { "a": 1 } }), &t.owner).await;
+    assert_eq!(not_settings.field(), "document");
+    let org_export = t.get("~/settings/export", &t.owner).await;
+    assert_eq!(org_export.body["scope"], json!("org"));
+    assert_eq!(org_export.body["settings"]["appearance.accent"], json!("inherit"));
+    let viewer = t.member("Udo", "viewer").await;
+    assert_eq!(t.get("~/settings/export", &viewer).await.status, StatusCode::FORBIDDEN);
+}
+
+async fn logo_changes_can_be_undone(t: TestApp) {
+    use base64::Engine;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let logo_sha =
+        async || -> Value { t.send(Method::GET, "/api/branding", None, None).await.body["logo"]["sha256"].clone() };
+    let upload = |bytes: Vec<u8>| {
+        t.put("/admin/branding/logo", json!({ "contentType": "image/png", "data": b64(&bytes) }), &t.owner)
+    };
+    let restore = || t.post("/admin/branding/logo/restore", json!({}), &t.owner);
+
+    // Nothing to undo yet.
+    assert_eq!(restore().await.code(), "not_found");
+    // The first upload undone: no logo again.
+    let first = upload(png()).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    let undone = restore().await;
+    assert_eq!((undone.status, &undone.body), (StatusCode::OK, &Value::Null));
+    assert!(logo_sha().await.is_null());
+
+    // A replaced logo comes back on undo.
+    let one = upload(png()).await.body["sha256"].clone();
+    let two = upload([png(), vec![1]].concat()).await.body["sha256"].clone();
+    assert_ne!(one, two);
+    assert_eq!(restore().await.body["sha256"], one);
+    assert_eq!(logo_sha().await, one);
+
+    // A removed logo comes back on undo.
+    assert_eq!(t.delete("/admin/branding/logo", &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert!(logo_sha().await.is_null());
+    assert_eq!(restore().await.body["sha256"], one);
+    assert_eq!(logo_sha().await, one);
+    assert!(t.actions().await.iter().any(|a| a == "branding.logo_restored"));
+
+    // The upload route takes no body beyond its cap, before reading it as JSON.
+    let huge = t
+        .put("/admin/branding/logo", json!({ "contentType": "image/png", "data": "A".repeat(500 * 1024) }), &t.owner)
+        .await;
+    assert_eq!((huge.status, huge.code()), (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"), "{}", huge.body);
+}
+
+async fn server_routes_refuse_organization_admins_and_org_writes_refuse_viewers(t: TestApp) {
+    let admin = t.member("Anton", "admin").await;
+    let document =
+        json!({ "document": { "format": "kalzit.settings", "formatVersion": 1, "scope": "server", "settings": {} } });
+    let change = json!({ "changes": [{ "key": "audit.retention_days", "value": 30, "version": 0 }] });
+    let logo = json!({ "contentType": "image/png", "data": "iVBORw0KGgo=" });
+    for (method, path, body) in [
+        (Method::PUT, "/admin/branding/logo", Some(logo)),
+        (Method::DELETE, "/admin/branding/logo", None),
+        (Method::POST, "/admin/branding/logo/restore", Some(json!({}))),
+        (Method::GET, "/admin/settings/export", None),
+        (Method::POST, "/admin/settings/import/preview", Some(document)),
+        (Method::POST, "/admin/settings/batch", Some(change)),
+    ] {
+        let r = t.send(method.clone(), &t.path(path), body, Some(&admin)).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{method} {path}: {}", r.body);
+    }
+    let viewer = t.member("Vera", "viewer").await;
+    let org_document =
+        json!({ "document": { "format": "kalzit.settings", "formatVersion": 1, "scope": "org", "settings": {} } });
+    let org_change = json!({ "changes": [{ "key": "appearance.density", "value": "compact", "version": 0 }] });
+    for (path, body) in [("~/settings/import/preview", org_document), ("~/settings/batch", org_change)] {
+        let r = t.post(path, body, &viewer).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{path}: {}", r.body);
+    }
+    // Nothing changed through any of them.
+    assert!(!t.actions().await.iter().any(|a| a.starts_with("settings.") || a.starts_with("branding.")));
+}
+
+async fn a_reset_in_a_batch_brings_the_default_back(t: TestApp) {
+    let applied = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [{ "key": "appearance.density", "value": "compact", "version": 0 }] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    let document = json!({ "format": "kalzit.settings", "formatVersion": 1, "scope": "server",
+                           "settings": { "appearance.density": "comfortable" } });
+    let preview = t.post("/admin/settings/import/preview", json!({ "document": document }), &t.owner).await;
+    assert_eq!(preview.body["items"][0]["source"], json!("database"));
+
+    let reset = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [{ "key": "appearance.density", "reset": true, "version": 1 }] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{}", reset.body);
+    assert_eq!((&reset.body["items"][0]["source"], &reset.body["items"][0]["version"]), (&json!("default"), &json!(0)));
+    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM server_settings WHERE key = 'appearance.density'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "a reset stores nothing");
+    let list = t.get("/admin/settings", &t.owner).await;
+    assert_eq!(setting(&list, "appearance.density")["source"], json!("default"));
+
+    for bad in [
+        json!({ "key": "appearance.density", "version": 0 }),
+        json!({ "key": "appearance.density", "value": "compact", "reset": true, "version": 0 }),
+    ] {
+        let r = t.post("/admin/settings/batch", json!({ "changes": [bad] }), &t.owner).await;
+        assert_eq!((r.code(), r.field()), ("validation", "changes"), "{}", r.body);
+    }
+    // Invisible direction characters are refused in names people read.
+    let sneaky = t
+        .patch("/admin/settings/appearance.product_name", json!({ "value": "Kal\u{202E}tiz", "version": 0 }), &t.owner)
+        .await;
+    assert_eq!((sneaky.code(), sneaky.field()), ("validation", "value"));
 }

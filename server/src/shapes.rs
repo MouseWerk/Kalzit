@@ -690,7 +690,14 @@ mod tests {
         out.push_str(&union("ErrorCode", crate::error::ERROR_CODES.to_vec()));
         out.push_str(&union("Permission", crate::authz::Permission::ALL.iter().map(|p| p.as_str()).collect()));
         // The UI keeps a label and description per setting in its catalogs (tested there).
-        out.push_str(&union("SettingKey", crate::settings::REGISTRY.iter().map(|d| d.key).collect()));
+        // A key in both scopes (an organization's appearance override) is listed once.
+        let mut keys: Vec<&str> = Vec::new();
+        for d in crate::settings::REGISTRY {
+            if !keys.contains(&d.key) {
+                keys.push(d.key);
+            }
+        }
+        out.push_str(&union("SettingKey", keys));
         for decl in decls {
             out.push_str("export ");
             out.push_str(&decl);

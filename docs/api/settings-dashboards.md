@@ -126,12 +126,32 @@ Server settings:
 | `sessions.lifetime_hours` | `720` | read-only (configuration) |
 | `sessions.idle_timeout_hours` | `168` | read-only (configuration) |
 | `dashboards.version_retention` | `100` | whole number 0 to 100000; 0 keeps every version |
+| `appearance.product_name` | `"Kalzit"` | text of 1 to 40 characters, one line |
+| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"`, or `#rrggbb` with at least 3:1 against the lightest light surface (luminance 1.0) and the darkest dark surface (luminance 0.00481) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
+| `appearance.density` | `"balanced"` | `"compact"`, `"balanced"`, `"comfortable"` |
+| `appearance.font_size` | `14` | `13`, `14`, `15`, `16` (body text in pixels) |
+| `appearance.start_page` | `"home"` | `"home"`, `"dashboards"`, `"explore"` |
+| `appearance.time_zone` | `"browser"` | `"browser"` or an IANA name |
+| `appearance.week_start` | `"monday"` | `"monday"`, `"sunday"`, `"saturday"` |
+| `signin.welcome` | `""` | text up to 280 characters, line breaks allowed, no other control characters |
+| `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
+| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
+
+The product name and the sign-in texts refuse invisible direction and format characters (bidi
+embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, the marks U+200E and
+U+200F, the zero-width space U+200B, U+2060 to U+2064 and U+FEFF); the joiners U+200C and U+200D,
+which scripts need, stay allowed.
+
+The sign-in texts are plain text with a few Markdown marks (`**strong**`, `*emphasis*`,
+`[text](https://...)` to http, https and mailto); the UI builds them from elements and never as
+HTML.
 
 Organization settings:
 
 | Key | Default | Accepts |
 |---|---|---|
 | `dashboards.default_time_range` | `{"from": "now-6h", "to": "now"}` | a time range as in the dashboard model; new dashboards without `timeRange` get it |
+| `appearance.accent`, `appearance.density`, `appearance.font_size`, `appearance.start_page`, `appearance.time_zone`, `appearance.week_start` | `"inherit"` | `"inherit"` (the server's value) or what the server setting of the same key accepts |
 
 ### `GET /admin/settings`
 
@@ -157,6 +177,85 @@ Permission `settings:read`. Answers `Page<Setting>` with every organization sett
 
 Permission `settings:write`. Same body, answer and errors as the server route; a server setting's
 key is `404 not_found`. Audited as `settings.updated` with the organization id.
+
+### Export and import
+
+`GET /admin/settings/export` (server administrators) and `GET /orgs/{orgId}/settings/export`
+(`settings:write`, since it holds only what the caller may change) answer
+
+```ts
+interface SettingsDocument {
+  format: "kalzit.settings";
+  formatVersion: 1;
+  scope: "server" | "org";
+  exportedAt: number;
+  settings: Record<string, unknown>; // every editable setting (not from env or file) with its value
+}
+```
+
+Secrets never live in the settings registry, so none can be exported.
+
+`POST /admin/settings/import/preview` and `POST /orgs/{orgId}/settings/import/preview` (same
+access) take `{"document": SettingsDocument}` and answer `Page<ImportItem>` without changing
+anything:
+
+```ts
+interface ImportItem {
+  key: string;
+  status: "change" | "same" | "locked" | "invalid" | "unknown";
+  current: unknown;   // null for an unknown key
+  imported: unknown;
+  version: number;    // what a batch must name
+  source: "env" | "file" | "database" | "default" | null;  // null for an unknown key
+  message?: string;   // English, for locked and invalid
+}
+```
+
+A document of another format, version or scope is `422 validation` with field `document`.
+
+`POST /admin/settings/batch` and `POST /orgs/{orgId}/settings/batch` (server administrators;
+`settings:write`) take `{"changes": [{"key", "value", "version"} | {"key", "reset": true,
+"version"}]}` (1 to 200, each key once) and
+apply all of them or none, answering `Page<Setting>` with the new versions. Every entry is checked
+before anything is written: an unknown key or a refused value is `422 validation` with field
+`changes`, a locked setting `409 conflict`, a stale version `409 version_conflict` with
+`current: Page<Setting>` of the named keys. Each change is audited as `settings.updated` with
+`"batch": true` in the summary. A `reset` deletes the stored value, so the default applies again
+(the answer has `source: "default"` and `version: 0`). Undo is another batch with the new
+versions: the previous value for a setting whose `source` was `database`, a `reset` for one that
+was `default`, so undo never stores a copy of the default.
+
+## Appearance and brand
+
+### `GET /branding`
+
+Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
+null, signIn: {welcome, notice}, defaultTheme, accent, density, fontSize}` with the server's
+values. The sign-in page applies `defaultTheme` when the visitor chose no theme in this browser;
+the language stays the browser's until sign-in.
+
+### `GET /branding/logo`
+
+Public. The logo's bytes with its content type and `ETag` (the SHA-256); `If-None-Match` (a list,
+weak tags or `*`) answers `304`. `404 not_found` without a logo. The UI adds `?v=<sha256 prefix>`
+(at least 8 hex digits): such a URL is cached `public, max-age=31536000, immutable`, a plain one
+`no-cache`.
+
+### `PUT /admin/branding/logo`, `DELETE /admin/branding/logo`, `POST /admin/branding/logo/restore`
+
+Server administrators. `PUT` takes `{"contentType": "image/png" | "image/jpeg" | "image/webp",
+"data": base64}` of at most 256 KiB (the request body at most 400 KiB, else `413
+payload_too_large`); the bytes must carry the type's signature (SVG is refused, as it can hold
+scripts). Answers `{contentType, sha256}`. `DELETE` answers `204`, `404` without a logo. Both keep
+the logo before them, and `POST .../restore` (undo) swaps it back: after an upload the earlier
+logo (or none) returns, after a removal the removed one. It answers the logo now in effect or
+`null`, `404` when there is nothing to swap. Audited as `branding.logo_updated` (type, size,
+version), `branding.logo_removed` and `branding.logo_restored`.
+
+### `GET /orgs/{orgId}/appearance`
+
+Any member. The organization's look: `{accent, density, fontSize, startPage, timeZone, weekStart}`,
+each the organization's own value or, where it is `inherit`, the server's.
 
 ## Audit log
 
@@ -200,7 +299,7 @@ Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
 
-Actions written by these routes: `settings.updated`, `folder.created`, `folder.updated`,
+Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `branding.logo_restored`, `folder.created`, `folder.updated`,
 `folder.trashed`, `folder.restored`, `folder.purged`, `dashboard.created`, `dashboard.saved`,
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
 `audit.expired`.
