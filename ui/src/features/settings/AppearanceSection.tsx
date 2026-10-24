@@ -18,6 +18,8 @@ import {
   LOGO_TYPES,
   MAX_LOGO_BYTES,
   removeLogo,
+  restoreLogo,
+  undoChange,
   uploadLogo,
 } from "./api";
 import { type Changes, contrastText, RowFrame, SettingRow } from "./rows";
@@ -140,6 +142,17 @@ function LogoRow({ found }: { found: boolean }) {
   const [busy, setBusy] = useState(false);
   const logo = branding.data?.logo ?? null;
 
+  /** The server keeps the logo before the last change; undo swaps it back. */
+  function undoLogo() {
+    void restoreLogo().then(
+      async () => {
+        await queryClient.invalidateQueries({ queryKey: brandingQuery.queryKey });
+        notice.show({ message: t("settings.logo.restored") });
+      },
+      (failure: unknown) => notice.showError(errorText(t, failure)),
+    );
+  }
+
   async function choose(file: File) {
     setError(undefined);
     if (!(LOGO_TYPES as readonly string[]).includes(file.type)) {
@@ -154,7 +167,7 @@ function LogoRow({ found }: { found: boolean }) {
     try {
       await uploadLogo(file.type, await fileToBase64(file));
       await queryClient.invalidateQueries({ queryKey: brandingQuery.queryKey });
-      notice.show({ message: t("settings.logo.saved") });
+      notice.show({ message: t("settings.logo.saved"), undo: undoLogo });
     } catch (failure) {
       setError(errorText(t, failure));
     } finally {
@@ -167,7 +180,7 @@ function LogoRow({ found }: { found: boolean }) {
     try {
       await removeLogo();
       await queryClient.invalidateQueries({ queryKey: brandingQuery.queryKey });
-      notice.show({ message: t("settings.logo.removed") });
+      notice.show({ message: t("settings.logo.removed"), undo: undoLogo });
     } catch (failure) {
       if (!isApiError(failure, "not_found")) {
         setError(errorText(t, failure));
@@ -335,11 +348,14 @@ function SignInDialog({
         undo: () => {
           void applyBatch(
             { kind: "server" },
-            saved.map((setting) => ({
-              key: setting.key,
-              value: changes.find((change) => change.setting.key === setting.key)?.setting.value,
-              version: setting.version,
-            })),
+            saved.map((setting) => {
+              const before = changes.find((change) => change.setting.key === setting.key)?.setting;
+              return undoChange(
+                setting.key,
+                { value: before?.value, source: before?.source },
+                setting.version,
+              );
+            }),
           ).then(refresh, (failure: unknown) => toast.showError(errorText(t, failure)));
         },
       });

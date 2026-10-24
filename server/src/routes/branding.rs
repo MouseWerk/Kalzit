@@ -5,7 +5,7 @@
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use base64::Engine;
@@ -27,8 +27,10 @@ pub fn routes() -> Vec<RouteDef> {
     vec![
         route(Method::GET, "/branding", Access::Public, get_branding),
         route(Method::GET, "/branding/logo", Access::Public, get_logo),
-        route(Method::PUT, "/admin/branding/logo", Access::ServerAdmin, put_logo),
+        // Base64 makes a 256 KiB image about 342 KiB; the cap leaves room for the JSON around it.
+        route(Method::PUT, "/admin/branding/logo", Access::ServerAdmin, put_logo).body_limit(MAX_UPLOAD_BYTES),
         route(Method::DELETE, "/admin/branding/logo", Access::ServerAdmin, delete_logo),
+        route(Method::POST, "/admin/branding/logo/restore", Access::ServerAdmin, restore_logo),
         route(Method::GET, "/orgs/{orgId}/appearance", Access::OrgMember, get_org_appearance),
     ]
 }
@@ -36,6 +38,9 @@ pub fn routes() -> Vec<RouteDef> {
 /// The largest logo, decoded. A logo is a small mark; this keeps the database row and every page
 /// load small.
 pub const MAX_LOGO_BYTES: usize = 256 * 1024;
+
+/// The largest upload request: the logo as base64 plus its JSON envelope.
+pub const MAX_UPLOAD_BYTES: usize = 400 * 1024;
 
 /// Raster formats only: an SVG can carry scripts and links, and would need its own sanitizer.
 pub const LOGO_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp"];
@@ -101,14 +106,30 @@ async fn get_branding(State(state): State<AppState>) -> ApiResult<Json<Branding>
     }))
 }
 
-async fn get_logo(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
+/// Whether an `If-None-Match` header names `etag`: a list of tags, weak ones (`W/"..."`) compared
+/// by their value, or `*`.
+pub fn etag_matches(header: &str, etag: &str) -> bool {
+    header.split(',').map(str::trim).any(|tag| tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag)
+}
+
+/// `?v=` of a logo URL, if it names the current image (a prefix of its hash, as the UI builds it).
+fn versioned(query: Option<&str>, sha: &str) -> bool {
+    query
+        .into_iter()
+        .flat_map(|q| q.split('&'))
+        .filter_map(|pair| pair.strip_prefix("v="))
+        .any(|v| v.len() >= 8 && v.len() <= sha.len() && sha.starts_with(v) && v.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+async fn get_logo(State(state): State<AppState>, uri: Uri, headers: HeaderMap) -> ApiResult<Response> {
     let row: Option<(String, String, String)> =
         sqlx::query_as("SELECT content_type, data, sha256 FROM branding_logo WHERE id = 'server'")
             .fetch_optional(&state.db)
             .await?;
     let Some((content_type, data, sha)) = row else { return Err(ApiError::not_found()) };
     let etag = format!("\"{sha}\"");
-    let fresh = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()).is_some_and(|v| v == etag);
+    let fresh =
+        headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()).is_some_and(|v| etag_matches(v, &etag));
     let mut res = if fresh {
         StatusCode::NOT_MODIFIED.into_response()
     } else {
@@ -125,8 +146,9 @@ async fn get_logo(State(state): State<AppState>, headers: HeaderMap) -> ApiResul
     if let Ok(v) = HeaderValue::from_str(&etag) {
         h.insert(header::ETAG, v);
     }
-    // The URL carries the hash, but a plain URL must still show a new logo at once.
-    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    // A URL with the image's hash never changes its answer; a plain URL must show a new logo at once.
+    let cache = if versioned(uri.query(), &sha) { "public, max-age=31536000, immutable" } else { "no-cache" };
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
     h.insert(header::CONTENT_DISPOSITION, HeaderValue::from_static("inline"));
     Ok(res)
 }
@@ -137,6 +159,48 @@ pub struct LogoUpload {
     content_type: String,
     /// The image, base64.
     data: String,
+}
+
+/// Keeps the current logo as the previous one, for undo (`restore_logo`). Without a current logo
+/// the previous one is cleared, so undoing the next upload removes the logo again.
+async fn keep_previous(tx: &mut sqlx::AnyConnection) -> ApiResult<()> {
+    let copied = sqlx::query(
+        "INSERT INTO branding_logo (id, content_type, data, sha256, version, updated_by, updated_at) \
+         SELECT 'previous', content_type, data, sha256, version, updated_by, updated_at FROM branding_logo \
+         WHERE id = 'server' \
+         ON CONFLICT (id) DO UPDATE SET content_type = excluded.content_type, data = excluded.data, \
+         sha256 = excluded.sha256, version = excluded.version, updated_by = excluded.updated_by, \
+         updated_at = excluded.updated_at",
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if copied == 0 {
+        sqlx::query("DELETE FROM branding_logo WHERE id = 'previous'").execute(&mut *tx).await?;
+    }
+    Ok(())
+}
+
+async fn record_logo(
+    tx: &mut sqlx::AnyConnection,
+    user: &SessionUser,
+    info: &RequestInfo,
+    action: &'static str,
+    summary: Value,
+    now: i64,
+) -> ApiResult<()> {
+    let event = AuditEvent {
+        org_id: None,
+        actor_user_id: Some(&user.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action,
+        resource_type: Some("logo"),
+        resource_id: None,
+        summary,
+        at_ms: now,
+    };
+    audit::record(tx, &event).await?;
+    Ok(())
 }
 
 async fn put_logo(
@@ -164,13 +228,17 @@ async fn put_logo(
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    let previous: Option<(i64,)> =
+    let current: Option<(i64,)> =
         sqlx::query_as("SELECT version FROM branding_logo WHERE id = 'server'").fetch_optional(&mut *tx).await?;
-    let version = previous.map_or(1, |(v,)| v + 1);
-    sqlx::query("DELETE FROM branding_logo WHERE id = 'server'").execute(&mut *tx).await?;
+    let version = current.map_or(1, |(v,)| v + 1);
+    keep_previous(&mut tx).await?;
+    // An upsert, so two uploads at once both succeed on PostgreSQL too; the later one wins.
     sqlx::query(
         "INSERT INTO branding_logo (id, content_type, data, sha256, version, updated_by, updated_at) \
-         VALUES ('server', $1, $2, $3, $4, $5, $6)",
+         VALUES ('server', $1, $2, $3, $4, $5, $6) \
+         ON CONFLICT (id) DO UPDATE SET content_type = excluded.content_type, data = excluded.data, \
+         sha256 = excluded.sha256, version = excluded.version, updated_by = excluded.updated_by, \
+         updated_at = excluded.updated_at",
     )
     .bind(&body.content_type)
     .bind(&data)
@@ -180,17 +248,8 @@ async fn put_logo(
     .bind(now)
     .execute(&mut *tx)
     .await?;
-    let event = AuditEvent {
-        org_id: None,
-        actor_user_id: Some(&user.id),
-        actor_address: Some(info.client_ip.to_string()),
-        action: "branding.logo_updated",
-        resource_type: Some("logo"),
-        resource_id: None,
-        summary: json!({ "contentType": body.content_type, "bytes": bytes.len(), "version": version }),
-        at_ms: now,
-    };
-    audit::record(&mut tx, &event).await?;
+    let summary = json!({ "contentType": body.content_type, "bytes": bytes.len(), "version": version });
+    record_logo(&mut tx, &user, &info, "branding.logo_updated", summary, now).await?;
     crate::db::commit(tx).await?;
     Ok(Json(LogoInfo { content_type: body.content_type, sha256: sha }))
 }
@@ -202,23 +261,42 @@ async fn delete_logo(
 ) -> ApiResult<StatusCode> {
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    let removed = sqlx::query("DELETE FROM branding_logo WHERE id = 'server'").execute(&mut *tx).await?.rows_affected();
-    if removed == 0 {
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT version FROM branding_logo WHERE id = 'server'").fetch_optional(&mut *tx).await?;
+    if exists.is_none() {
         return Err(ApiError::not_found());
     }
-    let event = AuditEvent {
-        org_id: None,
-        actor_user_id: Some(&user.id),
-        actor_address: Some(info.client_ip.to_string()),
-        action: "branding.logo_removed",
-        resource_type: Some("logo"),
-        resource_id: None,
-        summary: json!({}),
-        at_ms: now,
-    };
-    audit::record(&mut tx, &event).await?;
+    keep_previous(&mut tx).await?;
+    sqlx::query("DELETE FROM branding_logo WHERE id = 'server'").execute(&mut *tx).await?;
+    record_logo(&mut tx, &user, &info, "branding.logo_removed", json!({}), now).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Undo of the last upload or removal: the previous logo and the current one change places (a
+/// missing one counts as "no logo"). Answers the logo now in effect, or `null`.
+async fn restore_logo(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+) -> ApiResult<Json<Option<LogoInfo>>> {
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM branding_logo WHERE id IN ('server', 'previous')").fetch_all(&mut *tx).await?;
+    if !rows.iter().any(|(id,)| id == "previous") && !rows.iter().any(|(id,)| id == "server") {
+        return Err(ApiError::not_found());
+    }
+    sqlx::query("UPDATE branding_logo SET id = 'swap' WHERE id = 'server'").execute(&mut *tx).await?;
+    sqlx::query("UPDATE branding_logo SET id = 'server' WHERE id = 'previous'").execute(&mut *tx).await?;
+    sqlx::query("UPDATE branding_logo SET id = 'previous' WHERE id = 'swap'").execute(&mut *tx).await?;
+    let now_logo: Option<(String, String)> =
+        sqlx::query_as("SELECT content_type, sha256 FROM branding_logo WHERE id = 'server'")
+            .fetch_optional(&mut *tx)
+            .await?;
+    record_logo(&mut tx, &user, &info, "branding.logo_restored", json!({ "logo": now_logo.is_some() }), now).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(now_logo.map(|(content_type, sha256)| LogoInfo { content_type, sha256 })))
 }
 
 /// The look of one organization: its own value where it set one, the server's where it inherits.
@@ -265,5 +343,25 @@ mod tests {
         assert!(!logo_matches("image/png", &[0xff, 0xd8, 0xff]));
         assert!(!logo_matches("image/svg+xml", b"<svg/>"));
         assert!(!logo_matches("image/webp", b"RIFF"));
+    }
+
+    #[test]
+    fn if_none_match_takes_lists_weak_tags_and_the_wildcard() {
+        let etag = "\"abc\"";
+        for header in ["\"abc\"", "W/\"abc\"", "\"x\", \"abc\"", "\"x\",W/\"abc\"", "*"] {
+            assert!(etag_matches(header, etag), "{header}");
+        }
+        for header in ["\"abd\"", "abc", "W/abc", ""] {
+            assert!(!etag_matches(header, etag), "{header}");
+        }
+    }
+
+    #[test]
+    fn only_a_url_with_the_current_hash_is_cached_for_good() {
+        let sha = "0123456789abcdef0123";
+        assert!(versioned(Some("v=0123456789abcdef"), sha));
+        assert!(!versioned(Some("v=0123456789abcdee"), sha));
+        assert!(!versioned(Some("v=01"), sha), "too short to name an image");
+        assert!(!versioned(None, sha));
     }
 }

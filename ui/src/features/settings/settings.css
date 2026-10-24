@@ -84,6 +84,12 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /* High contrast draws borders strong, which would frame the item: a fill alone there. */
+  :root[data-theme="contrast"] .settings-nav__link[aria-current="page"] {
+    border-color: transparent;
+    background: var(--bg-active);
+  }
+
   .settings-nav__footer {
     margin-top: auto;
     padding-top: var(--space-4);

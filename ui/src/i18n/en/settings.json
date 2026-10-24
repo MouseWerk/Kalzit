@@ -97,6 +97,7 @@
   "settings.logo.remove": "Remove logo",
   "settings.logo.saved": "The logo was saved.",
   "settings.logo.removed": "The logo was removed.",
+  "settings.logo.restored": "The change to the logo was undone.",
   "settings.logo.wrongType": "Choose a PNG, JPEG or WebP image.",
   "settings.logo.tooLarge": "The image is larger than 256 KiB.",
   "settings.logo.current": "Current logo",

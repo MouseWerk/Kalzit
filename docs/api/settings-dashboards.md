@@ -137,6 +137,11 @@ Server settings:
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
 | `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
 
+The product name and the sign-in texts refuse invisible direction and format characters (bidi
+embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, the marks U+200E and
+U+200F, the zero-width space U+200B, U+2060 to U+2064 and U+FEFF); the joiners U+200C and U+200D,
+which scripts need, stay allowed.
+
 The sign-in texts are plain text with a few Markdown marks (`**strong**`, `*emphasis*`,
 `[text](https://...)` to http, https and mailto); the UI builds them from elements and never as
 HTML.
@@ -201,6 +206,7 @@ interface ImportItem {
   current: unknown;   // null for an unknown key
   imported: unknown;
   version: number;    // what a batch must name
+  source: "env" | "file" | "database" | "default" | null;  // null for an unknown key
   message?: string;   // English, for locked and invalid
 }
 ```
@@ -208,13 +214,16 @@ interface ImportItem {
 A document of another format, version or scope is `422 validation` with field `document`.
 
 `POST /admin/settings/batch` and `POST /orgs/{orgId}/settings/batch` (server administrators;
-`settings:write`) take `{"changes": [{"key", "value", "version"}]}` (1 to 200, each key once) and
+`settings:write`) take `{"changes": [{"key", "value", "version"} | {"key", "reset": true,
+"version"}]}` (1 to 200, each key once) and
 apply all of them or none, answering `Page<Setting>` with the new versions. Every entry is checked
 before anything is written: an unknown key or a refused value is `422 validation` with field
 `changes`, a locked setting `409 conflict`, a stale version `409 version_conflict` with
 `current: Page<Setting>` of the named keys. Each change is audited as `settings.updated` with
-`"batch": true` in the summary. Undo is another batch with the previous values and the new
-versions.
+`"batch": true` in the summary. A `reset` deletes the stored value, so the default applies again
+(the answer has `source: "default"` and `version: 0`). Undo is another batch with the new
+versions: the previous value for a setting whose `source` was `database`, a `reset` for one that
+was `default`, so undo never stores a copy of the default.
 
 ## Appearance and brand
 
@@ -226,16 +235,21 @@ the server's values.
 
 ### `GET /branding/logo`
 
-Public. The logo's bytes with its content type, `ETag` (the SHA-256) and `Cache-Control:
-no-cache`; `If-None-Match` answers `304`. `404 not_found` without a logo. The UI adds
-`?v=<sha256 prefix>` so a new logo is a new address.
+Public. The logo's bytes with its content type and `ETag` (the SHA-256); `If-None-Match` (a list,
+weak tags or `*`) answers `304`. `404 not_found` without a logo. The UI adds `?v=<sha256 prefix>`
+(at least 8 hex digits): such a URL is cached `public, max-age=31536000, immutable`, a plain one
+`no-cache`.
 
-### `PUT /admin/branding/logo`, `DELETE /admin/branding/logo`
+### `PUT /admin/branding/logo`, `DELETE /admin/branding/logo`, `POST /admin/branding/logo/restore`
 
 Server administrators. `PUT` takes `{"contentType": "image/png" | "image/jpeg" | "image/webp",
-"data": base64}` of at most 256 KiB; the bytes must carry the type's signature (SVG is refused, as
-it can hold scripts). Answers `{contentType, sha256}`. `DELETE` answers `204`, `404` without a
-logo. Audited as `branding.logo_updated` (type, size, version) and `branding.logo_removed`.
+"data": base64}` of at most 256 KiB (the request body at most 400 KiB, else `413
+payload_too_large`); the bytes must carry the type's signature (SVG is refused, as it can hold
+scripts). Answers `{contentType, sha256}`. `DELETE` answers `204`, `404` without a logo. Both keep
+the logo before them, and `POST .../restore` (undo) swaps it back: after an upload the earlier
+logo (or none) returns, after a removal the removed one. It answers the logo now in effect or
+`null`, `404` when there is nothing to swap. Audited as `branding.logo_updated` (type, size,
+version), `branding.logo_removed` and `branding.logo_restored`.
 
 ### `GET /orgs/{orgId}/appearance`
 
@@ -284,7 +298,7 @@ Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included
 Events older than `audit.retention_days` are deleted every hour; each run that deleted something
 records `audit.expired` with `{"deleted": n, "before": ms}`.
 
-Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `folder.created`, `folder.updated`,
+Actions written by these routes: `settings.updated`, `branding.logo_updated`, `branding.logo_removed`, `branding.logo_restored`, `folder.created`, `folder.updated`,
 `folder.trashed`, `folder.restored`, `folder.purged`, `dashboard.created`, `dashboard.saved`,
 `dashboard.version_restored`, `dashboard.trashed`, `dashboard.restored`, `dashboard.purged`,
 `audit.expired`.

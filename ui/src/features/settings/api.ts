@@ -28,6 +28,8 @@ export interface ImportItem {
   current: unknown;
   imported: unknown;
   version: number;
+  /** Where the value in effect comes from; null for an unknown key. */
+  source?: string | null;
   message?: string;
 }
 
@@ -57,10 +59,23 @@ export async function previewImport(
   );
 }
 
-export interface BatchChange {
-  key: string;
-  value: unknown;
-  version: number;
+/** A new value, or `reset` to delete the stored one so the default applies again. */
+export type BatchChange =
+  | { key: string; value: unknown; version: number }
+  | { key: string; reset: true; version: number };
+
+/**
+ * The change that puts a setting back as it was: its old value, or a reset when it had none of
+ * its own (`default`), so undo does not store a copy of the default.
+ */
+export function undoChange(
+  key: string,
+  previous: { value: unknown; source: string | null | undefined },
+  version: number,
+): BatchChange {
+  return previous.source === "default"
+    ? { key, reset: true, version }
+    : { key, value: previous.value, version };
 }
 
 /** Applies every change or none; answers the saved settings with their new versions. */
@@ -86,6 +101,11 @@ export async function uploadLogo(contentType: string, data: string): Promise<{ s
 
 export async function removeLogo(): Promise<void> {
   await request("DELETE", "/api/admin/branding/logo");
+}
+
+/** Undo of the last upload or removal: the logo before it comes back (or none). */
+export async function restoreLogo(): Promise<void> {
+  await request("POST", "/api/admin/branding/logo/restore", {});
 }
 
 /** The file's bytes as base64, for the logo upload. */

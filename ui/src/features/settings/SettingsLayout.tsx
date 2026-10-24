@@ -1,4 +1,4 @@
-import { Link, Outlet, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
@@ -40,10 +40,11 @@ export function SettingsLayout() {
   const { t } = useI18n();
   const access = useSettingsAccess();
   const org = useCurrentOrg();
-  const params = useParams({ strict: false }) as { section?: string };
+  const { pathname } = useLocation();
   const navigate = useNavigate();
   const visible = SECTIONS.filter((section) => section.visible(access));
-  const current = params.section;
+  // From the address, so the sections with addresses of their own (appearance, organization) count.
+  const current = pathname.split("/")[2];
   const listRef = useRef<HTMLUListElement>(null);
 
   function onListKey(event: KeyboardEvent<HTMLUListElement>) {

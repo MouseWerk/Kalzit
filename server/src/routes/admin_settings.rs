@@ -293,6 +293,9 @@ pub struct PreviewItem {
     imported: Value,
     /// The stored version a batch must name to apply this change.
     version: i64,
+    /// Where the value in effect comes from; `null` for an unknown key. An undo of the import
+    /// resets a setting that was `default` instead of storing its default value.
+    source: Option<Source>,
     /// Why the item is locked or invalid, in English.
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
@@ -334,6 +337,7 @@ async fn preview(state: &AppState, org_id: Option<&str>, body: PreviewRequest) -
                 current: Value::Null,
                 imported: value.clone(),
                 version: 0,
+                source: None,
                 message: None,
             });
             continue;
@@ -354,6 +358,7 @@ async fn preview(state: &AppState, org_id: Option<&str>, body: PreviewRequest) -
             current: e.value,
             imported: value.clone(),
             version: e.version,
+            source: Some(e.source),
             message,
         });
     }
@@ -379,8 +384,14 @@ async fn preview_org(
 #[serde(deny_unknown_fields)]
 pub struct BatchChange {
     key: String,
-    value: Value,
+    /// The new value; absent with `reset`.
+    #[serde(default)]
+    value: Option<Value>,
     version: i64,
+    /// Deletes the stored value, so the default applies again (and later changes of the default
+    /// reach this setting), instead of storing a copy of it.
+    #[serde(default)]
+    reset: bool,
 }
 
 #[derive(Deserialize)]
@@ -414,7 +425,16 @@ async fn batch(
         if let Some(reason) = locked_reason(def, &before) {
             return Err(ApiError::new(StatusCode::CONFLICT, "conflict", reason));
         }
-        settings::validate(def, &change.value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
+        match (&change.value, change.reset) {
+            (Some(value), false) => {
+                settings::validate(def, value).map_err(|e| ApiError::validation(e).with_field("changes"))?;
+            }
+            (None, true) => {}
+            _ => {
+                return Err(ApiError::validation(format!("{}: a change has either a value or reset", change.key))
+                    .with_field("changes"));
+            }
+        }
         stale |= before.version != change.version;
         checked.push((def, change));
     }
@@ -433,15 +453,28 @@ async fn batch(
     let mut tx = crate::db::begin(&state.db).await?;
     let mut saved = Vec::new();
     for (def, change) in &checked {
-        let Some(version) =
-            settings::store(&mut tx, org_id, def.key, &change.value, change.version, &user.id, now).await?
-        else {
+        let done = match &change.value {
+            Some(value) => settings::store(&mut tx, org_id, def.key, value, change.version, &user.id, now)
+                .await?
+                .map(|version| (version, stored_view(value.clone(), version, user, now))),
+            None => settings::reset(&mut tx, org_id, def.key, change.version).await?.then(|| {
+                let default = Effective {
+                    value: (def.default)(),
+                    source: Source::Default,
+                    version: 0,
+                    updated_by: None,
+                    updated_at: None,
+                };
+                (0, default)
+            }),
+        };
+        let Some((version, effective)) = done else {
             drop(tx);
             settings::cache(state).invalidate(org_id);
             return Err(conflict(state).await?);
         };
         record_update(&mut tx, user, info, org_id, def.key, version, now, true).await?;
-        saved.push(view(def, stored_view(change.value.clone(), version, user, now)));
+        saved.push(view(def, effective));
     }
     crate::db::commit(tx).await?;
     settings::cache(state).invalidate(org_id);

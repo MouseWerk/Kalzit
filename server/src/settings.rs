@@ -849,6 +849,50 @@ pub fn editable(def: &SettingDef, effective: &Effective) -> bool {
     def.ui_editable && matches!(effective.source, Source::Database | Source::Default)
 }
 
+/// Deletes a setting's stored value if its version is still `expected`, so the default applies
+/// again (rather than a stored copy of it). Answers false when someone else saved first; a setting
+/// never saved (`expected` 0) has nothing to delete and answers true. Same transaction and cache
+/// rules as `store`.
+pub async fn reset(conn: &mut sqlx::AnyConnection, org_id: Option<&str>, key: &str, expected: i64) -> ApiResult<bool> {
+    if expected == 0 {
+        let stored: Option<(i64,)> = match org_id {
+            None => {
+                sqlx::query_as("SELECT version FROM server_settings WHERE key = $1")
+                    .bind(key)
+                    .fetch_optional(&mut *conn)
+                    .await?
+            }
+            Some(org) => {
+                sqlx::query_as("SELECT version FROM org_settings WHERE org_id = $1 AND key = $2")
+                    .bind(org)
+                    .bind(key)
+                    .fetch_optional(&mut *conn)
+                    .await?
+            }
+        };
+        return Ok(stored.is_none());
+    }
+    let affected = match org_id {
+        None => {
+            sqlx::query("DELETE FROM server_settings WHERE key = $1 AND version = $2")
+                .bind(key)
+                .bind(expected)
+                .execute(&mut *conn)
+                .await?
+        }
+        Some(org) => {
+            sqlx::query("DELETE FROM org_settings WHERE org_id = $1 AND key = $2 AND version = $3")
+                .bind(org)
+                .bind(key)
+                .bind(expected)
+                .execute(&mut *conn)
+                .await?
+        }
+    }
+    .rows_affected();
+    Ok(affected == 1)
+}
+
 /// Writes a setting if its stored version is still `expected` (0: never saved). Answers the new
 /// version, or `None` when someone else saved first. Runs inside the caller's transaction, next
 /// to the audit entry; call `Cache::invalidate` after the commit.

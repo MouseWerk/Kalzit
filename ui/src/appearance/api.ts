@@ -1,7 +1,9 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { expectShape, isRecord, request } from "../api/client";
+import { applyDefaultLanguage } from "../i18n/i18n";
 import { setDefaultTimeSettings, WEEK_STARTS, type WeekStart } from "../lib/timeSettings";
+import { applyDefaultTheme } from "../theme/theme";
 import { DEFAULT_PRODUCT_NAME, logoUrlFor, setBrand } from "./brand";
 import { START_PAGES, type StartPage } from "./contrast";
 import { lookFrom, setLook } from "./look";
@@ -102,6 +104,10 @@ export function useBrandingSync(): Branding | undefined {
     if (branding.data !== undefined) {
       applyBranding(branding.data);
       setLook(lookFrom(branding.data));
+      // Before sign-in there are no account preferences: the server's defaults stand in for a
+      // visitor who chose nothing in this browser.
+      applyDefaultTheme(branding.data.defaultTheme);
+      applyDefaultLanguage(branding.data.defaultLanguage);
     }
   }, [branding.data]);
   return branding.data;

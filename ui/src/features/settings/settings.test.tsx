@@ -1,7 +1,9 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { checkAccent } from "../../appearance/contrast";
+import { installFakeServer } from "../../test/fakeServer";
 import { generatedUnion } from "../../test/generated";
+import { renderApp } from "../../test/renderApp";
 import { openAdmin, sent } from "../admin/test/openAdmin";
 import { buildIndex, search } from "./search";
 import { SECTIONS } from "./sections";
@@ -93,6 +95,30 @@ describe("settings shell", () => {
     expect(
       await screen.findByRole("heading", { level: 2, name: "Appearance and brand" }),
     ).toBeTruthy();
+  });
+
+  it("keeps the link to one setting through an old address", async () => {
+    const { location } = await openAdmin("/admin/server/settings#appearance.product_name", {
+      isServerAdmin: true,
+    });
+    await waitFor(() => expect(location().pathname).toBe("/settings/appearance"));
+    expect(location().hash).toBe("appearance.product_name");
+    const sections = await nav();
+    expect(
+      within(sections)
+        .getByRole("link", { name: "Appearance and brand" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
+  it("shows the sign-in page in the server's default theme when the visitor chose none", async () => {
+    const server = installFakeServer({ signedIn: false });
+    server.state.branding.defaultTheme = "dark";
+    renderApp("/login");
+    await screen.findByRole("heading", { name: "Sign in" });
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+    // Not remembered: a later default reaches the visitor too.
+    expect(window.localStorage.getItem("kalzit.theme")).toBeNull();
   });
 
   it("places every setting of the registry in a section", () => {
@@ -251,7 +277,7 @@ describe("organization settings", () => {
 
 describe("export and import", () => {
   it("imports a file after showing its changes, and undoes the import", async () => {
-    const { user, admin } = await openAdmin("/settings/transfer", { isServerAdmin: true });
+    const { user, admin, server } = await openAdmin("/settings/transfer", { isServerAdmin: true });
     await screen.findByRole("heading", { level: 2, name: "Export / import settings" });
     const file = new File(
       [
@@ -283,7 +309,35 @@ describe("export and import", () => {
     const rows = admin.serverSettings.find((s) => s.key === "datasources.max_rows");
     expect(rows).toMatchObject({ value: 500, version: 1 });
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(rows).toMatchObject({ value: 100000, version: 2 }));
+    // The setting had no value of its own, so undo resets it instead of storing the default.
+    await waitFor(() =>
+      expect(rows).toMatchObject({ value: 100000, version: 0, source: "default" }),
+    );
+    const batches = server.calls.filter((call) => call.path === "/api/admin/settings/batch");
+    expect(batches.at(-1)?.body).toEqual({
+      changes: [{ key: "datasources.max_rows", reset: true, version: 1 }],
+    });
+  });
+
+  it("undoes a logo upload and a removal", async () => {
+    const { user, server } = await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const input = await waitFor(() => {
+      const element = document.querySelector<HTMLInputElement>('input[type="file"]');
+      if (element === null) {
+        throw new Error("no file input");
+      }
+      return element;
+    });
+    await user.upload(
+      input,
+      new File([new Uint8Array([137, 80, 78, 71])], "logo.png", { type: "image/png" }),
+    );
+    expect(await screen.findByText("The logo was saved.")).toBeTruthy();
+    expect(server.state.branding.logo).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("The change to the logo was undone.")).toBeTruthy();
+    expect(server.state.branding.logo).toBeNull();
+    expect(sent(server, "POST")).toContain("/api/admin/branding/logo/restore");
   });
 
   it("refuses a file that is not JSON", async () => {

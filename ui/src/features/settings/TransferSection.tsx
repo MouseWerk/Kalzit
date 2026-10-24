@@ -11,6 +11,7 @@ import {
   type ImportItem,
   previewImport,
   type SettingsScope,
+  undoChange,
 } from "./api";
 import { shownValue } from "./rows";
 import { refreshLook } from "./SectionPage";
@@ -104,11 +105,14 @@ export function TransferSection() {
         undo: () => {
           void applyBatch(
             current.scope,
-            saved.map((setting) => ({
-              key: setting.key,
-              value: changes.find((item) => item.key === setting.key)?.current,
-              version: setting.version,
-            })),
+            saved.map((setting) => {
+              const item = changes.find((change) => change.key === setting.key);
+              return undoChange(
+                setting.key,
+                { value: item?.current, source: item?.source },
+                setting.version,
+              );
+            }),
           ).then(
             async () => {
               await queryClient.invalidateQueries({ queryKey: ["admin"] });

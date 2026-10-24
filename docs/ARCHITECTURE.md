@@ -369,7 +369,8 @@ type QueryResult =
   attributes on `<html>` that the tokens read; a custom accent is one custom property set through
   the CSSOM, so the CSP stays `style-src 'self'`. The logo is stored in the database (raster
   formats only, at most 256 KiB) and served same-origin at `GET /api/branding/logo`; `GET
-  /api/branding` is public, as the sign-in page shows it.
+  /api/branding` is public, as the sign-in page shows it. The logo before the last upload or
+  removal is kept as a second row, which undo swaps back.
 - Settings export as JSON (only what the caller may change), import through a preview and a batch
   that applies every change or none in one transaction (docs/api/settings-dashboards.md).
 - `audit_events`: written with `audit::record(&mut tx, &AuditEvent { .. })` inside the

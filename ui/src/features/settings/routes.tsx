@@ -1,5 +1,6 @@
 import { createRoute, lazyRouteComponent, redirect } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
+import { keepHash } from "./keepHash";
 
 // The settings page with one address per section (`/settings/appearance`) and per setting (its
 // row as the hash). Loaded on first use.
@@ -26,8 +27,13 @@ const sectionRoute = createRoute({
 const accountRedirect = createRoute({
   getParentRoute: () => appRoute,
   path: "/account",
-  beforeLoad: () => {
-    throw redirect({ to: "/settings/$section", params: { section: "profile" }, replace: true });
+  beforeLoad: ({ location }) => {
+    throw redirect({
+      to: "/settings/$section",
+      params: { section: "profile" },
+      replace: true,
+      ...keepHash(location),
+    });
   },
 });
 

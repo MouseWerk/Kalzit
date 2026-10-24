@@ -1,5 +1,6 @@
 import { createRoute, lazyRouteComponent, redirect } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
+import { keepHash } from "../settings/keepHash";
 
 // The admin area's pages: the administration with its sections. The user's own account and the
 // settings sections moved to the settings page (features/settings); their old addresses
@@ -51,11 +52,12 @@ const orgSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/settings",
   // Organization settings live in the settings page now.
-  beforeLoad: () => {
+  beforeLoad: ({ location }) => {
     throw redirect({
       to: "/settings/$section",
       params: { section: "organization" },
       replace: true,
+      ...keepHash(location),
     });
   },
 });
@@ -82,8 +84,13 @@ const serverSettingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/settings",
   // Server settings live in the settings page now.
-  beforeLoad: () => {
-    throw redirect({ to: "/settings/$section", params: { section: "appearance" }, replace: true });
+  beforeLoad: ({ location }) => {
+    throw redirect({
+      to: "/settings/$section",
+      params: { section: "appearance" },
+      replace: true,
+      ...keepHash(location),
+    });
   },
 });
 

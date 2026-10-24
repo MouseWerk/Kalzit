@@ -327,6 +327,33 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     if (path === "/api/branding" && method === "GET") {
       return json(200, state.branding);
     }
+    if (path.startsWith("/api/admin/branding/logo") && state.signedIn && state.user.isServerAdmin) {
+      // The logo and the one before it, which undo swaps back (docs/api/settings-dashboards.md).
+      const current = state.branding.logo ?? null;
+      if (path === "/api/admin/branding/logo" && method === "PUT") {
+        const logo = {
+          contentType: String(input.contentType),
+          sha256: `sha${server.calls.length}`,
+        };
+        Object.assign(state, { previousLogo: current });
+        state.branding.logo = logo;
+        return json(200, logo);
+      }
+      if (path === "/api/admin/branding/logo" && method === "DELETE") {
+        if (current === null) {
+          return error(404, "not_found");
+        }
+        Object.assign(state, { previousLogo: current });
+        state.branding.logo = null;
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/api/admin/branding/logo/restore" && method === "POST") {
+        const previous = (state as { previousLogo?: unknown }).previousLogo ?? null;
+        Object.assign(state, { previousLogo: current });
+        state.branding.logo = previous;
+        return json(200, previous);
+      }
+    }
     if (path === "/api/me" && method === "GET") {
       return state.signedIn ? json(200, state.user) : error(401, "unauthenticated");
     }

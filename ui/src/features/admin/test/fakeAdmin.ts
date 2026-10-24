@@ -1136,25 +1136,33 @@ function settingsExtras(
           : JSON.stringify(value) === JSON.stringify(stored.value)
             ? "same"
             : "change";
-      return { key, status, current: stored.value, imported: value, version: stored.version };
+      return {
+        key,
+        status,
+        current: stored.value,
+        imported: value,
+        version: stored.version,
+        source: stored.source,
+      };
     });
     return json(200, { items, nextCursor: null });
   }
   if (id === "batch" && method === "POST") {
     const changes = body(input, ["changes"]).changes as {
       key: string;
-      value: unknown;
+      value?: unknown;
+      reset?: boolean;
       version: number;
     }[];
     for (const change of changes) {
       const stored = settings.find((setting) => setting.key === change.key);
-      if (stored === undefined) {
+      if (stored === undefined || (change.reset === true) === "value" in change) {
         refuse("validation", "changes");
       }
       if (locked(stored)) {
         refuse("conflict");
       }
-      if (!(SETTING_VALUES[stored.key]?.(change.value) ?? true)) {
+      if (change.reset !== true && !(SETTING_VALUES[stored.key]?.(change.value) ?? true)) {
         refuse("validation", "changes");
       }
       if (stored.version !== change.version) {
@@ -1163,6 +1171,15 @@ function settingsExtras(
     }
     const saved = changes.map((change) => {
       const stored = settings.find((setting) => setting.key === change.key) as WireSetting;
+      if (change.reset === true) {
+        // The stored value is deleted: the default applies again, never saved.
+        stored.value = stored.default;
+        stored.version = 0;
+        stored.source = "default";
+        stored.updatedAt = null;
+        stored.updatedBy = null;
+        return stored;
+      }
       stored.value = change.value;
       stored.version += 1;
       stored.source = "database";

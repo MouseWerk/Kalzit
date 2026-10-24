@@ -1,6 +1,6 @@
--- The server's logo (appearance and brand settings). One row at most (`id` is always 'server');
--- the image is base64 text, so both databases store it the same way. `version` counts uploads and
--- makes the logo's URL change with every new image.
+-- The server's logo (appearance and brand settings). `id` is 'server' for the logo in effect and
+-- 'previous' for the one before the last upload or removal, which undo brings back. The image is
+-- base64 text, so both databases store it the same way. `version` counts uploads.
 
 CREATE TABLE branding_logo (
     id            TEXT PRIMARY KEY,
