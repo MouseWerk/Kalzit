@@ -1,3 +1,9 @@
+/*
+ * The layer order again: this sheet can load before styles/index.css (a shared chunk's styles
+ * come first), and the first statement fixes the order for the whole page.
+ */
+@layer reset, tokens, base, components, utilities;
+
 @layer components {
   /* Quiet icon buttons: square, no fill until hovered, the icon in the text color. */
 

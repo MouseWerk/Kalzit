@@ -134,9 +134,12 @@ export function TimeRangePicker({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverId = useId();
   const label = rangeLabel(t, language, value, timeZone);
+  const zone = showZone ? zoneOffset(language, timeZone) : "";
+  // The name holds what the button shows, the zone included.
+  const shown = zone === "" ? label : `${label} ${zone}`;
   const accessible =
     name === undefined
-      ? t("dashboards.time.buttonLabel", { range: label })
+      ? t("dashboards.time.buttonLabel", { range: shown })
       : t("dashboards.time.buttonFor", { name, range: label });
   return (
     <>
@@ -153,9 +156,9 @@ export function TimeRangePicker({
         >
           <Icon name="clock" />
           <span className="time-picker__label truncate">{label}</span>
-          {showZone ? (
-            <span className="time-picker__zone-tag">{zoneOffset(language, timeZone)}</span>
-          ) : null}
+          {/* A space, so the text reads as the name does: "Last 6 hours GMT+2". */}
+          {zone === "" ? null : " "}
+          {zone === "" ? null : <span className="time-picker__zone-tag">{zone}</span>}
           <Icon name="chevronDown" className="time-picker__chevron" />
         </button>
       </WithTooltip>

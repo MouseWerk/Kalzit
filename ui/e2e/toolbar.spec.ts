@@ -100,10 +100,14 @@ test.describe("on a phone", () => {
     await signInOwner(page);
     await page.goto(`/dashboards/${world.dashboardId}`);
     await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
-    const toolbar = page.locator(".dash-toolbar");
-    const height = (await toolbar.boundingBox())?.height ?? 0;
-    // Two rows of controls and the gap between them, never a third.
-    expect(height).toBeLessThan(3 * 32);
+    // Two rows of buttons, never a third; the filters below them are choices, not buttons.
+    const rows = await page
+      .locator(".dash-toolbar button:not(.dash-filters button)")
+      .evaluateAll((buttons) => {
+        const tops = buttons.map((b) => b.getBoundingClientRect().top).sort((a, b) => a - b);
+        return tops.filter((top, i) => i === 0 || top - (tops[i - 1] ?? top) > 12).length;
+      });
+    expect(rows).toBeLessThanOrEqual(2);
     await expect(page.getByRole("button", { name: t("dashboards.edit"), exact: true })).toHaveCount(
       0,
     );

@@ -105,7 +105,7 @@ describe("time picker", () => {
   it("searches the quick ranges and takes the first match with Enter", async () => {
     setup("viewer", { fiscalYearStartMonth: 4 });
     const { user, location } = renderApp("/dashboards/d-main");
-    await user.click(await screen.findByRole("button", { name: "Time range: Last 6 hours" }));
+    await user.click(await screen.findByRole("button", { name: /^Time range: Last 6 hours/ }));
     const picker = screen.getByRole("dialog", { name: "Time range" });
     const search = within(picker).getByRole("searchbox", { name: "Search quick ranges" });
     expect(document.activeElement).toBe(search);
@@ -124,14 +124,14 @@ describe("time picker", () => {
     expect(screen.queryByRole("dialog", { name: "Time range" })).toBeNull();
     // Focus is back on the button.
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Time range: Yesterday" }),
+      screen.getByRole("button", { name: /^Time range: Yesterday/ }),
     );
   });
 
   it("offers no fiscal ranges without a fiscal year, and closes with Escape", async () => {
     setup("viewer");
     const { user } = renderApp("/dashboards/d-main");
-    await user.click(await screen.findByRole("button", { name: "Time range: Last 6 hours" }));
+    await user.click(await screen.findByRole("button", { name: /^Time range: Last 6 hours/ }));
     const picker = screen.getByRole("dialog", { name: "Time range" });
     expect(within(picker).queryByRole("button", { name: "Previous fiscal year" })).toBeNull();
     await user.type(within(picker).getByRole("searchbox"), "nothing like this");
@@ -143,7 +143,7 @@ describe("time picker", () => {
   it("remembers ranges this account applied and picks days on the calendar", async () => {
     setup("viewer");
     const { user, location } = renderApp("/dashboards/d-main");
-    await user.click(await screen.findByRole("button", { name: "Time range: Last 6 hours" }));
+    await user.click(await screen.findByRole("button", { name: /^Time range: Last 6 hours/ }));
     let picker = screen.getByRole("dialog", { name: "Time range" });
     expect(within(picker).queryByRole("heading", { name: "Recently used" })).toBeNull();
     await user.click(within(picker).getByRole("button", { name: "Pick the start day" }));
@@ -167,7 +167,7 @@ describe("time picker", () => {
     expect(within(recent).getAllByRole("button")).toHaveLength(1);
     await user.click(within(picker).getByRole("button", { name: "Last 15 minutes" }));
     // Quick ranges are not kept as recent: they are always in the list.
-    await user.click(screen.getByRole("button", { name: "Time range: Last 15 minutes" }));
+    await user.click(screen.getByRole("button", { name: /^Time range: Last 15 minutes/ }));
     picker = screen.getByRole("dialog", { name: "Time range" });
     expect(
       within(within(picker).getByRole("list", { name: "Recently used" })).getAllByRole("button"),
@@ -177,7 +177,7 @@ describe("time picker", () => {
   it("moves through the calendar with the keyboard", async () => {
     setup("viewer");
     const { user } = renderApp("/dashboards/d-main");
-    await user.click(await screen.findByRole("button", { name: "Time range: Last 6 hours" }));
+    await user.click(await screen.findByRole("button", { name: /^Time range: Last 6 hours/ }));
     const picker = screen.getByRole("dialog", { name: "Time range" });
     await user.click(within(picker).getByRole("button", { name: "Pick the start day" }));
     const grid = within(picker).getByRole("table", { name: /Pick the start day/ });
@@ -225,7 +225,7 @@ describe("the dashboard's time options", () => {
     const range = lastRange(server) ?? { from: 0, to: 0 };
     expect(range.to).toBeLessThanOrEqual(before - 5 * 60_000 + 1000);
     expect(range.to - range.from).toBe(6 * 3_600_000);
-    await user.click(screen.getByRole("button", { name: "Time range: Last 6 hours" }));
+    await user.click(screen.getByRole("button", { name: /^Time range: Last 6 hours/ }));
     expect(screen.getByText(/^Times in Asia\/Tokyo.*as this dashboard sets$/)).toBeTruthy();
     await user.keyboard("{Escape}");
     const nav = screen.getByRole("navigation", { name: "Main navigation" });

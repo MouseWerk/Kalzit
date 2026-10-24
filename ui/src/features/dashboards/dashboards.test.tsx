@@ -557,7 +557,7 @@ describe("dashboard view", () => {
   it("changes the time range, and the queries follow with absolute times", async () => {
     const server = setup("viewer");
     const { user, location } = renderApp("/dashboards/d-sales");
-    await user.click(await screen.findByRole("button", { name: "Time range: Last 6 hours" }));
+    await user.click(await screen.findByRole("button", { name: /^Time range: Last 6 hours/ }));
     const dialog = screen.getByRole("dialog", { name: "Time range" });
     await user.click(within(dialog).getByRole("button", { name: "Last 15 minutes" }));
     expect(location().search).toMatchObject({ from: "now-15m", to: "now" });

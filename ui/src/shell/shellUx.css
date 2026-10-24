@@ -1,3 +1,9 @@
+/*
+ * The layer order again: this sheet can load before styles/index.css (a shared chunk's styles
+ * come first), and the first statement fixes the order for the whole page.
+ */
+@layer reset, tokens, base, components, utilities;
+
 @layer components {
   /* Notifications: one toast at the bottom of the window, above dialogs and menus. */
 
