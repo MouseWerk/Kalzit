@@ -1459,6 +1459,51 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
 
+### Updates (`422 validation` or `409 conflict`; also in the update status)
+
+The update routes (docs/api/updates.md) answer these, and the status reports them for a check,
+a download or an installation that ran in the background (`lastCheck.error`, `job.error`,
+history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only prepares.
+
+| Reason | Params | When |
+|---|---|---|
+| `updates.no_trusted_key` | | this build trusts no release key, so nothing can be verified |
+| `updates.signature_invalid` | | a signature does not match the manifest or a package entry |
+| `updates.unknown_key` | `keyId` | signed with a key this build does not trust |
+| `updates.manifest_invalid` | `detail` | the manifest or signature file is malformed, too large or not for Kalzit |
+| `updates.no_package` | `platform`, `arch` | the release has no package for this server |
+| `updates.wrong_platform` | `platform`, `arch`, `ours` | the uploaded package is for another platform |
+| `updates.hash_mismatch` | | the package does not match its signed SHA-256 |
+| `updates.size_mismatch` | | the package size differs from its signed size |
+| `updates.too_large` | `max` | an upload part is larger than `max` bytes |
+| `updates.downgrade` | `version`, `installed` | the release is older than the installed version (`409`) |
+| `updates.already_installed` | `version` | this version runs already (`409`) |
+| `updates.minimum_version` | `minimum` | the release needs at least `minimum` installed first (`409`) |
+| `updates.source_unreachable` | `detail` | GitHub did not answer, or answered an error |
+| `updates.source_refused` | `host` | a request or redirect would leave the release hosts |
+| `updates.release_incomplete` | `version` | the release lacks its manifest, signature or package file |
+| `updates.not_offered` | `version` | this version is not offered; check first (`409`) |
+| `updates.busy` | | another update step runs (`409`) |
+| `updates.pending` | | an installation is under way; the server restarts (`409`) |
+| `updates.not_staged` | `version` | this version is not downloaded or uploaded (`409`) |
+| `updates.manual_only` | `mode` | this server does not install on its own; `mode` is a `updates.mode_*` reason (`409`) |
+| `updates.backup_unsupported` | | PostgreSQL: back the database up with pg_dump and confirm (`409`) |
+| `updates.backup_failed` | `detail` | the database backup failed; nothing changed |
+| `updates.smoke_test_failed` | `detail` | the new binary does not run on this server; nothing changed |
+| `updates.install_failed` | `detail` | putting the files in place failed |
+| `updates.rollback_unavailable` | `version` | that version or its backup is not kept (`409`) |
+| `updates.rollback_needs_restore` | `version` | returning restores the database backup of that time; confirm with `restoreDatabase` (`409`) |
+| `updates.rollback_restore_unsupported` | | PostgreSQL: returning across a database change needs your own restore (`409`) |
+| `updates.schedule_out_of_range` | | the time is in the past, more than 7 days ahead, or the window end is not after it |
+| `updates.schedule_missed` | | the server was not running during the planned window |
+| `updates.upload_incomplete` | `part` | the upload lacks its `manifest`, `signature` or `package` |
+| `updates.upload_unknown_part` | `part` | the upload has an unknown or repeated part |
+| `updates.mode_windows_service` | | Windows: installing needs the service integration; use `kalzit update apply` |
+| `updates.mode_not_systemd` | | Linux, not started by systemd |
+| `updates.mode_binary_not_writable` | | the service account cannot replace the binary |
+| `updates.mode_container` | | a container: update the image instead |
+| `updates.mode_unsupported_platform` | | this system has no update support |
+
 ## Not here yet
 
 - Purging data sources from the trash, testing settings before saving.

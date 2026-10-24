@@ -1,0 +1,132 @@
+name: Release
+
+# Builds the Windows and Linux binaries for a version tag (v0.2.0, v0.3.0-rc.1), writes the signed
+# update manifest and publishes everything as a GitHub Release, which running servers find through
+# their update check (docs/operations/updates.md). A tag with a pre-release part (-rc.1) becomes
+# a pre-release, offered only on the preview channel.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            exe: ""
+          - os: windows-latest
+            platform: windows
+            arch: x64
+            exe: .exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Version from the tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          crate="$(grep -m1 '^version = ' server/Cargo.toml | cut -d'"' -f2)"
+          if [ "$version" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match server/Cargo.toml version $crate"
+            exit 1
+          fi
+          if [ ! -f "docs/releases/v$version.md" ]; then
+            echo "::error::docs/releases/v$version.md is missing"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - uses: dtolnay/rust-toolchain@stable
+      # The public release keys, if set as a repository variable (comma-separated base64), are
+      # trusted in addition to the keys in server/src/updates/signing.rs.
+      - run: cargo build --release --locked -p kalzit --bin kalzit
+        env:
+          KALZIT_UPDATE_PUBLIC_KEYS: ${{ vars.KALZIT_UPDATE_PUBLIC_KEYS }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          name="kalzit-${{ steps.version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.exe }}"
+          cp "target/release/kalzit${{ matrix.exe }}" "dist/$name"
+          # The same check a server makes before it installs: the binary runs and names its version.
+          "dist/$name" --version | grep -qw "${{ steps.version.outputs.version }}"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: kalzit-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p kalzit --bin kalzit-sign
+      - name: Sign
+        shell: bash
+        env:
+          KALZIT_RELEASE_SIGNING_KEY: ${{ secrets.KALZIT_RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$KALZIT_RELEASE_SIGNING_KEY" ]; then
+            echo "::error::the repository secret KALZIT_RELEASE_SIGNING_KEY is not set (docs/operations/updates.md)"
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          channel=stable
+          case "$version" in *-*) channel=preview ;; esac
+          target/release/kalzit-sign release \
+            --version "$version" \
+            --channel "$channel" \
+            --notes "docs/releases/v$version.md" \
+            --notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --package "linux:x64:dist/kalzit-$version-linux-x64" \
+            --package "windows:x64:dist/kalzit-$version-windows-x64.exe" \
+            --out-dir dist
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          prerelease=""
+          case "$version" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Kalzit $version" \
+            --notes-file "docs/releases/v$version.md" \
+            --verify-tag $prerelease

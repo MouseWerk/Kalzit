@@ -36,6 +36,15 @@ where
     RouteDef { method, path, access, handler: on(filter, handler) }
 }
 
+impl RouteDef {
+    /// Raises the body limit of this route above axum's default of 2 MiB (an upload). The access
+    /// rule still runs first, before any of the body is read.
+    pub fn with_body_limit(mut self, max_bytes: usize) -> Self {
+        self.handler = self.handler.layer(axum::extract::DefaultBodyLimit::max(max_bytes));
+        self
+    }
+}
+
 /// Builds the API router. Several methods on one path may have different access rules, so each
 /// method router gets its own layer before they are merged.
 #[expect(clippy::disallowed_methods, reason = "this is where route tables become routes, with their access layer")]
