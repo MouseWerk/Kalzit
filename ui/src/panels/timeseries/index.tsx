@@ -97,8 +97,12 @@ function TimeSeriesPanel({
     return <EmptyPanel reason={reason} />;
   }
   // The value axis follows the first series' unit and decimals; ends from the defaults. Series
-  // stacked to 100 % put percent on it, from 0 to 100 unless the ends are set.
+  // stacked to 100 % put percent on it, from 0 (or -100 with negative values) to 100 unless the
+  // ends are set.
   const percent = styles.some((style) => style.stack === "percent");
+  const negative =
+    percent &&
+    series.some((s, i) => styles[i]?.stack === "percent" && s.values.some((value) => value < 0));
   const axisOptions = series[0]?.options ?? config.defaults;
   const axisUnit = percent ? "percent" : axisOptions.unit === "none" ? undefined : axisOptions.unit;
   const axisDecimals = percent ? undefined : axisOptions.decimals;
@@ -115,7 +119,7 @@ function TimeSeriesPanel({
       }
       axisFormat={(value) => joinFormatted(formatUnit(value, axisUnit, axisDecimals, language))}
       yRange={{
-        min: config.defaults.min ?? (percent ? 0 : undefined),
+        min: config.defaults.min ?? (percent ? (negative ? -100 : 0) : undefined),
         max: config.defaults.max ?? (percent ? 100 : undefined),
       }}
     />
