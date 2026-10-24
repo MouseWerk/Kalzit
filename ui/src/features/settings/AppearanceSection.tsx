@@ -200,9 +200,7 @@ function LogoRow({ found }: { found: boolean }) {
           ref={input}
           type="file"
           accept={LOGO_TYPES.join(",")}
-          className="visually-hidden"
-          tabIndex={-1}
-          aria-labelledby={titleId}
+          hidden
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = "";

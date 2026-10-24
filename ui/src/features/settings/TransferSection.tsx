@@ -197,9 +197,7 @@ export function TransferSection() {
               ref={input}
               type="file"
               accept="application/json,.json"
-              className="visually-hidden"
-              tabIndex={-1}
-              aria-describedby={`${id}-hint`}
+              hidden
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0];
                 event.currentTarget.value = "";
