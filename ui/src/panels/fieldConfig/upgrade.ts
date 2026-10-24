@@ -4,8 +4,8 @@ import { CUSTOM_PREFIX } from "./units";
 
 /**
  * Panels saved before the field options existed kept a free-text unit in `options.unit`, the
- * time series its series name template in `options.legend` (now `seriesName`) and switches
- * `showLegend` and `sparkline`. They still draw as before; the panel editor moves them to their
+ * time series its series name template in `options.legend` (now `seriesName`) and its line
+ * width in `options.lineWidth` (now a field option), and switches `showLegend` and `sparkline`. They still draw as before; the panel editor moves them to their
  * new place when a panel is opened, so the next save stores the current form.
  */
 
@@ -23,6 +23,18 @@ export function legacyUnit(config: FieldConfig, unit: string | undefined): Field
     return config;
   }
   return { ...config, defaults: { ...config.defaults, unit: unitId(unit) } };
+}
+
+/**
+ * The time series' line width from before the graph style (`options.lineWidth`, 1 to 3) as the
+ * default line width, unless one is set. 1 was the editor's default and is left to the
+ * automatic width.
+ */
+export function legacyLineWidth(config: FieldConfig, lineWidth: number | undefined): FieldConfig {
+  if (lineWidth === undefined || lineWidth === 1 || config.defaults.lineWidth !== undefined) {
+    return config;
+  }
+  return { ...config, defaults: { ...config.defaults, lineWidth } };
 }
 
 interface StoredPanel {
@@ -62,6 +74,16 @@ export function upgradePanel<P extends StoredPanel>(panel: P): P {
       options.legend = { mode: "hidden", placement: "bottom", values: [] };
     }
     delete options.showLegend;
+    changed = true;
+  }
+  if ("lineWidth" in options) {
+    const width = options.lineWidth;
+    delete options.lineWidth;
+    const defaults = isRecord(fieldConfig.defaults) ? { ...fieldConfig.defaults } : {};
+    if (typeof width === "number" && width !== 1 && defaults.lineWidth === undefined) {
+      defaults.lineWidth = width;
+    }
+    fieldConfig.defaults = defaults;
     changed = true;
   }
   if ("sparkline" in options) {

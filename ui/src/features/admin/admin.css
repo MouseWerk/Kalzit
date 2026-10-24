@@ -61,6 +61,11 @@
     gap: var(--space-4);
   }
 
+  .admin-section__top {
+    display: grid;
+    gap: var(--space-1);
+  }
+
   .admin-section__header {
     display: flex;
     flex-wrap: wrap;

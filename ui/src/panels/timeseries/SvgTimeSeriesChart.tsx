@@ -1,10 +1,12 @@
-import { useRef } from "react";
+import { type ReactNode, useId, useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { zoneOption } from "../../lib/timeSettings";
 import { useElementSize } from "../useElementSize";
-import { ChartShell, seriesClass, type TimeSeriesChartProps } from "./ChartShell";
+import { chartData } from "./align";
+import { ChartShell, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
-import { niceTicks, type Scale, seriesPath, timeTicks, valueExtent } from "./series";
+import { linePath, niceTicks, type Scale, timeTicks, valueExtent } from "./series";
+import type { SeriesStyle } from "./styles";
 import "../panels.css";
 
 const AXIS_LEFT = 56;
@@ -13,19 +15,166 @@ const PAD_TOP = 8;
 const PAD_RIGHT = TIME_LABEL_OVERHANG;
 /** Roughly one value label per 40 px and one time label per 110 px, so labels never collide. */
 const PX_PER_VALUE_TICK = 40;
+/** Points and bars are drawn one by one only up to this many per series; more draw as a line. */
+const MAX_MARKS = 2000;
 
 const DAY = 24 * 60 * 60 * 1000;
+
+/** A number token of the theme, or the fallback where styles are not computed (tests). */
+function tokenNumber(name: string, fallback: number): number {
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(name),
+  );
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * The fill under a line as SVG, one closed shape per run of present values, so a missing value
+ * leaves a gap in the fill as in the line. A stacked line fills to its own baseline, walked back;
+ * others fill to zero (`zero` is its y in px).
+ */
+export function areaPath(
+  xs: readonly number[],
+  ys: readonly (number | null)[],
+  base: Float64Array | null,
+  scale: Scale,
+  right: number,
+  interpolation: SeriesStyle["interpolation"],
+  zero: number,
+): string {
+  // Walked backward, a step after the point is a step before it.
+  const backward =
+    interpolation === "stepAfter"
+      ? "stepBefore"
+      : interpolation === "stepBefore"
+        ? "stepAfter"
+        : interpolation;
+  const shapes: string[] = [];
+  let start = -1;
+  for (let i = 0; i <= ys.length; i++) {
+    const present = i < ys.length && ys[i] !== null && ys[i] !== undefined;
+    if (present && start === -1) {
+      start = i;
+    } else if (!present && start !== -1) {
+      const runX = xs.slice(start, i);
+      const top = linePath(runX, ys.slice(start, i), scale, right, interpolation);
+      if (base === null) {
+        const left = scale.x(runX[0] as number).toFixed(1);
+        shapes.push(`${top}V${zero.toFixed(1)}H${left}Z`);
+      } else {
+        const back = linePath(
+          [...runX].reverse(),
+          Array.from(base.subarray(start, i)).reverse(),
+          scale,
+          right,
+          backward,
+        ).replace("M", "L");
+        shapes.push(`${top}${back}Z`);
+      }
+      start = -1;
+    }
+  }
+  return shapes.join("");
+}
+
+/** The marks of one series: bars, points or a line with its fill. */
+function SeriesMarks({
+  look: style,
+  xs,
+  ys,
+  base,
+  scale,
+  right,
+  ids,
+}: {
+  look: SeriesStyle;
+  xs: readonly number[];
+  ys: readonly (number | null)[];
+  base: Float64Array | null;
+  scale: Scale;
+  right: number;
+  ids: { hatch: string; fade: string };
+}): ReactNode {
+  const present = ys.reduce<number>((count, y) => count + (y === null ? 0 : 1), 0);
+  const zero = scale.y(0);
+  if (style.drawStyle === "bars" && present <= MAX_MARKS) {
+    const step = xs.length > 1 ? (right - AXIS_LEFT) / Math.max(xs.length, 1) : 10;
+    const width = Math.max(1, step * style.barWidth);
+    const shift = style.barAlignment === -1 ? width : style.barAlignment === 1 ? 0 : width / 2;
+    return (
+      <g className={`ts__bars ${style.colorClass}`} fillOpacity={style.fillOpacity}>
+        {xs.map((x, i) => {
+          const y = ys[i];
+          if (y === null || y === undefined) return null;
+          const y0 = base === null ? zero : scale.y(base[i] ?? 0);
+          const top = Math.min(scale.y(y), y0);
+          return (
+            <rect
+              // biome-ignore lint/suspicious/noArrayIndexKey: one bar per point, in time order
+              key={i}
+              x={scale.x(x) - shift}
+              y={top}
+              width={width}
+              height={Math.abs(y0 - scale.y(y))}
+            />
+          );
+        })}
+      </g>
+    );
+  }
+  if (style.drawStyle === "points" && present <= MAX_MARKS) {
+    return (
+      <g className={`ts__points ${style.colorClass}`}>
+        {xs.map((x, i) => {
+          const y = ys[i];
+          return y === null || y === undefined ? null : (
+            // biome-ignore lint/suspicious/noArrayIndexKey: one point per row, in time order
+            <circle key={i} cx={scale.x(x)} cy={scale.y(y)} r={style.pointSize / 2} />
+          );
+        })}
+      </g>
+    );
+  }
+  const d = linePath(xs, ys, scale, right, style.interpolation);
+  const area =
+    style.fill === "none" || d === ""
+      ? null
+      : areaPath(xs, ys, base, scale, right, style.interpolation, zero);
+  return (
+    <>
+      {area === null ? null : (
+        <path
+          className={`ts__area ${style.colorClass}`}
+          d={area}
+          fill={style.fill === "hatch" ? `url(#${ids.hatch})` : undefined}
+          fillOpacity={style.fill === "hatch" ? undefined : style.fillOpacity}
+          mask={style.gradient === "none" ? undefined : `url(#${ids.fade})`}
+        />
+      )}
+      {style.lineWidth === 0 ? null : (
+        <path
+          className={`ts__line ${style.colorClass}`}
+          d={d}
+          strokeWidth={style.lineWidth}
+          strokeDasharray={style.dash.length === 0 ? undefined : style.dash.join(" ")}
+          strokeLinecap={style.lineStyle === "dotted" ? "round" : undefined}
+        />
+      )}
+    </>
+  );
+}
 
 /**
  * The time series drawn as SVG paths, reduced to a few points per pixel column. uPlot draws the
  * chart in browsers (`UplotTimeSeriesChart`); this one is shown while uPlot loads and where there
- * is no canvas, such as the tests.
+ * is no canvas, such as the tests. It follows the series' styles in a simpler way: a smooth line
+ * is drawn straight, and a gradient fill fades by opacity.
  */
 export function SvgTimeSeriesChart({
   series,
+  styles,
   timeRange,
   title,
-  lineWidth,
   legend,
   tooltip,
   format,
@@ -35,10 +184,14 @@ export function SvgTimeSeriesChart({
   const { language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
+  const id = useId();
+  const ids = { hatch: `${id}-hatch`, fade: `${id}-fade` };
 
   const plotWidth = Math.max(width - AXIS_LEFT - PAD_RIGHT, 10);
   const plotHeight = Math.max(height - AXIS_BOTTOM - PAD_TOP, 10);
-  const data = valueExtent(series) ?? { min: 0, max: 1 };
+  const { x: xs, stacked } = chartData(series, styles);
+  const drawn = stacked.ys.map((values) => ({ values }));
+  const data = valueExtent(drawn) ?? { min: 0, max: 1 };
   const extent = { min: yRange?.min ?? data.min, max: yRange?.max ?? data.max };
   const padding = extent.max === extent.min ? Math.abs(extent.max) * 0.1 || 1 : 0;
   const yTicks = niceTicks(
@@ -66,11 +219,14 @@ export function SvgTimeSeriesChart({
       ? { day: "2-digit", month: "2-digit", ...zoneOption(timeZone) }
       : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
-  const paths = series.map((s) => seriesPath(s, scale, AXIS_LEFT + plotWidth));
+  const hatched = styles.find((s) => s.fill === "hatch");
+  // The same token the canvas chart reads, so both hatch alike.
+  const hatchSpacing = hatched === undefined ? 0 : tokenNumber("--chart-hatch-spacing", 6);
 
   return (
     <ChartShell
       series={series}
+      styles={styles}
       title={title}
       legend={legend}
       tooltip={tooltip}
@@ -82,6 +238,33 @@ export function SvgTimeSeriesChart({
     >
       {(cursorX) => (
         <svg className="ts__svg" width={width} height={height} aria-hidden="true">
+          <defs>
+            {hatched === undefined ? null : (
+              <pattern
+                id={ids.hatch}
+                className={hatched.colorClass}
+                width={hatchSpacing}
+                height={hatchSpacing}
+                patternUnits="userSpaceOnUse"
+                patternTransform="rotate(45)"
+              >
+                <line className="ts__hatch" x1={0} y1={0} x2={0} y2={hatchSpacing} />
+              </pattern>
+            )}
+            <linearGradient id={`${ids.fade}-ramp`} x1={0} y1={0} x2={0} y2={1}>
+              <stop className="ts__fade-from" offset={0} />
+              <stop className="ts__fade-to" offset={1} />
+            </linearGradient>
+            <mask id={ids.fade}>
+              <rect
+                x={AXIS_LEFT}
+                y={PAD_TOP}
+                width={plotWidth}
+                height={plotHeight}
+                fill={`url(#${ids.fade}-ramp)`}
+              />
+            </mask>
+          </defs>
           {yTicks
             .filter((tick) => tick >= yMin && tick <= yMax)
             .map((tick) => (
@@ -109,13 +292,17 @@ export function SvgTimeSeriesChart({
               {timeLabel.format(tick)}
             </text>
           ))}
-          {paths.map((d, index) => (
-            <path
+          {styles.map((style, index) => (
+            <SeriesMarks
               // biome-ignore lint/suspicious/noArrayIndexKey: series keep their order; names can repeat
               key={index}
-              className={`ts__line ${seriesClass(series[index] as (typeof series)[number], index)}`}
-              d={d}
-              strokeWidth={lineWidth}
+              look={style}
+              xs={xs}
+              ys={stacked.ys[index] ?? []}
+              base={stacked.baselines[index] ?? null}
+              scale={scale}
+              right={AXIS_LEFT + plotWidth}
+              ids={ids}
             />
           ))}
           {cursorX === null ? null : (

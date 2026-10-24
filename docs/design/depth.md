@@ -302,6 +302,15 @@ tests cover new strokes and fills.
   `feel.md` section 8.
   Acceptance: uPlot updates without rebuilding when only data or size change; stacking sums
   only aligned points and leaves gaps as gaps.
+  Done: the graph style is a field option group (`ui/src/panels/fieldConfig/graphStyle.ts`), so
+  overrides set it per series, including stack groups and a "comparison series" flag for the
+  dashed, muted line; unset options resolve to the monochrome defaults
+  (`ui/src/panels/timeseries/styles.ts`, tokens `--chart-mono`, `--chart-mono-compare`,
+  `--chart-hatch-*`, `--chart-fade-to`, read by both the canvas and the SVG chart). Stacking
+  keeps positive and negative values on separate sums per group, percent divides by the sum of
+  absolute values (0/0 is 0); a stacked line fills to its own per-point baseline (never across
+  zero) and breaks where it has no value itself. A gradient "scheme" colors the fill by the
+  thresholds; drawing threshold lines and areas on the chart is still open.
 - **P1-3b Axes.** Placement, label, width, soft min and max, scale (linear, log 2 and 10,
   symlog), centered zero, grid lines, one axis per unit.
   Acceptance: log scales handle zero and negative values without throwing; two units give two

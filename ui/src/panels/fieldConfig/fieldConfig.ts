@@ -12,6 +12,7 @@ import {
   MAX_UNIT_CHARS,
 } from "./units";
 import "../viz.css";
+import { GRAPH_STYLE_KEYS, type GraphStyleOptions, parseGraphStyle } from "./graphStyle";
 import { compilePattern } from "./pattern";
 
 export { compilePattern } from "./pattern";
@@ -59,7 +60,8 @@ export type ValueMapping =
   | { type: "range"; from: number | null; to: number | null; text?: string; tone?: Tone }
   | { type: "regex"; pattern: string; text?: string; tone?: Tone };
 
-export interface FieldOptions {
+/** Field options; the graph style keys only matter to the time series (`graphStyle.ts`). */
+export interface FieldOptions extends GraphStyleOptions {
   /** A catalog unit id (`bytes`, `currency:EUR`) or `suffix:<text>`. */
   unit?: string;
   decimals?: number;
@@ -108,6 +110,7 @@ export const OPTION_KEYS = [
   "cellDisplay",
   "link",
   "width",
+  ...GRAPH_STYLE_KEYS,
 ] as const satisfies readonly (keyof FieldOptions)[];
 
 export interface FieldConfig {
@@ -207,7 +210,7 @@ export function parseFieldOptions(value: unknown): FieldOptions {
   if (!isRecord(value)) {
     return {};
   }
-  const options: FieldOptions = {};
+  const options: FieldOptions = parseGraphStyle(value);
   const unit = text(value.unit, LIMITS.unitChars + CUSTOM_PREFIX.length);
   if (unit !== undefined && unit !== "") options.unit = unit;
   const decimals = finite(value.decimals);
