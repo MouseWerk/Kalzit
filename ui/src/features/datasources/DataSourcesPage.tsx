@@ -4,7 +4,7 @@ import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
-import { Page } from "../../components/Page";
+import { Page, PageActions } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
@@ -108,14 +108,17 @@ function DataSourceList({
     </div>
   ) : canCreate || canSeeTrash ? (
     <div className="toolbar">
+      {/* The main action last, on the right, as on the blueprint. */}
+      <Link to="/data-sources" search={{ trash: true }} className="button button--ghost">
+        <Icon name="trash" />
+        {t("datasources.trash.link")}
+      </Link>
       {canCreate ? (
         <Link to="/data-sources/new" search={{}} className="button button--primary">
+          <Icon name="plus" />
           {t("datasources.add")}
         </Link>
       ) : null}
-      <Link to="/data-sources" search={{ trash: true }} className="button button--ghost">
-        {t("datasources.trash.link")}
-      </Link>
     </div>
   ) : null;
 
@@ -128,7 +131,7 @@ function DataSourceList({
   if (items.length === 0) {
     return (
       <>
-        {toolbar}
+        <PageActions>{toolbar}</PageActions>
         {trash ? (
           <EmptyState icon="dataSources" title={t("datasources.trash.empty")}>
             {t("datasources.trash.emptyText")}
@@ -145,7 +148,7 @@ function DataSourceList({
   return (
     <div className="ds-list">
       <FormAlert>{restore.isError ? errorMessage(t, restore.error) : null}</FormAlert>
-      {toolbar}
+      <PageActions>{toolbar}</PageActions>
       <table className="data-table data-table--stack" {...STACK_ROLES.table}>
         <thead {...STACK_ROLES.rowgroup}>
           <tr {...STACK_ROLES.row}>
