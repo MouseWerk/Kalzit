@@ -61,7 +61,7 @@
   "shell.start.action.explore": "Open Explore",
   "shell.start.action.newDatasource": "Add data source",
   "shell.start.action.search": "Search ({shortcut})",
-  "shell.start.starred": "Starred dashboards",
+  "shell.start.starred": "Favorites",
   "shell.start.starredEmpty": "Star a dashboard on its page to find it here.",
   "shell.start.recent": "Recently opened",
   "shell.start.recentEmpty": "Dashboards you open appear here.",
@@ -117,5 +117,17 @@
   "shell.preferences.saved.theme": "Theme saved.",
   "shell.preferences.saved.timeZone": "Time zone saved.",
   "shell.preferences.saved.weekStart": "First day of the week saved.",
-  "shell.preferences.saved.startDashboard": "Start dashboard saved."
+  "shell.preferences.saved.startDashboard": "Start dashboard saved.",
+  "shell.start.quickStart": "Quick start",
+  "shell.start.quick.datasource": "Connect a data source",
+  "shell.start.quick.invite": "Invite a member",
+  "shell.start.allDashboards": "All dashboards",
+  "shell.start.open": "Open",
+  "shell.start.changes": "Recently changed",
+  "shell.start.changesEmpty": "No changes in this organization yet.",
+  "shell.start.allChanges": "All in the audit log",
+  "shell.start.change": "{actor}: {action}",
+  "shell.start.someone": "Someone",
+  "shell.start.starToggle": "Favorite",
+  "shell.help": "Keyboard shortcuts and help"
 }

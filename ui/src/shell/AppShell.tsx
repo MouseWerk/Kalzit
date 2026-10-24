@@ -174,19 +174,22 @@ export function AppShell() {
         <div className="shell__top">
           <OrgSwitcher me={me} rail={rail} />
         </div>
-        <button
-          type="button"
-          className="shell__search"
-          aria-keyshortcuts={`/ ${palette.aria}`}
-          title={t("shell.search.hint", { shortcut: palette.label })}
-          onClick={() => setOverlay("palette")}
-        >
-          <Icon name="search" />
-          <span className="shell__search-label">{t("shell.search.label")}</span>
-          <span className="shell__search-key" aria-hidden="true">
-            <kbd className="kbd">/</kbd>
-          </span>
-        </button>
+        {/* With the sidebar as a column, search sits in the content header (shell__find). */}
+        {wide ? null : (
+          <button
+            type="button"
+            className="shell__search"
+            aria-keyshortcuts={`/ ${palette.aria}`}
+            title={t("shell.search.hint", { shortcut: palette.label })}
+            onClick={() => setOverlay("palette")}
+          >
+            <Icon name="search" />
+            <span className="shell__search-label">{t("shell.search.label")}</span>
+            <span className="shell__search-key" aria-hidden="true">
+              <kbd className="kbd">/</kbd>
+            </span>
+          </button>
+        )}
         <nav ref={navRef} className="shell__nav" aria-label={t("nav.label")}>
           {sections.map((section, index) => (
             <NavSection
@@ -233,6 +236,33 @@ export function AppShell() {
             </button>
           ) : null}
           <div ref={setCrumbSlot} className="shell__crumbs" />
+          {wide ? (
+            <>
+              <button
+                type="button"
+                className="shell__find"
+                aria-keyshortcuts={`/ ${palette.aria}`}
+                title={t("shell.search.hint", { shortcut: palette.label })}
+                onClick={() => setOverlay("palette")}
+              >
+                <Icon name="search" />
+                <span className="shell__find-label">{t("shell.search.label")}</span>
+                <kbd className="kbd" aria-hidden="true">
+                  {palette.label}
+                </kbd>
+              </button>
+              <button
+                type="button"
+                className="shell__toggle"
+                aria-label={t("shell.help")}
+                aria-keyshortcuts="?"
+                title={t("shell.help")}
+                onClick={() => setOverlay("shortcuts")}
+              >
+                <Icon name="help" />
+              </button>
+            </>
+          ) : null}
         </div>
         <div className="shell__content">
           <CrumbSlotContext value={crumbSlot}>

@@ -61,7 +61,7 @@
   "shell.start.action.explore": "Explore öffnen",
   "shell.start.action.newDatasource": "Datenquelle hinzufügen",
   "shell.start.action.search": "Suchen ({shortcut})",
-  "shell.start.starred": "Markierte Dashboards",
+  "shell.start.starred": "Favoriten",
   "shell.start.starredEmpty": "Markiere ein Dashboard auf seiner Seite, um es hier zu finden.",
   "shell.start.recent": "Zuletzt geöffnet",
   "shell.start.recentEmpty": "Dashboards, die du öffnest, erscheinen hier.",
@@ -117,5 +117,17 @@
   "shell.preferences.saved.theme": "Darstellung gespeichert.",
   "shell.preferences.saved.timeZone": "Zeitzone gespeichert.",
   "shell.preferences.saved.weekStart": "Erster Tag der Woche gespeichert.",
-  "shell.preferences.saved.startDashboard": "Start-Dashboard gespeichert."
+  "shell.preferences.saved.startDashboard": "Start-Dashboard gespeichert.",
+  "shell.start.quickStart": "Schnellstart",
+  "shell.start.quick.datasource": "Datenquelle verbinden",
+  "shell.start.quick.invite": "Mitglied einladen",
+  "shell.start.allDashboards": "Alle Dashboards",
+  "shell.start.open": "Öffnen",
+  "shell.start.changes": "Zuletzt geändert",
+  "shell.start.changesEmpty": "In dieser Organisation wurde noch nichts geändert.",
+  "shell.start.allChanges": "Alle im Audit-Log",
+  "shell.start.change": "{actor}: {action}",
+  "shell.start.someone": "Jemand",
+  "shell.start.starToggle": "Favorit",
+  "shell.help": "Tastenkürzel und Hilfe"
 }
