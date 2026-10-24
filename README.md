@@ -121,9 +121,15 @@ never returned by the API.
   and grants on single folders, dashboards and data sources.
 - Viewers run only the stored queries of dashboards they may read; free queries need
   `datasources:query` (editor and up).
-- Server and organization settings in the administration, showing where each value comes from
-  (environment, configuration file or saved in Kalzit); users and organizations for server
-  administrators; an audit log with configurable retention.
+- Settings on one page for the server, the organization and yourself, with a search that finds
+  any setting in German or English and a link to every setting. Changes apply at once with undo;
+  values from the environment or `kalzit.toml` show locked with their source.
+- Appearance and brand through checked options, never custom CSS: default theme, accent color
+  (eight checked colors, or your own color when its contrast is high enough), product name and
+  logo, density, font size, start page, time zone and the sign-in page's welcome text and notice,
+  per server and per organization. Settings export and import as JSON with a preview of every
+  change.
+- Users and organizations for server administrators; an audit log with configurable retention.
 - Local accounts with Argon2id passwords, sessions you can see and end, and a sign-in rate
   limit.
 - Interface in English and German, light, dark and high contrast themes, keyboard shortcuts and a
@@ -164,13 +170,17 @@ The images come from the real application with demo data (`npm run screenshots` 
 | ![Form for a new PostgreSQL data source](docs/screenshots/data-source.png) | ![Members of an organization with their roles](docs/screenshots/admin-members.png) |
 | Data source form | Members and roles |
 | ![List of dashboards](docs/screenshots/dashboards.png) | ![Sessions of the signed-in account](docs/screenshots/account.png) |
-| Dashboards | Your account and sessions |
+| Dashboards | Profile and sessions |
 | ![Time series graph styles: a monochrome hatched series, a dashed comparison, bars, points, steps and stacked series](docs/screenshots/graph-styles-light.png) | ![Time series graph styles in the dark theme](docs/screenshots/graph-styles-dark.png) |
 | Time series graph styles | Graph styles, dark theme |
 | ![Text, grouped bar chart, bar gauge and pie panels in the light theme](docs/screenshots/dashboard-panels-light.png) | ![The same panels in the dark theme](docs/screenshots/dashboard-panels-dark.png) |
 | Text, bar chart, bar gauge and pie | The same panels, dark theme |
 | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Panel editor on a phone | Sign in |
+| ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
+| Settings, dark theme | Settings, light theme |
+| ![Settings on a phone](docs/screenshots/settings-phone.png) | |
+| Settings on a phone | |
 
 ## Quick start
 

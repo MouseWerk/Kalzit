@@ -90,6 +90,11 @@
     margin-block-end: var(--space-4);
   }
 
+  /* The notice an admin set for the sign-in page (appearance settings). */
+  .auth__admin-notice {
+    align-items: start;
+  }
+
   .auth__notice .icon {
     color: var(--success-text);
   }

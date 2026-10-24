@@ -1,5 +1,6 @@
 import { getRouteApi, Outlet } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useAppearanceSync } from "../appearance/api";
 import { Icon } from "../components/Icon";
 import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
@@ -76,6 +77,7 @@ export function AppShell() {
   }, []);
   const palette = paletteShortcut();
   usePreferencesSync(me.id);
+  useAppearanceSync(currentOrgOf(me)?.id);
 
   function onFlyoutLayerChange(open: boolean) {
     openFlyouts.current += open ? 1 : -1;

@@ -20,6 +20,12 @@ const heading =
     ).toBeVisible();
   };
 
+/** A settings section with its rows loaded. */
+async function settingsRows(page: Page): Promise<void> {
+  await expect(page.locator("#settings-section-title")).toBeVisible();
+  await expect(page.locator(".settings-row").first()).toBeVisible();
+}
+
 const dialog = (page: Page, key: string, language: Language) =>
   expect(page.getByRole("dialog", { name: t(key, {}, language) })).toBeVisible();
 
@@ -107,8 +113,8 @@ export const MAIN_PAGES: readonly MainPage[] = [
   { name: "roles", path: () => "/admin/roles", ready: heading("admin.roles.title") },
   {
     name: "organization settings",
-    path: () => "/admin/settings",
-    ready: heading("admin.orgSettings.title"),
+    path: () => "/settings/organization",
+    ready: settingsRows,
   },
   { name: "audit log", path: () => "/admin/audit", ready: heading("admin.audit.title") },
   { name: "users", path: () => "/admin/server/users", ready: heading("admin.users.title") },
@@ -119,8 +125,24 @@ export const MAIN_PAGES: readonly MainPage[] = [
   },
   {
     name: "server settings",
-    path: () => "/admin/server/settings",
-    ready: heading("admin.serverSettings.title"),
+    path: () => "/settings/appearance",
+    ready: settingsRows,
   },
-  { name: "account", path: () => "/account", ready: heading("admin.account.title") },
+  {
+    name: "settings search",
+    path: () => "/settings/datasources",
+    ready: async (page, _world, language) => {
+      await settingsRows(page);
+      await page
+        .getByRole("combobox", { name: t("settings.search.label", {}, language) })
+        .fill("sqlite");
+      await expect(page.getByRole("option").first()).toBeVisible();
+    },
+  },
+  { name: "settings transfer", path: () => "/settings/transfer", ready: settingsRows },
+  {
+    name: "account",
+    path: () => "/settings/profile",
+    ready: heading("settings.section.profile.label"),
+  },
 ];

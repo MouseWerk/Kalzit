@@ -1,7 +1,7 @@
 @layer base {
   html {
     font-family: var(--font-sans);
-    font-size: 100%;
+    font-size: var(--font-size-root);
     line-height: var(--line-height);
     background: var(--bg);
     color: var(--text);

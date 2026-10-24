@@ -42,6 +42,21 @@ export function setTheme(theme: Theme): void {
   }
 }
 
+/**
+ * The server's default theme for a visitor who never chose one in this browser (the sign-in
+ * page). It applies without being remembered, so a later default reaches them too.
+ */
+export function applyDefaultTheme(theme: unknown): void {
+  if (!isTheme(theme) || readPreference(THEME_STORAGE_KEY) !== null || theme === current) {
+    return;
+  }
+  current = theme;
+  applyToDocument(theme);
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => {

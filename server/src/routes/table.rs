@@ -36,6 +36,15 @@ where
     RouteDef { method, path, access, handler: on(filter, handler) }
 }
 
+impl RouteDef {
+    /// Caps the request body of this route below the server-wide default; a larger body answers
+    /// `413 payload_too_large` before the handler reads it.
+    pub fn body_limit(mut self, bytes: usize) -> Self {
+        self.handler = self.handler.layer(axum::extract::DefaultBodyLimit::max(bytes));
+        self
+    }
+}
+
 /// Builds the API router. Several methods on one path may have different access rules, so each
 /// method router gets its own layer before they are merged.
 #[expect(clippy::disallowed_methods, reason = "this is where route tables become routes, with their access layer")]

@@ -13,4 +13,21 @@
     // Storage blocked: fall back to the system theme.
   }
   document.documentElement.dataset.theme = theme;
+  // The look an admin chose (accent, density, font size), as src/appearance/look.ts last applied
+  // it; the app checks and applies it again once it loads.
+  try {
+    const look = JSON.parse(window.localStorage.getItem("kalzit.look") || "{}");
+    const root = document.documentElement;
+    if (/^[a-z]+$/.test(look.accent)) {
+      root.dataset.accent = look.accent;
+    }
+    if (/^(compact|balanced|comfortable)$/.test(look.density)) {
+      root.dataset.density = look.density;
+    }
+    if ([13, 14, 15, 16].includes(look.fontSize)) {
+      root.dataset.fontSize = String(look.fontSize);
+    }
+  } catch {
+    // Storage blocked or nothing stored: the default look.
+  }
 })();

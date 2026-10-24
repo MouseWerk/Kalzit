@@ -1,5 +1,7 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
 import type { Me } from "../api/auth";
+import { BrandMark } from "../appearance/BrandMark";
+import { useBrand } from "../appearance/brand";
 import { Icon } from "../components/Icon";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
@@ -23,7 +25,8 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
   const org = currentOrgOf(me);
   const permissions = useOrgPermissions();
   const menu = useMenuButton();
-  const name = org?.name ?? t("app.name");
+  const brand = useBrand();
+  const name = org?.name ?? brand.productName;
 
   const links: OrgLink[] = [];
   if (org !== undefined && permissions.has("settings:read")) {
@@ -49,7 +52,7 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
   const content = (
     <>
       <span className="org-switcher__mark" aria-hidden="true">
-        <Icon name="logo" />
+        <BrandMark />
       </span>
       <span className="org-switcher__text">
         <span className="org-switcher__name truncate">{name}</span>

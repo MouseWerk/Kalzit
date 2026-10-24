@@ -1,6 +1,6 @@
 {
   "app.name": "Kalzit",
-  "app.documentTitle": "{page} – Kalzit",
+  "app.documentTitle": "{page} – {product}",
   "common.loading": "Wird geladen…",
   "common.retry": "Erneut versuchen",
   "common.undo": "Rückgängig",
@@ -22,7 +22,7 @@
   "language.de": "Deutsch",
   "language.en": "English",
   "login.title": "Anmelden",
-  "login.lead": "Nutze die E-Mail-Adresse und das Passwort deines Kalzit-Kontos.",
+  "login.lead": "Nutze die E-Mail-Adresse und das Passwort deines Kontos bei {product}.",
   "login.email": "E-Mail-Adresse",
   "login.password": "Passwort",
   "login.submit": "Anmelden",
