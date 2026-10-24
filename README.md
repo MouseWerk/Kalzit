@@ -181,6 +181,10 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Text, bar chart, bar gauge and pie | The same panels, dark theme |
 | ![The panel editor on a phone](docs/screenshots/panel-editor-phone.png) | ![Sign-in page with the brand panel next to the form](docs/screenshots/sign-in.png) |
 | Panel editor on a phone | Sign in |
+| ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
+| Time picker, dark theme | Dashboard in edit mode, dark theme |
+| ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | |
+| Dashboard on a phone | |
 | ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
 | Settings, dark theme | Settings, light theme |
 | ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |

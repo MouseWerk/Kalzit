@@ -1,0 +1,126 @@
+@layer components {
+  /* Quiet icon buttons: square, no fill until hovered, the icon in the text color. */
+
+  .icon-button {
+    min-width: var(--control-height);
+    padding-inline: var(--space-2);
+  }
+
+  .icon-button__text {
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .icon-button[aria-expanded="true"],
+  .icon-button[aria-pressed="true"] {
+    background: var(--bg-active);
+  }
+
+  /* Split controls: a main button and the menu beside it, close together as one control. */
+
+  .split-control {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .split-control__menu {
+    min-width: auto;
+    padding-inline: var(--space-1);
+  }
+
+  /* Menus of a toolbar: drawn in the window under their button. */
+
+  .toolbar-menu {
+    position: static;
+  }
+
+  .toolbar-menu__list,
+  .toolbar-menu__list.menu {
+    position: fixed;
+    inset: var(--menu-top, 0) var(--menu-right, 0) auto auto;
+    width: max-content;
+    min-width: var(--size-field);
+    max-width: var(--size-menu-max);
+    margin-block-start: var(--space-1);
+  }
+
+  .toolbar-menu__check {
+    display: inline-flex;
+    flex: none;
+    width: var(--icon-size);
+  }
+
+  .toolbar-menu__label {
+    flex: 1;
+  }
+
+  .toolbar-menu__key {
+    margin-inline-start: auto;
+  }
+
+  .toolbar-menu__item--danger {
+    color: var(--danger-text);
+  }
+
+  .toolbar-menu__separator {
+    margin: var(--space-1) 0;
+    border: 0;
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  /*
+   * Tooltips: under the control, its right edge on the control's, shown on hover and on keyboard
+   * focus. Hidden with display, so a tooltip that is not shown takes no room and never widens
+   * the page on a phone.
+   */
+
+  .tip-anchor {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .tip {
+    position: absolute;
+    inset-block-start: calc(100% + var(--space-1));
+    inset-inline-end: 0;
+    z-index: var(--z-menu);
+    display: none;
+    align-items: center;
+    gap: var(--space-2);
+    width: max-content;
+    max-width: var(--size-tooltip-max);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-tight);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .tip-anchor--start .tip {
+    inset-inline: 0 auto;
+  }
+
+  .tip__keys {
+    display: inline-flex;
+    gap: var(--space-1);
+  }
+
+  /* Dismissed with Escape, or covered by the menu its button opened: not shown. */
+  @media (hover: hover) {
+    .tip-anchor:hover:not([data-tip-dismissed], :has(> [aria-expanded="true"])) > .tip {
+      display: inline-flex;
+    }
+  }
+
+  .tip-anchor:has(> :focus-visible):not([data-tip-dismissed], :has(> [aria-expanded="true"]))
+    > .tip {
+    display: inline-flex;
+  }
+}

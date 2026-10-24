@@ -17,7 +17,9 @@ use serde_json::Value;
 ///   library panel references and multi-value variables. Those are optional and empty by default
 ///   and version 1 had none of them, so the one step `v1_to_v2` only converts `transformations`.
 ///   A library panel slot (`libraryPanelId`) has no steps, targets or links of its own; the
-///   library panel holds them (the slot rule in `validate`).
+///   library panel holds them (the slot rule in `validate`). The dashboard time options
+///   (`timeZone` ... `sharedCursor`) joined version 2 later, optional and left out while unset; a
+///   server from before them refuses a model that sets one (docs/api/settings-dashboards.md).
 pub const SCHEMA_VERSION: u64 = 2;
 
 /// `STEPS[i]` turns a model of schemaVersion `i + 1` into `i + 2`; each step has its own test.
@@ -131,6 +133,9 @@ pub const MAX_TITLE_CHARS: usize = 200;
 /// Refreshing faster than this only loads the data sources.
 const MIN_REFRESH_SECONDS: u32 = 5;
 const MAX_REFRESH_SECONDS: u32 = 24 * 3600;
+const MAX_REFRESH_INTERVALS: usize = 20;
+/// A now delay is short: seconds to days.
+const NOW_DELAY_UNITS: &[char] = &['s', 'm', 'h', 'd'];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -155,6 +160,43 @@ pub struct DashboardModel {
     pub annotations: Vec<AnnotationQuery>,
     #[serde(default)]
     pub links: Vec<DashboardLink>,
+    /// The zone times are read and shown in: an IANA name or `browser` (the viewer's browser).
+    /// Absent: each viewer's own preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
+    /// The first day of a week for `now/w`; absent: each viewer's own preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub week_start: Option<WeekStart>,
+    /// The month (1 to 12) the fiscal year starts with, for `fy` and `fQ`; absent: January.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fiscal_year_start_month: Option<u32>,
+    /// `now` stands this far back (`1m`), so the newest, still incomplete data is left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub now_delay: Option<String>,
+    /// The automatic refresh intervals offered, in seconds, ascending; empty: Kalzit's list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refresh_intervals: Vec<u32>,
+    /// Whether time panels show the pointer's time in every other time panel too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_cursor: Option<SharedCursor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WeekStart {
+    Monday,
+    Sunday,
+    Saturday,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SharedCursor {
+    Off,
+    /// A line at the same time in every time panel.
+    Crosshair,
+    /// The line and the values at that time.
+    Tooltip,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -483,6 +525,7 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
     {
         return Err(format!("model.refreshSeconds must be {MIN_REFRESH_SECONDS} to {MAX_REFRESH_SECONDS}"));
     }
+    check_time_options(model)?;
 
     if model.variables.len() > MAX_VARIABLES {
         return Err(format!("model.variables takes at most {MAX_VARIABLES} entries"));
@@ -712,6 +755,40 @@ pub fn check_url(what: &str, url: &str) -> Result<(), String> {
     }
 }
 
+/// The dashboard's own time zone, fiscal year, now delay and refresh intervals.
+fn check_time_options(model: &DashboardModel) -> Result<(), String> {
+    if let Some(zone) = &model.time_zone
+        && zone != "browser"
+        && zone.parse::<chrono_tz::Tz>().is_err()
+    {
+        return Err("model.timeZone must be \"browser\" or a known time zone such as Europe/Berlin".into());
+    }
+    if let Some(month) = model.fiscal_year_start_month
+        && !(1..=12).contains(&month)
+    {
+        return Err("model.fiscalYearStartMonth must be 1 to 12".into());
+    }
+    if let Some(delay) = &model.now_delay
+        && !(is_duration(delay) && delay.ends_with(NOW_DELAY_UNITS))
+    {
+        return Err("model.nowDelay must be a length in seconds, minutes, hours or days like \"1m\"".into());
+    }
+    if model.refresh_intervals.len() > MAX_REFRESH_INTERVALS {
+        return Err(format!("model.refreshIntervals takes at most {MAX_REFRESH_INTERVALS} entries"));
+    }
+    for (i, seconds) in model.refresh_intervals.iter().enumerate() {
+        if !(MIN_REFRESH_SECONDS..=MAX_REFRESH_SECONDS).contains(seconds) {
+            return Err(format!(
+                "model.refreshIntervals[{i}] must be {MIN_REFRESH_SECONDS} to {MAX_REFRESH_SECONDS} seconds"
+            ));
+        }
+        if i > 0 && model.refresh_intervals[i - 1] >= *seconds {
+            return Err(format!("model.refreshIntervals[{i}] must be longer than the one before"));
+        }
+    }
+    Ok(())
+}
+
 /// `timeFrom` is a range relative to now that ends now (`now-24h`, `now-7d/d`); `timeShift` a
 /// length (`1d`, `2w`).
 fn check_panel_time(at: &str, from: Option<&str>, shift: Option<&str>) -> Result<(), String> {
@@ -807,7 +884,8 @@ fn check_range(range: &TimeRange) -> Result<(), String> {
     Ok(())
 }
 
-/// `now`, `now-6h`, `now-1d/d`, `now+15m`; or an ISO 8601 date or date-time with zone.
+/// `now`, `now-6h`, `now-1d/d`, `now+15m`, `now-1fy/fy`; or an ISO 8601 date or date-time with
+/// zone.
 fn is_time(s: &str) -> bool {
     if let Some(rest) = s.strip_prefix("now") {
         return is_relative(rest);
@@ -816,6 +894,17 @@ fn is_time(s: &str) -> bool {
 }
 
 const UNITS: &[char] = &['s', 'm', 'h', 'd', 'w', 'M', 'y'];
+/// Fiscal year and fiscal quarter, counted from the dashboard's `fiscalYearStartMonth`.
+const FISCAL_UNITS: &[&str] = &["fy", "fQ"];
+
+/// The unit at the start of `text` and what follows it.
+fn strip_unit(text: &str) -> Option<&str> {
+    if let Some(rest) = FISCAL_UNITS.iter().find_map(|u| text.strip_prefix(u)) {
+        return Some(rest);
+    }
+    let mut chars = text.chars();
+    chars.next().filter(|u| UNITS.contains(u)).map(|_| chars.as_str())
+}
 
 fn is_relative(mut rest: &str) -> bool {
     while let Some(after_sign) = rest.strip_prefix(['+', '-']) {
@@ -824,14 +913,11 @@ fn is_relative(mut rest: &str) -> bool {
         if digits == 0 || digits > 5 {
             return false;
         }
-        let mut tail = after_sign[digits..].chars();
-        if !tail.next().is_some_and(|u| UNITS.contains(&u)) {
-            return false;
-        }
-        rest = tail.as_str();
+        let Some(tail) = strip_unit(&after_sign[digits..]) else { return false };
+        rest = tail;
     }
     match rest.strip_prefix('/') {
-        Some(unit) => unit.chars().count() == 1 && unit.chars().all(|u| UNITS.contains(&u)),
+        Some(unit) => strip_unit(unit).is_some_and(str::is_empty),
         None => rest.is_empty(),
     }
 }
@@ -1047,6 +1133,10 @@ mod tests {
             "now/w",
             "now+15m",
             "now-1M-2d",
+            "now/fy",
+            "now-1fy/fy",
+            "now-2fQ/fQ",
+            "now+1fQ",
             "2026-02-28",
             "2026-10-20T08:15Z",
             "2026-10-20T08:15:30.123+02:00",
@@ -1062,6 +1152,12 @@ mod tests {
             "now/",
             "now/dd",
             "now-999999h",
+            "now/f",
+            "now-1fq",
+            "now-1FY",
+            "now/fyy",
+            "now/fy/d",
+            "now-fy",
             "2026-13-01",
             "2026-10-20T24:00Z",
             "2026-10-20T08:15",
@@ -1072,6 +1168,54 @@ mod tests {
         ] {
             assert!(!is_time(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn time_options_are_optional_and_checked() {
+        let plain = parse(sample()).unwrap();
+        let out = serde_json::to_value(&plain).unwrap();
+        for key in ["timeZone", "weekStart", "fiscalYearStartMonth", "nowDelay", "refreshIntervals", "sharedCursor"] {
+            assert!(out.get(key).is_none(), "{key} is left out while unset");
+        }
+        let mut full = sample();
+        for (key, value) in [
+            ("timeZone", json!("America/Argentina/Buenos_Aires")),
+            ("weekStart", json!("sunday")),
+            ("fiscalYearStartMonth", json!(4)),
+            ("nowDelay", json!("5m")),
+            ("refreshIntervals", json!([10, 60, 900])),
+            ("sharedCursor", json!("tooltip")),
+        ] {
+            full = with(full, &[key], value);
+        }
+        let model = parse(full.clone()).unwrap();
+        assert_eq!(model.fiscal_year_start_month, Some(4));
+        assert_eq!(model.shared_cursor, Some(SharedCursor::Tooltip));
+        assert_eq!(serde_json::to_value(&model).unwrap()["refreshIntervals"], json!([10, 60, 900]));
+        assert!(parse(with(sample(), &["timeZone"], json!("browser"))).is_ok());
+        assert!(parse(with(sample(), &["sharedCursor"], json!("off"))).is_ok());
+        for (key, value, expect) in [
+            ("timeZone", json!("Europe/../etc"), "model.timeZone"),
+            ("timeZone", json!(""), "model.timeZone"),
+            ("timeZone", json!("Europe/Atlantis"), "model.timeZone"),
+            ("weekStart", json!("friday"), "unknown variant"),
+            ("fiscalYearStartMonth", json!(0), "fiscalYearStartMonth"),
+            ("fiscalYearStartMonth", json!(13), "fiscalYearStartMonth"),
+            ("nowDelay", json!("1y"), "model.nowDelay"),
+            ("nowDelay", json!("0m"), "model.nowDelay"),
+            ("nowDelay", json!("-1m"), "model.nowDelay"),
+            ("refreshIntervals", json!([1]), "refreshIntervals[0]"),
+            ("refreshIntervals", json!([60, 30]), "refreshIntervals[1]"),
+            ("refreshIntervals", json!([60, 60]), "refreshIntervals[1]"),
+            ("refreshIntervals", json!([86_401]), "refreshIntervals[0]"),
+            ("refreshIntervals", json!((1..=21).map(|i| i * 10).collect::<Vec<_>>()), "at most 20"),
+            ("sharedCursor", json!("always"), "unknown variant"),
+        ] {
+            let err = parse(with(sample(), &[key], value.clone())).unwrap_err();
+            assert!(err.contains(expect), "{key} {value}: {err}");
+        }
+        // Fiscal units belong to the range grammar everywhere a range is stored.
+        assert!(parse(with(sample(), &["timeRange"], json!({ "from": "now-1fy/fy", "to": "now-1fy/fy" }))).is_ok());
     }
 
     #[test]

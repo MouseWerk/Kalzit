@@ -543,6 +543,18 @@
   }
 }
 
+/* The dashboard toolbar and its time range popover. */
+@layer tokens {
+  :root {
+    /* Quick ranges and the absolute range side by side. */
+    --size-time-picker: 44rem;
+    /* The search field in the top bar. */
+    --size-top-search: 18rem;
+    /* The rail's Add pane: three visualization tiles abreast. */
+    --size-add-pane: 15rem;
+  }
+}
+
 /*
  * Appearance (settings "Appearance and brand"): the vetted accent colors, density and base font
  * size, chosen by data attributes on <html> (or on a preview container) that

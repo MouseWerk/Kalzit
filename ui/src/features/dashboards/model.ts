@@ -1,4 +1,5 @@
 import { isRecord } from "../../api/client";
+import { WEEK_STARTS, type WeekStart } from "../../lib/timeSettings";
 
 /**
  * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"; version 2 parts in
@@ -239,7 +240,25 @@ export interface DashboardModel {
   rows?: RowModel[];
   annotations?: AnnotationQueryModel[];
   links?: DashboardLinkModel[];
+  /** An IANA zone, or "browser" for the viewer's browser; absent: each viewer's preference. */
+  timeZone?: string;
+  /** The first day of a week; absent: each viewer's preference. */
+  weekStart?: WeekStart;
+  /** The month (1 to 12) the fiscal year starts with; absent: January. */
+  fiscalYearStartMonth?: number;
+  /** How far back "now" stands ("1m"), leaving out incomplete recent data. */
+  nowDelay?: string;
+  /** The automatic refresh intervals offered, in seconds, ascending; absent: Kalzit's list. */
+  refreshIntervals?: number[];
+  /** Whether time panels show the pointer's time in the other time panels too. */
+  sharedCursor?: SharedCursor;
 }
+
+export const SHARED_CURSORS = ["off", "crosshair", "tooltip"] as const;
+export type SharedCursor = (typeof SHARED_CURSORS)[number];
+
+/** The dashboard's own time zone value for the viewer's browser zone. */
+export const BROWSER_ZONE = "browser";
 
 export const DEFAULT_TIME_RANGE = { from: "now-6h", to: "now" };
 
@@ -459,7 +478,30 @@ export function parseModel(value: unknown, fallbackTitle: string): DashboardMode
     .map(parseDashboardLink)
     .filter((l) => l !== null);
   if (links.length > 0) parsed.links = links;
+  parseTimeOptions(model, parsed);
   return parsed;
+}
+
+/** The dashboard's time options, each only when it holds a value the server accepts. */
+function parseTimeOptions(model: Record<string, unknown>, parsed: DashboardModel): void {
+  if (typeof model.timeZone === "string" && model.timeZone !== "") {
+    parsed.timeZone = model.timeZone;
+  }
+  const weekStart = WEEK_STARTS.find((w) => w === model.weekStart);
+  if (weekStart !== undefined) parsed.weekStart = weekStart;
+  const month = model.fiscalYearStartMonth;
+  if (typeof month === "number" && Number.isInteger(month) && month >= 1 && month <= 12) {
+    parsed.fiscalYearStartMonth = month;
+  }
+  if (typeof model.nowDelay === "string" && model.nowDelay !== "") {
+    parsed.nowDelay = model.nowDelay;
+  }
+  const intervals = (Array.isArray(model.refreshIntervals) ? model.refreshIntervals : []).filter(
+    (s): s is number => typeof s === "number" && Number.isInteger(s) && s > 0,
+  );
+  if (intervals.length > 0) parsed.refreshIntervals = intervals;
+  const cursor = SHARED_CURSORS.find((c) => c === model.sharedCursor);
+  if (cursor !== undefined) parsed.sharedCursor = cursor;
 }
 
 /**

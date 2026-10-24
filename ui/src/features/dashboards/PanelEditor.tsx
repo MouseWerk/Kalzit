@@ -580,10 +580,10 @@ export function PanelEditor({
           title={t("dashboards.editor.backHint")}
         >
           <Icon name="chevron" className="panel-editor__back-icon" />
-          {t("dashboards.editor.back")}
+          <span className="panel-editor__back-label">{t("dashboards.editor.back")}</span>
         </button>
-        <h1 className="panel-editor__title truncate" id={titleId} ref={headingRef} tabIndex={-1}>
-          {editorTitle}
+        <h1 className="panel-editor__title" id={titleId} ref={headingRef} tabIndex={-1}>
+          <span className="panel-editor__label">{editorTitle}</span>
           <span className="panel-editor__name">
             {look.title === "" ? t("dashboards.panel.untitled") : look.title}
           </span>

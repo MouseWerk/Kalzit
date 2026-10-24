@@ -17,8 +17,15 @@ import {
   type VariableModel,
   type VariableType,
 } from "./model";
-import { REFRESH_CHOICES } from "./refresh";
+import { intervalLabel, refreshIntervals } from "./refresh";
 import { AnnotationQueriesEditor, LinksEditor, linkProblem, parseTags } from "./SettingsParts";
+import {
+  applyTimeOptions,
+  parseIntervals,
+  TimeOptionsEditor,
+  timeOptionsDraft,
+  timeOptionsProblems,
+} from "./TimeOptionsEditor";
 import { Dialog } from "./ui/Dialog";
 import "./dashboards.css";
 
@@ -34,7 +41,7 @@ interface SettingsDialogProps {
   onJson?: () => void;
 }
 
-/** Dashboard settings in edit mode: title, default refresh and the variables. */
+/** Dashboard settings in edit mode: title, refresh and time options, and the variables. */
 export function SettingsDialog({ orgId, model, onApply, onClose, onJson }: SettingsDialogProps) {
   const { t } = useI18n();
   const refreshId = useId();
@@ -50,6 +57,14 @@ export function SettingsDialog({ orgId, model, onApply, onClose, onJson }: Setti
   const [annotations, setAnnotations] = useState<AnnotationQueryModel[]>(model.annotations ?? []);
   const [checked, setChecked] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [time, setTime] = useState(() => timeOptionsDraft(model));
+  const timeProblems = checked ? timeOptionsProblems(t, time) : {};
+  // The default refresh offers the intervals typed here, as the toolbar will.
+  const typedIntervals = parseIntervals(t, time.intervals);
+  const intervalChoices = [
+    0,
+    ...refreshIntervals(typedIntervals.ok ? typedIntervals.seconds : undefined, refresh),
+  ];
 
   const update = (index: number, patch: Partial<VariableModel>) =>
     setVariables((list) => list.map((v, i) => (i === index ? { ...v, ...patch } : v)));
@@ -70,14 +85,19 @@ export function SettingsDialog({ orgId, model, onApply, onClose, onJson }: Setti
     const linksBad = links.some((link) => linkProblem(link) !== null);
     const annotationsBad = annotations.some((a) => a.datasourceId === "" || a.name.trim() === "");
     setProblem(annotationsBad ? t("annotations.queries.incomplete") : null);
-    if (Object.keys(found).length > 0 || linksBad || annotationsBad) {
+    const timeBad = Object.keys(timeOptionsProblems(t, time)).length > 0;
+    if (Object.keys(found).length > 0 || linksBad || annotationsBad || timeBad) {
       return;
     }
-    const next: DashboardModel = {
-      ...model,
-      title: title.trim(),
-      variables: variables.map(cleanVariable),
-    };
+    const next: DashboardModel = applyTimeOptions(
+      t,
+      {
+        ...model,
+        title: title.trim(),
+        variables: variables.map(cleanVariable),
+      },
+      time,
+    );
     if (refresh > 0) {
       next.refreshSeconds = refresh;
     } else {
@@ -142,13 +162,18 @@ export function SettingsDialog({ orgId, model, onApply, onClose, onJson }: Setti
             value={refresh}
             onChange={(event) => setRefresh(Number(event.currentTarget.value))}
           >
-            {REFRESH_CHOICES.map((choice) => (
-              <option key={choice.seconds} value={choice.seconds}>
-                {t(choice.label)}
+            {intervalChoices.map((seconds) => (
+              <option key={seconds} value={seconds}>
+                {intervalLabel(t, seconds)}
               </option>
             ))}
           </select>
         </div>
+        <TimeOptionsEditor
+          draft={time}
+          onChange={(patch) => setTime((current) => ({ ...current, ...patch }))}
+          problems={timeProblems}
+        />
         <TextField
           label={t("dashboardTools.tags.label")}
           hint={t("dashboardTools.tags.hint")}

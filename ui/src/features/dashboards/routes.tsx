@@ -4,8 +4,11 @@ import { appRoute } from "../../app/baseRoutes";
 export interface DashboardsSearch {
   folder?: string | undefined;
   q?: string | undefined;
-  /** Opens the dialog for a new dashboard (from the command palette and the start page). */
-  create?: "dashboard" | undefined;
+  /**
+   * Opens the dialog for a new dashboard, a new folder or an import (from the command palette,
+   * the start page and the top bar's New menu).
+   */
+  create?: "dashboard" | "folder" | "import" | undefined;
 }
 
 export interface DashboardSearch {
@@ -30,7 +33,10 @@ const dashboardsRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): DashboardsSearch => ({
     folder: text(search.folder),
     q: text(search.q),
-    create: search.create === "dashboard" ? "dashboard" : undefined,
+    create:
+      search.create === "dashboard" || search.create === "folder" || search.create === "import"
+        ? search.create
+        : undefined,
   }),
   component: lazyRouteComponent(() => import("./DashboardsPage"), "DashboardsPage"),
 });

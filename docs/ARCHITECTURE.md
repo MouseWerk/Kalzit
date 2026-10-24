@@ -269,8 +269,10 @@ type QueryResult =
   interface DashboardModel {
     schemaVersion: 2;
     title: string;
-    timeRange: { from: string; to: string };   // "now-6h", "now", or ISO times
+    timeRange: { from: string; to: string };   // "now-6h", "now-1fy/fy", "now", or ISO times
     refreshSeconds?: number;
+    // Time options, each optional: zone, week start, fiscal year start, now delay, refresh
+    // intervals and the shared cursor (docs/api/settings-dashboards.md).
     variables: Variable[];
     panels: {
       id: string; type: string; title: string;

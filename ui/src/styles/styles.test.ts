@@ -85,6 +85,17 @@ describe("stylesheet integrity", () => {
     expect(first).toBe(`@layer ${LAYER_ORDER.join(", ")}`);
   });
 
+  it("names the layer order in the very first style sheet of the page", () => {
+    // Style chunks of shared modules load before styles/index.css; the first sheet that names a
+    // layer fixes the order, so index.html links public/layers.css before anything else.
+    const ui = resolve(SRC_DIR, "..");
+    const layers = stripComments(readFileSync(resolve(ui, "public/layers.css"), "utf8"));
+    expect(layers.trim().replace(/\s+/g, " ")).toBe(`@layer ${LAYER_ORDER.join(", ")};`);
+    const html = readFileSync(resolve(ui, "index.html"), "utf8");
+    const first = /<link rel="stylesheet"[^>]*>|<script[^>]*>/.exec(html)?.[0] ?? "";
+    expect(first).toBe('<link rel="stylesheet" href="/layers.css" />');
+  });
+
   it("puts every rule of a file into that file's layer, area styles into components", () => {
     for (const { name, rules } of rulesByFile) {
       if (name === INDEX_FILE) {

@@ -1,7 +1,6 @@
 import { getRouteApi, Outlet } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useAppearanceSync } from "../appearance/api";
-import { Icon } from "../components/Icon";
 import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
 import { useI18n } from "../i18n/i18n";
@@ -21,7 +20,6 @@ import {
   isHelpShortcut,
   isPaletteShortcut,
   isSearchShortcut,
-  paletteShortcut,
   ShortcutsHelp,
 } from "./ShortcutsHelp";
 import { CrumbSlotContext, SidebarColumnContext } from "./shellContext";
@@ -29,10 +27,10 @@ import {
   isToggleShortcut,
   isTypingTarget,
   readCollapsed,
-  sidebarShortcut,
   useWideLayout,
   writeCollapsed,
 } from "./sidebarState";
+import { TopBar } from "./TopBar";
 import { UserMenu } from "./UserMenu";
 import "./shellUx.css";
 
@@ -62,7 +60,6 @@ export function AppShell() {
   const wide = useWideLayout();
   // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse.
   const rail = collapsed && wide;
-  const shortcut = sidebarShortcut();
   // A flyout opened from the keyboard is a layer for Escape, but not a dialog: F6 and Ctrl+B
   // still work while it is open.
   const openFlyouts = useRef(0);
@@ -75,7 +72,6 @@ export function AppShell() {
       markEntered(false);
     };
   }, []);
-  const palette = paletteShortcut();
   usePreferencesSync(me.id);
   useAppearanceSync(currentOrgOf(me)?.id);
 
@@ -164,7 +160,6 @@ export function AppShell() {
     mainRef.current?.focus();
   }
 
-  const toggleLabel = t("nav.sidebar");
   // Set from a ref callback, so breadcrumbs move into the header before the first paint.
   const [crumbSlot, setCrumbSlot] = useState<HTMLElement | null>(null);
   return (
@@ -176,19 +171,6 @@ export function AppShell() {
         <div className="shell__top">
           <OrgSwitcher me={me} rail={rail} />
         </div>
-        <button
-          type="button"
-          className="shell__search"
-          aria-keyshortcuts={`/ ${palette.aria}`}
-          title={t("shell.search.hint", { shortcut: palette.label })}
-          onClick={() => setOverlay("palette")}
-        >
-          <Icon name="search" />
-          <span className="shell__search-label">{t("shell.search.label")}</span>
-          <span className="shell__search-key" aria-hidden="true">
-            <kbd className="kbd">/</kbd>
-          </span>
-        </button>
         <nav ref={navRef} className="shell__nav" aria-label={t("nav.label")}>
           {sections.map((section, index) => (
             <NavSection
@@ -215,27 +197,16 @@ export function AppShell() {
       </header>
       <main ref={mainRef} id="main" className="shell__main" tabIndex={-1}>
         {/*
-          The content header: the sidebar toggle at the top left, then the page's breadcrumbs
-          (Breadcrumbs portals them in). Below the column breakpoint the sidebar is a bar on top
-          with nothing to collapse, so the toggle is left out there.
+          The top bar: the sidebar toggle and the page's breadcrumbs (Breadcrumbs portals them
+          in) on the left, search, New and Help on the right.
         */}
-        <div className="shell__header">
-          {wide ? (
-            <button
-              type="button"
-              className="shell__toggle"
-              aria-label={toggleLabel}
-              aria-expanded={!rail}
-              aria-controls={sidebarId}
-              aria-keyshortcuts={shortcut.aria}
-              title={t("nav.sidebarHint", { shortcut: shortcut.label })}
-              onClick={toggleSidebar}
-            >
-              <Icon name="sidebar" />
-            </button>
-          ) : null}
-          <div ref={setCrumbSlot} className="shell__crumbs" />
-        </div>
+        <TopBar
+          wide={wide}
+          rail={rail}
+          sidebarId={sidebarId}
+          onToggleSidebar={toggleSidebar}
+          crumbSlot={setCrumbSlot}
+        />
         <div className="shell__content">
           <CrumbSlotContext value={crumbSlot}>
             <SidebarColumnContext value={wide && !rail}>

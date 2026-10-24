@@ -388,11 +388,36 @@ interface DashboardModel {
   title: string;                                // 1 to 200 characters
   timeRange: { from: string; to: string };      // "now", "now-6h", "now-1d/d", "now+15m", or ISO
                                                 // 8601: "2026-10-20" or "2026-10-20T08:15:00Z"
-                                                // (a time needs a zone: "Z" or "+02:00")
+                                                // (a time needs a zone: "Z" or "+02:00");
+                                                // units s m h d w M y, and fQ, fy for the
+                                                // fiscal quarter and year ("now-1fy/fy")
   refreshSeconds?: number;                      // 5 to 86400
   variables?: Variable[];                       // up to 100, default []
   panels?: Panel[];                             // up to 500, default []
+  // Time options; each left out while unset, so older dashboards read as before.
+  timeZone?: string;                            // "browser" or a zone name ("Europe/Berlin");
+                                                // unset: each viewer's own preference
+  weekStart?: "monday" | "sunday" | "saturday"; // unset: each viewer's own preference
+  fiscalYearStartMonth?: number;                // 1 to 12; unset: January
+  nowDelay?: string;                            // "now" stands this far back: 1 to 5 digits
+                                                // and s, m, h or d ("1m")
+  refreshIntervals?: number[];                  // seconds, 5 to 86400 each, ascending, up to
+                                                // 20; offered for the automatic refresh
+  sharedCursor?: "off" | "crosshair" | "tooltip"; // the pointer's time in every time panel
 }
+```
+
+- `timeZone` must name a zone of the IANA time zone database the server ships (`chrono-tz`), or
+  be `browser`.
+- `fQ` and `fy` count from the dashboard's `fiscalYearStartMonth`. Where a range is stored outside
+  a dashboard (a panel's `timeFrom` inside the dashboard still uses it; a server setting such as
+  `dashboards.default_time_range`, Explore), the fiscal year starts in January, so `fy` equals
+  `y` there.
+- The time options came after `schemaVersion` 2 without a new version: a server before them
+  refuses a model that sets any of them (unknown field). Rolling back to such a server needs the
+  dashboards saved without the options first (unset every time option in the settings).
+
+```ts
 interface Variable {
   name: string;                                 // letters, digits, _; not starting with a digit; unique
   type: "query" | "custom" | "constant" | "textbox" | "interval";
