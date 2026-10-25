@@ -134,6 +134,8 @@
   "dashboards.history.actions": "Actions",
   "dashboards.history.current": "(current)",
   "dashboards.history.compare": "Compare",
+  "dashboards.history.compareNamed": "Compare version {version} with the current version",
+  "dashboards.history.restoreNamed": "Restore… version {version}",
   "dashboards.history.compareTitle": "Changes from version {version} to the current version",
   "dashboards.history.restore": "Restore…",
   "dashboards.history.restoreTitle": "Restore this version?",
@@ -309,5 +311,14 @@
   "dashboards.variables.truncated": "More values exist than are listed. Narrow the query to see the one you need.",
   "dashboards.editor.readOnlyQuery": "Changing this query needs query rights on its data source. You can still rename, arrange and restyle the panel.",
   "dashboards.editor.noQueryRight": "Adding or changing queries needs query rights on a data source; ask an admin.",
-  "dashboards.panel.drawFailed": "This panel could not be drawn. Reload the page, or open the panel in the editor to check its query and options."
+  "dashboards.panel.drawFailed": "This panel could not be drawn. Reload the page, or open the panel in the editor to check its query and options.",
+  "dashboards.variables.all": "All",
+  "dashboards.variables.selectAll": "Select all",
+  "dashboards.variables.clear": "None",
+  "dashboards.variables.search": "Search values",
+  "dashboards.variables.noMatch": "No match",
+  "dashboards.variables.more": "+{count}",
+  "dashboards.variables.count": "{count} values",
+  "dashboards.variables.quick": "Quick choice",
+  "dashboards.variables.picker": "{label}: {value}"
 }

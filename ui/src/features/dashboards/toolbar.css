@@ -639,7 +639,11 @@
     outline-offset: calc(var(--focus-ring-width) * -1);
   }
 
-  /* The variables in the filter bar (after the rules for inputs they refine). */
+  /*
+   * The variables in the filter bar (after the rules for inputs they refine): each one box of
+   * control height, its label then its value control, whatever the kind. The inner controls
+   * lose their own frame; their focus ring is drawn inside the box.
+   */
 
   .dash-filters .variables {
     gap: var(--space-2);
@@ -647,26 +651,168 @@
 
   .dash-filters .variables__item {
     flex-wrap: nowrap;
-    align-items: stretch;
-    gap: var(--space-px);
+    align-items: center;
+    gap: var(--space-2);
+    box-sizing: border-box;
+    height: var(--control-height);
+    min-width: 0;
+    max-width: 100%;
+    padding-inline-start: var(--space-3);
     overflow: hidden;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
-    background: var(--border);
+    background: var(--bg-surface);
+  }
+
+  .dash-filters .variables__item:hover {
+    border-color: var(--text-muted);
   }
 
   .dash-filters .variables__label {
-    display: flex;
-    align-items: center;
-    padding-inline: var(--space-3);
-    background: var(--bg-surface);
+    flex: none;
+    white-space: nowrap;
   }
 
   .dash-filters .variables__item > .select,
   .dash-filters .variables__item > .input {
-    border-color: transparent;
+    align-self: stretch;
+    min-height: 0;
+    padding-inline: 0 var(--space-2);
+    border: 0;
     border-radius: 0;
-    background-color: var(--bg-surface);
+    background-color: transparent;
+  }
+
+  .dash-filters .variables__item > .input {
+    padding-inline-end: var(--space-3);
+  }
+
+  .dash-filters .variables__item > .variables__input {
+    width: calc(var(--size-label) + var(--space-4));
+  }
+
+  .dash-filters .variables__item > .select:focus-visible,
+  .dash-filters .variables__item > .input:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .dash-filters .variables__item > .field__hint,
+  .dash-filters .variables__item > .field__error {
+    min-width: 0;
+    max-width: var(--size-column);
+    padding-inline-end: var(--space-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A multi-value variable: a button with its summary and a chevron, as a select looks. */
+
+  .variables__anchor {
+    position: static;
+    display: flex;
+    align-self: stretch;
+    min-width: 0;
+  }
+
+  .variables__picker {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    max-width: var(--size-column);
+    padding-inline: 0 var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+  }
+
+  .variables__picker:hover,
+  .variables__picker[aria-expanded="true"] {
+    background: var(--bg-hover);
+  }
+
+  .variables__picker:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  .variables__summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .variables__chevron {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  /* The menu of values and the Links menu: drawn in the window under their button. */
+
+  .variables__menu.menu {
+    position: fixed;
+    inset: var(--menu-top, 0) auto auto var(--menu-left, 0);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: max-content;
+    min-width: var(--size-field);
+    max-width: min(var(--size-menu-max), 100vw - 2 * var(--space-4));
+    margin-block-start: var(--space-1);
+    overflow-y: auto;
+  }
+
+  .variables__options {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .variables__search {
+    flex: none;
+  }
+
+  /* Links in the bar: quiet buttons of control height, never bold. */
+
+  .dash-filters .dash-links .button {
+    min-height: var(--control-height);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .dash-filters .dash-links .button:hover,
+  .dash-filters .dash-links .button[aria-expanded="true"] {
+    color: var(--text);
+  }
+
+  .dash-filters .dash-links__list {
+    margin: 0;
+  }
+
+  /*
+   * With room (not on a phone) the row stays one row: the filters take what the tools leave and
+   * wrap inside their own space, the tools keep together at the right. Without room for both the
+   * tools drop to a row of their own, still at the right.
+   */
+  @media not (max-width: 48rem) {
+    .dash-toolbar {
+      align-items: flex-start;
+    }
+
+    .dash-toolbar__start {
+      flex: 1 1 var(--size-text-max);
+      align-self: stretch;
+    }
+
+    .dash-toolbar__tools {
+      flex: 0 0 auto;
+      flex-wrap: nowrap;
+      min-height: var(--control-height);
+      margin-inline-start: auto;
+    }
   }
 
   /* The rail's Info: terms and values in two columns. */

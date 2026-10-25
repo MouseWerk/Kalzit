@@ -14,6 +14,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { ORG_SECTIONS, SERVER_SECTIONS } from "../features/admin/sections";
 import { NAV_ITEMS } from "../features/nav";
 import { LANGUAGES, type MessageKey, useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { useEscapeLayer } from "../lib/layers";
 import { showErrorToast } from "../lib/toasts";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
@@ -365,7 +366,7 @@ export function CommandPalette({
         setActive(Math.max(0, current - 8));
         break;
       case "Enter":
-        if (!event.nativeEvent.isComposing && current >= 0) {
+        if (!isComposingKey(event) && current >= 0) {
           event.preventDefault();
           runAt(current);
         }

@@ -14,6 +14,7 @@
   "annotations.tagsHint": "Trenne Schlagwörter durch Kommas.",
   "annotations.save": "Speichern",
   "annotations.delete": "Löschen",
+  "annotations.deleted": "Anmerkung gelöscht.",
   "annotations.textRequired": "Gib einen Text ein.",
   "annotations.timeInvalid": "Gib einen gültigen Zeitpunkt ein; das Ende darf nicht vor dem Anfang liegen.",
   "annotations.changed": "Jemand hat diese Anmerkung inzwischen geändert. Der Dialog zeigt jetzt den gespeicherten Stand; speichere erneut, um ihn zu ändern.",

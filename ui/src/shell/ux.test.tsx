@@ -326,12 +326,12 @@ describe("start page", () => {
     expect(
       within(card).getByRole("button", { name: "Favorite" }).getAttribute("aria-pressed"),
     ).toBe("true");
-    expect(within(card).getByRole("link", { name: "Open" }).getAttribute("href")).toBe(
-      "/dashboards/d-sales",
-    );
-    expect(within(card).getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
-      "/dashboards/d-sales?edit=true",
-    );
+    expect(
+      within(card).getByRole("link", { name: "Open “Sales overview”" }).getAttribute("href"),
+    ).toBe("/dashboards/d-sales");
+    expect(
+      within(card).getByRole("link", { name: "Edit “Sales overview”" }).getAttribute("href"),
+    ).toBe("/dashboards/d-sales?edit=true");
     const recent = screen.getByRole("region", { name: "Recently opened" });
     await within(recent).findByRole("link", { name: /Stock/ });
     // The restricted dashboard is not listed for an editor.

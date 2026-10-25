@@ -37,7 +37,7 @@ interface Panel {                                // in addition to version 1
   transparent?: boolean;                         // drawn without the card's surface and border; true or absent
 }
 interface Target {                               // in addition to version 1
-  hide?: boolean;                                // kept with the panel but not run; true or absent
+  hide?: boolean;                                // kept with the panel but not run, unless an enabled step reads it; true or absent
 }
 interface Variable {                             // in addition to version 1
   multi?: boolean;                               // custom and query variables only

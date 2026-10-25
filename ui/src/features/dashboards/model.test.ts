@@ -64,6 +64,24 @@ describe("model", () => {
     expect(nextRefId(targets)).toBe("B");
   });
 
+  it("keeps a hidden target hidden when it parses a stored panel", () => {
+    const model = parseModel(
+      {
+        panels: [
+          {
+            targets: [
+              { refId: "A", datasourceId: "x", query: null },
+              { refId: "C", datasourceId: "x", query: null, hide: true },
+            ],
+          },
+        ],
+      },
+      "Fallback",
+    );
+    const [a, c] = model.panels[0]?.targets ?? [];
+    expect([a?.hide, c?.hide]).toEqual([undefined, true]);
+  });
+
   it("parses odd stored models without failing", () => {
     const model = parseModel(
       {

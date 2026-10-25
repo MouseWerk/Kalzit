@@ -134,6 +134,8 @@
   "dashboards.history.actions": "Aktionen",
   "dashboards.history.current": "(aktuell)",
   "dashboards.history.compare": "Vergleichen",
+  "dashboards.history.compareNamed": "Version {version} mit der aktuellen Version vergleichen",
+  "dashboards.history.restoreNamed": "Wiederherstellen… Version {version}",
   "dashboards.history.compareTitle": "Änderungen von Version {version} zur aktuellen Version",
   "dashboards.history.restore": "Wiederherstellen…",
   "dashboards.history.restoreTitle": "Diese Version wiederherstellen?",
@@ -309,5 +311,14 @@
   "dashboards.variables.truncated": "Es gibt mehr Werte als aufgeführt. Grenze die Abfrage ein, um den gesuchten zu sehen.",
   "dashboards.editor.readOnlyQuery": "Um diese Abfrage zu ändern, brauchst du Abfragerechte auf ihrer Datenquelle. Umbenennen, anordnen und gestalten kannst du das Panel trotzdem.",
   "dashboards.editor.noQueryRight": "Um Abfragen hinzuzufügen oder zu ändern, brauchst du Abfragerechte auf einer Datenquelle; frag einen Admin.",
-  "dashboards.panel.drawFailed": "Dieses Panel konnte nicht gezeichnet werden. Lade die Seite neu oder öffne das Panel im Editor, um Abfrage und Optionen zu prüfen."
+  "dashboards.panel.drawFailed": "Dieses Panel konnte nicht gezeichnet werden. Lade die Seite neu oder öffne das Panel im Editor, um Abfrage und Optionen zu prüfen.",
+  "dashboards.variables.all": "Alle",
+  "dashboards.variables.selectAll": "Alle auswählen",
+  "dashboards.variables.clear": "Keine",
+  "dashboards.variables.search": "Werte suchen",
+  "dashboards.variables.noMatch": "Keine Treffer",
+  "dashboards.variables.more": "+{count}",
+  "dashboards.variables.count": "{count} Werte",
+  "dashboards.variables.quick": "Schnellauswahl",
+  "dashboards.variables.picker": "{label}: {value}"
 }

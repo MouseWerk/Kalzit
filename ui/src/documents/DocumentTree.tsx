@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 import { useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { useStyleVars } from "../panels/styleVars";
 import { useElementSize } from "../panels/useElementSize";
 import { filterable, filterablePath } from "./filter";
@@ -229,7 +230,7 @@ export function DocumentTree({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (total === 0) {
+    if (total === 0 || isComposingKey(event)) {
       return;
     }
     const current = activeIndex === -1 ? 0 : activeIndex;
