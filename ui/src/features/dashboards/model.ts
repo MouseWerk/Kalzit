@@ -295,6 +295,8 @@ function parseTarget(value: unknown, index: number): Target | null {
     refId: typeof value.refId === "string" ? value.refId : refIdAt(index),
     datasourceId: typeof value.datasourceId === "string" ? value.datasourceId : "",
     query: value.query ?? null,
+    // Dropping it would run a hidden query and lose the flag at the next save.
+    ...(value.hide === true ? { hide: true } : {}),
   };
 }
 
