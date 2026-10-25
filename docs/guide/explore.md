@@ -127,4 +127,17 @@ The dashboard's history records the save as "Panel added from Explore".
 
 ## Query history
 
-A history of your recent Explore queries is planned and not in this version yet.
+**History** in the Explore toolbar opens a panel with the queries you ran in Explore.
+
+- It is private to you: nobody else can read it, administrators included. Each organization has
+  its own history for you.
+- Entries are kept for 30 days, at most 500 per organization. Only successful runs are kept, and
+  running the same query again just moves the latest entry to the top.
+- The text you typed is stored as typed, including any values in it (an id, an email address).
+  Do not put secrets into queries. Results are never stored.
+- **Search history** finds entries by their query text, **Filter by data source** keeps one source.
+  Entries of a data source you may no longer query are not listed.
+- **Load into the editor** puts a query in the editor without running it; **Run again** loads and
+  runs it.
+- **Delete from history** removes one entry; **Clear history** removes all of them after a
+  confirmation and cannot be undone.

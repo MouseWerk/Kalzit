@@ -70,6 +70,30 @@ describe("catalogs", () => {
     }
   });
 
+  it("have no German message identical to its English one unless it is a name or loanword", () => {
+    // Names, units, technical terms and words that are the same in both languages. Add a word
+    // here only when it is really used as is in German; translate everything else.
+    const same = new Set([
+      "Server", "Admin", "Teams", "Name", "Team", "Person", "Kalzit", "HSTS", "Updates", "Online",
+      "Offline", "Version", "Trend", "Median", "Minimum", "Maximum", "JSON", "Format", "Text",
+      "Neutral", "System", "Deutsch", "English", "frame", "documents", "graph", "Dashboards",
+      "Panel", "Dashboard", "Panels: {count}", "Layout", "Links", "TLS", "{label} (optional)",
+      "Host", "Port", "URL", "Status", "Name A–Z", "APIs", "Graph", "API", "Details",
+      "Median {ms} ms", "Lucene", "CSV", "NDJSON", "orders/open", "Schema", "Collection", "Find",
+      "Filter", "ObjectId", "Date", "Decimal128", "Int64", "Double", "Number", "String", "Boolean",
+      "Null", "Object", "Array", "Binary", "Int32", "UUID", "Regex", "Timestamp", "JavaScript",
+      "Symbol", "MinKey", "MaxKey", "Undefined", "DBPointer", "Explore", "Community", "Labels",
+      "Label", "Heatmap", "Hex", "Suffix", "Bits", "Watt", "Volt", "Ampere", "Hertz", "Kelvin",
+      "Link", "Tooltip", "Linear", "Filter, >5", "Markdown", "Normal", "Playlists", "{n} min",
+      "Playlist", "Logo", "Navigation", "Panels",
+    ]);
+    for (const [key, message] of entries("de")) {
+      const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
+      if (words.length < 3 || message !== catalogs.en[key]) continue;
+      expect(same.has(message), `de:${key} is still English: "${message}"`).toBe(true);
+    }
+  });
+
   it("address the user with du in German, never with Sie", () => {
     // "Sie" could one day mean "they" at the start of a sentence; rephrase rather than loosen.
     const formal = /\b(Sie|Ihnen|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres)\b/;
