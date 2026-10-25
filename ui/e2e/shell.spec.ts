@@ -125,6 +125,10 @@ for (const viewport of [
     await signInOwner(page);
     await page.goto("/settings/appearance");
     await expect(page.locator(".settings-row").first()).toBeVisible();
+    // Over the page's content, not the sidebar, which scrolls on its own.
+    await page.mouse.move(viewport.width - 40, viewport.height / 2);
+    // Over the section, not the sidebar or the navigation, which scroll on their own.
+    await page.mouse.move(900, 300);
     await page.mouse.wheel(0, 4000);
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
     const bar = await boxInView(page, ".top-bar");
@@ -138,6 +142,8 @@ test("the settings navigation stays in view while the section scrolls", async ({
   await page.goto("/settings/appearance");
   const nav = page.getByRole("navigation", { name: t("settings.navLabel") });
   await expect(nav).toBeVisible();
+  // Over the section, not the sidebar or the navigation, which scroll on their own.
+  await page.mouse.move(900, 300);
   await page.mouse.wheel(0, 4000);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
   const bar = await boxInView(page, ".top-bar");
