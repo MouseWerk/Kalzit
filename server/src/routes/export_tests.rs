@@ -874,3 +874,48 @@ async fn an_export_that_fails_before_its_first_chunk_is_a_plain_error_without_an
     assert_eq!(t.audit_count("data.export_aborted").await, 0);
     t.slots_free().await;
 }
+
+/// A client that leaves at the last chunk does not turn a recorded export into an aborted one.
+#[tokio::test]
+async fn a_client_leaving_after_the_entry_was_written_adds_no_aborted_entry() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("gross", BIG).await;
+    // One chunk: the entry is written before it is sent, then the client drops the body unread.
+    let r = t.raw("/export", tiny(&ds), &t.owner).await;
+    drop(r);
+    t.slots_free().await;
+    for _ in 0..200 {
+        if t.audit_count("data.exported").await == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(t.audit_count("data.exported").await, 1);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(t.audit_count("data.export_aborted").await, 0);
+    t.spool_empty().await;
+}
+
+/// The panel route holds the user's slot too.
+#[tokio::test]
+async fn a_second_panel_export_of_a_user_is_busy() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("gross", BIG).await;
+    let model = json!({ "model": {
+        "schemaVersion": 2, "title": "Gross", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "p1", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n, s FROM gross ORDER BY n" } }] }]
+    } });
+    let id = t.post("/dashboards", model, &t.owner).await.json()["id"].as_str().unwrap().to_string();
+    let panel = format!("/dashboards/{id}/panels/p1/export");
+    let body = json!({ "timeRange": range(), "format": "csv", "language": "en" });
+    let first = t.raw(&panel, body.clone(), &t.owner).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let mut held = first.into_body();
+    let _ = held.frame().await;
+    let second = t.post(&panel, body.clone(), &t.owner).await;
+    assert_eq!((second.status, second.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.user_busy".into()));
+    drop(held);
+    t.slots_free().await;
+    t.spool_empty().await;
+}

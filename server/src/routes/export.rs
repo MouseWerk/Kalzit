@@ -485,9 +485,18 @@ async fn produce(
         std::fs::create_dir_all(&spool).map_err(io)?;
         // The file may be as large as its cells suggest, up to the limit; the disk keeps what
         // the data directory's other users (the databases) need.
-        let estimate =
+        let size =
             (frame.rows().saturating_mul(frame.fields().len()).saturating_mul(24) as u64).min(limits.file_bytes as u64);
-        if let Some(free) = crate::updates::platform::free_space(&spool)
+        // An Excel file takes three copies at once: the sheet, the workbook and the spool file.
+        let estimate = if format == ExportFormat::Xlsx { size.saturating_mul(3) } else { size };
+        let free = crate::updates::platform::free_space(&spool);
+        if free.is_none() {
+            tracing::warn!(
+                "the free disk space of {} is unknown; the export is made without checking it",
+                spool.display()
+            );
+        }
+        if let Some(free) = free
             && free < limits.keep_free.saturating_add(estimate)
         {
             return Err(ApiError::new(
@@ -602,7 +611,15 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
     let started = Instant::now();
     let Spooled { path, len, rows, user: _user, .. } = file;
     let mut sent: u64 = 0;
+    // Set once `data.exported` is written: the file was complete on the server then, and a client
+    // that drops at the last chunk does not turn it into an aborted export.
+    let mut recorded = false;
     let outcome: Result<(), (Detail, &'static str)> = async {
+        // A file without bytes still gets its entry.
+        if len == 0 {
+            pending.record_exported(rows).await.map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
+            recorded = true;
+        }
         let mut source = tokio::fs::File::open(&path)
             .await
             .map_err(|e| (stopped("export.failed", &format!("the spool file: {e}")), "failed"))?;
@@ -623,6 +640,7 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
                     .record_exported(rows)
                     .await
                     .map_err(|e| (stopped("export.audit_failed", &e.message), "audit"))?;
+                recorded = true;
             }
             let left = limits.download.saturating_sub(started.elapsed());
             if left.is_zero() {
@@ -646,10 +664,18 @@ async fn send_file(file: Spooled, tx: mpsc::Sender<Msg>, pending: Pending, limit
             let _ = tokio::time::timeout(limits.stall, tx.send(Msg::Done)).await;
         }
         Err((detail, kind)) => {
-            // The audit entry of a finished file may exist already; then this one is the break.
             let reason = detail.reason;
             let _ = tx.try_send(Msg::Failed(detail.message.clone()));
-            if kind != "audit" {
+            if kind == "audit" {
+                // The database that takes the audit log is failing: operators must see it.
+                tracing::error!(
+                    "the audit entry of an export could not be written, the download was broken off: {}",
+                    detail.message
+                );
+            } else if recorded {
+                // `data.exported` exists: the file was complete; no second entry for the same export.
+                tracing::info!("an export was recorded as made, but the client left before its last chunk: {reason}");
+            } else {
                 let aborted = pending.record(
                     "data.export_aborted",
                     vec![("reason", json!(reason)), ("bytes", json!(sent)), ("of", json!(len))],

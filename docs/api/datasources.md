@@ -1086,6 +1086,9 @@ entry cannot be written the download is broken off); an export refused inside th
 (the client went away, took nothing for 60 s, or needed more than 15 minutes) writes
 `data.export_aborted` with a `reason` (`export.client_gone`, `export.stalled`,
 `export.download_too_long`, `export.audit_failed`), the `bytes` sent and the size `of` the file.
+Once `data.exported` is written the file counts as made: a client that leaves at the last chunk
+adds no `data.export_aborted` for the same export. A failing audit write is logged as an error.
+An Excel export needs three times its estimate free (sheet, workbook and spool file).
 
 Resources: a server makes at most 3 export files at once (`503 busy`, reason `export.busy`, for
 more), and a user has one export at a time, from making the file to the last byte sent (`503 busy`,
