@@ -110,7 +110,6 @@
   "datasources.health.testing": "Wird getestet…",
   "datasources.health.ok": "Verbunden in {ms} ms",
   "datasources.health.failed": "Die Verbindung ist fehlgeschlagen",
-  "datasources.delete": "Löschen…",
   "datasources.delete.title": "Datenquelle löschen?",
   "datasources.delete.text": "„{name}“ kommt in den Papierkorb. Panels, die sie abfragen, zeigen einen Fehler, bis sie wiederhergestellt ist.",
   "datasources.delete.confirm": "Löschen",

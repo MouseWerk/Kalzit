@@ -110,7 +110,6 @@
   "datasources.health.testing": "Testing…",
   "datasources.health.ok": "Connected in {ms} ms",
   "datasources.health.failed": "The connection failed",
-  "datasources.delete": "Delete…",
   "datasources.delete.title": "Delete data source?",
   "datasources.delete.text": "“{name}” moves to the trash. Panels that query it show an error until it is restored.",
   "datasources.delete.confirm": "Delete",
