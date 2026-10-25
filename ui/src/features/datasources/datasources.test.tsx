@@ -215,6 +215,8 @@ describe("data source list", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByRole("button", { name: "Details of “Sales DB”" }));
     const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    // The panel takes focus on the next frame; a tab clicked before it would lose the focus again.
+    await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));
     await user.click(within(panel).getByRole("tab", { name: "Access" }));
     expect(
       await within(panel).findByText(
