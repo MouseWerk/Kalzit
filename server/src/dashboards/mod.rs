@@ -121,6 +121,7 @@ mod tests {
             org_id: "o".into(),
             role: "custom".into(),
             permissions: permissions.iter().copied().collect(),
+            at_ms: 0,
         }
     }
 

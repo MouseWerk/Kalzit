@@ -21,7 +21,7 @@ use super::query::{check_variables, readable_model, resolve_variables};
 use super::support::{Actor, QueryParams, audit, clean_text, conflict, decode_cursor, encode_cursor, page_limit};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{self, Access, OrgCtx, Permission, Resource};
+use crate::authz::{self, Access, OrgCtx, Permission};
 use crate::dashboards::model;
 use crate::datasources::{MAX_TIME_MS, MIN_TIME_MS, check_range, run_queries_with};
 use crate::error::{ApiError, ApiResult};
@@ -115,11 +115,17 @@ async fn dashboard_access(state: &AppState, ctx: &OrgCtx, dashboard_id: &str) ->
         .fetch_optional(&state.db)
         .await?;
     let Some((deleted_at,)) = row else { return Err(ApiError::not_found()) };
-    let held = authz::resource_permissions(&state.db, ctx, Resource::Dashboard(dashboard_id))
+    // Audited as a read of the dashboard, so an admin is recorded only where reading it rests on
+    // their reach into team content.
+    let (held, outsider) = authz::dashboard_reader(&state.db, ctx, dashboard_id)
         .await?
-        .filter(|held| held.contains(&Permission::DashboardsRead))
+        .filter(|(held, _)| held.contains(&Permission::DashboardsRead))
         .ok_or_else(ApiError::not_found)?;
-    let writes = ctx.permissions.contains(&Permission::AnnotationsWrite) || held.contains(&Permission::DashboardsWrite);
+    // On a dashboard a team owns (itself or through its folder), only the team, grants and org
+    // admins annotate: org-wide `annotations:write` counts for everyone else only elsewhere.
+    let writes = held.contains(&Permission::AnnotationsWrite)
+        || held.contains(&Permission::DashboardsWrite)
+        || (ctx.permissions.contains(&Permission::AnnotationsWrite) && !outsider);
     Ok((deleted_at.is_some(), writes))
 }
 

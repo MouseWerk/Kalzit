@@ -88,6 +88,7 @@ mod tests {
     const NOT_REASONS: &[&str] = &[
         // Settings keys, written like reasons.
         "dashboards.default_time_range",
+        "dashboards.new_in_team_space",
         "dashboards.version_retention",
         "datasource.created",
         "datasource.deleted",

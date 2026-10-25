@@ -28,6 +28,16 @@ export interface StoredFolder {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /** The team that owns the folder; a team space when at the top level and restricted. */
+  ownerTeamId: string | null;
+}
+
+/** A team as the team context lists it (docs/api/access.md, "Team spaces"). */
+export interface FakeTeam {
+  id: string;
+  name: string;
+  member: boolean;
+  maintainer: boolean;
 }
 
 export interface StoredVersion {
@@ -51,6 +61,12 @@ export interface StoredDashboard {
 
 export interface FakeDashboardsState {
   folders: StoredFolder[];
+  /** The teams the caller may pick in the team context. */
+  teams: FakeTeam[];
+  /** The stored team context: `undefined` follows the first own team, `null` is all areas. */
+  teamId: string | null | undefined;
+  /** The organization setting `dashboards.new_in_team_space`. */
+  newInTeamSpace: boolean;
   dashboards: StoredDashboard[];
   variableOptions: Record<string, VariableOption[]>;
   /** Resource grants per dashboard id, extending the caller's role on that dashboard. */
@@ -85,13 +101,14 @@ export function addFolder(
   state: FakeDashboardsState,
   id: string,
   name: string,
-  options: { parentId?: string | null; restricted?: boolean } = {},
+  options: { parentId?: string | null; restricted?: boolean; ownerTeamId?: string } = {},
 ): StoredFolder {
   const folder: StoredFolder = {
     id,
     parentId: options.parentId ?? null,
     name,
-    restricted: options.restricted ?? false,
+    restricted: options.restricted ?? options.ownerTeamId !== undefined,
+    ownerTeamId: options.ownerTeamId ?? null,
     version: 1,
     createdAt: CREATED,
     updatedAt: CREATED,
@@ -142,6 +159,8 @@ function summary(d: StoredDashboard) {
     updatedBy: current.authorId,
     deletedAt: d.deletedAt,
     tags: current.model.tags ?? [],
+    ownerTeam: null,
+    teamOnly: false,
   };
 }
 
@@ -323,6 +342,9 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
   let waiting: (() => void)[] = [];
   const state: FakeDashboardsState = {
     folders: [],
+    teams: [],
+    teamId: undefined,
+    newInTeamSpace: false,
     dashboards: [],
     variableOptions: {},
     grants: {},
@@ -346,6 +368,14 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
 
   const folderById = (id: string | null) =>
     id === null ? undefined : state.folders.find((f) => f.id === id);
+  /** The top-level folder above (or at) `id`: a team space when a team owns it. */
+  const topOf = (id: string | null): StoredFolder | undefined => {
+    let folder = folderById(id);
+    while (folder !== undefined && folder.parentId !== null) {
+      folder = folderById(folder.parentId);
+    }
+    return folder;
+  };
 
   /** Restricted here or above: such folders exist only for members who manage permissions. */
   function restrictedChain(id: string | null): boolean {
@@ -430,8 +460,14 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       return null;
     };
     const dashboardAnswer = (d: StoredDashboard) => ({ ...detail(d, areas), access: accessOf(d) });
+    const team = (id: string | null) => state.teams.find((t) => t.id === id);
     const folderAnswer = (f: StoredFolder) => ({
       ...folderView(f),
+      ownerTeam:
+        f.ownerTeamId === null
+          ? null
+          : { id: f.ownerTeamId, name: team(f.ownerTeamId)?.name ?? "" },
+      teamSpace: f.ownerTeamId !== null && f.restricted && f.parentId === null,
       access: {
         // A folder grant (in `grants` by folder id) extends the role, as for dashboards.
         write: can("folders:write") || state.grants[f.id]?.write === true,
@@ -442,14 +478,44 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     const allowed = (d: StoredDashboard, what: "write" | "delete") =>
       accessOf(d)[what] ? null : error(403, "forbidden");
     const visible = (folderId: string | null) =>
-      folderId === null || can("folders:permissions") || !restrictedChain(folderId);
+      folderId === null ||
+      can("folders:permissions") ||
+      !restrictedChain(folderId) ||
+      state.teams.some((t) => t.member && t.id === topOf(folderId)?.ownerTeamId);
+    // A team context leaves out folders in other teams' spaces.
+    const scoped = search.get("team");
+    if (scoped !== null && !state.teams.some((t) => t.id === scoped)) return validation("team");
+    const inScope = (folderId: string | null) => {
+      const owner = folderId === null ? null : (topOf(folderId)?.ownerTeamId ?? null);
+      return scoped === null || owner === null || owner === scoped;
+    };
+
+    if (parts[0] === "team-context") {
+      if (method === "PUT") {
+        const next = body.teamId as string | null;
+        if (next !== null && !state.teams.some((t) => t.id === next)) return validation("teamId");
+        state.teamId = next;
+      }
+      const current =
+        state.teamId === undefined ? (state.teams.find((t) => t.member)?.id ?? null) : state.teamId;
+      const spaces = (teamId: string) =>
+        state.folders
+          .filter((f) => f.parentId === null && f.ownerTeamId === teamId && f.deletedAt === null)
+          .map((f) => ({ id: f.id, name: f.name }));
+      return json(200, {
+        teamId: current,
+        teams: state.teams.map((t) => ({ ...t, spaces: spaces(t.id) })),
+        defaultFolderId:
+          state.newInTeamSpace && current !== null ? (spaces(current)[0]?.id ?? null) : null,
+      });
+    }
 
     if (parts[0] === "folders") {
       if (!can(parts.length === 1 && method === "GET" ? "folders:read" : "folders:write")) {
         return error(403, "forbidden");
       }
       if (parts.length === 1 && method === "GET") {
-        const extra = unknownParam(search, ["trashed", "limit", "cursor"]);
+        const extra = unknownParam(search, ["trashed", "limit", "cursor", "team"]);
         if (extra !== undefined) return validation(extra);
         if (search.get("trashed") === "true") {
           const items = state.folders
@@ -460,14 +526,29 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         }
         const tree = (parentId: string | null): unknown[] =>
           state.folders
-            .filter((f) => f.parentId === parentId && f.deletedAt === null && visible(f.id))
+            .filter(
+              (f) =>
+                f.parentId === parentId && f.deletedAt === null && visible(f.id) && inScope(f.id),
+            )
             .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
             .map((f) => ({ ...folderAnswer(f), children: tree(f.id) }));
         return json(200, { items: tree(null), nextCursor: null });
       }
       if (parts.length === 1 && method === "POST") {
-        const extra = unknownField(body, ["name", "parentId", "restricted"]);
+        const extra = unknownField(body, ["name", "parentId", "restricted", "ownerTeamId"]);
         if (extra !== undefined) return validation(extra);
+        if (typeof body.ownerTeamId === "string") {
+          const owner = team(body.ownerTeamId);
+          if (owner === undefined || (!owner.maintainer && !can("folders:permissions"))) {
+            return error(403, "forbidden");
+          }
+          const name = typeof body.name === "string" ? body.name.trim() : "";
+          if (name === "") return validation("name");
+          const space = addFolder(state, `folder-new-${nextId++}`, name, {
+            ownerTeamId: owner.id,
+          });
+          return json(201, folderAnswer(space));
+        }
         const name = typeof body.name === "string" ? body.name.trim() : "";
         if (name.length < 1 || name.length > 100) return validation("name");
         const parentId = (body.parentId as string | null | undefined) ?? null;
@@ -548,7 +629,15 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     }
     if (parts.length === 1 && method === "GET") {
       if (!can("dashboards:read")) return error(403, "forbidden");
-      const extra = unknownParam(search, ["folderId", "q", "trashed", "tag", "limit", "cursor"]);
+      const extra = unknownParam(search, [
+        "folderId",
+        "q",
+        "trashed",
+        "tag",
+        "limit",
+        "cursor",
+        "team",
+      ]);
       if (extra !== undefined) return validation(extra);
       const folderId = search.get("folderId");
       if (folderId !== null && (folderById(folderId) === undefined || !visible(folderId))) {
@@ -560,6 +649,7 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         .filter((d) => (trashed ? d.deletedAt !== null : d.deletedAt === null))
         .filter((d) => visible(d.folderId) && (trashed || !trashedChain(d.folderId)))
         .filter((d) => folderId === null || d.folderId === folderId)
+        .filter((d) => inScope(d.folderId))
         .filter((d) => latest(d).model.title.toLowerCase().includes(q))
         .filter((d) => {
           const tag = search.get("tag");

@@ -71,7 +71,11 @@ Actions on a whole folder subtree (trash, restore, purge, move):
   whose dashboards go along (trash, restore, purge);
 - moving a folder into or out of a restricted folder changes who sees it, so it needs
   `folders:permissions` on the folder and on the new parent; the same holds for moving a
-  dashboard (on its folder and on the target folder).
+  dashboard (on its folder and on the target folder). Moves between the open tree and team spaces
+  need edit rights on both sides instead (`docs/api/access.md`, "Team spaces").
+
+Team spaces and team ownership (a team's folders and dashboards, shared read only or team only)
+add to these rules; see `docs/api/access.md`, "Team spaces".
 
 Whoever restricts a folder, or creates one restricted, through an `admin` grant instead of
 org-wide `folders:permissions` gets an `admin` grant on that folder in the same change
@@ -151,6 +155,7 @@ Organization settings:
 | Key | Default | Accepts |
 |---|---|---|
 | `dashboards.default_time_range` | `{"from": "now-6h", "to": "now"}` | a time range as in the dashboard model; new dashboards without `timeRange` get it |
+| `dashboards.new_in_team_space` | `false` | `true` or `false`; new dashboards go into the team space of the member's team context (`docs/api/access.md`, "Team context") |
 | `appearance.accent`, `appearance.density`, `appearance.font_size`, `appearance.start_page`, `appearance.time_zone`, `appearance.week_start` | `"inherit"` | `"inherit"` (the server's value) or what the server setting of the same key accepts |
 
 ### `GET /admin/settings`
@@ -312,6 +317,8 @@ interface Folder {
   parentId: string | null;        // null: top level, or a parent the caller cannot see
   name: string;                   // 1 to 100 characters, trimmed, no control characters
   restricted: boolean;            // the folder's own flag; subfolders inherit the restriction
+  ownerTeam: { id: string; name: string } | null;  // the team that owns it
+  teamSpace: boolean;             // restricted, at the top level and owned by a team
   version: number;
   createdAt: number;
   updatedAt: number;
@@ -327,6 +334,7 @@ Folders nest at most 10 levels deep.
 
 Permission `folders:read`. Answers `Page<FolderNode>` (`nextCursor` always `null`): the tree of
 folders not in the trash that the caller sees, each level sorted by name (case-insensitive).
+`?team=<teamId>` scopes it to a team context (`docs/api/access.md`, "Team context").
 
 `?trashed=true` answers the trash instead: one `FolderNode` (with empty `children`) per trashed
 subtree, its top folder, newest deletion first. What was trashed in one call is one subtree: a
@@ -335,9 +343,11 @@ its folder.
 
 ### `POST /orgs/{orgId}/folders`
 
-Any member. Body `{"name": string, "parentId"?: string | null, "restricted"?: boolean}`. Needs
-`folders:write` on the parent (org-wide at the top level); `restricted: true` needs
-`folders:permissions` on the parent (org-wide at the top level). Answers `201` with the `Folder`.
+Any member. Body `{"name": string, "parentId"?: string | null, "restricted"?: boolean,
+"ownerTeamId"?: string}`. Needs `folders:write` on the parent (org-wide at the top level);
+`restricted: true` needs `folders:permissions` on the parent (org-wide at the top level).
+`ownerTeamId` creates a team space instead (top level only, `422 validation` `parentId`
+otherwise): a maintainer of that team or an org admin. Answers `201` with the `Folder`.
 
 Errors: `422 validation` field `name`; `404 not_found` (parent not in the organization or not
 visible); `422 validation` field `parentId` (parent in the trash, or too deep); `403 forbidden`
@@ -525,8 +535,9 @@ line breaks (`422 validation` field `message`).
 
 Permission `dashboards:read`. `Page<DashboardSummary>` ordered by title (the database's collation),
 then id. Query: `folderId` (only that folder; `404 not_found` if not visible), `q` (part of the
-title, any case), `trashed=true` (the trash instead), `limit`, `cursor`. Dashboards the caller
-does not see are left out.
+title, any case), `trashed=true` (the trash instead), `team` (a team context, `docs/api/access.md`),
+`limit`, `cursor`. Dashboards the caller does not see are left out. Summaries carry
+`ownerTeam: { id, name } | null` and `teamOnly: boolean`.
 
 ### `POST /orgs/{orgId}/dashboards`
 

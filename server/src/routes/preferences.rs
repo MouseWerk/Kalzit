@@ -95,7 +95,7 @@ async fn member_ctx(state: &AppState, user: &SessionUser, org_id: &str) -> ApiRe
         .await?;
     let Some((role,)) = role else { return Ok(None) };
     let permissions = authz::effective_permissions(&state.db, &user.id, org_id, &role).await?;
-    Ok(Some(OrgCtx { user: user.clone(), org_id: org_id.to_string(), role, permissions }))
+    Ok(Some(OrgCtx { user: user.clone(), org_id: org_id.to_string(), role, permissions, at_ms: state.clock.now_ms() }))
 }
 
 /// The title of the dashboard if the user may read it and it is not in the trash.

@@ -13,8 +13,9 @@ export interface FolderNode {
 /**
  * Builds the tree from the flat list the server sends. It contains only folders the caller may
  * see; a folder whose parent is hidden from them is shown at the top level instead of vanishing.
+ * The spaces of `firstTeam` (the active team) come first at the top level.
  */
-export function buildTree(folders: readonly Folder[]): FolderNode[] {
+export function buildTree(folders: readonly Folder[], firstTeam?: string): FolderNode[] {
   const nodes = new Map(
     folders.map((folder) => [folder.id, { folder, children: [] as FolderNode[] }]),
   );
@@ -30,6 +31,11 @@ export function buildTree(folders: readonly Folder[]): FolderNode[] {
     }
   };
   sort(roots);
+  if (firstTeam !== undefined) {
+    const own = (node: FolderNode) =>
+      node.folder.teamSpace && node.folder.ownerTeam?.id === firstTeam;
+    return [...roots.filter(own), ...roots.filter((node) => !own(node))];
+  }
   return roots;
 }
 
@@ -92,6 +98,8 @@ interface FolderTreeProps {
   onSelect: (id: string | undefined) => void;
   /** Where the folded folders are kept in this browser (per account); in memory when left out. */
   storageKey?: string | undefined;
+  /** The active team of the team context: its spaces come first. */
+  activeTeam?: string | undefined;
 }
 
 /** The tree's own key for "All dashboards", which has no folder id. */
@@ -102,9 +110,16 @@ const ALL = "";
  * between the shown entries, Home and End jump, Right opens a folder (or moves into it), Left
  * folds it (or moves to its parent), Enter and Space open the folder. A folder with subfolders
  * has a chevron that folds it for the pointer; the path to the current folder is always open,
- * and "Fold all" folds every folder.
+ * and "Fold all" folds every folder. Team spaces and team-owned folders carry the team icon and
+ * their team's name.
  */
-export function FolderTree({ folders, selected, onSelect, storageKey }: FolderTreeProps) {
+export function FolderTree({
+  folders,
+  selected,
+  onSelect,
+  storageKey,
+  activeTeam,
+}: FolderTreeProps) {
   const { t } = useI18n();
   const ids = useId();
   const treeRef = useRef<HTMLDivElement>(null);
@@ -125,7 +140,7 @@ export function FolderTree({ folders, selected, onSelect, storageKey }: FolderTr
       }
     }
   };
-  const tree = buildTree(folders);
+  const tree = buildTree(folders, activeTeam);
   walk(tree);
   const tabStop = shown.includes(focused) ? focused : (selected ?? ALL);
 
@@ -295,6 +310,16 @@ export function FolderTree({ folders, selected, onSelect, storageKey }: FolderTr
         level,
         <>
           <span className="truncate">{folder.name}</span>
+          {folder.ownerTeam === null ? null : (
+            <span className="folder-tree__team truncate">
+              <span className="visually-hidden">
+                {`, ${t(folder.teamSpace ? "dashboards.team.spaceOf" : "dashboards.team.ownedBy", { team: folder.ownerTeam.name })}`}
+              </span>
+              {folder.ownerTeam.name === folder.name ? null : (
+                <span aria-hidden="true">{folder.ownerTeam.name}</span>
+              )}
+            </span>
+          )}
           {restricted ? (
             <span className="folder-tree__restricted">
               <Icon name="lock" />
@@ -302,7 +327,7 @@ export function FolderTree({ folders, selected, onSelect, storageKey }: FolderTr
             </span>
           ) : null}
         </>,
-        "folder",
+        folder.ownerTeam === null ? "folder" : "members",
         {
           hasChildren,
           open,

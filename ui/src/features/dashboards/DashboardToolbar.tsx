@@ -26,6 +26,8 @@ export interface ToolbarActions {
   saveAs: () => void;
   history: () => void;
   access: () => void;
+  /** The owner team and who else sees the dashboard. */
+  owner: () => void;
   remove: () => void;
   kiosk: () => void;
   tv: () => void;
@@ -40,7 +42,8 @@ interface DashboardToolbarProps {
   /** Edit mode, and whether the draft differs from the saved dashboard. */
   editing: boolean;
   dirty: boolean;
-  can: { edit: boolean; remove: boolean; access: boolean; saveAs: boolean };
+  /** `owner`: change the owner team and visibility (edit and share on the dashboard). */
+  can: { edit: boolean; remove: boolean; access: boolean; owner: boolean; saveAs: boolean };
   /** The playlist's controls, before the time range. */
   controls?: ReactNode;
   /** The filter bar (variables and links), at the start of the row. */
@@ -159,6 +162,14 @@ export function DashboardToolbar({
       label: t("dashboards.access"),
       icon: "members",
       onSelect: actions.access,
+    });
+  }
+  if (can.owner) {
+    more.push({
+      key: "owner",
+      label: t("dashboards.team.ownerButton"),
+      icon: "members",
+      onSelect: actions.owner,
     });
   }
   if (can.saveAs) {

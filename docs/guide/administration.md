@@ -53,6 +53,12 @@ sidebar switches between the organizations you belong to (server admins see all)
 - **Roles of the team**: every member gets the permissions of these roles on top of their own
   (at most 20; never the owner role).
 - Teams can be given access to folders, dashboards and data sources like individual users.
+- A team can own **team spaces**, folders and dashboards (see
+  [Dashboards](dashboards.md#team-spaces-and-team-ownership)). Adding members to such a team is for
+  its maintainers and admins; an admin doing it is recorded in the audit log.
+- Deleting a team asks who takes over what it owns: another team, or the organization. Handed to
+  the organization, team-only content stays hidden from everyone but admins and grants, until an
+  admin decides otherwise.
 
 ## Roles and permissions
 

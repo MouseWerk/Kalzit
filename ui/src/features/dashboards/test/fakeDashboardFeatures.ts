@@ -359,7 +359,7 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
           title: latest(d).model.title,
           deletedAt: d.deletedAt,
         }));
-        return json(200, { items, hidden: 0 });
+        return json(200, { items });
       }
       if (parts.length === 2 && method === "PUT") {
         const extra = unknownField(body, ["version", "name", "model", "folderId"]);

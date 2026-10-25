@@ -12,7 +12,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{
     Access, GrantSource, OrgCtx, Permission, Resource, ResourceType, ensure_holds, explain, level_permissions,
-    lock_org, resolve_role, resource_exists, resource_permissions,
+    lock_org, resolve_role, resource_exists, resource_permissions_for,
 };
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
@@ -74,8 +74,9 @@ async fn managed_resource(
     if !is_uuid(resource.id()) || !resource_exists(&state.db, &ctx.org_id, resource).await? {
         return Err(ApiError::not_found());
     }
-    let held = resource_permissions(&state.db, ctx, resource).await?.ok_or_else(ApiError::not_found)?;
     let manage = resource.resource_type().manage_permission();
+    // Audited as managing access, where an admin holds that only through their reach.
+    let held = resource_permissions_for(&state.db, ctx, resource, manage).await?.ok_or_else(ApiError::not_found)?;
     if !held.contains(&manage) {
         return Err(ApiError::forbidden(format!("missing permission {}", manage.as_str())));
     }

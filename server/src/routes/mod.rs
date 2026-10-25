@@ -24,6 +24,7 @@ pub mod roles;
 pub mod setup;
 pub mod support;
 pub mod table;
+pub mod team_context;
 pub mod teams;
 pub mod updates;
 
@@ -52,6 +53,7 @@ pub fn all() -> Vec<table::RouteDef> {
         export::routes(),
         members::routes(),
         teams::routes(),
+        team_context::routes(),
         roles::routes(),
         grants::routes(),
         admin_users::routes(),

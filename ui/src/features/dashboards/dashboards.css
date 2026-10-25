@@ -182,9 +182,31 @@
     background: var(--bg-active);
     font-weight: var(--font-weight-semibold);
   }
+
+  .folder-tree__item:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
   .folder-tree__restricted {
     display: inline-flex;
     color: var(--text-muted);
+  }
+
+  /* The owner team of a team space or team-owned folder: quiet text after the name. */
+  .folder-tree__team {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .dashboard-list__team {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-inline-start: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
   }
 
   .folder-actions {
