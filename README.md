@@ -389,6 +389,9 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 
 ## Documentation
 
+- [docs/guide/](docs/guide/README.md): the user guide, one page per area: getting started,
+  dashboards, panels, Explore, calculated fields and statistics, export, data sources and the
+  administration.
 - [docs/PLAN.md](docs/PLAN.md): what Kalzit becomes (German).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): code layout, contracts, configuration, data
   directory, services, storage, backups and tests.
