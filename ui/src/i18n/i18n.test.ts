@@ -105,6 +105,7 @@ describe("catalogs", () => {
       "Dashboard",
       "Panels: {count}",
       "Team {team}",
+      "Commit",
       "Layout",
       "Links",
       "TLS",
