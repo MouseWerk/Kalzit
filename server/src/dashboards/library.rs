@@ -94,10 +94,16 @@ pub async fn linked_panels(
     let mut out = BTreeMap::new();
     for id in ids {
         if let Some(row) = fetch(&mut *conn, org_id, id).await? {
-            out.insert(
-                row.id.clone(),
-                LinkedPanel { model: stored_content(&row.model)?, id: row.id, name: row.name, version: row.version },
-            );
+            // One unreadable library panel leaves its slot empty instead of the whole dashboard
+            // failing to open or save.
+            let model = match stored_content(&row.model) {
+                Ok(model) => model,
+                Err(e) => {
+                    tracing::warn!("library panel {id} cannot be read, its slots stay empty: {}", e.message);
+                    continue;
+                }
+            };
+            out.insert(row.id.clone(), LinkedPanel { model, id: row.id, name: row.name, version: row.version });
         }
     }
     Ok(out)
@@ -123,6 +129,39 @@ pub async fn check_references(
             Ok(()) => {}
             Err(e) if e.code == "not_found" => return Err(missing()),
             Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// A dashboard at `place` (`None`: the top level) may show a library panel kept in a team space
+/// only when it lies in that space too, or the caller maintains the space's team or is an org
+/// admin: otherwise the panel's content would reach people outside the space without the team
+/// deciding it. Checked for the library panels a save adds, inside the save's transaction after
+/// the organization's lock (`403` otherwise).
+pub async fn recheck_space_links(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    place: Option<&str>,
+    ids: &BTreeSet<&str>,
+) -> ApiResult<()> {
+    if ids.is_empty() || authz::role_sees_restricted(&ctx.permissions) {
+        return Ok(());
+    }
+    let tree = crate::folders::Tree::load(&mut *conn, ctx).await?;
+    let here = place.and_then(|p| tree.space_of(p)).map(|(space, _)| space.to_string());
+    for id in ids {
+        let Some(row) = fetch(&mut *conn, &ctx.org_id, id).await? else { continue };
+        let Some((space, team)) = row.folder_id.as_deref().and_then(|f| tree.space_of(f)) else { continue };
+        if here.as_deref() == Some(space) {
+            continue;
+        }
+        let team = team.to_string();
+        if authz::team_membership(&mut *conn, ctx, &team).await?.as_deref() != Some("maintainer") {
+            return Err(ApiError::forbidden(format!(
+                "library panel {id} belongs to a team space; only that team's maintainers and org admins show it \
+                 outside the space"
+            )));
         }
     }
     Ok(())

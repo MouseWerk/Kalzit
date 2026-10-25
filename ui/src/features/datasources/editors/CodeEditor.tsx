@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useI18n } from "../../../i18n/i18n";
+import { isComposingKey } from "../../../lib/ime";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CompletionResult } from "./completion";
 import {
@@ -106,7 +107,7 @@ function TextareaCodeEditor({
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     // Enter and Tab confirm an input method composition; they must not pick a suggestion.
-    if (event.nativeEvent.isComposing) {
+    if (isComposingKey(event)) {
       return;
     }
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

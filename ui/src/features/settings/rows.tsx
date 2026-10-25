@@ -145,6 +145,7 @@ export function RowFrame({
   title,
   titleId,
   description,
+  note,
   badge,
   error,
   errorId,
@@ -155,6 +156,8 @@ export function RowFrame({
   title: ReactNode;
   titleId: string;
   description: ReactNode;
+  /** A line below the description that is not part of the setting, e.g. who it does not reach. */
+  note?: ReactNode;
   badge?: string | undefined;
   error?: string | undefined;
   errorId?: string;
@@ -176,6 +179,7 @@ export function RowFrame({
             {description}
           </p>
         )}
+        {note === undefined ? null : <p className="settings-row__note">{note}</p>}
         {badge === undefined ? null : <span className="settings-badge">{badge}</span>}
         {error === undefined ? null : (
           <p className="field__error" id={errorId}>
@@ -196,6 +200,7 @@ export function SettingRow({
   inheritable,
   found,
   description,
+  note,
 }: {
   setting: Setting;
   rowId: string;
@@ -206,6 +211,7 @@ export function SettingRow({
   found: boolean;
   /** Overrides the catalog's description. */
   description?: string;
+  note?: ReactNode;
 }) {
   const { t, language, timeZone } = useI18n();
   const titleId = useId();
@@ -252,6 +258,7 @@ export function SettingRow({
       title={text.label ?? <code translate="no">{setting.key}</code>}
       titleId={titleId}
       description={description ?? text.description}
+      note={note}
       badge={badge}
       error={error}
       errorId={errorId}

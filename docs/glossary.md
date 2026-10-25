@@ -28,6 +28,9 @@ catalog.
 | Abfrage | Query | Eine Anfrage an eine Datenquelle (SQL, Pipeline, Cypher, PromQL, ...). | Query (im Deutschen) |
 | Dashboard | Dashboard | Seite mit Panels, abgelegt in Ordnern, mit Verlauf. | Übersichtsseite, Board |
 | Ordner | Folder | Enthält Dashboards; Rechte am Ordner gelten für seinen Inhalt. | Verzeichnis |
+| Team-Bereich | Team space | Ordner ganz oben, der einem Team gehört; nur das Team sieht ihn, bis es ihn freigibt. | Teamraum, Team-Space, Teamordner |
+| Eigentümer-Team | Owner team | Das Team, dem ein Ordner oder Dashboard gehört; nur es (und Freigaben) bearbeitet ihn. | Besitzerteam, Owner-Team |
+| Sichtbarkeit | Visibility | Wer Inhalte eines Teams außer dem Team sieht: alle mit Zugriff (nur lesen) oder „Nur Team“. | |
 | Panel | Panel | Eine Visualisierung in einem Dashboard. | Kachel, Widget |
 | Explore | Explore | Ad-hoc-Abfragen ohne Dashboard, mit Verlauf. Name der Funktion, nicht übersetzt. | Erkunden |
 | Auswertung | Analysis | Gespeicherte Abfrage mit Schritten und Ansicht, teilbar im Team. | Analyse (als Name), Report |

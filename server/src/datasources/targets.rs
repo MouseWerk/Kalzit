@@ -260,14 +260,21 @@ impl TargetPolicy {
             self.check_ip(host, ip)?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
-        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((normalize_host(host).as_str(), port))
-            .await
-            .map_err(|e| ResolveError::Dns {
-                code: "target.unresolvable",
-                host: host.to_string(),
-                reason: e.to_string(),
-            })?
-            .collect();
+        #[cfg(test)]
+        let pinned = test_hosts::lookup(&normalize_host(host), port);
+        #[cfg(not(test))]
+        let pinned: Option<Vec<SocketAddr>> = None;
+        let addrs: Vec<SocketAddr> = match pinned {
+            Some(addrs) => addrs,
+            None => tokio::net::lookup_host((normalize_host(host).as_str(), port))
+                .await
+                .map_err(|e| ResolveError::Dns {
+                    code: "target.unresolvable",
+                    host: host.to_string(),
+                    reason: e.to_string(),
+                })?
+                .collect(),
+        };
         if addrs.is_empty() {
             return Err(ResolveError::Dns {
                 code: "target.unresolvable",
@@ -378,14 +385,54 @@ fn within(path: &Path, dir: &Path) -> bool {
     }
 }
 
-/// Link-local (including the cloud metadata endpoint 169.254.169.254) and the AWS IPv6 metadata
-/// address, also when written as an IPv4-mapped, -compatible or NAT64 address.
+/// Link-local (including the cloud metadata endpoint 169.254.169.254 of AWS, Azure, GCP and
+/// Oracle) and the other cloud metadata addresses: Alibaba's 100.100.100.200, Azure's WireServer
+/// 168.63.129.16, Oracle's 192.0.0.192, and the IPv6 endpoints of AWS (fd00:ec2::254) and GCP
+/// (fd20:ce::254). Also when carried in an IPv6 address: IPv4-mapped, -translated or
+/// -compatible, NAT64 (64:ff9b::/96 and 64:ff9b:1::/48), 6to4 or Teredo.
 pub fn is_always_blocked(ip: IpAddr) -> bool {
     const AWS_V6_METADATA: Ipv6Addr = Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254);
+    const GCP_V6_METADATA: Ipv6Addr = Ipv6Addr::new(0xfd20, 0xce, 0, 0, 0, 0, 0, 0x254);
     match canonical_ip(ip) {
-        IpAddr::V4(v4) => v4.is_link_local(),
-        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80 || v6 == AWS_V6_METADATA,
+        IpAddr::V4(v4) => is_blocked_v4(v4),
+        IpAddr::V6(v6) => {
+            (v6.segments()[0] & 0xffc0) == 0xfe80
+                || v6 == AWS_V6_METADATA
+                || v6 == GCP_V6_METADATA
+                || embedded_v4(v6).into_iter().any(is_blocked_v4)
+        }
     }
+}
+
+fn is_blocked_v4(v4: Ipv4Addr) -> bool {
+    const ALIBABA_METADATA: Ipv4Addr = Ipv4Addr::new(100, 100, 100, 200);
+    const AZURE_WIRESERVER: Ipv4Addr = Ipv4Addr::new(168, 63, 129, 16);
+    const ORACLE_METADATA: Ipv4Addr = Ipv4Addr::new(192, 0, 0, 192);
+    v4.is_link_local() || v4 == ALIBABA_METADATA || v4 == AZURE_WIRESERVER || v4 == ORACLE_METADATA
+}
+
+/// The IPv4 addresses a tunnelling or translation prefix may carry inside `v6`, beyond the forms
+/// `canonical_ip` reads: 6to4 (2002::/16), Teredo (2001::/32, the client address inverted) and
+/// the local-use NAT64 prefix 64:ff9b:1::/48 at every position RFC 6052 allows for it.
+fn embedded_v4(v6: Ipv6Addr) -> Vec<Ipv4Addr> {
+    let s = v6.segments();
+    let o = v6.octets();
+    let v4 = |a: u8, b: u8, c: u8, d: u8| Ipv4Addr::new(a, b, c, d);
+    let mut out = Vec::new();
+    if s[0] == 0x2002 {
+        out.push(v4(o[2], o[3], o[4], o[5]));
+    }
+    if s[0] == 0x2001 && s[1] == 0 {
+        out.push(v4(!o[12], !o[13], !o[14], !o[15]));
+    }
+    if s[..3] == [0x64, 0xff9b, 1] {
+        // Prefix lengths 48, 56, 64 and 96; bits 64 to 71 (octet 8) are never address bits.
+        out.push(v4(o[6], o[7], o[9], o[10]));
+        out.push(v4(o[7], o[9], o[10], o[11]));
+        out.push(v4(o[9], o[10], o[11], o[12]));
+        out.push(v4(o[12], o[13], o[14], o[15]));
+    }
+    out
 }
 
 /// IPv6 forms that carry an IPv4 address are compared as that address.
@@ -400,6 +447,10 @@ fn canonical_ip(ip: IpAddr) -> IpAddr {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return IpAddr::V4(v4);
             }
+            // IPv4-translated addresses (::ffff:0:a.b.c.d, RFC 2765).
+            if s[..6] == [0, 0, 0, 0, 0xffff, 0] {
+                return IpAddr::V4(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
+            }
             // Deprecated IPv4-compatible addresses (::a.b.c.d), but not :: and ::1.
             if s[..6] == [0; 6] && (s[6] != 0 || s[7] > 1) {
                 return IpAddr::V4(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
@@ -410,9 +461,21 @@ fn canonical_ip(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// An address literal, bare or in brackets. An IPv6 zone (`fe80::1%eth0`, `%25eth0` as written in
+/// a URL) names only the interface, so the address is checked without it. A zone is 1 to 64 of
+/// `A-Z a-z 0-9 . _ ~ -`; anything else is no address literal.
 pub fn parse_ip_literal(host: &str) -> Option<IpAddr> {
     let inner = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
-    inner.parse().ok()
+    if let Ok(ip) = inner.parse() {
+        return Some(ip);
+    }
+    let (address, zone) = inner.split_once('%')?;
+    let zone_ok = (1..=64).contains(&zone.len())
+        && zone.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'-'));
+    if !zone_ok {
+        return None;
+    }
+    address.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
 }
 
 fn normalize_host(host: &str) -> String {
@@ -483,6 +546,27 @@ fn strip_verbatim(path: PathBuf) -> PathBuf {
     path
 }
 
+/// Names the resolver answers in tests without asking DNS, for names that must resolve to a
+/// blocked address (`TargetPolicy::resolve_all` and the HTTP client's resolver both use it).
+#[cfg(test)]
+pub(crate) mod test_hosts {
+    use std::collections::BTreeMap;
+    use std::net::{IpAddr, SocketAddr};
+    use std::sync::Mutex;
+
+    static HOSTS: Mutex<BTreeMap<String, Vec<IpAddr>>> = Mutex::new(BTreeMap::new());
+
+    /// Makes `name` (lower case, no trailing dot) resolve to `ips`.
+    pub fn pin(name: &str, ips: &[IpAddr]) {
+        HOSTS.lock().unwrap().insert(name.to_string(), ips.to_vec());
+    }
+
+    pub(super) fn lookup(name: &str, port: u16) -> Option<Vec<SocketAddr>> {
+        let hosts = HOSTS.lock().unwrap();
+        hosts.get(name).map(|ips| ips.iter().map(|ip| SocketAddr::new(*ip, port)).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,11 +596,55 @@ mod tests {
             "::ffff:169.254.169.254",
             "64:ff9b::a9fe:a9fe",
             "::a9fe:a9fe",
+            // Alibaba, Azure WireServer and GCP's IPv6 endpoint.
+            "100.100.100.200",
+            "168.63.129.16",
+            "fd20:ce::254",
+            // The same in the IPv4-mapped and IPv4-translated forms.
+            "::ffff:100.100.100.200",
+            "::ffff:168.63.129.16",
+            "::ffff:0:169.254.169.254",
+            "::ffff:0:a9fe:a9fe",
+            "::ffff:0:100.100.100.200",
+            "::ffff:0:168.63.129.16",
+            "64:ff9b::a83f:8110",
+            // Oracle's alternate metadata address, also mapped.
+            "192.0.0.192",
+            "::ffff:192.0.0.192",
+            // 6to4 and Teredo (client address inverted) carrying 169.254.169.254 and 168.63.129.16.
+            "2002:a9fe:a9fe::1",
+            "2002:a83f:8110::",
+            "2001:0:4136:e378:8000:63bf:5601:5601",
+            "2001:0:4136:e378:8000:63bf:57c0:7eef",
+            // The local-use NAT64 prefix at /96, /64 and /48.
+            "64:ff9b:1::a9fe:a9fe",
+            "64:ff9b:1:0:a9:fea9:fe00:0",
+            "64:ff9b:1:a9fe:a9:fe00::",
         ] {
             assert!(is_always_blocked(ip(bad)), "{bad}");
             assert!(policy(&[]).check_ip("x", ip(bad)).is_err(), "{bad}");
+            // The allow-list never lifts the block, whatever form the address is written in.
+            assert!(policy(&["0.0.0.0/0", "::/0"]).check_ip("x", ip(bad)).is_err(), "{bad}");
         }
-        for ok in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "::1", "::", "fd00:ec2::253", "fec0::1", "8.8.8.8"] {
+        for ok in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "192.168.1.1",
+            "::1",
+            "::",
+            "fd00:ec2::253",
+            "fd20:ce::253",
+            "fec0::1",
+            "8.8.8.8",
+            "100.100.100.100",
+            "168.63.129.17",
+            "::ffff:0:10.0.0.5",
+            "192.0.0.193",
+            "2002:a00:5::1",
+            "2001:0:4136:e378:8000:63bf:f5ff:fffa",
+            "64:ff9b:1::a00:5",
+            "2001:db8::a9fe:a9fe",
+        ] {
             assert!(!is_always_blocked(ip(ok)), "{ok}");
             assert!(policy(&[]).check_ip("x", ip(ok)).is_ok(), "{ok}");
         }
@@ -543,6 +671,27 @@ mod tests {
     fn prechecks_need_no_network() {
         assert!(policy(&[]).precheck_host("169.254.169.254").is_err());
         assert!(policy(&[]).precheck_host("[fe80::1]").is_err());
+        // Brackets and zones do not hide an address.
+        for bad in [
+            "[fd20:ce::254]",
+            "[::ffff:0:169.254.169.254]",
+            "[::ffff:168.63.129.16]",
+            "fe80::1%eth0",
+            "[fe80::1%25eth0]",
+            "[fd00:ec2::254%1]",
+            "100.100.100.200",
+        ] {
+            assert!(policy(&[]).precheck_host(bad).is_err(), "{bad}");
+        }
+        assert_eq!(parse_ip_literal("[fe80::1%eth0]"), Some(ip("fe80::1")));
+        assert_eq!(parse_ip_literal("fe80::1%"), None);
+        assert_eq!(parse_ip_literal("db%eth0"), None);
+        // A zone has a narrow alphabet; anything else is no address.
+        for odd in ["fe80::1%a/b", "fe80::1%a b", "fe80::1%a%b", "fe80::1%\n", "[fe80::1%a/b]"] {
+            assert_eq!(parse_ip_literal(odd), None, "{odd:?}");
+        }
+        assert_eq!(parse_ip_literal(&format!("fe80::1%{}", "a".repeat(65))), None);
+        assert_eq!(parse_ip_literal("fe80::1%en0.v-1_~"), Some(ip("fe80::1")));
         assert!(policy(&[]).precheck_host("db.example.com").is_ok());
         assert!(policy(&["db.example.com"]).precheck_host("other.example.com").is_err());
         assert!(policy(&["10.0.0.0/8"]).precheck_host("other.example.com").is_ok(), "may resolve into the network");
@@ -554,6 +703,19 @@ mod tests {
         assert_eq!(p.resolve("127.0.0.1", 5432).await.unwrap(), "127.0.0.1:5432".parse().unwrap());
         assert_eq!(p.resolve("[::1]", 5432).await.unwrap(), "[::1]:5432".parse().unwrap());
         assert!(matches!(p.resolve("169.254.169.254", 80).await, Err(ResolveError::Blocked(_))));
+        // A name that resolves to a metadata address is refused, also when another of its
+        // addresses would be allowed.
+        test_hosts::pin("metadata.targets-test.invalid", &[ip("10.0.0.5"), ip("168.63.129.16")]);
+        assert!(matches!(p.resolve("Metadata.Targets-Test.Invalid.", 80).await, Err(ResolveError::Blocked(_))));
+        test_hosts::pin("teredo.targets-test.invalid", &[ip("2001:0:4136:e378:8000:63bf:5601:5601")]);
+        assert!(matches!(p.resolve("teredo.targets-test.invalid", 80).await, Err(ResolveError::Blocked(_))));
+        test_hosts::pin("fine.targets-test.invalid", &[ip("10.0.0.5")]);
+        assert_eq!(p.resolve("fine.targets-test.invalid", 80).await.unwrap(), "10.0.0.5:80".parse().unwrap());
+        for bad in
+            ["100.100.100.200", "168.63.129.16", "[fd20:ce::254]", "[::ffff:0:169.254.169.254]", "[fe80::1%25eth0]"]
+        {
+            assert!(matches!(p.resolve(bad, 80).await, Err(ResolveError::Blocked(_))), "{bad}");
+        }
         let localhost = p.resolve("localhost", 9090).await.unwrap();
         assert!(localhost.ip().is_loopback() && localhost.port() == 9090);
         let only_ten = policy(&["10.0.0.0/8"]);

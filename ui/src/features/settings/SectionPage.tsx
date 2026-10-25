@@ -6,6 +6,7 @@ import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg } from "../../org/useOrg";
+import { PREFERENCES_KEY } from "../../preferences/preferences";
 import { ShortcutsList } from "../../shell/ShortcutsHelp";
 import { AccountSections } from "../admin/account/AccountPage";
 import {
@@ -222,6 +223,8 @@ function SettingsCard({
 export function refreshLook<T>(queryClient: QueryClient, saved: T): T {
   void queryClient.invalidateQueries({ queryKey: ["branding"] });
   void queryClient.invalidateQueries({ queryKey: ["appearance"] });
+  // Users without a theme of their own get the default through their preferences.
+  void queryClient.invalidateQueries({ queryKey: [PREFERENCES_KEY] });
   return saved;
 }
 

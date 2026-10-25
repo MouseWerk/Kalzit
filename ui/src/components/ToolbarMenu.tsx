@@ -1,5 +1,6 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
 import { Icon, type IconName } from "./Icon";
 import { type ShortcutKeys, WithTooltip } from "./IconButton";
@@ -38,41 +39,13 @@ interface ToolbarMenuProps {
 /**
  * A quiet icon button that opens a menu, after the menu button pattern: arrow keys, Home and End
  * move, Escape and Tab close, focus returns to the button after a choice. The menu is drawn in
- * the window under the button, so a toolbar that wraps or scrolls never clips it.
+ * the window under the button (above it near the bottom edge), so a toolbar that wraps or
+ * scrolls never clips it.
  */
 export function ToolbarMenu({ label, icon, text, entries, shortcut, className }: ToolbarMenuProps) {
   const menu = useMenuButton();
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
-
-  useLayoutEffect(() => {
-    const button = buttonRef.current;
-    const list = menuRef.current;
-    if (!open || button === null || list === null) {
-      return;
-    }
-    const box = button.getBoundingClientRect();
-    list.style.setProperty("--menu-top", `${box.bottom}px`);
-    list.style.setProperty("--menu-right", `${Math.max(window.innerWidth - box.right, 0)}px`);
-  }, [open, buttonRef, menuRef]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const close = () => closeMenu(false);
-    window.addEventListener("resize", close);
-    return () => window.removeEventListener("resize", close);
-  }, [open, closeMenu]);
-
-  // Tab leaves the menu back at its button (the menu is drawn at the end of the page).
-  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Tab") {
-      event.preventDefault();
-      closeMenu(true);
-      return;
-    }
-    menu.onMenuKeyDown(event);
-  }
+  const onMenuKeyDown = useFloatingMenu(menu);
 
   return (
     <div className="menu-anchor toolbar-menu" ref={anchorRef}>
@@ -105,8 +78,6 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
               aria-label={label}
               className="menu toolbar-menu__list"
               onKeyDown={onMenuKeyDown}
-              // A click in the menu is the menu's, not a click outside that closes it.
-              onPointerDown={(event) => event.stopPropagation()}
             >
               {entries.map((entry) => {
                 switch (entry.kind) {

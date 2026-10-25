@@ -52,6 +52,10 @@ export interface PanelModel {
   links?: PanelLink[];
   /** Shows this library panel: queries, type and options come from there. */
   libraryPanelId?: string;
+  /** What the panel shows, up to 1000 characters; the header offers it as a hint. */
+  description?: string;
+  /** Drawn without the card's surface and border. */
+  transparent?: boolean;
 }
 
 export interface PanelRepeat {
@@ -66,6 +70,9 @@ export interface PanelLink {
   url: string;
   newTab?: boolean;
 }
+
+/** The longest panel description the server keeps. */
+export const MAX_DESCRIPTION_CHARS = 1000;
 
 export interface RowModel {
   id: string;
@@ -295,6 +302,8 @@ function parseTarget(value: unknown, index: number): Target | null {
     refId: typeof value.refId === "string" ? value.refId : refIdAt(index),
     datasourceId: typeof value.datasourceId === "string" ? value.datasourceId : "",
     query: value.query ?? null,
+    // Dropping it would run a hidden query and lose the flag at the next save.
+    ...(value.hide === true ? { hide: true } : {}),
   };
 }
 
@@ -313,7 +322,7 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     options: value.options ?? {},
     fieldConfig: value.fieldConfig ?? {},
   };
-  for (const key of ["rowId", "timeFrom", "timeShift", "libraryPanelId"] as const) {
+  for (const key of ["rowId", "timeFrom", "timeShift", "libraryPanelId", "description"] as const) {
     const text = value[key];
     if (typeof text === "string" && text !== "") {
       panel[key] = text;
@@ -331,6 +340,9 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
   const links = parseLinks(value.links);
   if (links.length > 0) {
     panel.links = links;
+  }
+  if (value.transparent === true) {
+    panel.transparent = true;
   }
   return panel;
 }

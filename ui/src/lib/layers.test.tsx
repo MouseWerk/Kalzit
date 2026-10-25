@@ -69,4 +69,22 @@ describe("useEscapeLayer", () => {
     unmount();
     expect(openLayerCount()).toBe(0);
   });
+
+  it("counts only blocking layers for the shortcuts, while Escape still closes the others", async () => {
+    const user = userEvent.setup();
+    function Selection() {
+      const [selected, setSelected] = useState(false);
+      useEscapeLayer(selected, () => setSelected(false), { blocking: false });
+      return (
+        <button type="button" onClick={() => setSelected(true)}>
+          {selected ? "selected" : "select"}
+        </button>
+      );
+    }
+    render(<Selection />);
+    await user.click(screen.getByRole("button", { name: "select" }));
+    expect(openLayerCount()).toBe(0);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "select" })).toBeTruthy();
+  });
 });

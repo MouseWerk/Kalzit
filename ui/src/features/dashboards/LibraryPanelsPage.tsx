@@ -158,11 +158,6 @@ function Uses({ orgId, panel }: { orgId: string; panel: LibraryPanel }) {
             </Link>
           </li>
         ))}
-        {uses.data !== undefined && uses.data.hidden > 0 ? (
-          <li className="field__hint">
-            {t("libraryPanels.hiddenUses", { count: uses.data.hidden })}
-          </li>
-        ) : null}
       </ul>
     </details>
   );

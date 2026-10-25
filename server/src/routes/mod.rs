@@ -8,6 +8,7 @@ pub mod auth;
 pub mod branding;
 pub mod dashboards;
 pub mod datasources;
+pub mod explore_history;
 pub mod export;
 pub mod folders;
 pub mod grants;
@@ -24,6 +25,7 @@ pub mod roles;
 pub mod setup;
 pub mod support;
 pub mod table;
+pub mod team_context;
 pub mod teams;
 pub mod updates;
 
@@ -49,9 +51,11 @@ pub fn all() -> Vec<table::RouteDef> {
         playlists::routes(),
         datasources::routes(),
         query::routes(),
+        explore_history::routes(),
         export::routes(),
         members::routes(),
         teams::routes(),
+        team_context::routes(),
         roles::routes(),
         grants::routes(),
         admin_users::routes(),

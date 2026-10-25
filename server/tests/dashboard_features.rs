@@ -257,10 +257,12 @@ on_both_databases! {
     library_panels_are_shared_by_dashboards,
     library_panels_in_restricted_folders,
     library_panels_check_panel_options,
+    library_panel_queries_count_as_stored_queries,
     hidden_targets_are_kept_but_not_run,
     time_options_are_stored_and_checked,
     colour_options_are_stored_and_checked,
     pins_keep_their_order_limit_and_access,
+    panel_descriptions_and_transparency_are_stored_and_checked,
 }
 
 fn model(title: &str) -> Value {
@@ -297,6 +299,85 @@ fn range() -> Value {
     json!({ "from": T0 - 6 * HOUR, "to": T0 })
 }
 
+/// A dashboard with the constant `k` and, when `library` is set, a slot showing that library panel.
+fn with_constant(title: &str, k: &str, library: Option<&str>) -> Value {
+    let panels = match library {
+        Some(id) => json!([ { "id": "lp", "type": "timeseries", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                              "libraryPanelId": id } ]),
+        None => json!([]),
+    };
+    json!({
+        "schemaVersion": SCHEMA_VERSION, "title": title, "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "k", "type": "constant", "current": k } ],
+        "panels": panels
+    })
+}
+
+/// The queries of a linked library panel run with the dashboard's variables, so they are the
+/// dashboard's stored queries: linking one, or changing a variable they read, needs
+/// `datasources:query` on their source, as changing a panel's own query does.
+async fn library_panel_queries_count_as_stored_queries(t: TestApp) {
+    let source = t.working_source().await;
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Gestalter", "permissions": ["dashboards:read", "dashboards:write", "folders:read", "datasources:read"] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    // May edit dashboards, but not query data sources.
+    let designer = t.member("Gerd", role.body["id"].as_str().unwrap()).await;
+    let editor = t.member("Emil", "editor").await;
+    let viewer = t.member("Vera", "viewer").await;
+    let mut content = library_model("Releases");
+    content["targets"] =
+        json!([{ "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } }]);
+    let lib = t.post("~/library-panels", json!({ "name": "Releases", "model": content }), &t.owner).await.id();
+    let id = t.dashboard(None, with_constant("Übersicht", "a", None), &t.owner).await;
+    let path = format!("~/dashboards/{id}");
+    let save = |model: Value, version: i64| json!({ "model": model, "version": version });
+
+    // Linking the library panel adds its query: refused without the right, naming the source.
+    let refused = t.put(&path, save(with_constant("Übersicht", "a", Some(&lib)), 1), &designer).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    assert!(refused.body["error"]["message"].as_str().unwrap().contains(&source), "{}", refused.body);
+    let refused = t.post("~/dashboards", json!({ "model": with_constant("Neu", "a", Some(&lib)) }), &designer).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    // An editor, who may query the source, links it.
+    let linked = t.put(&path, save(with_constant("Übersicht", "a", Some(&lib)), 1), &editor).await;
+    assert_eq!(linked.status, StatusCode::OK, "{}", linked.body);
+
+    // Renaming leaves the library panel's query as it was: no right needed.
+    let renamed = t.put(&path, save(with_constant("Übersicht 2", "a", Some(&lib)), 2), &designer).await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.body);
+    // A changed variable changes what the library panel's query reads.
+    let refused = t.put(&path, save(with_constant("Übersicht 2", "b", Some(&lib)), 3), &designer).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    let changed = t.put(&path, save(with_constant("Übersicht 2", "b", Some(&lib)), 3), &editor).await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
+
+    // A viewer runs the stored library query, but saves nothing.
+    let q = json!({ "timeRange": range(), "variables": {} });
+    let ran = t.post(&format!("{path}/panels/lp/query"), q, &viewer).await;
+    assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
+    assert_eq!(ran.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["Release 2.4"]));
+    let refused = t.put(&path, save(with_constant("Übersicht 3", "b", Some(&lib)), 4), &viewer).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+
+    // A stored library panel this server cannot read runs nothing: it neither blocks saving the
+    // dashboard nor keeps it from opening, its slot just stays empty.
+    sqlx::query("UPDATE library_panels SET model = '{ kaputt' WHERE id = $1")
+        .bind(&lib)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let saved = t.put(&path, save(with_constant("Übersicht 3", "c", Some(&lib)), 4), &designer).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert_eq!(saved.body["libraryPanels"], json!({}), "{}", saved.body);
+    assert_eq!(t.get(&path, &viewer).await.status, StatusCode::OK);
+}
+
 async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
     let source = t.working_source().await;
     let mut m = model("Versteckt");
@@ -304,7 +385,7 @@ async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
         { "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } },
         { "refId": "B", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" }, "hide": true }
     ]);
-    let id = t.dashboard(None, m, &t.owner).await;
+    let id = t.dashboard(None, m.clone(), &t.owner).await;
     // Stored as sent; a target that runs carries no `hide`.
     let read = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
     let targets = &read.body["model"]["panels"][0]["targets"];
@@ -313,6 +394,22 @@ async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
     let ran = t.post(&format!("~/dashboards/{id}/panels/p1/query"), q, &t.owner).await;
     assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
     assert!(ran.body["results"].get("A").is_some(), "{}", ran.body);
+    assert!(ran.body["results"].get("B").is_none(), "{}", ran.body);
+
+    // A hidden target that an enabled step reads is run, since the step needs its frame; a
+    // disabled step does not count.
+    let mut read_by_step = model("Versteckt, gelesen");
+    read_by_step["panels"][0]["targets"] = m["panels"][0]["targets"].clone();
+    read_by_step["panels"][0]["transformations"] =
+        json!([{ "id": "s", "type": "calculate", "frame": "B", "name": "n", "expression": "1" }]);
+    let read_id = t.dashboard(None, read_by_step.clone(), &t.owner).await;
+    let q = json!({ "timeRange": range(), "variables": {} });
+    let ran = t.post(&format!("~/dashboards/{read_id}/panels/p1/query"), q.clone(), &t.owner).await;
+    assert!(ran.body["results"].get("B").is_some(), "{}", ran.body);
+    read_by_step["title"] = json!("Versteckt, Schritt aus");
+    read_by_step["panels"][0]["transformations"][0]["disabled"] = json!(true);
+    let off_id = t.dashboard(None, read_by_step, &t.owner).await;
+    let ran = t.post(&format!("~/dashboards/{off_id}/panels/p1/query"), q, &t.owner).await;
     assert!(ran.body["results"].get("B").is_none(), "{}", ran.body);
 
     // The export runs the shown query only; a panel whose queries are all hidden has nothing
@@ -494,6 +591,28 @@ async fn colour_options_are_stored_and_checked(t: TestApp) {
         let detail = refused.body["error"]["params"]["detail"].as_str().unwrap_or_default();
         assert!(detail.contains(expect), "{path}: {}", refused.body);
     }
+}
+
+/// The panel inspector's own panel fields: a description and a transparent card. They come back as
+/// stored, stay out of the model when unset, and an oversized description is refused by place.
+async fn panel_descriptions_and_transparency_are_stored_and_checked(t: TestApp) {
+    let mut described = model("Beschrieben");
+    described["panels"][0]["description"] = json!("Netto-Umsatz pro Tag.\nVerglichen mit dem Vorjahr.");
+    described["panels"][0]["transparent"] = json!(true);
+    let id = t.dashboard(None, described.clone(), &t.owner).await;
+    let stored = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
+    assert_eq!(stored.status, StatusCode::OK, "{}", stored.body);
+    let panel = &stored.body["model"]["panels"][0];
+    assert_eq!(panel["description"], described["panels"][0]["description"]);
+    assert_eq!(panel["transparent"], true);
+    let plain_id = t.dashboard(None, model("Schlicht"), &t.owner).await;
+    let plain_panel = t.get(&format!("~/dashboards/{plain_id}"), &t.owner).await.body["model"]["panels"][0].clone();
+    assert!(plain_panel.get("description").is_none() && plain_panel.get("transparent").is_none(), "{plain_panel}");
+    let mut long = model("Zu lang");
+    long["panels"][0]["description"] = json!("x".repeat(1001));
+    let refused = t.put(&format!("~/dashboards/{id}"), json!({ "model": long, "version": 1 }), &t.owner).await;
+    assert_eq!((refused.code(), refused.field()), ("validation", "model"), "{}", refused.body);
+    assert!(refused.message().contains("panels[0].description"), "{}", refused.body);
 }
 
 /// Dashboards pinned to the sidebar: per user and organization, in the user's order, at most ten
@@ -1020,7 +1139,9 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
     );
 
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &viewer).await;
-    assert_eq!((uses.body["items"].as_array().unwrap().len(), uses.body["hidden"].as_i64()), (2, Some(0)));
+    assert_eq!(uses.body["items"].as_array().unwrap().len(), 2);
+    // Dashboards the caller cannot see are not counted either.
+    assert!(uses.body.get("hidden").is_none(), "{}", uses.body);
     assert_eq!(t.get(&format!("~/library-panels/{lib}"), &viewer).await.body["uses"], 2);
     // The list counts the same, for every row at once.
     let listed = t.get("~/library-panels", &viewer).await;
@@ -1087,20 +1208,17 @@ async fn library_panels_in_restricted_folders(t: TestApp) {
     assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
     // The editor cannot open the library panel itself, so its uses are not theirs to list.
     assert_eq!(t.get(&format!("~/library-panels/{lib}/uses"), &editor).await.status, StatusCode::NOT_FOUND);
-    // A dashboard in another restricted folder counts as hidden for whoever cannot see it.
+    // A dashboard in another restricted folder is neither listed nor counted for whoever cannot
+    // see it.
     let other = t.folder("Vorstand", true).await;
     t.dashboard(Some(&other), showing("Vorstand", &lib), &t.owner).await;
     let vera = t.member("Vera", "viewer").await;
     t.grant("Vera", "folder", &secret, "view").await;
     let partial = t.get(&format!("~/library-panels/{lib}/uses"), &vera).await;
-    assert_eq!(
-        (partial.body["items"].as_array().unwrap().len(), partial.body["hidden"].as_i64()),
-        (2, Some(1)),
-        "{}",
-        partial.body
-    );
+    assert_eq!(partial.body["items"].as_array().unwrap().len(), 2, "{}", partial.body);
+    assert_eq!(t.get(&format!("~/library-panels/{lib}"), &vera).await.body["uses"], 2);
     let all = t.get(&format!("~/library-panels/{lib}/uses"), &t.owner).await;
-    assert_eq!((all.body["items"].as_array().unwrap().len(), all.body["hidden"].as_i64()), (3, Some(0)));
+    assert_eq!(all.body["items"].as_array().unwrap().len(), 3);
     t.grant("Emil", "folder", &secret, "view").await;
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &editor).await;
     assert_eq!(uses.body["items"].as_array().unwrap().len(), 2, "{}", uses.body);

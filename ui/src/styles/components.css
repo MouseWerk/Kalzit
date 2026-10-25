@@ -531,7 +531,7 @@
 
   .shell__main {
     min-width: 0;
-    padding: var(--space-5) var(--space-gutter) var(--space-10);
+    padding: var(--space-page-top) var(--space-gutter) var(--space-page-bottom);
   }
 
   /*
@@ -620,7 +620,7 @@
     }
 
     .shell__main {
-      padding: var(--space-5) var(--space-4) var(--space-10);
+      padding: var(--space-page-top) var(--space-4) var(--space-page-bottom);
     }
   }
 
@@ -731,9 +731,12 @@
   /* Empty states */
 
   /* A quiet sunken field, as the website's panels: no dashed frame. */
+  /* Extra height (a tall dashboard canvas) centers the content instead of stretching the rows,
+     which would spread the gaps and stretch the action buttons. */
   .empty-state {
     display: grid;
     justify-items: center;
+    align-content: center;
     gap: var(--space-3);
     padding: var(--space-10) var(--space-6);
     border-radius: var(--radius-lg);

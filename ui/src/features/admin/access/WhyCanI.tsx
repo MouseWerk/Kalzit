@@ -30,6 +30,8 @@ function sourceText(t: Translate, source: GrantSource, resource: WhyCanIProps["r
         team: source.teamName,
         role: isBuiltInRole(source.role) ? roleLabel(t, source.role, undefined) : source.roleName,
       });
+    case "teamOwner":
+      return t("admin.why.teamOwner", { team: source.teamName });
     case "grant": {
       // A grant on the resource itself, or (for folders) on a folder above it.
       const onThis = resource !== undefined && source.resourceId === resource.id;

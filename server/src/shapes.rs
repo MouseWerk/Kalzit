@@ -352,6 +352,11 @@ pub struct QueryRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub variables: BTreeMap<String, Value>,
+    /// Set by Explore: the successful queries of this run go to the caller's Explore history
+    /// (docs/api/explore-history.md). Dashboard panels never set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub explore: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -570,6 +575,10 @@ pub struct ErrorBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub params: Option<BTreeMap<String, String>>,
+    /// For `internal`: the request id that the server log names next to the cause.
+    #[serde(default, rename = "requestId", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub request_id: Option<String>,
 }
 
 /// Every list answer. `nextCursor` is opaque; order is stable (newest first unless a route says

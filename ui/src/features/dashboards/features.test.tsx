@@ -152,6 +152,126 @@ describe("rows", () => {
   });
 });
 
+describe("multi-value variable picker", () => {
+  const regions = (current: string[]): DashboardModel => ({
+    ...emptyModel("Main"),
+    variables: [
+      {
+        name: "region",
+        label: "Region",
+        type: "custom",
+        options: ["Nord", "Ost", "Sued", "West"],
+        current,
+        multi: true,
+      },
+    ],
+    panels: [panel("p1", "Orders", { repeat: { variable: "region", direction: "horizontal" } })],
+  });
+
+  it("summarizes the value: one, a few and all", async () => {
+    setup("viewer", regions(["Nord"]));
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "Region: Nord" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await user.click(button);
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ost" }));
+    expect(screen.getByRole("button", { name: "Region: Nord, Ost" })).toBeTruthy();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "West" }));
+    expect(screen.getByRole("button", { name: "Region: Nord, Ost +1" })).toBeTruthy();
+    // The menu stays open while values are toggled.
+    expect(screen.getByRole("menu", { name: "Region" })).toBeTruthy();
+    await user.click(screen.getByRole("menuitem", { name: "Select all" }));
+    expect(screen.getByRole("button", { name: "Region: All" })).toBeTruthy();
+    await user.click(screen.getByRole("menuitem", { name: "None" }));
+    expect(screen.getByRole("button", { name: "Region: No value" })).toBeTruthy();
+  });
+
+  it("updates the variable: panels repeat per picked value, with the picks checked", async () => {
+    setup("viewer", regions(["Nord"]));
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Region: Nord" }));
+    const nord = screen.getByRole("menuitemcheckbox", { name: "Nord" });
+    expect(nord.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Ost" }).getAttribute("aria-checked")).toBe(
+      "false",
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ost" }));
+    expect(await screen.findByRole("article", { name: "Orders: Ost" })).toBeTruthy();
+    await user.click(nord);
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Orders: Nord" })).toBeNull());
+    expect(screen.getByRole("article", { name: "Orders: Ost" })).toBeTruthy();
+  });
+
+  it("works from the keyboard: arrows move, Space toggles, Escape closes and returns focus", async () => {
+    setup("viewer", regions(["Nord"]));
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "Region: Nord" });
+    button.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Select all" }));
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitemcheckbox", { name: "Ost" }));
+    await user.keyboard(" ");
+    expect(screen.getByRole("button", { name: "Region: Nord, Ost" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Region: Nord, Ost" }));
+  });
+
+  it("searches a long list", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `site-${i + 1}`);
+    setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        { name: "site", type: "custom", options: many, current: ["site-1"], multi: true },
+      ],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "site: site-1" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search values" }), "site-12");
+    expect(screen.getAllByRole("menuitemcheckbox")).toHaveLength(1);
+  });
+
+  it("reaches the search from the keyboard alone", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `site-${i + 1}`);
+    setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        { name: "site", type: "custom", options: many, current: ["site-1"], multi: true },
+      ],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "site: site-1" });
+    button.focus();
+    await user.keyboard("{Enter}");
+    const search = screen.getByRole("searchbox", { name: "Search values" });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    await user.keyboard("site-1");
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Select all" }));
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(search);
+    await user.keyboard("{Tab}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^site:/ }));
+  });
+
+  it("sends an empty list when no value is picked", async () => {
+    const model = regions(["Nord"]);
+    model.panels = [panel("p1", "Orders")];
+    const { server } = setup("viewer", model);
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Region: Nord" }));
+    await waitFor(() => expect(server.areas.dashboards.panelQueries.length).toBeGreaterThan(0));
+    const before = server.areas.dashboards.panelQueries.length;
+    await user.click(screen.getByRole("menuitem", { name: "None" }));
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.length).toBeGreaterThan(before),
+    );
+    expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables.region).toEqual([]);
+  });
+});
+
 describe("repeats", () => {
   it("shows a panel once per selected value, each querying with its own value", async () => {
     const model: DashboardModel = {
@@ -176,8 +296,8 @@ describe("repeats", () => {
     expect(sent).toEqual(["at", "de"]);
 
     // Picking a third value adds a copy.
-    const select = screen.getByRole("listbox", { name: "land" });
-    await user.selectOptions(select, ["at", "de", "ch"]);
+    await user.click(screen.getByRole("button", { name: "land: at, de" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "ch" }));
     expect(await screen.findByRole("article", { name: "Orders: ch" })).toBeTruthy();
   });
 
@@ -378,6 +498,36 @@ describe("annotations", () => {
     expect(dialog).toBeNull();
   });
 
+  it("takes back a deleted annotation with Undo, with its span and panel", async () => {
+    const { server } = setup("editor", timeModel());
+    const start = Date.now() - 3_600_000;
+    server.areas.dashboardFeatures.annotations.push({
+      id: "a1",
+      dashboardId: "d-main",
+      panelId: "p1",
+      time: start,
+      timeEnd: start + 600_000,
+      text: "Release 2.1",
+      tags: ["deploy"],
+      version: 1,
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: /Annotation at .*: Release 2\.1/ }));
+    const dialog = screen.getByRole("dialog", { name: "Change annotation" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(0));
+    expect(await screen.findByText("Annotation deleted.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(1));
+    expect(server.areas.dashboardFeatures.annotations[0]).toMatchObject({
+      text: "Release 2.1",
+      tags: ["deploy"],
+      panelId: "p1",
+      time: start,
+      timeEnd: start + 600_000,
+    });
+  });
+
   it("shows annotations read-only to viewers, and nothing to add", async () => {
     const { server } = setup("viewer", timeModel());
     server.areas.dashboardFeatures.annotations.push({
@@ -519,6 +669,7 @@ describe("links", () => {
       tags: ["Sales"],
     });
     const { user } = renderApp("/dashboards/d-main");
+    // The one that is not safe is left out, so two links remain: both sit in the bar.
     const wiki = await screen.findByRole("link", { name: "Wiki" });
     expect(wiki.getAttribute("href")).toBe("https://wiki.example/at");
     expect(screen.queryByRole("link", { name: "Evil" })).toBeNull();
@@ -537,6 +688,39 @@ describe("links", () => {
     );
     await user.click(screen.getByText("More sales"));
     expect(await screen.findByRole("link", { name: "Sales EU" })).toBeTruthy();
+  });
+
+  it("keeps up to two links in the bar and counts only the ones that are shown", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      links: [
+        { type: "url", title: "Wiki", url: "https://wiki.example/a" },
+        { type: "url", title: "Evil", url: "javascript:alert(1)" },
+        { type: "url", title: "Docs", url: "https://docs.example/a" },
+      ],
+    });
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("link", { name: "Wiki" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Docs" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Links" })).toBeNull();
+  });
+
+  it("returns focus to the Links button when the menu closes with Escape", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      links: [1, 2, 3].map((n) => ({
+        type: "url" as const,
+        title: `Doc ${n}`,
+        url: `https://docs.example/${n}`,
+      })),
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "Links" });
+    await user.click(button);
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Doc 1" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
 
   it("refuses a link address that is not web, mail or local in the settings", async () => {
@@ -656,6 +840,46 @@ describe("view modes", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps help and search over a panel shown alone, and Escape closes the top layer first", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      panels: [panel("p1", "Orders"), panel("p2", "Spend", { grid: { x: 12, y: 0, w: 12, h: 8 } })],
+    });
+    const { user, location } = renderApp("/dashboards/d-main?viewPanel=p1");
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    await user.keyboard("?");
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // That Escape closed the help; the panel is still shown alone.
+    expect(location().search).toMatchObject({ viewPanel: "p1" });
+    await user.keyboard("/");
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(location().search).toMatchObject({ viewPanel: "p1" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(location().search).not.toHaveProperty("viewPanel"));
+  });
+
+  it("keeps only help and Escape in kiosk mode: no search, no palette", async () => {
+    setup("viewer", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
+    const { user, location } = renderApp("/dashboards/d-main?kiosk=kiosk");
+    expect(await screen.findByRole("button", { name: "Leave full screen" })).toBeTruthy();
+    await user.keyboard("/");
+    await user.keyboard("{Control>}k{/Control}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.keyboard("?");
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The help closed; kiosk mode is still on.
+    expect(location().search).toMatchObject({ kiosk: "kiosk" });
+    expect(screen.getByRole("button", { name: "Leave full screen" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(location().search).not.toHaveProperty("kiosk"));
   });
 
   it("shows one panel alone and returns", async () => {

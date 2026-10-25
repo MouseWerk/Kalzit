@@ -36,6 +36,9 @@ export interface GridEditActions {
   onRowEdit: (rowId: string) => void;
   onRowRemove: (rowId: string) => void;
   onRowToggle: (rowId: string) => void;
+  /** The panel the inspector shows, and selecting one by clicking it. */
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
 }
 
 interface DashboardGridProps {
@@ -258,6 +261,7 @@ function SectionGrid({
           query={query}
           now={now}
           changed={edit !== undefined && changed.has(placed.panel.id)}
+          selected={edit?.selectedId === placed.panel.id}
           view={view}
           edit={edit}
           cellSize={cellSize}
@@ -286,12 +290,14 @@ const GridCard = memo(function GridCard({
   query,
   now,
   changed,
+  selected,
   view,
   edit,
   cellSize,
   onAnnounce,
 }: {
   panel: PanelModel;
+  selected: boolean;
   x: number;
   y: number;
   w: number;
@@ -354,6 +360,8 @@ const GridCard = memo(function GridCard({
                 }
               },
               cellSize,
+              selected,
+              ...(edit.onSelect === undefined ? {} : { onSelect: () => edit.onSelect?.(id) }),
             }
       }
     />

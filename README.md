@@ -324,7 +324,7 @@ flowchart LR
   server --> plugins["Data source plugins<br/>(compiled in)"]
   plugins --> sql[("SQL and metrics<br/>frame")]
   plugins --> docs[("MongoDB, search, files<br/>documents")]
-  plugins --> graph[("Neo4j, Memgraph, TigerGraph<br/>graph")]
+  plugins --> graphs[("Neo4j, Memgraph, TigerGraph<br/>graph")]
 ```
 
 - The Rust server (axum, tokio, sqlx, rustls) serves the API and the embedded UI from one
@@ -391,6 +391,9 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 
 ## Documentation
 
+- [docs/guide/](docs/guide/README.md): the user guide, one page per area: getting started,
+  dashboards, panels, Explore, calculated fields and statistics, export, data sources and the
+  administration.
 - [docs/PLAN.md](docs/PLAN.md): what Kalzit becomes (German).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): code layout, contracts, configuration, data
   directory, services, storage, backups and tests.

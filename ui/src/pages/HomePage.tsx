@@ -10,6 +10,7 @@ import { datasourcesNav } from "../features/datasources/nav";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { showErrorToast } from "../lib/toasts";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { useTeamContext } from "../org/teamContext";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
 import {
   type DashboardEntry,
@@ -84,8 +85,10 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
   const permissions = useOrgPermissions();
   // The sidebar's setup card shows only in its full column; otherwise it comes here.
   const sidebarColumn = useSidebarColumn();
-  const stars = useQuery(starsQuery(orgId));
-  const recents = useQuery(recentsQuery(orgId));
+  // The team context scopes both lists; they wait for it, so they load once.
+  const teams = useTeamContext();
+  const stars = useQuery({ ...starsQuery(orgId, teams.scope), enabled: teams.settled });
+  const recents = useQuery({ ...recentsQuery(orgId, teams.scope), enabled: teams.settled });
   // Anything at all the user may open; an empty answer is an organization without content yet.
   const anything = useQuery({
     queryKey: [HOME_KEY, orgId, "anything"],
@@ -565,7 +568,7 @@ function DashboardCard({
           to="/dashboards/$dashboardId"
           params={{ dashboardId: entry.id }}
           className="button button--secondary button--small"
-          aria-describedby={titleId}
+          aria-label={t("shell.start.openNamed", { title: entry.title })}
         >
           {t("shell.start.open")}
         </Link>
@@ -575,7 +578,7 @@ function DashboardCard({
             params={{ dashboardId: entry.id }}
             search={{ edit: true }}
             className="button button--ghost button--small"
-            aria-describedby={titleId}
+            aria-label={t("shell.start.editNamed", { title: entry.title })}
           >
             {t("shell.start.edit")}
           </Link>

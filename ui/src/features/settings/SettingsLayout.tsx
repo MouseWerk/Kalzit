@@ -2,6 +2,7 @@ import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { buildIndex, type SearchEntry, search } from "./search";
 import { SECTIONS, type SectionDef, type SettingsAccess, type SettingsGroup } from "./sections";
@@ -216,13 +217,13 @@ function SettingsSearch({
             } else if (event.key === "ArrowUp" && results.length > 0) {
               event.preventDefault();
               setActive((active - 1 + results.length) % results.length);
-            } else if (event.key === "Enter") {
+            } else if (event.key === "Enter" && !isComposingKey(event)) {
               const entry = results[active];
               if (entry !== undefined) {
                 event.preventDefault();
                 go(entry);
               }
-            } else if (event.key === "Escape" && query !== "") {
+            } else if (event.key === "Escape" && query !== "" && !isComposingKey(event)) {
               event.preventDefault();
               event.stopPropagation();
               setQuery("");

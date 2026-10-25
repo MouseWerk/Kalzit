@@ -14,6 +14,7 @@ import type { CameraState } from "sigma/types";
 import type { GraphSet } from "../../api/generated/shapes";
 import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { useEscapeLayer } from "../../lib/layers";
 import { setVariableFromClick, usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
@@ -176,6 +177,25 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const number = new Intl.NumberFormat(language);
   const [display, setDisplay] = useState<"graph" | "table">(DRAWABLE ? "graph" : "table");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Whether the focus is inside the panel; Escape clears the selection only then.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root === null) return;
+    const onIn = () => setFocused(true);
+    const onOut = (event: FocusEvent) => {
+      if (!(event.relatedTarget instanceof Node && root.contains(event.relatedTarget))) {
+        setFocused(false);
+      }
+    };
+    root.addEventListener("focusin", onIn);
+    root.addEventListener("focusout", onOut);
+    return () => {
+      root.removeEventListener("focusin", onIn);
+      root.removeEventListener("focusout", onOut);
+    };
+  }, []);
   const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
   const [unclustered, setUnclustered] = useState(false);
   const [timeIndex, setTimeIndex] = useState<number | null>(null);
@@ -244,7 +264,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     return set;
   }, [view, selected]);
 
-  useEscapeLayer(selected !== null, () => select(null));
+  // Escape clears the selection only while the panel has the focus, and the selection does not
+  // hold back the shell's shortcuts: Ctrl+K, ?, / and F6 still work after clicking a node.
+  useEscapeLayer(focused && selected !== null, () => select(null), { blocking: false });
 
   const selectedNode = selected === null ? undefined : view.nodes[selected];
   const modelNode =
@@ -328,7 +350,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       if (next !== null) select(next);
       return;
     }
-    if (event.key === "Enter" && selected !== null) {
+    if (event.key === "Enter" && selected !== null && !isComposingKey(event)) {
       event.preventDefault();
       activate(selected);
     } else if (event.key === "+" || event.key === "=") {
@@ -362,7 +384,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const drawn = display === "graph" && DRAWABLE;
 
   return (
-    <div className="graph">
+    <div className="graph" ref={rootRef}>
       <div className="graph__toolbar" role="toolbar" aria-label={t("graph.toolbar", { title })}>
         {drawn ? (
           <>

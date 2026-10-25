@@ -5,6 +5,7 @@ import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
+import { useBackGuard } from "../lib/useBackGuard";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
 import { usePreferencesSync } from "../preferences/preferences";
 import { markEntered } from "../preferences/startDashboard";
@@ -74,6 +75,13 @@ export function AppShell() {
       markEntered(false);
     };
   }, []);
+  // The browser's or mouse's Back button closes an open overlay (with the dialogs' guards, the
+  // topmost layer answers) rather than leaving it over the page.
+  useBackGuard(overlay !== null, {
+    onClose: () => setOverlay(null),
+    hasInput: () => false,
+    onKept: () => {},
+  });
   usePreferencesSync(me.id);
   useAppearanceSync(currentOrgOf(me)?.id);
 
@@ -96,7 +104,7 @@ export function AppShell() {
     // closes it. Over a dialog (which keeps the focus to itself) it does nothing at all, so the
     // key is left to the browser.
     if (isPaletteShortcut(event)) {
-      if (event.defaultPrevented || (overlay !== "palette" && blockingLayers())) {
+      if (inKiosk() || event.defaultPrevented || (overlay !== "palette" && blockingLayers())) {
         return;
       }
       event.preventDefault();
@@ -105,7 +113,7 @@ export function AppShell() {
     }
     // "/" searches, as in most tools; only where it would not type a slash.
     if (isSearchShortcut(event)) {
-      if (event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
+      if (inKiosk() || event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
         return;
       }
       event.preventDefault();
@@ -137,17 +145,30 @@ export function AppShell() {
       return;
     }
     event.preventDefault();
-    // With two regions, F6 and Shift+F6 both land on the other one; from anywhere else (the
-    // account menu button) focus goes to the navigation first.
-    if (nav.contains(document.activeElement)) {
-      main.focus();
+    // The regions F6 cycles through: navigation, content and, while a notification shows, the
+    // notifications (so Undo is reachable in time). From anywhere else (the account menu
+    // button) focus goes to the navigation first. With two regions both directions land on the
+    // other one.
+    // The toast with Undo comes first, then the others (an error stays until dismissed).
+    const toasts = [...document.querySelectorAll<HTMLElement>(".toaster .toast")].sort(
+      (a, b) => Number(b.hasAttribute("data-undo")) - Number(a.hasAttribute("data-undo")),
+    );
+    const stops: HTMLElement[] = [nav, main, ...toasts];
+    const active = document.activeElement;
+    const at = stops.findIndex((stop) => stop.contains(active));
+    if (at === -1) {
+      focusNav(nav);
       return;
     }
-    // The current page, else the entry it lies in (the rail hides sub-pages), else the first.
-    const current =
-      nav.querySelector<HTMLElement>('[aria-current="page"]') ??
-      nav.querySelector<HTMLElement>('[aria-current="true"]');
-    (current ?? nav.querySelector<HTMLElement>("a"))?.focus();
+    const step = event.shiftKey ? -1 : 1;
+    const next = stops[(at + step + stops.length) % stops.length];
+    if (next === nav) {
+      focusNav(nav);
+    } else if (next === main) {
+      main.focus();
+    } else {
+      next?.querySelector<HTMLElement>("button")?.focus();
+    }
   });
 
   useEffect(() => {
@@ -237,6 +258,22 @@ export function AppShell() {
       {overlay === "shortcuts" ? <ShortcutsHelp onClose={() => setOverlay(null)} /> : null}
     </div>
   );
+}
+
+/**
+ * Kiosk and TV mode cover the app for a screen nobody sits at: only Escape (to leave) and the
+ * help overlay work there; search and the command palette stay shut.
+ */
+function inKiosk(): boolean {
+  return document.querySelector(".dashboard--kiosk") !== null;
+}
+
+/** The current page, else the entry it lies in (the rail hides sub-pages), else the first. */
+function focusNav(nav: HTMLElement): void {
+  const current =
+    nav.querySelector<HTMLElement>('[aria-current="page"]') ??
+    nav.querySelector<HTMLElement>('[aria-current="true"]');
+  (current ?? nav.querySelector<HTMLElement>("a"))?.focus();
 }
 
 /**

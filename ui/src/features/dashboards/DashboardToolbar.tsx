@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { Icon } from "../../components/Icon";
 import { WithTooltip } from "../../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { useWideLayout } from "../../shell/sidebarState";
+import { useHeightVar } from "../../shell/useHeightVar";
 import { RefreshControl } from "./RefreshControl";
 import { TimeControls } from "./TimeRangePicker";
 import type { TextRange } from "./timeRange";
@@ -25,6 +26,8 @@ export interface ToolbarActions {
   saveAs: () => void;
   history: () => void;
   access: () => void;
+  /** The owner team and who else sees the dashboard. */
+  owner: () => void;
   remove: () => void;
   kiosk: () => void;
   tv: () => void;
@@ -39,7 +42,8 @@ interface DashboardToolbarProps {
   /** Edit mode, and whether the draft differs from the saved dashboard. */
   editing: boolean;
   dirty: boolean;
-  can: { edit: boolean; remove: boolean; access: boolean; saveAs: boolean };
+  /** `owner`: change the owner team and visibility (edit and share on the dashboard). */
+  can: { edit: boolean; remove: boolean; access: boolean; owner: boolean; saveAs: boolean };
   /** The playlist's controls, before the time range. */
   controls?: ReactNode;
   /** The filter bar (variables and links), at the start of the row. */
@@ -91,6 +95,9 @@ export function DashboardToolbar({
   actions,
 }: DashboardToolbarProps) {
   const { t } = useI18n();
+  // The toolbar sticks under the top bar; the rail sticks under both.
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  useHeightVar(toolbarRef, "--dash-toolbar-height", "(min-width: 48rem)");
   const wide = useWideLayout();
   const tv = mode === "tv";
 
@@ -157,6 +164,14 @@ export function DashboardToolbar({
       onSelect: actions.access,
     });
   }
+  if (can.owner) {
+    more.push({
+      key: "owner",
+      label: t("dashboards.team.ownerButton"),
+      icon: "members",
+      onSelect: actions.owner,
+    });
+  }
   if (can.saveAs) {
     more.push({
       key: "saveAs",
@@ -179,7 +194,7 @@ export function DashboardToolbar({
   }
 
   return (
-    <div className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
+    <div ref={toolbarRef} className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
       <h1 className="visually-hidden" id={headingId}>
         {title}
       </h1>

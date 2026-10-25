@@ -34,6 +34,7 @@ import {
   type TimeSettings,
 } from "../../lib/timeSettings";
 import { showErrorToast, showToast } from "../../lib/toasts";
+import { hasBackGuard } from "../../lib/useBackGuard";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
@@ -59,6 +60,8 @@ import {
   restoreDashboard,
   saveDashboard,
 } from "./api";
+import { PanelInspector } from "./PanelInspector";
+import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
@@ -320,6 +323,7 @@ type DialogState =
   | { kind: "mark"; mark: DashboardMark }
   | { kind: "discardPanel"; fresh: boolean }
   | { kind: "access" }
+  | { kind: "owner" }
   | { kind: "info" }
   | null;
 
@@ -665,13 +669,18 @@ function DashboardView({
       window.removeEventListener("keydown", wake);
     };
   }, [display.mode]);
-  // Escape leaves a panel shown alone first, then kiosk or TV mode.
-  useEscapeLayer(display.viewPanel !== undefined && dialog === null, () =>
-    onDisplay({ viewPanel: undefined }),
+  // Escape leaves a panel shown alone first, then kiosk or TV mode. These layers do not hold
+  // back the global shortcuts (search, help, Escape): a panel shown alone and kiosk mode keep
+  // them, and the palette opens over the dashboard.
+  useEscapeLayer(
+    display.viewPanel !== undefined && dialog === null,
+    () => onDisplay({ viewPanel: undefined }),
+    { blocking: false, base: true },
   );
   useEscapeLayer(
     display.viewPanel === undefined && display.mode !== "normal" && dialog === null,
     () => onDisplay({ mode: "normal" }),
+    { blocking: false, base: true },
   );
 
   const annotations = useDashboardAnnotations({
@@ -949,7 +958,12 @@ function DashboardView({
   const staysHere = (pathname: string) =>
     pathname === here || pathname.startsWith(`${here}/panels/`);
   const blocker = useBlocker({
-    shouldBlockFn: ({ current, next }) => {
+    shouldBlockFn: ({ current, next, action }) => {
+      // Back and Forward under an open dialog or overlay act on that layer first (its own guard
+      // holds the navigation); the leave question comes with the next press.
+      if ((action === "BACK" || action === "FORWARD") && hasBackGuard()) {
+        return false;
+      }
       if (staysHere(next.pathname)) {
         const fromEditor = current.pathname.startsWith(`${here}/panels/`);
         return fromEditor && leaveMode.current === null && editorChanged();
@@ -962,6 +976,13 @@ function DashboardView({
   });
   const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
   const inEditMode = draft !== null;
+  // The panel the inspector shows while editing; gone with edit mode or with the panel.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedPanel =
+    inEditMode && selectedId !== null ? model.panels.find((p) => p.id === selectedId) : undefined;
+  if (selectedId !== null && selectedPanel === undefined) {
+    setSelectedId(null);
+  }
   const editActions = !inEditMode
     ? undefined
     : {
@@ -1007,7 +1028,56 @@ function DashboardView({
               r.id === rowId ? { ...r, collapsed: !r.collapsed } : r,
             ),
           })),
+        selectedId,
+        onSelect: (id: string) => setSelectedId(id),
       };
+  const inspector =
+    editActions === undefined || selectedPanel === undefined ? null : (
+      <PanelInspector
+        key={selectedPanel.id}
+        orgId={orgId}
+        panel={selectedPanel}
+        rows={rows}
+        variables={model.variables}
+        libraryName={
+          selectedPanel.libraryPanelId === undefined
+            ? undefined
+            : library[selectedPanel.libraryPanelId]?.name
+        }
+        actions={{
+          onChange: (change) =>
+            changeDraft((m) => ({
+              ...m,
+              panels: m.panels.map((p) => (p.id === selectedPanel.id ? change(p) : p)),
+            })),
+          onGrid: (grid) => editActions.onGrid(selectedPanel.id, grid),
+          onEdit: () => editActions.onEdit(selectedPanel.id),
+          onDuplicate: () => editActions.onDuplicate(selectedPanel.id),
+          onCopy: () => editActions.onCopy(selectedPanel.id),
+          onRemove: () => {
+            // Focus moves on to the next outline entry (or the one before), not to the page.
+            const entries = [
+              ...document.querySelectorAll<HTMLElement>(".dash-pane [data-outline-id]"),
+            ];
+            const at = entries.findIndex((e) => e.dataset.outlineId === selectedPanel.id);
+            const next = entries[at + 1] ?? entries[at - 1];
+            setSelectedId(null);
+            editActions.onRemove(selectedPanel.id);
+            const nextId = next?.dataset.outlineId;
+            if (nextId !== undefined) {
+              window.requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLElement>(
+                    `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
+                  )
+                  ?.focus(),
+              );
+            }
+          },
+          onMakeLibrary: () => setDialog({ kind: "makeLibrary", panel: selectedPanel }),
+        }}
+      />
+    );
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
@@ -1235,6 +1305,7 @@ function DashboardView({
         params: { dashboardId: dashboard.id },
       }),
     access: () => setDialog({ kind: "access" }),
+    owner: () => setDialog({ kind: "owner" }),
     remove: () => setDialog({ kind: "delete" }),
     kiosk: () => onDisplay({ mode: "kiosk" }),
     tv: () => onDisplay({ mode: "tv" }),
@@ -1270,8 +1341,11 @@ function DashboardView({
 
   const showRail = wideLayout && mode === "normal";
 
-  /** Shows a panel from the outline: its row opens when it is folded, then it scrolls in. */
-  function goToPanel(panel: PanelModel) {
+  /**
+   * Shows a panel from the outline: its row opens when it is folded, then it scrolls in. Focus
+   * moves to the panel unless it should stay where the choice was made (selecting while editing).
+   */
+  function goToPanel(panel: PanelModel, focus = true) {
     const row = rows.find((r) => r.id === panel.rowId);
     if (row !== undefined && (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id])) {
       setOpenRows((current) => ({ ...current, [row.id]: true }));
@@ -1280,7 +1354,7 @@ function DashboardView({
       const card = document.querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(panel.id)}"]`);
       // jsdom has no scrollIntoView; every browser has.
       card?.scrollIntoView?.({ block: "nearest" });
-      card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
+      if (focus) card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
     });
   }
 
@@ -1329,6 +1403,7 @@ function DashboardView({
                 edit: canEdit,
                 remove: canDelete && !inTrash,
                 access: canAccess,
+                owner: canAccess && canEdit,
                 saveAs: permissions.has("dashboards:write") || canEdit,
               }}
               controls={controls}
@@ -1357,6 +1432,7 @@ function DashboardView({
                   className="button button--secondary button--small"
                   onClick={() => restore.mutate()}
                   disabled={restore.isPending}
+                  aria-label={t("dashboards.trash.restoreNamed", { title: dashboardTitle })}
                 >
                   {t("dashboards.trash.restore")}
                 </button>
@@ -1458,13 +1534,23 @@ function DashboardView({
                 {showRail ? (
                   <DashboardRail
                     pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
-                    userId={userId}
+                    selectedId={selectedPanel?.id ?? null}
+                    inspector={inspector}
+                    onSelect={(panel) => {
+                      setSelectedId(panel.id);
+                      goToPanel(panel, false);
+                    }}
+                    rowActions={
+                      editActions === undefined
+                        ? undefined
+                        : { onToggle: editActions.onRowToggle, onEdit: editActions.onRowEdit }
+                    }
                     editing={draft !== null}
                     panels={model.panels}
                     rows={rows}
                     untitled={t("dashboards.panel.untitled")}
                     canEdit={canEdit}
-                    onGoTo={goToPanel}
+                    onGoTo={(panel) => goToPanel(panel)}
                     filtersShown={filtersShown}
                     onFilters={() => setFiltersShown((shown) => !shown)}
                     annotationsShown={annotationsShown}
@@ -1506,6 +1592,7 @@ function DashboardView({
           confirmLabel={t("dashboards.discard.confirm")}
           onCancel={() => blocker.reset()}
           onConfirm={() => blocker.proceed()}
+          backGuard={false}
         >
           {isNewPanel ? t("dashboards.editor.discardNewText") : t("dashboards.editor.discardText")}
         </ConfirmDialog>
@@ -1515,6 +1602,7 @@ function DashboardView({
           title={t("dashboards.leave.title")}
           confirmLabel={t("dashboards.leave.confirm")}
           onCancel={() => blocker.reset()}
+          backGuard={false}
           onConfirm={() => {
             // Left on purpose: a reload of this dashboard later starts clean.
             writeDraft(owner, dashboard.id, null);
@@ -1764,6 +1852,18 @@ function DashboardView({
           open
           onClose={() => setDialog(null)}
           resource={{ type: "dashboard", id: dashboard.id, name: dashboard.title }}
+        />
+      ) : null}
+      {dialog?.kind === "owner" ? (
+        <OwnerDialog
+          orgId={orgId}
+          kind="dashboards"
+          id={dashboard.id}
+          name={dashboard.title}
+          owner={dashboard.ownerTeam}
+          visibility={dashboard.teamOnly ? "team" : "shared"}
+          version={dashboard.version}
+          onClose={() => setDialog(null)}
         />
       ) : null}
       {save.isError && dialog === null && !isApiError(save.error, "version_conflict") ? (

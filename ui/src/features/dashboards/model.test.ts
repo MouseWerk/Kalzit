@@ -64,6 +64,24 @@ describe("model", () => {
     expect(nextRefId(targets)).toBe("B");
   });
 
+  it("keeps a hidden target hidden when it parses a stored panel", () => {
+    const model = parseModel(
+      {
+        panels: [
+          {
+            targets: [
+              { refId: "A", datasourceId: "x", query: null },
+              { refId: "C", datasourceId: "x", query: null, hide: true },
+            ],
+          },
+        ],
+      },
+      "Fallback",
+    );
+    const [a, c] = model.panels[0]?.targets ?? [];
+    expect([a?.hide, c?.hide]).toEqual([undefined, true]);
+  });
+
   it("parses odd stored models without failing", () => {
     const model = parseModel(
       {
@@ -125,10 +143,36 @@ describe("folder tree", () => {
       restricted: false,
       version: 1,
       deletedAt: null,
+      ownerTeam: null,
+      teamSpace: false,
     });
     const tree = buildTree([folder("b", "a"), folder("a", null), folder("orphan", "hidden")]);
     expect(tree.map((n) => n.folder.id)).toEqual(["a", "orphan"]);
     expect(tree[0]?.children.map((n) => n.folder.id)).toEqual(["b"]);
+  });
+
+  it("puts the active team's spaces first", () => {
+    const folder = (id: string, team: string | null) => ({
+      id,
+      parentId: null,
+      name: id,
+      restricted: team !== null,
+      version: 1,
+      deletedAt: null,
+      ownerTeam: team === null ? null : { id: team, name: team },
+      teamSpace: team !== null,
+    });
+    const folders = [folder("allgemein", null), folder("betrieb", "t1"), folder("vertrieb", "t2")];
+    expect(buildTree(folders).map((n) => n.folder.id)).toEqual([
+      "allgemein",
+      "betrieb",
+      "vertrieb",
+    ]);
+    expect(buildTree(folders, "t2").map((n) => n.folder.id)).toEqual([
+      "vertrieb",
+      "allgemein",
+      "betrieb",
+    ]);
   });
 });
 

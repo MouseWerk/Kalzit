@@ -113,7 +113,7 @@ pub fn validate_text(value: &str, max_chars: usize, multiline: bool, required: b
     if value.chars().count() > max_chars {
         return Err(format!("the text takes at most {max_chars} characters"));
     }
-    if value.chars().any(is_invisible_format) {
+    if value.chars().any(crate::text::is_invisible_format) {
         return Err("the text contains invisible direction or format characters".into());
     }
     if value.chars().any(|c| c.is_control() && !(multiline && (c == '\n' || c == '\r' || c == '\t'))) {
@@ -124,23 +124,6 @@ pub fn validate_text(value: &str, max_chars: usize, multiline: bool, required: b
         });
     }
     Ok(())
-}
-
-/// Characters that change how the text around them is shown without being seen themselves: bidi
-/// embeddings, overrides and isolates (which can make a name read backwards), direction marks,
-/// the zero-width space, word joiners, invisible operators and the byte order mark. The zero-width
-/// joiner and non-joiner stay allowed: Persian, Indic scripts and emoji need them.
-fn is_invisible_format(c: char) -> bool {
-    matches!(
-        c,
-        '\u{200B}'
-            | '\u{200E}'
-            | '\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{FEFF}'
-    )
 }
 
 /// The cases both sides run: color, whether it passes, and the label it gets.
@@ -204,7 +187,7 @@ mod tests {
         assert!(validate_text("a\u{0007}b", 280, true, false).is_err());
         assert!(validate_text(&"ä".repeat(41), 40, false, true).is_err());
         assert!(validate_text(&"ä".repeat(40), 40, false, true).is_ok());
-        for sneaky in ["Kal\u{202E}tiz", "Kal\u{2066}zit\u{2069}", "Kal\u{200B}zit", "\u{FEFF}Kalzit", "a\u{200F}b"] {
+        for sneaky in crate::text::SNEAKY {
             assert!(validate_text(sneaky, 40, false, true).is_err(), "{sneaky:?}");
             assert!(validate_text(sneaky, 280, true, false).is_err(), "{sneaky:?}");
         }

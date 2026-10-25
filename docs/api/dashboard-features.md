@@ -33,9 +33,11 @@ interface Panel {                                // in addition to version 1
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
+  description?: string;                          // 1 to 1000 characters, line breaks allowed, not only white space
+  transparent?: boolean;                         // drawn without the card's surface and border; true or absent
 }
 interface Target {                               // in addition to version 1
-  hide?: boolean;                                // kept with the panel but not run; true or absent
+  hide?: boolean;                                // kept with the panel but not run, unless an enabled step reads it; true or absent
 }
 interface Variable {                             // in addition to version 1
   multi?: boolean;                               // custom and query variables only
@@ -52,6 +54,15 @@ type DashboardLink =
   | { type: "dashboards"; tag: string; title?: string; newTab?: boolean }   // dashboards with that tag
   | { type: "url"; title: string; url: string; newTab?: boolean };
 ```
+
+Panel titles and descriptions refuse invisible direction and format characters (bidi
+embeddings, overrides and isolates, direction marks, the zero-width space, word joiners, the byte
+order mark) and the line and paragraph separators U+2028 and U+2029, as appearance texts do.
+
+`description` and `transparent` came with version 0.1.0's edit mode. Models are read with unknown
+fields refused, so a server from before them refuses a dashboard that uses them: returning to such
+a version needs the database backup taken with the update, or those panels saved without them
+first.
 
 Rules:
 
@@ -207,7 +218,8 @@ interface LibraryPanel {
   name: string;                                  // 1 to 100 characters
   model: LibraryPanelModel;
   version: number;
-  uses: number;                                  // dashboards showing it, trashed ones included
+  uses: number;                                  // dashboards showing it that the caller may read,
+                                                 // trashed ones included; others are not counted
   createdAt: number; updatedAt: number; updatedBy: string | null;
   access: { write: boolean; delete: boolean };
 }
@@ -229,9 +241,9 @@ Audited as
 | `GET /orgs/{orgId}/library-panels?folderId=&q=` | `dashboards:read`; `Page<LibraryPanel>` by name |
 | `POST /orgs/{orgId}/library-panels` | `{"name", "folderId"?, "model"}`, `201` |
 | `GET /orgs/{orgId}/library-panels/{libraryPanelId}` | the `LibraryPanel` |
-| `PUT /orgs/{orgId}/library-panels/{libraryPanelId}` | `{"version", "name", "model", "folderId"?}`: every dashboard showing it shows the new content. Moving needs `dashboards:write` on the new folder, and across a restricted folder `folders:permissions` on both. `409 version_conflict` |
+| `PUT /orgs/{orgId}/library-panels/{libraryPanelId}` | `{"version", "name", "model", "folderId"?}`: every dashboard showing it shows the new content. Moving needs `dashboards:write` on the new folder, and across a restricted folder `folders:permissions` on both (between the open tree and team spaces edit rights on both sides; out of a team space only maintainers of its team and org admins). Into a team space only while no dashboard outside it shows the panel (`409 conflict`). `409 version_conflict` |
 | `DELETE /orgs/{orgId}/library-panels/{libraryPanelId}` | `204`; `409 conflict` while a dashboard (trashed ones too) shows it |
-| `GET /orgs/{orgId}/library-panels/{libraryPanelId}/uses` | `{"items": [{"id", "title", "deletedAt"}], "hidden": number}`: the dashboards showing it that the caller may read, and how many others |
+| `GET /orgs/{orgId}/library-panels/{libraryPanelId}/uses` | `{"items": [{"id", "title", "deletedAt"}]}`: the dashboards showing it that the caller may read; others are neither listed nor counted |
 
 Purging a folder deletes the library panels in it; dashboards elsewhere that showed one show it as
 deleted.

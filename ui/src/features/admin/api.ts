@@ -179,8 +179,12 @@ export function renameTeam(orgId: string, teamId: string, name: string) {
   return send("PATCH", orgPath(orgId, `/teams/${enc(teamId)}`), { name }, isTeam, "team");
 }
 
-export async function deleteTeam(orgId: string, teamId: string) {
-  await request("DELETE", orgPath(orgId, `/teams/${enc(teamId)}`));
+/**
+ * Deletes a team; what it owns (team spaces, folders, dashboards) goes to `transferTo`: another
+ * team's id, or `org` for the organization.
+ */
+export async function deleteTeam(orgId: string, teamId: string, transferTo = "org") {
+  await request("DELETE", orgPath(orgId, `/teams/${enc(teamId)}${query({ transferTo })}`));
 }
 
 export function listTeamMembers(orgId: string, teamId: string, cursor?: string) {
@@ -328,6 +332,7 @@ export type GrantSource =
   | { kind: "orgRole"; role: string }
   | { kind: "customRole"; roleId: string; roleName: string }
   | { kind: "teamRole"; teamId: string; teamName: string; role: string; roleName: string }
+  | { kind: "teamOwner"; teamId: string; teamName: string }
   | {
       kind: "grant";
       grantId: string;
@@ -347,6 +352,7 @@ const SOURCE_CHECKS: Record<GrantSource["kind"], (value: Record<string, unknown>
     role: isString,
     roleName: isString,
   }),
+  teamOwner: shape<{ teamId: string; teamName: string }>({ teamId: isString, teamName: isString }),
   grant: shape<Omit<Extract<GrantSource, { kind: "grant" }>, "kind">>({
     grantId: isString,
     subjectType: oneOf(...SUBJECT_TYPES),

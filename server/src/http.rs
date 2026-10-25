@@ -336,6 +336,28 @@ mod tests {
         assert!(matches!(e, HttpError::Blocked(_)), "{e}");
         let e = c.send(Method::GET, Url::parse("http://[fe80::1]/").unwrap(), HeaderMap::new()).await.unwrap_err();
         assert!(matches!(e, HttpError::Blocked(_)), "{e}");
+        // Every cloud metadata address, in any literal form a URL can carry (the URL parser
+        // also turns decimal and octal IPv4 forms into the dotted one).
+        for url in [
+            "http://100.100.100.200/latest/meta-data/",
+            "http://168.63.129.16/machine",
+            "http://[fd20:ce::254]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[::ffff:0:a9fe:a9fe]/",
+            "http://2852039166/",
+            "http://0251.0376.0251.0376/",
+        ] {
+            let e = c.send(Method::GET, Url::parse(url).unwrap(), HeaderMap::new()).await.unwrap_err();
+            assert!(matches!(e, HttpError::Blocked(_)), "{url}: {e}");
+        }
+        // A name is checked by the client's own resolver, on the address it would connect to.
+        crate::datasources::targets::test_hosts::pin(
+            "metadata.http-test.invalid",
+            &["100.100.100.200".parse().unwrap()],
+        );
+        let url = Url::parse("http://metadata.http-test.invalid/latest/meta-data/").unwrap();
+        let e = c.send(Method::GET, url, HeaderMap::new()).await.unwrap_err();
+        assert!(matches!(e, HttpError::Blocked(_)), "{e}");
         let e = c.send(Method::GET, Url::parse("file:///etc/passwd").unwrap(), HeaderMap::new()).await.unwrap_err();
         assert!(matches!(e, HttpError::Blocked(_)), "{e}");
     }

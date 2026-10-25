@@ -108,11 +108,19 @@ async fn query(
             Err(e) => refused.push((item.ref_id, e)),
         }
     }
+    let kept = if req.explore == Some(true) { allowed.clone() } else { Vec::new() };
+    let started = std::time::Instant::now();
     let mut response = if allowed.is_empty() {
         QueryResponse { results: Default::default() }
     } else {
         run_queries(&state, &ctx, allowed, req.time_range, req.interval_ms, req.max_data_points, &req.variables).await
     };
+    // Explore keeps what the user ran; the history of the caller alone, never a result.
+    if !kept.is_empty() {
+        let ran: Vec<_> = kept.iter().filter_map(|i| response.results.get(&i.ref_id).map(|o| (i, o))).collect();
+        let duration = (kept.len() == 1).then(|| started.elapsed().as_millis() as i64);
+        super::explore_history::record(&state, &ctx, &ran, duration).await;
+    }
     for (ref_id, e) in refused {
         let error = crate::datasources::api_error_body(e);
         response.results.insert(ref_id, QueryOutcome::Err { error });
@@ -248,6 +256,17 @@ pub(crate) fn resolve_variables(
     Ok((values, identifiers))
 }
 
+/// The reference ids that the enabled steps among `transformations` read. A step that does not
+/// parse reads nothing here; saving refused it already, and running it reports why.
+pub(crate) fn frames_read(transformations: &[Value]) -> BTreeSet<String> {
+    transformations
+        .iter()
+        .filter_map(|v| crate::analysis::parse_step(v).ok())
+        .filter(|s| !s.disabled)
+        .flat_map(|s| s.kind.frames().into_iter().map(str::to_owned).collect::<Vec<_>>())
+        .collect()
+}
+
 async fn panel_query(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -273,11 +292,12 @@ async fn panel_query(
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
-    // Hidden targets stay with the panel but are not run.
+    // Hidden targets stay with the panel but are not run, unless an analysis step reads them.
+    let read = frames_read(&panel.transformations);
     let items: Vec<QueryItem> = panel
         .targets
         .iter()
-        .filter(|t| !t.hide)
+        .filter(|t| !t.hide || read.contains(&t.ref_id))
         .map(|t| QueryItem {
             ref_id: t.ref_id.clone(),
             datasource_id: t.datasource_id.clone(),
@@ -354,9 +374,11 @@ pub(crate) fn api_error(error: ErrorBody) -> ApiError {
         "datasource_target_blocked" => (StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked"),
         "query_timeout" => (StatusCode::GATEWAY_TIMEOUT, "query_timeout"),
         "validation" => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
+        "internal" => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         _ => (StatusCode::BAD_GATEWAY, "datasource_error"),
     };
     let mut e = ApiError::new(status, code, error.message);
+    e.request_id = error.request_id.map(Into::into);
     if let Some(reason) = error.reason {
         e = e.with_reason_string(reason, error.params.unwrap_or_default());
     }

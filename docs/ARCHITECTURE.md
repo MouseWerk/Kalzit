@@ -200,7 +200,8 @@ type QueryResult =
   means databases in the own network). Always refused, answering `datasource_target_blocked`:
   Kalzit's own data directory and database (also through a PostgreSQL source at the same server
   and database), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`,
-  `fd00:ec2::254`), and SQLite files outside the directories a server admin allowed
+  `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, in every
+  IPv6 form that carries them), and SQLite files outside the directories a server admin allowed
   (`datasources.sqlite_dirs`, empty by default, never including the data directory); CSV and
   JSON files of file sources follow the same rules within `datasources.file_dirs`. A server
   admin can additionally restrict sources to a list of allowed hosts and networks
@@ -667,6 +668,10 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 | 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
 | 0010 | the server's logo (appearance and brand) | ux/settings |
+| 0011 | dashboard pins (sidebar, per user and organization) | ux/sidebar |
+| 0012 | not used (left free when 0013 and 0014 were numbered in parallel) | |
+| 0013 | Explore query history (per user, 30 days) | explore history (#76) |
+| 0014 | team ownership of folders and dashboards (team spaces), team contexts | feat/team-spaces |
 
 ## M1 work streams
 

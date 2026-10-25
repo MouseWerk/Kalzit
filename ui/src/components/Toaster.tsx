@@ -10,10 +10,12 @@ import "../shell/shellUx.css";
  * confirmations go to the polite one ("Notifications"), errors to the assertive one ("Errors").
  * A confirmation leaves on its own after a while, but never while the pointer or keyboard focus
  * is on it; an error stays until it is dismissed, and a later confirmation does not replace it.
+ * A toast with Undo sits in its own slot, so a plain confirmation never takes it away, and F6
+ * reaches it from the keyboard (the live region says so).
  */
 export function Toaster() {
   const { t } = useI18n();
-  const { confirmation, error } = useToasts();
+  const { confirmation, undo, error } = useToasts();
   return (
     <div className="toaster">
       <div
@@ -30,6 +32,7 @@ export function Toaster() {
         aria-label={t("shell.toast.region")}
         className="toaster__region"
       >
+        {undo === null ? null : <ToastBody key={undo.id} toast={undo} />}
         {confirmation === null ? null : <ToastBody key={confirmation.id} toast={confirmation} />}
       </div>
     </div>
@@ -38,7 +41,10 @@ export function Toaster() {
 
 function ToastBody({ toast }: { toast: Toast }) {
   const { t } = useI18n();
-  const [held, setHeld] = useState(false);
+  // Held while the pointer is over it or focus is inside; either keeps it, whichever leaves first.
+  const [pointer, setPointer] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const held = pointer || focus;
   // Where focus was before it came into the toast, to go back there when the toast closes.
   const returnTo = useRef<HTMLElement | null>(null);
 
@@ -73,11 +79,12 @@ function ToastBody({ toast }: { toast: Toast }) {
     // biome-ignore lint/a11y/noStaticElementInteractions: holding the timer is not an interaction.
     <div
       ref={ref}
+      data-undo={toast.undo === undefined ? undefined : ""}
       className={toast.error === true ? "toast notice notice--danger" : "toast notice"}
-      onPointerEnter={() => setHeld(true)}
-      onPointerLeave={() => setHeld(false)}
+      onPointerEnter={() => setPointer(true)}
+      onPointerLeave={() => setPointer(false)}
       onFocus={(event) => {
-        setHeld(true);
+        setFocus(true);
         if (
           event.relatedTarget instanceof HTMLElement &&
           !event.currentTarget.contains(event.relatedTarget)
@@ -91,12 +98,15 @@ function ToastBody({ toast }: { toast: Toast }) {
             event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)
           )
         ) {
-          setHeld(false);
+          setFocus(false);
         }
       }}
     >
       <Icon name={toast.error === true ? "alert" : "check"} />
       <div className="toast__text">{toast.message}</div>
+      {toast.undo === undefined ? null : (
+        <span className="visually-hidden">{t("shell.toast.undoHint")}</span>
+      )}
       <div className="toast__actions">
         {toast.undo === undefined ? null : (
           <button type="button" className="toast__button" onClick={() => close(toast.undo)}>

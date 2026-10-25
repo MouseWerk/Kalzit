@@ -19,6 +19,7 @@ import {
 } from "./model";
 import type { TextRange } from "./timeRange";
 import { errorMessage } from "./ui/errors";
+import { VariableMultiSelect } from "./VariableMultiSelect";
 import "./dashboards.css";
 import "./dashboardTools.css";
 
@@ -260,28 +261,15 @@ function VariableControl({
     const picked = valueList(value);
     const unknown = picked.filter((v) => !list.some((option) => option.value === v));
     control = multi ? (
-      // Several values: a list box; Ctrl or Shift with a click, or Space on an entry, picks more.
-      <select
+      <VariableMultiSelect
         id={id}
-        className="select variables__multi"
-        multiple
-        value={picked}
-        onChange={(event) =>
-          onChange(Array.from(event.currentTarget.selectedOptions, (option) => option.value))
-        }
-        aria-describedby={optionsError === null ? undefined : `${id}-error`}
-      >
-        {unknown.map((v) => (
-          <option key={`unknown-${v}`} value={v}>
-            {v}
-          </option>
-        ))}
-        {list.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        label={label}
+        picked={picked}
+        options={list}
+        truncated={options.data?.truncated === true}
+        describedBy={optionsError === null ? undefined : `${id}-error`}
+        onChange={onChange}
+      />
     ) : (
       <select
         id={id}
@@ -310,10 +298,12 @@ function VariableControl({
       </label>
       {control}
       {options.data?.truncated === true ? (
-        <span className="field__hint">{t("dashboards.variables.truncated")}</span>
+        <span className="field__hint" title={t("dashboards.variables.truncated")}>
+          {t("dashboards.variables.truncated")}
+        </span>
       ) : null}
       {optionsError === null ? null : (
-        <span className="field__error" id={`${id}-error`}>
+        <span className="field__error" id={`${id}-error`} title={optionsError}>
           {optionsError}
         </span>
       )}

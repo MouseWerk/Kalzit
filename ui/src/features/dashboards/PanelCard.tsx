@@ -16,6 +16,7 @@ import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
@@ -57,7 +58,7 @@ import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
-import { type PanelQueryInput, usePanelResults } from "./usePanelResults";
+import { firstLoad, type PanelQueryInput, usePanelResults } from "./usePanelResults";
 
 /** The width at which dashboards.css switches to one column. */
 const SINGLE_COLUMN = "(max-width: 48rem)";
@@ -83,6 +84,10 @@ export interface PanelEditActions {
   onGrid: (grid: GridPos, byKeyboard: boolean) => void;
   /** Size of one grid cell in px, for turning a pointer drag into cells. */
   cellSize: () => { width: number; height: number };
+  /** The panel is the one the inspector shows. */
+  selected?: boolean;
+  /** Makes the panel the selected one (a click on it, or its arrange handle taking focus). */
+  onSelect?: () => void;
 }
 
 interface PanelCardProps {
@@ -190,6 +195,12 @@ export function PanelCard({
       ArrowUp: [0, -1],
       ArrowDown: [0, 1],
     };
+    // Enter or Space on the arrange handle selects the panel, the keyboard's click on it.
+    if ((event.key === "Enter" || event.key === " ") && !isComposingKey(event)) {
+      event.preventDefault();
+      edit.onSelect?.();
+      return;
+    }
     const step = delta[event.key];
     if (step === undefined) {
       return;
@@ -353,9 +364,12 @@ export function PanelCard({
       onSelect: edit.onRemove,
     });
   }
+  const selected = edit?.selected === true && !alone;
   const className = [
     "panel-card",
     edit === undefined ? "" : "panel-card--editing",
+    selected ? "panel-card--selected" : "",
+    panel.transparent === true ? "panel-card--transparent" : "",
     alone ? "panel-card--alone" : "",
     dragging === null ? "" : `panel-card--${dragging === "move" ? "dragging" : "resizing"}`,
   ]
@@ -367,13 +381,28 @@ export function PanelCard({
       {dragging === null ? null : (
         <div className="dash-placeholder" ref={placeholderRef} aria-hidden="true" />
       )}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: Enter or Space on the arrange handle selects the panel from the keyboard */}
       <article
         ref={ref}
         className={className}
         data-panel-id={panel.id}
         aria-labelledby={titleId}
         aria-busy={results.isFetching}
+        aria-current={selected ? "true" : undefined}
+        onClick={
+          edit?.onSelect === undefined
+            ? undefined
+            : (event) => {
+                // Controls inside the card do their own thing; anywhere else selects it.
+                const control = (event.target as HTMLElement).closest(OWN_CONTROLS);
+                if (control !== null && event.currentTarget.contains(control)) {
+                  return;
+                }
+                edit.onSelect?.();
+              }
+        }
       >
+        {selected && edit !== undefined ? <SizeBadge w={panel.grid.w} h={panel.grid.h} /> : null}
         <header
           className="panel-card__header"
           onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
@@ -388,6 +417,9 @@ export function PanelCard({
             <span className="panel-card__note" title={noteText}>
               {noteText}
             </span>
+          )}
+          {panel.description === undefined ? null : (
+            <PanelDescription title={title} description={panel.description} />
           )}
           <div className="panel-card__actions">
             {edit === undefined ? null : (
@@ -408,6 +440,10 @@ export function PanelCard({
                 </span>
               </>
             )}
+            {/* After the handle, so selecting with Enter there leads on to these with Tab. */}
+            {selected && edit !== undefined ? (
+              <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+            ) : null}
             <PanelMenu title={title} items={menuItems} />
           </div>
         </header>
@@ -417,7 +453,7 @@ export function PanelCard({
               panel={panel}
               title={title}
               range={query.range}
-              pending={results.isPending && results.fetchStatus !== "idle"}
+              pending={firstLoad(results)}
               error={results.error}
               outcomes={outcomes}
               revision={results.dataUpdatedAt}
@@ -746,3 +782,92 @@ export function PanelBody({
     </div>
   );
 }
+
+/**
+ * The panel's description behind a quiet info button: shown on hover and keyboard focus, and
+ * toggled by a tap or click (touch screens have no hover). Screen readers get it once, through
+ * `aria-describedby`; the text is plain, never markup.
+ */
+function PanelDescription({ title, description }: { title: string; description: string }) {
+  const { t } = useI18n();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="panel-card__about-anchor" data-open={open ? "" : undefined}>
+      <button
+        type="button"
+        className="panel-card__about"
+        aria-label={t("dashboards.panel.aboutFor", { title })}
+        aria-describedby={id}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open && !isComposingKey(event)) {
+            event.stopPropagation();
+            setOpen(false);
+          }
+        }}
+      >
+        <Icon name="help" />
+      </button>
+      <span className="panel-card__about-text" id={id} role="tooltip">
+        {description}
+      </span>
+    </span>
+  );
+}
+
+/** The selected panel's size in grid units, quiet in the bottom corner. */
+function SizeBadge({ w, h }: { w: number; h: number }) {
+  return (
+    <span className="panel-card__size" aria-hidden="true">
+      {w} × {h}
+    </span>
+  );
+}
+
+/** The selected panel's small toolbar in its header: open in the editor, duplicate. */
+function MiniToolbar({
+  title,
+  onEdit,
+  onDuplicate,
+}: {
+  title: string;
+  onEdit: () => void;
+  onDuplicate: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div
+      className="panel-card__mini"
+      role="toolbar"
+      aria-label={t("dashboards.panel.actionsFor", { title })}
+    >
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        aria-label={t("dashboards.panel.editNamed", { title })}
+        onClick={onEdit}
+      >
+        <Icon name="edit" />
+        {t("dashboards.panel.edit")}
+      </button>
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        aria-label={t("dashboards.panel.duplicateNamed", { title })}
+        title={t("dashboards.panel.duplicate")}
+        onClick={onDuplicate}
+      >
+        <Icon name="copy" />
+      </button>
+    </div>
+  );
+}
+
+/** What a click must not select the panel through: its own controls and labels. */
+const OWN_CONTROLS =
+  "button, a, input, select, textarea, label, summary, [contenteditable], " +
+  '[role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], ' +
+  '[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])';

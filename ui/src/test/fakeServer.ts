@@ -5,6 +5,7 @@ import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
 import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
 import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
+import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory";
 import { shellFake } from "../shell/test/fakeShell";
 
 /**
@@ -93,6 +94,7 @@ export interface FakeArea<State> {
  */
 const AREA_FAKES = {
   datasources: datasourcesFake,
+  exploreHistory: exploreHistoryFake,
   // Before dashboards: it answers /dashboards/validate and the annotation routes.
   dashboardFeatures: dashboardFeaturesFake,
   dashboards: dashboardsFake,

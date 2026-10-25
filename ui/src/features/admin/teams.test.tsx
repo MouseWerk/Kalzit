@@ -36,6 +36,16 @@ describe("teams", () => {
     await user.click(screen.getByRole("button", { name: "Delete Analysts…" }));
     const dialog = screen.getByRole("dialog", { name: "Delete team" });
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    // Who takes over what the team owns is a choice of its own, never a default.
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      "Choose who takes over the team's spaces, folders and dashboards.",
+    );
+    expect(admin.teams).toHaveLength(1);
+    const takeover = within(dialog).getByRole("combobox", {
+      name: "Hand its team spaces, folders and dashboards to",
+    });
+    await user.selectOptions(takeover, "org");
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Team “Analysts” was deleted.")).toBeTruthy();
     expect(admin.teams).toHaveLength(0);

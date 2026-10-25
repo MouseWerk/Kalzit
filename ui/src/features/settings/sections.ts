@@ -210,6 +210,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.time_zone",
       "appearance.week_start",
       "dashboards.default_time_range",
+      "dashboards.new_in_team_space",
     ],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
   },

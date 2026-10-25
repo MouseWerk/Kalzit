@@ -193,11 +193,20 @@ Creating a source needs the org-wide `datasources:write` (the caller's role, not
 ### Update: `PATCH /orgs/{orgId}/datasources/{datasourceId}`
 
 ```json
-{ "name": "Neu", "settings": { ... }, "secrets": { "password": null, "bearerToken": "..." } }
+{ "name": "Neu", "settings": { ... }, "secrets": { "password": null, "bearerToken": "..." },
+  "expectedUpdatedAt": 1800000000000 }
 ```
 
 All fields optional. `settings`, when present, replaces all settings. Per secret field: absent =
 keep, `null` = remove, string = set. A patch that changes nothing answers the data source as is.
+
+`expectedUpdatedAt` is the `updatedAt` the client last read. When the stored source was changed
+since, the answer is `409 version_conflict` with the stored data source as `current`, and nothing
+is written. It is required whenever the patch has `settings` or a non-empty `secrets`
+(`422 validation` on `expectedUpdatedAt` otherwise); a rename alone may leave it out and applies
+to the source as it is stored. In every case the server writes only over the row it checked
+(target change, secrets to send again), so a concurrent change answers the same conflict instead
+of pairing one host's password with another host.
 
 Changing a `target` field (for example `host`, `port`, `user`, `sslMode`, `url`, `path`) needs
 the org-wide `datasources:write` or an `admin` grant on the source; an `edit` grant may change the
@@ -209,7 +218,8 @@ never sent to a new host without being entered again.
 
 ### Delete and restore
 
-`DELETE` moves the data source to the trash and answers `204`. `POST .../restore` brings it back
+`DELETE` moves the data source to the trash and answers `204`. `?expectedUpdatedAt=` works as
+in `PATCH`: a source changed since answers `409 version_conflict` with it as `current`. `POST .../restore` brings it back
 (`404` when it is not in the trash). Purging is not available yet.
 
 ### Errors when saving
@@ -220,8 +230,9 @@ Each row's `reason` is in [Reasons](#reasons) (`settings.*`, `secrets.*`, `targe
 | Status, code | When | `field` |
 |---|---|---|
 | `422 validation` | name empty or longer than 100 characters, unknown kind, unknown setting, wrong type, missing required field, secret sent in `settings`, unknown secret, port outside 1..65535, host with credentials, SQLite path not absolute, URL with credentials, query or fragment, `caCert` without a PEM certificate | the field name: `name`, `kind`, a settings field name such as `host`, `settings` (unknown setting), `secrets` (unknown secret) |
-| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or metadata address (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
+| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or cloud metadata address (`169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, also as IPv4-mapped, IPv4-translated or IPv4-compatible address, through NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 or Teredo, and with an IPv6 zone); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
 | `409 conflict` | another data source in use has this name (also when restoring) | `name` |
+| `409 version_conflict` | `expectedUpdatedAt` is older than the stored source, or another change was saved while this one was checked; `current` holds the stored source | |
 | `422 validation` | MongoDB: the login may do more than read, or the server has no access control (see [MongoDB](#mongodb-a-pipeline-or-find)) | `user` |
 | `422 datasource_target_blocked` | MongoDB: a host the SRV records or the driver name is refused | `hosts` |
 
@@ -378,6 +389,9 @@ Body `QueryRequest`, answer `QueryResponse` (types generated in `ui/src/api/gene
   "variables": { "land": "Österreich", "ids": [1, 2] }
 }
 ```
+
+Explore also sends `"explore": true` (optional, default false): the successful queries of the run are
+then kept in the caller's private Explore history (`docs/api/explore-history.md`).
 
 - 1 to 50 queries, each with its own `refId` (1 to 64 characters); `timeRange.from` not after
   `timeRange.to`, both within the years 1 to 9999. Otherwise `422 validation` (`field`: `queries`
@@ -1103,6 +1117,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `datasource.kind_unavailable` | `kind` | the stored source's kind is not available on this server |
 | `datasource.name_taken` | | another data source in use has this name (`409 conflict`) |
 | `datasource.target_change_forbidden` | `field` | `403 forbidden`: changing a target field needs the admin level |
+| `datasource.expected_version_missing` | | `422 validation` on `expectedUpdatedAt`: a patch with `settings` or `secrets` must say which version it changes |
 
 ### Settings and secrets (`422 validation`, `field` set)
 
@@ -1424,7 +1439,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `secrets.undecryptable` | `field` | a stored secret cannot be decrypted (key changed) |
 | `settings.stored_invalid` | | the stored settings no longer fit the kind |
 | `server.shutting_down` | | the server is shutting down |
-| `internal` | | an unexpected failure; see the server log |
+| `internal` | | an unexpected failure; see the server log (the error carries `requestId`, which the log line names too) |
 
 ### Health and notices
 

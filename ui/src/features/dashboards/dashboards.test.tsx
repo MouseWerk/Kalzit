@@ -385,6 +385,35 @@ describe("dashboard view", () => {
     expect(await screen.findByText(/More values exist than are listed/)).toBeTruthy();
   });
 
+  it("never claims all values of a cut-short list, and keeps the hint readable as a title", async () => {
+    const server = setup("viewer", []);
+    latest(storedSales(server)).model = {
+      ...latest(storedSales(server)).model,
+      variables: [
+        {
+          name: "city",
+          label: "City",
+          type: "query",
+          multi: true,
+          datasourceId: PG_ID,
+          query: { sql: "SELECT city FROM a" },
+        },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [
+      { value: "graz", label: "Graz" },
+      { value: "wien", label: "Wien" },
+    ];
+    server.areas.dashboards.truncatedOptions.push("city");
+    const { user } = renderApp("/dashboards/d-sales");
+    const hint = await screen.findByText(/More values exist than are listed/);
+    expect(hint.getAttribute("title")).toBe(hint.textContent);
+    await user.click(await screen.findByRole("button", { name: "City: Graz" }));
+    expect(screen.queryByRole("menuitem", { name: "Select all" })).toBeNull();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Wien" }));
+    expect(screen.getByRole("button", { name: "City: 2 values" })).toBeTruthy();
+  });
+
   it("explains a variable the saved dashboard does not have", async () => {
     const server = setup("viewer", []);
     const stored = storedSales(server);
@@ -971,7 +1000,7 @@ describe("history and trash", () => {
     saveAsOther(stored, emptyModel("Sales"), "Removed everything");
     const { user } = renderApp("/dashboards/d-sales/versions");
     expect(await screen.findByText("Removed everything")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Restore…" }));
+    await user.click(screen.getByRole("button", { name: "Restore… version 1" }));
     const dialog = screen.getByRole("dialog", { name: "Restore this version?" });
     await user.click(within(dialog).getByRole("button", { name: "Restore" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Sales" })).toBeTruthy();

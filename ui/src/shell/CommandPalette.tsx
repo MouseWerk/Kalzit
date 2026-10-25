@@ -1,11 +1,20 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { ORG_SECTIONS, SERVER_SECTIONS } from "../features/admin/sections";
 import { NAV_ITEMS } from "../features/nav";
 import { LANGUAGES, type MessageKey, useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { useEscapeLayer } from "../lib/layers";
 import { showErrorToast } from "../lib/toasts";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
@@ -16,6 +25,20 @@ import { recentsQuery, type SearchHit, search } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
 import "./shellUx.css";
 
+const NARROW = "(max-width: 48rem)";
+
+/** True on a phone-width window, where the placeholder has to be short. */
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const query = window.matchMedia?.(NARROW);
+      query?.addEventListener("change", notify);
+      return () => query?.removeEventListener("change", notify);
+    },
+    () => window.matchMedia?.(NARROW).matches ?? false,
+  );
+}
+
 const appRoute = getRouteApi("/_app");
 
 /** Pause in typing before the server is asked. */
@@ -23,13 +46,19 @@ export const SEARCH_DELAY_MS = 150;
 const PAGE_SIZE = 20;
 const RECENT_LIMIT = 5;
 
-type Group = "recent" | "results" | "actions" | "pages";
+type Group = "recent" | "results" | "create" | "pages" | "appearance" | "language" | "help";
 
 interface PaletteItem {
   key: string;
   label: string;
   /** Where it lives or what it is, read after the label. */
   detail?: string | undefined;
+  /** What kind of thing it is (Dashboard, Folder, ...), shown quietly on the right. */
+  kind?: string | undefined;
+  /** Keys of the shortcut that does the same, one keycap each. */
+  keys?: readonly string[] | undefined;
+  /** The current theme or language: marked with a check. */
+  current?: boolean | undefined;
   icon: IconName;
   group: Group;
   score: number;
@@ -39,8 +68,18 @@ interface PaletteItem {
 const GROUP_LABEL: Record<Group, MessageKey> = {
   recent: "shell.palette.group.recent",
   results: "shell.palette.group.results",
-  actions: "shell.palette.group.actions",
+  create: "shell.palette.group.create",
   pages: "shell.palette.group.pages",
+  appearance: "shell.palette.group.appearance",
+  language: "shell.palette.group.language",
+  help: "shell.palette.group.help",
+};
+
+const THEME_ICON: Record<(typeof THEMES)[number], IconName> = {
+  system: "screen",
+  light: "sun",
+  dark: "moon",
+  contrast: "contrast",
 };
 
 const KIND_ICON: Record<SearchHit["kind"], IconName> = {
@@ -69,11 +108,12 @@ export function CommandPalette({
   onClose: () => void;
   onShowShortcuts: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const org = useCurrentOrg();
   const permissions = useOrgPermissions();
   const navigate = useNavigate();
   const theme = useTheme();
+  const narrow = useNarrow();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -171,7 +211,7 @@ export function CommandPalette({
       key: "action:new-dashboard",
       label: t("shell.palette.action.newDashboard"),
       icon: "plus",
-      group: "actions",
+      group: "create",
       score: 0,
       run: () => void navigate({ to: "/dashboards", search: { create: "dashboard" } }),
     });
@@ -181,7 +221,7 @@ export function CommandPalette({
       key: "action:explore",
       label: t("shell.palette.action.explore"),
       icon: "explore",
-      group: "actions",
+      group: "pages",
       score: 0,
       run: goTo("/explore"),
     });
@@ -191,29 +231,29 @@ export function CommandPalette({
       key: "action:new-datasource",
       label: t("shell.palette.action.newDatasource"),
       icon: "plus",
-      group: "actions",
+      group: "create",
       score: 0,
       run: () => void navigate({ to: "/data-sources/new", search: {} }),
     });
   }
   for (const option of THEMES) {
-    if (option !== theme) {
-      actions.push({
-        key: `action:theme:${option}`,
-        label: t("shell.palette.action.theme", { theme: t(`theme.${option}`) }),
-        icon: "sidebar",
-        group: "actions",
-        score: 0,
-        run: () => change.mutate({ theme: option }),
-      });
-    }
+    actions.push({
+      key: `action:theme:${option}`,
+      label: t("shell.palette.action.theme", { theme: t(`theme.${option}`) }),
+      icon: THEME_ICON[option],
+      group: "appearance",
+      current: option === theme,
+      score: 0,
+      run: () => change.mutate({ theme: option }),
+    });
   }
   for (const option of LANGUAGES) {
     actions.push({
       key: `action:language:${option}`,
       label: t("shell.palette.action.language", { language: t(`language.${option}`) }),
-      icon: "explore",
-      group: "actions",
+      icon: "globe",
+      group: "language",
+      current: option === language,
       score: 0,
       run: () => change.mutate({ language: option }),
     });
@@ -222,7 +262,8 @@ export function CommandPalette({
     key: "action:shortcuts",
     label: t("shell.palette.action.shortcuts"),
     icon: "keyboard",
-    group: "actions",
+    group: "help",
+    keys: ["?"],
     score: 0,
     run: onShowShortcuts,
   });
@@ -231,6 +272,7 @@ export function CommandPalette({
     key: `dashboard:${entry.id}`,
     label: entry.title,
     detail: entry.path.join(" / ") || undefined,
+    kind: t(KIND_LABEL.dashboard),
     icon: "dashboards",
     group: "recent",
     score: 0,
@@ -239,13 +281,18 @@ export function CommandPalette({
 
   let items: PaletteItem[];
   if (query === "") {
-    items = [...recentItems.slice(0, RECENT_LIMIT), ...actions, ...pages];
+    // The explore action and the pages share a group; the groups follow one fixed order.
+    const order: Group[] = ["recent", "create", "pages", "appearance", "language", "help"];
+    items = [...recentItems.slice(0, RECENT_LIMIT), ...actions, ...pages].sort(
+      (a, b) => order.indexOf(a.group) - order.indexOf(b.group),
+    );
   } else {
     const hits: PaletteItem[] = (results.data?.pages ?? []).flatMap((page) =>
       page.items.map((hit) => ({
         key: `${hit.kind}:${hit.id}`,
         label: hit.title,
-        detail: [t(KIND_LABEL[hit.kind]), ...hit.path].join(" · "),
+        detail: hit.path.join(" / ") || undefined,
+        kind: t(KIND_LABEL[hit.kind]),
         icon: KIND_ICON[hit.kind],
         group: "results" as const,
         score: hit.score,
@@ -319,7 +366,7 @@ export function CommandPalette({
         setActive(Math.max(0, current - 8));
         break;
       case "Enter":
-        if (!event.nativeEvent.isComposing && current >= 0) {
+        if (!isComposingKey(event) && current >= 0) {
           event.preventDefault();
           runAt(current);
         }
@@ -374,11 +421,25 @@ export function CommandPalette({
         onPointerMove={() => setActive(index)}
         onClick={() => runAt(index)}
       >
-        <Icon name={item.icon} />
+        <Icon name={item.icon} className="palette__icon" />
         <span className="palette__label truncate">{item.label}</span>
         {item.detail === undefined ? null : (
           <span className="palette__detail truncate">{item.detail}</span>
         )}
+        <span className="palette__meta">
+          {item.kind === undefined ? null : <span className="palette__kind">{item.kind}</span>}
+          {item.keys?.map((key) => (
+            <kbd key={key} className="kbd">
+              {key}
+            </kbd>
+          ))}
+          {item.current === true ? (
+            <>
+              <Icon name="check" className="palette__check" />
+              <span className="visually-hidden">{t("shell.palette.current")}</span>
+            </>
+          ) : null}
+        </span>
       </div>
     );
   }
@@ -411,7 +472,7 @@ export function CommandPalette({
             aria-activedescendant={current >= 0 ? optionId(current) : undefined}
             autoComplete="off"
             spellCheck={false}
-            placeholder={t("shell.palette.placeholder")}
+            placeholder={t(narrow ? "shell.palette.placeholderShort" : "shell.palette.placeholder")}
             value={text}
             onChange={(event) => {
               setText(event.currentTarget.value);
@@ -419,6 +480,9 @@ export function CommandPalette({
             }}
             onKeyDown={onKeyDown}
           />
+          <span className="kbd" aria-hidden="true">
+            Esc
+          </span>
         </div>
         <div
           ref={listRef}
