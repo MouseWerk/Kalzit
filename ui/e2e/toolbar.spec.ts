@@ -33,9 +33,15 @@ test("t and the arrow keys move the range; the shortcuts are listed in the help"
   await signInOwner(page);
   await page.goto(`/dashboards/${world.dashboardId}`);
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
+  const range = page.locator(".time-picker__button");
+  const before = await range.innerText();
   await page.keyboard.press("t");
   await page.keyboard.press("ArrowLeft");
   await expect(page).toHaveURL(/from=now-12h&to=now-6h|to=now-6h.*from=now-12h/);
+  // The URL changes before the page has drawn the new range; the next shortcut starts from the
+  // range on screen, so it waits for that (and for the reload to finish) instead of racing it.
+  await expect(range).not.toHaveText(before);
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
   await page.keyboard.press("t");
   await page.keyboard.press("z");
   await expect(page).toHaveURL(/from=now-15h/);

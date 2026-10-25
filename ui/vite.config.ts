@@ -20,6 +20,15 @@ export default defineConfig({
     emptyOutDir: true,
     // The bundle is embedded in the server binary; source maps would only add weight to it.
     sourcemap: false,
+    modulePreload: {
+      // The chart's chunks are fetched by the import itself. Preloading them from a link element
+      // right before the import makes WebKit report "preloaded but not used" whenever its import
+      // does not pick up the preloaded copy (the stylesheet is still preloaded).
+      resolveDependencies: (filename, deps) =>
+        filename.includes("UplotTimeSeriesChart")
+          ? deps.filter((dep) => dep.endsWith(".css"))
+          : deps,
+    },
   },
   test: {
     environment: "jsdom",
