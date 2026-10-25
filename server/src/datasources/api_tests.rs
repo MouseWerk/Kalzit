@@ -2664,3 +2664,26 @@ async fn tests_are_logged_without_secrets_and_bad_bodies_are_not_echoed() {
     }
     t.finish().await;
 }
+
+/// A URL with a login in it never comes back in a refusal, and a viewer cannot use up the
+/// address bucket that members share.
+#[tokio::test]
+async fn refusals_hide_url_logins_and_viewers_do_not_burn_the_rate_limit() {
+    let t = T::new().await;
+    for url in ["http://leser:Geheim-Login-9@169.254.169.254/", "http://leser:Geheim-Login-9@127.0.0.1:1/"] {
+        let r = t.post("/datasources/test", json!({ "kind": "prometheus", "settings": { "url": url } })).await;
+        assert!(!r.text.contains("Geheim-Login-9"), "{url}: {}", r.text);
+    }
+    // Viewers are refused before they are counted.
+    let viewer = t.session_for_role("vera", Some("viewer")).await;
+    let path = t.path("/datasources/test");
+    for _ in 0..(crate::routes::datasources::PROBE_MAX + 5) {
+        let r = t.send(Method::POST, &path, Some(json!({ "kind": "sqlite", "settings": {} })), Some(&viewer)).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+        assert_eq!(r.body["error"]["reason"], "datasource.test_forbidden", "{}", r.text);
+    }
+    let file = t.sqlite_file("probe.db", "CREATE TABLE t (v TEXT);").await;
+    let body = json!({ "kind": "sqlite", "settings": { "path": file.to_string_lossy() } });
+    assert_eq!(t.post("/datasources/test", body).await.status, StatusCode::OK, "the owner can still test");
+    t.finish().await;
+}

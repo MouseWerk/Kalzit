@@ -55,9 +55,13 @@ fn field_error(e: FieldError) -> ApiError {
 }
 
 fn blocked(detail: crate::datasources::Detail, field: &'static str) -> ApiError {
-    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked", detail.message)
-        .with_field(field)
-        .with_reason(detail.reason, detail.params)
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "datasource_target_blocked",
+        datasources::hide_logins(&detail.message),
+    )
+    .with_field(field)
+    .with_reason(detail.reason, detail.params)
 }
 
 #[derive(Serialize)]
@@ -633,6 +637,18 @@ async fn test_unsaved(
             .because("request.body_invalid")
             .param("detail", "not a valid test request")
     })?;
+    // The right first, so that members who may not test cannot use up the limit of those who may.
+    let stored = match &body.datasource_id {
+        Some(id) => Some(resource(&state, &ctx, id, Permission::DatasourcesWrite, false).await?),
+        None => {
+            // A new source: what adding one takes.
+            if !ctx.permissions.contains(&Permission::DatasourcesWrite) {
+                return Err(ApiError::forbidden("testing a new data source needs datasources:write")
+                    .because("datasource.test_forbidden"));
+            }
+            None
+        }
+    };
     // Per user and per client address within the organization.
     let user_key = format!("datasource-test:user:{}", ctx.user.id);
     let address_key = format!("datasource-test:{}:address:{}", ctx.org_id, info.client_ip);
@@ -645,16 +661,6 @@ async fn test_unsaved(
         .because("datasource.test_rate_limited")
         .param("max", PROBE_MAX));
     }
-    let stored = match &body.datasource_id {
-        Some(id) => Some(resource(&state, &ctx, id, Permission::DatasourcesWrite, false).await?),
-        None => {
-            // A new source: what adding one takes.
-            if !ctx.permissions.contains(&Permission::DatasourcesWrite) {
-                return Err(ApiError::forbidden("testing a new data source needs datasources:write"));
-            }
-            None
-        }
-    };
     let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
         ApiError::validation(format!("{} is not a data source kind", body.kind))
             .with_field("kind")

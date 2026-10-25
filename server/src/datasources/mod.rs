@@ -1155,6 +1155,27 @@ impl DataSources {
     }
 }
 
+/// `user:password@` between `://` and the next `/` or space becomes `***@`, so a URL that was
+/// typed with a login never comes back in a refusal.
+pub fn hide_logins(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let end = tail.find(|c: char| c == '/' || c.is_whitespace()).unwrap_or(tail.len());
+        match tail[..end].rfind('@') {
+            Some(at) => {
+                out.push_str("***@");
+                rest = &tail[at + 1..];
+            }
+            None => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// What a failure to read a data source's stored secrets says.
 fn secrets_error(datasource_id: &str, e: crate::secrets::LoadError) -> SourceError {
     match e {
@@ -1571,7 +1592,9 @@ pub async fn check_unsaved(
     let policy = registry.policy(state).await?;
     if let Err((blocked, _)) = precheck_targets(&policy, kind, settings) {
         let e: SourceError = blocked.into();
-        return Ok(report(false, e.detail(), Some(e.code())));
+        let mut detail = e.detail();
+        detail.message = hide_logins(&detail.message);
+        return Ok(report(false, detail, Some(e.code())));
     }
     let mut secrets = match datasource_id {
         Some(id) => match crate::secrets::load_all(&state.db, &registry.keyring, id).await {
@@ -1590,7 +1613,8 @@ pub async fn check_unsaved(
         };
     }
     let conn = Arc::new(Connection::new(
-        datasource_id.unwrap_or("unsaved"),
+        // Never the stored id (nothing cached under it may be touched) and never a shared one.
+        format!("unsaved-{}", uuid::Uuid::now_v7()),
         plugin_settings(settings),
         secrets,
         policy,

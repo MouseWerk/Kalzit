@@ -365,6 +365,9 @@ org-wide `datasources:write`, as adding a source. Body:
 - Limited to 20 tests per minute per user and per client address within the organization
   (`429 rate_limited`, reason `datasource.test_rate_limited`), since it can reach any address the
   rules allow. Tests of stored sources (`.../health`) are not counted.
+- The right is checked before the limit is counted, so members who may not test cannot use up
+  the limit of those who may. A refusal never repeats a login typed into a URL (`user:password@`
+  becomes `***@`).
 - Every test is logged (info) with user, organization, kind and target host, never a secret. A
   body that cannot be read is refused with `request.body_invalid` without repeating any of it.
 - Like a saved source's test, the answer and its latency tell whether a host and port answer.
@@ -1197,6 +1200,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `datasource.in_use` | `dashboards`, `libraryPanels` | `409 conflict`: dashboards or library panels still use the source, so it is not purged |
 | `datasource.test_rate_limited` | `max` | `429 rate_limited`: more than `max` tests of unsaved settings per minute |
 | `datasource.kind_changed` | | `422 validation` on `kind`: a stored source's kind cannot change |
+| `datasource.test_forbidden` | | `403 forbidden`: testing settings of a new source needs the org-wide `datasources:write` |
 | `datasource.expected_version_missing` | | `422 validation` on `expectedUpdatedAt`: a patch with `settings` or `secrets` must say which version it changes |
 
 ### Settings and secrets (`422 validation`, `field` set)
