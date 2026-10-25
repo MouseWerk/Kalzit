@@ -150,7 +150,11 @@ function EditDataSource({ orgId }: { orgId: string }) {
   // The header's test checks the saved source.
   const test = useMutation({
     mutationFn: () => checkHealth(orgId, datasourceId),
-    onMutate: () => setHealth(null),
+    onMutate: () => {
+      setHealth(null);
+      setDraft(null);
+      testForm.reset();
+    },
     onSuccess: (result) => {
       setHealth(result);
       setDraft(null);
@@ -170,7 +174,10 @@ function EditDataSource({ orgId }: { orgId: string }) {
         settings: output.settings,
         secrets: output.secrets,
       }),
-    onMutate: () => setDraft(null),
+    onMutate: () => {
+      setDraft(null);
+      test.reset();
+    },
     onSuccess: (result, output) => {
       if (output.settings === undefined && Object.keys(output.secrets).length === 0) {
         setHealth(result);
@@ -340,9 +347,12 @@ function EditDataSource({ orgId }: { orgId: string }) {
             onDirtyChange={setDirty}
             readOnly={!access.write}
             targetLocked={targetLocked}
-            {...(canTest && access.write
-              ? { onTest: (output: FormOutput) => testForm.mutate(output) }
-              : {})}
+            // Exactly when the server allows it: the right to change this source.
+            {...(access.write ? { onTest: (output: FormOutput) => testForm.mutate(output) } : {})}
+            onEdited={() => {
+              setDraft(null);
+              testForm.reset();
+            }}
             testing={test.isPending || testForm.isPending}
             saved={save.isSuccess}
             status={

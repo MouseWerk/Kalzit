@@ -297,6 +297,62 @@ async fn purging_is_limited_to_the_organization(t: TestApp) {
     assert_eq!(t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &id).await, 1);
 }
 
+/// Deleting for good takes the right to move targets: an edit grant restores and edits, an admin
+/// grant or the org-wide right also purges.
+async fn purging_needs_the_right_to_move_targets(t: TestApp) {
+    let id = t.source("Prom").await;
+    let (member, cookie) = t.member("Gerda", "editor").await;
+    let give = |level: &'static str| {
+        let (t, id, member) = (&t, id.clone(), member.clone());
+        async move {
+            let r = t
+                .post(
+                    "/grants",
+                    json!({ "subjectType": "user", "subjectId": member, "resourceType": "datasource",
+                           "resourceId": id, "level": level }),
+                    &t.owner,
+                )
+                .await;
+            assert!(r.status.is_success(), "{}", r.body);
+        }
+    };
+    give("edit").await;
+    // She may delete it (to the trash) and restore it, but not purge it.
+    let r = t.delete(&format!("/datasources/{id}"), &cookie).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let r = t.purge(&id, &cookie).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "datasource.purge_forbidden"), "{}", r.body);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &id).await, 1);
+    give("admin").await;
+    assert_eq!(t.purge(&id, &cookie).await.status, StatusCode::NO_CONTENT);
+}
+
+/// Restore and purge of the same source at the same time: one wins, never both, and a restored
+/// source keeps its secrets.
+async fn restoring_and_purging_at_once_end_in_one_state(t: TestApp) {
+    for round in 0..8 {
+        let id = t.source(&format!("Prom {round}")).await;
+        t.trash(&id).await;
+        let restore_path = format!("/datasources/{id}/restore");
+        let restore = t.post(&restore_path, json!({}), &t.owner);
+        let purge = t.purge(&id, &t.owner);
+        let (restored, purged) = tokio::join!(restore, purge);
+        let rows = t.count("SELECT COUNT(*) FROM datasources WHERE id = $1", &id).await;
+        let secrets = t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", &id).await;
+        match (restored.status, purged.status) {
+            (StatusCode::OK, StatusCode::CONFLICT | StatusCode::NOT_FOUND) => {
+                assert_eq!((rows, secrets), (1, 1), "restored: it and its secret stay");
+            }
+            (StatusCode::NOT_FOUND | StatusCode::CONFLICT, StatusCode::NO_CONTENT) => {
+                assert_eq!((rows, secrets), (0, 0), "purged: nothing is left");
+            }
+            other => panic!("round {round}: {other:?} {} {}", restored.body, purged.body),
+        }
+        let live: i64 = t.count("SELECT COUNT(*) FROM datasources WHERE id = $1 AND deleted_at IS NULL", &id).await;
+        assert!(rows == 0 || live == 1, "never half restored");
+    }
+}
+
 /// Every flow runs on SQLite, and on PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set (in a
 /// throwaway schema per flow, so the test database is left as it was).
 macro_rules! on_both_databases {
@@ -336,4 +392,6 @@ on_both_databases! {
     a_trashed_source_is_purged_with_its_secrets_grants_and_history;
     a_source_in_use_is_not_purged;
     purging_is_limited_to_the_organization;
+    purging_needs_the_right_to_move_targets;
+    restoring_and_purging_at_once_end_in_one_state;
 }

@@ -934,6 +934,36 @@ describe("editing a data source", () => {
     );
   });
 
+  it("drops the result of a test as soon as the form changes again", async () => {
+    const { server, user } = open(`/data-sources/${PG_ID}`);
+    await screen.findByRole("textbox", { name: "Name" });
+    await openSection(user, "Limits");
+    await user.type(await screen.findByRole("textbox", { name: "Row limit (optional)" }), "1000");
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText(/Tested with the settings you entered/)).toBeTruthy();
+    expect(server.areas.datasources.tests).toHaveLength(1);
+    await user.type(screen.getByRole("textbox", { name: "Row limit (optional)" }), "0");
+    await waitFor(() =>
+      expect(screen.queryByText(/Tested with the settings you entered/)).toBeNull(),
+    );
+    expect(screen.queryByText(/Connected in \d+ ms/)).toBeNull();
+  });
+
+  it("drops the result of a test of a new source when its fields change", async () => {
+    const { user } = open("/data-sources/new?kind=sqlite");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Local");
+    await fill(
+      user,
+      screen.getByRole("textbox", { name: "Absolute path of the file" }),
+      "/data/a.db",
+    );
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText(/Connected in \d+ ms/)).toBeTruthy();
+    await user.type(screen.getByRole("textbox", { name: "Absolute path of the file" }), "x");
+    await waitFor(() => expect(screen.queryByText(/Connected in \d+ ms/)).toBeNull());
+    expect(screen.getByText("Not tested yet")).toBeTruthy();
+  });
+
   it("tests the stored settings from the form when nothing was changed", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
     await user.click(await screen.findByRole("button", { name: "Test connection" }));

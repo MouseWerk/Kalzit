@@ -142,7 +142,6 @@ function NewDataSource({ orgId }: { orgId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { kind: chosen, from } = newRoute.useSearch();
-  const permissions = useOrgPermissions();
   const pickerId = useId();
   const [search, setSearch] = useState("");
   const kinds = useQuery(kindsQuery(orgId));
@@ -304,10 +303,9 @@ function NewDataSource({ orgId }: { orgId: string }) {
                 .filter(Boolean)
                 .join(" · ")}
               onSubmit={(output) => create.mutate(output)}
-              // Testing needs query rights; a custom role may allow adding without them.
-              {...(permissions.has("datasources:query")
-                ? { onTest: (output: FormOutput) => test.mutate(output) }
-                : {})}
+              // This page is for members who may add sources, which is what testing takes.
+              onTest={(output) => test.mutate(output)}
+              onEdited={test.reset}
               testing={test.isPending}
               status={
                 <HealthResult
@@ -548,6 +546,8 @@ interface SettingsFormProps {
   prefill?: Datasource | undefined;
   /** Told whenever the form gets or loses unsaved changes (the page's leave guard). */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Told after every edit of a field, so a test result of what was entered before can go. */
+  onEdited?: () => void;
 }
 
 /**
@@ -588,6 +588,7 @@ export function SettingsForm({
   cancel,
   prefill,
   onDirtyChange,
+  onEdited,
 }: SettingsFormProps) {
   const { t } = useI18n();
   const plain = kind.settings.filter((spec) => !spec.secret);
@@ -611,6 +612,17 @@ export function SettingsForm({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  // Whatever was typed after a test makes its result stale; the first run is no edit.
+  const edited = useRef(false);
+  const onEditedNow = useRef(onEdited);
+  onEditedNow.current = onEdited;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the fields are the trigger
+  useEffect(() => {
+    if (edited.current) {
+      onEditedNow.current?.();
+    }
+    edited.current = true;
+  }, [name, values, secrets]);
   // A form that goes away (saved and started again, or left) holds nothing unsaved any more.
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [focusInvalid, setFocusInvalid] = useState(0);

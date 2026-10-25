@@ -139,6 +139,8 @@ trash.
 **Delete for good...** in the trash removes a data source and its stored passwords and keys for
 good, after you confirm. It does not work while a dashboard (also one in the trash) or a library
 panel still uses the source; the message says how many, so take the source out of them first. The
-deletion is written to the audit log.
+deletion is written to the audit log. It needs the right to change where a source connects (a data
+source admin). Older versions of a dashboard that used the source still name it: restoring such a
+version shows "data source not found" for its panels until you pick another source.
 
 ![Form for a PostgreSQL data source](../screenshots/data-source.png)

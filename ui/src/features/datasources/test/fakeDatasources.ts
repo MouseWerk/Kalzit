@@ -846,7 +846,11 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     }
     // Settings not saved yet: the same rules as saving, nothing stored.
     if (parts.length === 2 && parts[1] === "test" && method === "POST") {
-      if (!can("datasources:write")) {
+      const allowed =
+        typeof body.datasourceId === "string"
+          ? may(body.datasourceId, "write")
+          : can("datasources:write");
+      if (!allowed) {
         return error(403, "forbidden");
       }
       const extra = unknownKey(body, ["kind", "datasourceId", "settings", "secrets"]);

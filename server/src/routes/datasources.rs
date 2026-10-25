@@ -34,7 +34,9 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/datasources", Access::OrgMember, list),
         route(Method::POST, "/orgs/{orgId}/datasources", Access::Org(Permission::DatasourcesWrite), create),
         // Settings not saved yet; no source id is involved, `test` is a path of its own.
-        route(Method::POST, "/orgs/{orgId}/datasources/test", Access::Org(Permission::DatasourcesWrite), test_unsaved),
+        // Member, then the right to change: on the source when `datasourceId` names one (a grant is
+        // enough there), else org-wide (as adding a source).
+        route(Method::POST, "/orgs/{orgId}/datasources/test", Access::OrgMember, test_unsaved),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, get_one),
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
@@ -599,17 +601,41 @@ struct TestBody {
     secrets: SecretPatch,
 }
 
+/// The host a test goes to, for the log: the first host, URL host or "file". Never a secret.
+fn target_of(settings: &Value) -> String {
+    let text = |key: &str| settings.get(key).and_then(Value::as_str).filter(|v| !v.is_empty());
+    if let Some(host) = text("host").or_else(|| text("hosts")) {
+        return host.chars().take(200).collect();
+    }
+    for key in ["url", "restppUrl"] {
+        if let Some(host) =
+            text(key).and_then(|u| reqwest::Url::parse(u).ok()).and_then(|u| u.host_str().map(String::from))
+        {
+            return host.chars().take(200).collect();
+        }
+    }
+    if text("path").is_some() { "file".into() } else { "-".into() }
+}
+
 /// "Test connection" for what the add or edit form holds, before anything is saved. The body
 /// carries secrets: it is read into memory, used for the probe and dropped; it is not logged, not
-/// stored and not part of the answer (messages are scrubbed of the secrets).
+/// stored and not part of the answer (messages are scrubbed of the secrets, and a malformed body
+/// is refused without repeating any of it). The test is logged with user, organization, kind and
+/// target, never with a secret.
 async fn test_unsaved(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
-    JsonBody(body): JsonBody<TestBody>,
+    JsonBody(raw): JsonBody<Value>,
 ) -> ApiResult<Json<HealthReport>> {
+    let body: TestBody = serde_json::from_value(raw).map_err(|_| {
+        ApiError::validation("the body is not a valid test request; see docs/api/datasources.md")
+            .because("request.body_invalid")
+            .param("detail", "not a valid test request")
+    })?;
+    // Per user and per client address within the organization.
     let user_key = format!("datasource-test:user:{}", ctx.user.id);
-    let address_key = format!("datasource-test:address:{}", info.client_ip);
+    let address_key = format!("datasource-test:{}:address:{}", ctx.org_id, info.client_ip);
     if !state.probe_limiter.try_acquire(&[&user_key, &address_key], state.clock.now_ms()) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
@@ -621,7 +647,13 @@ async fn test_unsaved(
     }
     let stored = match &body.datasource_id {
         Some(id) => Some(resource(&state, &ctx, id, Permission::DatasourcesWrite, false).await?),
-        None => None,
+        None => {
+            // A new source: what adding one takes.
+            if !ctx.permissions.contains(&Permission::DatasourcesWrite) {
+                return Err(ApiError::forbidden("testing a new data source needs datasources:write"));
+            }
+            None
+        }
     };
     let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
         ApiError::validation(format!("{} is not a data source kind", body.kind))
@@ -647,6 +679,14 @@ async fn test_unsaved(
     if let Some(ds) = &stored {
         check_target_change(&state, &ctx, kind, ds, &settings, &patch).await?;
     }
+    tracing::info!(
+        user = %ctx.user.id,
+        org = %ctx.org_id,
+        kind = kind.kind(),
+        target = %target_of(&settings),
+        stored = stored.is_some(),
+        "connection test of data source settings that are not saved"
+    );
     let report = datasources::check_unsaved(
         &state,
         &ctx.user.id,
@@ -703,13 +743,23 @@ async fn restore(
     }
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
-    sqlx::query("UPDATE datasources SET deleted_at = NULL, updated_at = $1 WHERE id = $2 AND org_id = $3")
-        .bind(now)
-        .bind(&ds.id)
-        .bind(&ctx.org_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(conflict_on_name)?;
+    // Purging locks the organization too: a source is either restored or purged, never both.
+    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let restored = sqlx::query(
+        "UPDATE datasources SET deleted_at = NULL, updated_at = $1 \
+         WHERE id = $2 AND org_id = $3 AND deleted_at IS NOT NULL",
+    )
+    .bind(now)
+    .bind(&ds.id)
+    .bind(&ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(conflict_on_name)?
+    .rows_affected();
+    if restored != 1 {
+        // Purged (or restored by someone else) since it was read.
+        return Err(ApiError::not_found());
+    }
     record(&mut tx, &event(&ctx, &info, "datasource.restored", &ds.id, json!({}), now)).await?;
     let restored = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, &ctx, restored).await?;
@@ -740,6 +790,15 @@ async fn purge(
         }
         Err(e) => return Err(e),
     };
+    // Deleting for good cannot be undone, so it takes the right to move targets: the org-wide
+    // `datasources:write` or an admin grant on the source, not an edit grant.
+    let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+    if !may_change_target(&ctx, &held) {
+        return Err(ApiError::forbidden(
+            "deleting a data source for good needs datasources:write for the organization or an admin grant on it",
+        )
+        .because("datasource.purge_forbidden"));
+    }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     // Saves of dashboards and restores lock the organization too: what is counted here holds
@@ -792,11 +851,22 @@ async fn purge(
         .bind(&ds.id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NOT NULL")
+    let removed = sqlx::query("DELETE FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NOT NULL")
         .bind(&ds.id)
         .bind(&ctx.org_id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+    if removed != 1 {
+        // Restored in the meantime: nothing is deleted, not even its secrets.
+        tx.rollback().await?;
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "the data source was restored in the meantime; it was not deleted",
+        )
+        .because("datasource.not_in_trash"));
+    }
     let summary = json!({ "name": ds.name, "kind": ds.kind });
     record(&mut tx, &event(&ctx, &info, "datasource.purged", &ds.id, summary, now)).await?;
     crate::db::commit(tx).await?;

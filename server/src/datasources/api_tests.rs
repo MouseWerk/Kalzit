@@ -2525,3 +2525,142 @@ async fn testing_unsaved_settings_is_rate_limited() {
     assert_eq!(t.post("/datasources/test", body).await.status, StatusCode::OK);
     t.finish().await;
 }
+
+// ---- who may test, and what a test says and logs ----
+
+async fn user_id(t: &T, name: &str) -> String {
+    let (id,): (String,) = sqlx::query_as("SELECT id FROM users WHERE email = $1")
+        .bind(format!("{name}@example.de"))
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    id
+}
+
+async fn grant(t: &T, user: &str, source: &str, level: &str) {
+    let r = t
+        .post(
+            "/grants",
+            json!({ "subjectType": "user", "subjectId": user, "resourceType": "datasource",
+                    "resourceId": source, "level": level }),
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text);
+}
+
+/// A member with only a grant on one source tests that source, and nothing else.
+#[tokio::test]
+async fn a_grant_decides_who_may_test_a_stored_source_and_nothing_else() {
+    let t = T::new().await;
+    let file = t.sqlite_file("probe.db", "CREATE TABLE t (v TEXT);").await;
+    let id = t.create_sqlite("Probe", &file).await;
+    let other = t.create_sqlite("Andere", &file).await;
+    let cookie = t.session_for_role("gerda", Some("editor")).await;
+    let gerda = user_id(&t, "gerda").await;
+    let path = t.path("/datasources/test");
+    let test = |body: Value| t.send(Method::POST, &path, Some(body), Some(&cookie));
+    let stored = json!({ "kind": "sqlite", "datasourceId": id });
+    let new = json!({ "kind": "sqlite", "settings": { "path": file.to_string_lossy() } });
+    // No right yet, org-wide or on the source.
+    assert_eq!(test(stored.clone()).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(test(new.clone()).await.status, StatusCode::FORBIDDEN);
+    grant(&t, &gerda, &id, "query").await;
+    assert_eq!(test(stored.clone()).await.status, StatusCode::FORBIDDEN, "query is no right to change");
+    grant(&t, &gerda, &id, "edit").await;
+    let r = test(stored.clone()).await;
+    assert_eq!((r.status, r.body["ok"].clone()), (StatusCode::OK, json!(true)), "{}", r.text);
+    // Only that source, and no new one.
+    let r = test(json!({ "kind": "sqlite", "datasourceId": other })).await;
+    assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{}", r.text);
+    assert_eq!(test(new).await.status, StatusCode::FORBIDDEN);
+    // An edit grant does not move targets, here as when saving.
+    let moved = t.sqlite_file("anders.db", "CREATE TABLE t (v TEXT);").await;
+    let r =
+        test(json!({ "kind": "sqlite", "datasourceId": id, "settings": { "path": moved.to_string_lossy() } })).await;
+    assert_eq!(r.body["error"]["reason"], "datasource.target_change_forbidden", "{}", r.text);
+    t.finish().await;
+}
+
+/// A new target for a stored MongoDB or Neo4j source needs its secrets again in a test as in a
+/// save, so a test cannot send the stored password to another host.
+#[tokio::test]
+async fn target_changes_are_guarded_for_mongodb_and_neo4j_tests_too() {
+    let t = T::new().await;
+    let sources = [
+        (
+            "mongodb",
+            json!({ "hosts": "127.0.0.1:9", "database": "d", "user": "u" }),
+            json!({ "hosts": "anders.example:9", "database": "d", "user": "u" }),
+        ),
+        (
+            "neo4j",
+            json!({ "host": "127.0.0.1", "port": 9, "user": "n" }),
+            json!({ "host": "anders.example", "port": 9, "user": "n" }),
+        ),
+    ];
+    for (kind, settings, moved) in sources {
+        let created = t
+            .post(
+                "/datasources",
+                json!({ "name": format!("Quelle {kind}"), "kind": kind, "settings": settings,
+                        "secrets": { "password": "Alt-Passwort-1" } }),
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{kind}: {}", created.text);
+        let id = created.body["id"].as_str().unwrap().to_string();
+        let r =
+            t.post("/datasources/test", json!({ "kind": kind, "datasourceId": id, "settings": moved.clone() })).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{kind}: {}", r.text);
+        assert_eq!(r.body["error"]["reason"], "secrets.resend_on_target_change", "{kind}: {}", r.text);
+        // With the secret sent again the test runs (and fails to connect, as a report).
+        let r = t
+            .post(
+                "/datasources/test",
+                json!({ "kind": kind, "datasourceId": id, "settings": moved, "secrets": { "password": "Neu-Passwort-2" } }),
+            )
+            .await;
+        assert!(r.status == StatusCode::OK || r.status == StatusCode::UNPROCESSABLE_ENTITY, "{kind}: {}", r.text);
+        assert!(!r.text.contains("Alt-Passwort-1") && !r.text.contains("Neu-Passwort-2"), "{}", r.text);
+    }
+    t.finish().await;
+}
+
+/// Every test is logged with who, where and to what, never with a secret, also for kinds that do
+/// not speak HTTP; a malformed body is refused without repeating it.
+#[tokio::test]
+async fn tests_are_logged_without_secrets_and_bad_bodies_are_not_echoed() {
+    let capture = LogCapture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
+    let t = T::new().await;
+    let secret = "Nur-Fuer-Postgres-77";
+    let r = t
+        .post(
+            "/datasources/test",
+            json!({ "kind": "postgres", "settings": { "host": "127.0.0.1", "port": 9, "database": "d", "user": "u" },
+                    "secrets": { "password": secret } }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["ok"], false);
+    let logs = String::from_utf8_lossy(&capture.0.lock().unwrap()).to_string();
+    assert!(logs.contains("connection test of data source settings"), "{logs}");
+    assert!(logs.contains("127.0.0.1") && logs.contains("postgres"), "{logs}");
+    assert!(!logs.contains(secret), "the log holds the password");
+    // Wrong types and unknown fields do not come back in the error.
+    for body in [
+        json!({ "kind": "postgres", "secrets": "Geheimnis-Nr-5" }),
+        json!({ "kind": "postgres", "Geheimnis-Nr-5": 1 }),
+        json!({ "kind": 7, "settings": "Geheimnis-Nr-5" }),
+    ] {
+        let r = t.post("/datasources/test", body).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text);
+        assert_eq!(r.body["error"]["reason"], "request.body_invalid", "{}", r.text);
+        assert!(!r.text.contains("Geheimnis-Nr-5"), "{}", r.text);
+    }
+    t.finish().await;
+}
