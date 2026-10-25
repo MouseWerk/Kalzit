@@ -24,5 +24,22 @@
   "explore.add.pickRequired": "Choose a dashboard.",
   "explore.add.submit": "Add panel",
   "explore.add.message": "Panel added from Explore",
-  "explore.aside": "Steps and actions"
+  "explore.aside": "Steps and actions",
+  "explore.history.button": "History",
+  "explore.history.title": "History",
+  "explore.history.close": "Close history",
+  "explore.history.note": "Only visible to you, kept for 30 days.",
+  "explore.history.search": "Search history",
+  "explore.history.source": "Filter by data source",
+  "explore.history.allSources": "All data sources",
+  "explore.history.empty": "No history yet. Queries you run in Explore show up here.",
+  "explore.history.noMatch": "No query matches your search.",
+  "explore.history.load": "Load into the editor: {query}",
+  "explore.history.run": "Run again: {query}",
+  "explore.history.delete": "Delete from history: {query}",
+  "explore.history.rows": "{count} rows",
+  "explore.history.justNow": "just now",
+  "explore.history.clear": "Clear history",
+  "explore.history.clearConfirm": "Delete all",
+  "explore.history.clearText": "Your whole history in this organization is deleted. This cannot be undone."
 }

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, useDeferredValue, useId, useRef, useState } from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
@@ -9,6 +9,7 @@ import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
+import { Icon } from "../../components/Icon";
 import { Page } from "../../components/Page";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
@@ -38,12 +39,20 @@ import {
 } from "../dashboards/timeRange";
 import { errorBodyMessage, errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
-import { datasourcesQuery, kindsQuery, runQuery, sourceAccess } from "../datasources/api";
+import {
+  type DatasourceSummary,
+  datasourcesQuery,
+  kindsQuery,
+  runQuery,
+  sourceAccess,
+} from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, familyOf, hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
+import { HistoryPanel } from "./HistoryPanel";
+import { HISTORY_KEY, type HistoryEntry } from "./history";
 import { LAST_DATASOURCE_KEY } from "./lastSource";
 import "./explore.css";
 
@@ -93,6 +102,10 @@ function Explore({ orgId }: { orgId: string }) {
   const permissions = useOrgPermissions();
   const datasourceId = useId();
   const datasources = useQuery(datasourcesQuery(orgId));
+  const client = useQueryClient();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // Bumped when a history entry is loaded, so the editor starts over with its query.
+  const [loads, setLoads] = useState(0);
   const kinds = useQuery(kindsQuery(orgId));
   const [chosen, setChosen] = useState<string | null>(() => readPreference(LAST_DATASOURCE_KEY));
   const [queries, setQueries] = useState<Record<string, unknown>>({});
@@ -149,17 +162,24 @@ function Explore({ orgId }: { orgId: string }) {
           maxDataPoints: MAX_DATA_POINTS,
           intervalMs: intervalFor(timeRange),
           variables: {},
+          // Explore keeps what the user ran, for them alone (docs/api/explore-history.md).
+          explore: true,
         },
         signal,
       );
+      void client.invalidateQueries({ queryKey: [HISTORY_KEY, orgId] });
       return outcomesOf(response, [REF_ID]);
     },
   });
 
-  function run(nextRange = range, nextQuery: unknown = query) {
+  function run(
+    nextRange = range,
+    nextQuery: unknown = query,
+    target: DatasourceSummary | undefined = datasource,
+  ) {
     // A field that holds something the server would refuse keeps the query from running; the
     // field says why.
-    if (datasource === undefined || !hasQuery(nextQuery, datasource.kind) || queryBlocked) {
+    if (target === undefined || !hasQuery(nextQuery, target.kind) || queryBlocked) {
       return;
     }
     // A new run leaves an old filter refusal behind.
@@ -171,8 +191,8 @@ function Explore({ orgId }: { orgId: string }) {
     }
     setRangeError(null);
     setSubmitted((current) => ({
-      datasourceId: datasource.id,
-      query: normalizeQuery(nextQuery, datasource.kind),
+      datasourceId: target.id,
+      query: normalizeQuery(nextQuery, target.kind),
       range: nextRange,
       ...resolved.range,
       run: (current?.run ?? 0) + 1,
@@ -228,6 +248,21 @@ function Explore({ orgId }: { orgId: string }) {
     } catch (problem) {
       keep((pages) => ({ of: run, pages, loading: false, error: errorMessage(t, problem) }));
     }
+  }
+  // An entry goes into the editor without running; a data source the caller can no longer pick
+  // is never loaded (the server hides such entries, so this only guards a stale list).
+  function loadEntry(entry: HistoryEntry): DatasourceSummary | undefined {
+    const target = list.find((d) => d.id === entry.datasourceId);
+    if (target === undefined) {
+      return undefined;
+    }
+    setChosen(target.id);
+    setFilterError(null);
+    writePreference(LAST_DATASOURCE_KEY, target.id);
+    setQueries((current) => ({ ...current, [target.id]: entry.query }));
+    setPendingText((current) => ({ ...current, [target.id]: false }));
+    setLoads((n) => n + 1);
+    return target;
   }
   const kindShapes = kinds.data?.find((k) => k.kind === datasource.kind)?.shapes ?? ["frame"];
   const takesDocuments = kindShapes.includes("documents");
@@ -289,6 +324,15 @@ function Explore({ orgId }: { orgId: string }) {
           </select>
         </div>
         <div className="explore__run">
+          <button
+            type="button"
+            className="button button--secondary"
+            aria-pressed={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+          >
+            <Icon name="history" />
+            {t("explore.history.button")}
+          </button>
           <TimeRangePicker
             value={range}
             onChange={(next) => {
@@ -313,7 +357,7 @@ function Explore({ orgId }: { orgId: string }) {
           {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
           {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
           <QueryEditor
-            key={datasource.id}
+            key={`${datasource.id}:${loads}`}
             orgId={orgId}
             datasource={datasource}
             query={query}
@@ -452,39 +496,55 @@ function Explore({ orgId }: { orgId: string }) {
           )}
         </div>
         {/* The steps and what to do with the result, beside it as on the blueprint. */}
-        <aside className="explore__aside" aria-label={t("explore.aside")}>
-          <StepsEditor
-            steps={steps}
-            onChange={setSteps}
-            refIds={[REF_ID]}
-            inputs={namedInputs(outcomes)}
-            run={stepsRun}
-          />
-          <div className="explore__aside-actions">
-            {permissions.has("data:export") ? (
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => setExporting(true)}
-                disabled={result.data === undefined || blocked}
-                aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
-              >
-                {t("analysis.export.button")}
-              </button>
-            ) : null}
-            {permissions.has("dashboards:write") ? (
-              <button
-                type="button"
-                className="button button--secondary"
-                onClick={() => setAdding(true)}
-                disabled={result.data === undefined || blocked}
-                aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
-              >
-                {t("explore.addToDashboard")}
-              </button>
-            ) : null}
-          </div>
-        </aside>
+        <div className="explore__rail">
+          {historyOpen ? (
+            <HistoryPanel
+              orgId={orgId}
+              sources={list}
+              onClose={() => setHistoryOpen(false)}
+              onLoad={(entry) => {
+                loadEntry(entry);
+              }}
+              onRun={(entry) => {
+                const target = loadEntry(entry);
+                run(range, entry.query, target);
+              }}
+            />
+          ) : null}
+          <aside className="explore__aside" aria-label={t("explore.aside")}>
+            <StepsEditor
+              steps={steps}
+              onChange={setSteps}
+              refIds={[REF_ID]}
+              inputs={namedInputs(outcomes)}
+              run={stepsRun}
+            />
+            <div className="explore__aside-actions">
+              {permissions.has("data:export") ? (
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  onClick={() => setExporting(true)}
+                  disabled={result.data === undefined || blocked}
+                  aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
+                >
+                  {t("analysis.export.button")}
+                </button>
+              ) : null}
+              {permissions.has("dashboards:write") ? (
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  onClick={() => setAdding(true)}
+                  disabled={result.data === undefined || blocked}
+                  aria-describedby={blocked ? `${tabsId}-blocked` : undefined}
+                >
+                  {t("explore.addToDashboard")}
+                </button>
+              ) : null}
+            </div>
+          </aside>
+        </div>
       </div>
       {exporting && submitted !== null ? (
         <ExportDialog
