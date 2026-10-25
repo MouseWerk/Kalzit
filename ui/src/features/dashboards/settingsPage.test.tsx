@@ -188,4 +188,25 @@ describe("the dashboard settings page", () => {
     expect((query as HTMLTextAreaElement).value).toBe("SELECT city FROM a");
     expect(section.querySelector("fieldset")?.hasAttribute("inert")).toBe(true);
   });
+
+  it("applies in edit mode into the unsaved dashboard, which Save then keeps", async () => {
+    const { stored } = setup("editor");
+    const { user, location } = renderApp("/dashboards/d-main?edit=true");
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.type(await title(), " 2");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    // Back on the dashboard, still editing, with the new title and nothing saved yet.
+    expect(await screen.findByRole("heading", { level: 1, name: "Main 2" })).toBeTruthy();
+    expect(location().pathname).toBe("/dashboards/d-main");
+    expect(stored.versions).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.title).toBe("Main 2");
+  });
 });
