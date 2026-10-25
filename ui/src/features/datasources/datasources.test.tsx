@@ -254,6 +254,17 @@ describe("data source list", () => {
     await waitFor(() => expect(document.activeElement).toBe(details));
   });
 
+  it("names every kind of the server's registry in the empty list, not a fixed few", async () => {
+    const { server } = open("/data-sources");
+    server.areas.datasources.datasources.length = 0;
+    expect(await screen.findByRole("heading", { name: "No data sources yet" })).toBeTruthy();
+    const text = await screen.findByText(/Available kinds:/);
+    for (const kind of FAKE_KINDS) {
+      expect(text.textContent).toContain(kind.name);
+    }
+    expect(text.textContent).toContain("MongoDB");
+  });
+
   it("shows viewers without a grant an empty list and no Explore", async () => {
     open("/data-sources", "viewer");
     // The server lists only what the caller may read, so a viewer without a grant sees nothing.

@@ -12,6 +12,7 @@ import { Icon } from "../../components/Icon";
 import { IconButton, WithTooltip } from "../../components/IconButton";
 import { type Translate, useI18n } from "../../i18n/i18n";
 import { readClipboard, writeClipboard } from "../../lib/clipboard";
+import { isComposingKey } from "../../lib/ime";
 import { useEscapeLayer } from "../../lib/layers";
 import {
   getTimeSettings,
@@ -417,7 +418,7 @@ function RangePopover({
               onKeyDown={(event) => {
                 // Enter takes the first match.
                 const first = presets[0];
-                if (event.key === "Enter" && first !== undefined) {
+                if (event.key === "Enter" && first !== undefined && !isComposingKey(event)) {
                   event.preventDefault();
                   onApply({ from: first.from, to: first.to });
                 }

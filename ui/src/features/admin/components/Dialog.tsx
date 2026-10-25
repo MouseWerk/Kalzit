@@ -10,6 +10,8 @@ import {
 import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
+import { showToast } from "../../../lib/toasts";
+import { useBackGuard, useTypedInput } from "../../../lib/useBackGuard";
 // Dialogs and the popover are used outside the administration too (stream areas).
 import "../admin.css";
 
@@ -30,6 +32,8 @@ export interface DialogProps {
   /** What receives focus on open; the first focusable element otherwise. */
   initialFocus?: RefObject<HTMLElement | null>;
   wide?: boolean;
+  /** The id of the element that describes the dialog (read after the title); a confirmation's text. */
+  describedBy?: string;
 }
 
 /**
@@ -44,10 +48,16 @@ export function Dialog({
   footer,
   initialFocus,
   wide = false,
+  describedBy,
 }: DialogProps) {
+  const { t } = useI18n();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  useEscapeLayer(open, onClose);
+  const typed = useTypedInput();
+  const keep = () => showToast({ message: t("common.dialog.backKept") });
+  useEscapeLayer(open, () => (typed.has() ? keep() : onClose()));
+  // The Back button closes the dialog (or keeps typed input) rather than leaving the page.
+  useBackGuard(open, { onClose, hasInput: typed.has, onKept: keep });
 
   const focusInitial = useEffectEvent(() => {
     const dialog = dialogRef.current;
@@ -62,6 +72,7 @@ export function Dialog({
       return;
     }
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    typed.reset();
     focusInitial();
     return () => {
       // Only if it still exists: the row that opened a delete dialog may be gone afterwards.
@@ -69,7 +80,7 @@ export function Dialog({
         opener.focus();
       }
     };
-  }, [open]);
+  }, [open, typed.reset]);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const dialog = dialogRef.current;
@@ -102,9 +113,11 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={describedBy}
         tabIndex={-1}
         className={wide ? "admin-dialog admin-dialog--wide" : "admin-dialog"}
         onKeyDown={onKeyDown}
+        onInput={typed.onInput}
       >
         <h2 className="admin-dialog__title" id={titleId}>
           {title}
@@ -144,12 +157,14 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const textId = useId();
   return (
     <Dialog
       open={open}
       title={title}
       onClose={onClose}
       initialFocus={cancelRef}
+      describedBy={textId}
       footer={
         <>
           <button
@@ -175,7 +190,9 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="admin-dialog__text">{children}</div>
+      <div id={textId} className="admin-dialog__text">
+        {children}
+      </div>
       {error === undefined || error === null ? null : (
         <p className="admin-error" role="alert">
           {error}

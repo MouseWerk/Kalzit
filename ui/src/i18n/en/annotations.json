@@ -14,6 +14,7 @@
   "annotations.tagsHint": "Separate tags with commas.",
   "annotations.save": "Save",
   "annotations.delete": "Delete",
+  "annotations.deleted": "Annotation deleted.",
   "annotations.textRequired": "Enter a text.",
   "annotations.timeInvalid": "Enter a valid time; the end must not be before the start.",
   "annotations.changed": "Someone changed this annotation in the meantime. The dialog now shows what is stored; save again to change it.",

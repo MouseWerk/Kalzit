@@ -4,6 +4,7 @@
   "common.loading": "Loading…",
   "common.retry": "Try again",
   "common.undo": "Undo",
+  "common.dialog.backKept": "Back and Escape keep what you typed. Choose Cancel to discard it.",
   "common.dismiss": "Dismiss",
   "common.skipToContent": "Skip to content",
   "nav.label": "Main navigation",

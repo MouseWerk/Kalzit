@@ -23,6 +23,7 @@ import { IconButton } from "../../components/IconButton";
 import { Page, PageActions } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { zoneOption } from "../../lib/timeSettings";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -121,6 +122,8 @@ function DataSourceList({
     getNextPageParam: (page) => page.nextCursor ?? undefined,
   });
   const kinds = useQuery(kindsQuery(orgId));
+  // Every kind the server offers (its registry), for the empty list's text.
+  const names = (kinds.isSuccess ? kinds.data : []).map((kind) => kind.name);
   const restore = useMutation({
     mutationFn: (id: string) => restoreDatasource(orgId, id),
     onSuccess: async (_, id) => {
@@ -177,7 +180,13 @@ function DataSourceList({
           </EmptyState>
         ) : (
           <EmptyState icon="dataSources" title={t("datasources.empty.title")}>
-            {canCreate ? t("datasources.empty.text") : t("datasources.empty.textReadOnly")}
+            {!canCreate
+              ? t("datasources.empty.textReadOnly")
+              : names.length === 0
+                ? t("datasources.empty.text")
+                : t("datasources.empty.textKinds", {
+                    kinds: new Intl.ListFormat(language, { type: "conjunction" }).format(names),
+                  })}
           </EmptyState>
         )}
       </>
@@ -673,7 +682,7 @@ function SourceOverview({
             ref={drawerHeading}
             className="ds-layout__drawer"
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
+              if (event.key === "Escape" && !isComposingKey(event)) {
                 event.stopPropagation();
                 close();
               }

@@ -498,6 +498,36 @@ describe("annotations", () => {
     expect(dialog).toBeNull();
   });
 
+  it("takes back a deleted annotation with Undo, with its span and panel", async () => {
+    const { server } = setup("editor", timeModel());
+    const start = Date.now() - 3_600_000;
+    server.areas.dashboardFeatures.annotations.push({
+      id: "a1",
+      dashboardId: "d-main",
+      panelId: "p1",
+      time: start,
+      timeEnd: start + 600_000,
+      text: "Release 2.1",
+      tags: ["deploy"],
+      version: 1,
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: /Annotation at .*: Release 2\.1/ }));
+    const dialog = screen.getByRole("dialog", { name: "Change annotation" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(0));
+    expect(await screen.findByText("Annotation deleted.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(server.areas.dashboardFeatures.annotations).toHaveLength(1));
+    expect(server.areas.dashboardFeatures.annotations[0]).toMatchObject({
+      text: "Release 2.1",
+      tags: ["deploy"],
+      panelId: "p1",
+      time: start,
+      timeEnd: start + 600_000,
+    });
+  });
+
   it("shows annotations read-only to viewers, and nothing to add", async () => {
     const { server } = setup("viewer", timeModel());
     server.areas.dashboardFeatures.annotations.push({
@@ -810,6 +840,46 @@ describe("view modes", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps help and search over a panel shown alone, and Escape closes the top layer first", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      panels: [panel("p1", "Orders"), panel("p2", "Spend", { grid: { x: 12, y: 0, w: 12, h: 8 } })],
+    });
+    const { user, location } = renderApp("/dashboards/d-main?viewPanel=p1");
+    expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
+    await user.keyboard("?");
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // That Escape closed the help; the panel is still shown alone.
+    expect(location().search).toMatchObject({ viewPanel: "p1" });
+    await user.keyboard("/");
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(location().search).toMatchObject({ viewPanel: "p1" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(location().search).not.toHaveProperty("viewPanel"));
+  });
+
+  it("keeps only help and Escape in kiosk mode: no search, no palette", async () => {
+    setup("viewer", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
+    const { user, location } = renderApp("/dashboards/d-main?kiosk=kiosk");
+    expect(await screen.findByRole("button", { name: "Leave full screen" })).toBeTruthy();
+    await user.keyboard("/");
+    await user.keyboard("{Control>}k{/Control}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.keyboard("?");
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The help closed; kiosk mode is still on.
+    expect(location().search).toMatchObject({ kiosk: "kiosk" });
+    expect(screen.getByRole("button", { name: "Leave full screen" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(location().search).not.toHaveProperty("kiosk"));
   });
 
   it("shows one panel alone and returns", async () => {

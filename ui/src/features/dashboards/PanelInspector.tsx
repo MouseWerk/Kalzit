@@ -3,6 +3,7 @@ import { type ReactNode, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { getPanel } from "../../panels/registry";
 import { datasourcesQuery } from "../datasources/api";
 import {
@@ -431,7 +432,7 @@ function NumberRow({
           onChange={(event) => setText(event.currentTarget.value)}
           onBlur={commit}
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && !isComposingKey(event)) {
               event.preventDefault();
               commit();
             }
