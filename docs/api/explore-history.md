@@ -10,7 +10,10 @@ caller alone.
   there is no route for it, and the audit log is unaffected.
 - Entries are kept per user and organization: the same user has a separate history in each
   organization, and an entry of one organization is never listed, deleted or run through another.
-- Entries are kept for 30 days and at most 500 per user and organization. The newest stay.
+- Entries are kept for 30 days and at most 500 per user and organization. The newest stay. The
+  retention job runs hourly and deletes in batches of 1000.
+- The text you type is stored as typed, including any literal values in it (an id, an email
+  address in a `WHERE`). Do not put secrets into queries; Kalzit does not scan them.
 - Only the query as Explore sent it is stored (`query`, the data source id, the shape and the
   size of the answer, how long it took). Results are never stored, and a data source's settings
   and secrets are not part of a query, so none are stored.
@@ -27,16 +30,19 @@ and other clients do not, and their runs are not recorded.
   query leaves nothing. A query larger than 64 KiB is run but not kept.
 - The same query on the same data source right after the caller's latest entry does not add an
   entry; the latest one moves to the top (`createdAt` is the new run).
-- Recording never fails the query: if the history cannot be written, the query still answers.
+- All items of one run are recorded in one transaction, locked per user, so concurrent runs keep
+  the de-duplication and the cap. Recording never fails the query: if the history cannot be
+  written, the query still answers.
 - `durationMs` is the time of the run when the request held a single query, else absent.
 
 ## List
 
 `GET /explore/history?limit=&cursor=&datasourceId=&q=`
 
-Newest first. `limit` 1 to 200 (default 50), `cursor` from `nextCursor`. `datasourceId` keeps one
-data source. `q` (at most 100 characters) keeps entries whose query contains the text, ignoring
-case; `%`, `_` and `\` are plain characters. Unknown parameters answer `422 validation`.
+Newest first, ties on the time ordered by id; a page reads only its own rows. `limit` 1 to 200 (default 50), `cursor` from `nextCursor`. `datasourceId` keeps one
+data source. `q` (at most 100 characters) keeps entries whose query text (the strings in the query, not its
+JSON keys) contains the text, ignoring case for all letters ("ärger" finds "ÄRGER"); `%`, `_`
+and `\` are plain characters. Unknown parameters answer `422 validation`.
 
 ```json
 {

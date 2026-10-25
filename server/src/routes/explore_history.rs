@@ -69,15 +69,24 @@ async fn try_record(
     duration_ms: Option<i64>,
 ) -> ApiResult<()> {
     let now = state.clock.now_ms();
-    for (item, outcome) in ran {
-        let QueryOutcome::Ok { result } = outcome else { continue };
-        let Ok(text) = serde_json::to_string(&item.query) else { continue };
-        if text.len() > MAX_QUERY_BYTES {
-            continue;
-        }
+    let kept: Vec<(&QueryItem, String, &QueryResult)> = ran
+        .iter()
+        .filter_map(|(item, outcome)| {
+            let QueryOutcome::Ok { result } = outcome else { return None };
+            let text = serde_json::to_string(&item.query).ok()?;
+            (text.len() <= MAX_QUERY_BYTES).then_some((*item, text, result))
+        })
+        .collect();
+    if kept.is_empty() {
+        return Ok(());
+    }
+    // One transaction for the whole run (at most 50 items), locked per user so that two runs of
+    // one user cannot both pass the de-duplication or the cap on PostgreSQL.
+    let mut tx = crate::db::begin(&state.db).await?;
+    sqlx::query("UPDATE users SET name = name WHERE id = $1").bind(&ctx.user.id).execute(&mut *tx).await?;
+    for (item, text, result) in kept {
         let shape = shape_name(result);
         let rows = row_count(result);
-        let mut tx = crate::db::begin(&state.db).await?;
         // The same query again right after itself is one entry that moves to the top.
         let last: Option<(String, String, String)> = sqlx::query_as(
             "SELECT id, datasource_id, query FROM explore_history WHERE user_id = $1 AND org_id = $2 \
@@ -104,14 +113,15 @@ async fn try_record(
             _ => {
                 sqlx::query(
                     "INSERT INTO explore_history \
-                     (id, user_id, org_id, datasource_id, query, shape, row_count, duration_ms, created_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                     (id, user_id, org_id, datasource_id, query, search_text, shape, row_count, duration_ms, created_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 )
                 .bind(uuid::Uuid::now_v7().to_string())
                 .bind(&ctx.user.id)
                 .bind(&ctx.org_id)
                 .bind(&item.datasource_id)
                 .bind(&text)
+                .bind(search_text(&item.query))
                 .bind(shape)
                 .bind(rows)
                 .bind(duration_ms)
@@ -120,19 +130,35 @@ async fn try_record(
                 .await?;
             }
         }
-        sqlx::query(
-            "DELETE FROM explore_history WHERE user_id = $1 AND org_id = $2 AND id NOT IN \
-             (SELECT id FROM explore_history WHERE user_id = $1 AND org_id = $2 \
-              ORDER BY created_at DESC, id DESC LIMIT $3)",
-        )
-        .bind(&ctx.user.id)
-        .bind(&ctx.org_id)
-        .bind(MAX_ENTRIES)
-        .execute(&mut *tx)
-        .await?;
-        crate::db::commit(tx).await?;
     }
+    sqlx::query(
+        "DELETE FROM explore_history WHERE user_id = $1 AND org_id = $2 AND id NOT IN \
+         (SELECT id FROM explore_history WHERE user_id = $1 AND org_id = $2 \
+          ORDER BY created_at DESC, id DESC LIMIT $3)",
+    )
+    .bind(&ctx.user.id)
+    .bind(&ctx.org_id)
+    .bind(MAX_ENTRIES)
+    .execute(&mut *tx)
+    .await?;
+    crate::db::commit(tx).await?;
     Ok(())
+}
+
+/// Every string in the query, in lower case, one per line: what a search looks in. Lower-cased
+/// here, not by the database, which folds only ASCII (SQLite) or follows its locale (PostgreSQL).
+pub(crate) fn search_text(query: &Value) -> String {
+    fn collect(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(s) => out.push(s.clone()),
+            Value::Array(items) => items.iter().for_each(|v| collect(v, out)),
+            Value::Object(map) => map.values().for_each(|v| collect(v, out)),
+            _ => {}
+        }
+    }
+    let mut parts = Vec::new();
+    collect(query, &mut parts);
+    parts.join("\n").to_lowercase()
 }
 
 fn shape_name(result: &QueryResult) -> &'static str {
@@ -178,17 +204,37 @@ fn contains_pattern(needle: &str) -> String {
 }
 
 /// The caller's entries, newest first, of data sources they may still query. Filter by data
-/// source and by text in the query (case-insensitive).
+/// source and by text in the query (case-insensitive). The permission, the filters, the cursor
+/// and the order are all in the one SQL statement, so a page reads only its own rows.
 async fn list(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<HistoryEntry>>> {
-    let limit = page_limit(q.limit)? as usize;
+    let limit = page_limit(q.limit)?;
     let after: Option<(i64, String)> = decode_cursor(q.cursor.as_deref())?;
     let text = q.q.as_deref().map(str::trim).filter(|t| !t.is_empty());
     if text.is_some_and(|t| t.chars().count() > MAX_SEARCH_CHARS) {
         return Err(ApiError::validation(format!("q is at most {MAX_SEARCH_CHARS} characters")).with_field("q"));
+    }
+    let mut conn = state.db.acquire().await?;
+    // The sources of this organization the caller may query now.
+    let index = AccessIndex::load(&mut conn, &ctx).await?;
+    let all: Vec<(String,)> = sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND deleted_at IS NULL")
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    let total = all.len();
+    let mut allowed: Vec<String> = all
+        .into_iter()
+        .map(|(id,)| id)
+        .filter(|id| index.datasource(id).is_some_and(|p| p.contains(&Permission::DatasourcesQuery)))
+        .collect();
+    if let Some(ds) = &q.datasource_id {
+        allowed.retain(|id| id == ds);
+    }
+    if allowed.is_empty() {
+        return Ok(Json(Page { items: Vec::new(), next_cursor: None }));
     }
     let mut sql = String::from(
         "SELECT h.id, h.datasource_id, d.name, d.kind, h.query, h.shape, h.row_count, h.duration_ms, h.created_at \
@@ -196,30 +242,39 @@ async fn list(
          WHERE h.user_id = $1 AND h.org_id = $2 AND d.deleted_at IS NULL",
     );
     let mut next = 3;
-    if q.datasource_id.is_some() {
-        sql.push_str(&format!(" AND h.datasource_id = ${next}"));
-        next += 1;
+    // Everything the caller may query needs no list of ids.
+    let restrict = allowed.len() < total || q.datasource_id.is_some();
+    if restrict {
+        let marks: Vec<String> = (0..allowed.len()).map(|i| format!("${}", next + i)).collect();
+        sql.push_str(&format!(" AND h.datasource_id IN ({})", marks.join(", ")));
+        next += allowed.len();
     }
     if text.is_some() {
-        sql.push_str(&format!(" AND LOWER(h.query) LIKE ${next} ESCAPE '\\'"));
+        sql.push_str(&format!(" AND h.search_text LIKE ${next} ESCAPE '\\'"));
+        next += 1;
     }
-    sql.push_str(" ORDER BY h.created_at DESC, h.id DESC");
+    if after.is_some() {
+        sql.push_str(&format!(" AND (h.created_at < ${next} OR (h.created_at = ${next} AND h.id < ${}))", next + 1));
+        next += 2;
+    }
+    sql.push_str(&format!(" ORDER BY h.created_at DESC, h.id DESC LIMIT ${next}"));
     let mut query = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(sql)).bind(&ctx.user.id).bind(&ctx.org_id);
-    if let Some(ds) = &q.datasource_id {
-        query = query.bind(ds);
+    if restrict {
+        for id in &allowed {
+            query = query.bind(id);
+        }
     }
     if let Some(t) = text {
         query = query.bind(contains_pattern(&t.to_lowercase()));
     }
-    let mut conn = state.db.acquire().await?;
-    let rows = query.fetch_all(&mut *conn).await?;
-    let index = AccessIndex::load(&mut conn, &ctx).await?;
-    // At most `MAX_ENTRIES` rows, filtered here by what the caller may query now, so pages stay
-    // full and the cursor compares the same key the rows are ordered by.
-    let mut items: Vec<HistoryEntry> = rows
+    if let Some((time, id)) = &after {
+        query = query.bind(*time).bind(id);
+    }
+    let rows = query.bind(i64::from(limit) + 1).fetch_all(&mut *conn).await?;
+    let more = rows.len() > limit as usize;
+    let items: Vec<HistoryEntry> = rows
         .into_iter()
-        .filter(|r| index.datasource(&r.1).is_some_and(|p| p.contains(&Permission::DatasourcesQuery)))
-        .filter(|r| after.as_ref().is_none_or(|(t, id)| (r.8, r.0.as_str()) < (*t, id.as_str())))
+        .take(limit as usize)
         .filter_map(|r| {
             let query = serde_json::from_str(&r.4).ok()?;
             Some(HistoryEntry {
@@ -235,8 +290,6 @@ async fn list(
             })
         })
         .collect();
-    let more = items.len() > limit;
-    items.truncate(limit);
     let next_cursor = items.last().filter(|_| more).map(|e| encode_cursor(&(e.created_at, e.id.as_str())));
     Ok(Json(Page { items, next_cursor }))
 }
@@ -281,16 +334,29 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
     purge_expired_in(state, &state.db).await
 }
 
+/// Rows deleted per statement, so a large backlog does not hold the database for long.
+const PURGE_BATCH: i64 = 1000;
+
 async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
     let cutoff = state.clock.now_ms().saturating_sub(RETENTION_DAYS * DAY_MS);
-    let mut tx = crate::db::begin(db).await?;
-    let deleted = sqlx::query("DELETE FROM explore_history WHERE created_at < $1")
+    let mut total = 0;
+    loop {
+        let mut tx = crate::db::begin(db).await?;
+        let deleted = sqlx::query(
+            "DELETE FROM explore_history WHERE id IN \
+             (SELECT id FROM explore_history WHERE created_at < $1 ORDER BY created_at LIMIT $2)",
+        )
         .bind(cutoff)
+        .bind(PURGE_BATCH)
         .execute(&mut *tx)
         .await?
         .rows_affected();
-    crate::db::commit(tx).await?;
-    Ok(deleted)
+        crate::db::commit(tx).await?;
+        total += deleted;
+        if deleted < PURGE_BATCH as u64 {
+            return Ok(total);
+        }
+    }
 }
 
 /// Runs `purge_expired` every hour, like the audit retention.

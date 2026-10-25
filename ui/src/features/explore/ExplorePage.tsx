@@ -176,10 +176,16 @@ function Explore({ orgId }: { orgId: string }) {
     nextRange = range,
     nextQuery: unknown = query,
     target: DatasourceSummary | undefined = datasource,
+    // A history entry replaces the editor's text, so text still waiting in a field is moot.
+    ignoreBlocked = false,
   ) {
     // A field that holds something the server would refuse keeps the query from running; the
     // field says why.
-    if (target === undefined || !hasQuery(nextQuery, target.kind) || queryBlocked) {
+    if (
+      target === undefined ||
+      !hasQuery(nextQuery, target.kind) ||
+      (queryBlocked && !ignoreBlocked)
+    ) {
       return;
     }
     // A new run leaves an old filter refusal behind.
@@ -507,7 +513,7 @@ function Explore({ orgId }: { orgId: string }) {
               }}
               onRun={(entry) => {
                 const target = loadEntry(entry);
-                run(range, entry.query, target);
+                run(range, entry.query, target, true);
               }}
             />
           ) : null}

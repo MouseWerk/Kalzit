@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions } from "@tanstack/react-query";
 import { orgPath, send } from "../datasources/api";
 
 /** One query the caller ran from Explore (docs/api/explore-history.md). */
@@ -15,9 +15,6 @@ export interface HistoryEntry {
 }
 
 export const HISTORY_KEY = "exploreHistory";
-
-/** Entries per request; the server keeps at most 500 per user and organization. */
-const PAGE = 100;
 
 function parseEntry(value: unknown): HistoryEntry | null {
   if (typeof value !== "object" || value === null) {
@@ -50,46 +47,53 @@ export interface HistoryFilter {
   text: string;
 }
 
-/** The caller's newest entries, following the cursor up to the server's cap. */
-export async function fetchHistory(
+export interface HistoryPage {
+  items: HistoryEntry[];
+  nextCursor: string | null;
+}
+
+/** Entries per page; "Load more" follows the cursor. */
+const PAGE = 50;
+
+/** One page of the caller's entries, newest first. */
+export async function fetchHistoryPage(
   orgId: string,
   filter: HistoryFilter,
+  cursor: string | null,
   signal?: AbortSignal,
-): Promise<HistoryEntry[]> {
-  const entries: HistoryEntry[] = [];
-  let cursor: string | null = null;
-  do {
-    const params = new URLSearchParams({ limit: String(PAGE) });
-    if (filter.datasourceId !== "") {
-      params.set("datasourceId", filter.datasourceId);
+): Promise<HistoryPage> {
+  const params = new URLSearchParams({ limit: String(PAGE) });
+  if (filter.datasourceId !== "") {
+    params.set("datasourceId", filter.datasourceId);
+  }
+  if (filter.text !== "") {
+    params.set("q", filter.text);
+  }
+  if (cursor !== null) {
+    params.set("cursor", cursor);
+  }
+  const page = (await send(
+    "GET",
+    `${orgPath(orgId, "explore", "history")}?${params}`,
+    undefined,
+    signal,
+  )) as { items?: unknown[]; nextCursor?: string | null };
+  const items: HistoryEntry[] = [];
+  for (const item of page.items ?? []) {
+    const entry = parseEntry(item);
+    if (entry !== null) {
+      items.push(entry);
     }
-    if (filter.text !== "") {
-      params.set("q", filter.text);
-    }
-    if (cursor !== null) {
-      params.set("cursor", cursor);
-    }
-    const page = (await send(
-      "GET",
-      `${orgPath(orgId, "explore", "history")}?${params}`,
-      undefined,
-      signal,
-    )) as { items?: unknown[]; nextCursor?: string | null };
-    for (const item of page.items ?? []) {
-      const entry = parseEntry(item);
-      if (entry !== null) {
-        entries.push(entry);
-      }
-    }
-    cursor = typeof page.nextCursor === "string" ? page.nextCursor : null;
-  } while (cursor !== null);
-  return entries;
+  }
+  return { items, nextCursor: typeof page.nextCursor === "string" ? page.nextCursor : null };
 }
 
 export function historyQuery(orgId: string, filter: HistoryFilter) {
-  return queryOptions({
+  return infiniteQueryOptions({
     queryKey: [HISTORY_KEY, orgId, filter.datasourceId, filter.text],
-    queryFn: ({ signal }) => fetchHistory(orgId, filter, signal),
+    queryFn: ({ pageParam, signal }) => fetchHistoryPage(orgId, filter, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
     staleTime: 0,
   });
 }

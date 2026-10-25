@@ -18,10 +18,12 @@ export interface FakeExploreHistoryState {
   entries: HistoryEntry[];
   /** Every `limit` the list was asked with, in order. */
   limits: number[];
+  /** The `q` of every list request, in order (empty text is an empty string). */
+  searches: string[];
 }
 
 export function exploreHistoryFake(_areas: FakeAreaStates): FakeArea<FakeExploreHistoryState> {
-  const state: FakeExploreHistoryState = { entries: [], limits: [] };
+  const state: FakeExploreHistoryState = { entries: [], limits: [], searches: [] };
   return {
     state,
     handle({ method, route, search }: FakeRequest) {
@@ -35,6 +37,7 @@ export function exploreHistoryFake(_areas: FakeAreaStates): FakeArea<FakeExplore
         const source = search.get("datasourceId");
         const text = search.get("q")?.toLowerCase();
         state.limits.push(limit);
+        state.searches.push(search.get("q") ?? "");
         const all = state.entries
           .filter((e) => source === null || e.datasourceId === source)
           .filter(

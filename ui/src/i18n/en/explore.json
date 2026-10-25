@@ -41,5 +41,7 @@
   "explore.history.justNow": "just now",
   "explore.history.clear": "Clear history",
   "explore.history.clearConfirm": "Delete all",
-  "explore.history.clearText": "Your whole history in this organization is deleted. This cannot be undone."
+  "explore.history.clearText": "Your whole history in this organization is deleted. This cannot be undone.",
+  "explore.history.noteText": "The text of your query is stored, including any values in it; results are not.",
+  "explore.history.more": "Load more"
 }

@@ -246,6 +246,10 @@ on_both_databases! {
     entries_are_deleted_one_by_one_and_all_at_once,
     listing_filters_searches_and_pages,
     every_route_checks_the_caller,
+    pages_keep_their_order_when_times_are_equal,
+    search_ignores_case_beyond_ascii,
+    a_run_with_several_queries_is_recorded_in_order,
+    a_query_over_64_kib_runs_but_is_not_kept,
 }
 
 async fn explore_runs_are_recorded_and_others_are_not(t: TestApp) {
@@ -313,8 +317,8 @@ async fn an_entry_cap_keeps_the_newest(t: TestApp) {
     let source = t.source("shop").await;
     for i in 0..500 {
         sqlx::query(
-            "INSERT INTO explore_history (id, user_id, org_id, datasource_id, query, shape, created_at) \
-             VALUES ($1, $2, $3, $4, $5, 'frame', $6)",
+            "INSERT INTO explore_history (id, user_id, org_id, datasource_id, query, search_text, shape, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $5, 'frame', $6)",
         )
         .bind(format!("old-{i:04}"))
         .bind(&t.owner_id)
@@ -568,5 +572,83 @@ async fn every_route_checks_the_caller(t: TestApp) {
     let (viewer, _) = t.member("Vera", "viewer").await;
     assert!(t.history("", &viewer).await.ids().is_empty());
     assert_eq!(t.delete("~/explore/history", &viewer).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.count().await, 1);
+}
+
+async fn pages_keep_their_order_when_times_are_equal(t: TestApp) {
+    let source = t.source("shop").await;
+    for id in ["t-a", "t-b", "t-c", "t-d", "t-e", "t-f", "t-g"] {
+        sqlx::query(
+            "INSERT INTO explore_history (id, user_id, org_id, datasource_id, query, search_text, shape, created_at) \
+             VALUES ($1, $2, $3, $4, '{\"sql\":\"SELECT 1\"}', 'select 1', 'frame', $5)",
+        )
+        .bind(id)
+        .bind(&t.owner_id)
+        .bind(&t.org)
+        .bind(&source)
+        .bind(T0)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    }
+    let whole = t.history("?limit=50", &t.owner).await.ids();
+    assert_eq!(whole.len(), 7);
+    let mut paged = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        let page = t.history(&format!("?limit=3{cursor}"), &t.owner).await;
+        paged.extend(page.ids());
+        match page.body["nextCursor"].as_str() {
+            Some(c) => cursor = format!("&cursor={c}"),
+            None => break,
+        }
+    }
+    assert_eq!(paged, whole, "equal times neither repeat nor skip an entry");
+}
+
+async fn search_ignores_case_beyond_ascii(t: TestApp) {
+    let source = t.source("shop").await;
+    t.run(&source, "SELECT 'ÄRGER' AS wut", true, &t.owner).await;
+    t.clock.advance_ms(1000);
+    t.run(&source, "SELECT 'Ruhe'", true, &t.owner).await;
+    for needle in ["%C3%A4rger", "%C3%84RGER", "%C3%84rger", "WUT"] {
+        let found = t.history(&format!("?q={needle}"), &t.owner).await;
+        assert_eq!(found.texts(), ["SELECT 'ÄRGER' AS wut"], "{needle}");
+    }
+    // The text is searched, not the JSON around it: no key names, no quotes.
+    assert!(t.history("?q=sql", &t.owner).await.ids().is_empty());
+    assert!(t.history("?q=%22", &t.owner).await.ids().is_empty());
+}
+
+async fn a_run_with_several_queries_is_recorded_in_order(t: TestApp) {
+    let source = t.source("shop").await;
+    let body = json!({
+        "queries": [
+            { "refId": "A", "datasourceId": source, "query": { "sql": "SELECT 1" } },
+            { "refId": "B", "datasourceId": source, "query": { "sql": "SELECT 2" } },
+            { "refId": "C", "datasourceId": source, "query": { "sql": "SELECT nope FROM nowhere" } },
+            { "refId": "D", "datasourceId": source, "query": { "sql": "SELECT 2" } }
+        ],
+        "timeRange": { "from": T0 - DAY, "to": T0 },
+        "variables": {},
+        "explore": true
+    });
+    let ran = t.post("~/query", body, &t.owner).await;
+    assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
+    // The failed item is left out; B and D are the same query, one entry after the other, so they
+    // collapse. The time of a run is only known for a single query.
+    let listed = t.history("", &t.owner).await;
+    assert_eq!(listed.texts(), ["SELECT 2", "SELECT 1"], "{}", listed.body);
+    assert!(listed.body["items"][0]["durationMs"].is_null(), "{}", listed.body);
+}
+
+async fn a_query_over_64_kib_runs_but_is_not_kept(t: TestApp) {
+    let source = t.source("shop").await;
+    let big = format!("SELECT '{}'", "x".repeat(70 * 1024));
+    let ran = t.run(&source, &big, true, &t.owner).await;
+    assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
+    assert!(ran.body["results"]["A"].get("result").is_some(), "the query runs: {}", ran.body);
+    assert_eq!(t.count().await, 0);
+    t.run(&source, "SELECT 1", true, &t.owner).await;
     assert_eq!(t.count().await, 1);
 }

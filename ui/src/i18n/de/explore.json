@@ -41,5 +41,7 @@
   "explore.history.justNow": "gerade eben",
   "explore.history.clear": "Verlauf löschen",
   "explore.history.clearConfirm": "Alles löschen",
-  "explore.history.clearText": "Dein gesamter Verlauf in dieser Organisation wird gelöscht. Das lässt sich nicht rückgängig machen."
+  "explore.history.clearText": "Dein gesamter Verlauf in dieser Organisation wird gelöscht. Das lässt sich nicht rückgängig machen.",
+  "explore.history.noteText": "Gespeichert wird der Text deiner Abfrage, auch Werte darin; Ergebnisse nicht.",
+  "explore.history.more": "Mehr laden"
 }
