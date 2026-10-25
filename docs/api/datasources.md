@@ -458,8 +458,9 @@ limit). SQL and Prometheus results are frames, MongoDB results are documents (se
   types answers with its new types at once.
 - `meta.executedQuery` is the statement as sent, with placeholders instead of values.
 - Hitting the row limit (`datasources.max_rows`, the source's `maxRows`, the query's `limit`) or the
-  response size limit (`datasources.max_response_bytes`, shared by all queries of the request)
-  cuts the frame: `meta.rowsTruncated` is true and `meta.notices` says why. Columns of types the
+  response memory limit (`datasources.max_response_bytes`, default 128 MiB, shared by all queries
+  of the request and counted as the results hold them in memory: 32 bytes per value plus string
+  text and document entries) cuts the frame: `meta.rowsTruncated` is true and `meta.notices` says why. Columns of types the
   server cannot show are `null` with a notice.
 - A notice is `{ "severity": "info" | "warning", "code", "params", "text" }`: `code` is a reason
   from [Reasons](#reasons) (`frame.*`, `prometheus.warning`), `text` the English fallback.

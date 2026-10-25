@@ -128,46 +128,15 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
     {
         return Err(ApiError::validation("from must not be after to").with_field("from"));
     }
-    // Absent filters are bound as NULL; the casts give PostgreSQL the parameter types.
-    let rows: Vec<AuditRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.action, e.resource_type, \
-         e.resource_id, e.summary, e.created_at \
-         FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id \
-         WHERE (CAST($1 AS TEXT) IS NULL OR e.org_id = $1) \
-         AND (CAST($5 AS TEXT) IS NULL OR e.actor_user_id = $5) \
-         AND (CAST($6 AS TEXT) IS NULL OR SUBSTR(e.action, 1, LENGTH(CAST($6 AS TEXT))) = $6) \
-         AND (CAST($7 AS TEXT) IS NULL OR e.resource_type = $7) \
-         AND (CAST($8 AS TEXT) IS NULL OR e.resource_id = $8) \
-         AND (CAST($9 AS BIGINT) IS NULL OR e.created_at >= $9) \
-         AND (CAST($10 AS BIGINT) IS NULL OR e.created_at < $10) \
-         AND (e.created_at < $11 OR (e.created_at = $11 AND e.id < $12)) \
-         AND NOT ( \
-           (COALESCE(e.resource_type, '') = 'folder' \
-            AND COALESCE(e.resource_id, '') IN (SELECT id FROM hidden_folders)) \
-           OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
-             (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND NOT {}))) \
-         AND (CAST($4 AS BIGINT) = 1 OR NOT EXISTS (SELECT 1 FROM restricted_tombstones t \
-              WHERE t.org_id = e.org_id AND t.resource_type = COALESCE(e.resource_type, '') \
-              AND t.resource_id = COALESCE(e.resource_id, ''))) \
-         ORDER BY e.created_at DESC, e.id DESC LIMIT $13",
-        folders::VISIBILITY_CTE,
-        folders::dashboard_visible("d"),
-    )))
-    .bind(viewer.org_id)
-    .bind(viewer.user_id)
-    .bind(viewer.role)
-    .bind(viewer.sees_every_folder)
-    .bind(q.actor.as_deref())
-    .bind(q.action.as_deref().filter(|a| !a.is_empty()))
-    .bind(q.resource_type.as_deref())
-    .bind(q.resource_id.as_deref())
-    .bind(q.from)
-    .bind(q.to)
-    .bind(paging.before_time())
-    .bind(paging.before_id())
-    .bind(paging.fetch_limit())
-    .fetch_all(&state.db)
-    .await?;
+    let (sql, args) = list_sql(&viewer, &q, &paging);
+    let mut query = sqlx::query_as::<_, AuditRow>(sqlx::AssertSqlSafe(sql));
+    for arg in args {
+        query = match arg {
+            Arg::Text(t) => query.bind(t),
+            Arg::Int(i) => query.bind(i),
+        };
+    }
+    let rows: Vec<AuditRow> = query.fetch_all(&state.db).await?;
 
     // Summaries name folders (`parentId`, `folderId`); those the viewer cannot see, or that were
     // restricted when they were purged, are not named.
@@ -210,6 +179,84 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
         });
     }
     Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
+}
+
+/// A bound value of the audit query.
+#[derive(Debug)]
+enum Arg<'a> {
+    Text(Option<&'a str>),
+    Int(i64),
+}
+
+/// The audit query for `viewer` with only the filters that are set, so the database can use
+/// the indexes on the organization, the resource and the time (`audit_events_org_time_id`,
+/// `audit_events_org_resource`); a condition like `($n IS NULL OR column = $n)` would make SQLite
+/// scan every event. `$1` to `$4` are the parameters of `folders::VISIBILITY_CTE`; the filters
+/// follow from `$5`. The checks for hidden folders and dashboards are left out for a viewer who
+/// sees every folder, for whom they hold anyway.
+fn list_sql<'a>(viewer: &Viewer<'a>, q: &'a AuditQuery, paging: &'a Paging) -> (String, Vec<Arg<'a>>) {
+    let mut args = vec![
+        Arg::Text(viewer.org_id),
+        Arg::Text(Some(viewer.user_id)),
+        Arg::Text(Some(viewer.role)),
+        Arg::Int(viewer.sees_every_folder),
+    ];
+    let mut conditions: Vec<String> = Vec::new();
+    if viewer.org_id.is_some() {
+        conditions.push("e.org_id = $1".into());
+    }
+    let mut add = |args: &mut Vec<Arg<'a>>, condition: &str, arg: Arg<'a>| {
+        args.push(arg);
+        conditions.push(condition.replace("$?", &format!("${}", args.len())));
+    };
+    if let Some(actor) = q.actor.as_deref() {
+        add(&mut args, "e.actor_user_id = $?", Arg::Text(Some(actor)));
+    }
+    if let Some(action) = q.action.as_deref().filter(|a| !a.is_empty()) {
+        add(&mut args, "SUBSTR(e.action, 1, LENGTH(CAST($? AS TEXT))) = $?", Arg::Text(Some(action)));
+    }
+    if let Some(resource_type) = q.resource_type.as_deref() {
+        add(&mut args, "e.resource_type = $?", Arg::Text(Some(resource_type)));
+    }
+    if let Some(resource_id) = q.resource_id.as_deref() {
+        add(&mut args, "e.resource_id = $?", Arg::Text(Some(resource_id)));
+    }
+    if let Some(from) = q.from {
+        add(&mut args, "e.created_at >= $?", Arg::Int(from));
+    }
+    if let Some(to) = q.to {
+        add(&mut args, "e.created_at < $?", Arg::Int(to));
+    }
+    args.push(Arg::Int(paging.before_time()));
+    args.push(Arg::Text(Some(paging.before_id())));
+    let (t, i) = (args.len() - 1, args.len());
+    // As a row value, so the database seeks to the cursor in the index instead of filtering.
+    conditions.push(format!("(e.created_at, e.id) < (${t}, ${i})"));
+    if viewer.sees_every_folder == 0 {
+        conditions.push(format!(
+            "NOT ((COALESCE(e.resource_type, '') = 'folder' \
+               AND COALESCE(e.resource_id, '') IN (SELECT id FROM hidden_folders)) \
+             OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
+               (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND NOT {})))",
+            folders::dashboard_visible("d"),
+        ));
+        conditions.push(
+            "NOT EXISTS (SELECT 1 FROM restricted_tombstones t WHERE t.org_id = e.org_id \
+             AND t.resource_type = COALESCE(e.resource_type, '') AND t.resource_id = COALESCE(e.resource_id, ''))"
+                .into(),
+        );
+    }
+    args.push(Arg::Int(paging.fetch_limit()));
+    let limit = args.len();
+    let sql = format!(
+        "{} SELECT e.id, e.org_id, e.actor_user_id, u.name AS actor_name, e.actor_address, e.action, e.resource_type, \
+         e.resource_id, e.summary, e.created_at \
+         FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id \
+         WHERE {} ORDER BY e.created_at DESC, e.id DESC LIMIT ${limit}",
+        folders::VISIBILITY_CTE,
+        conditions.join(" AND "),
+    );
+    (sql, args)
 }
 
 /// Deletes events older than `audit.retention_days` and records how many went. Answers the
@@ -276,6 +323,58 @@ pub fn spawn_retention_on(state: AppState, schedule: crate::db::Schedule) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The audit pages use the indexes on SQLite instead of scanning every event (checked with
+    /// EXPLAIN QUERY PLAN), for an organization with and without hidden folders, by resource,
+    /// and on a later page.
+    #[tokio::test]
+    async fn audit_pages_use_the_indexes() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        let plan = |viewer: Viewer<'static>, filters: Value, cursor: Option<&'static str>| {
+            let db = db.clone();
+            async move {
+                let q: AuditQuery = serde_json::from_value(filters).unwrap();
+                let paging = Paging::new(Some(50), cursor).unwrap();
+                let (sql, args) = list_sql(&viewer, &q, &paging);
+                let mut query = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+                    "EXPLAIN QUERY PLAN {sql}"
+                )));
+                for arg in args {
+                    query = match arg {
+                        Arg::Text(t) => query.bind(t.map(str::to_string)),
+                        Arg::Int(i) => query.bind(i),
+                    };
+                }
+                query.fetch_all(&db).await.unwrap().into_iter().map(|r| r.3).collect::<Vec<_>>()
+            }
+        };
+        let member = || Viewer { org_id: Some("o"), user_id: "u", role: "viewer", sees_every_folder: 0, scrub: None };
+        let admin = || Viewer { sees_every_folder: 1, ..member() };
+        let events = |plan: &[String]| {
+            plan.iter().filter(|l| l.starts_with("SCAN e") || l.starts_with("SEARCH e")).cloned().collect::<Vec<_>>()
+        };
+        for (viewer, filters, index) in [
+            (admin(), json!({}), "audit_events_org_time_id"),
+            (member(), json!({}), "audit_events_org_time_id"),
+            (admin(), json!({ "action": "dashboard.", "from": 1, "to": 2 }), "audit_events_org_time_id"),
+            (admin(), json!({ "resourceType": "dashboard", "resourceId": "d" }), "audit_events_org_resource"),
+            (member(), json!({ "resourceType": "folder", "resourceId": "f" }), "audit_events_org_resource"),
+        ] {
+            let lines = plan(viewer, filters.clone(), None).await;
+            let access = events(&lines);
+            assert_eq!(access.len(), 1, "{filters}: {lines:?}");
+            assert!(access[0].contains(index), "{filters} uses {index}: {lines:?}");
+            assert!(!lines.iter().any(|l| l.contains("TEMP B-TREE FOR ORDER BY")), "{filters} sorts: {lines:?}");
+        }
+        // A later page seeks to its cursor.
+        let cursor =
+            Paging::new(Some(50), None).unwrap().page(vec![(5_i64, "x".to_string()); 51], |r| (r.0, r.1.as_str()));
+        let next = cursor.next_cursor.clone().expect("a next page");
+        let next: &'static str = Box::leak(next.into_boxed_str());
+        let lines = plan(admin(), json!({}), Some(next)).await;
+        let access = events(&lines);
+        assert!(access[0].starts_with("SEARCH e USING") && access[0].contains("created_at"), "{lines:?}");
+    }
 
     /// Built-in roles that read the audit log also see restricted folders, so this runs the
     /// query directly, as for a custom role with `audit:read` alone.

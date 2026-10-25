@@ -6,6 +6,7 @@ import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, type Step } from "../../analysis/steps";
 import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
+import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -61,6 +62,8 @@ preloadCodeEditor();
 
 /** The single query of Explore; panels created from it keep this reference id. */
 const REF_ID = "A";
+/** The cache key of Explore runs: `[EXPLORE_KEY, orgId, submitted]`. */
+const EXPLORE_KEY = "explore";
 
 interface Submitted {
   datasourceId: string;
@@ -148,11 +151,13 @@ function Explore({ orgId }: { orgId: string }) {
     familyOf(datasource.kind) !== "mongo";
 
   const result = useQuery({
-    queryKey: ["explore", orgId, submitted],
+    queryKey: [EXPLORE_KEY, orgId, submitted],
     enabled: submitted !== null,
     staleTime: Number.POSITIVE_INFINITY,
+    // Each run is a new answer of up to the response size limit; only the latest one stays.
+    gcTime: RESULT_GC_MS,
     ...BUSY_RETRY,
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal, queryKey }) => {
       const run = submitted as Submitted;
       const timeRange = { from: run.from, to: run.to };
       const response = await runQuery(
@@ -169,6 +174,7 @@ function Explore({ orgId }: { orgId: string }) {
         signal,
       );
       void client.invalidateQueries({ queryKey: [HISTORY_KEY, orgId] });
+      dropOlderResults(client, [EXPLORE_KEY, orgId], queryKey);
       return outcomesOf(response, [REF_ID]);
     },
   });

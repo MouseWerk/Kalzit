@@ -3,7 +3,7 @@
 //! (same system identifier and database) is refused after connecting.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
 use serde::Deserialize;
@@ -39,6 +39,10 @@ const POOL_SIZE: u32 = 4;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Columns listed in the schema.
 const MAX_SCHEMA_COLUMNS: i64 = 20_000;
+/// Rows read from the query's cursor per round trip.
+const FETCH_BATCH: usize = 1000;
+/// The cursor a query is read through; closed with the transaction it lives in.
+const CURSOR: &str = "kalzit_rows";
 
 pub fn kind() -> Kind {
     Kind {
@@ -246,6 +250,7 @@ impl DataSourcePlugin for Postgres {
         #[expect(clippy::disallowed_methods, reason = "user database, read-only transaction")]
         let mut tx = c.begin_with("BEGIN READ ONLY").await.map_err(failed)?;
         // The server stops the statement itself, also when this request is dropped mid-query.
+        let deadline = Instant::now() + req.limits.timeout;
         let timeout_ms = req.limits.timeout.as_millis().max(1);
         (&mut *tx)
             .execute(sqlx::AssertSqlSafe(format!("SET LOCAL statement_timeout = {timeout_ms}")))
@@ -255,6 +260,9 @@ impl DataSourcePlugin for Postgres {
         (&mut *tx).execute("SET LOCAL TimeZone = 'UTC'").await.map_err(failed)?;
         // The statement checker reads backslashes in '...' literally, as the SQL standard does.
         (&mut *tx).execute("SET LOCAL standard_conforming_strings = on").await.map_err(failed)?;
+        // The query is read through a cursor; planned for all its rows, as the plain statement
+        // would be, not for the first tenth (the default for cursors).
+        (&mut *tx).execute("SET LOCAL cursor_tuple_fraction = 1.0").await.map_err(failed)?;
         let statement =
             (&mut *tx).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(failed)?;
         let decoders: Vec<Decoder> =
@@ -280,7 +288,17 @@ impl DataSourcePlugin for Postgres {
                 frame.notice(NoticeSeverity::Warning, detail);
             }
         }
-        let mut query = statement.query();
+        // The query runs as a cursor and is read in batches of at most the row limit plus one
+        // (the row that shows the cut): a query with more rows stops on the server instead of
+        // sending all of them, and the rollback closes the cursor. Prepared, so the server infers
+        // the parameter types exactly as for the query itself.
+        let declare = (&mut *tx)
+            .prepare(
+                sqlx::AssertSqlSafe(format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {}", prepared.sql)).into_sql_str(),
+            )
+            .await
+            .map_err(failed)?;
+        let mut query = declare.query();
         for bind in prepared.binds {
             query = match bind {
                 Bind::Null => query.bind(None::<String>),
@@ -294,6 +312,7 @@ impl DataSourcePlugin for Postgres {
                 }
             };
         }
+        query.execute(&mut *tx).await.map_err(failed)?;
         // MONEY travels as a count of the smallest unit; how many fraction digits that has
         // depends on the server's `lc_monetary`, so it is asked, never assumed.
         let money_scale = if decoders.iter().any(|d| matches!(d, Decoder::Money)) {
@@ -303,13 +322,34 @@ impl DataSourcePlugin for Postgres {
         } else {
             0
         };
-        {
-            let mut rows = query.fetch(&mut *tx);
+        let batch = req.limits.max_rows.saturating_add(1).min(FETCH_BATCH);
+        // Not cached: FETCH describes the rows of whichever cursor is open when it is prepared.
+        let fetch = format!("FETCH FORWARD {batch} FROM {CURSOR}");
+        'read: loop {
+            // Each FETCH is a statement of its own: it may only take the time the query has left,
+            // so a cut-off request never keeps the server working for longer than the timeout.
+            let left = deadline.saturating_duration_since(Instant::now()).as_millis();
+            if left == 0 {
+                return Err(SourceError::failed(
+                    "query.statement_timeout",
+                    "the query was cancelled by the statement timeout",
+                ));
+            }
+            (&mut *tx)
+                .execute(sqlx::AssertSqlSafe(format!("SET LOCAL statement_timeout = {left}")))
+                .await
+                .map_err(failed)?;
+            let mut rows = sqlx::query(sqlx::AssertSqlSafe(fetch.clone())).persistent(false).fetch(&mut *tx);
+            let mut read = 0;
             while let Some(row) = rows.try_next().await.map_err(failed)? {
+                read += 1;
                 let values = decoders.iter().enumerate().map(|(i, d)| d.decode(&row, i, money_scale)).collect();
                 if !frame.push_row(values) {
-                    break;
+                    break 'read;
                 }
+            }
+            if read < batch {
+                break;
             }
         }
         tx.rollback().await.map_err(failed)?;

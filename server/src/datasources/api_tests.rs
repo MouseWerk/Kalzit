@@ -1070,6 +1070,64 @@ async fn changed_settings_rebuild_the_connection() {
     t.finish().await;
 }
 
+/// Sessions and permissions are read through the read-only pool; a change committed on the main
+/// pool counts at the very next request.
+#[tokio::test]
+async fn revoked_sessions_and_new_permissions_count_at_once() {
+    let t = T::new().await;
+    let (query_only,): (i64,) = sqlx::query_as("PRAGMA query_only").fetch_one(&t.state.read_db).await.unwrap();
+    assert_eq!(query_only, 1, "a file database reads through its read-only pool");
+    let member = t.session_for_role("lese", Some("viewer")).await;
+    let audit = t.path("/audit");
+    let r = t.send(Method::GET, &audit, None, Some(&member)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    sqlx::query("UPDATE org_members SET role = 'admin' WHERE user_id = (SELECT id FROM users WHERE name = 'lese')")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.send(Method::GET, &audit, None, Some(&member)).await;
+    assert_eq!(r.status, StatusCode::OK, "the new role counts at once: {}", r.text);
+    sqlx::query("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE name = 'lese')")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.send(Method::GET, &audit, None, Some(&member)).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "the revoked session ends at once: {}", r.text);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn parallel_first_queries_share_one_connection() {
+    let t = T::new().await;
+    let file = t.sqlite_file("parallel.db", SALES).await;
+    let id = t.create_sqlite("Parallel", &file).await;
+    let ds = super::resolve_in_org(&t.state.db, &t.org, &id).await.unwrap();
+    // Cold cache: every caller waits for the same build instead of opening its own pool.
+    let conns = futures_util::future::join_all((0..20).map(|_| t.state.datasources.connection(&t.state, &ds))).await;
+    let first = conns[0].as_ref().unwrap().clone();
+    assert!(conns.iter().all(|c| Arc::ptr_eq(c.as_ref().unwrap(), &first)), "one connection per data source");
+    let builds = || t.state.datasources.connection_builds.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(builds(), 1);
+    t.state.datasources.forget(&id);
+    // The same through the query route: twenty panels in one request, one cached connection.
+    let queries: Vec<Value> = (0..20)
+        .map(|i| json!({ "refId": format!("Q{i}"), "datasourceId": id, "query": { "sql": "SELECT id FROM verkauf" } }))
+        .collect();
+    let r = t.query(&t.owner, Value::Array(queries)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert!(r.body["results"]["Q19"]["result"]["frame"].is_object(), "{}", r.text);
+    assert_eq!(builds(), 2, "one build for the twenty parallel queries");
+    let cached = t.state.datasources.cached_connection(&id).expect("cached");
+    let again = t.state.datasources.connection(&t.state, &ds).await.unwrap();
+    assert!(Arc::ptr_eq(&cached, &again));
+    // After the stop began, a new build is closed again instead of handed out.
+    drop((cached, again, first, conns));
+    t.state.datasources.close().await;
+    let e = t.state.datasources.connection(&t.state, &ds).await.err().expect("refused after close");
+    assert!(format!("{e:?}").contains("server.shutting_down"), "{e:?}");
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn roles_and_organizations_are_enforced() {
     let t = T::new().await;
