@@ -259,6 +259,7 @@ on_both_databases! {
     library_panels_check_panel_options,
     hidden_targets_are_kept_but_not_run,
     time_options_are_stored_and_checked,
+    colour_options_are_stored_and_checked,
 }
 
 fn model(title: &str) -> Value {
@@ -442,6 +443,56 @@ async fn time_options_are_stored_and_checked(t: TestApp) {
     odd_range["timeRange"] = json!({ "from": "now-1fq", "to": "now" });
     let refused = t.post("~/dashboards", json!({ "model": odd_range }), &t.owner).await;
     assert_eq!((refused.code(), refused.field()), ("validation", "model"));
+}
+
+/// The panel editor's colours: a colour scheme, free colours next to the palette tones, series
+/// overrides of colour, line style and opacity, and threshold steps with colours. They come back
+/// as stored, panels stored with tones keep working, and invalid values are refused by place.
+async fn colour_options_are_stored_and_checked(t: TestApp) {
+    let field_config = json!({
+        "defaults": {
+            "colorScheme": "thresholds", "color": "#6aa3d8", "opacity": 90, "thresholdDisplay": "lines",
+            "thresholds": { "mode": "absolute", "steps": [
+                { "value": null, "tone": "neutral", "color": "#8a8a93" }, { "value": 80, "tone": "warn", "color": "#e8a33d" }
+            ] }
+        },
+        "overrides": [
+            { "matcher": { "type": "name", "value": "Vortag" },
+              "properties": { "color": "#4FB3A9", "lineStyle": "dashed", "opacity": 85 } },
+            { "matcher": { "type": "name", "value": "Umsatz" }, "properties": { "color": "chart-1" } }
+        ]
+    });
+    let mut coloured = model("Farben");
+    coloured["panels"][0]["fieldConfig"] = field_config.clone();
+    let id = t.dashboard(None, coloured, &t.owner).await;
+    let stored = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
+    assert_eq!(stored.status, StatusCode::OK, "{}", stored.body);
+    assert_eq!(stored.body["model"]["panels"][0]["fieldConfig"], field_config);
+
+    // A panel stored with a tone only, as before, still saves.
+    let mut toned = model("Töne");
+    toned["panels"][0]["fieldConfig"] = json!({ "defaults": { "color": "chart-4" }, "overrides": [] });
+    let saved = t.put(&format!("~/dashboards/{id}"), json!({ "model": toned, "version": 1 }), &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+
+    for (path, value, expect) in [
+        ("/defaults/color", json!("#12345"), "fieldConfig.defaults.color"),
+        ("/defaults/opacity", json!(150), "fieldConfig.defaults.opacity"),
+        ("/defaults/colorScheme", json!("rainbow"), "unknown variant `rainbow`"),
+        ("/defaults/thresholdDisplay", json!("dots"), "unknown variant `dots`"),
+        ("/defaults/thresholds/steps/1/color", json!("orange"), "steps[1].color"),
+        ("/overrides/0/properties/color", json!("#zzzzzz"), "overrides[0].properties.color"),
+    ] {
+        let mut bad = model("Falsch");
+        let mut config = field_config.clone();
+        *config.pointer_mut(path).unwrap() = value;
+        bad["panels"][0]["fieldConfig"] = config;
+        let refused = t.put(&format!("~/dashboards/{id}"), json!({ "model": bad, "version": 2 }), &t.owner).await;
+        assert_eq!((refused.code(), refused.field()), ("validation", "model"), "{path}: {}", refused.body);
+        assert_eq!(refused.body["error"]["reason"], "dashboards.panel_options", "{path}: {}", refused.body);
+        let detail = refused.body["error"]["params"]["detail"].as_str().unwrap_or_default();
+        assert!(detail.contains(expect), "{path}: {}", refused.body);
+    }
 }
 
 async fn annotations_follow_the_dashboard_access(t: TestApp) {
