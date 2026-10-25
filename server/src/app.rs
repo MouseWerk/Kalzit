@@ -37,12 +37,18 @@ pub struct AppState {
     pub touches: Arc<crate::auth::session::Touches>,
     /// Exports making their file at the same time (`routes::export::MAX_EXPORTS`).
     pub exports: Arc<tokio::sync::Semaphore>,
+    /// Users with an export running (making or sending its file): one each.
+    pub export_users: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// The bounds of exports; tests make them small.
+    pub export_limits: Arc<std::sync::RwLock<crate::routes::export::Limits>>,
     /// Checks, downloads and installations of new versions (`updates`).
     pub updates: Arc<crate::updates::Updates>,
 }
 
 impl AppState {
     pub async fn new(config: Config, db: AnyPool, clock: Arc<dyn Clock>, setup_code: Option<String>) -> Result<Self> {
+        // Files left by exports a stop or a crash cut short; nothing runs yet that could own one.
+        crate::routes::export::clear_spool(&config.paths.data_dir);
         let setup = SetupGate::init(&db, &config.paths.data_dir, setup_code).await?;
         crate::auth::password::prewarm().await;
         let sec = &config.security;
@@ -68,6 +74,8 @@ impl AppState {
             background,
             touches,
             exports: Arc::new(tokio::sync::Semaphore::new(crate::routes::export::MAX_EXPORTS)),
+            export_users: Arc::default(),
+            export_limits: Arc::default(),
             updates,
         })
     }

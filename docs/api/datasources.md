@@ -1080,28 +1080,35 @@ browser-side export would need the data in the browser first and could not be re
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
 the format, the time range, the frame, the number of rows and the panel or the data sources,
-never the data, once the whole file has been made (before its last byte is sent); an export refused
-inside the route writes `data.export_refused` with the code and reason as well, and one that breaks
-off after its first bytes (the client went away, the file passed the size limit, the client took
-nothing for 60 s) writes `data.export_aborted` with a `reason`.
+never the data, once the whole file has been made and before its last chunk is sent (when the
+entry cannot be written the download is broken off); an export refused inside the route writes
+`data.export_refused` with the code and reason as well, and one whose download does not complete
+(the client went away, took nothing for 60 s, or needed more than 15 minutes) writes
+`data.export_aborted` with a `reason` (`export.client_gone`, `export.stalled`,
+`export.download_too_long`, `export.audit_failed`), the `bytes` sent and the size `of` the file.
 
 Resources: a server makes at most 3 export files at once (`503 busy`, reason `export.busy`, for
-more). The steps and the encoder stop when the client goes away and when the query time limit
-(`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`); the
-time limit covers the queries and the steps, not the download. The steps' bounds hold here as in
+more), and a user has one export at a time, from making the file to the last byte sent (`503 busy`,
+reason `export.user_busy`). The steps and the encoder stop when the client goes away and when the
+query time limit (`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason
+`steps.timeout`); the time limit covers the queries, the steps and the encoder, not the download.
+An export needs free disk space: the file's estimate plus 1 GiB must be free in the data
+directory's disk (`503 busy`, reason `export.disk_space`). The steps' bounds hold here as in
 the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16 units of made text per run),
 and a file is at most 256 MiB (`export.too_large`).
 
-The file is streamed: the encoder writes chunks of 1 MiB into a queue of two that feeds the
-answer, so a slow client slows the encoder down and memory holds the result frame plus a few
-chunks, however large the file is. CSV and JSON are written row by row and stop at the first
-byte past the size limit. An Excel file is written in constant memory mode (no cell limit): the
-rows go to a temporary file in `export-tmp` inside the data directory, the finished workbook to a
-second one that is then sent, and both are removed afterwards; the size limit is checked on the
-finished workbook, before the first byte is sent. Everything that goes wrong before the first
-chunk (queries, steps, a small file's limits) is an ordinary error answer; a failure later breaks
-the answer off, as the connection does. An export's slot is given back only when its work has
-stopped, also when the client went away. The statement as sent to the database
+The file is made first and sent afterwards, so memory holds the result frame and one chunk,
+however large the file is. The encoder writes the file to a spool file in `export-tmp` inside the
+data directory (CSV and JSON row by row, Excel in constant memory mode, so it has no cell limit)
+and stops at the first byte past the size limit. Everything that goes wrong while the file is made
+(queries, steps, the size limit, disk space) is an ordinary error answer, before anything is sent.
+When the file is complete the server-wide slot is given back and a task of its own sends the file
+from disk, 1 MiB at a time, ending with an error on the connection if it has to give up: when the
+client goes away, takes no chunk for 60 s (`export.stalled`) or needs more than 15 minutes
+(`export.download_too_long`). A client that reads slowly holds no server slot, only its own
+user's. The spool file is removed when the sending ends; the spool folder is emptied when the
+server starts. An export's slot is given back when its work has stopped, also when the client
+went away. The statement as sent to the database
 (`meta.executedQuery`) is not in the file.
 
 - `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
@@ -1412,6 +1419,12 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.failed` | `detail` | the file could not be written |
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
+| `export.user_busy` | | `503 busy`: the user has an export running (making or sending its file) |
+| `export.disk_space` | `free`, `needed` | `503 busy`: too little free disk space to make the file |
+| `export.stalled` | | audit only (`data.export_aborted`): the client took no chunk for 60 s |
+| `export.download_too_long` | | audit only: the download needed more than 15 minutes |
+| `export.client_gone` | | audit only: the client went away during the download |
+| `export.audit_failed` | | audit only: the entry of the export could not be written, so the download was broken off |
 | `export.time_zone_unknown` | | `timeZone` is not a known time zone (`field: timeZone`) |
 | `export.week_start_unknown` | | `weekStart` is not `monday`, `sunday` or `saturday` (`field: weekStart`) |
 

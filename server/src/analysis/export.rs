@@ -183,13 +183,15 @@ pub fn encode_within(
     control: &Control,
     caps: Caps,
 ) -> Result<File, Detail> {
-    let spool = tempfile::tempdir().map_err(|e| io_error(&e))?;
+    // Only an Excel file needs a spool folder.
+    let spool = if format == ExportFormat::Xlsx { Some(tempfile::tempdir().map_err(|e| io_error(&e))?) } else { None };
     let mut chunks = Vec::new();
     let mut out = |c: Vec<u8>| {
         chunks.push(c);
         Ok(())
     };
-    encode_to(frame, name, format, language, control, caps, spool.path(), true, &mut out)?;
+    let spool_path = spool.as_ref().map_or(Path::new(""), |d| d.path());
+    encode_to(frame, name, format, language, control, caps, spool_path, true, &mut out)?;
     let Kind { content_type, extension } = kind(format);
     Ok(File { chunks, content_type, extension })
 }
