@@ -133,6 +133,7 @@ function DataSourceList({
       await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
     },
   });
+  // The source the confirmation asks about, before it is deleted for good.
   const [purging, setPurging] = useState<DatasourceSummary | null>(null);
   const purge = useMutation({
     mutationFn: (id: string) => purgeDatasource(orgId, id),
@@ -223,16 +224,13 @@ function DataSourceList({
           kindName={kindName}
           date={(source) => dateFormat.format(source.deletedAt ?? 0)}
           onRestore={(id) => restore.mutate(id)}
-          onPurge={(source) => {
-            purge.reset();
-            setPurging(source);
-          }}
+          onPurge={setPurging}
         />
         {more}
-        {purging !== null ? (
+        {purging === null ? null : (
           <ConfirmDialog
-            title={t("datasources.trash.purgeTitle")}
-            confirmLabel={t("datasources.trash.purgeConfirm")}
+            title={t("datasources.purge.title")}
+            confirmLabel={t("datasources.purge.confirm")}
             onCancel={() => {
               purge.reset();
               setPurging(null);
@@ -241,9 +239,9 @@ function DataSourceList({
             busy={purge.isPending}
             error={purge.isError ? errorMessage(t, purge.error) : undefined}
           >
-            {t("datasources.trash.purgeText", { name: purging.name })}
+            {t("datasources.purge.text", { name: purging.name })}
           </ConfirmDialog>
-        ) : null}
+        )}
       </div>
     );
   }
@@ -269,7 +267,7 @@ function DataSourceList({
   );
 }
 
-/** The trash: name, kind, when it was deleted, restore and delete for good. */
+/** The trash: name, kind, when it was deleted, and restore. */
 function TrashTable({
   items,
   kindName,
@@ -326,9 +324,9 @@ function TrashTable({
                 type="button"
                 className="button button--ghost button--small"
                 onClick={() => onPurge(source)}
-                aria-label={t("datasources.trash.purgeNamed", { name: source.name })}
+                aria-label={t("datasources.purgeNamed", { name: source.name })}
               >
-                {t("datasources.trash.purge")}
+                {t("datasources.purge")}
               </button>
             </td>
           </tr>

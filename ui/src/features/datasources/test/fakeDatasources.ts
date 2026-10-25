@@ -282,6 +282,12 @@ export interface FakeDatasourcesState {
   schemas: Record<string, unknown>;
   /** The answer of "Test connection" per data source id; healthy by default. */
   health: Record<string, WireHealth>;
+  /** The bodies of the tests of unsaved settings (`POST /datasources/test`), in order. */
+  tests: Record<string, unknown>[];
+  /** Data sources that dashboards still use, with how many: their purge answers `in_use`. */
+  purgeBlocked: Record<string, number>;
+  /** What a test of unsaved settings answers; healthy by default. */
+  testHealth?: WireHealth;
   /** Answers one valid query item. Defaults to `defaultOutcome`. */
   respond: (
     item: QueryItem,
@@ -662,6 +668,8 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       },
     },
     health: {},
+    tests: [],
+    purgeBlocked: {},
     // MongoDB queries run against the fake collections; everything else as `defaultOutcome`.
     respond: (item, range, variables) =>
       typeof (item.query as Record<string, unknown> | null)?.collection === "string"
@@ -836,6 +844,49 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       state.datasources.push(stored);
       return json(201, view(stored));
     }
+    // Settings not saved yet: the same rules as saving, nothing stored.
+    if (parts.length === 2 && parts[1] === "test" && method === "POST") {
+      const allowed =
+        typeof body.datasourceId === "string"
+          ? may(body.datasourceId, "write")
+          : can("datasources:write");
+      if (!allowed) {
+        return error(403, "forbidden");
+      }
+      const extra = unknownKey(body, ["kind", "datasourceId", "settings", "secrets"]);
+      if (extra !== undefined) {
+        return validation(extra);
+      }
+      const kind = FAKE_KINDS.find((k) => k.kind === body.kind);
+      if (kind === undefined) {
+        return validation("kind");
+      }
+      const stored = state.datasources.find((d) => d.id === body.datasourceId);
+      if (body.datasourceId !== undefined && (stored === undefined || stored.deletedAt)) {
+        return error(404, "not_found");
+      }
+      const settings = (body.settings ?? stored?.settings ?? {}) as Record<string, unknown>;
+      const refused = checkSettings(
+        kind,
+        settings,
+        (body.secrets ?? {}) as Record<string, unknown>,
+        body.settings !== undefined,
+      );
+      if (refused !== null) {
+        return refused;
+      }
+      state.tests.push(body);
+      return json(
+        200,
+        state.testHealth ?? {
+          ok: true,
+          reason: "health.connected",
+          params: { engine: "PostgreSQL", version: "17.2" },
+          message: "PostgreSQL 17.2",
+          latencyMs: 7,
+        },
+      );
+    }
     const ds = state.datasources.find((d) => d.id === decodeURIComponent(parts[1] ?? ""));
     const inTrash = ds?.deletedAt !== undefined;
     if (ds === undefined || (inTrash && parts[2] !== "restore" && parts[2] !== "purge")) {
@@ -961,19 +1012,36 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       ds.deletedAt = Date.now();
       return new Response(null, { status: 204 });
     }
+    if (parts[2] === "purge" && method === "DELETE") {
+      if (!inTrash) {
+        return json(409, {
+          error: {
+            code: "conflict",
+            message: "only data sources in the trash can be purged",
+            reason: "datasource.not_in_trash",
+          },
+        });
+      }
+      const used = state.purgeBlocked[ds.id];
+      if (used !== undefined) {
+        return json(409, {
+          error: {
+            code: "conflict",
+            message: "still in use",
+            reason: "datasource.in_use",
+            params: { dashboards: String(used), libraryPanels: "0" },
+          },
+        });
+      }
+      state.datasources.splice(state.datasources.indexOf(ds), 1);
+      return new Response(null, { status: 204 });
+    }
     if (parts[2] === "restore" && method === "POST") {
       if (!inTrash) {
         return error(404, "not_found");
       }
       delete ds.deletedAt;
       return json(200, view(ds));
-    }
-    if (parts[2] === "purge" && method === "DELETE") {
-      if (!inTrash) {
-        return error(404, "not_found");
-      }
-      state.datasources.splice(state.datasources.indexOf(ds), 1);
-      return new Response(null, { status: 204 });
     }
     return undefined;
   }
