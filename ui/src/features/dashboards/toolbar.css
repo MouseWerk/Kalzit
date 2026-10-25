@@ -16,6 +16,21 @@
     min-height: var(--control-height);
   }
 
+  /*
+   * From tablet width up it sticks right under the top bar, covering what scrolls beneath it. On
+   * phones its two rows would take too much of the screen, so only the top bar sticks there.
+   */
+  @media (min-width: 48rem) {
+    .dash-toolbar {
+      position: sticky;
+      inset-block-start: var(--top-bar-height, 0px);
+      z-index: var(--z-bar);
+      margin-block: calc(var(--space-2) * -1);
+      padding-block: var(--space-2);
+      background: var(--bg);
+    }
+  }
+
   .dash-toolbar__start {
     display: flex;
     align-items: center;
@@ -182,11 +197,28 @@
 
   .dash-rail__column {
     position: sticky;
-    inset-block-start: var(--space-2);
+    inset-block-start: calc(
+      var(--top-bar-height, 0px) +
+      var(--dash-toolbar-height, 0px) +
+      var(--space-2)
+    );
     display: flex;
     flex-direction: column;
-    align-self: stretch;
-    min-height: min(100%, calc(100dvh - var(--space-16)));
+    /*
+     * As tall as the window below the bars, less the page's bottom padding (or the canvas, when
+     * that is shorter), so it sticks and never gets pushed under the toolbar at the page's end.
+     */
+    align-self: flex-start;
+    height: min(
+      100%,
+      calc(
+        100dvh -
+        var(--top-bar-height, 0px) -
+        var(--dash-toolbar-height, 0px) -
+        var(--space-4) -
+        var(--space-page-bottom)
+      )
+    );
     padding: var(--space-1);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
@@ -218,12 +250,22 @@
 
   .dash-pane {
     position: sticky;
-    inset-block-start: var(--space-2);
+    inset-block-start: calc(
+      var(--top-bar-height, 0px) +
+      var(--dash-toolbar-height, 0px) +
+      var(--space-2)
+    );
     display: grid;
     align-content: start;
     gap: var(--space-2);
     width: var(--size-column);
-    max-height: calc(100dvh - var(--space-4));
+    max-height: calc(
+      100dvh -
+      var(--top-bar-height, 0px) -
+      var(--dash-toolbar-height, 0px) -
+      var(--space-4) -
+      var(--space-page-bottom)
+    );
     overflow-y: auto;
     padding: var(--space-3);
     border: var(--border-width) solid var(--border);

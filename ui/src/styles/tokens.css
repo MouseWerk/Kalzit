@@ -125,6 +125,10 @@
     /* Layers, lowest first. */
     --z-base: 0;
     --z-sticky: 10;
+    /* The top bar and the dashboard toolbar: above sticky parts inside panels, below menus. */
+    --z-bar: 50;
+    /* Kiosk and TV mode cover the page, bars included. */
+    --z-kiosk: 60;
     --z-menu: 100;
     --z-dialog: 200;
     --z-toast: 300;
@@ -141,6 +145,12 @@
     --content-max-width: 72rem;
     /* The gutter around the content, the gap of the dashboard grid and a panel's inner padding. */
     --space-gutter: var(--space-6);
+    /*
+     * The page's padding above and below the content. The sticky top bar takes over the top one,
+     * and sticky columns leave room for both so they never get pushed under the bars.
+     */
+    --space-page-top: var(--space-5);
+    --space-page-bottom: var(--space-10);
     --space-grid: var(--space-2);
     /* Pulls a row of small ghost buttons back by their padding, so their text lines up. */
     --space-ghost-pull: calc(-1 * (var(--space-2) + var(--border-width)));

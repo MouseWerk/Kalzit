@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useRef } from "react";
 import { Icon } from "../components/Icon";
 import { WithTooltip } from "../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
@@ -7,6 +8,7 @@ import { useOrgPermissions } from "../org/useOrg";
 import { setOverlay } from "./overlay";
 import { paletteShortcut } from "./ShortcutsHelp";
 import { sidebarShortcut } from "./sidebarState";
+import { useHeightVar } from "./useHeightVar";
 import "./shellUx.css";
 
 /** Where the documentation lives: the project's docs folder. */
@@ -33,6 +35,9 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
   const permissions = useOrgPermissions();
   const palette = paletteShortcut();
   const toggle = sidebarShortcut();
+  // The bar stays at the top while the page scrolls; what sticks below it starts at its height.
+  const barRef = useRef<HTMLDivElement>(null);
+  useHeightVar(barRef, "--top-bar-height");
 
   const create: ToolbarMenuEntry[] = [];
   if (permissions.has("dashboards:write")) {
@@ -87,7 +92,7 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
   ];
 
   return (
-    <div className="shell__header top-bar">
+    <div ref={barRef} className="shell__header top-bar">
       {wide ? (
         <button
           type="button"

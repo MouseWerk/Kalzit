@@ -6,6 +6,12 @@
     background: var(--bg);
     color: var(--text);
     -webkit-font-smoothing: antialiased;
+    /* Anchor jumps and scrolled-in panels land below the sticky top bar (and dashboard toolbar). */
+    scroll-padding-block-start: calc(
+      var(--top-bar-height, 0px) +
+      var(--dash-toolbar-height, 0px) +
+      var(--space-2)
+    );
   }
 
   body {

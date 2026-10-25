@@ -11,13 +11,20 @@
     align-items: start;
   }
 
+  /*
+   * The navigation fills the height below the top bar and stays put while the section scrolls;
+   * a navigation taller than the window scrolls on its own. Its height leaves room for the
+   * page's bottom padding, so it never gets pushed up under the bar at the end of the page.
+   */
   .settings-nav {
     position: sticky;
-    top: var(--space-4);
+    top: calc(var(--top-bar-height, 0px) + var(--space-4));
     display: flex;
     flex-direction: column;
     gap: var(--space-half);
-    min-height: calc(100dvh - var(--space-16));
+    height: calc(100dvh - var(--top-bar-height, 0px) - var(--space-4) - var(--space-page-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--space-5) var(--space-3);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
@@ -234,7 +241,7 @@
     align-items: center;
     gap: var(--space-3) var(--space-4);
     padding: var(--space-3) var(--space-4);
-    scroll-margin-block: var(--space-16);
+    scroll-margin-block: var(--space-4);
     transition: background-color var(--duration-normal) var(--easing);
   }
 
@@ -530,7 +537,7 @@
 
   .settings-preview {
     position: sticky;
-    top: var(--space-4);
+    top: calc(var(--top-bar-height, 0px) + var(--space-4));
     display: grid;
     gap: var(--space-3);
     padding: var(--space-card);
@@ -694,7 +701,8 @@
 
     .settings-nav {
       position: static;
-      min-height: 0;
+      height: auto;
+      overflow: visible;
       padding: var(--space-3);
     }
 
