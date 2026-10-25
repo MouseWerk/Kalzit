@@ -629,7 +629,7 @@ export function LibrarySaveDialog({
     queryKey: [LIBRARY_PANELS_KEY, orgId, "uses", libraryId],
     queryFn: ({ signal }) => fetchLibraryUses(orgId, libraryId, signal),
   });
-  const count = uses.data === undefined ? null : uses.data.items.length + uses.data.hidden;
+  const count = uses.data === undefined ? null : uses.data.items.length;
   return (
     <Dialog
       title={t("libraryPanels.saveTitle")}
@@ -663,9 +663,6 @@ export function LibrarySaveDialog({
           {uses.data.items.map((d) => (
             <li key={d.id}>{d.title}</li>
           ))}
-          {uses.data.hidden > 0 ? (
-            <li>{t("libraryPanels.hiddenUses", { count: uses.data.hidden })}</li>
-          ) : null}
         </ul>
       )}
       <FormAlert>{error}</FormAlert>

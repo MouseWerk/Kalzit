@@ -202,6 +202,36 @@ impl TestApp {
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         r.items().len()
     }
+
+    /// The audit events with `action` about `resource_id`, newest first.
+    async fn events(&self, action: &str, resource_id: &str) -> Vec<Value> {
+        let r = self.get(&format!("~/audit?action={action}&resourceId={resource_id}"), &self.owner).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        r.items().clone()
+    }
+
+    /// `PUT .../{kind}/{id}/owner` as `cookie`.
+    async fn set_owner(&self, kind: &str, id: &str, team: Option<&str>, visibility: &str, cookie: &str) -> Reply {
+        self.put(&format!("~/{kind}/{id}/owner"), json!({ "ownerTeamId": team, "visibility": visibility }), cookie)
+            .await
+    }
+
+    async fn subfolder(&self, name: &str, parent: &str, cookie: &str) -> String {
+        id_of(self.post("~/folders", json!({ "name": name, "parentId": parent }), cookie).await)
+    }
+
+    /// Moves a folder as `cookie`.
+    async fn move_folder(&self, id: &str, parent: Option<&str>, cookie: &str) -> Reply {
+        let tree = self.get("~/folders", &self.owner).await;
+        fn find(nodes: &[Value], id: &str) -> Option<Value> {
+            nodes
+                .iter()
+                .find_map(|n| if n["id"] == id { Some(n.clone()) } else { find(n["children"].as_array().unwrap(), id) })
+        }
+        let version = find(tree.items(), id).unwrap()["version"].clone();
+        let body = json!({ "parentId": parent, "version": version });
+        self.send(Method::PATCH, &self.path(&format!("~/folders/{id}")), Some(body), Some(cookie)).await
+    }
 }
 
 fn id_of(r: Reply) -> String {
@@ -259,6 +289,13 @@ on_both_databases! {
     the_team_context_is_checked_against_membership;
     team_owned_dashboards_in_shared_folders;
     folders_without_a_team_keep_their_access;
+    owner_changes_follow_the_owner_rules;
+    moving_out_of_a_space_is_for_maintainers;
+    admin_access_is_audited_per_permission;
+    joining_a_team_with_spaces;
+    outsiders_reach_nothing_else_either;
+    library_panels_in_spaces;
+    nested_owners_decide_by_the_nearest;
 }
 
 /// Two teams with an editor each and a space each: (team a, team b, a's editor, b's editor).
@@ -268,6 +305,7 @@ struct Teams {
     anna: String,
     bert: String,
     anna_id: String,
+    bert_id: String,
     space_a: String,
     space_b: String,
 }
@@ -282,7 +320,7 @@ async fn two_teams(t: &TestApp) -> Teams {
     // Maintainers create their team's space.
     let space_a = t.space("Betrieb", &a, &anna).await;
     let space_b = t.space("Vertrieb", &b, &bert).await;
-    Teams { a, b, anna, bert, anna_id, space_a, space_b }
+    Teams { a, b, anna, bert, anna_id, bert_id, space_a, space_b }
 }
 
 async fn other_teams_cannot_reach_a_space_through_any_route(t: TestApp) {
@@ -519,9 +557,14 @@ async fn team_owned_dashboards_in_shared_folders(t: TestApp) {
     let r =
         t.put(&format!("~/dashboards/{d}/owner"), json!({ "ownerTeamId": s.b, "visibility": "shared" }), &s.anna).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
-    // Bert makes it team B's: everyone reads it, only B edits it.
+    // Nor can Bert hand open content to his team: that needs folders:permissions on its folder.
     let r =
         t.put(&format!("~/dashboards/{d}/owner"), json!({ "ownerTeamId": s.b, "visibility": "shared" }), &s.bert).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    // An admin makes it team B's: everyone reads it, only B edits it.
+    let r = t
+        .put(&format!("~/dashboards/{d}/owner"), json!({ "ownerTeamId": s.b, "visibility": "shared" }), &t.owner)
+        .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.body["ownerTeam"]["name"], "Vertrieb");
     let seen = t.get(&format!("~/dashboards/{d}"), &s.anna).await;
@@ -540,6 +583,11 @@ async fn team_owned_dashboards_in_shared_folders(t: TestApp) {
     assert_eq!(t.save(&d, "Kennzahlen A", None, &s.anna).await.status, StatusCode::OK);
     // Team only: hidden from everyone else everywhere, including a team-owned folder's content.
     let only = t.dashboard("Nur Vertrieb", Some(&shared), &s.bert).await;
+    let r = t
+        .put(&format!("~/dashboards/{only}/owner"), json!({ "ownerTeamId": s.b, "visibility": "shared" }), &t.owner)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Within what his team owns, Bert decides the visibility himself.
     let r = t
         .put(&format!("~/dashboards/{only}/owner"), json!({ "ownerTeamId": s.b, "visibility": "team" }), &s.bert)
         .await;
@@ -583,7 +631,330 @@ async fn folders_without_a_team_keep_their_access(t: TestApp) {
     // A member without any team has no team context and sees everything they may see.
     let ctx = t.get("~/team-context", &editor).await;
     assert_eq!((ctx.body["teamId"].clone(), ctx.body["teams"].clone()), (Value::Null, json!([])));
-    // Without a team, nothing changed for admins: no admin-access entries for plain folders.
+    // Admins still open restricted folders; that access is recorded like access to a team's
+    // space (a space handed to the organization is such a folder), plain content is not.
     assert_eq!(t.get(&format!("~/dashboards/{hidden}"), &t.owner).await.status, StatusCode::OK);
-    assert_eq!(t.admin_accesses(&hidden).await, 0);
+    assert_eq!(t.admin_accesses(&hidden).await, 1);
+    assert_eq!(t.get(&format!("~/dashboards/{d}"), &t.owner).await.status, StatusCode::OK);
+    assert_eq!(t.admin_accesses(&d).await, 0);
+}
+
+/// A library panel without queries, so members who may not query data sources can be given it.
+fn library_model(title: &str) -> Value {
+    json!({ "schemaVersion": 2, "type": "table", "title": title, "targets": [] })
+}
+
+/// A dashboard model showing one library panel.
+fn showing(title: &str, library: &str) -> Value {
+    json!({ "schemaVersion": 2, "title": title, "timeRange": { "from": "now-6h", "to": "now" },
+            "panels": [{ "id": "lp", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                         "libraryPanelId": library }] })
+}
+
+async fn owner_changes_follow_the_owner_rules(t: TestApp) {
+    let s = two_teams(&t).await;
+    // Vic maintains team A with the org role viewer; Carl is an editor in both teams.
+    let (vic_id, vic) = t.member("Vic", "viewer").await;
+    t.join(&s.a, &vic_id, "maintainer").await;
+    let (carl_id, carl) = t.member("Carl", "editor").await;
+    t.join(&s.a, &carl_id, "member").await;
+    t.join(&s.b, &carl_id, "member").await;
+
+    // B1: a maintainer cannot open up the space or hand it away, whatever their role; only org
+    // admins change a team space's owner or visibility.
+    for cookie in [&vic, &s.anna] {
+        for (team, visibility) in [(None, "shared"), (None, "team"), (Some(s.b.as_str()), "team")] {
+            let r = t.set_owner("folders", &s.space_a, team, visibility, cookie).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{team:?} {visibility}: {}", r.body);
+        }
+        let r = t
+            .send(
+                Method::PATCH,
+                &t.path(&format!("~/folders/{}", s.space_a)),
+                Some(json!({ "restricted": false, "version": 1 })),
+                Some(cookie),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    }
+    // Vic got no grant out of trying.
+    let grants = t.get(&format!("~/grants?resourceType=folder&resourceId={}", s.space_a), &t.owner).await;
+    assert!(grants.items().is_empty(), "{}", grants.body);
+    // A viewer maintainer cannot change ownership inside the space either: no folders:write.
+    let sub = t.subfolder("Netz", &s.space_a, &s.anna).await;
+    let r = t.set_owner("folders", &sub, Some(&s.a), "team", &vic).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+
+    // B2: inside A's space, content belongs to team A or nobody, unless an org admin decides.
+    let d = t.dashboard("Leitstand", Some(&s.space_a), &s.anna).await;
+    let r = t.set_owner("dashboards", &d, Some(&s.b), "shared", &carl).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.set_owner("folders", &sub, Some(&s.b), "shared", &s.anna).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.set_owner("dashboards", &d, Some(&s.a), "team", &carl).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.set_owner("dashboards", &d, Some(&s.b), "shared", &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // B3: open content goes to a team only through folders:permissions on its folder.
+    let open = t.folder("Gemeinsam", None, false).await;
+    let shared = t.dashboard("Kennzahlen", Some(&open), &t.owner).await;
+    let r = t.set_owner("dashboards", &shared, Some(&s.a), "shared", &carl).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.set_owner("folders", &open, Some(&s.a), "shared", &carl).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let body = json!({ "subjectType": "user", "subjectId": carl_id, "resourceType": "folder",
+                       "resourceId": open, "level": "admin" });
+    assert!(t.post("~/grants", body, &t.owner).await.status.is_success());
+    let r = t.set_owner("dashboards", &shared, Some(&s.a), "shared", &carl).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Within what team A owns, its editors change owner and visibility without the grant.
+    let other = t.dashboard("Wartung", Some(&open), &t.owner).await;
+    t.set_owner("dashboards", &other, Some(&s.a), "shared", &t.owner).await;
+    let (_, edith) = t.member("Edith", "editor").await;
+    let r = t.set_owner("dashboards", &other, Some(&s.a), "team", &edith).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.set_owner("dashboards", &other, Some(&s.b), "team", &carl).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    // A stale version is a conflict, not a silent change.
+    let current = t.get(&format!("~/dashboards/{other}"), &t.owner).await.body["version"].as_i64().unwrap();
+    let body = json!({ "ownerTeamId": s.b, "visibility": "shared", "version": current + 5 });
+    let r = t.put(&format!("~/dashboards/{other}/owner"), body, &t.owner).await;
+    assert_eq!((r.status, r.code()), (StatusCode::CONFLICT, "version_conflict"), "{}", r.body);
+    let body = json!({ "ownerTeamId": s.a, "visibility": "shared", "version": 1 });
+    let r = t.put(&format!("~/folders/{sub}/owner"), body, &s.anna).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let body = json!({ "ownerTeamId": s.a, "visibility": "team", "version": 1 });
+    let r = t.put(&format!("~/folders/{sub}/owner"), body, &s.anna).await;
+    assert_eq!((r.status, r.code()), (StatusCode::CONFLICT, "version_conflict"), "{}", r.body);
+
+    // The owner opens a team space up, audited as an owner change.
+    let r = t.set_owner("folders", &s.space_b, None, "shared", &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.events("folder.owner_changed", &s.space_b).await.len(), 1);
+}
+
+async fn moving_out_of_a_space_is_for_maintainers(t: TestApp) {
+    let s = two_teams(&t).await;
+    let (carl_id, carl) = t.member("Carl", "editor").await;
+    t.join(&s.a, &carl_id, "member").await;
+    let general = t.folder("Allgemein", None, false).await;
+    let inner = t.subfolder("Netz", &s.space_a, &s.anna).await;
+    let d = t.dashboard("Störungen", Some(&s.space_a), &carl).await;
+    // An editor of the team moves within the space, not out of it.
+    assert_eq!(t.save(&d, "Störungen", Some(Some(&inner)), &carl).await.status, StatusCode::OK);
+    assert_eq!(t.save(&d, "Störungen", Some(Some(&general)), &carl).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.save(&d, "Störungen", Some(None), &carl).await.status, StatusCode::FORBIDDEN);
+    // The maintainer does, and the move is recorded with source and target.
+    assert_eq!(t.save(&d, "Störungen", Some(Some(&general)), &s.anna).await.status, StatusCode::OK);
+    let moved = t.events("team_space.moved_out", &d).await;
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0]["summary"]["spaceId"], s.space_a.as_str());
+    assert_eq!(moved[0]["summary"]["from"], inner.as_str());
+    assert_eq!(moved[0]["summary"]["to"], general.as_str());
+
+    // A folder goes out of the space only with every team's content in it movable by the caller.
+    let carried = t.subfolder("Mitnahme", &s.space_a, &s.anna).await;
+    let theirs = t.dashboard("Fremd", Some(&carried), &s.anna).await;
+    let r = t.set_owner("dashboards", &theirs, Some(&s.b), "shared", &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.move_folder(&carried, None, &carl).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.move_folder(&carried, None, &s.anna).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.move_folder(&carried, Some(&general), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.events("team_space.moved_out", &carried).await.len(), 1);
+    // Within the space, editors move folders as before.
+    let deep = t.subfolder("Tief", &s.space_a, &s.anna).await;
+    assert_eq!(t.move_folder(&deep, Some(&inner), &carl).await.status, StatusCode::OK);
+    // A team space stays at the top level.
+    let r = t.move_folder(&s.space_a, Some(&general), &t.owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+
+    // A folder with children moves from A's space into B's, which shared edit with team A: the
+    // maintainer takes it along, and B's members then see what it holds.
+    let parcel = t.subfolder("Paket", &s.space_a, &s.anna).await;
+    let child = t.subfolder("Kind", &parcel, &s.anna).await;
+    let packed = t.dashboard("Im Paket", Some(&child), &s.anna).await;
+    assert_eq!(t.get(&format!("~/dashboards/{packed}"), &s.bert).await.status, StatusCode::NOT_FOUND);
+    t.grant_team(&s.a, "folder", &s.space_b, "edit").await;
+    assert_eq!(t.move_folder(&parcel, Some(&s.space_b), &carl).await.status, StatusCode::FORBIDDEN);
+    let r = t.move_folder(&parcel, Some(&s.space_b), &s.anna).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.events("team_space.moved_out", &parcel).await[0]["summary"]["to"], s.space_b.as_str());
+    assert_eq!(t.get(&format!("~/dashboards/{packed}"), &s.bert).await.status, StatusCode::OK);
+}
+
+async fn admin_access_is_audited_per_permission(t: TestApp) {
+    let s = two_teams(&t).await;
+    let open = t.folder("Gemeinsam", None, false).await;
+    let d = t.dashboard("Absatz", Some(&open), &t.owner).await;
+    t.set_owner("dashboards", &d, Some(&s.b), "shared", &t.owner).await;
+    // Reading a shared team dashboard is everyone's: no entry.
+    assert_eq!(t.get(&format!("~/dashboards/{d}"), &t.owner).await.status, StatusCode::OK);
+    assert_eq!(t.admin_accesses(&d).await, 0);
+    // Changing it rests on the admin's reach: recorded, with the permission and the team.
+    assert_eq!(t.save(&d, "Absatz neu", None, &t.owner).await.status, StatusCode::OK);
+    let events = t.events("team_space.admin_access", &d).await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["summary"]["permission"], "dashboards:write");
+    assert_eq!(events[0]["summary"]["teamId"], s.b.as_str());
+    // "Why can I" on another team's space is access too, even with a grant on a folder in reach
+    // that does not give what was asked.
+    let inner = t.subfolder("Netz", &s.space_a, &s.anna).await;
+    let r =
+        t.get(&format!("~/explain?permission=folders:write&resourceType=folder&resourceId={inner}"), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let events = t.events("team_space.admin_access", &inner).await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["summary"]["governingId"], s.space_a.as_str());
+    // A space handed to the organization is still recorded.
+    let gone = t.team("Aufgelöst").await;
+    let (zoe_id, zoe) = t.member("Zoe", "editor").await;
+    t.join(&gone, &zoe_id, "maintainer").await;
+    let space = t.space("Archiv", &gone, &zoe).await;
+    let kept = t.dashboard("Archivbericht", Some(&space), &zoe).await;
+    assert_eq!(t.delete(&format!("~/teams/{gone}?transferTo=org"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.get(&format!("~/dashboards/{kept}"), &t.owner).await.status, StatusCode::OK);
+    assert_eq!(t.admin_accesses(&kept).await, 1);
+}
+
+async fn joining_a_team_with_spaces(t: TestApp) {
+    let s = two_teams(&t).await;
+    let (newbie_id, _) = t.member("Neu", "viewer").await;
+    // A member manager without folders:permissions cannot open a team space by adding people.
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Teamverwaltung", "description": "", "permissions": ["teams:read", "teams:members"] }),
+            &t.owner,
+        )
+        .await;
+    assert!(role.status.is_success(), "{}", role.body);
+    let (_, manager) = t.member("Mia", role.body["id"].as_str().unwrap()).await;
+    let r = t.put(&format!("~/teams/{}/members/{newbie_id}", s.a), json!({ "role": "member" }), &manager).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    // A team without spaces is theirs to fill.
+    let plain = t.team("Ohne Bereich").await;
+    let r = t.put(&format!("~/teams/{plain}/members/{newbie_id}"), json!({ "role": "member" }), &manager).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // The maintainer adds members; an org admin does too, recorded as admin access.
+    let r = t.put(&format!("~/teams/{}/members/{newbie_id}", s.a), json!({ "role": "member" }), &s.anna).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.join(&s.b, &newbie_id, "member").await;
+    let events = t.events("team_space.admin_access", &s.b).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["summary"]["action"], "team.member_added");
+}
+
+async fn outsiders_reach_nothing_else_either(t: TestApp) {
+    let s = two_teams(&t).await;
+    let d = t.dashboard("Netzlast", Some(&s.space_a), &s.anna).await;
+    let not_found = |r: Reply| assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    // Stored panel queries, version restore, pins, grants.
+    let q = json!({ "timeRange": { "from": 0, "to": 1 }, "variables": {} });
+    not_found(t.post(&format!("~/dashboards/{d}/panels/p1/query"), q.clone(), &s.bert).await);
+    not_found(t.post(&format!("~/dashboards/{d}/versions/1/restore"), json!(null), &s.bert).await);
+    not_found(t.put(&format!("~/dashboards/{d}/pin"), json!(null), &s.bert).await);
+    let body = json!({ "subjectType": "team", "subjectId": s.b, "resourceType": "folder",
+                       "resourceId": s.space_a, "level": "edit" });
+    not_found(t.post("~/grants", body, &s.bert).await);
+    let body = json!({ "subjectType": "team", "subjectId": s.b, "resourceType": "dashboard",
+                       "resourceId": d, "level": "view" });
+    not_found(t.post("~/grants", body, &s.bert).await);
+    // Trash, restore and purge.
+    not_found(t.delete(&format!("~/dashboards/{d}"), &s.bert).await);
+    assert_eq!(t.delete(&format!("~/dashboards/{d}"), &s.anna).await.status, StatusCode::NO_CONTENT);
+    not_found(t.post(&format!("~/dashboards/{d}/restore"), json!(null), &s.bert).await);
+    not_found(t.delete(&format!("~/dashboards/{d}/purge"), &s.bert).await);
+    let trash = t.get("~/dashboards?trashed=true", &s.bert).await;
+    assert!(trash.items().is_empty(), "{}", trash.body);
+    assert_eq!(t.post(&format!("~/dashboards/{d}/restore"), json!(null), &s.anna).await.status, StatusCode::OK);
+    not_found(t.post(&format!("~/folders/{}/restore", s.space_a), json!(null), &s.bert).await);
+    not_found(t.delete(&format!("~/folders/{}/purge", s.space_a), &s.bert).await);
+    // Stars, pins and scoped lists for members of the team.
+    assert_eq!(t.put(&format!("~/dashboards/{d}/star"), json!(null), &s.anna).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.put(&format!("~/dashboards/{d}/pin"), json!(null), &s.anna).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.get(&format!("~/stars?team={}", s.a), &s.anna).await.titles(), ["Netzlast"]);
+    assert_eq!(t.get(&format!("~/pins?team={}", s.a), &s.anna).await.titles(), ["Netzlast"]);
+    assert_eq!(t.get(&format!("~/stars?team={}", s.b), &s.anna).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(t.get(&format!("~/pins?team={}", s.b), &s.anna).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(t.get(&format!("~/folders?team={}", s.b), &s.anna).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+    // Bert's star and pin of it never come into being, so his lists stay empty.
+    assert!(t.get(&format!("~/stars?team={}", s.b), &s.bert).await.items().is_empty());
+    assert!(t.get("~/pins", &s.bert).await.items().is_empty());
+    // A grant to Bert in person keeps A's dashboard in his team context too.
+    let body = json!({ "subjectType": "user", "subjectId": s.bert_id, "resourceType": "dashboard",
+                       "resourceId": d, "level": "view" });
+    assert!(t.post("~/grants", body, &t.owner).await.status.is_success());
+    assert_eq!(t.get(&format!("~/dashboards?team={}", s.b), &s.bert).await.titles(), ["Netzlast"]);
+}
+
+async fn library_panels_in_spaces(t: TestApp) {
+    let s = two_teams(&t).await;
+    let open = t.folder("Allgemein", None, false).await;
+    let made = t
+        .post(
+            "~/library-panels",
+            json!({ "name": "Lastkurve", "model": library_model("Lastkurve"), "folderId": s.space_a }),
+            &s.anna,
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let lib = made.body["id"].as_str().unwrap().to_string();
+    // Team B neither opens nor lists it.
+    assert_eq!(t.get(&format!("~/library-panels/{lib}"), &s.bert).await.status, StatusCode::NOT_FOUND);
+    let listed = t.get("~/library-panels", &s.bert).await;
+    assert!(listed.items().iter().all(|p| p["id"] != lib.as_str()), "{}", listed.body);
+    // A panel in the open tree used by dashboards in two places cannot move into A's space.
+    let shared = t
+        .post("~/library-panels", json!({ "name": "Kopf", "model": library_model("Kopf"), "folderId": open }), &t.owner)
+        .await;
+    let shared_id = shared.body["id"].as_str().unwrap().to_string();
+    let inside = id_of(
+        t.post("~/dashboards", json!({ "folderId": s.space_a, "model": showing("Innen", &shared_id) }), &s.anna).await,
+    );
+    id_of(t.post("~/dashboards", json!({ "folderId": open, "model": showing("Außen", &shared_id) }), &t.owner).await);
+    let body = json!({ "version": 1, "name": "Kopf", "model": library_model("Kopf"), "folderId": s.space_a });
+    let r = t.put(&format!("~/library-panels/{shared_id}"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+    // Counts tell only what the caller may read.
+    assert_eq!(t.get(&format!("~/library-panels/{shared_id}"), &s.bert).await.body["uses"], 1);
+    assert_eq!(t.get(&format!("~/library-panels/{shared_id}"), &s.anna).await.body["uses"], 2);
+    let uses = t.get(&format!("~/library-panels/{shared_id}/uses"), &s.bert).await;
+    assert_eq!(uses.body["items"].as_array().unwrap().len(), 1);
+    assert!(uses.body.get("hidden").is_none(), "{}", uses.body);
+    // An editor of the team cannot take A's panel out of the space; its maintainer can.
+    let (carl_id, carl) = t.member("Carl", "editor").await;
+    t.join(&s.a, &carl_id, "member").await;
+    let body = json!({ "version": 1, "name": "Lastkurve", "model": library_model("Lastkurve"), "folderId": open });
+    assert_eq!(t.put(&format!("~/library-panels/{lib}"), body.clone(), &carl).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.put(&format!("~/library-panels/{lib}"), body, &s.anna).await.status, StatusCode::OK);
+    let _ = inside;
+}
+
+async fn nested_owners_decide_by_the_nearest(t: TestApp) {
+    let s = two_teams(&t).await;
+    let open = t.folder("Allgemein", None, false).await;
+    let owned = t.folder("Betriebsordner", Some(&open), false).await;
+    t.set_owner("folders", &owned, Some(&s.a), "shared", &t.owner).await;
+    let theirs = t.dashboard("Vertriebsbericht", Some(&owned), &t.owner).await;
+    t.set_owner("dashboards", &theirs, Some(&s.b), "shared", &t.owner).await;
+    let ours = t.dashboard("Betriebsbericht", Some(&owned), &t.owner).await;
+    // The dashboard's own owner decides who edits it, the folder's owner the rest.
+    assert_eq!(t.save(&theirs, "Vertrieb neu", None, &s.bert).await.status, StatusCode::OK);
+    assert_eq!(t.save(&theirs, "Vertrieb A", None, &s.anna).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.save(&ours, "Betrieb neu", None, &s.anna).await.status, StatusCode::OK);
+    assert_eq!(t.save(&ours, "Betrieb B", None, &s.bert).await.status, StatusCode::FORBIDDEN);
+    // Annotations follow the owner too.
+    let path = format!("~/dashboards/{ours}/annotations");
+    let note = json!({ "time": 1_800_000_000_000_i64, "text": "Wartung" });
+    assert_eq!(t.post(&path, note.clone(), &s.bert).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.post(&path, note, &s.anna).await.status, StatusCode::CREATED);
+    // A team-only dashboard of B inside A's folder: B's members see it, A's members do not.
+    t.set_owner("dashboards", &theirs, Some(&s.b), "team", &s.bert).await;
+    assert_eq!(t.get(&format!("~/dashboards/{theirs}"), &s.anna).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.get(&format!("~/dashboards/{theirs}"), &s.bert).await.status, StatusCode::OK);
 }

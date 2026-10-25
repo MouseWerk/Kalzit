@@ -284,6 +284,14 @@ impl Tree {
         from != to && !(team_owned(from) && team_owned(to))
     }
 
+    /// The team space `id` lies in (the folder itself included): its top-level folder when that
+    /// is restricted and owned by a team, as (space id, team id).
+    pub fn space_of(&self, id: &str) -> Option<(&str, &str)> {
+        let top = self.ancestors(id).into_iter().last()?;
+        let team = top.owner_team_id.as_deref().filter(|_| top.restricted != 0 && top.parent_id.is_none())?;
+        Some((top.id.as_str(), team))
+    }
+
     /// Whether the caller sees the folder (see `VISIBILITY_CTE`).
     pub fn visible(&self, id: &str) -> bool {
         !self.hidden.contains(id)
@@ -354,10 +362,46 @@ impl Tree {
     }
 }
 
+/// The grants a team context counts as shared with it: to the team itself, to the caller in
+/// person and to their roles (grants to the caller's other teams belong to those teams' contexts).
+const SCOPE_GRANTS: &str = "SELECT g.resource_type, g.resource_id FROM resource_grants g \
+     WHERE g.org_id = $1 AND g.resource_type IN ('folder', 'dashboard') \
+     AND ((g.subject_type = 'team' AND g.subject_id = $2) OR (g.subject_type = 'user' AND g.subject_id = $3) \
+     OR (g.subject_type = 'role' AND (g.subject_id = $4 OR g.subject_id IN (SELECT r.role FROM team_roles r \
+         JOIN team_members m ON m.team_id = r.team_id JOIN teams t ON t.id = m.team_id \
+         WHERE m.user_id = $3 AND t.org_id = $1))))";
+
+/// To follow `VISIBILITY_CTE` (it starts with a comma): `scope_grants(resource_type,
+/// resource_id)` and `scope_out(id)`, the folders a team context leaves out, by the rule of
+/// `TeamScope`. `$n` is the team (NULL: no team context, nothing is left out); `$1` to `$3` are
+/// those of `VISIBILITY_CTE`.
+pub fn scope_cte(n: usize) -> String {
+    format!(
+        ", scope_grants(resource_type, resource_id) AS (SELECT g.resource_type, g.resource_id FROM resource_grants g \
+         WHERE g.org_id = $1 AND ((g.subject_type = 'team' AND g.subject_id = CAST(${n} AS TEXT)) \
+         OR (g.subject_type = 'user' AND g.subject_id = $2) \
+         OR (g.subject_type = 'role' AND (g.subject_id = $3 OR g.subject_id IN \
+             (SELECT r.role FROM team_roles r WHERE r.team_id IN (SELECT id FROM caller_teams)))))), \
+         scope_walk(id, owner, shared, depth) AS ( \
+            SELECT f.id, CASE WHEN f.restricted = 1 THEN f.owner_team_id END, \
+                CAST(CASE WHEN f.id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'folder') \
+                    THEN 1 ELSE 0 END AS BIGINT), CAST(1 AS BIGINT) \
+            FROM folders f WHERE f.org_id = $1 AND f.parent_id IS NULL \
+            UNION ALL \
+            SELECT c.id, w.owner, CAST(CASE WHEN w.shared = 1 OR c.id IN \
+                (SELECT resource_id FROM scope_grants WHERE resource_type = 'folder') THEN 1 ELSE 0 END AS BIGINT), \
+                w.depth + 1 \
+            FROM folders c JOIN scope_walk w ON c.parent_id = w.id WHERE w.depth < 64), \
+         scope_out(id) AS (SELECT id FROM scope_walk WHERE CAST(${n} AS TEXT) IS NOT NULL AND owner IS NOT NULL \
+            AND owner <> CAST(${n} AS TEXT) AND shared = 0) "
+    )
+}
+
 /// What a team context shows in lists (docs/api/access.md, "Team spaces"): everything outside
-/// team spaces, the team's own spaces, and what was shared with the team inside other teams'
-/// spaces. A filter only: access is decided by `authz` as always, so nothing the caller may not
-/// see appears because of it.
+/// team spaces (restricted top-level folders a team owns), the team's own spaces, and what was
+/// shared with the team, the caller or their roles inside other teams' spaces. A filter only:
+/// access is decided by `authz` as always, so nothing the caller may not see appears because of
+/// it. `scope_cte` applies the same rule in SQL.
 pub struct TeamScope {
     /// Folders inside another team's space that no grant to the team reaches.
     out: HashSet<String>,
@@ -367,23 +411,27 @@ pub struct TeamScope {
 
 impl TeamScope {
     /// For `team_id`, which the caller checked against the member's teams.
-    pub async fn load(conn: &mut sqlx::AnyConnection, org_id: &str, team_id: &str) -> ApiResult<Self> {
-        let rows: Vec<(String, Option<String>, Option<String>)> =
-            sqlx::query_as("SELECT id, parent_id, owner_team_id FROM folders WHERE org_id = $1")
-                .bind(org_id)
+    pub async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> ApiResult<Self> {
+        let rows: Vec<(String, Option<String>, Option<String>, i64)> =
+            sqlx::query_as("SELECT id, parent_id, owner_team_id, restricted FROM folders WHERE org_id = $1")
+                .bind(&ctx.org_id)
                 .fetch_all(&mut *conn)
                 .await?;
-        let grants: Vec<(String, String)> = sqlx::query_as(
-            "SELECT resource_type, resource_id FROM resource_grants WHERE org_id = $1 AND subject_type = 'team' \
-             AND subject_id = $2 AND resource_type IN ('folder', 'dashboard')",
-        )
-        .bind(org_id)
-        .bind(team_id)
-        .fetch_all(&mut *conn)
-        .await?;
+        let grants: Vec<(String, String)> = sqlx::query_as(SCOPE_GRANTS)
+            .bind(&ctx.org_id)
+            .bind(team_id)
+            .bind(&ctx.user.id)
+            .bind(&ctx.role)
+            .fetch_all(&mut *conn)
+            .await?;
         let shared: HashSet<&str> = grants.iter().filter(|(t, _)| t == "folder").map(|(_, id)| id.as_str()).collect();
-        let folders: HashMap<&str, (Option<&str>, Option<&str>)> =
-            rows.iter().map(|(id, parent, owner)| (id.as_str(), (parent.as_deref(), owner.as_deref()))).collect();
+        // Only a restricted top-level folder's owner makes a team space.
+        let folders: HashMap<&str, (Option<&str>, Option<&str>)> = rows
+            .iter()
+            .map(|(id, parent, owner, restricted)| {
+                (id.as_str(), (parent.as_deref(), owner.as_deref().filter(|_| *restricted != 0)))
+            })
+            .collect();
         let mut out = HashSet::new();
         for id in folders.keys() {
             let mut chain = vec![*id];
@@ -411,20 +459,6 @@ impl TeamScope {
 
     pub fn dashboard(&self, id: &str, folder: Option<&str>) -> bool {
         folder.is_none_or(|f| self.folder(f)) || self.dashboards.contains(id)
-    }
-
-    /// The folders left out, sorted, for a query that filters by them.
-    pub fn excluded_folders(&self) -> Vec<&str> {
-        let mut out: Vec<&str> = self.out.iter().map(String::as_str).collect();
-        out.sort_unstable();
-        out
-    }
-
-    /// The dashboards shared with the team, sorted, for a query that brings them back.
-    pub fn shared_dashboards(&self) -> Vec<&str> {
-        let mut out: Vec<&str> = self.dashboards.iter().map(String::as_str).collect();
-        out.sort_unstable();
-        out
     }
 }
 
@@ -593,6 +627,108 @@ mod tests {
                 assert!(hidden.is_empty());
             }
         }
+    }
+
+    /// The SQL that lists and searches (`VISIBILITY_CTE`, `dashboard_visible`) hides exactly what
+    /// `check_resource` refuses once teams own folders and dashboards, and `scope_cte` leaves out
+    /// exactly what `TeamScope` does.
+    #[tokio::test]
+    async fn the_visibility_query_agrees_with_check_resource_for_owners() {
+        use crate::authz::{BuiltinRole, Resource, resource_permissions};
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for sql in [
+            "INSERT INTO orgs (id, name, created_at) VALUES ('o', 'O', 0)",
+            "INSERT INTO users (id, email, name, created_at) VALUES ('u', 'u@example.de', 'U', 0)",
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('a', 'o', 'A', 'a', 0), \
+             ('b', 'o', 'B', 'b', 0)",
+            "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('a', 'u', 'member', 0)",
+            // space_a > only_a (team only) ; space_b > shared_b (granted to team a) ; space_b > x
+            // open > owned_b (shared) > deep ; open > only_b (team only, owned by b) ; gone (restricted,
+            // handed to the organization)
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at, \
+             owner_team_id) VALUES ('space_a', 'o', NULL, 'SA', 1, 1, 0, 0, 'a'), \
+             ('only_a', 'o', 'space_a', 'OA', 1, 1, 0, 0, 'a'), ('space_b', 'o', NULL, 'SB', 1, 1, 0, 0, 'b'), \
+             ('shared_b', 'o', 'space_b', 'S', 0, 1, 0, 0, NULL), ('x', 'o', 'space_b', 'X', 0, 1, 0, 0, NULL), \
+             ('open', 'o', NULL, 'O', 0, 1, 0, 0, NULL), ('owned_b', 'o', 'open', 'OB', 0, 1, 0, 0, 'b'), \
+             ('deep', 'o', 'owned_b', 'D', 0, 1, 0, 0, NULL), ('only_b', 'o', 'open', 'OOB', 1, 1, 0, 0, 'b'), \
+             ('gone', 'o', NULL, 'G', 1, 1, 0, 0, NULL)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at, \
+             owner_team_id, team_only) VALUES \
+             ('d1', 'o', 'only_a', 'D', 'd', 1, 0, 0, NULL, 0), ('d2', 'o', 'x', 'D', 'd', 1, 0, 0, NULL, 0), \
+             ('d3', 'o', 'shared_b', 'D', 'd', 1, 0, 0, NULL, 0), ('d4', 'o', 'open', 'D', 'd', 1, 0, 0, 'b', 1), \
+             ('d5', 'o', 'open', 'D', 'd', 1, 0, 0, 'a', 1), ('d6', 'o', 'deep', 'D', 'd', 1, 0, 0, NULL, 0), \
+             ('d7', 'o', 'only_b', 'D', 'd', 1, 0, 0, 'a', 0), ('d8', 'o', 'x', 'D', 'd', 1, 0, 0, 'a', 0), \
+             ('d9', 'o', 'gone', 'D', 'd', 1, 0, 0, NULL, 0), ('d10', 'o', NULL, 'D', 'd', 1, 0, 0, 'b', 1)",
+            "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
+             created_at) VALUES ('g1', 'o', 'team', 'a', 'folder', 'shared_b', 'view', 0), \
+             ('g2', 'o', 'user', 'u', 'dashboard', 'd4', 'view', 0)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let folders = ["space_a", "only_a", "space_b", "shared_b", "x", "open", "owned_b", "deep", "only_b", "gone"];
+        let dashboards = [
+            ("d1", Some("only_a")),
+            ("d2", Some("x")),
+            ("d3", Some("shared_b")),
+            ("d4", Some("open")),
+            ("d5", Some("open")),
+            ("d6", Some("deep")),
+            ("d7", Some("only_b")),
+            ("d8", Some("x")),
+            ("d9", Some("gone")),
+            ("d10", None),
+        ];
+        for role in [BuiltinRole::Viewer, BuiltinRole::Editor, BuiltinRole::Admin] {
+            let ctx = ctx(role);
+            let hidden = hidden_folder_ids(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            for id in folders {
+                let seen = resource_permissions(&db, &ctx, Resource::Folder(id)).await.unwrap().is_some();
+                assert_eq!(!hidden.contains(id), seen, "{role:?} folder {id}");
+            }
+            let visible: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "{VISIBILITY_CTE} SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND {}",
+                dashboard_visible("d")
+            )))
+            .bind(&ctx.org_id)
+            .bind(&ctx.user.id)
+            .bind(&ctx.role)
+            .bind(sees_every_folder(&ctx))
+            .fetch_all(&db)
+            .await
+            .unwrap();
+            let index = crate::authz::AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            for (id, folder) in dashboards {
+                let held = resource_permissions(&db, &ctx, Resource::Dashboard(id)).await.unwrap();
+                assert_eq!(visible.iter().any(|(v,)| v == id), held.is_some(), "{role:?} dashboard {id}");
+                assert_eq!(index.dashboard(id, folder), held, "{role:?} dashboard {id}");
+            }
+            // The team context in SQL leaves out what `TeamScope` leaves out.
+            for team in ["a", "b"] {
+                let out: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                    "{VISIBILITY_CTE}{} SELECT id FROM scope_out",
+                    scope_cte(5)
+                )))
+                .bind(&ctx.org_id)
+                .bind(&ctx.user.id)
+                .bind(&ctx.role)
+                .bind(sees_every_folder(&ctx))
+                .bind(team)
+                .fetch_all(&db)
+                .await
+                .unwrap();
+                let scope = TeamScope::load(&mut db.acquire().await.unwrap(), &ctx, team).await.unwrap();
+                for id in folders {
+                    assert_eq!(!out.iter().any(|(o,)| o == id), scope.folder(id), "{role:?} team {team} {id}");
+                }
+            }
+        }
+        // The cases that matter, for a viewer of team A.
+        let ctx = ctx(BuiltinRole::Viewer);
+        let scope = TeamScope::load(&mut db.acquire().await.unwrap(), &ctx, "a").await.unwrap();
+        assert!(scope.folder("space_a") && scope.folder("shared_b") && scope.folder("open"));
+        assert!(!scope.folder("x") && !scope.folder("space_b"));
+        // Only a restricted top-level folder makes a space: owned_b and only_b are open content.
+        assert!(scope.folder("owned_b") && scope.folder("only_b"));
     }
 
     #[test]

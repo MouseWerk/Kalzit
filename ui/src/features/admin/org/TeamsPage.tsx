@@ -26,7 +26,9 @@ export function TeamsPage() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Team | null>(null);
   // Who takes over the team's spaces, folders and dashboards: the organization or another team.
-  const [transferTo, setTransferTo] = useState("org");
+  // No default: who takes over is a decision, not something to confirm past.
+  const [transferTo, setTransferTo] = useState("");
+  const [choiceMissing, setChoiceMissing] = useState(false);
   const transferId = useId();
   const teams = list.items ?? [];
   const keys = useRowKeys(teams.length);
@@ -91,7 +93,8 @@ export function TeamsPage() {
                     aria-label={t("admin.teams.deleteNamed", { name: team.name })}
                     onClick={() => {
                       remove.reset();
-                      setTransferTo("org");
+                      setTransferTo("");
+                      setChoiceMissing(false);
                       setDeleting(team);
                     }}
                   >
@@ -128,10 +131,18 @@ export function TeamsPage() {
         title={t("admin.teams.deleteTitle")}
         confirmLabel={t("admin.common.delete")}
         busy={remove.isPending}
-        error={remove.error === null ? null : errorText(t, remove.error, TEAM_ERRORS)}
+        error={
+          choiceMissing
+            ? t("admin.teams.transferRequired")
+            : remove.error === null
+              ? null
+              : errorText(t, remove.error, TEAM_ERRORS)
+        }
         onClose={() => setDeleting(null)}
         onConfirm={() => {
-          if (deleting !== null) {
+          if (transferTo === "") {
+            setChoiceMissing(true);
+          } else if (deleting !== null) {
             remove.mutate(deleting);
           }
         }}
@@ -145,8 +156,13 @@ export function TeamsPage() {
             id={transferId}
             className="select"
             value={transferTo}
-            onChange={(event) => setTransferTo(event.currentTarget.value)}
+            onChange={(event) => {
+              setTransferTo(event.currentTarget.value);
+              setChoiceMissing(false);
+            }}
+            aria-invalid={choiceMissing}
           >
+            <option value="">{t("admin.teams.transferChoose")}</option>
             <option value="org">{t("admin.teams.transferToOrg")}</option>
             {teams
               .filter((team) => team.id !== deleting?.id)

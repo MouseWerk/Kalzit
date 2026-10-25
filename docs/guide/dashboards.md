@@ -212,6 +212,41 @@ in the trash is read-only until restored.
 - **Copy to...** in a panel's menu copies the panel to another dashboard you may change; **Save
   as...** saves the dashboard as a new one.
 
+## Team spaces and team ownership
+
+A **team space** (Team-Bereich) is a folder at the top of the tree that belongs to one team. Only
+the team sees it; its members work in it with their role (an editor edits, a viewer reads).
+Maintainers of a team and admins create one with **Create team space**. The tree marks team spaces
+and team folders with the team icon and the team's name. To let another team in, open **Access...**
+on the space or a folder in it and give that team **Can view** or **Can edit**.
+
+**Team and visibility** on a folder or in a dashboard's **More** menu gives it an **owner team**
+(Eigentümer-Team) and sets its **visibility** (Sichtbarkeit):
+
+- **Everyone with access reads it, only the team edits it**: other members can open it but not
+  change, delete or share it (grants still can).
+- **Team only**: nobody outside the team sees it.
+
+Who may change this:
+
+- Content of your own team: its editors (for dashboards) and maintainers (for folders).
+- Content without a team, or another team's: whoever manages the folder's access (admins, or an
+  admin grant on the folder).
+- A team space's owner and visibility: admins only.
+- Inside a team space, content belongs to that space's team; only admins hand it to another team.
+
+Moving content out of a team space (into the shared tree or another team's space) is for
+maintainers of the team and admins; editors move within the space. Each such move is recorded in
+the audit log.
+
+The team you work in shows below the organization's name in the workspace card at the top of the
+sidebar. With more than one team, pick another one or **All areas** (Alle Bereiche) in its menu: the
+Dashboards page shows that team's space first and leaves out other teams' spaces (unless they were
+shared with you or your team), and the start page lists follow.
+
+Admins see and manage every team space. Each time they open or change another team's space,
+team-only content or a restricted folder through their admin rights, the audit log records it.
+
 ## Sharing and access
 
 Within an organization, **More** > **Access...** gives users, teams or roles access to a dashboard

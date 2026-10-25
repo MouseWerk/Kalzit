@@ -218,7 +218,8 @@ interface LibraryPanel {
   name: string;                                  // 1 to 100 characters
   model: LibraryPanelModel;
   version: number;
-  uses: number;                                  // dashboards showing it, trashed ones included
+  uses: number;                                  // dashboards showing it that the caller may read,
+                                                 // trashed ones included; others are not counted
   createdAt: number; updatedAt: number; updatedBy: string | null;
   access: { write: boolean; delete: boolean };
 }
@@ -240,9 +241,9 @@ Audited as
 | `GET /orgs/{orgId}/library-panels?folderId=&q=` | `dashboards:read`; `Page<LibraryPanel>` by name |
 | `POST /orgs/{orgId}/library-panels` | `{"name", "folderId"?, "model"}`, `201` |
 | `GET /orgs/{orgId}/library-panels/{libraryPanelId}` | the `LibraryPanel` |
-| `PUT /orgs/{orgId}/library-panels/{libraryPanelId}` | `{"version", "name", "model", "folderId"?}`: every dashboard showing it shows the new content. Moving needs `dashboards:write` on the new folder, and across a restricted folder `folders:permissions` on both. `409 version_conflict` |
+| `PUT /orgs/{orgId}/library-panels/{libraryPanelId}` | `{"version", "name", "model", "folderId"?}`: every dashboard showing it shows the new content. Moving needs `dashboards:write` on the new folder, and across a restricted folder `folders:permissions` on both (between the open tree and team spaces edit rights on both sides; out of a team space only maintainers of its team and org admins). Into a team space only while no dashboard outside it shows the panel (`409 conflict`). `409 version_conflict` |
 | `DELETE /orgs/{orgId}/library-panels/{libraryPanelId}` | `204`; `409 conflict` while a dashboard (trashed ones too) shows it |
-| `GET /orgs/{orgId}/library-panels/{libraryPanelId}/uses` | `{"items": [{"id", "title", "deletedAt"}], "hidden": number}`: the dashboards showing it that the caller may read, and how many others |
+| `GET /orgs/{orgId}/library-panels/{libraryPanelId}/uses` | `{"items": [{"id", "title", "deletedAt"}]}`: the dashboards showing it that the caller may read; others are neither listed nor counted |
 
 Purging a folder deletes the library panels in it; dashboards elsewhere that showed one show it as
 deleted.

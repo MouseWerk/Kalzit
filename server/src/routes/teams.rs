@@ -11,7 +11,7 @@ use serde_json::json;
 use super::support::{Actor, PageQuery, Paging, QueryParams, audit, conflict, is_unique_violation};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{Access, BuiltinRole, OrgCtx, Permission, ensure_holds, lock_org, lock_role, resolve_role};
+use crate::authz::{self, Access, BuiltinRole, OrgCtx, Permission, ensure_holds, lock_org, lock_role, resolve_role};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -216,7 +216,7 @@ struct DeleteQuery {
 async fn hand_over(conn: &mut sqlx::AnyConnection, org_id: &str, team_id: &str, to: Option<&str>) -> ApiResult<u64> {
     let mut moved = 0;
     for sql in [
-        "UPDATE folders SET owner_team_id = $1 WHERE org_id = $2 AND owner_team_id = $3",
+        "UPDATE folders SET owner_team_id = $1, version = version + 1 WHERE org_id = $2 AND owner_team_id = $3",
         "UPDATE dashboards SET owner_team_id = $1 WHERE org_id = $2 AND owner_team_id = $3",
     ] {
         moved += sqlx::query(sql).bind(to).bind(org_id).bind(team_id).execute(&mut *conn).await?.rows_affected();
@@ -387,6 +387,23 @@ async fn put_member(
     }
     // Joining a team hands out its roles.
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
+    // And its team spaces and team-only content: that is for the team's maintainers, and for org
+    // admins, whose access to a team's content is audited.
+    let (owned,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+    )
+    .bind(&ctx.org_id)
+    .bind(&team_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let maintainer = authz::team_membership(&mut *tx, &ctx, &team_id).await?.as_deref() == Some("maintainer");
+    let admin_access = owned > 0 && !maintainer;
+    if admin_access && !authz::role_sees_restricted(&ctx.permissions) {
+        return Err(ApiError::forbidden(
+            "the team owns team spaces or team-only content; only its maintainers and org admins add members",
+        ));
+    }
     let current: Option<(String,)> =
         sqlx::query_as("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2")
             .bind(&team_id)
@@ -405,7 +422,12 @@ async fn put_member(
                 .bind(now)
                 .execute(&mut *tx)
                 .await?;
-            audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_added", ("team", &team_id), summary).await?;
+            audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_added", ("team", &team_id), summary.clone()).await?;
+            if admin_access {
+                let access = json!({ "action": "team.member_added", "teamId": team_id, "userId": user_id });
+                audit(&mut tx, &actor, Some(&ctx.org_id), "team_space.admin_access", ("team", &team_id), access)
+                    .await?;
+            }
         }
         Some((previous,)) if previous != role => {
             sqlx::query("UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3")

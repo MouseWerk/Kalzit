@@ -190,7 +190,8 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
     for r in rows {
         let mut summary: Value = serde_json::from_str(&r.summary)
             .map_err(|e| ApiError::internal("audit", format!("summary of event {} is not JSON: {e}", r.id)))?;
-        for key in ["parentId", "folderId"] {
+        // Folder ids also stand in the team events (`governingId`, `spaceId`, `from`, `to`).
+        for key in ["parentId", "folderId", "governingId", "spaceId", "from", "to"] {
             if summary.get(key).and_then(Value::as_str).is_some_and(|id| unnamed.contains(id)) {
                 summary[key] = Value::Null;
             }

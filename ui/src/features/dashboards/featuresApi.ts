@@ -342,9 +342,9 @@ export async function deleteLibraryPanel(orgId: string, id: string): Promise<voi
   await send("DELETE", orgPath(orgId, "library-panels", id));
 }
 
+/** The dashboards showing a library panel that the caller may open; others are not told. */
 export interface LibraryUses {
   items: { id: string; title: string }[];
-  hidden: number;
 }
 
 export async function fetchLibraryUses(
@@ -360,7 +360,6 @@ export async function fetchLibraryUses(
     items: value.items.flatMap((i) =>
       isRecord(i) && typeof i.id === "string" ? [{ id: i.id, title: str(i.title) }] : [],
     ),
-    hidden: num(value.hidden),
   };
 }
 

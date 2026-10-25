@@ -64,6 +64,8 @@
   "admin.teams.deleteTitle": "Delete team",
   "admin.teams.deleteText": "Delete the team “{name}”? Its members lose the roles and access they had through it. Their accounts and memberships stay.",
   "admin.teams.transferTo": "Hand its team spaces, folders and dashboards to",
+  "admin.teams.transferChoose": "Choose who takes over…",
+  "admin.teams.transferRequired": "Choose who takes over the team's spaces, folders and dashboards.",
   "admin.teams.transferToOrg": "The organization (only admins and grants reach team-only content)",
   "admin.teams.transferHint": "Nothing the team owns is deleted with it.",
   "admin.teams.deleted": "Team “{name}” was deleted.",

@@ -299,7 +299,7 @@ export async function setOwner(
   orgId: string,
   kind: "folders" | "dashboards",
   id: string,
-  input: { ownerTeamId: string | null; visibility: Visibility },
+  input: { ownerTeamId: string | null; visibility: Visibility; version: number },
 ): Promise<void> {
   await send("PUT", orgPath(orgId, kind, id, "owner"), input);
 }

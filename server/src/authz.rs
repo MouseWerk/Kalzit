@@ -441,7 +441,8 @@ impl GrantRow {
 /// The permissions anyone outside a resource's owner team loses on it through their role: a
 /// team-owned folder or dashboard is edited only by its team and by grants (docs/api/access.md,
 /// "Team ownership").
-const OWNER_EDIT: [Permission; 5] = [
+const OWNER_EDIT: [Permission; 6] = [
+    Permission::AnnotationsWrite,
     Permission::FoldersWrite,
     Permission::FoldersPermissions,
     Permission::DashboardsWrite,
@@ -455,6 +456,8 @@ const OWNER_EDIT: [Permission; 5] = [
 struct Subjects {
     user_id: String,
     team_ids: BTreeSet<String>,
+    /// The teams the caller maintains.
+    maintains: BTreeSet<String>,
     role_keys: BTreeSet<String>,
     /// Per team: the member's org role, the team's roles, and for maintainers the right to manage
     /// grants.
@@ -482,6 +485,7 @@ impl Subjects {
             let entry = out.member.entry(team).or_insert_with(|| base.clone());
             if member_role == "maintainer" {
                 entry.extend([Permission::FoldersPermissions, Permission::DashboardsShare]);
+                out.maintains.insert(team_key.clone());
             }
             if let Some(role) = role {
                 let held = cached_role(conn, &ctx.org_id, &role, &mut resolved).await?;
@@ -530,16 +534,19 @@ struct ResourceFacts {
     member: Option<BTreeSet<Permission>>,
     /// The nearest team within reach the caller is a member of.
     member_team: Option<String>,
-    /// The governing restricted resource when a team owns it: (type, id, team).
-    governing_team: Option<(ResourceType, String, String)>,
+    /// The governing restricted resource and the team that owns it: (type, id, team).
+    governing: Option<(ResourceType, String, Option<String>)>,
+    /// The nearest team that owns the resource or any folder above it, within reach or not.
+    chain_team: Option<String>,
 }
 
-impl ResourceFacts {
-    /// Whether an org admin reaches the resource only through their role, into a team's space or
-    /// team-only content: such access is audited (`audit_admin_access`).
-    fn admin_override(&self, org: &BTreeSet<Permission>) -> bool {
-        role_sees_restricted(org) && self.governing_team.is_some() && self.grants.is_empty() && self.member.is_none()
-    }
+/// Who owns a folder or dashboard as far as changing its owner goes (`routes::folders`, owner
+/// changes): the nearest owner within reach, whether the caller belongs to it, and the governing
+/// restricted folder above the item (the item itself left out) with its owner team.
+#[derive(Clone, Debug, Default)]
+pub struct Ownership {
+    pub owner: Option<(String, bool)>,
+    pub governing_above: Option<(String, Option<String>)>,
 }
 
 /// One step from the resource up to the top folder: the resource itself, then its folders.
@@ -582,10 +589,10 @@ fn narrow(chain: &[ChainLink], grants: Vec<GrantRow>, subjects: &Subjects) -> Re
         }
         owner.get_or_insert_with(|| (team.to_string(), held.is_some()));
     }
-    let governing_team = governing
-        .map(|i| &chain[i])
-        .and_then(|l| l.owner_team.clone().map(|team| (l.resource_type, l.id.clone(), team)));
-    ResourceFacts { restricted: governing.is_some(), grants, owner, member, member_team, governing_team }
+    let chain_team = chain.iter().find_map(|l| l.owner_team.clone());
+    let restricted = governing.is_some();
+    let governing = governing.map(|i| &chain[i]).map(|l| (l.resource_type, l.id.clone(), l.owner_team.clone()));
+    ResourceFacts { restricted, grants, owner, member, member_team, governing, chain_team }
 }
 
 async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>) -> ApiResult<ResourceFacts> {
@@ -763,13 +770,52 @@ impl AccessIndex {
     }
 
     fn decide(&self, resource_type: ResourceType, chain: &[ChainLink]) -> Option<BTreeSet<Permission>> {
+        permissions_on(&self.org, resource_type, &self.facts(chain))
+    }
+
+    fn facts(&self, chain: &[ChainLink]) -> ResourceFacts {
         let reaching = self
             .grants
             .iter()
             .filter(|g| chain.iter().any(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id))
             .cloned()
             .collect();
-        permissions_on(&self.org, resource_type, &narrow(chain, reaching, &self.subjects))
+        narrow(chain, reaching, &self.subjects)
+    }
+
+    fn ownership(&self, chain: &[ChainLink]) -> Ownership {
+        let above = chain.get(1..).unwrap_or_default();
+        Ownership {
+            owner: self.facts(chain).owner,
+            governing_above: above.iter().find(|l| l.restricted).map(|l| (l.id.clone(), l.owner_team.clone())),
+        }
+    }
+
+    /// Who owns the folder (see `Ownership`).
+    pub fn folder_ownership(&self, folder_id: &str) -> Ownership {
+        let mut chain = Vec::new();
+        self.folder_links(folder_id, &mut chain);
+        self.ownership(&chain)
+    }
+
+    /// Who owns the dashboard in `folder_id` (see `Ownership`).
+    pub fn dashboard_ownership(&self, dashboard_id: &str, folder_id: Option<&str>) -> Ownership {
+        let (owner_team, team_only) = self.dashboards.get(dashboard_id).cloned().unwrap_or_default();
+        let mut chain = vec![ChainLink {
+            resource_type: ResourceType::Dashboard,
+            id: dashboard_id.to_string(),
+            restricted: team_only,
+            owner_team,
+        }];
+        if let Some(folder) = folder_id {
+            self.folder_links(folder, &mut chain);
+        }
+        self.ownership(&chain)
+    }
+
+    /// Whether the caller maintains the team.
+    pub fn is_maintainer(&self, team_id: &str) -> bool {
+        self.subjects.maintains.contains(team_id)
     }
 }
 
@@ -780,18 +826,20 @@ pub fn role_sees_restricted(org: &BTreeSet<Permission>) -> bool {
     org.contains(&Permission::FoldersPermissions)
 }
 
-/// Whether the org-wide permissions count on this resource (see `role_sees_restricted`).
-fn role_applies(org: &BTreeSet<Permission>, facts: &ResourceFacts) -> bool {
-    !facts.restricted || role_sees_restricted(org)
+/// Whether the org-wide permissions count on this resource (see `role_sees_restricted`). With
+/// `bypass` false the admins' reach into restricted and team content is left out, to tell what
+/// their access rests on (`audit_admin_access`).
+fn role_applies(org: &BTreeSet<Permission>, facts: &ResourceFacts, bypass: bool) -> bool {
+    !facts.restricted || (bypass && role_sees_restricted(org))
 }
 
 /// What the org-wide permissions give on the resource: nothing where they do not apply, and
 /// without the edit permissions on content another team owns (admins keep everything).
-fn role_part(org: &BTreeSet<Permission>, facts: &ResourceFacts) -> BTreeSet<Permission> {
-    if !role_applies(org, facts) {
+fn role_part(org: &BTreeSet<Permission>, facts: &ResourceFacts, bypass: bool) -> BTreeSet<Permission> {
+    if !role_applies(org, facts, bypass) {
         return BTreeSet::new();
     }
-    let outsider = matches!(facts.owner, Some((_, false))) && !role_sees_restricted(org);
+    let outsider = matches!(facts.owner, Some((_, false))) && !(bypass && role_sees_restricted(org));
     org.iter().copied().filter(|p| !(outsider && OWNER_EDIT.contains(p))).collect()
 }
 
@@ -801,8 +849,18 @@ fn permissions_on(
     resource_type: ResourceType,
     facts: &ResourceFacts,
 ) -> Option<BTreeSet<Permission>> {
-    let role = role_part(org, facts);
-    let role_sees = role_applies(org, facts)
+    permissions_with(org, resource_type, facts, true)
+}
+
+/// `permissions_on`, with or without the admins' reach (see `role_applies`).
+fn permissions_with(
+    org: &BTreeSet<Permission>,
+    resource_type: ResourceType,
+    facts: &ResourceFacts,
+    bypass: bool,
+) -> Option<BTreeSet<Permission>> {
+    let role = role_part(org, facts, bypass);
+    let role_sees = role_applies(org, facts, bypass)
         && match resource_type {
             ResourceType::Folder => org.contains(&Permission::FoldersRead),
             ResourceType::Dashboard => org.contains(&Permission::DashboardsRead),
@@ -824,19 +882,37 @@ fn permissions_on(
 /// dashboard runs a check per panel query and refresh, which would otherwise flood the log.
 const ADMIN_ACCESS_QUIET_MS: i64 = 10 * 60 * 1000;
 
-/// Records that an org admin reached a resource inside a team's space or team-only content
-/// through their role alone (once per admin and resource within `ADMIN_ACCESS_QUIET_MS`).
+/// Whether an org admin's access rests on their reach into restricted and team content: without
+/// it they would not hold `permission` (`None`: would hold less, or not see the resource).
+fn rests_on_bypass(
+    org: &BTreeSet<Permission>,
+    resource_type: ResourceType,
+    facts: &ResourceFacts,
+    permission: Option<Permission>,
+) -> bool {
+    if !role_sees_restricted(org) {
+        return false;
+    }
+    let without = permissions_with(org, resource_type, facts, false);
+    match permission {
+        Some(p) => !without.is_some_and(|held| held.contains(&p)),
+        None => without != permissions_with(org, resource_type, facts, true),
+    }
+}
+
+/// Records that an org admin reached a resource through their reach into restricted and team
+/// content: a team's space, team-only or team-owned content, a restricted folder (also one handed
+/// to the organization). Once per admin and resource within `ADMIN_ACCESS_QUIET_MS`.
 async fn audit_admin_access(
     db: &sqlx::AnyPool,
     ctx: &OrgCtx,
     resource: Resource<'_>,
     facts: &ResourceFacts,
+    permission: Option<Permission>,
 ) -> ApiResult<()> {
-    let Some((space_type, space_id, team)) =
-        facts.governing_team.as_ref().filter(|_| facts.admin_override(&ctx.permissions))
-    else {
+    if !rests_on_bypass(&ctx.permissions, resource.resource_type(), facts, permission) {
         return Ok(());
-    };
+    }
     let (recent,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM audit_events WHERE org_id = $1 AND actor_user_id = $2 \
          AND action = 'team_space.admin_access' AND resource_type = $3 AND resource_id = $4 AND created_at > $5",
@@ -852,9 +928,10 @@ async fn audit_admin_access(
         return Ok(());
     }
     let summary = serde_json::json!({
-        "teamId": team,
-        "governingType": space_type.as_str(),
-        "governingId": space_id,
+        "permission": permission.map(Permission::as_str),
+        "teamId": facts.chain_team,
+        "governingType": facts.governing.as_ref().map(|(t, _, _)| t.as_str()),
+        "governingId": facts.governing.as_ref().map(|(_, id, _)| id),
     });
     crate::audit::record(
         &mut *db.acquire().await?,
@@ -884,7 +961,7 @@ pub async fn resource_permissions(
     let facts = resource_facts(db, ctx, resource).await?;
     let held = permissions_on(&ctx.permissions, resource.resource_type(), &facts);
     if held.is_some() {
-        audit_admin_access(db, ctx, resource, &facts).await?;
+        audit_admin_access(db, ctx, resource, &facts, None).await?;
     }
     Ok(held)
 }
@@ -897,9 +974,13 @@ pub async fn check_resource(
     permission: Permission,
     resource: Resource<'_>,
 ) -> ApiResult<()> {
-    match resource_permissions(db, ctx, resource).await? {
+    let facts = resource_facts(db, ctx, resource).await?;
+    match permissions_on(&ctx.permissions, resource.resource_type(), &facts) {
         None => Err(ApiError::not_found()),
-        Some(held) if held.contains(&permission) => Ok(()),
+        Some(held) if held.contains(&permission) => {
+            audit_admin_access(db, ctx, resource, &facts, Some(permission)).await?;
+            Ok(())
+        }
         Some(_) => Err(ApiError::forbidden(format!("missing permission {}", permission.as_str()))),
     }
 }
@@ -919,9 +1000,9 @@ pub async fn explain(
     if permissions_on(&ctx.permissions, resource.resource_type(), &facts).is_none() {
         return Err(ApiError::not_found());
     }
-    audit_admin_access(db, ctx, resource, &facts).await?;
+    audit_admin_access(db, ctx, resource, &facts, Some(permission)).await?;
     let mut out: Vec<GrantSource> =
-        if role_part(&ctx.permissions, &facts).contains(&permission) { from_roles.collect() } else { Vec::new() };
+        if role_part(&ctx.permissions, &facts, true).contains(&permission) { from_roles.collect() } else { Vec::new() };
     out.extend(facts.grants.iter().filter(|g| g.permissions().contains(&permission)).map(GrantRow::source));
     if facts.member.as_ref().is_some_and(|m| m.contains(&permission))
         && let Some(team_id) = &facts.member_team

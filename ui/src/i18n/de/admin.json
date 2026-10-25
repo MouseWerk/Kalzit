@@ -64,6 +64,8 @@
   "admin.teams.deleteTitle": "Team löschen",
   "admin.teams.deleteText": "Das Team „{name}“ löschen? Seine Mitglieder verlieren die Rollen und Zugriffe, die sie durch das Team hatten. Konten und Mitgliedschaften bleiben bestehen.",
   "admin.teams.transferTo": "Team-Bereiche, Ordner und Dashboards übergeben an",
+  "admin.teams.transferChoose": "Wähle, wer übernimmt…",
+  "admin.teams.transferRequired": "Wähle, wer die Team-Bereiche, Ordner und Dashboards des Teams übernimmt.",
   "admin.teams.transferToOrg": "Die Organisation (nur Admins und Freigaben erreichen Team-Inhalte)",
   "admin.teams.transferHint": "Was dem Team gehört, wird nicht mitgelöscht.",
   "admin.teams.deleted": "Team „{name}“ wurde gelöscht.",

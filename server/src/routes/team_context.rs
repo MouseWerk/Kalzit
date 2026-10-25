@@ -58,11 +58,20 @@ async fn choices(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Vec<
 /// The scope of a list for `team` (`None`: no team context, everything the caller sees). A team
 /// that is not one of the caller's (or any team, for org admins) is refused.
 pub async fn scope(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, team: Option<&str>) -> ApiResult<Option<TeamScope>> {
+    check_team(conn, ctx, team).await?;
     let Some(team) = team else { return Ok(None) };
-    if !choices(conn, ctx).await?.iter().any(|c| c.id == team) {
-        return Err(ApiError::validation("the team is not one of yours").with_field("team"));
+    Ok(Some(TeamScope::load(conn, ctx, team).await?))
+}
+
+/// Refuses a team context that is not one the caller may pick, for lists that apply the scope
+/// in SQL (`folders::scope_cte`).
+pub async fn check_team(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, team: Option<&str>) -> ApiResult<()> {
+    let Some(team) = team else { return Ok(()) };
+    if choices(conn, ctx).await?.iter().any(|c| c.id == team) {
+        Ok(())
+    } else {
+        Err(ApiError::validation("the team is not one of yours").with_field("team"))
     }
-    Ok(Some(TeamScope::load(conn, &ctx.org_id, team).await?))
 }
 
 /// The team the caller works in: their stored choice while it is still one they may pick, else

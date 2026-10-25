@@ -680,7 +680,7 @@ function FolderActions({
             resource={{ kind: "folder", id: folder.id, name: folder.name }}
             allowed={folder.access?.permissions}
           />
-          {(folder.access?.permissions ?? permissions.has("folders:permissions")) ? (
+          {folder.access?.permissions === true && folder.access.write ? (
             <button
               type="button"
               className="button button--secondary"
@@ -715,6 +715,7 @@ function FolderActions({
           name={folder.name}
           owner={folder.ownerTeam}
           visibility={folder.restricted ? "team" : "shared"}
+          version={folder.version}
           onClose={() => setDialog(null)}
         />
       ) : null}

@@ -161,18 +161,26 @@ inside follow their folder.
 
 Created with `POST /orgs/{orgId}/folders` `{"name", "ownerTeamId"}` (no `parentId`): by a
 maintainer of the team, or by an org admin (`folders:permissions` org-wide). Audit
-`folder.created` with `ownerTeamId`.
+`folder.created` with `ownerTeamId`. A team space stays at the top level (`422 validation`
+`parentId` on a move) and team only: only org admins open it up (`PATCH` `restricted: false`) or
+change its owner.
+
+Adding a member to a team that owns team spaces or team-only content is for maintainers of that
+team and org admins (`403` for anyone else, also with `teams:members`); an org admin who is not a
+maintainer of it is recorded with `team_space.admin_access` (`summary.action`
+`team.member_added`).
 
 ### Team ownership
 
 A team can also own single folders and dashboards inside shared folders
 (`PUT /orgs/{orgId}/folders/{folderId}/owner`, `PUT /orgs/{orgId}/dashboards/{dashboardId}/owner`,
-body `{"ownerTeamId": string | null, "visibility": "shared" | "team"}`):
+body `{"ownerTeamId": string | null, "visibility": "shared" | "team", "version"?: number}`; a
+`version` that is no longer the item's is `409 version_conflict` with `current`):
 
 - `shared`: everyone with access to the place reads it; only members of the owner team (with their
-  role there) and grants change, delete or share it. Members outside the team lose
-  `folders:write`, `folders:permissions`, `dashboards:write`, `dashboards:delete` and
-  `dashboards:share` from their role on it; org admins keep them.
+  role there) and grants change, delete, share or annotate it. Members outside the team lose
+  `folders:write`, `folders:permissions`, `dashboards:write`, `dashboards:delete`,
+  `dashboards:share` and `annotations:write` from their role on it; org admins keep them.
 - `team`: team only. For a folder this is `restricted: true`; for a dashboard `teamOnly: true`:
   the dashboard governs itself like a restricted folder, so only the team, grants on the dashboard
   and org admins see it.
@@ -180,25 +188,45 @@ body `{"ownerTeamId": string | null, "visibility": "shared" | "team"}`):
 Ownership passes down: a dashboard in a team-owned folder belongs to that team unless it has an
 owner of its own; the nearest owner decides who edits. Membership in a team that owns a folder
 further up still lets its members see the content. `ownerTeamId: null` hands the item to the
-organization. The change needs `folders:permissions` on the folder or `dashboards:share` on the
-dashboard; the new owner team must be one of the caller's teams unless they are an org admin
-(`403` otherwise, `422 validation` `ownerTeamId` for an unknown team). Whoever makes an item team
-only without belonging to its team keeps an `admin` grant on it. Audit `folder.owner_changed`,
+organization. Every rule is checked again under the organization's lock (`403` unless noted):
+
+- The caller may edit the item and manage its access: `folders:write` and `folders:permissions` on
+  a folder, `dashboards:write` and `dashboards:share` on a dashboard.
+- Content their own team does not own (open content, or another team's) needs
+  `folders:permissions` on its folder: an org admin, or an `admin` grant there. Team editors change
+  owner and visibility only of what their team already owns.
+- A team space's owner and visibility are changed by org admins only.
+- Inside a team space or another restricted folder, content belongs to that folder's team (or to
+  nobody); only org admins hand it to another team, whose members would otherwise gain their roles
+  there from someone who may not hand them out.
+- The new owner team must be one of the caller's teams unless they are an org admin (`422
+  validation` `ownerTeamId` for an unknown team).
+
+Whoever makes an item team only without belonging to its team keeps a grant on it, at the
+strongest level within what they held there before (never more). Audit `folder.owner_changed`,
 `dashboard.owner_changed`.
 
 Moves: moving a folder or dashboard between the open tree and a team space, or between two team
 spaces, needs edit rights on both sides (`dashboards:write` on the dashboard and on the target
 folder, `folders:write` for folders); moves into or out of other restricted folders still need
-`folders:permissions` on both sides.
+`folders:permissions` on both sides. Moving content out of a team space is for maintainers of the
+space's team and org admins only; team editors move within the space. A folder moved out takes
+content another team owns along only when the caller is a maintainer of that team or an org admin.
+Each such move writes `team_space.moved_out` on the item with `spaceId`, `teamId`, `from` and
+`to`. Library panels follow the same rules, and move into a team space only while no dashboard
+outside that space shows them (`409 conflict`).
 
 ### Admins and the audit log
 
 Org admins (members whose org-wide permissions include `folders:permissions`) see and manage every
-team space and team-only item, for example when a team is dissolved. Every access an admin makes
-to another team's space or team-only dashboard through their role alone (opening, saving, moving,
-trashing, exporting, the versions, the access dialog, "why can I") writes the audit event
-`team_space.admin_access` on the resource reached, with `teamId`, `governingType` and
-`governingId`; repeated accesses to the same resource by the same admin are written once per ten
+team space and team-only item, for example when a team is dissolved. Every access whose permission
+an admin would not hold without that reach into restricted and team content writes the audit
+event `team_space.admin_access` on the resource reached, whatever other grants they hold there:
+opening another team's space, a team-only dashboard or a restricted folder (also a space handed to
+the organization), changing another team's shared content, saving, moving, trashing, exporting,
+the versions, the access dialog, "why can I". The summary names the `permission`, the nearest
+owner team in the chain (`teamId`) and the governing restricted resource (`governingType`,
+`governingId`). Repeated accesses to the same resource by the same admin are written once per ten
 minutes, since opening a dashboard checks access for every panel query. Lists and the folder tree
 do not write it.
 
@@ -229,7 +257,8 @@ caller may create dashboards there.
 
 The team context is a view, not a right. Lists take it as `?team=<teamId>`: `GET .../folders`,
 `GET .../dashboards`, `GET .../stars`, `GET .../recents` and `GET .../pins`. They then leave out
-what lies in other teams' spaces, unless a grant to the team reaches it (on the space, a folder in
+what lies in other teams' spaces (restricted top-level folders a team owns), unless a grant to
+the team, to the caller in person or to one of their roles reaches it (on the space, a folder in
 it, or the dashboard). The team is checked against the caller's teams on every call (`422
 validation` `team`).
 

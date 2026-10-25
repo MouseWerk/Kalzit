@@ -668,6 +668,9 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0008 | dashboard stars, dashboard views, user preferences (docs/api/shell.md) | ux/shell |
 | 0009 | annotations, playlists, library panels and their uses, dashboard tags | ux/dashboards |
 | 0010 | the server's logo (appearance and brand) | ux/settings |
+| 0011 | dashboard pins (sidebar, per user and organization) | ux/sidebar |
+| 0012 | not used (left free when 0013 and 0014 were numbered in parallel) | |
+| 0013 | Explore query history (per user, 30 days) | explore history (#76) |
 | 0014 | team ownership of folders and dashboards (team spaces), team contexts | feat/team-spaces |
 
 ## M1 work streams

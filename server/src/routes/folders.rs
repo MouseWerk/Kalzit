@@ -25,7 +25,7 @@ use super::table::{RouteDef, route};
 use super::{clean_name, new_id};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
-use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
+use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource, ResourceType};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders::{self, FolderRow, Tree};
@@ -74,26 +74,106 @@ pub struct OwnerRequest {
     /// `null` hands the folder or dashboard to the organization.
     pub owner_team_id: Option<String>,
     pub visibility: Visibility,
+    /// The folder's or dashboard's version the caller decided on; a newer one is a
+    /// `version_conflict`.
+    #[serde(default)]
+    pub version: Option<i64>,
 }
 
-/// Before a change of owner: the new owner team exists in the organization and the caller may
-/// hand content to it, as one of its members or as an org admin.
-pub async fn check_new_owner(state: &AppState, ctx: &OrgCtx, team_id: Option<&str>) -> ApiResult<()> {
-    let Some(team_id) = team_id else { return Ok(()) };
-    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM teams WHERE org_id = $1 AND id = $2")
-        .bind(&ctx.org_id)
-        .bind(team_id)
-        .fetch_optional(&state.db)
-        .await?;
-    if exists.is_none() {
-        return Err(ApiError::validation("no such team here").with_field("ownerTeamId"));
+/// A folder or dashboard whose owner changes.
+pub enum OwnedItem<'a> {
+    Folder(&'a FolderRow),
+    Dashboard { id: &'a str, folder: Option<&'a str> },
+}
+
+/// The rules of an owner change (docs/api/access.md, "Team ownership"), read through the
+/// transaction that holds the organization's lock. Answers what the caller held on the item
+/// before, which bounds what they may keep (`keep_access`).
+///
+/// - The caller may edit the item and manage its access: `folders:write` and
+///   `folders:permissions` on a folder, `dashboards:write` and `dashboards:share` on a dashboard.
+/// - Content their own team does not own (open content, another team's) needs
+///   `folders:permissions` on its folder: an org admin or an admin grant. Team editors change
+///   owner and visibility only of what their team owns.
+/// - A team space's owner and visibility are the org admins' to change.
+/// - Inside a team space or another restricted folder, content belongs to that folder's team or
+///   to nobody, unless an org admin decides otherwise: another team would gain its members' roles
+///   there, which nobody may hand out.
+/// - The new owner team exists and is one of the caller's teams, unless they are an org admin.
+pub async fn check_owner_change(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    item: OwnedItem<'_>,
+    body: &OwnerRequest,
+) -> ApiResult<BTreeSet<Permission>> {
+    let index = AccessIndex::load(conn, ctx).await?;
+    let admin = authz::role_sees_restricted(&ctx.permissions);
+    let manages_place = |folder: Option<&str>| match folder {
+        Some(folder) => index.folder(folder).is_some_and(|held| held.contains(&Permission::FoldersPermissions)),
+        None => admin,
+    };
+    let (held, ownership, needed, space, place) = match item {
+        OwnedItem::Folder(row) => (
+            index.folder(&row.id),
+            index.folder_ownership(&row.id),
+            [Permission::FoldersWrite, Permission::FoldersPermissions],
+            row.parent_id.is_none() && row.restricted != 0 && row.owner_team_id.is_some(),
+            // `folders:permissions` on the folder itself is needed anyway.
+            true,
+        ),
+        OwnedItem::Dashboard { id, folder } => (
+            index.dashboard(id, folder),
+            index.dashboard_ownership(id, folder),
+            [Permission::DashboardsWrite, Permission::DashboardsShare],
+            false,
+            manages_place(folder),
+        ),
+    };
+    let held = held.ok_or_else(ApiError::not_found)?;
+    if let Some(missing) = needed.iter().find(|p| !held.contains(p)) {
+        return Err(ApiError::forbidden(format!("missing permission {}", missing.as_str())));
     }
-    if authz::role_sees_restricted(&ctx.permissions) || authz::team_membership(&state.db, ctx, team_id).await?.is_some()
+    let own = matches!(ownership.owner, Some((_, true)));
+    if !own && !place {
+        return Err(ApiError::forbidden(
+            "only the owning team, or whoever manages the folder's permissions, decides who owns this",
+        ));
+    }
+    if space && !admin {
+        return Err(ApiError::forbidden("only org admins change the owner or visibility of a team space"));
+    }
+    if let (Some((_, space_team)), Some(new)) = (&ownership.governing_above, &body.owner_team_id)
+        && !admin
+        && space_team.as_deref() != Some(new.as_str())
     {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden("only members of a team and org admins can hand content to it"))
+        return Err(ApiError::forbidden(
+            "inside a team space or restricted folder, content belongs to that folder's team",
+        ));
     }
+    if let Some(team) = body.owner_team_id.as_deref() {
+        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM teams WHERE org_id = $1 AND id = $2")
+            .bind(&ctx.org_id)
+            .bind(team)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if exists.is_none() {
+            return Err(ApiError::validation("no such team here").with_field("ownerTeamId"));
+        }
+        if !admin && !index.is_member(team) {
+            return Err(ApiError::forbidden("only members of a team and org admins can hand content to it"));
+        }
+    }
+    Ok(held)
+}
+
+/// The strongest level of `resource_type` whose permissions all lie in `held`: what a grant that
+/// keeps someone's sight of a resource may give them at most.
+pub fn level_within(resource_type: ResourceType, held: &BTreeSet<Permission>) -> Option<&'static str> {
+    resource_type
+        .levels()
+        .into_iter()
+        .rev()
+        .find(|level| authz::level_permissions(resource_type, level).is_some_and(|wanted| wanted.is_subset(held)))
 }
 
 /// For patch bodies: a missing field is `None`, an explicit `null` is `Some(None)`.
@@ -450,7 +530,14 @@ async fn create(
             if !maintainer && !authz::role_sees_restricted(&ctx.permissions) {
                 return Err(ApiError::forbidden("only maintainers of the team and org admins create its team space"));
             }
-            check_new_owner(&state, &ctx, Some(team)).await?;
+            let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM teams WHERE org_id = $1 AND id = $2")
+                .bind(&ctx.org_id)
+                .bind(team)
+                .fetch_optional(&state.db)
+                .await?;
+            if exists.is_none() {
+                return Err(ApiError::validation("no such team here").with_field("ownerTeamId"));
+            }
         }
         (Some(parent), None) => {
             authorize(&state, &ctx, parent, Permission::FoldersWrite).await?;
@@ -476,6 +563,12 @@ async fn create(
         tree.check_placement(None, parent)?;
     }
     let restricted = body.restricted || space.is_some();
+    // What the caller holds where the folder goes, before it exists: a restricted folder keeps
+    // their sight of it with no more than that.
+    let held = match body.parent_id.as_deref() {
+        Some(parent) => AccessIndex::load(&mut tx, &ctx).await?.folder(parent).unwrap_or_default(),
+        None => ctx.permissions.clone(),
+    };
     sqlx::query(
         "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_by, created_at, updated_at, \
          owner_team_id) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $7, $8)",
@@ -493,7 +586,7 @@ async fn create(
     let summary = json!({ "parentId": body.parent_id, "restricted": restricted, "ownerTeamId": space });
     audit::record(&mut tx, &event(&ctx, &info, "folder.created", &id, summary, now)).await?;
     if restricted && space.is_none() {
-        keep_access(&mut tx, &ctx, &info, &id, now).await?;
+        keep_access(&mut tx, &ctx, &info, Resource::Folder(&id), &held, now).await?;
     }
     let created = answer(&mut tx, &ctx, &id).await?;
     crate::db::commit(tx).await?;
@@ -513,59 +606,123 @@ pub struct UpdateFolder {
     version: i64,
 }
 
-/// A member who restricts a folder (or creates one restricted) through a grant, not through
-/// org-wide `folders:permissions`, would lose sight of it at once: grants above a restricted
-/// folder do not reach into it. They get an `admin` grant on it in the same transaction, which
-/// they may hand out since they hold its permissions there.
-async fn keep_access(
+/// A member who restricts a folder or makes a dashboard team only (or creates a restricted
+/// folder) through a grant or team membership, not through org-wide `folders:permissions`, would
+/// lose sight of it at once: grants above a restricted folder do not reach into it. They get a
+/// grant on it in the same transaction, at the strongest level within what they held there
+/// (`held`, read before the change), so nobody gains a right this way.
+pub async fn keep_access(
     conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
     info: &RequestInfo,
-    folder_id: &str,
+    resource: Resource<'_>,
+    held: &BTreeSet<Permission>,
     now: i64,
 ) -> ApiResult<()> {
     if authz::role_sees_restricted(&ctx.permissions) {
         return Ok(());
     }
+    let resource_type = resource.resource_type();
+    let Some(level) = level_within(resource_type, held) else { return Ok(()) };
     let existing: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, level FROM resource_grants WHERE org_id = $1 AND resource_type = 'folder' AND resource_id = $2 \
-         AND subject_type = 'user' AND subject_id = $3",
+        "SELECT id, level FROM resource_grants WHERE org_id = $1 AND resource_type = $2 AND resource_id = $3 \
+         AND subject_type = 'user' AND subject_id = $4",
     )
     .bind(&ctx.org_id)
-    .bind(folder_id)
+    .bind(resource_type.as_str())
+    .bind(resource.id())
     .bind(&ctx.user.id)
     .fetch_optional(&mut *conn)
     .await?;
+    let rank = |l: &str| resource_type.levels().iter().position(|x| *x == l);
     let (action, summary) = match existing {
-        Some((_, level)) if level == "admin" => return Ok(()),
-        Some((id, level)) => {
-            sqlx::query("UPDATE resource_grants SET level = 'admin' WHERE id = $1")
+        Some((_, old)) if rank(&old) >= rank(level) => return Ok(()),
+        Some((id, old)) => {
+            sqlx::query("UPDATE resource_grants SET level = $1 WHERE id = $2")
+                .bind(level)
                 .bind(&id)
                 .execute(&mut *conn)
                 .await?;
-            ("grant.changed", json!({ "grantId": id, "from": level, "to": "admin" }))
+            ("grant.changed", json!({ "grantId": id, "from": old, "to": level }))
         }
         None => {
             let id = new_id();
             sqlx::query(
                 "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
-                 created_by, created_at) VALUES ($1, $2, 'user', $3, 'folder', $4, 'admin', $3, $5)",
+                 created_by, created_at) VALUES ($1, $2, 'user', $3, $4, $5, $6, $3, $7)",
             )
             .bind(&id)
             .bind(&ctx.org_id)
             .bind(&ctx.user.id)
-            .bind(folder_id)
+            .bind(resource_type.as_str())
+            .bind(resource.id())
+            .bind(level)
             .bind(now)
             .execute(&mut *conn)
             .await?;
-            (
-                "grant.created",
-                json!({ "grantId": id, "subjectType": "user", "subjectId": ctx.user.id, "level": "admin" }),
-            )
+            ("grant.created", json!({ "grantId": id, "subjectType": "user", "subjectId": ctx.user.id, "level": level }))
         }
     };
-    audit::record(conn, &event(ctx, info, action, folder_id, summary, now)).await?;
+    let event = AuditEvent {
+        org_id: Some(&ctx.org_id),
+        actor_user_id: Some(&ctx.user.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action,
+        resource_type: Some(resource_type.as_str()),
+        resource_id: Some(resource.id()),
+        summary,
+        at_ms: now,
+    };
+    audit::record(conn, &event).await?;
     Ok(())
+}
+
+/// Moving content out of a team space (into the open tree or another space) is for maintainers
+/// of the space's team and org admins; team editors move within the space only. Content inside
+/// that another team owns goes along only with the same right for that team. Answers the summary
+/// of the `team_space.moved_out` audit event, or `None` when the move stays inside (or never was
+/// in) a space. Read through the transaction that holds the organization's lock.
+pub async fn check_leaving_space(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    tree: &Tree,
+    index: &AccessIndex,
+    folder_id: &str,
+    to: Option<&str>,
+) -> ApiResult<Option<Value>> {
+    let Some((space, team)) = tree.space_of(folder_id) else { return Ok(None) };
+    if to.and_then(|p| tree.space_of(p)).map(|(s, _)| s) == Some(space) {
+        return Ok(None);
+    }
+    let admin = authz::role_sees_restricted(&ctx.permissions);
+    let may_take = |team: &str| admin || index.is_maintainer(team);
+    if !may_take(team) {
+        return Err(ApiError::forbidden(
+            "only maintainers of the team and org admins move content out of its team space",
+        ));
+    }
+    // Everything that goes along, and the teams that own parts of it.
+    let mut folders = vec![folder_id.to_string()];
+    folders.extend(tree.descendants(folder_id).into_iter().map(|r| r.id.clone()));
+    let mut owners: BTreeSet<String> =
+        folders.iter().filter_map(|f| tree.rows.get(f)).filter_map(|r| r.owner_team_id.clone()).collect();
+    for folder in &folders {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT owner_team_id FROM dashboards WHERE org_id = $1 AND folder_id = $2 \
+             AND owner_team_id IS NOT NULL",
+        )
+        .bind(&ctx.org_id)
+        .bind(folder)
+        .fetch_all(&mut *conn)
+        .await?;
+        owners.extend(rows.into_iter().map(|(t,)| t));
+    }
+    if owners.iter().any(|owner| owner != team && !may_take(owner)) {
+        return Err(ApiError::forbidden("the folder holds content another team owns; that team must move it"));
+    }
+    Ok(Some(
+        json!({ "spaceId": space, "teamId": team, "from": tree.rows.get(folder_id).and_then(|r| r.parent_id.clone()), "to": to }),
+    ))
 }
 
 /// The restricted folder that would govern `folder` under `parent`: the folder itself when it is
@@ -636,6 +793,21 @@ async fn update(
         let index = AccessIndex::load(&mut tx, &ctx).await?;
         return Err(ApiError::version_conflict(json!(view(&current, &tree, &index))));
     }
+    let index = AccessIndex::load(&mut tx, &ctx).await?;
+    let admin = authz::role_sees_restricted(&ctx.permissions);
+    let space = current.parent_id.is_none() && current.restricted != 0 && current.owner_team_id.is_some();
+    // A team space is team only and lives at the top level; opening it up is the org admins'.
+    if space && body.restricted == Some(false) && !admin {
+        return Err(ApiError::forbidden("only org admins make a team space visible to others"));
+    }
+    if space && new_parent.as_ref().is_some_and(Option::is_some) {
+        return Err(ApiError::validation("a team space stays at the top level").with_field("parentId"));
+    }
+    let mut moved_out = None;
+    if let Some(parent) = &new_parent {
+        moved_out = check_leaving_space(&mut tx, &ctx, &tree, &index, &folder_id, parent.as_deref()).await?;
+    }
+    let held = index.folder(&folder_id).unwrap_or_default();
     let mut next = current.clone();
     let mut changed: Vec<&str> = Vec::new();
     if let Some(name) = name
@@ -680,8 +852,11 @@ async fn update(
         .await?;
         let summary = json!({ "fields": changed });
         audit::record(&mut tx, &event(&ctx, &info, "folder.updated", &folder_id, summary, now)).await?;
+        if let Some(summary) = moved_out {
+            audit::record(&mut tx, &event(&ctx, &info, "team_space.moved_out", &folder_id, summary, now)).await?;
+        }
         if next.restricted != 0 && current.restricted == 0 {
-            keep_access(&mut tx, &ctx, &info, &folder_id, now).await?;
+            keep_access(&mut tx, &ctx, &info, Resource::Folder(&folder_id), &held, now).await?;
         }
     }
     let updated = answer(&mut tx, &ctx, &folder_id).await?;
@@ -700,20 +875,21 @@ async fn set_owner(
     Path((_, folder_id)): Path<(String, String)>,
     JsonBody(body): JsonBody<OwnerRequest>,
 ) -> ApiResult<Json<Folder>> {
+    // Before the lock, for `not_found` on what the caller cannot see and the admin audit; every
+    // rule is checked again under the lock, where nothing can change it meanwhile.
     authorize(&state, &ctx, &folder_id, Permission::FoldersPermissions).await?;
-    check_new_owner(&state, &ctx, body.owner_team_id.as_deref()).await?;
     let restricted = body.visibility == Visibility::Team;
-    let tree = pool_tree(&state, &ctx).await?;
-    let before = visible_row(&tree, &folder_id)?.clone();
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
     if current.deleted_at.is_some() {
         return Err(conflict("the folder is in the trash; restore it first"));
     }
-    if current.version != before.version {
-        return Err(changed_meanwhile());
+    if body.version.is_some_and(|v| v != current.version) {
+        let index = AccessIndex::load(&mut tx, &ctx).await?;
+        return Err(ApiError::version_conflict(json!(view(&current, &tree, &index))));
     }
+    let held = check_owner_change(&mut tx, &ctx, OwnedItem::Folder(&current), &body).await?;
     let unchanged = current.owner_team_id == body.owner_team_id && (current.restricted != 0) == restricted;
     if !unchanged {
         let now = state.clock.now_ms();
@@ -733,13 +909,14 @@ async fn set_owner(
             "from": current.owner_team_id, "to": body.owner_team_id, "visibility": body.visibility,
         });
         audit::record(&mut tx, &event(&ctx, &info, "folder.owner_changed", &folder_id, summary, now)).await?;
-        // Whoever restricts a folder without belonging to its new owner team keeps sight of it.
+        // Whoever restricts a folder without belonging to its new owner team keeps sight of it,
+        // with no more than they held.
         let member = match body.owner_team_id.as_deref() {
             Some(team) => authz::team_membership(&mut *tx, &ctx, team).await?.is_some(),
             None => false,
         };
         if restricted && !member {
-            keep_access(&mut tx, &ctx, &info, &folder_id, now).await?;
+            keep_access(&mut tx, &ctx, &info, Resource::Folder(&folder_id), &held, now).await?;
         }
     }
     let updated = answer(&mut tx, &ctx, &folder_id).await?;
@@ -889,4 +1066,27 @@ async fn purge(
     audit::record(&mut tx, &event(&ctx, &info, "folder.purged", &folder_id, summary, now)).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authz::BuiltinRole;
+
+    #[test]
+    fn kept_access_never_exceeds_what_was_held() {
+        let editor = BuiltinRole::Editor.permissions();
+        // An editor holds no folders:permissions: restricting through a team keeps them at edit.
+        assert_eq!(level_within(ResourceType::Folder, &editor), Some("edit"));
+        assert_eq!(level_within(ResourceType::Dashboard, &editor), Some("admin"));
+        let viewer = BuiltinRole::Viewer.permissions();
+        assert_eq!(level_within(ResourceType::Folder, &viewer), Some("view"));
+        // A maintainer with the viewer role holds folders:permissions inside the space, but not
+        // write: they keep sight, not the admin level.
+        let mut maintainer = viewer.clone();
+        maintainer.extend([Permission::FoldersPermissions, Permission::DashboardsShare]);
+        assert_eq!(level_within(ResourceType::Folder, &maintainer), Some("view"));
+        assert_eq!(level_within(ResourceType::Folder, &BTreeSet::new()), None);
+        assert_eq!(level_within(ResourceType::Folder, &BuiltinRole::Admin.permissions()), Some("admin"));
+    }
 }

@@ -1392,6 +1392,7 @@ function DashboardView({
                 edit: canEdit,
                 remove: canDelete && !inTrash,
                 access: canAccess,
+                owner: canAccess && canEdit,
                 saveAs: permissions.has("dashboards:write") || canEdit,
               }}
               controls={controls}
@@ -1847,6 +1848,7 @@ function DashboardView({
           name={dashboard.title}
           owner={dashboard.ownerTeam}
           visibility={dashboard.teamOnly ? "team" : "shared"}
+          version={dashboard.version}
           onClose={() => setDialog(null)}
         />
       ) : null}

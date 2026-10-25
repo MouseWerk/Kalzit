@@ -12,7 +12,9 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::folders::{OwnerRequest, OwnerTeam, ResourceAccess, Visibility, check_new_owner, double_option};
+use super::folders::{
+    OwnedItem, OwnerRequest, OwnerTeam, ResourceAccess, Visibility, check_owner_change, double_option, keep_access,
+};
 use super::new_id;
 use super::support::{QueryParams, clean_text, conflict, decode_cursor, encode_cursor, page_limit};
 use super::table::{RouteDef, route};
@@ -271,6 +273,8 @@ struct NewVersion<'a> {
     /// Library panels this version references and the stored one did not; checked again under
     /// the organization's lock, so a library panel deleted meanwhile is not referenced.
     added_library: std::collections::BTreeSet<&'a str>,
+    /// A move out of a team space: the summary of its `team_space.moved_out` event.
+    moved_out: Option<Value>,
 }
 
 /// The library panels `model` references that `previous` did not.
@@ -417,27 +421,13 @@ async fn list(
         }
     }
     let index = AccessIndex::load(&mut conn, &ctx).await?;
-    let scope = super::team_context::scope(&mut conn, &ctx, q.team.as_deref()).await?;
+    super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
     // Lower case by Unicode rules on both sides: `search_title` is written by the server.
     let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
     let (after_title, after_id) = after.unzip();
-    // A team context leaves out other teams' spaces in the query itself, so pages stay full: one
-    // parameter per folder left out and per dashboard shared with the team, from `$12` on.
-    let excluded = scope.as_ref().map(|s| s.excluded_folders()).unwrap_or_default();
-    let shared = scope.as_ref().map(|s| s.shared_dashboards()).unwrap_or_default();
-    let numbered = |from: usize, n: usize| (from..from + n).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ");
-    let scoped = if excluded.is_empty() {
-        String::new()
-    } else {
-        let back = if shared.is_empty() {
-            String::new()
-        } else {
-            format!(" OR id IN ({})", numbered(12 + excluded.len(), shared.len()))
-        };
-        format!("AND (folder_id IS NULL OR folder_id NOT IN ({}){back})", numbered(12, excluded.len()))
-    };
+    // A team context (`$12`) leaves out other teams' spaces in the query itself, so pages stay full.
     let sql = format!(
-        "{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
+        "{}{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
          AND ((CAST($5 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($5 AS BIGINT) = 0 AND deleted_at IS NULL)) \
          AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
          AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\') \
@@ -445,12 +435,15 @@ async fn list(
          AND (CAST($8 AS TEXT) IS NULL OR title > $8 OR (title = $8 AND id > $9)) \
          AND (CAST($11 AS TEXT) IS NULL OR id IN \
               (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key = $11)) \
-         {scoped} ORDER BY title, id LIMIT $10",
+         AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
+              OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard')) \
+         ORDER BY title, id LIMIT $10",
         folders::VISIBILITY_CTE,
+        folders::scope_cte(12),
         folders::dashboard_visible("dashboards"),
     );
     // Built from constants and parameter numbers only, so nothing from the request reaches the SQL.
-    let mut query = sqlx::query_as::<_, DashboardRow>(sqlx::AssertSqlSafe(sql))
+    let rows: Vec<DashboardRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(&ctx.org_id)
         .bind(&ctx.user.id)
         .bind(&ctx.role)
@@ -461,11 +454,10 @@ async fn list(
         .bind(after_title.as_deref())
         .bind(after_id.as_deref())
         .bind(limit as i64 + 1)
-        .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase));
-    for id in excluded.iter().chain(shared.iter()) {
-        query = query.bind(*id);
-    }
-    let rows: Vec<DashboardRow> = query.fetch_all(&mut *conn).await?;
+        .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase))
+        .bind(q.team.as_deref())
+        .fetch_all(&mut *conn)
+        .await?;
     let mut items: Vec<DashboardSummary> = rows.iter().map(|r| DashboardSummary::new(r, &index)).collect();
     let more = items.len() > limit;
     items.truncate(limit);
@@ -533,6 +525,7 @@ async fn create(
         message: &message,
         restored_from: None,
         added_library: added_library(&model, None),
+        moved_out: None,
     };
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &id, &model).await?;
@@ -644,6 +637,9 @@ async fn write_version(
         None => ("dashboard.saved", json!({ "version": next, "moved": moved })),
     };
     audit::record(&mut tx, &event(ctx, info, action, &row.id, summary, now)).await?;
+    if let Some(summary) = &new.moved_out {
+        audit::record(&mut tx, &event(ctx, info, "team_space.moved_out", &row.id, summary.clone(), now)).await?;
+    }
     let saved = fetch(&mut *tx, &ctx.org_id, &row.id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut tx, ctx, saved).await?;
     crate::db::commit(tx).await?;
@@ -693,6 +689,8 @@ async fn save(
             }
         }
     }
+    let moved_out =
+        if folder_id == row.folder_id { None } else { leaving_space(&state, &ctx, &row, folder_id.as_deref()).await? };
     if body.version != row.version {
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
@@ -705,8 +703,36 @@ async fn save(
         message: &message,
         restored_from: None,
         added_library: added_library(&model, Some(&stored)),
+        moved_out,
     };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
+}
+
+/// Moving a dashboard out of a team space (into the open tree or another space) is for
+/// maintainers of the space's team and org admins; team editors move within the space only. A
+/// dashboard another team owns needs the same right for that team. Answers the summary of the
+/// `team_space.moved_out` event, or `None` when the move stays inside (or never was in) a space.
+async fn leaving_space(
+    state: &AppState,
+    ctx: &OrgCtx,
+    row: &DashboardRow,
+    to: Option<&str>,
+) -> ApiResult<Option<Value>> {
+    let mut conn = state.db.acquire().await?;
+    let tree = Tree::load(&mut conn, ctx).await?;
+    let Some((space, team)) = row.folder_id.as_deref().and_then(|f| tree.space_of(f)) else { return Ok(None) };
+    if to.and_then(|f| tree.space_of(f)).map(|(s, _)| s) == Some(space) {
+        return Ok(None);
+    }
+    let index = AccessIndex::load(&mut conn, ctx).await?;
+    let admin = authz::role_sees_restricted(&ctx.permissions);
+    let may_take = |team: &str| admin || index.is_maintainer(team);
+    if !may_take(team) || row.owner_team_id.as_deref().is_some_and(|owner| !may_take(owner)) {
+        return Err(ApiError::forbidden(
+            "only maintainers of the team and org admins move content out of its team space",
+        ));
+    }
+    Ok(Some(json!({ "spaceId": space, "teamId": team, "from": row.folder_id, "to": to })))
 }
 
 async fn trash(
@@ -851,19 +877,28 @@ async fn set_owner(
     Path((_, id)): Path<(String, String)>,
     JsonBody(body): JsonBody<OwnerRequest>,
 ) -> ApiResult<Json<Dashboard>> {
-    let row = load(&state, &ctx, &id, Permission::DashboardsShare).await?;
-    if row.deleted_at.is_some() {
-        return Err(conflict("the dashboard is in the trash; restore it first"));
-    }
-    check_new_owner(&state, &ctx, body.owner_team_id.as_deref()).await?;
+    // Before the lock, for `not_found` on what the caller cannot see and the admin audit; every
+    // rule is checked again under the lock, where nothing can change it meanwhile.
+    load(&state, &ctx, &id, Permission::DashboardsShare).await?;
     let team_only = body.visibility == Visibility::Team;
-    let member = match body.owner_team_id.as_deref() {
-        Some(team) => authz::team_membership(&state.db, &ctx, team).await?.is_some(),
-        None => false,
-    };
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    if row.deleted_at.is_some() {
+        return Err(conflict("the dashboard is in the trash; restore it first"));
+    }
+    if body.version.is_some_and(|v| v != row.version) {
+        let current = view(&mut tx, &ctx, row).await?;
+        return Err(ApiError::version_conflict(json!(current)));
+    }
+    let held =
+        check_owner_change(&mut tx, &ctx, OwnedItem::Dashboard { id: &id, folder: row.folder_id.as_deref() }, &body)
+            .await?;
+    let member = match body.owner_team_id.as_deref() {
+        Some(team) => authz::team_membership(&mut *tx, &ctx, team).await?.is_some(),
+        None => false,
+    };
     let changed = sqlx::query(
         "UPDATE dashboards SET owner_team_id = $1, team_only = $2, \
          ever_restricted = CASE WHEN $2 = 1 THEN 1 ELSE ever_restricted END \
@@ -881,50 +916,15 @@ async fn set_owner(
         let summary = json!({ "from": row.owner_team_id, "to": body.owner_team_id, "visibility": body.visibility });
         audit::record(&mut tx, &event(&ctx, &info, "dashboard.owner_changed", &id, summary, now)).await?;
         // Whoever makes a dashboard team only without belonging to its team keeps sight of it,
-        // as on restricting a folder.
-        if team_only && !member && !authz::role_sees_restricted(&ctx.permissions) {
-            keep_dashboard_access(&mut tx, &ctx, &info, &id, now).await?;
+        // as on restricting a folder, with no more than they held.
+        if team_only && !member {
+            keep_access(&mut tx, &ctx, &info, Resource::Dashboard(&id), &held, now).await?;
         }
     }
     let saved = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut tx, &ctx, saved).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
-}
-
-/// An `admin` grant on the dashboard for the caller, so making it team only does not lock them
-/// out (see `set_owner`).
-async fn keep_dashboard_access(
-    conn: &mut sqlx::AnyConnection,
-    ctx: &OrgCtx,
-    info: &RequestInfo,
-    id: &str,
-    now: i64,
-) -> ApiResult<()> {
-    sqlx::query(
-        "DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id = $2 \
-         AND subject_type = 'user' AND subject_id = $3",
-    )
-    .bind(&ctx.org_id)
-    .bind(id)
-    .bind(&ctx.user.id)
-    .execute(&mut *conn)
-    .await?;
-    let grant = new_id();
-    sqlx::query(
-        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
-         created_by, created_at) VALUES ($1, $2, 'user', $3, 'dashboard', $4, 'admin', $3, $5)",
-    )
-    .bind(&grant)
-    .bind(&ctx.org_id)
-    .bind(&ctx.user.id)
-    .bind(id)
-    .bind(now)
-    .execute(&mut *conn)
-    .await?;
-    let summary = json!({ "grantId": grant, "subjectType": "user", "subjectId": ctx.user.id, "level": "admin" });
-    audit::record(conn, &event(ctx, info, "grant.created", id, summary, now)).await?;
-    Ok(())
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -1046,6 +1046,7 @@ async fn restore_version(
         message: "",
         restored_from: Some(summary.version),
         added_library: added_library(&model, Some(&current)),
+        moved_out: None,
     };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
 }

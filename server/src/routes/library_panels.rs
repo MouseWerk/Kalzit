@@ -50,12 +50,38 @@ pub struct LibraryPanel {
     /// The panel content, migrated to the current `schemaVersion`.
     model: Value,
     version: i64,
-    /// How many dashboards show it (trashed ones included), whoever may see them.
+    /// How many dashboards the caller may read show it (trashed ones included); others are not
+    /// counted, so their number tells nothing about content the caller cannot see.
     uses: i64,
     created_at: i64,
     updated_at: i64,
     updated_by: Option<String>,
     access: LibraryAccess,
+}
+
+/// Per library panel, how many dashboards the caller may read show it.
+async fn visible_uses(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    index: &AccessIndex,
+    only: Option<&str>,
+) -> ApiResult<std::collections::HashMap<String, i64>> {
+    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT u.library_panel_id, d.id, d.folder_id FROM library_panel_uses u \
+         JOIN dashboards d ON d.id = u.dashboard_id \
+         WHERE d.org_id = $1 AND (CAST($2 AS TEXT) IS NULL OR u.library_panel_id = $2)",
+    )
+    .bind(&ctx.org_id)
+    .bind(only)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut out = std::collections::HashMap::new();
+    for (panel, dashboard, folder) in rows {
+        if index.dashboard(&dashboard, folder.as_deref()).is_some_and(|p| p.contains(&Permission::DashboardsRead)) {
+            *out.entry(panel).or_insert(0) += 1;
+        }
+    }
+    Ok(out)
 }
 
 async fn use_count<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, id: &str) -> ApiResult<i64> {
@@ -90,8 +116,8 @@ fn view(row: LibraryRow, uses: i64, index: &AccessIndex, ctx: &OrgCtx) -> ApiRes
 }
 
 async fn answer(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: LibraryRow) -> ApiResult<LibraryPanel> {
-    let uses = use_count(&mut *conn, &row.id).await?;
     let index = AccessIndex::load(conn, ctx).await?;
+    let uses = visible_uses(conn, ctx, &index, Some(&row.id)).await?.get(&row.id).copied().unwrap_or(0);
     view(row, uses, &index, ctx)
 }
 
@@ -229,14 +255,7 @@ async fn list(
     .await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
     // Every count in one query, not one per row.
-    let counts: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
-        "SELECT library_panel_id, COUNT(*) FROM library_panel_uses WHERE org_id = $1 GROUP BY library_panel_id",
-    )
-    .bind(&ctx.org_id)
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .collect();
+    let counts = visible_uses(&mut conn, &ctx, &index, None).await?;
     let mut items = Vec::new();
     for row in rows {
         let uses = counts.get(&row.id).copied().unwrap_or(0);
@@ -355,6 +374,7 @@ async fn save(
                 })?;
             }
         }
+        check_space_move(&state, &ctx, &tree, &index, &id, row.folder_id.as_deref(), folder_id.as_deref()).await?;
     }
     if body.version != row.version {
         let current = answer(&mut *state.db.acquire().await?, &ctx, row).await?;
@@ -402,6 +422,51 @@ async fn save(
 
 /// Only a library panel no dashboard shows can be deleted (trashed dashboards count); it is gone
 /// for good.
+/// Moves of a library panel across team spaces (docs/api/access.md, "Team spaces"): out of a
+/// space only by maintainers of its team and org admins, as for dashboards; into a space only
+/// while no dashboard outside that space shows it, since those would show content their viewers
+/// may no longer see.
+async fn check_space_move(
+    state: &AppState,
+    ctx: &OrgCtx,
+    tree: &Tree,
+    index: &AccessIndex,
+    id: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> ApiResult<()> {
+    let from_space = from.and_then(|f| tree.space_of(f));
+    let to_space = to.and_then(|f| tree.space_of(f));
+    if from_space.map(|(s, _)| s) == to_space.map(|(s, _)| s) {
+        return Ok(());
+    }
+    if let Some((_, team)) = from_space
+        && !authz::role_sees_restricted(&ctx.permissions)
+        && !index.is_maintainer(team)
+    {
+        return Err(ApiError::forbidden(
+            "only maintainers of the team and org admins move content out of its team space",
+        ));
+    }
+    if let Some((space, _)) = to_space {
+        let users: Vec<(Option<String>,)> = sqlx::query_as(
+            "SELECT d.folder_id FROM library_panel_uses u JOIN dashboards d ON d.id = u.dashboard_id \
+             WHERE u.library_panel_id = $1 AND d.org_id = $2",
+        )
+        .bind(id)
+        .bind(&ctx.org_id)
+        .fetch_all(&state.db)
+        .await?;
+        if users.iter().any(|(folder,)| folder.as_deref().and_then(|f| tree.space_of(f)).map(|(s, _)| s) != Some(space))
+        {
+            return Err(conflict(
+                "dashboards outside the team space show this library panel; remove it from them first",
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn remove(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -414,9 +479,9 @@ async fn remove(
     // A dashboard saved at this very moment may still add a reference; it then shows the panel
     // as deleted, as after a folder purge.
     authz::lock_org(&mut tx, &ctx.org_id).await?;
-    let uses = use_count(&mut *tx, &id).await?;
-    if uses > 0 {
-        return Err(conflict(format!("the library panel is shown by {uses} dashboards; remove it from them first")));
+    // Without the number: some of them may be dashboards the caller cannot see.
+    if use_count(&mut *tx, &id).await? > 0 {
+        return Err(conflict("dashboards still show the library panel; remove it from them first"));
     }
     sqlx::query("DELETE FROM library_panels WHERE org_id = $1 AND id = $2")
         .bind(&ctx.org_id)
@@ -440,10 +505,9 @@ pub struct Use {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Uses {
-    /// The dashboards showing it that the caller may see, by title.
+    /// The dashboards showing it that the caller may see, by title. Others are not counted, so
+    /// nothing tells about content the caller cannot see.
     items: Vec<Use>,
-    /// How many more show it that the caller may not see.
-    hidden: i64,
 }
 
 async fn uses(
@@ -463,14 +527,12 @@ async fn uses(
     .fetch_all(&mut *conn)
     .await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
-    let mut items = Vec::new();
-    let mut hidden = 0;
-    for (dashboard, folder, title, deleted_at) in rows {
-        if index.dashboard(&dashboard, folder.as_deref()).is_some_and(|p| p.contains(&Permission::DashboardsRead)) {
-            items.push(Use { id: dashboard, title, deleted_at });
-        } else {
-            hidden += 1;
-        }
-    }
-    Ok(Json(Uses { items, hidden }))
+    let items = rows
+        .into_iter()
+        .filter(|(dashboard, folder, _, _)| {
+            index.dashboard(dashboard, folder.as_deref()).is_some_and(|p| p.contains(&Permission::DashboardsRead))
+        })
+        .map(|(id, _, title, deleted_at)| Use { id, title, deleted_at })
+        .collect();
+    Ok(Json(Uses { items }))
 }

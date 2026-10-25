@@ -123,4 +123,17 @@ describe("team spaces on the Dashboards page", () => {
     const folder = within(dialog).getByRole("combobox", { name: "Folder" }) as HTMLSelectElement;
     expect(folder.value).toBe("f-ops");
   });
+
+  it("offers team and visibility only to whoever may change them", async () => {
+    setup([OPS, SALES], "editor");
+    renderApp("/dashboards?folder=f-general");
+    await screen.findByRole("button", { name: "Rename or move…" });
+    expect(screen.queryByRole("button", { name: "Team and visibility" })).toBeNull();
+  });
+
+  it("offers team and visibility to whoever manages the folder's access", async () => {
+    setup([OPS, SALES], "owner");
+    renderApp("/dashboards?folder=f-general");
+    expect(await screen.findByRole("button", { name: "Team and visibility" })).toBeTruthy();
+  });
 });

@@ -142,6 +142,7 @@ export function OwnerDialog({
   name,
   owner,
   visibility,
+  version,
   onClose,
 }: {
   orgId: string;
@@ -150,6 +151,8 @@ export function OwnerDialog({
   name: string;
   owner: OwnerTeam | null;
   visibility: Visibility;
+  /** The folder's or dashboard's version, so a change made meanwhile is a conflict. */
+  version: number;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -166,7 +169,11 @@ export function OwnerDialog({
   ];
   const save = useMutation({
     mutationFn: () =>
-      setOwner(orgId, kind, id, { ownerTeamId: teamId === "" ? null : teamId, visibility: shown }),
+      setOwner(orgId, kind, id, {
+        ownerTeamId: teamId === "" ? null : teamId,
+        visibility: shown,
+        version,
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
