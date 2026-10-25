@@ -32,6 +32,7 @@ import {
 } from "./api";
 import {
   connectionFields,
+  hasHost,
   MASK,
   parseConnectionString,
   supportsConnectionString,
@@ -52,6 +53,9 @@ import { forgetHealth, healthQuery } from "./sourceStatus";
 import "./datasources.css";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
+
+/** A test that could not run right after adding a source, kept for the page it lands on. */
+const testErrorKey = (orgId: string, id: string) => ["datasource-test-error", orgId, id] as const;
 const editRoute = getRouteApi("/_app/data-sources/$datasourceId");
 
 /** Server-provided label keys are used when this UI knows them; otherwise the field name. */
@@ -149,6 +153,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { kind: chosen } = newRoute.useSearch();
+  const permissions = useOrgPermissions();
   const pickerId = useId();
   const [search, setSearch] = useState("");
   const kinds = useQuery(kindsQuery(orgId));
@@ -157,12 +162,14 @@ function NewDataSource({ orgId }: { orgId: string }) {
     // and the edit page it lands on shows the result (shared through the test cache).
     mutationFn: async ({ output, test }: { output: FormOutput; test: boolean }) => {
       const created = await createSource(output);
-      if (test) {
+      // Testing needs query rights; a custom role may allow adding without them.
+      if (test && permissions.has("datasources:query")) {
         try {
           const health = await checkHealth(orgId, created.id);
           queryClient.setQueryData(healthQuery(orgId, created.id).queryKey, health);
-        } catch {
-          // The source is stored; the edit page offers the test again.
+        } catch (error) {
+          // The source is stored; its page says the test could not run, and why.
+          queryClient.setQueryData(testErrorKey(orgId, created.id), error);
         }
       }
       return created;
@@ -399,6 +406,13 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const [health, setHealth] = useState<Health | null>(
     () => queryClient.getQueryData(healthQuery(orgId, datasourceId).queryKey) ?? null,
   );
+  // Read once: a later test replaces it.
+  const [addTestError] = useState<Error | null>(
+    () => queryClient.getQueryData<Error>(testErrorKey(orgId, datasourceId)) ?? null,
+  );
+  useEffect(() => {
+    queryClient.removeQueries({ queryKey: testErrorKey(orgId, datasourceId), exact: true });
+  }, [queryClient, orgId, datasourceId]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Bumped after a save so the form starts again from what the server stored.
   const [formKey, setFormKey] = useState(0);
@@ -496,11 +510,16 @@ function EditDataSource({ orgId }: { orgId: string }) {
         saved={save.isSuccess}
         status={
           access.write ? (
-            <HealthResult
-              health={health}
-              error={test.error}
-              empty={canTest ? <UntestedNote /> : null}
-            />
+            <>
+              {addTestError !== null && test.isIdle ? (
+                <p className="field__hint">{t("datasources.new.testFailed")}</p>
+              ) : null}
+              <HealthResult
+                health={health}
+                error={test.error ?? (test.isIdle ? addTestError : null)}
+                empty={canTest ? <UntestedNote /> : null}
+              />
+            </>
           ) : undefined
         }
         cancel={
@@ -737,6 +756,7 @@ function SettingsForm({
     Object.fromEntries(groups.map(({ section, specs }) => [section, openAtFirst(section, specs)])),
   );
   const [useString, setUseString] = useState(false);
+  const [connStringError, setConnStringError] = useState<string | undefined>(undefined);
   const secretSet = (field: string) => {
     const state = secrets[field];
     return state?.mode === "set"
@@ -750,7 +770,9 @@ function SettingsForm({
     secret.map((spec) => spec.name),
   );
   const fieldError = (field: string) =>
-    errors[field] ?? (server?.field === field ? server.text : undefined);
+    errors[field] ??
+    (field === "connectionString" ? connStringError : undefined) ??
+    (server?.field === field ? server.text : undefined);
 
   function validate(): FormOutput | null {
     const found: Record<string, string> = {};
@@ -775,6 +797,10 @@ function SettingsForm({
       if (spec.type === "number") {
         if (!WHOLE_NUMBER.test(text)) {
           found[spec.name] = t("datasources.form.number");
+          continue;
+        }
+        if (spec.name === "port" && (Number(text) < 1 || Number(text) > 65535)) {
+          found[spec.name] = t("datasources.form.portRange");
           continue;
         }
         parsed[spec.name] = Number(text);
@@ -841,6 +867,10 @@ function SettingsForm({
         ...Object.fromEntries(reenter.map((field) => [field, { mode: "set", value: "" }])),
       }));
     }
+    // A string that could not be read would leave the fields at an older one: say so first.
+    if (useString && connStringError !== undefined) {
+      found.connectionString = connStringError;
+    }
     setErrors(found);
     if (Object.keys(found).length > 0) {
       setFocusInvalid((count) => count + 1);
@@ -896,7 +926,7 @@ function SettingsForm({
         </div>
         <span className="ds-badge">
           <Icon name="lock" />
-          {t("datasources.form.readOnlyBadge")}
+          {t("datasources.form.readOnlyQueries")}
         </span>
       </div>
       <div className="ds-card__body">
@@ -932,7 +962,7 @@ function SettingsForm({
             onToggle={() =>
               setOpenSections((current) => ({ ...current, [section]: !current[section] }))
             }
-            summary={summarize(specs, values, secretSet)}
+            summary={summarize(specs, values, secretSet, section === "behavior")}
             specs={specs}
           >
             {section === "connection" && supportsConnectionString(kind.kind) && !readOnly ? (
@@ -942,13 +972,23 @@ function SettingsForm({
                 stringMode={useString}
                 onMode={(next) => setUseString(next)}
                 disabled={targetLocked}
+                error={fieldError("connectionString")}
+                onError={(text) => {
+                  setConnStringError(text);
+                  setErrors(({ connectionString: _, ...rest }) => rest);
+                }}
                 onParsed={(parsed, password) => {
                   setValues((current) => ({ ...current, ...parsed }));
-                  if (password !== undefined && password !== "") {
-                    setSecrets((current) => ({
-                      ...current,
-                      password: { mode: "set", value: password },
-                    }));
+                  if (password !== "unchanged") {
+                    // A string without a password takes back one typed before; a stored one
+                    // stays stored, as when the form opened.
+                    const next: SecretState =
+                      password !== undefined && password !== ""
+                        ? { mode: "set", value: password }
+                        : initial?.secrets.password?.set === true
+                          ? { mode: "keep" }
+                          : { mode: "set", value: "" };
+                    setSecrets((current) => ({ ...current, password: next }));
                   }
                   setDirty(true);
                 }}
@@ -1127,6 +1167,8 @@ function ConnectionStringBlock({
   stringMode,
   onMode,
   disabled,
+  error,
+  onError,
   onParsed,
 }: {
   kind: DatasourceKind;
@@ -1134,26 +1176,35 @@ function ConnectionStringBlock({
   stringMode: boolean;
   onMode: (stringMode: boolean) => void;
   disabled: boolean;
-  onParsed: (values: Record<string, string | boolean>, password: string | undefined) => void;
+  /** A string that cannot be read; the form refuses to save while one is shown. */
+  error: string | undefined;
+  onError: (error: string | undefined) => void;
+  /** `unchanged`: the string still holds the mask, so the password stays as it is. */
+  onParsed: (
+    values: Record<string, string | boolean>,
+    password: string | undefined | "unchanged",
+  ) => void;
 }) {
   const { t } = useI18n();
   const [text, setText] = useState("");
-  const [parseError, setParseError] = useState<string | undefined>(undefined);
   function read(next: string) {
     setText(next);
     if (next.trim() === "") {
-      setParseError(undefined);
+      onError(undefined);
       return;
     }
     const result = parseConnectionString(kind.kind, next, kind.settings);
     if (!result.ok) {
-      setParseError(
-        t(`datasources.connString.error.${result.error}`, { detail: result.detail ?? "" }),
-      );
+      onError(t(`datasources.connString.error.${result.error}`, { detail: result.detail ?? "" }));
       return;
     }
-    setParseError(undefined);
-    onParsed(result.values, result.password);
+    onError(undefined);
+    const password = result.password === MASK ? "unchanged" : result.password;
+    onParsed(result.values, password);
+    if (password !== undefined && password !== "unchanged") {
+      // The password moved to its field; the box shows only the mask from now on.
+      setText(toConnectionString(kind.kind, { ...values, ...result.values }, kind.settings, MASK));
+    }
   }
   return (
     <div className="ds-connstring">
@@ -1163,7 +1214,12 @@ function ConnectionStringBlock({
           type="button"
           className="ds-segmented__button"
           aria-pressed={!stringMode}
-          onClick={() => onMode(false)}
+          onClick={() => {
+            // The fields hold the last string that could be read; the box is emptied.
+            setText("");
+            onError(undefined);
+            onMode(false);
+          }}
         >
           {t("datasources.connString.fields")}
         </button>
@@ -1174,7 +1230,7 @@ function ConnectionStringBlock({
           onClick={() => {
             // Starts from the fields, without the password: it is never read back.
             setText(toConnectionString(kind.kind, values, kind.settings, undefined));
-            setParseError(undefined);
+            onError(undefined);
             onMode(true);
           }}
         >
@@ -1187,7 +1243,7 @@ function ConnectionStringBlock({
           hint={t("datasources.connString.hint")}
           value={text}
           onValueChange={read}
-          error={parseError}
+          error={error}
           mono
           autoComplete="off"
           spellCheck={false}
@@ -1197,7 +1253,6 @@ function ConnectionStringBlock({
     </div>
   );
 }
-
 /** The fields as a string, read-only below them, the password masked. */
 function ConnectionStringPreview({
   kind,
@@ -1215,9 +1270,13 @@ function ConnectionStringPreview({
       <span className="field__label" id={`${id}-label`}>
         {t("datasources.connString.asString")}
       </span>
-      <output className="ds-connstring__value" aria-labelledby={`${id}-label`}>
-        {toConnectionString(kind.kind, values, kind.settings, passwordSet ? MASK : undefined)}
-      </output>
+      {hasHost(kind.kind, values) ? (
+        <output className="ds-connstring__value" aria-labelledby={`${id}-label`}>
+          {toConnectionString(kind.kind, values, kind.settings, passwordSet ? MASK : undefined)}
+        </output>
+      ) : (
+        <p className="ds-connstring__empty">{t("datasources.connString.noHost")}</p>
+      )}
       <p className="field__hint">{t("datasources.connString.previewHint")}</p>
     </div>
   );
