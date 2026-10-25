@@ -10,21 +10,14 @@
     max-width: var(--content-max-width);
   }
 
-  /* The test result belongs to the form above it and keeps its width. */
-  .ds-form,
-  .ds-health-region {
+  /* The edit form keeps the reading width. */
+  .ds-edit .ds-form,
+  .ds-edit > .ds-health-region {
     max-width: var(--size-form);
   }
 
-  .ds-form__kind {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-weight: var(--font-weight-semibold);
-  }
-
   .ds-form__saved {
-    align-self: center;
+    flex: 1;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
@@ -36,16 +29,105 @@
     gap: var(--space-3);
   }
 
+  /* Adding a source: the kinds on the left, the form of the chosen one on the right. */
+  .ds-new {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  @media (min-width: 72rem) {
+    .ds-new {
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    }
+  }
+
+  /* Narrow: once a kind is chosen the form takes the page; "Change kind" leads back. */
+  @media (max-width: 71.99rem) {
+    .ds-new--chosen > .ds-kinds {
+      display: none;
+    }
+  }
+
+  @media (min-width: 72rem) {
+    .ds-new__change {
+      display: none;
+    }
+  }
+
+  .ds-new__form {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
   .ds-kinds {
     display: grid;
     gap: var(--space-3);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
   }
 
-  /* The kinds as cards: the kind's mark in a tile, its name and one line on what it is. */
+  .ds-kinds__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .ds-kinds__title {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--font-size-md);
+  }
+
+  .ds-kinds__title h2 {
+    margin: 0;
+    font-size: var(--font-size-md);
+  }
+
+  .ds-kinds__count {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .ds-kinds__search {
+    flex: 0 1 var(--size-field);
+  }
+
+  .ds-kinds__none {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-kinds__group {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .ds-kinds__group-title {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  /* The kinds as small cards: mark, name, one line on what it is, a check on the chosen one. */
   .ds-kinds__list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--size-column)), 1fr));
-    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--size-field)), 1fr));
+    gap: var(--space-2);
+    margin: 0;
     padding: 0;
     list-style: none;
   }
@@ -53,13 +135,13 @@
   /*
    * The link covers the whole card and is named by the product alone; the summary lies over it
    * in the same grid (clicks pass through to the link) and describes it. The outer tracks are
-   * the card's padding: with the gaps they add up to 16 px on every side.
+   * the card's padding.
    */
   .ds-kinds__item {
     display: grid;
-    grid-template-columns: var(--space-1) auto minmax(0, 1fr) var(--space-1);
-    grid-template-rows: var(--space-3) auto 1fr var(--space-3);
-    gap: var(--space-1) var(--space-3);
+    grid-template-columns: var(--space-1) auto minmax(0, 1fr) auto var(--space-1);
+    grid-template-rows: var(--space-1) auto 1fr var(--space-1);
+    gap: 0 var(--space-2);
     height: 100%;
   }
 
@@ -70,7 +152,7 @@
     grid-column: 1 / -1;
     grid-row: 1 / -1;
     border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     background: var(--bg-raised);
     color: var(--text);
     text-decoration: none;
@@ -81,22 +163,334 @@
     background: var(--bg-hover);
   }
 
+  /* The chosen kind: the neutral tint of a pressed control and a check, never a colored edge. */
+  .ds-kinds__link[aria-current="page"] {
+    background: var(--bg-active);
+  }
+
   .ds-kinds__name {
     grid-column: 3;
     grid-row: 2;
+    font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
+  }
+
+  .ds-kinds__check {
+    display: inline-grid;
+    grid-column: 4;
+    grid-row: 2 / 4;
+    align-self: center;
+    color: var(--text-muted);
   }
 
   .ds-kinds__summary {
     position: relative;
+    overflow: hidden;
     grid-column: 3;
     grid-row: 3;
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     line-height: var(--line-height-tight);
+    text-overflow: ellipsis;
+    white-space: nowrap;
     pointer-events: none;
   }
 
+  /* The steps of adding a source, in a quiet pill next to the page title. */
+  .ds-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-1) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-steps__step {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+  }
+
+  .ds-steps__step + .ds-steps__step::before {
+    content: "";
+    width: var(--space-4);
+    height: var(--border-width);
+    background: var(--border);
+  }
+
+  .ds-steps__step[data-state="current"] {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ds-steps__mark {
+    display: inline-grid;
+    place-items: center;
+    width: var(--size-auth-step);
+    height: var(--size-auth-step);
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-2xs);
+  }
+
+  .ds-steps__step[data-state="current"] .ds-steps__mark {
+    border-color: var(--text);
+    background: var(--text);
+    color: var(--bg-raised);
+  }
+
+  .ds-steps__mark .icon {
+    width: 70%;
+    height: 70%;
+  }
+
+  /* The form as one card: header, the name, then one section per group of settings. */
+  .ds-card {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .ds-card--empty {
+    padding: var(--space-4);
+  }
+
+  .ds-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+
+  /* On a phone the badge moves below the title instead of squeezing it. */
+  .ds-card__title {
+    display: grid;
+    flex: 1 1 var(--size-sidebar-min);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .ds-card__title h2 {
+    margin: 0;
+    font-size: var(--font-size-lg);
+  }
+
+  .ds-card__sub {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-badge {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  .ds-card__body {
+    display: grid;
+    gap: var(--space-3);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
+  .ds-card__hint {
+    margin: 0;
+  }
+
+  .ds-section {
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .ds-section__heading {
+    margin: 0;
+    font-size: var(--font-size-md);
+  }
+
+  .ds-section__toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .ds-section__toggle:hover {
+    background: var(--bg-hover);
+  }
+
+  .ds-section__toggle:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-offset));
+  }
+
+  .ds-section__chevron {
+    display: inline-grid;
+    color: var(--text-muted);
+    transition: rotate var(--duration-fast) var(--easing);
+  }
+
+  .ds-section__toggle[aria-expanded="true"] .ds-section__chevron {
+    rotate: 90deg;
+  }
+
+  .ds-section__title {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ds-section__summary {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-1);
+    min-width: 0;
+    margin-inline-start: auto;
+  }
+
+  .ds-chip {
+    overflow: hidden;
+    max-width: var(--size-field);
+    padding: var(--space-half) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ds-chip--mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .ds-section__body {
+    display: grid;
+    gap: var(--space-3);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
+  .ds-section__body[hidden] {
+    display: none;
+  }
+
+  .ds-connstring {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .ds-segmented {
+    display: inline-flex;
+    justify-self: start;
+    gap: var(--space-1);
+    margin: 0;
+    min-width: 0;
+    padding: var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .ds-segmented__button {
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .ds-segmented__button[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .ds-segmented__button:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .ds-connstring__preview {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .ds-connstring__value {
+    display: block;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .ds-connstring__empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-card__status {
+    padding: var(--space-3) var(--space-4) 0;
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .ds-card__status .ds-health-region {
+    max-width: none;
+  }
+
+  .ds-test-status {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .ds-test-status .field__hint {
+    margin: 0;
+  }
+
+  .ds-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
   /* A kind next to its name, in the list and the form's header. */
   .kind-label {
     display: inline-flex;

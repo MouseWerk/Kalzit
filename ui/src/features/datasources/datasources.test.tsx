@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { fakeAdmin } from "../admin/test/fakeAdmin";
-import { PG_ID, PROM_ID } from "./test/fakeDatasources";
+import { FAKE_KINDS, PG_ID, PROM_ID } from "./test/fakeDatasources";
 
 /** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
 async function fill(user: ReturnType<typeof renderApp>["user"], field: HTMLElement, text: string) {
@@ -24,6 +24,11 @@ type Server = ReturnType<typeof installFakeServer>;
 
 const lastCall = (server: Server, method: string, part: string) =>
   server.calls.filter((call) => call.method === method && call.path.includes(part)).at(-1);
+
+/** Opens a closed section of the form by its title (its name also holds the summary). */
+async function openSection(user: ReturnType<typeof open>["user"], title: string) {
+  await user.click(screen.getByRole("button", { name: new RegExp(`^${title}`) }));
+}
 
 async function pickKind(user: ReturnType<typeof open>["user"], name: string) {
   await user.click(await screen.findByRole("link", { name }));
@@ -339,6 +344,7 @@ describe("adding a data source", () => {
       "value",
       "5432",
     );
+    await openSection(user, "TLS");
     expect(screen.getByRole("combobox", { name: "TLS mode" })).toHaveProperty("value", "prefer");
     expect(screen.getByRole("textbox", { name: "CA certificate (PEM) (optional)" }).tagName).toBe(
       "TEXTAREA",
@@ -378,6 +384,7 @@ describe("adding a data source", () => {
   it("keeps encryption on for SQL Server when the form is left untouched", async () => {
     const { server, user } = open("/data-sources/new?kind=mssql");
     await screen.findByRole("textbox", { name: "Name" });
+    await openSection(user, "TLS");
     expect(screen.getByRole("checkbox", { name: "Encrypt the connection" })).toHaveProperty(
       "checked",
       true,
@@ -397,6 +404,7 @@ describe("adding a data source", () => {
   it("offers exactly the Prometheus fields of the kind", async () => {
     const { user } = open("/data-sources/new");
     await pickKind(user, "Prometheus");
+    await openSection(user, "Limits");
     for (const label of [
       "URL",
       "Basic auth user name (optional)",
@@ -411,6 +419,199 @@ describe("adding a data source", () => {
     expect(screen.queryByText(/Access token|certificate check/)).toBeNull();
   });
 
+  it("groups the kinds, finds them by search and shows the steps", async () => {
+    const { user } = open("/data-sources/new");
+    const tables = await screen.findByRole("list", { name: "Tables (SQL)" });
+    expect(within(tables).getByRole("link", { name: "PostgreSQL" })).toBeTruthy();
+    const steps = screen.getByRole("list", { name: "Steps" });
+    expect(within(steps).getByText("Kind").closest("li")?.getAttribute("aria-current")).toBe(
+      "step",
+    );
+    await user.type(screen.getByRole("searchbox", { name: /Search, such as/ }), "graph");
+    expect(screen.queryByRole("list", { name: "Tables (SQL)" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Neo4j" })).toBeTruthy();
+
+    await user.click(screen.getByRole("link", { name: "Neo4j" }));
+    await screen.findByRole("heading", { name: "Connect Neo4j" });
+    expect(screen.getByRole("link", { name: "Neo4j" }).getAttribute("aria-current")).toBe("page");
+    expect(within(steps).getByText("Connection").closest("li")?.getAttribute("aria-current")).toBe(
+      "step",
+    );
+    expect(within(steps).getByText("(done)")).toBeTruthy();
+    // Neo4j has no connection string here: only the fields.
+    expect(screen.queryByRole("button", { name: "Connection string" })).toBeNull();
+    expect(screen.getByText("Not tested yet")).toBeTruthy();
+  });
+
+  it("fills the fields from a pasted connection string, the password as a secret", async () => {
+    const { server, user } = open("/data-sources/new?kind=postgres");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Shop");
+    // Without a host there is no string to show yet.
+    expect(screen.getByText("Enter a host to see the connection as a string.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Connection string" }));
+    const text = screen.getByRole("textbox", { name: "Connection string" });
+    await user.clear(text);
+    await user.click(text);
+    // An unescaped @ in the password: the login ends at the last @.
+    await user.paste("postgres://kalzit:se@cret@db.intern:6543/shop?sslmode=require");
+    // The password left the box: only the mask stays visible.
+    expect((text as HTMLInputElement).value).toBe(
+      "postgres://kalzit:••••••••@db.intern:6543/shop?sslmode=require",
+    );
+    await user.click(screen.getByRole("button", { name: "Fields" }));
+    expect(screen.getByRole("textbox", { name: "Host" })).toHaveProperty("value", "db.intern");
+    expect(
+      screen.getByText(/postgres:\/\/kalzit:•+@db\.intern:6543\/shop\?sslmode=require/),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
+    await waitFor(() =>
+      expect(lastCall(server, "POST", "/datasources")?.body).toEqual({
+        name: "Shop",
+        kind: "postgres",
+        settings: {
+          host: "db.intern",
+          port: 6543,
+          database: "shop",
+          user: "kalzit",
+          sslMode: "require",
+        },
+        secrets: { password: "se@cret" },
+      }),
+    );
+  });
+
+  it("takes back a pasted password when the string no longer has one", async () => {
+    const { server, user } = open("/data-sources/new?kind=postgres");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Shop");
+    await user.click(screen.getByRole("button", { name: "Connection string" }));
+    const text = screen.getByRole("textbox", { name: "Connection string" });
+    await user.clear(text);
+    await user.click(text);
+    await user.paste("postgres://kalzit:secret@db.intern/shop");
+    await user.clear(text);
+    await user.click(text);
+    await user.paste("postgres://kalzit@db.intern/shop");
+    expect(screen.getByLabelText("Password (optional)")).toHaveProperty("value", "");
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
+    await waitFor(() =>
+      expect(lastCall(server, "POST", "/datasources")?.body).toMatchObject({ secrets: {} }),
+    );
+  });
+
+  it("keeps the TLS mode when a pasted string leaves it out", async () => {
+    const { user } = open("/data-sources/new?kind=postgres");
+    await screen.findByRole("textbox", { name: "Name" });
+    await openSection(user, "TLS");
+    await user.selectOptions(screen.getByRole("combobox", { name: "TLS mode" }), "verify-full");
+    await user.click(screen.getByRole("button", { name: "Connection string" }));
+    const text = screen.getByRole("textbox", { name: "Connection string" });
+    await user.clear(text);
+    await user.click(text);
+    await user.paste("postgres://kalzit@db.intern/shop");
+    expect(screen.getByRole("combobox", { name: "TLS mode" })).toHaveProperty(
+      "value",
+      "verify-full",
+    );
+  });
+
+  it("does not save while the connection string cannot be read", async () => {
+    const { server, user } = open("/data-sources/new?kind=postgres");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Shop");
+    await user.click(screen.getByRole("button", { name: "Connection string" }));
+    const text = screen.getByRole("textbox", { name: "Connection string" });
+    await user.clear(text);
+    await user.click(text);
+    await user.paste("postgres://kalzit@db.intern/shop?sslmode=sometimes");
+    expect(screen.getByText(/The value of sslmode is not one this kind accepts/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
+    await waitFor(() => expect(document.activeElement).toBe(text));
+    expect(text.getAttribute("aria-invalid")).toBe("true");
+    expect(lastCall(server, "POST", "/datasources")).toBeUndefined();
+  });
+
+  it("saves and tests a new source and shows the result on its page", async () => {
+    const { server, user, location } = open("/data-sources/new?kind=sqlite");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Local");
+    await fill(
+      user,
+      screen.getByRole("textbox", { name: "Absolute path of the file" }),
+      "/data/a.db",
+    );
+    await user.click(screen.getByRole("button", { name: "Save and test" }));
+    await waitFor(() => expect(location().pathname).toBe("/data-sources/ds-new-1"));
+    expect(lastCall(server, "POST", "ds-new-1/health")).toBeTruthy();
+    expect(await screen.findByText(/Connected in \d+ ms/)).toBeTruthy();
+  });
+
+  it("says when a new source was saved but its test could not run", async () => {
+    const { server, user, location } = open("/data-sources/new?kind=sqlite");
+    server.failNext("/api/orgs/o1/datasources/ds-new-1/health", 403, "forbidden", "POST");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Local");
+    await fill(
+      user,
+      screen.getByRole("textbox", { name: "Absolute path of the file" }),
+      "/data/a.db",
+    );
+    await user.click(screen.getByRole("button", { name: "Save and test" }));
+    await waitFor(() => expect(location().pathname).toBe("/data-sources/ds-new-1"));
+    expect(
+      await screen.findByText("The data source was added, but the test could not run."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Not tested yet")).toBeNull();
+  });
+
+  it("stays on the form when saving fails", async () => {
+    const { server, user, location } = open("/data-sources/new?kind=sqlite");
+    server.failNext("/api/orgs/o1/datasources", 503, "busy", "POST");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Local");
+    await fill(
+      user,
+      screen.getByRole("textbox", { name: "Absolute path of the file" }),
+      "/data/a.db",
+    );
+    await user.click(screen.getByRole("button", { name: "Save and test" }));
+    expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
+    expect(location().pathname).toBe("/data-sources/new");
+    expect(lastCall(server, "POST", "/health")).toBeUndefined();
+  });
+
+  it("opens a closed section that holds a field with an error", async () => {
+    const { user } = open("/data-sources/new?kind=postgres");
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Shop");
+    await user.click(screen.getByRole("button", { name: /^Connection(?! string)/ }));
+    expect(screen.queryByRole("textbox", { name: "Host" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
+    const host = await screen.findByRole("textbox", { name: "Host" });
+    expect(host.getAttribute("aria-invalid")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(host));
+  });
+
+  it("shows a setting this UI does not know under Behavior, summed up when changed", async () => {
+    const sqlite = FAKE_KINDS.find((kind) => kind.kind === "sqlite");
+    sqlite?.settings.push({
+      name: "journalMode",
+      labelKey: "datasources.settings.journalMode",
+      type: "string",
+      required: false,
+      secret: false,
+      target: false,
+      default: "wal",
+    });
+    try {
+      const { user } = open("/data-sources/new?kind=sqlite");
+      await screen.findByRole("textbox", { name: "Name" });
+      // At its default the closed section shows no summary.
+      const behavior = screen.getByRole("button", { name: "Behavior" });
+      await user.click(behavior);
+      const field = screen.getByRole("textbox", { name: "journalMode (optional)" });
+      await user.clear(field);
+      await user.type(field, "delete");
+      await user.click(behavior);
+      expect(screen.getByRole("button", { name: "Behavior delete" })).toBeTruthy();
+    } finally {
+      sqlite?.settings.pop();
+    }
+  });
   it("asks for whole numbers and shows refused targets and taken names at their fields", async () => {
     const { user } = open("/data-sources/new?kind=postgres");
     const name = await screen.findByRole("textbox", { name: "Name" });
@@ -423,6 +624,10 @@ describe("adding a data source", () => {
     await fill(user, screen.getByRole("textbox", { name: "User name" }), "u");
     await user.click(screen.getByRole("button", { name: "Add data source" }));
     expect(screen.getByText("Enter a whole number of 0 or more.")).toBeTruthy();
+    await user.clear(port);
+    await fill(user, port, "70000");
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
+    expect(screen.getByText("Enter a port between 1 and 65535.")).toBeTruthy();
 
     await user.clear(port);
     await user.click(screen.getByRole("button", { name: "Add data source" }));
@@ -467,7 +672,9 @@ describe("editing a data source", () => {
   it("asks for stored secrets again when the target changes, as the contract requires", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
     expect(await screen.findByText("Set")).toBeTruthy();
-    // The stored TLS mode is shown, not the default.
+    // The stored TLS mode is shown, not the default; the closed section sums it up.
+    expect(screen.getByRole("button", { name: /^TLS verify-full/ })).toBeTruthy();
+    await openSection(user, "TLS");
     expect(screen.getByRole("combobox", { name: "TLS mode" })).toHaveProperty(
       "value",
       "verify-full",
@@ -612,6 +819,7 @@ describe("editing a data source", () => {
       code: "datasource_target_blocked",
     };
     // The row limit is no target, so no secret has to be entered again.
+    await openSection(user, "Limits");
     await user.type(screen.getByRole("textbox", { name: "Row limit (optional)" }), "1000");
     await user.click(screen.getByRole("button", { name: "Save and test" }));
     expect(await screen.findByText("The connection failed")).toBeTruthy();
