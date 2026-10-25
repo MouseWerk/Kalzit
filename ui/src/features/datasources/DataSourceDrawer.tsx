@@ -22,7 +22,7 @@ import "./datasources.css";
 const TABS = ["overview", "access"] as const;
 type Tab = (typeof TABS)[number];
 
-const SHAPE_TEXT: Record<Shape, MessageKey> = {
+export const SHAPE_TEXT: Record<Shape, MessageKey> = {
   frame: "datasources.shape.frame",
   documents: "datasources.shape.documents",
   graph: "datasources.shape.graph",
@@ -224,7 +224,7 @@ export function DataSourceDrawer({
 }
 
 /** The caller's own rights on the source, as the highest one in words. */
-function yourAccess(access: DatasourceAccess): MessageKey {
+export function yourAccess(access: DatasourceAccess): MessageKey {
   if (access.permissions) {
     return "datasources.drawer.access.manage";
   }
@@ -237,7 +237,14 @@ function yourAccess(access: DatasourceAccess): MessageKey {
   return "datasources.drawer.access.read";
 }
 
-function AccessSection({ orgId, source }: { orgId: string; source: DatasourceSummary }) {
+/** Who has access beyond their role, and the way to change it; the drawer's and the edit page's. */
+export function AccessSection({
+  orgId,
+  source,
+}: {
+  orgId: string;
+  source: Pick<DatasourceSummary, "id" | "name">;
+}) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const headingId = useId();

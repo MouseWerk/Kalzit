@@ -40,20 +40,92 @@
     max-width: var(--size-text-max);
   }
 
+  /* The tree: a quiet heading with "Fold all", then the folders, each step indented by a token. */
+  .folder-tree {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .folder-tree__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding-inline: var(--space-2);
+  }
+
+  .folder-tree__heading {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .folder-tree__fold-all {
+    padding: var(--space-half) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+  }
+
+  .folder-tree__fold-all:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .folder-tree__fold-all:disabled {
+    cursor: default;
+  }
+
+  .folder-tree__fold-all:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
   .folder-tree__list {
     display: grid;
     gap: var(--space-px);
-    list-style: none;
   }
 
-  .folder-tree__list .folder-tree__list {
+  /* A tree item: its row, then its subfolders one indent step in. */
+  .folder-tree__node {
+    display: grid;
+    gap: var(--space-px);
+  }
+
+  .folder-tree__node > .folder-tree__list {
     padding-inline-start: var(--space-4);
+  }
+
+  .folder-tree__toggle {
+    display: inline-grid;
+    flex: none;
+    width: var(--space-5);
+    height: var(--space-5);
+    place-items: center;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+
+  .folder-tree__toggle:not(:empty):not([data-disabled]):hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+  .browser__new-folder {
+    justify-self: start;
+    gap: var(--space-1);
   }
 
   /* Trash, playlists and library panels: quiet rows below the tree, like the folders. */
   .browser__links {
     display: grid;
     gap: var(--space-px);
+    margin-block-start: var(--space-2);
     padding-block-start: var(--space-3);
     border-block-start: var(--border-width) solid var(--border);
   }
@@ -79,6 +151,7 @@
 
   .folder-tree__name {
     display: flex;
+    flex: 1;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
@@ -92,17 +165,11 @@
   .folder-tree__item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    width: 100%;
+    gap: var(--space-1);
     min-height: var(--control-height);
-    padding: var(--space-1) var(--space-2);
-    border: 0;
+    padding: var(--space-1) var(--space-2) var(--space-1) 0;
     border-radius: var(--radius-sm);
-    background: transparent;
     color: var(--text);
-    font: inherit;
-    text-align: start;
     cursor: pointer;
   }
 
@@ -110,14 +177,14 @@
     background: var(--bg-hover);
   }
 
-  .folder-tree__item:focus-visible {
-    outline-offset: calc(var(--focus-ring-width) * -1);
-  }
-
   /* Current folder: neutral tint and weight, no frame or bar. */
-  .folder-tree__item[aria-current="true"] {
+  .folder-tree__item[data-current="true"] {
     background: var(--bg-active);
     font-weight: var(--font-weight-semibold);
+  }
+
+  .folder-tree__item:focus-visible {
+    outline-offset: calc(var(--focus-ring-width) * -1);
   }
 
   .folder-tree__restricted {

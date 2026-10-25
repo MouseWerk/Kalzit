@@ -27,8 +27,8 @@ function setup(teams: FakeTeam[], role = "owner") {
 function folderNames(): string[] {
   const tree = screen.getByRole("navigation", { name: "Folders" });
   return within(tree)
-    .getAllByRole("button")
-    .map((button) => button.querySelector(".truncate")?.textContent ?? "");
+    .getAllByRole("treeitem")
+    .map((item) => item.querySelector(".truncate")?.textContent ?? "");
 }
 
 describe("team context in the workspace card", () => {
@@ -81,7 +81,7 @@ describe("team spaces on the Dashboards page", () => {
     expect(screen.queryByRole("link", { name: "Deals" })).toBeNull();
     // The space carries the team mark for screen readers too.
     const tree = screen.getByRole("navigation", { name: "Folders" });
-    expect(within(tree).getByRole("button", { name: /Team space of Operations/ })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: /Team space of Operations/ })).toBeTruthy();
     const listed = server.calls.filter((c) => c.path.startsWith("/api/orgs/o1/dashboards?"));
     expect(listed.every((c) => c.path.includes("team=t-ops"))).toBe(true);
 

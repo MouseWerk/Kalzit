@@ -101,6 +101,8 @@ export interface Datasource {
   access?: DatasourceAccess;
   /** When it was last changed; a save or delete sends it back to refuse overwriting a newer one. */
   updatedAt?: number;
+  /** When it was added. */
+  createdAt?: number;
 }
 
 /**
@@ -332,6 +334,7 @@ function parseDatasource(value: unknown): Datasource {
     secrets,
     ...(summary.access === undefined ? {} : { access: summary.access }),
     ...(typeof value.updatedAt === "number" ? { updatedAt: value.updatedAt } : {}),
+    createdAt: summary.createdAt,
   };
 }
 
