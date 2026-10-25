@@ -1,8 +1,16 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { act, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { fromCargoMetadata, fromPackageLock, merge } from "../../../scripts/licenses.mjs";
+import {
+  buildNotices,
+  fromCargoMetadata,
+  fromPackageLock,
+  isStrict,
+  merge,
+  SEE_FILE,
+} from "../../../scripts/licenses.mjs";
 import { setLanguage } from "../../i18n/i18n";
 import { openAdmin } from "../admin/test/openAdmin";
 import { filterLicenses } from "./AboutSection";
@@ -38,7 +46,7 @@ describe("settings, About", () => {
 
   it("names the build the server reports, the company, the license and the clean-room note", async () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-    await openAdmin("/settings/about", { isServerAdmin: false, permissions: [] });
+    await openAdmin("/settings/about", { isServerAdmin: true });
     await section();
     const product = await screen.findByRole("region", { name: "Product" });
     expect(await within(product).findByText("0.1.0")).toBeTruthy();
@@ -52,7 +60,9 @@ describe("settings, About", () => {
 
     const company = screen.getByRole("region", { name: "Company" });
     const href = (name: string) =>
-      within(company).getByRole("link", { name }).getAttribute("href") ?? "";
+      within(company)
+        .getByRole("link", { name: new RegExp(`^${name}`) })
+        .getAttribute("href") ?? "";
     expect(href("GitHub repository")).toBe("https://github.com/MouseWerk/Kalzit");
     expect(href("Website")).toBe("https://kalzit.dev");
     expect(href("Security policy")).toBe(
@@ -61,13 +71,59 @@ describe("settings, About", () => {
 
     const license = screen.getByRole("region", { name: "License" });
     expect(within(license).getByText("GNU Affero General Public License v3.0")).toBeTruthy();
-    expect(within(license).getByRole("link", { name: "Source code" })).toBeTruthy();
-    expect(within(license).getByRole("link", { name: "Full license text" })).toBeTruthy();
+    expect(within(license).getByRole("link", { name: /^Source code/ })).toBeTruthy();
+    expect(within(license).getByRole("link", { name: /^Full license text/ })).toBeTruthy();
     expect(
       within(license).getByText(
         "Independently developed, without code from other dashboard products.",
       ),
     ).toBeTruthy();
+  });
+
+  it("shows members the version and build date only", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    await openAdmin("/settings/about", { isServerAdmin: false, permissions: [] });
+    await section();
+    const product = await screen.findByRole("region", { name: "Product" });
+    expect(await within(product).findByText("0.1.0")).toBeTruthy();
+    expect(within(product).getByText("2026-10-25")).toBeTruthy();
+    for (const hidden of ["Commit", "Platform", "Database"]) {
+      expect(within(product).queryByText(hidden), hidden).toBeNull();
+    }
+  });
+
+  it("marks links that open a new tab for assistive technology", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    await openAdmin("/settings/about", { isServerAdmin: false, permissions: [] });
+    await section();
+    const link = screen.getByRole("link", { name: /^GitHub repository/ });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.textContent).toContain("opens in a new tab");
+  });
+
+  it("links the full license texts and explains the license of a crate with a file", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    await openAdmin("/settings/about", { isServerAdmin: false, permissions: [] });
+    await section();
+    const notices = await screen.findByRole("link", {
+      name: /^Full license texts of these packages/,
+    });
+    expect(notices.getAttribute("href")).toBe("/THIRD-PARTY-NOTICES.txt");
+  });
+
+  it("says so when the build wrote no license list", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    const { user, server } = await openAdmin("/settings/profile", {
+      isServerAdmin: false,
+      permissions: [],
+    });
+    server.failNext("/third-party-licenses.json", 404, "not_found");
+    const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+    await user.click(within(nav).getByRole("link", { name: "About Kalzit" }));
+    expect(
+      await screen.findByText(/The list of third-party licenses is created when Kalzit is built/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("searchbox", { name: "Search packages" })).toBeNull();
   });
 
   it("lists the third-party packages and filters them by name or license", async () => {
@@ -168,6 +224,55 @@ describe("third-party license list", () => {
     expect(packages.every((entry) => entry.version !== "unknown" && entry.license !== "")).toBe(
       true,
     );
+  });
+
+  it("keeps the path of a package out of its entry and names a crate with a license file", () => {
+    const crates = fromCargoMetadata({
+      ...metadata,
+      packages: metadata.packages.map((pkg) =>
+        pkg.name === "axum"
+          ? { ...pkg, license: null, manifest_path: "/registry/axum-0.8.9/Cargo.toml" }
+          : pkg,
+      ),
+    });
+    const axum = crates.find((crate) => crate.name === "axum");
+    expect(axum?.license).toBe(SEE_FILE);
+    expect(Object.keys(axum ?? {})).toEqual(["name", "version", "license", "source"]);
+    expect(JSON.stringify(crates)).not.toContain("registry");
+  });
+
+  it("collects each distinct license text once with the packages that ship it", () => {
+    const root = mkdtempSync(join(tmpdir(), "kalzit-notices-"));
+    const entry = (name: string, text?: string) => {
+      const dir = join(root, "node_modules", name);
+      mkdirSync(dir, { recursive: true });
+      if (text !== undefined) {
+        writeFileSync(join(dir, "LICENSE-MIT"), text);
+      }
+      return fromPackageLock(
+        { packages: { [`node_modules/${name}`]: { version: "1.0.0", license: "MIT" } } },
+        root,
+      )[0];
+    };
+    const license = (holder: string) => ["MIT License", "", `Copyright (c) ${holder}`].join("\n");
+    const notices = buildNotices([
+      entry("alpha", license("A")),
+      entry("beta", license("A")),
+      entry("gamma", license("C")),
+      entry("delta"),
+    ] as never);
+    expect(notices.match(/Copyright \(c\) A/g)).toHaveLength(1);
+    expect(notices).toContain(["alpha 1.0.0 (npm, MIT)", "beta 1.0.0 (npm, MIT)"].join("\n"));
+    expect(notices).toContain("Copyright (c) C");
+    expect(notices).toContain("Packages that ship no license file");
+    expect(notices).toContain("delta 1.0.0");
+  });
+
+  it("fails hard only where a release could be affected", () => {
+    expect(isStrict({})).toBe(false);
+    expect(isStrict({ CI: "true" })).toBe(true);
+    expect(isStrict({ CI: "true", KALZIT_LICENSES_STRICT: "0" })).toBe(false);
+    expect(isStrict({ KALZIT_LICENSES_STRICT: "1" })).toBe(true);
   });
 
   it("merges both lists sorted by name without duplicates", () => {

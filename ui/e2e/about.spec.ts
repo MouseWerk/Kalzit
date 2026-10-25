@@ -46,6 +46,17 @@ test("shows the build, the company, the license and the shipped packages", async
   await expect(list.getByRole("rowheader", { name: "react", exact: true })).toBeVisible();
   await expect(list.getByRole("rowheader", { name: "axum", exact: true })).toHaveCount(0);
   expect(await seriousViolations(page)).toEqual([]);
+
+  // The license texts the build wrote are served, as UTF-8 text, and the page links them.
+  const notices = await page.request.get("/THIRD-PARTY-NOTICES.txt");
+  expect(notices.ok()).toBe(true);
+  expect(notices.headers()["content-type"]).toBe("text/plain; charset=utf-8");
+  const text = await notices.text();
+  expect(text).toContain("axum");
+  expect(text).toContain("Permission is hereby granted");
+  await expect(
+    page.getByRole("link", { name: new RegExp(`^${t("settings.about.notices")}`) }),
+  ).toHaveAttribute("href", "/THIRD-PARTY-NOTICES.txt");
 });
 
 async function openCrystal(page: Page) {

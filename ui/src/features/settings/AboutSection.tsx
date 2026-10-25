@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useDeferredValue, useId, useState } from "react";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
-import { type About, getAbout, getLicenses, type LicenseEntry } from "./api";
+import { getAbout, getLicenses, type LicenseEntry } from "./api";
 import { CalciteCrystal } from "./CalciteCrystal";
 import { normalize } from "./search";
 import "./settings.css";
@@ -10,11 +10,17 @@ export const REPOSITORY_URL = "https://github.com/MouseWerk/Kalzit";
 export const WEBSITE_URL = "https://kalzit.dev";
 export const SECURITY_URL = `${REPOSITORY_URL}/blob/main/SECURITY.md`;
 export const LICENSE_TEXT_URL = "https://www.gnu.org/licenses/agpl-3.0.html";
+/** The license texts of the shipped packages, written into the bundle by the build. */
+export const NOTICES_URL = "/THIRD-PARTY-NOTICES.txt";
+/** What the license list says for a package that has a license file instead of an expression. */
+const SEE_FILE = "SEE LICENSE FILE";
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  const { t } = useI18n();
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" className="about-link">
       {children}
+      <span className="visually-hidden"> ({t("settings.about.newTab")})</span>
     </a>
   );
 }
@@ -83,7 +89,7 @@ export function AboutSection() {
   );
 }
 
-const DATABASE_LABEL: Record<About["database"], MessageKey> = {
+const DATABASE_LABEL: Record<"sqlite" | "postgres", MessageKey> = {
   sqlite: "settings.about.database.sqlite",
   postgres: "settings.about.database.postgres",
 };
@@ -109,24 +115,23 @@ function ProductCard() {
         <dl className="about-facts">
           <Fact term={t("settings.about.name")} value={t("app.name")} />
           <Fact term={t("settings.about.version")} value={data?.version ?? ""} />
-          <Fact
-            term={t("settings.about.commit")}
-            value={data === undefined ? "" : data.commit === "unknown" ? unknown : data.commit}
-            mono
-          />
+          {data === undefined || data.commit !== undefined ? (
+            <Fact
+              term={t("settings.about.commit")}
+              value={data?.commit === "unknown" ? unknown : (data?.commit ?? "")}
+              mono
+            />
+          ) : null}
           <Fact term={t("settings.about.built")} value={data?.buildDate ?? ""} />
-          <Fact
-            term={t("settings.about.platform")}
-            value={
-              data === undefined
-                ? ""
-                : `${PLATFORM_LABEL[data.platform] ?? data.platform} ${data.arch}`
-            }
-          />
-          <Fact
-            term={t("settings.about.database")}
-            value={data === undefined ? "" : t(DATABASE_LABEL[data.database])}
-          />
+          {data?.platform === undefined ? null : (
+            <Fact
+              term={t("settings.about.platform")}
+              value={`${PLATFORM_LABEL[data.platform] ?? data.platform} ${data.arch ?? ""}`.trim()}
+            />
+          )}
+          {data?.database === undefined ? null : (
+            <Fact term={t("settings.about.database")} value={t(DATABASE_LABEL[data.database])} />
+          )}
         </dl>
       )}
     </Card>
@@ -175,6 +180,9 @@ function ThirdParty() {
   return (
     <Card title={t("settings.about.thirdParty")}>
       <p className="about-text">{t("settings.about.thirdPartyLead")}</p>
+      <p className="about-text">
+        <ExternalLink href={NOTICES_URL}>{t("settings.about.notices")}</ExternalLink>
+      </p>
       {licenses.isError ? (
         <p className="about-text" role="status">
           {t("settings.about.licensesMissing")}
@@ -232,7 +240,11 @@ function ThirdParty() {
                         {entry.name}
                       </th>
                       <td className="about-licenses__cell">{entry.version}</td>
-                      <td className="about-licenses__cell">{entry.license}</td>
+                      <td className="about-licenses__cell">
+                        {entry.license === SEE_FILE
+                          ? t("settings.about.licenseFile")
+                          : entry.license}
+                      </td>
                       <td className="about-licenses__cell">
                         {entry.source === "rust"
                           ? t("settings.about.sourceRust")

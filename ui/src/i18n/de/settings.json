@@ -178,7 +178,7 @@
   "settings.about.security": "Sicherheitsrichtlinie",
   "settings.about.license": "Lizenz",
   "settings.about.licenseName": "GNU Affero General Public License v3.0",
-  "settings.about.licenseNote": "Du darfst Kalzit frei betreiben, untersuchen, verändern und weitergeben. Wenn du es veränderst und andere deine Version über ein Netzwerk nutzen lässt, musst du ihnen den Quellcode deiner Version unter derselben Lizenz anbieten. Den unveränderten Betrieb betrifft das nicht.",
+  "settings.about.licenseNote": "Du darfst Kalzit frei betreiben, untersuchen, verändern und weitergeben. Den unveränderten Betrieb für den eigenen Gebrauch betrifft nichts weiter. Wenn du es weitergibst, musst du den Lizenztext und den Quellcode mitgeben. Wenn du es veränderst und andere deine Version über ein Netzwerk nutzen lässt, musst du ihnen den Quellcode deiner Version unter derselben Lizenz anbieten.",
   "settings.about.licenseText": "Vollständiger Lizenztext",
   "settings.about.sourceCode": "Quellcode",
   "settings.about.cleanRoom": "Eigenständige Entwicklung",
@@ -196,5 +196,8 @@
   "settings.about.colSource": "Quelle",
   "settings.about.sourceRust": "Rust-Crate",
   "settings.about.sourceNpm": "npm-Paket",
-  "settings.about.licensesMissing": "Die Liste der Drittanbieter-Lizenzen entsteht beim Bauen von Kalzit; dieser Build hat keine."
+  "settings.about.licensesMissing": "Die Liste der Drittanbieter-Lizenzen entsteht beim Bauen von Kalzit; dieser Build hat keine.",
+  "settings.about.newTab": "öffnet in neuem Tab",
+  "settings.about.licenseFile": "Siehe Lizenzdatei",
+  "settings.about.notices": "Vollständige Lizenztexte dieser Pakete"
 }

@@ -16,27 +16,40 @@ import {
 } from "./crystal";
 import "./settings.css";
 
-/** The three colors of the picture, read from the design tokens through the canvas's own style. */
+/** The three colors of the picture. */
 interface Colors {
   ink: string;
   quiet: string;
   beam: string;
 }
 
+/**
+ * A custom property of the canvas as the color it stands for now. `light-dark()` and `var()`
+ * stay unresolved in a custom property's value, so the property is applied to the canvas's own
+ * `color` for a moment and the computed color is read back.
+ */
+function resolveColor(canvas: HTMLCanvasElement, name: string): string {
+  canvas.style.setProperty("color", `var(${name})`);
+  const color = getComputedStyle(canvas).color;
+  canvas.style.removeProperty("color");
+  return color;
+}
+
 function readColors(canvas: HTMLCanvasElement): Colors {
-  const style = getComputedStyle(canvas);
   return {
-    ink: style.color,
-    quiet: style.textDecorationColor,
-    beam: style.accentColor === "auto" ? style.color : style.accentColor,
+    ink: resolveColor(canvas, "--crystal-ink"),
+    quiet: resolveColor(canvas, "--crystal-quiet"),
+    beam: resolveColor(canvas, "--crystal-beam"),
   };
 }
 
 /** How far behind its head the beam reaches full strength, as a share of the width. */
 const LEAD = 0.16;
-const STEP = 6;
 
-/** A ray along `y(x)`, drawn as short pieces that fade out behind the head. */
+/**
+ * A ray along `y(x)` (a straight line), drawn as two strokes: the body at full strength and the
+ * soft head, behind which it is drawn from the left.
+ */
 function ray(
   ctx: CanvasRenderingContext2D,
   color: string,
@@ -49,19 +62,19 @@ function ray(
 ) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.25;
-  const end = Math.min(to, head);
-  for (let x = from; x < end; x += STEP) {
-    const next = Math.min(end, x + STEP + 0.5);
-    const age = Math.min(1, Math.max(0, (head - (x + next) / 2) / lead));
-    ctx.globalAlpha = strength * age * age * (3 - 2 * age);
-    if (ctx.globalAlpha < 0.01) {
-      continue;
+  const stroke = (x0: number, x1: number, alpha: number) => {
+    if (x1 <= x0 || alpha < 0.01) {
+      return;
     }
+    ctx.globalAlpha = alpha;
     ctx.beginPath();
-    ctx.moveTo(x, y(x));
-    ctx.lineTo(next, y(next));
+    ctx.moveTo(x0, y(x0));
+    ctx.lineTo(x1, y(x1));
     ctx.stroke();
-  }
+  };
+  const body = Math.min(to, head - lead);
+  stroke(from, body, strength);
+  stroke(Math.max(from, head - lead), Math.min(to, head), strength * 0.5);
 }
 
 function structure(
@@ -225,9 +238,10 @@ export function CalciteCrystal() {
     let colors = readColors(canvas);
     let width = 0;
     let height = 0;
+    let resolution: MediaQueryList | undefined;
 
     function paint() {
-      if (canvas === null || ctx === null || width === 0) {
+      if (ctx === null || width === 0) {
         return;
       }
       drawCrystal(ctx, width, height, seconds, reduced?.matches === true, colors);
@@ -255,6 +269,7 @@ export function CalciteCrystal() {
       }
     }
 
+    // The look changed (theme, accent, color scheme): read the colors again.
     function restyle() {
       if (canvas !== null) {
         colors = readColors(canvas);
@@ -278,6 +293,18 @@ export function CalciteCrystal() {
       paint();
     }
 
+    // Moving the window to another screen, or zooming, changes the pixel ratio without a resize.
+    function watchResolution() {
+      resolution?.removeEventListener("change", onResolution);
+      resolution = window.matchMedia?.(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      resolution?.addEventListener("change", onResolution);
+    }
+
+    function onResolution() {
+      resize();
+      watchResolution();
+    }
+
     const sizes = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(resize);
     sizes?.observe(canvas);
     const visible =
@@ -288,11 +315,13 @@ export function CalciteCrystal() {
             sync();
           });
     visible?.observe(canvas);
-    const themes = new MutationObserver(restyle);
-    themes.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    // The theme, the accent and the density are attributes, classes or properties of the root.
+    const look = new MutationObserver(restyle);
+    look.observe(document.documentElement, { attributes: true });
     document.addEventListener("visibilitychange", sync);
     reduced?.addEventListener("change", sync);
     dark?.addEventListener("change", restyle);
+    watchResolution();
     resize();
     sync();
 
@@ -302,10 +331,11 @@ export function CalciteCrystal() {
       }
       sizes?.disconnect();
       visible?.disconnect();
-      themes.disconnect();
+      look.disconnect();
       document.removeEventListener("visibilitychange", sync);
       reduced?.removeEventListener("change", sync);
       dark?.removeEventListener("change", restyle);
+      resolution?.removeEventListener("change", onResolution);
     };
   }, []);
 

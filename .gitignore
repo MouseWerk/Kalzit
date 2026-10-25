@@ -2,6 +2,7 @@
 node_modules/
 /ui/dist/
 /ui/public/third-party-licenses.json
+/ui/public/THIRD-PARTY-NOTICES.txt
 *.db
 *.db-shm
 *.db-wal

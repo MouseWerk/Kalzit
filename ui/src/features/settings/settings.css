@@ -719,23 +719,17 @@
     color: var(--text-muted);
   }
 
-  /*
-   * The crystal is drawn on a canvas that reads its colors from its own style: ink from color,
-   * the quiet lines from text-decoration-color and the beam from accent-color.
-   */
+  /* The canvas reads these three, as colors, each time the look changes. */
   .about-crystal {
-    color: var(--text);
-    text-decoration-color: var(--text-muted);
-    accent-color: var(--accent);
+    --crystal-ink: var(--text);
+    --crystal-quiet: var(--text-muted);
+    --crystal-beam: var(--accent);
   }
 
   .about-crystal__canvas {
     display: block;
     width: 100%;
     aspect-ratio: 3 / 2;
-    color: inherit;
-    text-decoration-color: inherit;
-    accent-color: inherit;
   }
 
   .about-card {

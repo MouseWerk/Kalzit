@@ -332,14 +332,14 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       if (!state.signedIn) {
         return error(401, "unauthenticated");
       }
-      return json(200, {
-        version: "0.1.0",
-        commit: "a1b2c3d4e",
-        buildDate: "2026-10-25",
-        platform: "linux",
-        arch: "x64",
-        database: "sqlite",
-      });
+      // Server administrators get the build details too (docs/api/shell.md, "About").
+      const everyone = { version: "0.1.0", buildDate: "2026-10-25" };
+      return json(
+        200,
+        state.user.isServerAdmin
+          ? { ...everyone, commit: "a1b2c3d4e", platform: "linux", arch: "x64", database: "sqlite" }
+          : everyone,
+      );
     }
     // The list the build writes into the bundle (ui/scripts/licenses.mjs).
     if (path === "/third-party-licenses.json" && method === "GET") {

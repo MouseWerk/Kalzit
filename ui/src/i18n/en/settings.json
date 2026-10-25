@@ -178,7 +178,7 @@
   "settings.about.security": "Security policy",
   "settings.about.license": "License",
   "settings.about.licenseName": "GNU Affero General Public License v3.0",
-  "settings.about.licenseNote": "You may run, study, change and share Kalzit freely. If you change it and let others use your version over a network, you must offer them the source code of your version under the same license. Running it unchanged needs nothing more.",
+  "settings.about.licenseNote": "You may run, study, change and share Kalzit freely. Running it unchanged for your own use needs nothing more. If you distribute it, you must pass on the license text and the source code. If you change it and let others use your version over a network, you must offer them the source code of your version under the same license.",
   "settings.about.licenseText": "Full license text",
   "settings.about.sourceCode": "Source code",
   "settings.about.cleanRoom": "Independent development",
@@ -196,5 +196,8 @@
   "settings.about.colSource": "Source",
   "settings.about.sourceRust": "Rust crate",
   "settings.about.sourceNpm": "npm package",
-  "settings.about.licensesMissing": "The list of third-party licenses is created when Kalzit is built; this build has none."
+  "settings.about.licensesMissing": "The list of third-party licenses is created when Kalzit is built; this build has none.",
+  "settings.about.newTab": "opens in a new tab",
+  "settings.about.licenseFile": "See license file",
+  "settings.about.notices": "Full license texts of these packages"
 }

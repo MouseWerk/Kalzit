@@ -328,8 +328,12 @@ jobs:
         env:
           TZ: America/New_York
         run: npm test
+      # This job checks the UI only: the license lists need cargo (the e2e and release builds
+      # make them strictly), so here the build may do without.
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run build
+        env:
+          KALZIT_LICENSES_STRICT: "0"
 
   # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
   # e2e profile (release settings, less optimization, so it builds faster). Not a required check
@@ -372,6 +376,7 @@ jobs:
       - run: npm ci
         if: env.RUN_JOB == 'true'
         working-directory: ui
+      # Strict (CI is set): the license lists of the bundle need cargo, which is installed above.
       - run: npm run build
         if: env.RUN_JOB == 'true'
         working-directory: ui

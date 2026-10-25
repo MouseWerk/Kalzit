@@ -118,25 +118,28 @@ export async function fileToBase64(file: Blob): Promise<string> {
   return btoa(binary);
 }
 
-/** What the server says about itself (docs/api/shell.md, "About"). */
+/**
+ * What the server says about itself (docs/api/shell.md, "About"): the version and build date for
+ * everyone signed in, the rest for server administrators only.
+ */
 export interface About {
   version: string;
-  commit: string;
   buildDate: string;
-  platform: string;
-  arch: string;
-  database: "sqlite" | "postgres";
+  commit?: string;
+  platform?: string;
+  arch?: string;
+  database?: "sqlite" | "postgres";
 }
 
 function isAbout(value: unknown): value is About {
   return (
     isRecord(value) &&
     typeof value.version === "string" &&
-    typeof value.commit === "string" &&
     typeof value.buildDate === "string" &&
-    typeof value.platform === "string" &&
-    typeof value.arch === "string" &&
-    (value.database === "sqlite" || value.database === "postgres")
+    (value.commit === undefined || typeof value.commit === "string") &&
+    (value.platform === undefined || typeof value.platform === "string") &&
+    (value.arch === undefined || typeof value.arch === "string") &&
+    (value.database === undefined || value.database === "sqlite" || value.database === "postgres")
   );
 }
 
