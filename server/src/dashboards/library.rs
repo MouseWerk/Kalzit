@@ -94,10 +94,16 @@ pub async fn linked_panels(
     let mut out = BTreeMap::new();
     for id in ids {
         if let Some(row) = fetch(&mut *conn, org_id, id).await? {
-            out.insert(
-                row.id.clone(),
-                LinkedPanel { model: stored_content(&row.model)?, id: row.id, name: row.name, version: row.version },
-            );
+            // One unreadable library panel leaves its slot empty instead of the whole dashboard
+            // failing to open or save.
+            let model = match stored_content(&row.model) {
+                Ok(model) => model,
+                Err(e) => {
+                    tracing::warn!("library panel {id} cannot be read, its slots stay empty: {}", e.message);
+                    continue;
+                }
+            };
+            out.insert(row.id.clone(), LinkedPanel { model, id: row.id, name: row.name, version: row.version });
         }
     }
     Ok(out)

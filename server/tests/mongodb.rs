@@ -92,6 +92,25 @@ impl T {
     }
 
     async fn send(&self, method: Method, rest: &str, body: Option<Value>) -> (StatusCode, Value) {
+        // A data source PATCH names the version it changes, as the edit page does; these tests
+        // change the stored one unless they name a version themselves.
+        let body = match body {
+            Some(Value::Object(mut fields)) if method == Method::PATCH && !fields.contains_key("expectedUpdatedAt") => {
+                let id = rest.split_once("/datasources/").map(|(_, id)| id).filter(|id| !id.contains(['/', '?']));
+                if let Some(id) = id {
+                    let row: Option<(i64,)> = sqlx::query_as("SELECT updated_at FROM datasources WHERE id = $1")
+                        .bind(id)
+                        .fetch_optional(&self.state.db)
+                        .await
+                        .unwrap();
+                    if let Some((at,)) = row {
+                        fields.insert("expectedUpdatedAt".into(), json!(at));
+                    }
+                }
+                Some(Value::Object(fields))
+            }
+            other => other,
+        };
         let req = Request::builder()
             .method(method)
             .uri(format!("/api/orgs/{}{rest}", self.org))
