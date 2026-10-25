@@ -1,6 +1,7 @@
 /target/
 node_modules/
 /ui/dist/
+/ui/public/third-party-licenses.json
 *.db
 *.db-shm
 *.db-wal

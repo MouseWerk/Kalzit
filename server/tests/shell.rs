@@ -278,6 +278,7 @@ on_both_databases! {
     recents_keep_the_newest_and_follow_access;
     preferences_are_personal_validated_and_reset;
     start_dashboards_must_be_readable;
+    about_names_the_build_to_signed_in_users;
 }
 
 async fn search_names_only_what_the_caller_may_open(t: TestApp) {
@@ -656,4 +657,26 @@ async fn start_dashboards_must_be_readable(t: TestApp) {
 
     let r = t.patch("/me/preferences", json!({ "startDashboard": null }), &viewer).await;
     assert_eq!(r.body["startDashboard"], Value::Null);
+}
+
+async fn about_names_the_build_to_signed_in_users(t: TestApp) {
+    let anonymous = t.send(Method::GET, "/api/about", None, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+
+    let viewer = t.member("Vera", "viewer").await;
+    let r = t.send(Method::GET, "/api/about", None, Some(&viewer)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["version"], env!("CARGO_PKG_VERSION"));
+    assert!(r.body["commit"].as_str().is_some_and(|c| c == "unknown" || c.chars().all(|ch| ch.is_ascii_hexdigit())));
+    let date = r.body["buildDate"].as_str().unwrap();
+    assert!(date.len() == 10 && date.as_bytes()[4] == b'-', "{date}");
+    assert!(r.body["platform"].as_str().is_some_and(|p| !p.is_empty()));
+    assert!(r.body["arch"].as_str().is_some_and(|p| !p.is_empty()));
+    let database = if t.state.config.database_url().starts_with("postgres") { "postgres" } else { "sqlite" };
+    assert_eq!(r.body["database"], database);
+
+    // Only the six fields: no paths, host names or settings.
+    let mut keys: Vec<&String> = r.body.as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(keys, ["arch", "buildDate", "commit", "database", "platform", "version"]);
 }

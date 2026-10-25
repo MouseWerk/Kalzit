@@ -718,6 +718,9 @@
     --size-settings-nav: 16.25rem;
     --size-settings-preview: 20rem;
     --size-settings-main: 62.5rem;
+    /* About: the crystal's picture and the scrolling list of third-party licenses. */
+    --size-about-art: 28rem;
+    --size-about-list: 24rem;
     --size-swatch: 1.625rem;
     --size-logo-tile: 2.5rem;
     --size-preview-height: 11.25rem;

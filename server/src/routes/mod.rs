@@ -1,3 +1,4 @@
+pub mod about;
 pub mod admin_orgs;
 pub mod admin_settings;
 pub mod admin_users;
@@ -35,6 +36,7 @@ use crate::error::{ApiError, ApiResult};
 pub fn all() -> Vec<table::RouteDef> {
     [
         setup::routes(),
+        about::routes(),
         auth::routes(),
         orgs::routes(),
         admin_settings::routes(),
