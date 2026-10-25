@@ -117,8 +117,15 @@ async function boxInView(page: Page, selector: string) {
 
 /** Scrolls the window, the page's scroll container, and waits until it got there. */
 async function scrollPage(page: Page, y: number) {
-  await page.evaluate((top) => window.scrollTo(0, top), y);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
+  // Repeated until it sticks: content still loading may make the page shorter at first.
+  await expect
+    .poll(() =>
+      page.evaluate((top) => {
+        window.scrollTo(0, top);
+        return window.scrollY;
+      }, y),
+    )
+    .toBeGreaterThan(200);
 }
 
 for (const viewport of [
@@ -143,6 +150,7 @@ test("the settings navigation stays in view while the section scrolls", async ({
   await signInOwner(page);
   await page.goto("/settings/appearance");
   await expect(page.getByRole("navigation", { name: t("settings.navLabel") })).toBeVisible();
+  await expect(page.locator(".settings-row").first()).toBeVisible();
   await scrollPage(page, 4000);
   const bar = await boxInView(page, ".top-bar");
   const nav = await boxInView(page, ".settings-nav");
