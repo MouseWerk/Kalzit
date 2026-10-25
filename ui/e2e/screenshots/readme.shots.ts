@@ -379,6 +379,22 @@ for (const colorScheme of ["dark", "light"] as const) {
   });
 }
 
+for (const colorScheme of ["dark", "light"] as const) {
+  test(`about, ${colorScheme}`, async ({ browser }) => {
+    const page = await openPage(browser, colorScheme);
+    // The crystal holds still (reduced motion), so a rerun gives the same picture.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await signIn(page);
+    await page.goto("/settings/about");
+    await expect(
+      page.getByRole("heading", { name: t("settings.section.about.label") }),
+    ).toBeVisible();
+    await expect(page.getByRole("rowheader", { name: "axum", exact: true })).toBeVisible();
+    await shoot(page, `about-${colorScheme}`);
+    await page.context().close();
+  });
+}
+
 test("settings, phone", async ({ browser }) => {
   const page = await openPage(browser, "dark", { width: 360, height: 780 });
   await signIn(page);

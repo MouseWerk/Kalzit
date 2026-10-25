@@ -1,4 +1,4 @@
-import { expectShape, isRecord, request } from "../../api/client";
+import { ApiError, expectShape, isRecord, request } from "../../api/client";
 import { isSetting, type Setting } from "../admin/api";
 
 /**
@@ -116,4 +116,60 @@ export async function fileToBase64(file: Blob): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   return btoa(binary);
+}
+
+/**
+ * What the server says about itself (docs/api/shell.md, "About"): the version and build date for
+ * everyone signed in, the rest for server administrators only.
+ */
+export interface About {
+  version: string;
+  buildDate: string;
+  commit?: string;
+  platform?: string;
+  arch?: string;
+  database?: "sqlite" | "postgres";
+}
+
+function isAbout(value: unknown): value is About {
+  return (
+    isRecord(value) &&
+    typeof value.version === "string" &&
+    typeof value.buildDate === "string" &&
+    (value.commit === undefined || typeof value.commit === "string") &&
+    (value.platform === undefined || typeof value.platform === "string") &&
+    (value.arch === undefined || typeof value.arch === "string") &&
+    (value.database === undefined || value.database === "sqlite" || value.database === "postgres")
+  );
+}
+
+export async function getAbout(): Promise<About> {
+  return expectShape(await request("GET", "/api/about"), isAbout, "about");
+}
+
+/** One third-party package that ships with Kalzit. */
+export interface LicenseEntry {
+  name: string;
+  version: string;
+  license: string;
+  source: "rust" | "npm";
+}
+
+function isLicenseEntry(value: unknown): value is LicenseEntry {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.version === "string" &&
+    typeof value.license === "string" &&
+    (value.source === "rust" || value.source === "npm")
+  );
+}
+
+/** The list the build wrote into the bundle (`npm run licenses`); absent in a dev server. */
+export async function getLicenses(): Promise<LicenseEntry[]> {
+  const list = await request("GET", "/third-party-licenses.json");
+  if (!Array.isArray(list) || !list.every(isLicenseEntry)) {
+    throw new ApiError("invalid_response", 200, "unexpected licenses response");
+  }
+  return list;
 }

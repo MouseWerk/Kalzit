@@ -346,6 +346,57 @@ async fn postgres_panels_bind_mixed_variables() {
     t.finish().await;
 }
 
+/// A query with far more rows than the row limit answers at once with the cut rows: the server
+/// stops producing rows instead of sending all of them, and the source stays usable.
+#[tokio::test]
+async fn postgres_stops_reading_at_the_row_limit() {
+    let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
+    let (host, port, user, password, database) = parts(&url);
+    let t = T::new(None).await;
+    let id = t
+        .create(
+            "postgres",
+            json!({ "host": host, "port": port, "database": database, "user": user, "maxRows": 10,
+                    "queryTimeoutSecs": 30 }),
+            secrets(password.clone()),
+        )
+        .await;
+    let started = std::time::Instant::now();
+    let r = t.query(&id, json!({ "sql": "SELECT generate_series(1, 100000000) AS kalzit_big_n" })).await;
+    let took = started.elapsed();
+    let frame = &r["result"]["frame"];
+    assert_eq!(frame["fields"][0]["values"].as_array().map(Vec::len), Some(10), "{r}");
+    assert_eq!(frame["meta"]["rowsTruncated"], true, "{r}");
+    assert_eq!(frame["meta"]["notices"][0]["code"], "frame.row_limit", "{r}");
+    assert!(took < std::time::Duration::from_secs(5), "the row limit stops the query: {took:?}");
+    // Nothing keeps running on the server.
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    let (running,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active' AND query LIKE '%kalzit_big_n%'          AND pid <> pg_backend_pid()",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(running, 0);
+    pool.close().await;
+
+    // More rows than one fetch batch, but within the limit: all of them, not cut.
+    let (status, body) = t
+        .send(
+            Method::PATCH,
+            &format!("/datasources/{id}"),
+            Some(json!({ "settings": {
+            "host": host, "port": port, "database": database, "user": user, "maxRows": 5000 } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let r = t.query(&id, json!({ "sql": "SELECT n, $land::text AS land FROM generate_series(1, 2500) AS n" })).await;
+    let frame = &r["result"]["frame"];
+    assert_eq!(frame["fields"][0]["values"].as_array().map(Vec::len), Some(2500), "{r}");
+    assert_eq!(frame["meta"]["rowsTruncated"], false, "{r}");
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn postgres_errors_never_show_the_password() {
     let Some(url) = env("KALZIT_TEST_POSTGRES_URL") else { return };
@@ -458,6 +509,49 @@ async fn mysql_like(url: &str) {
     let load = sqlx::raw_sql("LOAD DATA LOCAL INFILE 'Cargo.toml' INTO TABLE kalzit_infile").execute(&pool).await;
     assert!(load.is_err(), "LOCAL INFILE must not work");
     pool.close().await;
+
+    // A query with far more rows than the row limit answers at once: the connection is closed
+    // instead of reading the rest, the server stops the statement, and the source stays usable.
+    let (status, body) = t
+        .send(
+            Method::PATCH,
+            &format!("/datasources/{id}"),
+            Some(json!({ "settings": {
+            "host": host, "port": port, "database": database, "user": user, "maxRows": 10,
+            "queryTimeoutSecs": 30 } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let big = "WITH d AS (SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL                SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL                SELECT 9) SELECT a.n AS kalzit_big_n FROM d a, d b, d c, d e, d f, d g, d h, d i";
+    let started = std::time::Instant::now();
+    let r = t.query(&id, json!({ "sql": big })).await;
+    let took = started.elapsed();
+    let frame = &r["result"]["frame"];
+    assert_eq!(frame["fields"][0]["values"].as_array().map(Vec::len), Some(10), "{r}");
+    assert_eq!(frame["meta"]["rowsTruncated"], true, "{r}");
+    assert_eq!(frame["meta"]["notices"][0]["code"], "frame.row_limit", "{r}");
+    assert!(took < std::time::Duration::from_secs(5), "the row limit stops the query: {took:?}");
+    let pool = sqlx::MySqlPool::connect(&url).await.unwrap();
+    let mut running = 1;
+    for _ in 0..50 {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE INFO LIKE '%kalzit_big_n%'              AND ID <> CONNECTION_ID()",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        running = n;
+        if n == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    pool.close().await;
+    assert_eq!(running, 0, "the server stopped the cut statement");
+    // The source still answers after a cut result (a text, typed alike on MySQL and MariaDB).
+    let again = t.query(&id, json!({ "sql": "SELECT 'ok' AS eins" })).await;
+    assert_eq!(types(&again), ["string"], "{again}");
+    assert_eq!(again["result"]["frame"]["fields"][0]["values"][0], "ok", "{again}");
     t.finish().await;
 }
 

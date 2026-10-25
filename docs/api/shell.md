@@ -1,4 +1,4 @@
-# Shell API: search, stars, pins, recently viewed dashboards, preferences
+# Shell API: search, stars, pins, recently viewed dashboards, preferences, about
 
 What the app shell needs per user: the command palette's search, starred and recently viewed
 dashboards for the start page, and personal preferences. Implemented in
@@ -154,3 +154,45 @@ day filter of the audit log.
 A start dashboard that was trashed, purged or is no longer readable answers `null` without being
 removed. The UI opens it when the user enters Kalzit at `/`; the start page stays reachable from
 the navigation.
+
+## About
+
+`GET /about` (any signed-in user) answers what Settings, About shows about this server. Everyone
+gets `version` (the crate version, such as "0.1.0") and `buildDate` (`YYYY-MM-DD`); server
+administrators also get the build details:
+
+```ts
+interface About {
+  version: string;
+  buildDate: string;
+  // Server administrators only:
+  commit?: string;     // short commit id of the build, or "unknown" without one
+  platform?: string;   // "windows", "linux", "macos"
+  arch?: string;       // "x64", "arm64"
+  database?: "sqlite" | "postgres";
+}
+```
+
+Never paths, host names, settings or secrets. The commit and date are embedded by
+`server/build.rs`. Commit: `KALZIT_BUILD_COMMIT`, else the checkout, else "unknown". Date:
+`KALZIT_BUILD_DATE` (`YYYY-MM-DD`), else `SOURCE_DATE_EPOCH`, else the date of the commit, and only
+without a checkout the day of the build. An invalid value is reported as a build warning and
+ignored. The build watches HEAD, the branch ref and packed-refs, so a new commit updates the id.
+
+**Third-party licenses.** `npm run build` first runs `ui/scripts/licenses.mjs`, which writes two
+files into the bundle (not committed):
+
+- `/third-party-licenses.json`: a list of `{ name, version, license, source }` with `source` `rust`
+  or `npm`. A package with a license file instead of an SPDX expression has `license` "SEE LICENSE
+  FILE". The page searches the list by name, version and license.
+- `/THIRD-PARTY-NOTICES.txt`: the license texts the packages ship with, each distinct text once
+  with the packages it belongs to (ASCII, served as UTF-8 text).
+
+The Rust part comes from `cargo metadata --locked --filter-platform <host>`, following normal
+dependencies of the `kalzit` package only (workspace members, dev and build dependencies and the
+crates of other platforms are left out), with the license files from the crates' sources. The npm
+part comes from the entries of `ui/package-lock.json` that are not dev-only, with the license
+files from `node_modules`. Without cargo the build does not fail: it keeps the files of the last
+full run or writes the npm packages only, with a warning. CI and release builds fail instead
+(`CI` set, or `KALZIT_LICENSES_STRICT=1`; `KALZIT_LICENSES_STRICT=0` turns that off for jobs that
+only check the UI).

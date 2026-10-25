@@ -36,7 +36,13 @@ fn file_response(path: &str, file: rust_embed::EmbeddedFile, cache: &'static str
     let mime = mime_guess::from_path(path).first_or_octet_stream();
     let mut res = file.data.into_owned().into_response();
     let h = res.headers_mut();
-    if let Ok(v) = HeaderValue::from_str(mime.as_ref()) {
+    // Text the browser would otherwise have to guess the encoding of (the third-party notices).
+    let content_type = if mime.type_() == mime_guess::mime::TEXT && mime.get_param("charset").is_none() {
+        format!("{mime}; charset=utf-8")
+    } else {
+        mime.to_string()
+    };
+    if let Ok(v) = HeaderValue::from_str(&content_type) {
         h.insert(header::CONTENT_TYPE, v);
     }
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));

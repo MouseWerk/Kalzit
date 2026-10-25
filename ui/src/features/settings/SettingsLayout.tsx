@@ -128,18 +128,24 @@ export function SettingsLayout() {
               </li>
             );
           })}
-          {footer.map((section) => (
-            <li key={section.id} className="settings-nav__footer">
-              <Link
-                to="/settings/$section"
-                params={{ section: section.id }}
-                className="settings-nav__link settings-nav__link--quiet"
-                aria-current={section.id === current ? "page" : undefined}
-              >
-                {t(section.label)}
-              </Link>
+          {footer.length === 0 ? null : (
+            <li className="settings-nav__footer">
+              <ul>
+                {footer.map((section) => (
+                  <li key={section.id}>
+                    <Link
+                      to="/settings/$section"
+                      params={{ section: section.id }}
+                      className="settings-nav__link settings-nav__link--quiet"
+                      aria-current={section.id === current ? "page" : undefined}
+                    >
+                      {t(section.label)}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </li>
-          ))}
+          )}
         </ul>
       </nav>
       <div className="settings-main">

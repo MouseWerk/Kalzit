@@ -83,9 +83,9 @@ pub const REGISTRY: &[SettingDef] = &[
     SettingDef {
         key: "datasources.max_response_bytes",
         scope: Scope::Server,
-        default: || json!(50 * 1024 * 1024),
+        default: || json!(128 * 1024 * 1024),
         ui_editable: true,
-        description: "Largest result one request may produce, all its queries together.",
+        description: "Memory the results of one request may take, all its queries together; counted as held in memory (every value, string and document entry), not as JSON text.",
     },
     SettingDef {
         key: "datasources.max_parallel_queries",
@@ -99,7 +99,7 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(1024 * 1024 * 1024),
         ui_editable: true,
-        description: "Result bytes all running queries together may hold.",
+        description: "Memory the results of all running queries together may take, counted like the per-request limit.",
     },
     SettingDef {
         key: "audit.retention_days",

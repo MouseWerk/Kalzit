@@ -19,6 +19,7 @@ import {
 } from "../admin/api";
 import { LoadState } from "../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../admin/components/Settings";
+import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
@@ -148,6 +149,8 @@ function SectionBody({ section }: { section: SectionDef }) {
       );
     case "transfer":
       return <TransferSection />;
+    case "about":
+      return <AboutSection />;
   }
 }
 
