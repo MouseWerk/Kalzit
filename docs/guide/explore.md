@@ -41,14 +41,16 @@ never as text in the query. Writing queries are always refused, see
 Macros take the time range of the dashboard or of Explore:
 
 - **SQL**: `$__timeFilter(column)` (true for rows in the range), `$__timeFrom`, `$__timeTo`,
-  `$__interval` (a suggested grouping interval such as `1m`), `$__intervalMs`. Variables are
+  `$__interval` (a suggested grouping interval such as `1m`), `$__interval_ms`. Variables are
   written `$name`.
-- **PromQL**: `$__interval`, `$__rate_interval` (four intervals, at least 1m, a safe window for
-  `rate()`), `$__range`, `$__timeFromSeconds`, `$__timeToSeconds`. Variables only inside quoted
-  strings, such as `job="$job"`.
-- **Cypher**: `$__timeFromDateTime`, `$__timeToDateTime`, `$__timeFromMs`, `$__timeToMs`.
-- **Lucene and Query DSL**: the same macros; in Lucene variables become quoted phrases, in Query
-  DSL a macro or variable is written as a whole string such as `"$__interval"`.
+- **PromQL**: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at least 1m, a
+  safe window for `rate()`), `$__range`, `$__timeFrom`, `$__timeTo` (Unix seconds). Variables only
+  inside quoted strings, such as `job="$job"`.
+- **Cypher**: `$__timeFrom`, `$__timeTo` (UTC DateTime values), `$__timeFromMs`, `$__timeToMs`,
+  `$__interval_ms`.
+- **Lucene and Query DSL**: `$__timeFrom`, `$__timeTo` (Unix ms), `$__interval`, `$__interval_ms`;
+  in Lucene variables become quoted phrases, in Query DSL a macro or variable is written as a
+  whole string such as `"$__interval"`.
 - **MongoDB**: in a `$match` or filter, `{"$__timeFilter": "ts"}` keeps the time range and
   `"${name}"` stands for a variable.
 
