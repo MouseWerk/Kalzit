@@ -266,6 +266,7 @@ function VariableControl({
         label={label}
         picked={picked}
         options={list}
+        truncated={options.data?.truncated === true}
         describedBy={optionsError === null ? undefined : `${id}-error`}
         onChange={onChange}
       />
@@ -297,10 +298,12 @@ function VariableControl({
       </label>
       {control}
       {options.data?.truncated === true ? (
-        <span className="field__hint">{t("dashboards.variables.truncated")}</span>
+        <span className="field__hint" title={t("dashboards.variables.truncated")}>
+          {t("dashboards.variables.truncated")}
+        </span>
       ) : null}
       {optionsError === null ? null : (
-        <span className="field__error" id={`${id}-error`}>
+        <span className="field__error" id={`${id}-error`} title={optionsError}>
           {optionsError}
         </span>
       )}

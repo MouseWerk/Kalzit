@@ -231,6 +231,45 @@ describe("multi-value variable picker", () => {
     await user.type(screen.getByRole("searchbox", { name: "Search values" }), "site-12");
     expect(screen.getAllByRole("menuitemcheckbox")).toHaveLength(1);
   });
+
+  it("reaches the search from the keyboard alone", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `site-${i + 1}`);
+    setup("viewer", {
+      ...emptyModel("Main"),
+      variables: [
+        { name: "site", type: "custom", options: many, current: ["site-1"], multi: true },
+      ],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "site: site-1" });
+    button.focus();
+    await user.keyboard("{Enter}");
+    const search = screen.getByRole("searchbox", { name: "Search values" });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    await user.keyboard("site-1");
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Select all" }));
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(search);
+    await user.keyboard("{Tab}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /^site:/ }));
+  });
+
+  it("sends an empty list when no value is picked", async () => {
+    const model = regions(["Nord"]);
+    model.panels = [panel("p1", "Orders")];
+    const { server } = setup("viewer", model);
+    const { user } = renderApp("/dashboards/d-main");
+    await user.click(await screen.findByRole("button", { name: "Region: Nord" }));
+    await waitFor(() => expect(server.areas.dashboards.panelQueries.length).toBeGreaterThan(0));
+    const before = server.areas.dashboards.panelQueries.length;
+    await user.click(screen.getByRole("menuitem", { name: "None" }));
+    await waitFor(() =>
+      expect(server.areas.dashboards.panelQueries.length).toBeGreaterThan(before),
+    );
+    expect(server.areas.dashboards.panelQueries.at(-1)?.body.variables.region).toEqual([]);
+  });
 });
 
 describe("repeats", () => {
@@ -600,12 +639,10 @@ describe("links", () => {
       tags: ["Sales"],
     });
     const { user } = renderApp("/dashboards/d-main");
-    // Three links do not fit the bar as buttons: they are one "Links" menu.
-    await user.click(await screen.findByRole("button", { name: "Links" }));
-    const wiki = screen.getByRole("menuitem", { name: "Wiki" });
+    // The one that is not safe is left out, so two links remain: both sit in the bar.
+    const wiki = await screen.findByRole("link", { name: "Wiki" });
     expect(wiki.getAttribute("href")).toBe("https://wiki.example/at");
-    expect(screen.queryByRole("menuitem", { name: "Evil" })).toBeNull();
-    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("link", { name: "Evil" })).toBeNull();
     // Data links are in the panel's menu.
     await user.click(
       within(article("Orders")).getByRole("button", { name: "Panel menu of “Orders”" }),
@@ -616,12 +653,44 @@ describe("links", () => {
     expect(details.getAttribute("rel")).toBe("noopener noreferrer");
     await user.keyboard("{Escape}");
     await user.selectOptions(screen.getByRole("combobox", { name: "land" }), "de");
-    await user.click(screen.getByRole("button", { name: "Links" }));
-    expect(screen.getByRole("menuitem", { name: "Wiki" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "Wiki" }).getAttribute("href")).toBe(
       "https://wiki.example/de",
     );
-    expect(screen.getByText("More sales")).toBeTruthy();
-    expect(await screen.findByRole("menuitem", { name: "Sales EU" })).toBeTruthy();
+    await user.click(screen.getByText("More sales"));
+    expect(await screen.findByRole("link", { name: "Sales EU" })).toBeTruthy();
+  });
+
+  it("keeps up to two links in the bar and counts only the ones that are shown", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      links: [
+        { type: "url", title: "Wiki", url: "https://wiki.example/a" },
+        { type: "url", title: "Evil", url: "javascript:alert(1)" },
+        { type: "url", title: "Docs", url: "https://docs.example/a" },
+      ],
+    });
+    renderApp("/dashboards/d-main");
+    expect(await screen.findByRole("link", { name: "Wiki" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Docs" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Links" })).toBeNull();
+  });
+
+  it("returns focus to the Links button when the menu closes with Escape", async () => {
+    setup("viewer", {
+      ...emptyModel("Main"),
+      links: [1, 2, 3].map((n) => ({
+        type: "url" as const,
+        title: `Doc ${n}`,
+        url: `https://docs.example/${n}`,
+      })),
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const button = await screen.findByRole("button", { name: "Links" });
+    await user.click(button);
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Doc 1" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
 
   it("refuses a link address that is not web, mail or local in the settings", async () => {

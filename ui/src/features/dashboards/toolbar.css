@@ -656,7 +656,11 @@
 
   .dash-filters .variables__item > .field__hint,
   .dash-filters .variables__item > .field__error {
+    min-width: 0;
+    max-width: var(--size-column);
     padding-inline-end: var(--space-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 

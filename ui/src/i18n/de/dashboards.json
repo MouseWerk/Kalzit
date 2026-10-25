@@ -291,5 +291,8 @@
   "dashboards.variables.clear": "Keine",
   "dashboards.variables.search": "Werte suchen",
   "dashboards.variables.noMatch": "Keine Treffer",
-  "dashboards.variables.more": "+{count}"
+  "dashboards.variables.more": "+{count}",
+  "dashboards.variables.count": "{count} Werte",
+  "dashboards.variables.quick": "Schnellauswahl",
+  "dashboards.variables.picker": "{label}: {value}"
 }
