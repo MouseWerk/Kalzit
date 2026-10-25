@@ -33,6 +33,7 @@ import {
 import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { openLayerCount } from "../../lib/layers";
+import { tabForKey } from "../../lib/tabKeys";
 import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
@@ -853,14 +854,11 @@ function LowerPane({
     steps: t("analysis.steps.title"),
   };
   function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+    const next = tabForKey(LOWER_TABS, tab, event.key);
+    if (next === undefined) {
       return;
     }
     event.preventDefault();
-    const index = LOWER_TABS.indexOf(tab);
-    const next =
-      LOWER_TABS[(index + (event.key === "ArrowRight" ? 1 : LOWER_TABS.length - 1)) % 2] ??
-      "queries";
     onTab(next);
     document.getElementById(`${idPrefix}-${next}-tab`)?.focus();
   }
@@ -944,7 +942,9 @@ function OptionGroup({
           <Icon name="chevron" className="option-group__chevron" />
           <span className="option-group__title">{title}</span>{" "}
           {summary === undefined || open ? null : (
-            <span className="option-group__summary truncate">{summary}</span>
+            <span className="option-group__summary truncate" title={summary}>
+              {summary}
+            </span>
           )}
         </button>
       </h3>

@@ -67,6 +67,7 @@ export function PanelInspector({
         ? t("dashboardTools.rows.untitled")
         : row.title;
   const title = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
+  const where = t("dashboardTools.inspector.typeInRow", { type: typeName, row: rowName });
   const linked = panel.libraryPanelId !== undefined;
   const set = <K extends keyof PanelModel>(key: K, value: PanelModel[K] | undefined) =>
     actions.onChange((p) => {
@@ -101,8 +102,8 @@ export function PanelInspector({
           <h2 id={`${id}-title`} className="truncate" title={title}>
             {title}
           </h2>
-          <p className="inspector__where truncate">
-            {t("dashboardTools.inspector.typeInRow", { type: typeName, row: rowName })}
+          <p className="inspector__where truncate" title={where}>
+            {where}
           </p>
         </div>
       </div>
@@ -349,7 +350,9 @@ function InspectorSection({
           {summary === undefined ? null : (
             <>
               {" "}
-              <span className="inspector__summary truncate">{summary}</span>
+              <span className="inspector__summary truncate" title={summary}>
+                {summary}
+              </span>
             </>
           )}
         </button>

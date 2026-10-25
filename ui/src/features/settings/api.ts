@@ -78,6 +78,21 @@ export function undoChange(
     : { key, value: previous.value, version };
 }
 
+/** Removes a setting's stored value so its default applies again; answers it as it is now. */
+export async function resetSetting(
+  scope: SettingsScope,
+  key: string,
+  version: number,
+): Promise<Setting> {
+  const saved = (await applyBatch(scope, [{ key, reset: true, version }])).find(
+    (setting) => setting.key === key,
+  );
+  if (saved === undefined) {
+    throw new Error(`the settings batch did not answer ${key}`);
+  }
+  return saved;
+}
+
 /** Applies every change or none; answers the saved settings with their new versions. */
 export async function applyBatch(scope: SettingsScope, changes: BatchChange[]): Promise<Setting[]> {
   return itemsOf(

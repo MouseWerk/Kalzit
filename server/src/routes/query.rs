@@ -98,13 +98,23 @@ async fn query(
     check_variables(&req.variables)?;
     // Each item is authorized on its own data source; one the caller may not query answers for
     // its refId only. Ids of other organizations are not found when they are run.
+    // A source is checked once per request, however many items query it (the refusal is
+    // checked again for each of its items, which is rare, to answer each with its own error).
     let mut refused = Vec::new();
     let mut allowed = Vec::new();
+    let mut may_query = std::collections::HashSet::new();
     for item in req.queries {
+        if may_query.contains(&item.datasource_id) {
+            allowed.push(item);
+            continue;
+        }
         match check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(&item.datasource_id))
             .await
         {
-            Ok(()) => allowed.push(item),
+            Ok(()) => {
+                may_query.insert(item.datasource_id.clone());
+                allowed.push(item);
+            }
             Err(e) => refused.push((item.ref_id, e)),
         }
     }

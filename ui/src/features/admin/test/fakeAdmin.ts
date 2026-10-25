@@ -1172,12 +1172,15 @@ function settingsExtras(
     const saved = changes.map((change) => {
       const stored = settings.find((setting) => setting.key === change.key) as WireSetting;
       if (change.reset === true) {
-        // The stored value is deleted: the default applies again, never saved.
+        // The stored value goes: the default applies again, and the version keeps counting
+        // (a setting never saved stays at 0).
         stored.value = stored.default;
-        stored.version = 0;
+        stored.version = stored.version === 0 ? 0 : stored.version + 1;
         stored.source = "default";
-        stored.updatedAt = null;
-        stored.updatedBy = null;
+        if (stored.key === "appearance.default_theme") {
+          server.state.branding.defaultTheme = stored.value;
+          server.state.preferences.defaults.theme = String(stored.value);
+        }
         return stored;
       }
       stored.value = change.value;

@@ -396,6 +396,36 @@ async fn export_needs_the_permission_and_the_same_rights_as_running() {
     assert_eq!(refused[1].0, None, "a panel that does not exist names no dashboard");
 }
 
+/// A panel that shows a library panel exports the library panel's queries and steps.
+#[tokio::test]
+async fn a_linked_library_panel_exports_its_own_queries() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let library = t
+        .post(
+            "/library-panels",
+            json!({ "name": "Länder", "model": {
+                "schemaVersion": 2, "type": "table", "title": "Länder",
+                "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT land FROM verkauf ORDER BY tag" } }]
+            } }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(library.status, StatusCode::CREATED, "{}", library.text());
+    let model = json!({
+        "schemaVersion": 2, "title": "Übersicht", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "lp", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                     "libraryPanelId": library.json()["id"] }]
+    });
+    let created = t.post("/dashboards", json!({ "model": model }), &t.owner).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    let id = created.json()["id"].as_str().unwrap().to_string();
+    let body = json!({ "timeRange": range(), "format": "csv", "language": "en" });
+    let r = t.post(&format!("/dashboards/{id}/panels/lp/export"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.text(), "\u{FEFF}land\r\nÖsterreich\r\nSchweiz\r\n'=Formel\r\n");
+}
+
 /// A restricted folder hides its dashboards: their panels cannot be exported either.
 #[tokio::test]
 async fn panels_in_hidden_folders_are_not_found() {

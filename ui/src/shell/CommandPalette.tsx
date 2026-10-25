@@ -422,9 +422,13 @@ export function CommandPalette({
         onClick={() => runAt(index)}
       >
         <Icon name={item.icon} className="palette__icon" />
-        <span className="palette__label truncate">{item.label}</span>
+        <span className="palette__label truncate" title={item.label}>
+          {item.label}
+        </span>
         {item.detail === undefined ? null : (
-          <span className="palette__detail truncate">{item.detail}</span>
+          <span className="palette__detail truncate" title={item.detail}>
+            {item.detail}
+          </span>
         )}
         <span className="palette__meta">
           {item.kind === undefined ? null : <span className="palette__kind">{item.kind}</span>}

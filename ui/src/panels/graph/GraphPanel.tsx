@@ -385,7 +385,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
 
   return (
     <div className="graph" ref={rootRef}>
-      <div className="graph__toolbar" role="toolbar" aria-label={t("graph.toolbar", { title })}>
+      {/* A group, not role="toolbar" (which promises one Tab stop with arrow keys inside): each
+          button is its own Tab stop, as in the rest of the panel. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a field set */}
+      <div className="graph__toolbar" role="group" aria-label={t("graph.toolbar", { title })}>
         {drawn ? (
           <>
             <button

@@ -10,7 +10,9 @@ import "./shellUx.css";
 
 /**
  * Stars or unstars a dashboard for the start page. A toggle button: `aria-pressed` says whether
- * it is starred, the filled icon and weight show it, never an accent frame.
+ * it is starred, the filled icon and weight show it, never an accent frame. Its name stays the
+ * same in both states (as on the start page's cards): a screen reader hears "Favorite, pressed",
+ * not a name that changes along with the state.
  */
 export function StarButton({
   orgId,
@@ -44,7 +46,7 @@ export function StarButton({
     return (
       <IconButton
         icon={on ? "starFilled" : "star"}
-        label={on ? t("shell.star.starred") : t("shell.star.star")}
+        label={t("shell.start.starToggle")}
         tipAlign="start"
         className="star-button"
         aria-pressed={on}
@@ -60,7 +62,7 @@ export function StarButton({
       onClick={() => toggle.mutate(!on)}
     >
       <Icon name={on ? "starFilled" : "star"} />
-      {on ? t("shell.star.starred") : t("shell.star.star")}
+      {t("shell.start.starToggle")}
     </button>
   );
 }

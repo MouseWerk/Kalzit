@@ -303,7 +303,9 @@ export function ChartShell({
                     className={styles[row.index]?.swatchClass ?? ""}
                     freeColor={styles[row.index]?.freeColor}
                   />
-                  <span className="truncate">{row.name}</span>
+                  <span className="truncate" title={row.name}>
+                    {row.name}
+                  </span>
                   <span className="ts__tooltip-value">
                     {Number.isNaN(row.value) ? "" : format(row.index, row.value)}
                   </span>

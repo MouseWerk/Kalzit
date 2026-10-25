@@ -402,7 +402,12 @@ type QueryResult =
   `auth.sign_in_failed`, `team.created`). Summaries hold ids and changed field names, never
   secrets and never what a user typed (a failed sign-in records the account id if it exists, not
   the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
-  since they hold client addresses.
+  since they hold client addresses: 5,000 per transaction, so a large backlog never holds the
+  write lock for long.
+- A settings reset keeps the row as a marker (value `null`) with the next version, so versions
+  only ever count up and a write from before the reset is a `version_conflict`.
+- A database that a newer Kalzit migrated is refused at start with a message that says so and
+  names the backups in `updates/backups`, before the migrator runs.
 - The audit list query carries only the filters that are set, and pages by the row value
   `(created_at, id)`, so it runs on the indexes `audit_events_org_time_id` and
   `audit_events_org_resource` (migration 0015) without a sort; a test checks the plan with

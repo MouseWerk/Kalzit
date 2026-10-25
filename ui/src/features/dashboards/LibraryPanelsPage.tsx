@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -23,6 +23,9 @@ import { errorMessage } from "./ui/errors";
 import "./dashboards.css";
 import "./dashboardTools.css";
 
+/** Pause in typing after which the library panel search runs. */
+export const LIBRARY_SEARCH_DELAY_MS = 250;
+
 /**
  * Library panels of the organization that the viewer may see. They are added to dashboards and
  * changed from a dashboard's edit mode; here they are found, their uses listed and unused ones
@@ -43,11 +46,17 @@ function LibraryList({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [q, setQ] = useState("");
+  // The search asks the server once typing pauses, not for every letter.
+  const [searched, setSearched] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearched(q), LIBRARY_SEARCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [q]);
   const [deleting, setDeleting] = useState<LibraryPanel | null>(null);
   const folders = useQuery(foldersQuery(orgId));
   const list = useQuery({
-    queryKey: [LIBRARY_PANELS_KEY, orgId, "list", q],
-    queryFn: ({ signal }) => fetchLibraryPanels(orgId, q, signal),
+    queryKey: [LIBRARY_PANELS_KEY, orgId, "list", searched],
+    queryFn: ({ signal }) => fetchLibraryPanels(orgId, searched, signal),
   });
   const remove = useMutation({
     mutationFn: (id: string) => deleteLibraryPanel(orgId, id),
@@ -80,7 +89,17 @@ function LibraryList({ orgId }: { orgId: string }) {
       </div>
       {list.isError ? <FormAlert>{errorMessage(t, list.error)}</FormAlert> : null}
       {!list.isPending && items.length === 0 ? (
-        <EmptyState icon="dashboards" title={t("libraryPanels.empty")}>
+        <EmptyState
+          icon="dashboards"
+          title={t("libraryPanels.empty")}
+          actions={
+            searched === "" ? (
+              <Link to="/dashboards" className="button button--secondary">
+                {t("libraryPanels.openDashboards")}
+              </Link>
+            ) : undefined
+          }
+        >
           {t("libraryPanels.emptyText")}
         </EmptyState>
       ) : null}

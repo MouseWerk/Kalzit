@@ -124,7 +124,11 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
         const state = toneName(item.display.tone);
         return (
           <li key={item.index} className={classes}>
-            {showName ? <span className="stat__name truncate">{item.name}</span> : null}
+            {showName ? (
+              <span className="stat__name truncate" title={item.name}>
+                {item.name}
+              </span>
+            ) : null}
             {showValue ? (
               <span className="stat__value">
                 {text}

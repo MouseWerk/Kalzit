@@ -480,6 +480,24 @@ impl Drop for Rights {
 mod tests {
     use super::*;
 
+    /// The command reads the setting from the table itself; the marker a reset leaves (`null`)
+    /// counts as no value, like everywhere else.
+    #[tokio::test]
+    async fn the_health_timeout_skips_a_reset_marker() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for (stored, expected) in [("null", 60), ("120", 120)] {
+            sqlx::query(
+                "INSERT INTO server_settings (key, value, version, updated_at) VALUES ('updates.health_timeout_secs', $1, 2, 0) \
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            )
+            .bind(stored)
+            .execute(&db)
+            .await
+            .unwrap();
+            assert_eq!(health_timeout(&db).await, expected, "{stored}");
+        }
+    }
+
     #[test]
     fn links_below_updates_are_refused() {
         let dir = tempfile::tempdir().unwrap();

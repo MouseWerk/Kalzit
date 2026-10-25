@@ -996,6 +996,23 @@ describe("library panels", () => {
     });
   }
 
+  it("searches the library once typing pauses, not for every letter", async () => {
+    const { server } = setup("editor", emptyModel("Main"));
+    withLibrary(server);
+    const { user } = renderApp("/dashboards/library");
+    expect(await screen.findByRole("heading", { level: 2, name: "Revenue per day" })).toBeTruthy();
+    await user.type(screen.getByRole("searchbox", { name: "Search library panels" }), "Rev");
+    await waitFor(() =>
+      expect(
+        server.calls.some((c) => c.path.includes("/library-panels?") && c.path.includes("q=Rev")),
+      ).toBe(true),
+    );
+    const searches = server.calls.filter(
+      (c) => c.path.includes("/library-panels?") && c.path.includes("q="),
+    );
+    expect(searches.map((c) => new URL(c.path, "http://x").searchParams.get("q"))).toEqual(["Rev"]);
+  });
+
   it("adds a library panel; the dashboard stores only the reference and draws its content", async () => {
     const { server, stored } = setup("editor", emptyModel("Main"));
     withLibrary(server);

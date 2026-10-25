@@ -251,6 +251,11 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
           folders={folders.data ?? []}
           team={teams.scope}
           enabled={teams.settled}
+          onClearSearch={() => {
+            setQuery("");
+            void navigate({ search: (prev) => ({ ...prev, q: undefined }), replace: true });
+          }}
+          onCreate={canWrite ? () => setCreating("dashboard") : undefined}
         />
       </section>
       {creating === "dashboard" ? (
@@ -290,6 +295,8 @@ function DashboardList({
   folders,
   team,
   enabled,
+  onClearSearch,
+  onCreate,
 }: {
   orgId: string;
   folderId: string | undefined;
@@ -298,6 +305,10 @@ function DashboardList({
   /** The active team: the list leaves out other teams' spaces. */
   team: string | undefined;
   enabled: boolean;
+  /** Empties the search field and shows the folder again (a search that found nothing). */
+  onClearSearch: () => void;
+  /** Opens "New dashboard" here; absent without the right to create one. */
+  onCreate: (() => void) | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
   const list = useInfiniteQuery({
@@ -328,6 +339,18 @@ function DashboardList({
       <EmptyState
         icon="dashboards"
         title={q === undefined ? t("dashboards.empty.title") : t("dashboards.empty.search")}
+        actions={
+          q !== undefined ? (
+            <button type="button" className="button button--secondary" onClick={onClearSearch}>
+              {t("dashboards.empty.clearSearch")}
+            </button>
+          ) : onCreate !== undefined ? (
+            <button type="button" className="button button--secondary" onClick={onCreate}>
+              <Icon name="plus" />
+              {t("dashboards.empty.create")}
+            </button>
+          ) : undefined
+        }
       >
         {q === undefined ? t("dashboards.empty.text") : t("dashboards.empty.searchText")}
       </EmptyState>

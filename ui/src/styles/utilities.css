@@ -9,6 +9,18 @@
     white-space: nowrap;
   }
 
+  /*
+   * A live region that is mounted before its message, so screen readers announce the message
+   * when it arrives. While empty it takes no space, but stays in the accessibility tree.
+   */
+  .live-region:empty {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
   .truncate {
     overflow: hidden;
     text-overflow: ellipsis;

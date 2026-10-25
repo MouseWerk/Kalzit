@@ -109,11 +109,11 @@ describe("Explore with an Elasticsearch source", () => {
     if (source !== undefined) source.settings = { url: "https://search.internal:9200" };
     await ready;
     expect(
-      await screen.findByText("Name an index, in the query or in the data source's settings."),
+      await screen.findByText("Name an index, in the query or in the data source’s settings."),
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Run query" }));
     const alerts = await screen.findAllByText(
-      "Name an index, in the query or in the data source's settings.",
+      "Name an index, in the query or in the data source’s settings.",
     );
     expect(alerts.length).toBe(2);
   });
@@ -186,7 +186,7 @@ describe("Explore with an HTTP JSON source", () => {
     fireEvent.change(path, { target: { value: "orders" } });
     fireEvent.change(path, { target: { value: "../x" } });
     expect(path.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText(/The path must lie below the data source's URL/)).toBeTruthy();
+    expect(screen.getByText(/The path must lie below the data source’s URL/)).toBeTruthy();
     // The last valid path is not run behind the user's back: Run waits for a fix.
     expect(run).toHaveProperty("disabled", true);
     fireEvent.keyDown(path, { key: "Enter", ctrlKey: true });

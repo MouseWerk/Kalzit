@@ -263,7 +263,7 @@ impl DataSourcePlugin for Prometheus {
         } else {
             let params = [
                 ("query", expr.clone()),
-                ("start", seconds(req.range.from)),
+                ("start", seconds(aligned_start(req.range.from, req.range.to, step_ms))),
                 ("end", seconds(req.range.to)),
                 ("step", seconds(step_ms)),
             ];
@@ -293,6 +293,15 @@ fn step_ms(q: &PromQuery, req: &SourceQuery) -> i64 {
     }
     let span = req.range.to.saturating_sub(req.range.from).max(0);
     step.max(span / MAX_POINTS_PER_SERIES + 1).max(1)
+}
+
+/// The start of a range query on a multiple of the step, so the points fall on the same times
+/// from one refresh to the next instead of moving with the clock. One step later when aligning
+/// would ask for more points than Prometheus answers.
+fn aligned_start(from: i64, to: i64, step: i64) -> i64 {
+    let step = step.max(1);
+    let start = from.div_euclid(step) * step;
+    if (to - start) / step > MAX_POINTS_PER_SERIES { start + step } else { start }
 }
 
 /// Unix seconds with millisecond precision, as Prometheus takes them.
@@ -491,6 +500,8 @@ fn to_frame(data: &Value, req: &SourceQuery) -> Result<FrameBuilder, SourceError
             let mut columns = vec![Column::new("time", Some(FieldType::Time))];
             let mut samples: Vec<BTreeMap<i64, Value>> = Vec::with_capacity(result.len());
             let mut times = BTreeSet::new();
+            // +Inf and -Inf have no JSON number; they are shown empty, and a notice says so.
+            let mut infinite = 0usize;
             for series in result {
                 let labels: BTreeMap<String, String> = series["metric"]
                     .as_object()
@@ -508,6 +519,9 @@ fn to_frame(data: &Value, req: &SourceQuery) -> Result<FrameBuilder, SourceError
                 for p in points {
                     if let Some(t) = sample_time(&p[0]) {
                         times.insert(t);
+                        if p[1].as_str().and_then(|s| s.parse::<f64>().ok()).is_some_and(f64::is_infinite) {
+                            infinite += 1;
+                        }
                         map.insert(t, sample(&p[1]));
                     }
                 }
@@ -522,6 +536,10 @@ fn to_frame(data: &Value, req: &SourceQuery) -> Result<FrameBuilder, SourceError
                 if !frame.push_row(row) {
                     break;
                 }
+            }
+            if infinite > 0 {
+                let message = format!("{infinite} infinite values (+Inf or -Inf) are shown empty");
+                frame.notice(NoticeSeverity::Info, Detail::new("prometheus.infinite", message).with("count", infinite));
             }
             Ok(frame)
         }
@@ -558,6 +576,20 @@ mod tests {
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
         }
+    }
+
+    #[test]
+    fn range_starts_are_aligned_to_the_step() {
+        // Two refreshes a few seconds apart ask for the same point times.
+        assert_eq!(aligned_start(1_800_000_007_123, 1_800_003_600_000, 15_000), 1_800_000_000_000);
+        assert_eq!(aligned_start(1_800_000_011_900, 1_800_003_604_000, 15_000), 1_800_000_000_000);
+        assert_eq!(aligned_start(1_800_000_015_000, 1_800_003_600_000, 15_000), 1_800_000_015_000);
+        assert_eq!(aligned_start(-7, 100, 10), -10);
+        // Never more points than Prometheus answers: then the first aligned point is left out.
+        let step = 1_000;
+        let to = (MAX_POINTS_PER_SERIES + 1) * step;
+        assert_eq!(aligned_start(999, to, step), 1_000);
+        assert!((to - aligned_start(999, to, step)) / step <= MAX_POINTS_PER_SERIES);
     }
 
     #[test]
@@ -617,6 +649,18 @@ mod tests {
         assert_eq!(f[1].labels.as_ref().unwrap()["job"], "api");
         assert_eq!(f[1].values, [json!(1.0), json!(0.0)]);
         assert_eq!(f[2].values, [Value::Null, Value::Null]);
+        // NaN is "no value"; the infinities are shown empty too, and a notice says how many.
+        assert!(frame.meta().is_none_or(|m| m.notices.is_empty()));
+        let infinite = json!({
+            "resultType": "matrix",
+            "result": [{ "metric": { "__name__": "ratio" }, "values": [[1800000000, "+Inf"], [1800000015, "-Inf"], [1800000030, "2"]] }]
+        });
+        let frame = to_frame(&infinite, &req(json!({}))).unwrap().finish();
+        assert_eq!(frame.fields()[1].values, [Value::Null, Value::Null, json!(2.0)]);
+        let notices = &frame.meta().unwrap().notices;
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].code, "prometheus.infinite");
+        assert_eq!(notices[0].params.as_ref().unwrap()["count"], "2");
 
         let scalar = to_frame(&json!({ "resultType": "scalar", "result": [1800000000.5, "2"] }), &req(json!({})))
             .unwrap()

@@ -546,6 +546,7 @@ function DashboardCard({
             to="/dashboards/$dashboardId"
             params={{ dashboardId: entry.id }}
             className="dash-card__link truncate"
+            title={entry.title}
           >
             {entry.title}
           </Link>
@@ -562,7 +563,9 @@ function DashboardCard({
           <Icon name={on ? "starFilled" : "star"} />
         </button>
       </div>
-      <p className="dash-card__path truncate">{folderOf(t, entry)}</p>
+      <p className="dash-card__path truncate" title={folderOf(t, entry)}>
+        {folderOf(t, entry)}
+      </p>
       <div className="dash-card__actions">
         <Link
           to="/dashboards/$dashboardId"
@@ -599,8 +602,13 @@ function RecentCard({ entry }: { entry: DashboardEntry }) {
         params={{ dashboardId: entry.id }}
         className="recent-card"
       >
-        <span className="recent-card__title truncate">{entry.title}</span>
-        <span className="recent-card__meta truncate">
+        <span className="recent-card__title truncate" title={entry.title}>
+          {entry.title}
+        </span>
+        <span
+          className="recent-card__meta truncate"
+          title={`${folderOf(t, entry)} · ${relative(entry.at)}`}
+        >
           {folderOf(t, entry)} · {relative(entry.at)}
         </span>
       </Link>
@@ -624,19 +632,22 @@ function RecentChanges({ orgId }: { orgId: string }) {
     const now = Date.now();
     body = (
       <ul className="start__changes">
-        {changes.data.map((event) => (
-          <li key={event.id} className="start__change">
-            <span className="start__change-time">
-              {changeTime(event.createdAt, now, language, timeZone)}
-            </span>
-            <span className="truncate">
-              {t("shell.start.change", {
-                actor: event.actorName ?? t("shell.start.someone"),
-                action: auditActionLabel(t, event.action),
-              })}
-            </span>
-          </li>
-        ))}
+        {changes.data.map((event) => {
+          const text = t("shell.start.change", {
+            actor: event.actorName ?? t("shell.start.someone"),
+            action: auditActionLabel(t, event.action),
+          });
+          return (
+            <li key={event.id} className="start__change">
+              <span className="start__change-time">
+                {changeTime(event.createdAt, now, language, timeZone)}
+              </span>
+              <span className="truncate" title={text}>
+                {text}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     );
   }

@@ -313,9 +313,11 @@ export function FolderTree({
         folder.id,
         level,
         <>
-          <span className="truncate">{folder.name}</span>
+          <span className="truncate" title={folder.name}>
+            {folder.name}
+          </span>
           {folder.ownerTeam === null ? null : (
-            <span className="folder-tree__team truncate">
+            <span className="folder-tree__team truncate" title={folder.ownerTeam.name}>
               <span className="visually-hidden">
                 {`, ${t(folder.teamSpace ? "dashboards.team.spaceOf" : "dashboards.team.ownedBy", { team: folder.ownerTeam.name })}`}
               </span>
@@ -372,7 +374,9 @@ export function FolderTree({
         {item(
           ALL,
           1,
-          <span className="truncate">{t("dashboards.folders.all")}</span>,
+          <span className="truncate" title={t("dashboards.folders.all")}>
+            {t("dashboards.folders.all")}
+          </span>,
           "dashboards",
           { hasChildren: false, open: false },
           null,

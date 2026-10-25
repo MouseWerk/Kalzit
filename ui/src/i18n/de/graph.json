@@ -9,7 +9,7 @@
   "graph.showTable": "Als Tabelle zeigen",
   "graph.showDrawing": "Zeichnung zeigen",
   "graph.roleDescription": "Graph",
-  "graph.keyboardHint": "Pfeiltasten wählen den nächsten Knoten in diese Richtung. Eingabe öffnet eine Gruppe oder lädt die Nachbarn des Knotens und setzt die Variable, wo das Panel das tut. Escape hebt die Auswahl auf, Plus und Minus zoomen, 0 zeigt alles.",
+  "graph.keyboardHint": "Pfeiltasten wählen den nächsten Knoten in diese Richtung. Eingabe öffnet eine Gruppe oder lädt die Nachbarn des Knotens und setzt die Variable, wo das Panel das tut. Esc hebt die Auswahl auf, Plus und Minus zoomen, 0 zeigt alles.",
   "graph.summary": "{nodes}, {edges}, {components}.",
   "graph.communities.count": "{communities}.",
   "graph.communities.tooLarge": "Communities werden für Graphen bis {limit} Knoten berechnet.",

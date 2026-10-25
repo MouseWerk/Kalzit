@@ -85,7 +85,22 @@ function PlaylistList({ orgId }: { orgId: string }) {
       {list.isError ? <FormAlert>{errorMessage(t, list.error)}</FormAlert> : null}
       {list.isPending ? <p className="loading">{t("common.loading")}</p> : null}
       {!list.isPending && items.length === 0 ? (
-        <EmptyState icon="dashboards" title={t("playlists.empty")}>
+        <EmptyState
+          icon="dashboards"
+          title={t("playlists.empty")}
+          actions={
+            canWrite ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={() => setEditing("new")}
+              >
+                <Icon name="plus" />
+                {t("playlists.createFirst")}
+              </button>
+            ) : undefined
+          }
+        >
           {canWrite ? t("playlists.emptyText") : t("playlists.emptyTextViewer")}
         </EmptyState>
       ) : null}
@@ -288,7 +303,9 @@ function PlaylistDialog({
             {items.map((item, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: entries keep their order and may repeat
               <li key={index} className="tool-list__item">
-                <span className="truncate">{itemLabel(item)}</span>
+                <span className="truncate" title={itemLabel(item)}>
+                  {itemLabel(item)}
+                </span>
                 <span className="tool-list__actions">
                   <button
                     type="button"
@@ -330,7 +347,9 @@ function PlaylistDialog({
           <ul className="tool-list">
             {(all.data?.items ?? []).slice(0, 8).map((d) => (
               <li key={d.id} className="tool-list__item">
-                <span className="truncate">{d.title}</span>
+                <span className="truncate" title={d.title}>
+                  {d.title}
+                </span>
                 <button
                   type="button"
                   className="button button--secondary button--small"

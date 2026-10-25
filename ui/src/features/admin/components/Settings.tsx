@@ -11,10 +11,28 @@ import { Dialog } from "./Dialog";
 import { formatValue } from "./format";
 import { useNotice } from "./Notice";
 
+interface SaveInput {
+  key: string;
+  value: unknown;
+  previous: unknown;
+  /** Where the value before this change came from; undo resets a `default`. */
+  previousSource: string;
+  version: number;
+  /** Remove the stored value instead of writing `value` (the undo of such a change). */
+  reset?: boolean;
+}
+
+/**
+ * A save waiting its turn: a change made in the page (sent with the version current when it
+ * starts), or a save whose version is already fixed (undo, "overwrite" in the conflict dialog).
+ */
+type Job = { kind: "change"; key: string; value: unknown } | { kind: "fixed"; input: SaveInput };
+
 interface Conflict {
   key: string;
   mine: unknown;
   stored: unknown;
+  storedSource: string;
   version: number;
 }
 
@@ -48,9 +66,15 @@ function useShownValue(): (key: string, value: unknown) => string {
 export function useSettingChanges({
   queryKey,
   patch,
+  reset,
 }: {
   queryKey: QueryKey;
   patch: (key: string, value: unknown, version: number) => Promise<Setting>;
+  /**
+   * Removes the stored value so the default applies again. Undo of a change to a setting that
+   * had no value of its own uses it, so undo does not store a copy of the default.
+   */
+  reset?: (key: string, version: number) => Promise<Setting>;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -58,25 +82,90 @@ export function useSettingChanges({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   // A value the server rejected, shown at its setting's field.
   const [rejected, setRejected] = useState<{ key: string; message: string } | null>(null);
+  // Every save goes through this queue, so only one runs at a time and each starts from the
+  // versions the one before it left. A change committed while a save is on its way waits here
+  // (the latest per setting) instead of being dropped; undo and "overwrite" wait their turn too.
+  const queue = useRef<Job[]>([]);
+  const running = useRef(false);
+
+  function enqueue(job: Job) {
+    if (job.kind === "change") {
+      forget(job.key);
+    }
+    queue.current.push(job);
+    pump();
+  }
+
+  /** Drops the changes still waiting for `key`: an error or a conflict is about to be shown. */
+  function forget(key: string) {
+    queue.current = queue.current.filter((j) => !(j.kind === "change" && j.key === key));
+  }
+
+  function pump() {
+    if (running.current) {
+      return;
+    }
+    const job = queue.current.shift();
+    if (job === undefined) {
+      return;
+    }
+    let input: SaveInput;
+    if (job.kind === "change") {
+      // The version is read when the change is sent, after the save before it has settled.
+      const setting = queryClient.getQueryData<Setting[]>(queryKey)?.find((s) => s.key === job.key);
+      if (setting === undefined) {
+        pump();
+        return;
+      }
+      input = {
+        key: job.key,
+        value: job.value,
+        previous: setting.value,
+        previousSource: setting.source,
+        version: setting.version,
+      };
+    } else {
+      input = job.input;
+    }
+    running.current = true;
+    save
+      .mutateAsync(input)
+      // Errors are shown by the mutation's onError.
+      .catch(() => undefined)
+      .finally(() => {
+        running.current = false;
+        pump();
+      });
+  }
 
   const save = useMutation({
-    mutationFn: (input: { key: string; value: unknown; previous: unknown; version: number }) =>
-      patch(input.key, input.value, input.version),
-    onSuccess: async (saved, { previous }) => {
+    mutationFn: (input: SaveInput) =>
+      input.reset === true && reset !== undefined
+        ? reset(input.key, input.version)
+        : patch(input.key, input.value, input.version),
+    onSuccess: async (saved, { previous, previousSource }) => {
       setRejected(null);
       await queryClient.invalidateQueries({ queryKey });
       notice.show({
         message: t("admin.settings.saved", { name: settingName(t, saved.key) }),
         undo: () =>
-          save.mutate({
-            key: saved.key,
-            value: previous,
-            previous: saved.value,
-            version: saved.version,
+          enqueue({
+            kind: "fixed",
+            input: {
+              key: saved.key,
+              value: previous,
+              previous: saved.value,
+              previousSource: saved.source,
+              version: saved.version,
+              reset: previousSource === "default",
+            },
           }),
       });
     },
     onError: (error, { key, value }) => {
+      // A later change of the same setting would go over what this error (or the conflict
+      // dialog) is about.
+      forget(key);
       if (isApiError(error, "validation") && error.field === "value") {
         notice.clear();
         setRejected({ key, message: errorText(t, error, SETTING_ERRORS) });
@@ -99,7 +188,13 @@ export function useSettingChanges({
         settings?.map((setting) => (setting.key === key ? stored : setting)),
       );
       void queryClient.invalidateQueries({ queryKey });
-      setConflict({ key, mine: value, stored: stored.value, version: stored.version });
+      setConflict({
+        key,
+        mine: value,
+        stored: stored.value,
+        storedSource: stored.source,
+        version: stored.version,
+      });
     },
   });
 
@@ -109,20 +204,22 @@ export function useSettingChanges({
     rejected,
     pending: save.isPending,
     apply: (setting: Setting, value: unknown) => {
-      if (!save.isPending) {
-        setRejected(null);
-        save.mutate({ key: setting.key, value, previous: setting.value, version: setting.version });
-      }
+      setRejected(null);
+      enqueue({ kind: "change", key: setting.key, value });
     },
     keepStored: () => setConflict(null),
     overwrite: () => {
       if (conflict !== null) {
         setConflict(null);
-        save.mutate({
-          key: conflict.key,
-          value: conflict.mine,
-          previous: conflict.stored,
-          version: conflict.version,
+        enqueue({
+          kind: "fixed",
+          input: {
+            key: conflict.key,
+            value: conflict.mine,
+            previous: conflict.stored,
+            previousSource: conflict.storedSource,
+            version: conflict.version,
+          },
         });
       }
     },

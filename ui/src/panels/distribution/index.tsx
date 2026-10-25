@@ -201,7 +201,9 @@ function DistributionPanel({
               key={`${typeOf(entry.value)}:${JSON.stringify(entry.value)}`}
               className="dist__entry"
             >
-              <span className="dist__value truncate">{valueSummary(t, entry.value, language)}</span>
+              <span className="dist__value truncate" title={valueSummary(t, entry.value, language)}>
+                {valueSummary(t, entry.value, language)}
+              </span>
               <span className="doc-tree__type">{typeLabel(t, typeOf(entry.value))}</span>
               <Share share={result.values === 0 ? 0 : entry.count / result.values} />
               <span className="dist__count">

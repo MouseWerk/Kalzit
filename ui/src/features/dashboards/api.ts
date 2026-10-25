@@ -447,8 +447,18 @@ export async function fetchVersionModel(
   return parseModel(isRecord(value) ? value.model : undefined, "");
 }
 
-export async function restoreVersion(orgId: string, id: string, version: number): Promise<void> {
-  await send("POST", orgPath(orgId, "dashboards", id, "versions", String(version), "restore"));
+/**
+ * Makes an old version the current one. `expectedVersion` is the current version the user saw:
+ * a dashboard saved since answers `version_conflict` instead of being replaced.
+ */
+export async function restoreVersion(
+  orgId: string,
+  id: string,
+  version: number,
+  expectedVersion: number,
+): Promise<void> {
+  const path = orgPath(orgId, "dashboards", id, "versions", String(version), "restore");
+  await send("POST", `${path}?expectedVersion=${expectedVersion}`);
 }
 
 function isQueryResponse(value: unknown): value is QueryResponse {

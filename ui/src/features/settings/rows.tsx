@@ -282,11 +282,8 @@ function Control(props: ControlProps) {
   const { t } = useI18n();
   const { setting, inheritable, pending, labelled, onCommit } = props;
   const { key, value } = setting;
-  const guard = (next: unknown) => {
-    if (!pending) {
-      onCommit(next);
-    }
-  };
+  // A change while another save is on its way is queued (useSettingChanges), not dropped.
+  const guard = (next: unknown) => onCommit(next);
 
   if (key === "appearance.default_theme") {
     return (
@@ -400,9 +397,6 @@ function TextField({ setting, pending, labelled, invalid, onCommit }: ControlPro
   }
   const committed = useRef<string | null>(null);
   function commit() {
-    if (pending) {
-      return;
-    }
     let next: unknown = draft;
     if (numeric) {
       const number = Number(draft);
@@ -456,9 +450,6 @@ function ListField({ setting, pending, labelled, invalid, onCommit }: ControlPro
     setDraft(items.join("\n"));
   }
   function commit() {
-    if (pending) {
-      return;
-    }
     const next = draft
       .split(/\r?\n/)
       .map((line) => line.trim())

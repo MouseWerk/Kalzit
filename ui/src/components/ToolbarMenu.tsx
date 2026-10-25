@@ -119,8 +119,13 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
                             ? "menu__item toolbar-menu__item--danger"
                             : "menu__item"
                         }
-                        disabled={entry.disabled}
+                        // aria-disabled, not disabled: the item stays in the arrow-key order,
+                        // so its name and that it is unavailable are still announced.
+                        aria-disabled={entry.disabled === true ? true : undefined}
                         onClick={() => {
+                          if (entry.disabled === true) {
+                            return;
+                          }
                           closeMenu(true);
                           entry.onSelect();
                         }}

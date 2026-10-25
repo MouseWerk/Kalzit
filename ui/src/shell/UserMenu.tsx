@@ -88,8 +88,12 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
             {initialsOf(me.name)}
           </span>
           <span className="user-button__text">
-            <span className="user-button__name truncate">{me.name}</span>
-            <span className="user-button__email truncate">{me.email}</span>
+            <span className="user-button__name truncate" title={me.name}>
+              {me.name}
+            </span>
+            <span className="user-button__email truncate" title={me.email}>
+              {me.email}
+            </span>
           </span>
           <span className="visually-hidden">{t("userMenu.label")}</span>
         </button>

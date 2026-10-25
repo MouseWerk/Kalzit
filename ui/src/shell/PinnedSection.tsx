@@ -283,9 +283,13 @@ function PinPicker({
                 disabled={pin.isPending}
                 onClick={() => pin.mutate(hit.id)}
               >
-                <span className="pin-picker__title truncate">{hit.title}</span>
+                <span className="pin-picker__title truncate" title={hit.title}>
+                  {hit.title}
+                </span>
                 {hit.path.length === 0 ? null : (
-                  <span className="pin-picker__path truncate">{hit.path.join(" / ")}</span>
+                  <span className="pin-picker__path truncate" title={hit.path.join(" / ")}>
+                    {hit.path.join(" / ")}
+                  </span>
                 )}
               </button>
             </li>

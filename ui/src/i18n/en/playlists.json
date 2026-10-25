@@ -4,6 +4,7 @@
   "playlists.new": "New playlist",
   "playlists.editTitle": "Change playlist",
   "playlists.empty": "No playlists yet",
+  "playlists.createFirst": "Create the first playlist",
   "playlists.emptyText": "Create a playlist and add dashboards or tags to it.",
   "playlists.emptyTextViewer": "Playlists that editors create appear here.",
   "playlists.summary": "{count} entries, every {interval}",

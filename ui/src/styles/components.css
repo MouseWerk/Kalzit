@@ -953,6 +953,15 @@
     outline-offset: calc(var(--focus-ring-width) * -1);
   }
 
+  .menu__item[aria-disabled="true"] {
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .menu__item[aria-disabled="true"]:hover {
+    background: transparent;
+  }
+
   .menu__item[aria-checked="true"] {
     font-weight: var(--font-weight-semibold);
   }

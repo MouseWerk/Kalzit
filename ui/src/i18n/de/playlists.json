@@ -3,6 +3,7 @@
   "playlists.lead": "Playlists zeigen Dashboards nacheinander, für Bildschirme an der Wand. Jeder sieht nur die Dashboards, die er öffnen darf.",
   "playlists.new": "Neue Playlist",
   "playlists.editTitle": "Playlist ändern",
+  "playlists.createFirst": "Erste Playlist anlegen",
   "playlists.empty": "Noch keine Playlists",
   "playlists.emptyText": "Lege eine Playlist an und füge Dashboards oder Schlagwörter hinzu.",
   "playlists.emptyTextViewer": "Hier erscheinen Playlists, die Bearbeiter anlegen.",

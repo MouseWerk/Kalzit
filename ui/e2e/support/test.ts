@@ -132,6 +132,21 @@ function observe(message: ConsoleMessage): Observed {
 }
 
 /**
+ * Charts measure their box in a ResizeObserver callback and render in it (useElementSize). A
+ * render that changes the size again makes the browser report "ResizeObserver loop ..." as an
+ * error event on the window, which no console listener sees; this turns it into a console error,
+ * so the guard fails the test.
+ */
+function reportResizeLoops(): void {
+  window.addEventListener("error", (event) => {
+    if (typeof event.message === "string" && event.message.includes("ResizeObserver loop")) {
+      // biome-ignore lint/suspicious/noConsole: the guard fails the test on console errors.
+      console.error(`uncaught: ${event.message}`);
+    }
+  });
+}
+
+/**
  * Watches every page of a context for console warnings and errors and for uncaught exceptions.
  * Anything not allowed fails the test at its end, so a broken page cannot pass by looking right.
  */
@@ -146,6 +161,7 @@ class Guard {
 
   async watch(context: BrowserContext): Promise<void> {
     await context.addInitScript(recordStyleWrites);
+    await context.addInitScript(reportResizeLoops);
     if (context.browser()?.browserType().name() === "webkit") {
       this.baseline = WEBKIT_NOTICES_PER_DOCUMENT;
     }

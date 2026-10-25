@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -54,19 +55,26 @@ function VersionList({ orgId }: { orgId: string }) {
   const [confirm, setConfirm] = useState<DashboardVersion | null>(null);
   const [compare, setCompare] = useState<number | null>(null);
   const restore = useMutation({
-    mutationFn: (version: number) => restoreVersion(orgId, dashboardId, version),
+    // Always names the version the user saw; restore is only offered once it is known.
+    mutationFn: ({ version, seen }: { version: number; seen: number }) =>
+      restoreVersion(orgId, dashboardId, version, seen),
     onSuccess: async () => {
       setConfirm(null);
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       await navigate({ to: "/dashboards/$dashboardId", params: { dashboardId }, search: {} });
     },
+    // Saved by someone else meanwhile: the dialog says so, and the list shows the new version.
+    onError: () => void queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] }),
   });
   const format = new Intl.DateTimeFormat(language, {
     dateStyle: "medium",
     timeStyle: "short",
     ...zoneOption(timeZone),
   });
+  // Only once the dashboard (and so its current version) has loaded: the restore names it.
+  const seenVersion = dashboard.data?.version;
   const canRestore =
+    seenVersion !== undefined &&
     (dashboard.data?.access?.write ?? permissions.has("dashboards:write")) &&
     dashboard.data?.deletedAt === null;
 
@@ -196,9 +204,19 @@ function VersionList({ orgId }: { orgId: string }) {
           title={t("dashboards.history.restoreTitle")}
           confirmLabel={t("dashboards.history.restoreConfirm")}
           onCancel={() => setConfirm(null)}
-          onConfirm={() => restore.mutate(confirm.version)}
-          busy={restore.isPending}
-          error={restore.isError ? errorMessage(t, restore.error) : undefined}
+          onConfirm={() => {
+            if (seenVersion !== undefined) {
+              restore.mutate({ version: confirm.version, seen: seenVersion });
+            }
+          }}
+          busy={restore.isPending || seenVersion === undefined}
+          error={
+            !restore.isError
+              ? undefined
+              : isApiError(restore.error, "version_conflict")
+                ? t("dashboards.history.restoreConflict")
+                : errorMessage(t, restore.error)
+          }
         >
           {t("dashboards.history.restoreText", { version: confirm.version })}
         </ConfirmDialog>
