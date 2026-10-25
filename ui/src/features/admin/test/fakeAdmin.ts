@@ -1218,6 +1218,11 @@ function patchSetting(
   stored.source = "database";
   stored.updatedAt = T0 + 10 * DAY;
   stored.updatedBy = server.state.user.id;
+  if (stored.key === "appearance.default_theme") {
+    // The brand and every user's preferences read the same setting, as on the server.
+    server.state.branding.defaultTheme = stored.value;
+    server.state.preferences.defaults.theme = String(stored.value);
+  }
   return json(200, stored);
 }
 
