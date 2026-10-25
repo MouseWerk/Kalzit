@@ -1,5 +1,10 @@
 //! Kalzit server: a self-hosted platform for visualizing and analyzing data.
 
+// The build script's date and commit checks, tested here (build scripts have no tests of their own).
+#[cfg(test)]
+#[path = "../build_info.rs"]
+mod build_info;
+
 pub mod analysis;
 pub mod app;
 pub mod appearance;

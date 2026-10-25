@@ -123,7 +123,7 @@ Server settings:
 | `datasources.allowed_targets` | `[]` | up to 100 texts of 1 to 1024 characters |
 | `datasources.query_timeout_secs` | `30` | whole number 1 to 3600 |
 | `datasources.max_rows` | `100000` | whole number 1 to 10,000,000 |
-| `datasources.max_response_bytes` | `52428800` | whole number 1024 to 1 GiB |
+| `datasources.max_response_bytes` | `134217728` (128 MiB) | whole number 1024 to 1 GiB; a memory budget: results count what they hold in memory, not their JSON text |
 | `audit.retention_days` | `365` | whole number 1 to 36500 |
 | `appearance.default_language` | `"de"` | `"de"`, `"en"` |
 | `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"` |

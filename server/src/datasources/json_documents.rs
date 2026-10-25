@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::detail::Detail;
 use super::document_schema::{SAMPLE_DOCUMENTS, SchemaSampler, charge_schema, schema_cut};
-use super::frame::{ResponseBudget, json_size};
+use super::frame::{ResponseBudget, value_size};
 use crate::shapes::{DocumentSet, Notice, NoticeSeverity, OrderedJson, Truncated};
 
 /// Collects documents up to `max` and the response budget. The first document that does not fit
@@ -46,7 +46,7 @@ impl DocumentsBuilder {
             self.mark_limit(self.max);
             return false;
         }
-        if !self.budget.take(json_size(&doc) + 1) {
+        if !self.budget.take(value_size(&doc)) {
             self.mark_truncated();
             return false;
         }
@@ -162,9 +162,9 @@ mod tests {
         assert_eq!(set.notices[0].params.as_ref().unwrap()["limit"], "2");
         assert_eq!(set.schema[0].path, "a");
 
-        let mut b = DocumentsBuilder::new(100, ResponseBudget::new(30));
+        let mut b = DocumentsBuilder::new(100, ResponseBudget::new(150));
         assert!(b.push(json!({ "a": "x" })));
-        assert!(!b.push(json!({ "a": "y".repeat(40) })));
+        assert!(!b.push(json!({ "a": "y".repeat(200) })));
         assert!(b.is_full());
         b.mark_truncated();
         let set = b.finish();

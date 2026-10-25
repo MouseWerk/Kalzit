@@ -252,6 +252,7 @@ impl DataSourcePlugin for MySql {
             };
         }
         let mut binary_notice = false;
+        let mut stopped_early = false;
         {
             let mut rows = query.fetch(&mut *tx);
             let mut first = true;
@@ -274,6 +275,7 @@ impl DataSourcePlugin for MySql {
                     })
                     .collect();
                 if !frame.push_row(values) {
+                    stopped_early = true;
                     break;
                 }
             }
@@ -292,7 +294,15 @@ impl DataSourcePlugin for MySql {
                 frame.notice(NoticeSeverity::Warning, detail);
             }
         }
-        tx.rollback().await.map_err(failed)?;
+        if stopped_early {
+            // The rest of the result is still coming; a rollback would first read all of it.
+            // Closing the connection makes the server stop the statement (its next write fails)
+            // and roll the transaction back; the pool opens a new connection when needed.
+            drop(tx);
+            let _ = sqlx::Connection::close_hard(c.detach()).await;
+        } else {
+            tx.rollback().await.map_err(failed)?;
+        }
         Ok(QueryResult::Frame { frame: frame.finish() })
     }
 }
