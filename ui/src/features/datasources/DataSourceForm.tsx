@@ -209,12 +209,13 @@ function NewDataSource({ orgId }: { orgId: string }) {
       </PageActions>
       <section className="ds-kinds" aria-labelledby={`${pickerId}-title`}>
         <div className="ds-kinds__head">
-          <h2 id={`${pickerId}-title`} className="ds-kinds__title">
-            {t("datasources.new.pickKind")}
+          {/* The count stays out of the heading, so the heading is named "Kind" alone. */}
+          <div className="ds-kinds__title">
+            <h2 id={`${pickerId}-title`}>{t("datasources.new.pickKind")}</h2>
             <span className="ds-kinds__count">
               {t("datasources.new.kindCount", { count: kinds.data.length })}
             </span>
-          </h2>
+          </div>
           <div className="ds-search ds-kinds__search">
             <Icon name="search" />
             <label className="visually-hidden" htmlFor={`${pickerId}-search`}>
