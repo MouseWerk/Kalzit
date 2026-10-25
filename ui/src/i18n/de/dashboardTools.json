@@ -106,5 +106,6 @@
   "dashboardTools.import.mappingHint": "Jede Datenquelle der Datei wird nach Art und Name zugeordnet. Prüfe die Wahl oder wähle eine andere.",
   "dashboardTools.import.sourceLabel": "{name} ({kind})",
   "dashboardTools.import.pick": "Datenquelle wählen",
-  "dashboardTools.import.confirm": "Importieren"
+  "dashboardTools.import.confirm": "Importieren",
+  "dashboardTools.links.menu": "Links"
 }

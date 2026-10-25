@@ -8,7 +8,9 @@ function menuItems(menu: HTMLElement | null): HTMLElement[] {
     return [];
   }
   return Array.from(
-    menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+    menu.querySelectorAll<HTMLElement>(
+      '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]',
+    ),
   );
 }
 
