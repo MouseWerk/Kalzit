@@ -316,7 +316,8 @@ describe("the rail", () => {
     await user.click(outlineButton);
     expect(outlineButton.getAttribute("aria-expanded")).toBe("true");
     const outline = within(rail).getByRole("navigation", { name: "Outline" });
-    await user.click(within(outline).getByRole("button", { name: "Orders" }));
+    // Each entry names the panel, then its visualization and size.
+    await user.click(within(outline).getByRole("button", { name: /^Orders/ }));
     await user.click(within(rail).getByRole("button", { name: "Info" }));
     const info = screen.getByRole("dialog", { name: "About this dashboard" });
     expect(within(info).getByText("Panels").nextElementSibling?.textContent).toBe("1");

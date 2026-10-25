@@ -12,6 +12,7 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::support::QueryParams;
 use super::table::{RouteDef, route};
 use super::{clean_name, new_id};
 use crate::app::AppState;
@@ -419,6 +420,30 @@ struct PatchBody {
     /// Per field: absent = keep, null = remove, string = set.
     #[serde(default)]
     secrets: SecretPatch,
+    /// The `updatedAt` the client last read. A newer stored row answers `409 version_conflict`
+    /// with the stored data source instead of overwriting it. Required with `settings` or
+    /// `secrets`; a rename alone may leave it out.
+    expected_updated_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteQuery {
+    /// As for `PATCH`: the `updatedAt` the client last read.
+    expected_updated_at: Option<i64>,
+}
+
+/// The conflict for a change made on a data source that was changed since: it carries the
+/// stored data source, or answers "not found" when it is gone (trashed) in the meantime.
+async fn stale(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiError {
+    let current = match find_in_org(&state.db, &ctx.org_id, id, false).await {
+        Ok(current) => current,
+        Err(e) => return e,
+    };
+    match view(state, ctx, current).await {
+        Ok(current) => ApiError::version_conflict(json!(current)),
+        Err(e) => e,
+    }
 }
 
 async fn update(
@@ -429,6 +454,19 @@ async fn update(
     JsonBody(body): JsonBody<PatchBody>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    // Settings and secrets belong to one target: a change to them is only taken over the version
+    // of the source the client saw.
+    let Some(expected) = body
+        .expected_updated_at
+        .or_else(|| (body.settings.is_none() && body.secrets.is_empty()).then_some(ds.updated_at))
+    else {
+        return Err(ApiError::validation("expectedUpdatedAt is required when settings or secrets change")
+            .with_field("expectedUpdatedAt")
+            .because("datasource.expected_version_missing"));
+    };
+    if expected != ds.updated_at {
+        return Err(stale(&state, &ctx, &ds.id).await);
+    }
     let kind = state.datasources.kind(&ds.kind).ok_or_else(|| ApiError::internal("update", "unknown kind"))?;
     let mut changed: Vec<String> = Vec::new();
     let name = match &body.name {
@@ -494,15 +532,28 @@ async fn update(
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
-    sqlx::query("UPDATE datasources SET name = $1, settings = $2, updated_at = $3 WHERE id = $4 AND org_id = $5")
-        .bind(&name)
-        .bind(settings.to_string())
-        .bind(now)
-        .bind(&ds.id)
-        .bind(&ctx.org_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(conflict_on_name)?;
+    // Written only over the row everything above was checked against: the target change rule,
+    // the secrets that must be sent again and the connection check all saw this row. A change
+    // saved in the meantime (another host, say) answers the conflict, so a password meant for one
+    // host is never stored against another.
+    let updated = sqlx::query(
+        "UPDATE datasources SET name = $1, settings = $2, updated_at = $3 \
+         WHERE id = $4 AND org_id = $5 AND updated_at = $6 AND deleted_at IS NULL",
+    )
+    .bind(&name)
+    .bind(settings.to_string())
+    .bind(now)
+    .bind(&ds.id)
+    .bind(&ctx.org_id)
+    .bind(ds.updated_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(conflict_on_name)?
+    .rows_affected();
+    if updated == 0 {
+        tx.rollback().await?;
+        return Err(stale(&state, &ctx, &ds.id).await);
+    }
     secrets::apply_patch(&mut tx, state.datasources.keyring(), &ds.id, &body.secrets).await?;
     record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, json!({ "changed": changed }), now)).await?;
     let saved = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
@@ -517,16 +568,27 @@ async fn delete(
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
     Path(path): Path<DsPath>,
+    QueryParams(query): QueryParams<DeleteQuery>,
 ) -> ApiResult<StatusCode> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    let expected = query.expected_updated_at.unwrap_or(ds.updated_at);
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
-    sqlx::query("UPDATE datasources SET deleted_at = $1, updated_at = $1 WHERE id = $2 AND org_id = $3")
-        .bind(now)
-        .bind(&ds.id)
-        .bind(&ctx.org_id)
-        .execute(&mut *tx)
-        .await?;
+    let updated = sqlx::query(
+        "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+         WHERE id = $2 AND org_id = $3 AND updated_at = $4 AND deleted_at IS NULL",
+    )
+    .bind(now)
+    .bind(&ds.id)
+    .bind(&ctx.org_id)
+    .bind(expected)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if updated == 0 {
+        tx.rollback().await?;
+        return Err(stale(&state, &ctx, &ds.id).await);
+    }
     record(&mut tx, &event(&ctx, &info, "datasource.deleted", &ds.id, json!({}), now)).await?;
     crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
