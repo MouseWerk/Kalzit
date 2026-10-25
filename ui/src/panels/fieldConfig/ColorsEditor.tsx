@@ -99,7 +99,15 @@ export function ColorsEditor({
         label={t("panels.colors.scheme")}
         value={scheme}
         choices={COLOR_SCHEMES.map((s) => [s, t(`panels.colors.scheme.${s}`)] as const)}
-        onChange={(next) => setDefault("colorScheme", next === "palette" ? undefined : next)}
+        onChange={(next) => {
+          // The panel's colour only means something to one colour and the palette; another
+          // scheme would otherwise be hidden behind it.
+          const nextDefaults = { ...defaults };
+          if (next === "palette") delete nextDefaults.colorScheme;
+          else nextDefaults.colorScheme = next;
+          if (next !== "single" && next !== "palette") delete nextDefaults.color;
+          onChange({ ...config, defaults: nextDefaults });
+        }}
       />
       {scheme === "single" || scheme === "palette" ? (
         <ColorField

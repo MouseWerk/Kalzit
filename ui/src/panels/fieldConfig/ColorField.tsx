@@ -1,6 +1,7 @@
-import { type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { useThemeVersion } from "../useThemeVersion";
 import { contrastRatio, MIN_MARK_CONTRAST } from "./contrast";
 import { type ColorValue, type HexColor, isHexColor, TONES, type Tone } from "./fieldConfig";
 import { Swatch } from "./Legend";
@@ -34,6 +35,10 @@ export function ColorField({
   const name = useId();
   const free = isHexColor(value);
   const [customOpen, setCustomOpen] = useState(free);
+  // A value changed elsewhere (undo, reset) opens or closes the custom colour with it.
+  useEffect(() => {
+    setCustomOpen(free);
+  }, [free]);
   const choose = (next: ColorValue | undefined) => {
     setCustomOpen(false);
     onChange(next);
@@ -134,10 +139,12 @@ function useSurfaces(): {
   const light = useRef<HTMLSpanElement>(null);
   const dark = useRef<HTMLSpanElement>(null);
   const [surfaces, setSurfaces] = useState({ light: "", dark: "" });
+  const theme = useThemeVersion();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `theme` stands for the theme the probes resolve in
   useLayoutEffect(() => {
     const read = (el: HTMLSpanElement | null) => (el === null ? "" : getComputedStyle(el).color);
     setSurfaces({ light: read(light.current), dark: read(dark.current) });
-  }, []);
+  }, [theme]);
   return { probes: [light, dark], surfaces };
 }
 
@@ -155,9 +162,15 @@ export function FreeColorInput({
   const { t, language } = useI18n();
   const id = useId();
   const [text, setText] = useState<string>(value ?? "#");
+  // A value changed elsewhere (undo, reset) replaces the text, unless the text already says it.
+  useEffect(() => {
+    if (value !== undefined) {
+      setText((current) => (current.trim().toLowerCase() === value ? current : value));
+    }
+  }, [value]);
   const { probes, surfaces } = useSurfaces();
-  const valid = isHexColor(text);
-  const hex = valid ? (text.toLowerCase() as HexColor) : value;
+  const valid = isHexColor(text.trim());
+  const hex = valid ? (text.trim().toLowerCase() as HexColor) : value;
   const ratio = (surface: string) =>
     hex === undefined || surface === "" ? null : contrastRatio(hex, surface);
   const onLight = ratio(surfaces.light);
@@ -193,27 +206,29 @@ export function FreeColorInput({
             id={`${id}-hex`}
             className="input input--mono"
             value={text}
-            maxLength={7}
             spellCheck={false}
             autoComplete="off"
-            aria-invalid={text !== "#" && !valid ? true : undefined}
+            aria-invalid={text.trim() !== "#" && !valid ? true : undefined}
             aria-describedby={`${id}-contrast`}
             onChange={(event) => {
-              const next = event.currentTarget.value.trim();
+              const next = event.currentTarget.value;
               setText(next);
-              if (isHexColor(next)) {
-                onChange(next.toLowerCase() as HexColor);
+              const trimmed = next.trim();
+              if (isHexColor(trimmed)) {
+                onChange(trimmed.toLowerCase() as HexColor);
               }
             }}
           />
         </div>
       </div>
+      {/* A polite live region: the contrast changes with every keystroke, never interrupting. */}
       <p
         id={`${id}-contrast`}
         className={low ? "field__error" : "field__hint"}
-        role={low ? "alert" : undefined}
+        role="status"
+        aria-live="polite"
       >
-        {text !== "#" && !valid
+        {text.trim() !== "#" && !valid
           ? t("panels.color.hexInvalid")
           : onLight === null || onDark === null
             ? t("panels.color.hexHint")

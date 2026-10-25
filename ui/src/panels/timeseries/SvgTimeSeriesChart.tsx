@@ -123,10 +123,11 @@ function ThresholdMarks({
   const { thresholds, display } = shown;
   if (layer === "bands") {
     if (display !== "areas" && display !== "linesAndAreas") return null;
-    return thresholdBands(thresholds, min, max).map((band) => {
+    return thresholdBands(thresholds, min, max).map((band, index) => {
       const look = stepLook(band.step);
       return (
-        <ColorGroup key={`b${band.from}`} freeColor={look.freeColor}>
+        // biome-ignore lint/suspicious/noArrayIndexKey: bands are in axis order; two steps may share a value
+        <ColorGroup key={index} freeColor={look.freeColor}>
           <rect
             className={`ts__threshold-band ${look.colorClass}`}
             x={left}
@@ -139,10 +140,11 @@ function ThresholdMarks({
     });
   }
   if (display !== "lines" && display !== "linesAndAreas") return null;
-  return thresholdLines(thresholds, min, max).map((line) => {
+  return thresholdLines(thresholds, min, max).map((line, index) => {
     const look = stepLook(line.step);
     return (
-      <ColorGroup key={`l${line.value}`} freeColor={look.freeColor}>
+      // biome-ignore lint/suspicious/noArrayIndexKey: lines are in step order; two steps may share a value
+      <ColorGroup key={index} freeColor={look.freeColor}>
         <line
           className={`ts__threshold-line ${look.colorClass}`}
           x1={left}

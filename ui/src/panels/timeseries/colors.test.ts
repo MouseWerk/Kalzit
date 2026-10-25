@@ -90,6 +90,15 @@ describe("series colours", () => {
       colorClass: FREE_CLASS,
       freeColor: "#8a8a93",
     });
+    // A series' own colour wins over the threshold scheme; the others still follow the steps.
+    const styles = resolveStyles([
+      series({ colorScheme: "thresholds", thresholds: STEPS, color: "#4fb3a9" }),
+      series({ colorScheme: "thresholds", thresholds: STEPS }),
+    ]);
+    expect(styles.map((s) => [s.freeColor, s.gradient])).toEqual([
+      ["#4fb3a9", "none"],
+      ["#8a8a93", "scheme"],
+    ]);
     // Without thresholds the scheme falls back to the palette.
     expect(seriesColor({ colorScheme: "thresholds" }, 1, 2, false).colorClass).toBe("series-2");
   });

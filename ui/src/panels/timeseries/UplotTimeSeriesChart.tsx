@@ -6,6 +6,7 @@ import { zoneOption } from "../../lib/timeSettings";
 import { TONES, type Tone } from "../fieldConfig/fieldConfig";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
+import { useThemeVersion } from "../useThemeVersion";
 import { type ChartData, chartData } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG, VALUE_AXIS_SIZE, valueAxisSize } from "./layout";
@@ -30,32 +31,6 @@ const SERIES_CLASSES = [
 ];
 
 const DAY = 24 * 60 * 60 * 1000;
-
-/**
- * Re-reads theme colors when the theme changes: the data-theme attribute or the system's light
- * and dark preference. A canvas cannot use CSS variables, so the chart is drawn again.
- */
-function useThemeVersion(): number {
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    const bump = () => setVersion((v) => v + 1);
-    const observer = new MutationObserver(bump);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    const media =
-      typeof window.matchMedia === "function"
-        ? window.matchMedia("(prefers-color-scheme: dark)")
-        : null;
-    media?.addEventListener("change", bump);
-    return () => {
-      observer.disconnect();
-      media?.removeEventListener("change", bump);
-    };
-  }, []);
-  return version;
-}
 
 /** The computed color of a probe element: tokens resolved to what a canvas understands. */
 function probeColor(root: HTMLElement, selector: string): string {

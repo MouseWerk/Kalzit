@@ -44,6 +44,18 @@ describe("colours editor", () => {
     expect(last().defaults).toEqual({});
   });
 
+  it("drops the panel's colour when a scheme that does not use it is picked", async () => {
+    const { user, last } = setup({
+      defaults: { colorScheme: "single", color: "#6aa3d8" },
+      overrides: [{ matcher: { type: "name", value: "Vortag" }, properties: { color: "chart-2" } }],
+    });
+    await openSection(user, "Colors");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Color scheme" }), "blues");
+    expect(last().defaults).toEqual({ colorScheme: "blues" });
+    // A series' own colour stays: it is the series' choice, not the panel's.
+    expect(last().overrides[0]?.properties.color).toBe("chart-2");
+  });
+
   it("styles a series through its own override, removed again when cleared", async () => {
     const { user, last } = setup();
     await openSection(user, "Colors");
@@ -81,6 +93,11 @@ describe("colours editor", () => {
     expect(last().overrides[0]?.properties.color).toBe("#6aa3d8");
     await user.type(hex, "EF");
     expect(last().overrides[0]?.properties.color).toBe("#12abef");
+    // A pasted colour with spaces around it is taken as well.
+    await user.clear(hex);
+    await user.click(hex);
+    await user.paste(" #A1B2C3 ");
+    expect(last().overrides[0]?.properties.color).toBe("#a1b2c3");
   });
 
   it("gives threshold steps free colours and shows them in the chart on request", async () => {
@@ -105,6 +122,37 @@ describe("colours editor", () => {
       "linesAndAreas",
     );
     expect(last().defaults.thresholdDisplay).toBe("linesAndAreas");
+  });
+});
+
+describe("free colour field", () => {
+  it("follows a value changed elsewhere, as by undo", async () => {
+    function Host() {
+      const [config, setConfig] = useState<FieldConfig>({
+        defaults: { colorScheme: "single", color: "#111111" },
+        overrides: [],
+      });
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              setConfig({ defaults: { colorScheme: "single", color: "#222222" }, overrides: [] })
+            }
+          >
+            Undo
+          </button>
+          <FieldConfigEditor value={config} groups={TIME_SERIES} onChange={setConfig} />
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Host />);
+    await openSection(user, "Colors");
+    const group = screen.getByRole("group", { name: "Color" });
+    expect(within(group).getByRole("textbox", { name: "Hex" })).toHaveProperty("value", "#111111");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(within(group).getByRole("textbox", { name: "Hex" })).toHaveProperty("value", "#222222");
   });
 });
 

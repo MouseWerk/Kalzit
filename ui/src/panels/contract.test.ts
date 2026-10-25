@@ -25,6 +25,30 @@ const FIXTURE = resolve(
 function editorFieldConfigs(): FieldConfig[] {
   return [
     { defaults: {}, overrides: [] },
+    // The colours editor: a scheme, steps with free colours shown in the chart, and a series
+    // styled by its row (a free colour, a line style and an opacity in its own override).
+    {
+      defaults: {
+        colorScheme: "thresholds",
+        opacity: 90,
+        thresholdDisplay: "linesAndAreas",
+        thresholds: {
+          mode: "percentage",
+          steps: [
+            { value: null, tone: "neutral", color: "#8a8a93" },
+            { ...newStep(70), color: "#e8a33d" },
+          ],
+        },
+      },
+      overrides: [
+        {
+          matcher: { type: "name", value: "Vortag" },
+          properties: { color: "#4fb3a9", lineStyle: "dashed", opacity: 0 },
+        },
+        { matcher: { type: "name", value: "Umsatz" }, properties: { color: "chart-1" } },
+      ],
+    },
+    { defaults: { colorScheme: "single", color: "#6aa3d8", opacity: 100 }, overrides: [] },
     {
       defaults: {
         unit: CUSTOM_PREFIX,

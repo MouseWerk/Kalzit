@@ -20,7 +20,12 @@ export function shownThresholds(
   return null;
 }
 
-/** A step's value on the value axis; percentage steps lie between the axis' ends. */
+/**
+ * A step's value on the value axis. Percentage steps lie between the axis' ends, as the line's
+ * threshold gradient places them (`schemeGradient`), so lines, bands and the coloured line agree.
+ * Panels that colour single values (stat, gauge) take the percentage of the field's min and max
+ * instead; a time series with fixed min and max has those as its axis ends, so the two match there.
+ */
 function axisValue(thresholds: Thresholds, value: number, min: number, max: number): number {
   return thresholds.mode === "percentage" ? min + (value / 100) * (max - min) : value;
 }

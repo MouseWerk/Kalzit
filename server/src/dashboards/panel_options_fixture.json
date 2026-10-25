@@ -32,6 +32,86 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "timeseries",
+    "options": {
+      "seriesName": "",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "timeseries",
+    "options": {
+      "seriesName": "",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -195,6 +275,76 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "stat",
+    "options": {
+      "reducer": "last",
+      "colorMode": "none",
+      "graphMode": "area",
+      "textMode": "auto"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "stat",
+    "options": {
+      "reducer": "last",
+      "colorMode": "none",
+      "graphMode": "area",
+      "textMode": "auto"
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -338,6 +488,72 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "gauge",
+    "options": {
+      "reducer": "last",
+      "showThresholdMarkers": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "gauge",
+    "options": {
+      "reducer": "last",
+      "showThresholdMarkers": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -493,6 +709,78 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "bargauge",
+    "options": {
+      "reducer": "last",
+      "displayMode": "basic",
+      "orientation": "horizontal",
+      "valueDisplay": "text",
+      "namePlacement": "left"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "bargauge",
+    "options": {
+      "reducer": "last",
+      "displayMode": "basic",
+      "orientation": "horizontal",
+      "valueDisplay": "text",
+      "namePlacement": "left"
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -706,6 +994,88 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "bar",
+    "options": {
+      "showValues": false,
+      "categoryLabels": "auto",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "bar",
+    "options": {
+      "showValues": false,
+      "categoryLabels": "auto",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -887,6 +1257,74 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "table",
+    "options": {
+      "columnFilters": false,
+      "pagination": false,
+      "pageSize": 50
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "table",
+    "options": {
+      "columnFilters": false,
+      "pagination": false,
+      "pageSize": 50
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -1043,6 +1481,100 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "piechart",
+    "options": {
+      "pieType": "pie",
+      "reducer": "last",
+      "labels": "percent",
+      "labelPlacement": "inside",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "legendValues": [
+        "value",
+        "percent"
+      ],
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "piechart",
+    "options": {
+      "pieType": "pie",
+      "reducer": "last",
+      "labels": "percent",
+      "labelPlacement": "inside",
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "legendValues": [
+        "value",
+        "percent"
+      ],
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -1270,6 +1802,86 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "histogram",
+    "options": {
+      "combine": false,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "histogram",
+    "options": {
+      "combine": false,
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -1439,6 +2051,82 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "heatmap",
+    "options": {
+      "mode": "calculate",
+      "xBuckets": 40,
+      "yBuckets": 10,
+      "scale": "linear",
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "heatmap",
+    "options": {
+      "mode": "calculate",
+      "xBuckets": 40,
+      "yBuckets": 10,
+      "scale": "linear",
+      "tooltip": {
+        "mode": "all"
+      }
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -1610,6 +2298,86 @@
     },
     "fieldConfig": {
       "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "state-timeline",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "state-timeline",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
         "unit": "suffix:",
         "decimals": 0,
         "min": 0,
@@ -1783,6 +2551,86 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "status-history",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "status-history",
+    "options": {
+      "legend": {
+        "mode": "list",
+        "placement": "bottom",
+        "values": []
+      },
+      "tooltip": {
+        "mode": "all"
+      },
+      "colorStateWords": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -1964,6 +2812,66 @@
     "options": {},
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "documents",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "documents",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -2107,6 +3015,66 @@
     "options": {},
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "schema",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "schema",
+    "options": {},
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -2252,6 +3220,70 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "distribution",
+    "options": {
+      "path": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "distribution",
+    "options": {
+      "path": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -2401,6 +3433,70 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "document",
+    "options": {
+      "titlePath": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -2560,6 +3656,90 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "network",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "auto",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -2819,6 +3999,90 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "off",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "hierarchy",
+    "options": {
+      "caption": "",
+      "colorBy": "label",
+      "sizeBy": "degree",
+      "edgeWidthBy": "",
+      "nodeLimit": 5000,
+      "cluster": "off",
+      "timeProperty": "",
+      "explorer": false,
+      "expandLimit": 25,
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -3070,6 +4334,74 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "path",
+    "options": {
+      "caption": "",
+      "variable": "",
+      "variableProperty": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },
@@ -3236,6 +4568,72 @@
     },
     "fieldConfig": {
       "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "text",
+    "options": {
+      "mode": "markdown",
+      "content": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "text",
+    "options": {
+      "mode": "markdown",
+      "content": ""
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
       "overrides": []
     }
   },

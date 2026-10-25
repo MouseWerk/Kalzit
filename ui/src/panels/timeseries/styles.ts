@@ -97,9 +97,11 @@ function isRamp(scheme: ColorScheme | undefined): scheme is keyof typeof RAMPS {
 }
 
 /**
- * The colour of one series, the one place it is decided: the threshold scheme takes the base
- * step's colour (and the line follows the steps), a colour of the series' own wins otherwise,
- * then the scheme (one colour, a ramp step), then the monochrome look or the palette.
+ * The colour of one series, the one place it is decided: a colour of the series' own wins
+ * (a tone or a free colour), then the scheme: the threshold scheme takes the base step's colour
+ * (and the line follows the steps), one colour, a ramp step; then the monochrome look or the
+ * palette. The editor clears the panel's colour when it picks a scheme that does not use it, so
+ * a colour set here is the series' own or the one colour of the "single" scheme.
  */
 export function seriesColor(
   options: FieldOptions,
@@ -107,17 +109,17 @@ export function seriesColor(
   count: number,
   mono: boolean,
 ): { colorClass: string; freeColor: HexColor | null } {
+  if (options.color !== undefined) {
+    return isHexColor(options.color)
+      ? { colorClass: FREE_CLASS, freeColor: options.color }
+      : { colorClass: toneClass(options.color), freeColor: null };
+  }
   const scheme = options.colorScheme;
   const base = scheme === "thresholds" ? options.thresholds?.steps[0] : undefined;
   if (base !== undefined) {
     return base.color === undefined
       ? { colorClass: toneClass(base.tone), freeColor: null }
       : { colorClass: FREE_CLASS, freeColor: base.color };
-  }
-  if (options.color !== undefined) {
-    return isHexColor(options.color)
-      ? { colorClass: FREE_CLASS, freeColor: options.color }
-      : { colorClass: toneClass(options.color), freeColor: null };
   }
   if (scheme === "single") {
     return { colorClass: toneClass("chart-1"), freeColor: null };
@@ -171,7 +173,11 @@ function resolveOne(
   const drawStyle = options.drawStyle ?? "line";
   const stack = options.stack ?? "none";
   const { colorClass, freeColor } = seriesColor(options, index, count, mono);
-  const byThresholds = options.colorScheme === "thresholds" && options.thresholds !== undefined;
+  // Only series without a colour of their own follow the steps.
+  const byThresholds =
+    options.colorScheme === "thresholds" &&
+    options.thresholds !== undefined &&
+    options.color === undefined;
   const lineWidth = options.lineWidth ?? (mono ? 2 : 1);
   const lineStyle = options.lineStyle ?? (comparison ? "dashed" : "solid");
   const autoFill: Fill =
