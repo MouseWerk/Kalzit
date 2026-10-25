@@ -350,6 +350,14 @@ mod tests {
             let e = c.send(Method::GET, Url::parse(url).unwrap(), HeaderMap::new()).await.unwrap_err();
             assert!(matches!(e, HttpError::Blocked(_)), "{url}: {e}");
         }
+        // A name is checked by the client's own resolver, on the address it would connect to.
+        crate::datasources::targets::test_hosts::pin(
+            "metadata.http-test.invalid",
+            &["100.100.100.200".parse().unwrap()],
+        );
+        let url = Url::parse("http://metadata.http-test.invalid/latest/meta-data/").unwrap();
+        let e = c.send(Method::GET, url, HeaderMap::new()).await.unwrap_err();
+        assert!(matches!(e, HttpError::Blocked(_)), "{e}");
         let e = c.send(Method::GET, Url::parse("file:///etc/passwd").unwrap(), HeaderMap::new()).await.unwrap_err();
         assert!(matches!(e, HttpError::Blocked(_)), "{e}");
     }

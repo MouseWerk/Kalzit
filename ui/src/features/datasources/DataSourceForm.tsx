@@ -435,28 +435,29 @@ function EditDataSource({ orgId }: { orgId: string }) {
   }
 
   const save = useMutation({
-    mutationFn: ({ output, expected }: { output: FormOutput; expected: number | undefined }) =>
+    mutationFn: ({ output, expected }: SaveRequest) =>
       updateDatasource(orgId, datasourceId, {
         name: output.name,
         secrets: output.secrets,
         ...(output.settings === undefined ? {} : { settings: output.settings }),
         ...(expected === undefined ? {} : { expectedUpdatedAt: expected }),
       }),
-    onSuccess: (saved) => {
+    onSuccess: (saved, { afterSave }) => {
       // The last test was of the old settings.
       forgetHealth(queryClient, orgId, datasourceId);
       void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
       startFrom(saved);
+      afterSave?.();
     },
-    onError: (error, { output }) => {
+    onError: (error, { output, afterSave }) => {
       const stored = conflictingDatasource(error);
       if (stored !== null) {
-        setConflict({ stored, retry: { kind: "save", output } });
+        setConflict({ stored, retry: { kind: "save", output, afterSave } });
       }
     },
   });
   const submit = (output: FormOutput, then?: () => void) =>
-    save.mutate({ output, expected: base }, then === undefined ? undefined : { onSuccess: then });
+    save.mutate({ output, expected: base, afterSave: then });
   const test = useMutation({
     mutationFn: () => checkHealth(orgId, datasourceId),
     onMutate: () => setHealth(null),
@@ -618,7 +619,12 @@ function EditDataSource({ orgId }: { orgId: string }) {
             if (retry.kind === "save") {
               // Sent again over the stored source: the server checks the change against it, so
               // a target someone else moved still asks for its secrets again.
-              save.mutate({ output: retry.output, expected: stored.updatedAt });
+              // "Save and test" still tests once the save went through.
+              save.mutate({
+                output: retry.output,
+                expected: stored.updatedAt,
+                afterSave: retry.afterSave,
+              });
             } else {
               remove.mutate(stored.updatedAt);
             }
@@ -629,11 +635,21 @@ function EditDataSource({ orgId }: { orgId: string }) {
   );
 }
 
+interface SaveRequest {
+  output: FormOutput;
+  /** The `updatedAt` the change is made on. */
+  expected: number | undefined;
+  /** What follows a successful save ("Save and test" tests). */
+  afterSave?: (() => void) | undefined;
+}
+
 interface Conflict {
   /** The data source as it is stored now. */
   stored: Datasource;
-  /** What was refused: a save of the form's output, or the delete. */
-  retry: { kind: "save"; output: FormOutput } | { kind: "delete" };
+  /** What was refused: a save of the form's output (and what follows it), or the delete. */
+  retry:
+    | { kind: "save"; output: FormOutput; afterSave?: (() => void) | undefined }
+    | { kind: "delete" };
 }
 
 /**

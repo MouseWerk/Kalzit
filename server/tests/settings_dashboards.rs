@@ -1239,6 +1239,24 @@ async fn datasource_edits_refuse_stale_writes(t: TestApp) {
     let path = format!("~/datasources/{id}");
     let read = created.body["updatedAt"].as_i64().unwrap();
 
+    // Settings and secrets are only changed over a named version.
+    for body in [
+        json!({ "secrets": { "password": "Passwort-X" } }),
+        json!({ "settings": { "host": "10.0.0.5", "database": "lager", "user": "leser", "maxRows": 5 } }),
+        json!({ "name": "Lager", "secrets": { "password": null }, "expectedUpdatedAt": null }),
+    ] {
+        let refused = t.patch(&path, body.clone(), &t.owner).await;
+        assert_eq!(
+            (refused.status, refused.code(), refused.field()),
+            (StatusCode::UNPROCESSABLE_ENTITY, "validation", "expectedUpdatedAt"),
+            "{body}: {}",
+            refused.body
+        );
+        assert_eq!(refused.body["error"]["reason"], "datasource.expected_version_missing");
+    }
+    assert_eq!(stored_password(&t, &id).await.as_deref(), Some("Passwort-A"));
+    assert_eq!(t.get(&path, &t.owner).await.body["updatedAt"], json!(read));
+
     // B moves the source to another host with that host's password.
     let moved = t
         .patch(
@@ -1276,6 +1294,10 @@ async fn datasource_edits_refuse_stale_writes(t: TestApp) {
     let won = replies.iter().filter(|r| r.status == StatusCode::OK).count();
     let lost = replies.iter().filter(|r| r.status == StatusCode::CONFLICT && r.code() == "version_conflict").count();
     assert_eq!((won, lost), (1, 5), "{:?}", replies.iter().map(|r| r.body.to_string()).collect::<Vec<_>>());
+
+    // A rename alone may leave the version out: it applies to the source as stored.
+    let renamed = t.patch(&path, json!({ "name": "Lager neu" }), &t.owner).await;
+    assert_eq!((renamed.status, &renamed.body["name"]), (StatusCode::OK, &json!("Lager neu")), "{}", renamed.body);
 
     // Deleting from a stale view is refused too; from the current one it goes to the trash.
     let current = t.get(&path, &t.owner).await.body["updatedAt"].as_i64().unwrap();

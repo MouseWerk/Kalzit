@@ -61,9 +61,15 @@ async fn queries_with_library(
         model.stored_queries().into_iter().map(|(id, query)| (id.to_string(), query)).collect();
     for id in model.library_panel_ids() {
         let Some(row) = library::fetch(db, org_id, id).await? else { continue };
-        let content = library::stored_content(&row.model)?;
-        let panel = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
-        queries.extend(panel.targets.into_iter().map(|t| (t.datasource_id, t.query.to_string())));
+        // A stored library panel this server cannot read runs no query (its panel answers an
+        // error), so it adds none here and does not block saving the dashboards that show it.
+        let panel = library::stored_content(&row.model).and_then(|content| {
+            model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))
+        });
+        match panel {
+            Ok(panel) => queries.extend(panel.targets.into_iter().map(|t| (t.datasource_id, t.query.to_string()))),
+            Err(e) => tracing::warn!("library panel {id} cannot be read, its queries are left out: {}", e.message),
+        }
     }
     Ok(queries)
 }

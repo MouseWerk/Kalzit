@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
@@ -87,6 +87,12 @@ describe("network panel", () => {
       await user.keyboard("{Escape}");
       expect(reached).toBe(true);
       expect(screen.getByRole("region", { name: "Details of Ada" })).toBeTruthy();
+      // With the focus back in the panel, Escape clears the selection and stays there.
+      reached = false;
+      act(() => screen.getByRole("button", { name: "Ada" }).focus());
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("region", { name: "Details of Ada" })).toBeNull();
+      expect(reached).toBe(false);
     } finally {
       document.removeEventListener("keydown", listener);
     }

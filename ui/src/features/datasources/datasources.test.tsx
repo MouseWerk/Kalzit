@@ -880,6 +880,23 @@ describe("editing a data source", () => {
     });
   });
 
+  it("still tests after saving over a change made in the meantime with Save and test", async () => {
+    const { server, user } = open(`/data-sources/${PG_ID}`);
+    await screen.findByRole("textbox", { name: "Name" });
+    await openSection(user, "Limits");
+    await user.type(await screen.findByRole("textbox", { name: "Row limit (optional)" }), "1000");
+    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (stored === undefined) throw new Error("no source");
+    stored.updatedAt += 1;
+    const tests = () =>
+      server.calls.filter((c) => c.method === "POST" && c.path.endsWith(`/${PG_ID}/health`)).length;
+    await user.click(screen.getByRole("button", { name: "Save and test" }));
+    await user.click(await screen.findByRole("button", { name: "Save mine over it" }));
+    expect(await screen.findByText("Connected in 12 ms")).toBeTruthy();
+    expect(tests()).toBe(1);
+    expect(stored.settings.maxRows).toBe(1000);
+  });
+
   it("moves a data source to the trash, lists it there and restores it", async () => {
     const { server, user, location } = open(`/data-sources/${PG_ID}`);
     await user.click(await screen.findByRole("button", { name: "Delete…" }));

@@ -67,7 +67,8 @@ export function usePanelResults(input: PanelQueryInput) {
       range.from,
       range.to,
       variables,
-      source === "draft" ? targets : null,
+      // The stored panel answers per shown query: hiding one (or the last) is another request.
+      source === "draft" ? targets : refIds,
       run,
     ],
     enabled: targets.length > 0,
@@ -75,9 +76,12 @@ export function usePanelResults(input: PanelQueryInput) {
     staleTime: Number.POSITIVE_INFINITY,
     // A refresh, a new range or new variables keep the panel's last answer on screen until the
     // new one is there, so charts, table sort, scroll and page survive. Only the same panel's
-    // answer is kept: another panel's (or a draft's for the stored panel) never stands in.
+    // answer is kept (same organization, dashboard, panel and source): another panel's, or a
+    // draft's for the stored panel, never stands in. A panel left without a query to run shows
+    // that, not its last answer.
     placeholderData: (previous, previousQuery) =>
-      previousQuery?.queryKey[3] === panel.id && previousQuery.queryKey[4] === source
+      targets.length > 0 &&
+      samePanel(previousQuery?.queryKey, [orgId, dashboardId, panel.id, source])
         ? previous
         : undefined,
     gcTime: 60_000,
@@ -108,6 +112,11 @@ export function usePanelResults(input: PanelQueryInput) {
         return outcomesOf(response, refIds);
       }, signal),
   });
+}
+
+/** Whether a panel query key (`PANEL_DATA_KEY` first) is of the panel `[orgId, dashboardId, panelId, source]`. */
+function samePanel(key: readonly unknown[] | undefined, panel: readonly string[]): boolean {
+  return key !== undefined && panel.every((part, i) => key[i + 1] === part);
 }
 
 /**

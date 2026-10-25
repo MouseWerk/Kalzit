@@ -363,6 +363,18 @@ async fn library_panel_queries_count_as_stored_queries(t: TestApp) {
     assert_eq!(ran.body["results"]["A"]["result"]["frame"]["fields"][0]["values"], json!(["Release 2.4"]));
     let refused = t.put(&path, save(with_constant("Übersicht 3", "b", Some(&lib)), 4), &viewer).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+
+    // A stored library panel this server cannot read runs nothing: it neither blocks saving the
+    // dashboard nor keeps it from opening, its slot just stays empty.
+    sqlx::query("UPDATE library_panels SET model = '{ kaputt' WHERE id = $1")
+        .bind(&lib)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let saved = t.put(&path, save(with_constant("Übersicht 3", "c", Some(&lib)), 4), &designer).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert_eq!(saved.body["libraryPanels"], json!({}), "{}", saved.body);
+    assert_eq!(t.get(&path, &viewer).await.status, StatusCode::OK);
 }
 
 async fn hidden_targets_are_kept_but_not_run(t: TestApp) {

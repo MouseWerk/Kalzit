@@ -269,6 +269,7 @@
   "datasources.reason.datasource.kind_unavailable": "Die Art „{kind}“ ist auf diesem Server nicht verfügbar.",
   "datasources.reason.datasource.name_taken": "Eine andere Datenquelle hat schon diesen Namen.",
   "datasources.reason.datasource.target_change_forbidden": "Du darfst Name, Limits und Geheimnisse dieser Datenquelle ändern, aber nicht, wohin sie sich verbindet ({field}). Dafür brauchst du Admin-Rechte auf der Datenquelle; frag einen Admin.",
+  "datasources.reason.datasource.expected_version_missing": "Diese Änderung braucht die Fassung der Datenquelle, auf der sie gemacht wurde. Lade die Seite neu und mach sie noch einmal.",
   "datasources.reason.settings.not_object": "Die Einstellungen ließen sich nicht lesen.",
   "datasources.reason.settings.too_large": "Die Einstellungen sind zu groß.",
   "datasources.reason.settings.unknown": "„{name}“ ist keine Einstellung dieser Art von Datenquelle.",

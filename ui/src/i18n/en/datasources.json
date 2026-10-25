@@ -269,6 +269,7 @@
   "datasources.reason.datasource.kind_unavailable": "The kind “{kind}” is not available on this server.",
   "datasources.reason.datasource.name_taken": "Another data source already has this name.",
   "datasources.reason.datasource.target_change_forbidden": "You may change the name, limits and secrets of this data source, but not where it connects ({field}). That needs admin rights on the data source; ask an admin.",
+  "datasources.reason.datasource.expected_version_missing": "This change needs the version of the data source it was made on. Reload the page and make it again.",
   "datasources.reason.settings.not_object": "The settings could not be read.",
   "datasources.reason.settings.too_large": "The settings are too large.",
   "datasources.reason.settings.unknown": "“{name}” is no setting of this kind of data source.",

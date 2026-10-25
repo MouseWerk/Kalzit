@@ -863,6 +863,19 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       if (refusedStale !== null) {
         return refusedStale;
       }
+      // Settings and secrets change only over a named version (Update in the doc).
+      const changesTarget =
+        body.settings !== undefined || Object.keys((body.secrets ?? {}) as object).length > 0;
+      if (changesTarget && typeof body.expectedUpdatedAt !== "number") {
+        return json(422, {
+          error: {
+            code: "validation",
+            message: "expectedUpdatedAt is required when settings or secrets change",
+            field: "expectedUpdatedAt",
+            reason: "datasource.expected_version_missing",
+          },
+        });
+      }
       const kind = FAKE_KINDS.find((k) => k.kind === ds.kind) as WireKind;
       const settings = (body.settings ?? ds.settings) as Record<string, unknown>;
       const secrets = (body.secrets ?? {}) as Record<string, unknown>;

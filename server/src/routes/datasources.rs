@@ -421,7 +421,8 @@ struct PatchBody {
     #[serde(default)]
     secrets: SecretPatch,
     /// The `updatedAt` the client last read. A newer stored row answers `409 version_conflict`
-    /// with the stored data source instead of overwriting it.
+    /// with the stored data source instead of overwriting it. Required with `settings` or
+    /// `secrets`; a rename alone may leave it out.
     expected_updated_at: Option<i64>,
 }
 
@@ -453,7 +454,17 @@ async fn update(
     JsonBody(body): JsonBody<PatchBody>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
-    if body.expected_updated_at.is_some_and(|expected| expected != ds.updated_at) {
+    // Settings and secrets belong to one target: a change to them is only taken over the version
+    // of the source the client saw.
+    let Some(expected) = body
+        .expected_updated_at
+        .or_else(|| (body.settings.is_none() && body.secrets.is_empty()).then_some(ds.updated_at))
+    else {
+        return Err(ApiError::validation("expectedUpdatedAt is required when settings or secrets change")
+            .with_field("expectedUpdatedAt")
+            .because("datasource.expected_version_missing"));
+    };
+    if expected != ds.updated_at {
         return Err(stale(&state, &ctx, &ds.id).await);
     }
     let kind = state.datasources.kind(&ds.kind).ok_or_else(|| ApiError::internal("update", "unknown kind"))?;
@@ -526,7 +537,8 @@ async fn update(
     // saved in the meantime (another host, say) answers the conflict, so a password meant for one
     // host is never stored against another.
     let updated = sqlx::query(
-        "UPDATE datasources SET name = $1, settings = $2, updated_at = $3          WHERE id = $4 AND org_id = $5 AND updated_at = $6 AND deleted_at IS NULL",
+        "UPDATE datasources SET name = $1, settings = $2, updated_at = $3 \
+         WHERE id = $4 AND org_id = $5 AND updated_at = $6 AND deleted_at IS NULL",
     )
     .bind(&name)
     .bind(settings.to_string())
@@ -539,7 +551,7 @@ async fn update(
     .map_err(conflict_on_name)?
     .rows_affected();
     if updated == 0 {
-        drop(tx);
+        tx.rollback().await?;
         return Err(stale(&state, &ctx, &ds.id).await);
     }
     secrets::apply_patch(&mut tx, state.datasources.keyring(), &ds.id, &body.secrets).await?;
@@ -563,7 +575,8 @@ async fn delete(
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
     let updated = sqlx::query(
-        "UPDATE datasources SET deleted_at = $1, updated_at = $1          WHERE id = $2 AND org_id = $3 AND updated_at = $4 AND deleted_at IS NULL",
+        "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+         WHERE id = $2 AND org_id = $3 AND updated_at = $4 AND deleted_at IS NULL",
     )
     .bind(now)
     .bind(&ds.id)
@@ -573,7 +586,7 @@ async fn delete(
     .await?
     .rows_affected();
     if updated == 0 {
-        drop(tx);
+        tx.rollback().await?;
         return Err(stale(&state, &ctx, &ds.id).await);
     }
     record(&mut tx, &event(&ctx, &info, "datasource.deleted", &ds.id, json!({}), now)).await?;
