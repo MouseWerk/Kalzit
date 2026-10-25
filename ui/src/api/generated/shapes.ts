@@ -114,7 +114,12 @@ export type QueryRequest = { queries: Array<QueryItem>, timeRange: TimeRange, in
  * Variable values: bound as parameters in SQL, escaped into strings in PromQL, and checked
  * against the schema when used as identifiers (docs/api/datasources.md).
  */
-variables: Record<string, unknown>, };
+variables: Record<string, unknown>, 
+/**
+ * Set by Explore: the successful queries of this run go to the caller's Explore history
+ * (docs/api/explore-history.md). Dashboard panels never set it.
+ */
+explore?: boolean, };
 
 export type QueryItem = { refId: string, datasourceId: string, 
 /**

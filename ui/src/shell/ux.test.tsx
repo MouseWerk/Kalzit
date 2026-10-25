@@ -72,8 +72,8 @@ describe("command palette", () => {
     expect(input.getAttribute("aria-expanded")).toBe("true");
     const listbox = within(dialog).getByRole("listbox", { name: "Results" });
     expect(input.getAttribute("aria-controls")).toBe(listbox.id);
-    expect(within(listbox).getByRole("group", { name: "Actions" })).toBeTruthy();
-    expect(within(listbox).getByRole("group", { name: "Go to" })).toBeTruthy();
+    expect(within(listbox).getByRole("group", { name: "Create" })).toBeTruthy();
+    expect(within(listbox).getByRole("group", { name: "Navigation" })).toBeTruthy();
     expect(options(dialog)).toContain("New dashboard");
     expect(options(dialog)).toContain("Open Explore");
     // The first option is active, named by aria-activedescendant.
@@ -84,6 +84,25 @@ describe("command palette", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull(),
     );
+  });
+
+  it("groups the actions, offers every theme with the current one checked and a keycap for help", async () => {
+    const { dialog } = await openPalette();
+    const listbox = within(dialog).getByRole("listbox", { name: "Results" });
+    for (const name of ["Appearance", "Language", "Help"]) {
+      expect(within(listbox).getByRole("group", { name })).toBeTruthy();
+    }
+    expect(options(dialog)).toEqual(
+      expect.arrayContaining([
+        "Theme: System",
+        "Theme: Light",
+        "Theme: Dark",
+        "Theme: High contrast",
+      ]),
+    );
+    expect(within(dialog).getAllByText("current").length).toBeGreaterThanOrEqual(2);
+    const help = within(dialog).getByRole("option", { name: /Keyboard shortcuts/ });
+    expect(help.querySelector("kbd")?.textContent).toBe("?");
   });
 
   it("finds only what the user may open, moves with the arrow keys and opens with Enter", async () => {

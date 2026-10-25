@@ -1,0 +1,57 @@
+# Kalzit user guide
+
+How to work with Kalzit, one page per area. The guide describes what the interface does today;
+the [roadmap in the README](../../README.md#roadmap) lists what is still to come. Labels are
+written as the English interface shows them, with the German label in parentheses where it helps.
+
+## Pages
+
+| Page | What it covers |
+|---|---|
+| [Getting started](getting-started.md) | First setup and sign-in, your first data source, dashboard and Explore query |
+| [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables, time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
+| [Panels](panels.md) | Every visualization with its options; colours, thresholds, units, value mappings, overrides |
+| [Explore](explore.md) | Free queries per source kind, the three result shapes, steps, add to dashboard |
+| [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, with examples |
+| [Export](export.md) | CSV, JSON and Excel files, and their limits |
+| [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour, testing, access, trash |
+| [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
+
+The HTTP API behind every function is described in [docs/api](../api): [access](../api/access.md),
+[data sources and queries](../api/datasources.md),
+[settings and dashboards](../api/settings-dashboards.md),
+[dashboard features](../api/dashboard-features.md), [shell](../api/shell.md) and
+[updates](../api/updates.md). Words used in the interface are explained in the
+[glossary](../glossary.md); how to install and run a server is in the
+[README](../../README.md#quick-start) and [ARCHITECTURE](../ARCHITECTURE.md).
+
+## Finding your way
+
+The **sidebar** on the left is the main navigation:
+
+- **Home** (Start): the start page with your organization in numbers, favorites and recently
+  opened dashboards.
+- **Dashboards**, **Explore** and **Data sources**: working with data.
+- **Organization** group: **Members**, **Settings** and **Administration** (Verwaltung). Each
+  entry appears only if your role may open it.
+- Your **pinned dashboards** sit under the navigation, in your own order.
+- The **organization card** at the top shows the organization you work in; open it for its
+  settings, members and teams, and to switch organization (server admins see all organizations).
+
+The **bar on top** shows where you are (breadcrumbs), the search, a **New** menu (dashboard,
+folder, import, data source) and **Help** (keyboard shortcuts and documentation). On a phone the
+search, New and Help are icon buttons.
+
+Faster ways:
+
+| Keys | What happens |
+|---|---|
+| Ctrl+K (Cmd+K on macOS) | Command palette: find dashboards, folders, data sources and pages by a few letters, or run an action such as a new dashboard, Explore or the theme. It lists only what you may open. |
+| `/` | Search (outside text fields) |
+| `?` | All keyboard shortcuts of the current area |
+| Ctrl+B | Collapse or expand the sidebar |
+| Esc | Close a menu, dialog or the palette |
+
+Your language (English or German), theme (system, light, dark, high contrast), time zone, start
+dashboard and first day of the week are set on your account page (see
+[Administration](administration.md#your-account)).

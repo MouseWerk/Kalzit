@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getRouteApi, Link } from "@tanstack/react-router";
 import { useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import { brandingQuery } from "../../appearance/api";
@@ -7,6 +8,7 @@ import { isAccentName } from "../../appearance/contrast";
 import { LimitedMarkdown } from "../../appearance/LimitedMarkdown";
 import { applyLook, lookFrom } from "../../appearance/look";
 import { useI18n } from "../../i18n/i18n";
+import { preferencesQuery } from "../../preferences/preferences";
 import type { Setting } from "../admin/api";
 import { Dialog } from "../admin/components/Dialog";
 import { useNotice } from "../admin/components/Notice";
@@ -27,6 +29,8 @@ import { useFoundRow } from "./SectionPage";
 import { APPEARANCE_ROWS, LOGO_ROW, SIGN_IN_ROW } from "./sections";
 import "../../appearance/appearance.css";
 import "./settings.css";
+
+const appRoute = getRouteApi("/_app");
 
 /**
  * "Appearance and brand": theme, accent, logo and name, density, font size, language and the
@@ -61,6 +65,7 @@ export function AppearanceSection({
             <SettingRow
               key={row}
               setting={setting}
+              note={row === "appearance.default_theme" ? <OwnThemeNote /> : undefined}
               rowId={row}
               changes={changes}
               canWrite
@@ -81,6 +86,28 @@ export function AppearanceSection({
         fontSize={value("appearance.font_size")}
       />
     </div>
+  );
+}
+
+/**
+ * A theme chosen in the profile wins over the default, so changing the default does nothing for
+ * its owner; this says so instead of letting the control seem broken.
+ */
+function OwnThemeNote() {
+  const { t } = useI18n();
+  const { me } = appRoute.useRouteContext();
+  const preferences = useQuery(preferencesQuery(me.id));
+  if (preferences.data?.theme == null) {
+    return null;
+  }
+  return (
+    <>
+      {t("settings.theme.own")} (
+      <Link to="/settings/$section" params={{ section: "profile" }}>
+        {t("settings.theme.ownLink")}
+      </Link>
+      ). {t("settings.theme.ownHint")}
+    </>
   );
 }
 

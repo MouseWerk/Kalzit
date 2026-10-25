@@ -1,6 +1,6 @@
 import { screen } from "@testing-library/react";
 import type { Me } from "../../../api/auth";
-import { installFakeServer, TEST_USER } from "../../../test/fakeServer";
+import { type FakeServer, installFakeServer, TEST_USER } from "../../../test/fakeServer";
 import { generatedUnion } from "../../../test/generated";
 import { renderApp } from "../../../test/renderApp";
 import { type FakeAdminState, fakeAdmin } from "./fakeAdmin";
@@ -15,6 +15,8 @@ export interface OpenAdminOptions {
   user?: Partial<Me>;
   /** Changes the fake's data before the first request. */
   setup?: (admin: FakeAdminState) => void;
+  /** Changes the fake server's data (preferences, branding) before the first request. */
+  setupServer?: (server: FakeServer) => void;
 }
 
 /**
@@ -37,6 +39,7 @@ export async function openAdmin(path: string, options: OpenAdminOptions = {}) {
   // The fake checks the same permissions the UI hides by.
   admin.callerPermissions = new Set(options.permissions ?? ALL_PERMISSIONS);
   options.setup?.(admin);
+  options.setupServer?.(server);
   const rendered = renderApp(path);
   await screen.findByRole("navigation", { name: "Main navigation" });
   return { ...rendered, server, admin };
