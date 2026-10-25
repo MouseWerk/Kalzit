@@ -1,10 +1,11 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
+import { resolveTime } from "./timeRange";
 
 /** Opens a panel's menu and picks an action, named as the old buttons were ("Edit “Orders”"). */
 async function panelAction(user: ReturnType<typeof renderApp>["user"], name: string) {
@@ -597,13 +598,28 @@ describe("annotations", () => {
         ),
       ).toHaveLength(5),
     );
-    const ranges = new Set(
-      server.areas.dashboardFeatures.annotationListRequests.map((r) => r.to - r.from),
+    // Six hours for the dashboard, and 30 calendar days for the wide panel: 30 times 24 hours,
+    // or an hour more or less when a daylight saving change lies in between.
+    const requests = server.areas.dashboardFeatures.annotationListRequests;
+    const kinds = new Set(
+      requests.map((r) =>
+        r.from === r.to - 6 * 3_600_000
+          ? "dashboard"
+          : r.from === resolveTime("now-30d", r.to)
+            ? "panel"
+            : "other",
+      ),
     );
-    expect(ranges).toEqual(new Set([6 * 3_600_000, 30 * 24 * 3_600_000]));
+    expect(kinds).toEqual(new Set(["dashboard", "panel"]));
   });
 
   it("asks for annotation times to the second, and keeps a new mark's exact time", async () => {
+    // Seven seconds past a minute: an input on a full minute reports its value without ":00".
+    vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+    vi.setSystemTime(Math.floor(Date.now() / 60_000) * 60_000 + 7_000);
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     setup("editor", timeModel());
     const { user } = renderApp("/dashboards/d-main");
     await panelAction(user, "Annotate “Load”");
@@ -771,8 +787,9 @@ describe("panel time options", () => {
       from: 0,
       to: 0,
     };
+    // 24 hours ending this time yesterday (23 or 25 hours ago across a daylight saving change).
     expect(to - from).toBe(24 * 3_600_000);
-    expect(Date.now() - to).toBeGreaterThanOrEqual(23 * 3_600_000);
+    expect(Math.abs(to - (resolveTime("now-1d", Date.now()) ?? 0))).toBeLessThan(60_000);
   });
 
   it("refuses an own range that is not relative to now", async () => {

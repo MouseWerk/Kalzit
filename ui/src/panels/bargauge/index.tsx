@@ -81,7 +81,7 @@ export function gaugeItems(
     (f) =>
       rowCount(f) > 1 &&
       f.fields.some((field) => field.type === "string") &&
-      !f.fields.some((field) => field.type === "time") &&
+      !f.fields.some((field) => field.type === "time" || field.type === "date") &&
       valueFields(f).length > 0,
   );
   const label = byRow?.fields.find((field) => field.type === "string");

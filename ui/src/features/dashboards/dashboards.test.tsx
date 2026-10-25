@@ -565,7 +565,13 @@ describe("dashboard view", () => {
     expect(server.areas.dashboards.panelExports).toHaveLength(1);
     expect(server.areas.dashboards.panelExports[0]).toMatchObject({
       panelId: "p-orders",
-      body: { format: "csv", language: "de" },
+      // Calculated fields in the file read times in the calendar the screen shows.
+      body: {
+        format: "csv",
+        language: "de",
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        weekStart: "monday",
+      },
     });
     expect(created).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog", { name: "Export data" })).toBeNull();

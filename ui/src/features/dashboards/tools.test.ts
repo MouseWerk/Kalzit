@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setTimeZone } from "../../lib/timeSettings";
 import {
   annotationRanges,
   type DashboardMark,
@@ -22,6 +23,7 @@ import {
   SCHEMA_VERSION,
 } from "./model";
 import { isTimeFrom, isTimeShift, panelRange, timeNote } from "./panelTime";
+import { optionValue } from "./Variables";
 
 /** `${name}` as a link writes it. */
 const ref = (name: string) => ["$", "{", name, "}"].join("");
@@ -203,6 +205,41 @@ describe("panel time options", () => {
       isTimeShift("1x"),
       isTimeShift("123456s"),
     ]).toEqual([true, false, false, false]);
+  });
+
+  it("keeps an own range's length when the shift crosses a daylight saving change", () => {
+    setTimeZone("Europe/Berlin");
+    // Sunday 2026-10-25 12:00 CET; the day before had 25 hours.
+    const now = Date.UTC(2026, 9, 25, 11, 0, 0);
+    const range = { from: now - 6 * 3_600_000, to: now };
+    const own = panelRange(panel("p", { timeFrom: "now-24h", timeShift: "1d" }), range, now);
+    // 24 hours ending Saturday 12:00 CEST, the same wall-clock time yesterday.
+    expect(own).toEqual({ from: Date.UTC(2026, 9, 23, 10), to: Date.UTC(2026, 9, 24, 10) });
+    // A calendar own range stays a calendar range: it starts at midnight the day before.
+    const day = panelRange(panel("p", { timeFrom: "now-1d/d", timeShift: "1d" }), range, now);
+    expect(day.from).toBe(Date.UTC(2026, 9, 22, 22));
+    // The dashboard's range moves to the same wall-clock times yesterday.
+    const moved = panelRange(panel("p", { timeShift: "1d" }), range, now);
+    expect(moved).toEqual({ from: Date.UTC(2026, 9, 24, 4), to: Date.UTC(2026, 9, 24, 10) });
+
+    // The day after the change to summer time: yesterday had 23 hours.
+    const spring = Date.UTC(2026, 2, 30, 10, 0, 0); // Monday 12:00 CEST
+    const springOwn = panelRange(
+      panel("p", { timeFrom: "now-24h", timeShift: "1d" }),
+      { from: spring - 6 * 3_600_000, to: spring },
+      spring,
+    );
+    // 24 hours ending Sunday 12:00 CEST (10:00 UTC).
+    expect(springOwn).toEqual({ from: Date.UTC(2026, 2, 28, 10), to: Date.UTC(2026, 2, 29, 10) });
+  });
+
+  it("keeps a saved selection when the options write the same number another way", () => {
+    const list = [{ value: "12.50" }, { value: "1" }, { value: "x" }];
+    expect(optionValue(list, "12.5")).toBe("12.50");
+    expect(optionValue(list, "1.0")).toBe("1");
+    expect(optionValue(list, "x")).toBe("x");
+    expect(optionValue(list, "7")).toBe("7");
+    expect(optionValue(list, "")).toBe("");
   });
 });
 

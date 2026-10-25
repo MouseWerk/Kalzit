@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Field } from "../api/generated/shapes";
+import { setTimeZone, setWeekStart } from "../lib/timeSettings";
+import { exportPanel } from "./api";
 import { compile, DetailError, isoTime, numberText, parse, parseNumber } from "./expr";
 import * as stats from "./stats";
 import { type NamedFrame, runSteps, type Step, withUnknown } from "./steps";
@@ -319,5 +321,33 @@ describe("budget", () => {
     expect(run.frames[0]?.frame.fields[0]?.values).toEqual(["AT", "CH", "DE"]);
     // A panel recomputes on every change; CI machines are slower than desks.
     expect(took).toBeLessThan(1500);
+  });
+});
+
+describe("export calendar", () => {
+  it("sends the calendar in effect, and makes the file in UTC when the server lacks the zone", async () => {
+    setTimeZone("America/Nuuk");
+    setWeekStart("sunday");
+    const bodies: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (body.timeZone !== undefined) {
+        const error = { code: "validation", message: "unknown zone", field: "timeZone" };
+        return new Response(JSON.stringify({ error }), { status: 422 });
+      }
+      return new Response("a\r\n", { status: 200 });
+    });
+    const body = {
+      timeRange: { from: 0, to: 1 },
+      variables: {},
+      format: "csv",
+      language: "en",
+    } as const;
+    await exportPanel("o1", "d1", "p1", body);
+    expect(bodies).toEqual([
+      { ...body, timeZone: "America/Nuuk", weekStart: "sunday" },
+      { ...body, weekStart: "sunday" },
+    ]);
   });
 });

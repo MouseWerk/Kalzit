@@ -2,8 +2,9 @@ import { type ReactNode, useDeferredValue, useEffect, useId, useRef, useState } 
 import type { Field, Frame } from "../api/generated/shapes";
 import { reasonText } from "../features/datasources/reasons";
 import { type MessageKey, type Translate, useI18n } from "../i18n/i18n";
-import { formatValue } from "../panels/frame";
+import { formatValue, isNumeric } from "../panels/frame";
 import { DetailError, FUNCTIONS, parse } from "./expr";
+import { useAnalysisCalendar } from "./panel";
 import {
   AGGS,
   type Agg,
@@ -44,7 +45,8 @@ interface StepsEditorProps {
 /** What to focus after a step moved or went: a control of a step, or the step picker. */
 type FocusRequest = { id: string; action: "up" | "down" | "remove" } | { id: null };
 
-const numeric = (f: Field) => f.type === "number" || f.type === "int64";
+const numeric = (f: Field) => isNumeric(f.type);
+const timeLike = (f: Field) => f.type === "time" || f.type === "date";
 
 /**
  * Edits a list of analysis steps: add, reorder, turn off, remove, and a preview of the frames
@@ -66,7 +68,8 @@ export function StepsEditor({ steps, onChange, refIds, inputs, run: given }: Ste
   const frames = inputs.flatMap((i) => ("frame" in i ? [i] : []));
   // Typing stays quick: the steps run on the deferred list, a moment behind the keystrokes.
   const deferred = useDeferredValue(steps);
-  const run = given ?? runSteps(deferred, inputs);
+  const calendar = useAnalysisCalendar();
+  const run = given ?? runSteps(deferred, inputs, { calendar });
   const hasData = inputs.length > 0;
   // The run may be of the list as it was a moment ago (deferred); results go by step id, so a
   // step never shows its neighbour's result after a move.
@@ -306,7 +309,7 @@ export function newStep(
   const frame = refIds[0] ?? "A";
   const fields = input.find((f) => f.name === frame)?.frame.fields ?? [];
   const firstNumber = fields.find(numeric)?.name ?? "";
-  const firstOther = fields.find((f) => !numeric(f) && f.type !== "time")?.name ?? "";
+  const firstOther = fields.find((f) => !numeric(f) && !timeLike(f))?.name ?? "";
   switch (type) {
     case "toFrame":
       // Not offered here: the query's editor picks the columns of a projection.
@@ -380,7 +383,7 @@ export function newStep(
         type,
         frame,
         row: firstOther,
-        column: fields.filter((f) => !numeric(f) && f.type !== "time")[1]?.name ?? firstOther,
+        column: fields.filter((f) => !numeric(f) && !timeLike(f))[1]?.name ?? firstOther,
         value: firstNumber,
         op: "sum",
       };
@@ -539,7 +542,7 @@ function StepForm({ step, onChange, refIds, input }: FormProps) {
           <FieldChoice
             label={t("analysis.field.x")}
             value={step.x ?? ""}
-            fields={fieldsOf(step.frame).filter((f) => numeric(f) || f.type === "time")}
+            fields={fieldsOf(step.frame).filter((f) => numeric(f) || timeLike(f))}
             empty={t("analysis.field.xDefault")}
             onChange={(x) => {
               const { x: _, ...rest } = step;
@@ -626,7 +629,7 @@ function StepForm({ step, onChange, refIds, input }: FormProps) {
           <FieldChoice
             label={t("analysis.field.time")}
             value={step.time ?? ""}
-            fields={fieldsOf(step.frame).filter((f) => f.type === "time")}
+            fields={fieldsOf(step.frame).filter(timeLike)}
             empty={t("analysis.field.timeDefault")}
             onChange={(time) => {
               const { time: _, ...rest } = step;

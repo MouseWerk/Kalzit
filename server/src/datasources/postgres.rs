@@ -294,10 +294,19 @@ impl DataSourcePlugin for Postgres {
                 }
             };
         }
+        // MONEY travels as a count of the smallest unit; how many fraction digits that has
+        // depends on the server's `lc_monetary`, so it is asked, never assumed.
+        let money_scale = if decoders.iter().any(|d| matches!(d, Decoder::Money)) {
+            let (scale,): (i32,) =
+                sqlx::query_as("SELECT scale(1::money::numeric)").fetch_one(&mut *tx).await.map_err(failed)?;
+            u32::try_from(scale).unwrap_or(0).min(18)
+        } else {
+            0
+        };
         {
             let mut rows = query.fetch(&mut *tx);
             while let Some(row) = rows.try_next().await.map_err(failed)? {
-                let values = decoders.iter().enumerate().map(|(i, d)| d.decode(&row, i)).collect();
+                let values = decoders.iter().enumerate().map(|(i, d)| d.decode(&row, i, money_scale)).collect();
                 if !frame.push_row(values) {
                     break;
                 }
@@ -334,6 +343,7 @@ enum Decoder {
     Float4,
     Float8,
     Numeric,
+    Money,
     Text,
     Uuid,
     TimestampTz,
@@ -355,7 +365,8 @@ impl Decoder {
             "OID" => Self::Oid,
             "FLOAT4" => Self::Float4,
             "FLOAT8" => Self::Float8,
-            "NUMERIC" | "MONEY" if name == "NUMERIC" => Self::Numeric,
+            "NUMERIC" => Self::Numeric,
+            "MONEY" => Self::Money,
             "TEXT" | "VARCHAR" | "BPCHAR" | "NAME" | "CHAR" | "UNKNOWN" | "citext" => Self::Text,
             "UUID" => Self::Uuid,
             "TIMESTAMPTZ" => Self::TimestampTz,
@@ -371,15 +382,18 @@ impl Decoder {
     fn field_type(self) -> FieldType {
         match self {
             Self::Bool => FieldType::Bool,
-            Self::Int2 | Self::Int4 | Self::Oid | Self::Float4 | Self::Float8 | Self::Numeric => FieldType::Number,
+            Self::Int2 | Self::Int4 | Self::Oid | Self::Float4 | Self::Float8 => FieldType::Number,
+            Self::Numeric | Self::Money => FieldType::Decimal,
             Self::Int8 => FieldType::Int64,
             Self::Text | Self::Uuid | Self::Time | Self::Interval | Self::Unsupported => FieldType::String,
-            Self::TimestampTz | Self::Timestamp | Self::Date => FieldType::Time,
+            Self::TimestampTz | Self::Timestamp => FieldType::Time,
+            Self::Date => FieldType::Date,
             Self::Json => FieldType::Json,
         }
     }
 
-    fn decode(self, row: &PgRow, i: usize) -> Value {
+    /// One cell; `money_scale` is the fraction digits of the server's MONEY.
+    fn decode(self, row: &PgRow, i: usize, money_scale: u32) -> Value {
         if row.try_get_raw(i).map_or(true, |v| v.is_null()) {
             return Value::Null;
         }
@@ -395,8 +409,15 @@ impl Decoder {
                 return row
                     .try_get_raw(i)
                     .ok()
-                    .and_then(|raw| raw.as_bytes().ok().and_then(numeric_to_f64))
-                    .map_or(Value::Null, finite);
+                    .and_then(|raw| raw.as_bytes().ok().and_then(numeric_text))
+                    .map_or(Value::Null, Value::String);
+            }
+            Self::Money => {
+                return row
+                    .try_get_raw(i)
+                    .ok()
+                    .and_then(|raw| raw.as_bytes().ok().and_then(|b| money_text(b, money_scale)))
+                    .map_or(Value::Null, Value::String);
             }
             Self::Text => row.try_get::<String, _>(i).map(|s| json!(s)),
             Self::Uuid => {
@@ -429,39 +450,114 @@ fn format_interval(iv: &PgInterval) -> String {
     format!("P{}M{}DT{}S", iv.months, iv.days, seconds)
 }
 
-/// PostgreSQL's binary NUMERIC: digit count, weight, sign, scale, then base-10000 digits. Read
-/// into a float, which is what a chart needs; NaN and infinities have no JSON form.
-fn numeric_to_f64(bytes: &[u8]) -> Option<f64> {
-    let word = |i: usize| bytes.get(i..i + 2).map(|b| i16::from_be_bytes([b[0], b[1]]));
-    let ndigits = word(0)? as usize;
-    let weight = word(2)? as i32;
-    let sign = word(4)? as u16;
-    if sign == 0xC000 || sign == 0xD000 || sign == 0xF000 {
+/// PostgreSQL's binary NUMERIC as exact decimal text with its scale ("-12.50"): digit count,
+/// weight, sign and display scale, then base-10000 digits. NaN and infinities have no decimal
+/// form and are empty.
+fn numeric_text(bytes: &[u8]) -> Option<String> {
+    let word = |i: usize| bytes.get(i..i + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    let ndigits = usize::from(word(0)?);
+    let weight = i64::from(word(2)? as i16);
+    let negative = match word(4)? {
+        0x0000 => false,
+        0x4000 => true,
+        _ => return None,
+    };
+    let scale = usize::from(word(6)?);
+    let digits: Vec<u16> = (0..ndigits).map(|k| word(8 + 2 * k)).collect::<Option<_>>()?;
+    if digits.iter().any(|d| *d > 9999) || scale > 16_383 {
         return None;
     }
-    let mut value = 0.0_f64;
-    for k in 0..ndigits {
-        let digit = f64::from(word(8 + 2 * k)?);
-        value += digit * 10_000f64.powi(weight - k as i32);
+    // The base-10000 digit at a weight (10000^weight); zero outside the stored digits.
+    let at = |w: i64| usize::try_from(weight - w).ok().and_then(|k| digits.get(k)).copied().unwrap_or(0);
+    let mut out = String::new();
+    if weight < 0 {
+        out.push('0');
+    } else {
+        out.push_str(&at(weight).to_string());
+        for w in (0..weight).rev() {
+            out.push_str(&format!("{:04}", at(w)));
+        }
     }
-    Some(if sign == 0x4000 { -value } else { value })
+    if scale > 0 {
+        let mut fraction = String::new();
+        for g in 1..=scale.div_ceil(4) as i64 {
+            fraction.push_str(&format!("{:04}", at(-g)));
+        }
+        fraction.truncate(scale);
+        out.push('.');
+        out.push_str(&fraction);
+    }
+    let zero = out.bytes().all(|b| b == b'0' || b == b'.');
+    Some(if negative && !zero { format!("-{out}") } else { out })
+}
+
+/// PostgreSQL's binary MONEY: a 64-bit count of the smallest unit, with `scale` fraction digits
+/// (the server's `lc_monetary`: 2 for euros and dollars, 0 for yen), as decimal text such as
+/// "-1234.56".
+fn money_text(bytes: &[u8], scale: u32) -> Option<String> {
+    let units = i64::from_be_bytes(bytes.try_into().ok()?);
+    let sign = if units < 0 { "-" } else { "" };
+    let abs = units.unsigned_abs();
+    if scale == 0 {
+        return Some(format!("{sign}{abs}"));
+    }
+    let unit = 10_u64.pow(scale);
+    Some(format!("{sign}{}.{:0width$}", abs / unit, abs % unit, width = scale as usize))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// NUMERIC bytes: digit count, weight, sign, scale and the base-10000 digits.
+    fn numeric(weight: i16, negative: bool, scale: u16, digits: &[u16]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend((digits.len() as u16).to_be_bytes());
+        out.extend(weight.to_be_bytes());
+        out.extend(if negative { 0x4000_u16 } else { 0 }.to_be_bytes());
+        out.extend(scale.to_be_bytes());
+        for d in digits {
+            out.extend(d.to_be_bytes());
+        }
+        out
+    }
+
     #[test]
-    fn numeric_binary_format() {
-        // 12345.678 = digits [1, 2345, 6780], weight 1, positive, scale 3.
-        let bytes = [0, 3, 0, 1, 0, 0, 0, 3, 0, 1, 0x09, 0x29, 0x1A, 0x7C];
-        assert!((numeric_to_f64(&bytes).unwrap() - 12345.678).abs() < 1e-9);
-        // -0.05 = digits [500], weight -1, negative.
-        let bytes = [0, 1, 0xFF, 0xFF, 0x40, 0, 0, 2, 0x01, 0xF4];
-        assert!((numeric_to_f64(&bytes).unwrap() + 0.05).abs() < 1e-12);
-        assert_eq!(numeric_to_f64(&[0, 0, 0, 0, 0xC0, 0, 0, 0]), None);
-        assert_eq!(numeric_to_f64(&[0, 0, 0, 0, 0, 0, 0, 0]), Some(0.0));
-        assert_eq!(numeric_to_f64(&[0, 2]), None);
+    fn numeric_binary_format_is_exact_text() {
+        assert_eq!(numeric_text(&numeric(1, false, 3, &[1, 2345, 6780])).as_deref(), Some("12345.678"));
+        assert_eq!(numeric_text(&numeric(-1, true, 2, &[500])).as_deref(), Some("-0.05"));
+        // The scale keeps trailing zeros: 12.50 stays 12.50.
+        assert_eq!(numeric_text(&numeric(0, false, 2, &[12, 5000])).as_deref(), Some("12.50"));
+        // Whole numbers with zeros the digits leave out: 1 0000 0000 = 10^8.
+        assert_eq!(numeric_text(&numeric(2, false, 0, &[1])).as_deref(), Some("100000000"));
+        // Digits a float rounds: 0.1 + 0.2 and the largest exact decimals stay as they are.
+        assert_eq!(numeric_text(&numeric(-1, false, 1, &[1000])).as_deref(), Some("0.1"));
+        assert_eq!(
+            numeric_text(&numeric(4, false, 4, &[1, 2345, 6789, 123, 4567, 8901])).as_deref(),
+            Some("12345678901234567.8901")
+        );
+        // 0.0000 1200: the digit 1200 at the weight 10000^-2.
+        assert_eq!(numeric_text(&numeric(-2, false, 6, &[1200])).as_deref(), Some("0.000012"));
+        assert_eq!(numeric_text(&numeric(-2, false, 8, &[12])).as_deref(), Some("0.00000012"));
+        assert_eq!(numeric_text(&numeric(0, false, 0, &[])).as_deref(), Some("0"));
+        assert_eq!(numeric_text(&numeric(0, false, 3, &[])).as_deref(), Some("0.000"));
+        assert_eq!(numeric_text(&numeric(0, true, 0, &[])).as_deref(), Some("0"), "no negative zero");
+        // NaN, infinities, broken input.
+        assert_eq!(numeric_text(&[0, 0, 0, 0, 0xC0, 0, 0, 0]), None);
+        assert_eq!(numeric_text(&[0, 0, 0, 0, 0xD0, 0, 0, 0]), None);
+        assert_eq!(numeric_text(&[0, 2]), None);
+        assert_eq!(numeric_text(&numeric(0, false, 0, &[10_000])), None);
+    }
+
+    #[test]
+    fn money_is_cents_as_decimal_text() {
+        assert_eq!(money_text(&123_456_i64.to_be_bytes(), 2).as_deref(), Some("1234.56"));
+        assert_eq!(money_text(&(-5_i64).to_be_bytes(), 2).as_deref(), Some("-0.05"));
+        assert_eq!(money_text(&i64::MIN.to_be_bytes(), 2).as_deref(), Some("-92233720368547758.08"));
+        // Yen have no fraction digits, a Bahraini dinar three.
+        assert_eq!(money_text(&123_456_i64.to_be_bytes(), 0).as_deref(), Some("123456"));
+        assert_eq!(money_text(&(-5_i64).to_be_bytes(), 3).as_deref(), Some("-0.005"));
+        assert_eq!(money_text(&[0, 1], 2), None);
     }
 
     #[test]

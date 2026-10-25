@@ -37,6 +37,10 @@ fn reject<T>(reason: &'static str, msg: impl Into<String>) -> Result<T, Rejected
     Err(Rejected::new(reason, msg))
 }
 
+/// Above this, a number in a SQLite time column is Unix milliseconds, below it Unix seconds; the
+/// same rule the SQLite source reads time values by.
+pub const SQLITE_EPOCH_MS_ABOVE: i64 = 100_000_000_000;
+
 /// A value bound to one placeholder. Each engine converts it to its own types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Bind {
@@ -222,6 +226,41 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
     for piece in &pieces {
         match piece {
             Piece::Text(t) => out.push_str(t),
+            Piece::TimeFilter(col) if engine == Engine::Sqlite => {
+                // SQLite has no time type: a column holds text (ISO 8601 with "T" or a space,
+                // with or without a zone) or Unix seconds or milliseconds as numbers. Text
+                // compares as a time through julianday (exact to the millisecond, like SQLite's
+                // own clock), numbers as Unix milliseconds; comparing as text would cut ISO
+                // values with "T" at the edges and match no number at all.
+                //
+                // In front of that exact test, plain ranges an index on the column can serve:
+                // the range in seconds, in milliseconds, and as text from the day before to the
+                // day after (zone offsets stay within a day). Each holds at least every value the
+                // exact test lets through, so the result is the same, only found faster.
+                let (from_ms, to_ms) = (ctx.range.from, ctx.range.to);
+                let day = |ms: i64, days: i64, fallback: &str| {
+                    chrono::DateTime::from_timestamp_millis(ms.saturating_add(days * 86_400_000))
+                        .map_or_else(|| fallback.to_string(), |t| t.format("%Y-%m-%d").to_string())
+                };
+                let s_lo = placeholder(&mut binds, Bind::Float((from_ms - 1) as f64 / 1000.0));
+                let s_hi = placeholder(&mut binds, Bind::Float((to_ms + 1) as f64 / 1000.0));
+                let ms_lo = placeholder(&mut binds, Bind::Int(from_ms));
+                let ms_hi = placeholder(&mut binds, Bind::Int(to_ms));
+                let text_lo = placeholder(&mut binds, Bind::Text(day(from_ms, -1, "")));
+                let text_hi = placeholder(&mut binds, Bind::Text(day(to_ms, 2, "~")));
+                let exact_lo = placeholder(&mut binds, Bind::Int(from_ms));
+                let exact_hi = placeholder(&mut binds, Bind::Int(to_ms));
+                let from = placeholder(&mut binds, Bind::Time(from_ms));
+                let to = placeholder(&mut binds, Bind::Time(to_ms));
+                out.push_str(&format!(
+                    "(({col} BETWEEN {s_lo} AND {s_hi} OR {col} BETWEEN {ms_lo} AND {ms_hi} \
+                     OR {col} BETWEEN {text_lo} AND {text_hi}) \
+                     AND (CASE WHEN typeof({col}) IN ('integer', 'real') \
+                     THEN (CASE WHEN abs({col}) > {SQLITE_EPOCH_MS_ABOVE} THEN {col} ELSE {col} * 1000 END) \
+                     BETWEEN {exact_lo} AND {exact_hi} \
+                     ELSE julianday({col}) BETWEEN julianday({from}) AND julianday({to}) END))"
+                ));
+            }
             Piece::TimeFilter(col) => {
                 let from = placeholder(&mut binds, Bind::Time(ctx.range.from));
                 let to = placeholder(&mut binds, Bind::Time(ctx.range.to));

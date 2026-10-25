@@ -412,7 +412,11 @@ pub fn convert(raw: Option<&str>, ty: FieldType, decimal: Decimal) -> Value {
         FieldType::Number => {
             parse_number(v, decimal).and_then(serde_json::Number::from_f64).map_or(Value::Null, Value::Number)
         }
-        FieldType::Time => parse_time(v).map_or(Value::Null, Value::from),
+        FieldType::Time | FieldType::Date => parse_time(v).map_or(Value::Null, Value::from),
+        // Files are not typed as decimals; a decimal column keeps the number's own text.
+        FieldType::Decimal => parse_number(v, decimal)
+            .filter(|x| x.is_finite())
+            .map_or(Value::Null, |x| Value::String(crate::analysis::expr::number_text(x))),
         FieldType::String | FieldType::Json => Value::String(raw.to_string()),
     }
 }

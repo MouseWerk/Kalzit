@@ -1,18 +1,60 @@
 import type { Field, FieldType, Frame } from "../api/generated/shapes";
 import { getTimeZone, zoneOption } from "../lib/timeSettings";
+import { fromWall, wallOf } from "../lib/zonedTime";
 
 /**
- * Reading frames (docs/ARCHITECTURE.md, result envelope): `time` is Unix ms, `int64` arrives as a
- * decimal string so it stays exact, and a missing value is `null`.
+ * Reading frames (docs/ARCHITECTURE.md, result envelope): `time` is Unix ms, `int64` and
+ * `decimal` arrive as decimal strings so they stay exact, a `date` is the ms of its midnight UTC,
+ * and a missing value is `null`.
  */
 
+/** Times and days: fields that can be a time axis. */
+export function isTimeType(type: FieldType): boolean {
+  return type === "time" || type === "date";
+}
+
+/** Numbers, int64 and decimal text: fields drawn and computed as numbers. */
+export function isNumeric(type: FieldType): boolean {
+  return type === "number" || type === "int64" || type === "decimal";
+}
+
+// Date fields as time fields at each day's midnight on the wall clock, per zone, so a chart puts
+// a day on that day in every time zone; kept with the field so a panel drawn again gets the same.
+const dayFields = new WeakMap<Field, Map<string, Field>>();
+
+/** A date field as a time field at each day's midnight in `zone` (null: the browser's). */
+export function dayStarts(field: Field, zone: string | null = getTimeZone()): Field {
+  let byZone = dayFields.get(field);
+  if (byZone === undefined) {
+    byZone = new Map();
+    dayFields.set(field, byZone);
+  }
+  const key = zone ?? "";
+  let converted = byZone.get(key);
+  if (converted === undefined) {
+    const values = field.values.map((v) => {
+      if (typeof v !== "number" || !Number.isFinite(v)) return null;
+      const day = wallOf(v, "UTC");
+      return fromWall({ ...day, hour: 0, minute: 0, second: 0, millisecond: 0 }, zone);
+    });
+    converted = { ...field, type: "time", values };
+    byZone.set(key, converted);
+  }
+  return converted;
+}
+
+/**
+ * The frame's time axis: its first time field, or its first date field with each day at its
+ * midnight in the zone in effect.
+ */
 export function timeField(frame: Frame): Field | undefined {
-  return frame.fields.find((field) => field.type === "time");
+  const field = frame.fields.find((f) => f.type === "time" || f.type === "date");
+  return field?.type === "date" ? dayStarts(field) : field;
 }
 
 /** Fields that can be drawn as values. */
 export function valueFields(frame: Frame): Field[] {
-  return frame.fields.filter((field) => field.type === "number" || field.type === "int64");
+  return frame.fields.filter((field) => isNumeric(field.type));
 }
 
 export function rowCount(frame: Frame): number {
@@ -155,6 +197,46 @@ export function dateTimeFormat(language: string, zone: string | null): Intl.Date
   return format;
 }
 
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** A day as the language writes dates, read in UTC so it never moves to the day before. */
+function dayFormat(language: string): Intl.DateTimeFormat {
+  let format = dayFormats.get(language);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat(language, { dateStyle: "short", timeZone: "UTC" });
+    dayFormats.set(language, format);
+  }
+  return format;
+}
+
+/** Fraction digits up to which a decimal keeps the zeros its scale gives it. */
+const MAX_SHOWN_SCALE = 6;
+
+/**
+ * Decimal text with the language's grouping and decimal sign, every digit kept: "-1234.50" is
+ * "-1.234,50" in German. Above a scale of six, zeros at the end are left out (fixed decimals in
+ * the field options format the value instead).
+ */
+function formatDecimal(value: unknown, language: string): string {
+  const text = String(value);
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text);
+  if (match === null) return text;
+  const [, sign, whole, scaled] = match;
+  // A short scale is part of the value's form (12.50 money stays 12.50); a long one (a NUMERIC
+  // with scale 10) would pad every value with zeros, so those are trimmed.
+  const fraction =
+    scaled !== undefined && scaled.length > MAX_SHOWN_SCALE
+      ? scaled.replace(/0+$/, "") || undefined
+      : scaled;
+  const grouped = formatInt64(whole, language);
+  if (fraction === undefined) return `${sign}${grouped}`;
+  const point =
+    numberFormat(language)
+      .formatToParts(1.5)
+      .find((p) => p.type === "decimal")?.value ?? ".";
+  return `${sign}${grouped}${point}${fraction}`;
+}
+
 /** int64 digits grouped as the language groups numbers, every digit kept. */
 function formatInt64(value: unknown, language: string): string {
   try {
@@ -177,6 +259,12 @@ export function formatValue(
   switch (type) {
     case "int64":
       return formatInt64(value, language);
+    case "decimal":
+      return formatDecimal(value, language);
+    case "date":
+      return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 8.64e15
+        ? dayFormat(language).format(value)
+        : String(value);
     case "number":
       return typeof value === "number" ? numberFormat(language).format(value) : String(value);
     case "time":
@@ -213,6 +301,11 @@ export function compareValues(type: FieldType, a: unknown, b: unknown): number {
   }
   if (typeof a === "boolean" && typeof b === "boolean") {
     return Number(a) - Number(b);
+  }
+  if (type === "decimal") {
+    const x = toNumber(a);
+    const y = toNumber(b);
+    if (x !== null && y !== null) return x - y;
   }
   return String(type === "json" ? JSON.stringify(a) : a).localeCompare(
     String(type === "json" ? JSON.stringify(b) : b),

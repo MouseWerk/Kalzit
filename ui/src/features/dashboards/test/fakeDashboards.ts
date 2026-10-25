@@ -721,6 +721,8 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
         "format",
         "language",
         "frame",
+        "timeZone",
+        "weekStart",
       ]);
       if (extra !== undefined) return validation(extra);
       state.panelExports.push({ dashboardId: dashboard.id, panelId, body });
