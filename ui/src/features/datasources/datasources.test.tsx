@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { fakeAdmin } from "../admin/test/fakeAdmin";
 import { PG_ID, PROM_ID } from "./test/fakeDatasources";
 
 /** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
@@ -71,9 +72,91 @@ describe("data source list", () => {
       code: "datasource_error",
     };
     await user.click(screen.getByRole("button", { name: "Test connection of “Sales DB”" }));
-    expect(await screen.findByText("The connection failed")).toBeTruthy();
-    expect(screen.getByText(/The data source reported an error/)).toBeTruthy();
-    expect(screen.getByText("password authentication failed")).toBeTruthy();
+    const row = within(table).getByRole("row", { name: /Sales DB/ });
+    expect(await within(row).findByText("Unreachable")).toBeTruthy();
+    // The side panel tells why.
+    await user.click(within(row).getByRole("button", { name: "Details of “Sales DB”" }));
+    const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    expect(within(panel).getByText("The connection failed")).toBeTruthy();
+    expect(within(panel).getByText(/The data source reported an error/)).toBeTruthy();
+    expect(within(panel).getByText("password authentication failed")).toBeTruthy();
+    // Editors query but do not change the source: no edit link, no access tab.
+    expect(within(panel).queryByRole("link", { name: "Edit" })).toBeNull();
+    expect(within(panel).queryByRole("tab", { name: "Access" })).toBeNull();
+  });
+
+  it("shows status tiles and filters the list by search, kind and status", async () => {
+    const { server, user } = open("/data-sources");
+    server.areas.datasources.health[PG_ID] = { ok: true, message: "", latencyMs: 12 };
+    server.areas.datasources.health[PROM_ID] = { ok: true, message: "", latencyMs: 840 };
+    const table = await screen.findByRole("table");
+    const tiles = screen.getByRole("region", { name: "Status overview" });
+    expect(within(tiles).getAllByText("Not tested yet")).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: "Test all" }));
+    await waitFor(() =>
+      expect(within(tiles).getByRole("button", { name: /Slow/ }).textContent).toContain(
+        "Metrics · 840 ms",
+      ),
+    );
+    expect(within(tiles).getByRole("button", { name: /Connected/ }).textContent).toContain(
+      "Median",
+    );
+    expect(await screen.findByText("Tested 2 data sources.")).toBeTruthy();
+
+    // A status tile filters by its status, and again shows everything.
+    const source = (name: string) => screen.queryByRole("link", { name });
+    await user.click(within(tiles).getByRole("button", { name: /Slow/ }));
+    expect(source("Sales DB")).toBeNull();
+    expect(source("Metrics")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(source("Sales DB")).toBeTruthy();
+
+    // Kind groups and search.
+    await user.click(screen.getByRole("button", { name: /^Tables/ }));
+    expect(source("Metrics")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^All/ }));
+    await user.type(screen.getByRole("searchbox", { name: "Search name or kind" }), "prom");
+    expect(source("Sales DB")).toBeNull();
+    expect(within(table).getByRole("link", { name: "Metrics" })).toBeTruthy();
+    expect(screen.getByText("1 of 2 sources")).toBeTruthy();
+  });
+
+  it("shows who has access in the side panel and opens the access dialog from it", async () => {
+    const { server, user } = open("/data-sources");
+    fakeAdmin(server).grants.push({
+      id: "g-pg",
+      subjectType: "team",
+      subjectId: "t1",
+      subjectName: "Analysts",
+      resourceType: "datasource",
+      resourceId: PG_ID,
+      level: "query",
+      createdAt: 0,
+    });
+    const table = await screen.findByRole("table");
+    const row = within(table).getByRole("row", { name: /Sales DB/ });
+    await user.click(within(row).getByRole("button", { name: "Details of “Sales DB”" }));
+    const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    expect(within(panel).getByRole("link", { name: "Edit" })).toBeTruthy();
+    expect(within(panel).getByRole("link", { name: "Open in Explore" })).toBeTruthy();
+    await user.click(within(panel).getByRole("tab", { name: "Access" }));
+    const grants = await within(panel).findByRole("list", { name: "Granted access" });
+    expect(within(grants).getByText("Analysts")).toBeTruthy();
+    expect(within(grants).getByText("Can query")).toBeTruthy();
+    await user.click(within(panel).getByRole("button", { name: "Manage access…" }));
+    expect(await screen.findByRole("dialog", { name: "Access to “Sales DB”" })).toBeTruthy();
+  });
+
+  it("closes the side panel with Escape and returns focus to the row", async () => {
+    const { user } = open("/data-sources");
+    const table = await screen.findByRole("table");
+    const details = within(table).getByRole("button", { name: "Details of “Sales DB”" });
+    await user.click(details);
+    const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(panel.isConnected).toBe(false));
+    await waitFor(() => expect(document.activeElement).toBe(details));
   });
 
   it("shows viewers without a grant an empty list and no Explore", async () => {
