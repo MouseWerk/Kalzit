@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+import { Api, regionDashboard, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
 
@@ -97,4 +99,108 @@ test("every administration section opens from the sidebar", async ({ page }) => 
       "page",
     );
   }
+});
+
+/** The element's box, which must be inside the window. */
+async function boxInView(page: Page, selector: string) {
+  const box = await page.locator(selector).first().boundingBox();
+  const view = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(view).not.toBeNull();
+  if (box === null || view === null) throw new Error("no box");
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(view.height);
+  expect(box.x + box.width).toBeLessThanOrEqual(view.width);
+  return box;
+}
+
+/** Scrolls the window, the page's scroll container, and waits until it got there. */
+async function scrollPage(page: Page, y: number) {
+  // Repeated until it sticks: content still loading may make the page shorter at first.
+  await expect
+    .poll(() =>
+      page.evaluate((top) => {
+        window.scrollTo(0, top);
+        return window.scrollY;
+      }, y),
+    )
+    .toBeGreaterThan(200);
+}
+
+for (const viewport of [
+  { width: 1440, height: 520 },
+  { width: 360, height: 640 },
+]) {
+  test(`the top bar stays at the top while the page scrolls, ${viewport.width} px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await signInOwner(page);
+    await page.goto("/settings/appearance");
+    await expect(page.locator(".settings-row").first()).toBeVisible();
+    await scrollPage(page, 4000);
+    const bar = await boxInView(page, ".top-bar");
+    expect(bar.y).toBe(0);
+  });
+}
+
+test("the settings navigation stays in view while the section scrolls", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 520 });
+  await signInOwner(page);
+  await page.goto("/settings/appearance");
+  await expect(page.getByRole("navigation", { name: t("settings.navLabel") })).toBeVisible();
+  await expect(page.locator(".settings-row").first()).toBeVisible();
+  await scrollPage(page, 4000);
+  const bar = await boxInView(page, ".top-bar");
+  const nav = await boxInView(page, ".settings-nav");
+  // Right below the bar, filling the height under it.
+  expect(nav.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+  expect(nav.y).toBeLessThan(bar.y + bar.height + 40);
+});
+
+test("a dashboard's toolbar and rail stick right below the top bar", async ({ page, world }) => {
+  const owner = await Api.owner();
+  const model = regionDashboard(unique("Lang"), world.sourceId);
+  const [first] = model.panels as Record<string, unknown>[];
+  model.panels = [0, 1, 2, 3, 4, 5].map((i) => ({
+    ...first,
+    id: `p${i + 1}`,
+    title: `Sales ${i + 1}`,
+    grid: { x: 0, y: i * 8, w: 12, h: 8 },
+  }));
+  const id = await owner.createDashboard(model);
+  await owner.dispose();
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  await expect(page.getByRole("group", { name: "Sales 1" })).toBeVisible();
+  await scrollPage(page, 600);
+  const bar = await boxInView(page, ".top-bar");
+  const toolbar = await boxInView(page, ".dash-toolbar");
+  expect(Math.round(toolbar.y)).toBe(Math.round(bar.y + bar.height));
+  const rail = await boxInView(page, ".dash-rail__column");
+  expect(rail.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
+});
+test("a pin's menu opens beside it, whole and usable", async ({ page, world }) => {
+  const owner = await Api.owner();
+  await owner.context.put(`/api/orgs/${owner.orgId}/dashboards/${world.dashboardId}/pin`);
+  await owner.dispose();
+  await signInOwner(page);
+  const more = page.getByRole("button", {
+    name: t("shell.pins.actionsNamed", { name: world.dashboardTitle }),
+  });
+  await more.click();
+  const menu = page.getByRole("menu", {
+    name: t("shell.pins.actionsNamed", { name: world.dashboardTitle }),
+  });
+  await expect(menu).toBeVisible();
+  const box = await boxInView(page, '[role="menu"]');
+  // A real menu, not a sliver: wide enough for its items, and not over the sidebar's buttons.
+  expect(box.width).toBeGreaterThan(120);
+  const trigger = await more.boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual((trigger?.x ?? 0) + (trigger?.width ?? 0));
+  await menu.getByRole("menuitem", { name: t("shell.pins.unpin") }).click();
+  await expect(menu).toBeHidden();
+  await expect(more).toBeHidden();
 });

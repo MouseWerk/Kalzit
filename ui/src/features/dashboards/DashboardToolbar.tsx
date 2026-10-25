@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { Icon } from "../../components/Icon";
 import { WithTooltip } from "../../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { useWideLayout } from "../../shell/sidebarState";
+import { useHeightVar } from "../../shell/useHeightVar";
 import { RefreshControl } from "./RefreshControl";
 import { TimeControls } from "./TimeRangePicker";
 import type { TextRange } from "./timeRange";
@@ -91,6 +92,9 @@ export function DashboardToolbar({
   actions,
 }: DashboardToolbarProps) {
   const { t } = useI18n();
+  // The toolbar sticks under the top bar; the rail sticks under both.
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  useHeightVar(toolbarRef, "--dash-toolbar-height", "(min-width: 48rem)");
   const wide = useWideLayout();
   const tv = mode === "tv";
 
@@ -179,7 +183,7 @@ export function DashboardToolbar({
   }
 
   return (
-    <div className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
+    <div ref={toolbarRef} className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
       <h1 className="visually-hidden" id={headingId}>
         {title}
       </h1>
