@@ -322,7 +322,7 @@ flowchart LR
   server --> plugins["Data source plugins<br/>(compiled in)"]
   plugins --> sql[("SQL and metrics<br/>frame")]
   plugins --> docs[("MongoDB, search, files<br/>documents")]
-  plugins --> graph[("Neo4j, Memgraph, TigerGraph<br/>graph")]
+  plugins --> graphs[("Neo4j, Memgraph, TigerGraph<br/>graph")]
 ```
 
 - The Rust server (axum, tokio, sqlx, rustls) serves the API and the embedded UI from one
