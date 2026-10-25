@@ -1385,9 +1385,10 @@
     list-style: none;
   }
 
+  /* The series' name on its own line, its colour, line style and opacity below it. */
   .colors-editor__row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-1) var(--space-2);
@@ -1396,6 +1397,7 @@
   }
 
   .colors-editor__name {
+    grid-column: 1 / -1;
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -1403,9 +1405,7 @@
   }
 
   .colors-editor__select.select {
-    width: auto;
     min-width: 0;
-    max-width: var(--size-column);
   }
 
   .colors-editor__percent {
@@ -1423,9 +1423,4 @@
     grid-column: 1 / -1;
   }
 
-  @container (max-width: 24rem) {
-    .colors-editor__row {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-  }
 }
