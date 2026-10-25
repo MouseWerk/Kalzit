@@ -89,6 +89,28 @@ pub fn side_pool(pool: &AnyPool, url: &str, max_connections: u32, busy_timeout: 
     Some(pool_options(max_connections, busy_timeout).connect_lazy_with((*pool.connect_options()).clone()))
 }
 
+/// A pool of read-only connections on the same SQLite file, for the reads every request makes
+/// (session and permission lookups). In WAL mode a reader never waits for the writer, but a
+/// request's connection from the main pool may: writers queue there for the one write lock (up to
+/// the busy timeout each), and once they hold every connection of the main pool, a sign-in or a
+/// permission check would wait behind them. These connections cannot write (`query_only`), so
+/// writes stay on the main pool and SQLite keeps its single writer. `None` for PostgreSQL, whose
+/// readers never queue behind writers, and for an in-memory database, which a second pool would
+/// not see. Connects on first use; the schema is the main pool's.
+pub fn read_pool(pool: &AnyPool, url: &str, max_connections: u32) -> Option<AnyPool> {
+    sqlite_file(url)?;
+    let busy_ms = SQLITE_BUSY_TIMEOUT.as_millis();
+    let options = AnyPoolOptions::new().max_connections(max_connections).after_connect(move |conn, _| {
+        Box::pin(async move {
+            for pragma in [format!("PRAGMA busy_timeout = {busy_ms}"), "PRAGMA query_only = ON".to_string()] {
+                sqlx::query(sqlx::AssertSqlSafe(pragma)).execute(&mut *conn).await?;
+            }
+            Ok(())
+        })
+    });
+    Some(options.connect_lazy_with((*pool.connect_options()).clone()))
+}
+
 /// The writes the server makes on its own, outside requests: session touches and the hourly
 /// jobs. They run as tasks the server aborts when it stops, and on SQLite through a `side_pool`
 /// that waits at most `BACKGROUND_BUSY_TIMEOUT` for the write lock, so a stop never waits the
@@ -247,11 +269,16 @@ pub async fn scope_requests(req: axum::extract::Request, next: axum::middleware:
 }
 
 /// The database file of a SQLite URL (as `config::sqlite_url` writes them), `None` for other
-/// databases and for an in-memory one.
+/// databases and for an in-memory one (`sqlite::memory:`, `sqlite:file::memory:`, or any URL with
+/// `mode=memory`).
 pub fn sqlite_file(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("sqlite:")?;
     let rest = rest.strip_prefix("//").unwrap_or(rest);
-    let path = rest.split('?').next().unwrap_or(rest);
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if query.split('&').any(|pair| pair.eq_ignore_ascii_case("mode=memory")) {
+        return None;
+    }
+    let path = path.strip_prefix("file:").unwrap_or(path);
     if path.is_empty() || path == ":memory:" {
         return None;
     }
@@ -647,6 +674,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reads_proceed_while_writers_hold_every_main_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = crate::config::sqlite_url(&dir.path().join("k.db"));
+        let pool = connect_with(&url, 2, Duration::from_secs(15)).await.unwrap();
+        sqlx::query("INSERT INTO users (id, email, name, created_at) VALUES ('u', 'u@example.de', 'U', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let read = read_pool(&pool, &url, 2).expect("a file database has a read pool");
+        // One writer holds the write lock, a second waits for it: the main pool is used up.
+        let first = begin(&pool).await.unwrap();
+        let waiting = tokio::spawn({
+            let pool = pool.clone();
+            async move { begin(&pool).await.map(drop) }
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while pool.num_idle() > 0 || pool.size() < 2 {
+            assert!(std::time::Instant::now() < deadline, "the second writer did not start");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(tokio::time::timeout(Duration::from_millis(300), pool.acquire()).await.is_err(), "main pool busy");
+        // A sign-in or permission lookup still answers at once.
+        let started = std::time::Instant::now();
+        let (n,): (i64,) = tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE id = 'u'").fetch_one(&read),
+        )
+        .await
+        .expect("the read does not wait for the writers")
+        .unwrap();
+        assert_eq!(n, 1);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // The read pool cannot write, so SQLite keeps its single writer on the main pool.
+        let e = sqlx::query("DELETE FROM users").execute(&read).await.unwrap_err();
+        assert!(e.to_string().contains("readonly") || e.to_string().contains("read-only"), "{e}");
+        drop(first);
+        waiting.await.unwrap().unwrap();
+        read.close().await;
+        pool.close().await;
+        dir.close().unwrap();
+        // In memory there is no second pool; PostgreSQL has none either.
+        let memory = connect_with("sqlite::memory:", 1, Duration::from_millis(10)).await.unwrap();
+        for url in ["sqlite::memory:", "sqlite:file::memory:?cache=shared", "sqlite:k.db?mode=memory"] {
+            assert!(read_pool(&memory, url, 1).is_none(), "{url}");
+            assert!(side_pool(&memory, url, 1, Duration::from_millis(10)).is_none(), "{url}");
+        }
+    }
+
+    #[tokio::test]
     async fn sqlite_runs_in_wal_mode_with_the_busy_timeout() {
         let dir = tempfile::tempdir().unwrap();
         let url = crate::config::sqlite_url(&dir.path().join("k.db"));
@@ -681,6 +757,10 @@ mod tests {
             Some("C:/ProgramData/Kalzit/kalzit.db".into())
         );
         assert_eq!(sqlite_file("sqlite::memory:"), None);
+        assert_eq!(sqlite_file("sqlite:file::memory:?cache=shared"), None);
+        assert_eq!(sqlite_file("sqlite:file:k.db?mode=memory&cache=shared"), None);
+        assert_eq!(sqlite_file("sqlite:k.db?Mode=Memory"), None);
+        assert_eq!(sqlite_file("sqlite:k.db?mode=rwc"), Some("k.db".into()));
         assert_eq!(sqlite_file("postgres://db/kalzit"), None);
     }
 

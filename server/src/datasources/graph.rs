@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use serde_json::Value;
 
 use super::detail::Detail;
-use super::frame::{ResponseBudget, json_size};
+use super::frame::{ResponseBudget, map_size, string_size};
 use crate::shapes::{Edge, GraphPath, GraphSchema, GraphSet, Node, Notice, NoticeSeverity, Truncated};
 
 /// Nodes a graph answer holds unless the source's `maxNodes` says otherwise.
@@ -84,12 +84,28 @@ impl Drop for GraphBuilder {
     }
 }
 
+/// Bookkeeping of one index entry (its hash slot); the copy of the id it keeps is counted apart.
+const INDEX_ENTRY: usize = 8;
+
+/// The bytes a node holds: the node, its id (twice: also as the index key), labels and
+/// properties.
 fn node_size(n: &Node) -> usize {
-    n.id.len() + n.labels.iter().map(|l| l.len() + 3).sum::<usize>() + props_size(&n.properties) + 32
+    std::mem::size_of::<Node>()
+        + 2 * string_size(&n.id)
+        + INDEX_ENTRY
+        + n.labels.iter().map(string_size).sum::<usize>()
+        + map_size(&n.properties)
 }
 
-fn props_size(p: &BTreeMap<String, Value>) -> usize {
-    p.iter().map(|(k, v)| k.len() + 4 + json_size(v)).sum()
+/// The bytes an edge holds, counted like a node's.
+fn edge_size(e: &Edge) -> usize {
+    std::mem::size_of::<Edge>()
+        + 2 * string_size(&e.id)
+        + INDEX_ENTRY
+        + string_size(&e.edge_type)
+        + string_size(&e.from)
+        + string_size(&e.to)
+        + map_size(&e.properties)
 }
 
 impl GraphBuilder {
@@ -211,8 +227,7 @@ impl GraphBuilder {
         if !self.ensure_node(&edge.from, from_labels) || !self.ensure_node(&edge.to, to_labels) {
             return false;
         }
-        let size =
-            edge.id.len() + edge.edge_type.len() + edge.from.len() + edge.to.len() + props_size(&edge.properties) + 40;
+        let size = edge_size(&edge);
         if !self.take(size) {
             return false;
         }
@@ -227,7 +242,8 @@ impl GraphBuilder {
         if self.truncated.is_some() {
             return false;
         }
-        let size = path.nodes.iter().chain(&path.edges).map(|id| id.len() + 3).sum::<usize>() + 24;
+        let size =
+            std::mem::size_of::<GraphPath>() + path.nodes.iter().chain(&path.edges).map(string_size).sum::<usize>();
         if !self.take(size) {
             return false;
         }
@@ -325,10 +341,10 @@ mod tests {
         assert!(!g.add_edge(edge("e2", "a", "b"), &[], &[]));
         assert_eq!(g.finish().truncated.unwrap().reason.as_deref(), Some("graph.edge_limit"));
 
-        let budget = ResponseBudget::new(100);
+        let budget = ResponseBudget::new(1000);
         let mut g = GraphBuilder::new(GraphLimits { max_nodes: 100, max_edges: 100, budget: budget.clone() });
         assert!(g.add_node(node("a", "X")));
-        assert!(!g.add_node(node(&"b".repeat(200), "X")));
+        assert!(!g.add_node(node(&"b".repeat(2000), "X")));
         let left = budget.remaining();
         assert_eq!(g.finish().truncated.unwrap().reason.as_deref(), Some("graph.size_limit"));
         assert_eq!(budget.remaining(), left, "the answer keeps its bytes");

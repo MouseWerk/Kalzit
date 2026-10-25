@@ -52,8 +52,10 @@ where
 }
 
 /// The signed-in user for `token`, or `None` when the session is unknown, expired, idle too long
-/// or its user is disabled.
+/// or its user is disabled. Reads through `read` (`AppState::read_db`); only an ended session is
+/// deleted through `db`.
 pub async fn lookup(
+    read: &AnyPool,
     db: &AnyPool,
     touches: &Touches,
     cfg: &SessionConfig,
@@ -63,7 +65,7 @@ pub async fn lookup(
     let hash = hash_token(token);
     let row: Option<(i64, i64)> = sqlx::query_as("SELECT last_seen_at, expires_at FROM sessions WHERE token_hash = $1")
         .bind(&hash)
-        .fetch_optional(db)
+        .fetch_optional(read)
         .await?;
     let Some((last_seen, expires)) = row else { return Ok(None) };
     let idle_limit = cfg.idle_timeout_hours as i64 * HOUR_MS;
@@ -76,7 +78,7 @@ pub async fn lookup(
          WHERE s.token_hash = $1 AND u.disabled = 0",
     )
     .bind(&hash)
-    .fetch_optional(db)
+    .fetch_optional(read)
     .await?;
     if user.is_some() && now_ms - last_seen >= TOUCH_INTERVAL_MS {
         touches.spawn(hash, now_ms);
