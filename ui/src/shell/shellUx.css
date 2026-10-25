@@ -840,11 +840,125 @@
     stroke-linejoin: round;
   }
 
+  /* Each section is a card with its heading and an optional link on the right. */
   .start__section {
     display: grid;
     align-content: start;
     gap: var(--space-3);
     min-width: 0;
+    padding: var(--space-card);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .start__section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .start__more {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+  }
+
+  .start__more:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
+  /* Quick start: a muted label, then small first steps as pills. */
+  .start__quick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .start__quick-label {
+    margin-inline-end: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .start__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--control-height);
+    padding: var(--space-1) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-raised);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .start__chip:hover {
+    background: var(--bg-hover);
+  }
+
+  /* Recently opened: short entries in a row, title over folder and time. */
+  .start__recent {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-column), 100%), 1fr));
+    gap: var(--space-2);
+    list-style: none;
+  }
+
+  .recent-card {
+    display: grid;
+    gap: var(--space-px);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .recent-card:hover {
+    background: var(--bg-hover);
+  }
+
+  .recent-card__title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .recent-card__meta {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Recently changed: time, then who did what, between hairlines. */
+  .start__changes {
+    display: grid;
+    list-style: none;
+  }
+
+  .start__change {
+    display: grid;
+    grid-template-columns: var(--size-label) minmax(0, 1fr);
+    gap: var(--space-3);
+    padding-block: var(--space-2);
+    border-block-end: var(--border-width) solid var(--border);
+    font-size: var(--font-size-sm);
+  }
+
+  .start__change:last-child {
+    border-block-end: 0;
+  }
+
+  .start__change-time {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
   }
 
   .start__title {
@@ -869,11 +983,30 @@
     background: var(--bg-raised);
   }
 
-  /* A small sheet of panels, drawn from the surface tokens. */
+  /* A wide tile with a small sheet of panels, drawn from the surface tokens. */
+  .dash-card__tile {
+    display: grid;
+    place-items: center;
+    height: calc(var(--size-thumb-height) + var(--space-4));
+    margin-block-end: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+  }
+
   .dash-card__thumb {
     width: var(--size-thumb-width);
     height: var(--size-thumb-height);
-    margin-block-end: var(--space-4);
+  }
+
+  .dash-card__head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .dash-card__star {
+    flex: none;
   }
 
   .thumb__tab {
@@ -899,6 +1032,7 @@
   }
 
   .dash-card__title {
+    flex: 1;
     min-width: 0;
     font-size: var(--font-size-md);
     font-weight: var(--font-weight-medium);
@@ -915,23 +1049,16 @@
   }
 
   .dash-card__path {
-    display: flex;
-    align-items: center;
     min-width: 0;
-    gap: var(--space-1);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
   .dash-card__actions {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-2);
-    margin-block-start: var(--space-4);
-  }
-
-  .dash-card__actions > .button {
-    flex: 1 1 auto;
+    margin-block-start: var(--space-3);
   }
 
   /* Preferences on the account page */

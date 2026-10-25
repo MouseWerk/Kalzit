@@ -698,9 +698,29 @@
     gap: var(--space-5);
   }
 
+  /* The heading on the left, the page's actions on the right (PageActions). */
+  .page__top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-6);
+  }
+
   .page__header {
     display: grid;
     gap: var(--space-1);
+  }
+
+  .page__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .page__actions:empty {
+    display: none;
   }
 
   .page__lead {

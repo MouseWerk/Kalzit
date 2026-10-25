@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, type LinkProps } from "@tanstack/react-router";
-import { type ReactNode, useId } from "react";
+import { type ReactNode, useId, useMemo } from "react";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { EmptyState } from "../components/EmptyState";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
+import { auditActionLabel } from "../features/admin/catalog";
 import { datasourcesNav } from "../features/datasources/nav";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { showErrorToast } from "../lib/toasts";
@@ -28,9 +29,12 @@ import {
   ACTIVITY_DAYS,
   activityQuery,
   type Count,
+  changeTime,
   dashboardCountQuery,
   datasourceCountQuery,
   memberCountQuery,
+  recentChangesQuery,
+  relativeTime,
 } from "../shell/startData";
 import "../shell/shellUx.css";
 
@@ -104,7 +108,6 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         search={{ create: "dashboard" }}
         className="button button--primary"
       >
-        <Icon name="plus" />
         {t("shell.start.action.newDashboard")}
       </Link>,
     );
@@ -112,29 +115,34 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
   if (permissions.has("datasources:query")) {
     actions.push(
       <Link key="explore" to="/explore" className="button button--secondary">
-        <Icon name="explore" />
         {t("shell.start.action.explore")}
       </Link>,
     );
   }
+
+  // Smaller first steps as chips under the numbers.
+  const quick: ReactNode[] = [];
   if (permissions.has("datasources:write")) {
-    actions.push(
-      <Link
-        key="datasource"
-        to="/data-sources/new"
-        search={{}}
-        className="button button--secondary"
-      >
-        <Icon name="dataSources" />
-        {t("shell.start.action.newDatasource")}
+    quick.push(
+      <Link key="datasource" to="/data-sources/new" search={{}} className="start__chip">
+        <Icon name="plus" />
+        {t("shell.start.quick.datasource")}
       </Link>,
     );
   }
-  actions.push(
+  if (permissions.has("users:invite") || permissions.has("users:write")) {
+    quick.push(
+      <Link key="invite" to="/admin/members" className="start__chip">
+        <Icon name="plus" />
+        {t("shell.start.quick.invite")}
+      </Link>,
+    );
+  }
+  quick.push(
     <button
       key="search"
       type="button"
-      className="button button--secondary"
+      className="start__chip"
       aria-keyshortcuts={`/ ${palette.aria}`}
       onClick={() => setOverlay("palette")}
     >
@@ -142,7 +150,6 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
       {t("shell.start.action.search", { shortcut: palette.label })}
     </button>,
   );
-
   const starredIds = new Set((stars.data?.items ?? []).map((entry) => entry.id));
 
   return (
@@ -160,6 +167,12 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         <SetupChecklist key={`${userId}:${orgId}`} userId={userId} orgId={orgId} placement="page" />
       )}
       <Stats orgId={orgId} />
+      <section className="start__quick" aria-label={t("shell.start.quickStart")}>
+        <span className="start__quick-label" aria-hidden="true">
+          {t("shell.start.quickStart")}
+        </span>
+        {quick}
+      </section>
       {fresh && !canCreate ? (
         <EmptyState icon="dashboards" title={t("shell.start.empty.title")}>
           {t("shell.start.empty.text")}
@@ -171,6 +184,11 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         empty={t("shell.start.starredEmpty")}
         query={stars}
         starredIds={starredIds}
+        more={
+          <Link to="/dashboards" className="start__more">
+            {t("shell.start.allDashboards")}
+          </Link>
+        }
       />
       <EntryCards
         orgId={orgId}
@@ -179,7 +197,9 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         query={recents}
         limit={RECENT_CARDS}
         starredIds={starredIds}
+        compact
       />
+      {permissions.has("audit:read") && permissions.loaded ? <RecentChanges orgId={orgId} /> : null}
     </div>
   );
 }
@@ -400,6 +420,8 @@ function EntryCards({
   query,
   limit,
   starredIds,
+  more,
+  compact = false,
 }: {
   orgId: string;
   title: string;
@@ -407,6 +429,10 @@ function EntryCards({
   query: { data?: { items: DashboardEntry[] } | undefined; isPending: boolean; error: unknown };
   limit?: number;
   starredIds: ReadonlySet<string>;
+  /** A link on the right of the heading, such as "All dashboards". */
+  more?: ReactNode;
+  /** Short entries (title, folder and time) instead of cards with a thumbnail and actions. */
+  compact?: boolean;
 }) {
   const { t } = useI18n();
   const titleId = useId();
@@ -419,7 +445,13 @@ function EntryCards({
     body = <p className="start__muted">{empty}</p>;
   } else {
     const items = limit === undefined ? query.data.items : query.data.items.slice(0, limit);
-    body = (
+    body = compact ? (
+      <ul className="start__recent">
+        {items.map((entry) => (
+          <RecentCard key={entry.id} entry={entry} />
+        ))}
+      </ul>
+    ) : (
       <ul className="start__cards">
         {items.map((entry) => (
           <DashboardCard
@@ -434,29 +466,51 @@ function EntryCards({
   }
   return (
     <section className="start__section" aria-labelledby={titleId}>
-      <h2 id={titleId} className="start__title">
-        {title}
-      </h2>
+      <div className="start__section-head">
+        <h2 id={titleId} className="start__title">
+          {title}
+        </h2>
+        {more}
+      </div>
       {body}
     </section>
   );
 }
 
+/** "Vertrieb", or "No folder", the folder path of a dashboard. */
+function folderOf(t: ReturnType<typeof useI18n>["t"], entry: DashboardEntry): string {
+  return entry.path.length === 0 ? t("shell.start.noFolder") : entry.path.join(" / ");
+}
+
+/** "2 hours ago" in the UI language for a time in Unix milliseconds (relativeTime). */
+function useRelativeTime(): (at: number) => string {
+  const { t, language } = useI18n();
+  const format = useMemo(
+    () => new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" }),
+    [language],
+  );
+  return (at) => relativeTime(format, at, Date.now(), t("shell.start.justNow"));
+}
 /** The card's thumbnail: a small sheet of panels, the same for every dashboard. */
 function DashboardThumb() {
   return (
-    <svg className="dash-card__thumb" aria-hidden="true" viewBox="0 0 92 68" focusable="false">
-      <rect className="thumb__tab" x="0.5" y="0.5" width="30" height="12" rx="5" />
-      <rect className="thumb__sheet" x="0.5" y="6.5" width="91" height="61" rx="7" />
-      <rect className="thumb__panel" x="7" y="13" width="35" height="20" rx="3" />
-      <rect className="thumb__panel" x="47" y="13" width="38" height="20" rx="3" />
-      <rect className="thumb__panel" x="7" y="38" width="78" height="23" rx="3" />
-      <path className="thumb__line" d="M12 55l10-6 9 3 11-8 10 5 11-6 9 2" />
-    </svg>
+    <span className="dash-card__tile" aria-hidden="true">
+      <svg className="dash-card__thumb" aria-hidden="true" viewBox="0 0 92 68" focusable="false">
+        <rect className="thumb__tab" x="0.5" y="0.5" width="30" height="12" rx="5" />
+        <rect className="thumb__sheet" x="0.5" y="6.5" width="91" height="61" rx="7" />
+        <rect className="thumb__panel" x="7" y="13" width="35" height="20" rx="3" />
+        <rect className="thumb__panel" x="47" y="13" width="38" height="20" rx="3" />
+        <rect className="thumb__panel" x="7" y="38" width="78" height="23" rx="3" />
+        <path className="thumb__line" d="M12 55l10-6 9 3 11-8 10 5 11-6 9 2" />
+      </svg>
+    </span>
   );
 }
 
-/** A dashboard as a card: a thumbnail tile, its title and folder, and two quick actions. */
+/**
+ * A favorite as a card: a thumbnail tile, its title and folder, Open and Edit, and a star to take
+ * it off the favorites.
+ */
 function DashboardCard({
   orgId,
   entry,
@@ -483,32 +537,38 @@ function DashboardCard({
   return (
     <li className="dash-card">
       <DashboardThumb />
-      <h3 id={titleId} className="dash-card__title">
-        <Link
-          to="/dashboards/$dashboardId"
-          params={{ dashboardId: entry.id }}
-          className="dash-card__link truncate"
-        >
-          {entry.title}
-        </Link>
-      </h3>
-      <p className="dash-card__path">
-        <Icon name="folder" />
-        <span className="truncate">
-          {entry.path.length === 0 ? t("shell.start.noFolder") : entry.path.join(" / ")}
-        </span>
-      </p>
-      <div className="dash-card__actions">
+      <div className="dash-card__head">
+        <h3 id={titleId} className="dash-card__title">
+          <Link
+            to="/dashboards/$dashboardId"
+            params={{ dashboardId: entry.id }}
+            className="dash-card__link truncate"
+          >
+            {entry.title}
+          </Link>
+        </h3>
         <button
           type="button"
-          className="button button--secondary button--small star-button"
+          className="button button--ghost button--small dash-card__star"
           aria-pressed={on}
+          aria-label={t("shell.start.starToggle")}
           aria-describedby={titleId}
+          title={on ? t("shell.star.starred") : t("shell.star.star")}
           onClick={() => toggle.mutate(!on)}
         >
           <Icon name={on ? "starFilled" : "star"} />
-          {on ? t("shell.star.starred") : t("shell.star.star")}
         </button>
+      </div>
+      <p className="dash-card__path truncate">{folderOf(t, entry)}</p>
+      <div className="dash-card__actions">
+        <Link
+          to="/dashboards/$dashboardId"
+          params={{ dashboardId: entry.id }}
+          className="button button--secondary button--small"
+          aria-describedby={titleId}
+        >
+          {t("shell.start.open")}
+        </Link>
         {permissions.has("dashboards:write") ? (
           <Link
             to="/dashboards/$dashboardId"
@@ -517,11 +577,77 @@ function DashboardCard({
             className="button button--ghost button--small"
             aria-describedby={titleId}
           >
-            <Icon name="edit" />
             {t("shell.start.edit")}
           </Link>
         ) : null}
       </div>
     </li>
+  );
+}
+
+/** A recently opened dashboard: its title as the link, folder and when it was opened. */
+function RecentCard({ entry }: { entry: DashboardEntry }) {
+  const { t } = useI18n();
+  const relative = useRelativeTime();
+  return (
+    <li>
+      <Link
+        to="/dashboards/$dashboardId"
+        params={{ dashboardId: entry.id }}
+        className="recent-card"
+      >
+        <span className="recent-card__title truncate">{entry.title}</span>
+        <span className="recent-card__meta truncate">
+          {folderOf(t, entry)} · {relative(entry.at)}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+/** Changes in the organization, newest first: who did what and when (needs `audit:read`). */
+function RecentChanges({ orgId }: { orgId: string }) {
+  const { t, language, timeZone } = useI18n();
+  const titleId = useId();
+  const changes = useQuery(recentChangesQuery(orgId));
+  let body: ReactNode;
+  if (changes.isPending) {
+    body = <p className="loading">{t("common.loading")}</p>;
+  } else if (changes.data === undefined) {
+    body = <FormAlert>{apiErrorText(t, changes.error)}</FormAlert>;
+  } else if (changes.data.length === 0) {
+    body = <p className="start__muted">{t("shell.start.changesEmpty")}</p>;
+  } else {
+    const now = Date.now();
+    body = (
+      <ul className="start__changes">
+        {changes.data.map((event) => (
+          <li key={event.id} className="start__change">
+            <span className="start__change-time">
+              {changeTime(event.createdAt, now, language, timeZone)}
+            </span>
+            <span className="truncate">
+              {t("shell.start.change", {
+                actor: event.actorName ?? t("shell.start.someone"),
+                action: auditActionLabel(t, event.action),
+              })}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <section className="start__section" aria-labelledby={titleId}>
+      <div className="start__section-head">
+        <h2 id={titleId} className="start__title">
+          {t("shell.start.changes")}
+        </h2>
+        <Link to="/admin/audit" className="start__more">
+          {t("shell.start.allChanges")}
+        </Link>
+      </div>
+      {body}
+    </section>
   );
 }

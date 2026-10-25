@@ -40,7 +40,10 @@ test("Explore adds a panel to an existing dashboard", async ({ page, world }) =>
   await page.getByRole("button", { name: t("explore.run") }).click();
   const result = page.getByRole("region", { name: t("explore.result") });
   await expect(result.locator(".ts__plot")).toBeVisible();
-  await result.getByRole("button", { name: t("explore.addToDashboard") }).click();
+  await page
+    .getByRole("complementary", { name: t("explore.aside") })
+    .getByRole("button", { name: t("explore.addToDashboard") })
+    .click();
   const add = page.getByRole("dialog", { name: t("explore.add.title") });
   await add.getByLabel(t("explore.add.existing")).check();
   await add.getByLabel(t("explore.add.dashboard"), { exact: true }).selectOption({ label: title });

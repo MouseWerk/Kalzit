@@ -26,7 +26,7 @@ export interface DashboardEntry {
   title: string;
   folderId: string | null;
   path: string[];
-  /** When it was starred, or last opened. */
+  /** When it was starred, or last opened, in Unix milliseconds. */
   at: number;
 }
 

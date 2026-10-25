@@ -5,6 +5,48 @@
     gap: var(--space-4);
   }
 
+  /* The source on the left; time range and Run on the right, as on the blueprint. */
+  .explore__run {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-inline-start: auto;
+  }
+
+  .explore__body,
+  .explore__main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  /* The steps rail: a card with the steps and, at its foot, what to do with the result. */
+  .explore__aside {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: start;
+    gap: var(--space-4);
+    min-width: 0;
+    padding: var(--space-card);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .explore__aside-actions {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  @media (min-width: 80rem) {
+    .explore__body {
+      grid-template-columns: minmax(0, 1fr) var(--size-text-max);
+      align-items: start;
+    }
+  }
+
   .explore__toolbar,
   .explore__result-bar {
     display: flex;

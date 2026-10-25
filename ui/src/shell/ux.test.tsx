@@ -298,14 +298,17 @@ describe("start page", () => {
       { dashboardId: "d-people", at: 3 },
     );
     renderApp("/");
-    const starred = await screen.findByRole("region", { name: "Starred dashboards" });
+    const starred = await screen.findByRole("region", { name: "Favorites" });
     const link = await within(starred).findByRole("link", { name: "Sales overview" });
     expect(link.getAttribute("href")).toBe("/dashboards/d-sales");
-    // A card: its folder, and the star already set for a starred dashboard.
+    // A card: its folder, Open, and the star already set for a favorite.
     const card = link.closest("li") as HTMLElement;
     expect(card.textContent).toContain("Operations");
-    expect(within(card).getByRole("button", { name: "Starred" }).getAttribute("aria-pressed")).toBe(
-      "true",
+    expect(
+      within(card).getByRole("button", { name: "Favorite" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(within(card).getByRole("link", { name: "Open" }).getAttribute("href")).toBe(
+      "/dashboards/d-sales",
     );
     expect(within(card).getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
       "/dashboards/d-sales?edit=true",
@@ -316,6 +319,8 @@ describe("start page", () => {
     expect(within(recent).queryByRole("link", { name: /Salaries/ })).toBeNull();
     const actions = screen.getByRole("region", { name: "Quick actions" });
     expect(within(actions).getByRole("link", { name: "New dashboard" })).toBeTruthy();
+    const quick = screen.getByRole("region", { name: "Quick start" });
+    expect(within(quick).getByRole("button", { name: /^Search/ })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
   });
 
@@ -336,13 +341,43 @@ describe("start page", () => {
     expect(within(stats).getByRole("link", { name: /^Changes, 7 days/ })).toBeTruthy();
   });
 
+  it("lists the latest changes for who may read the audit log", async () => {
+    setup("owner");
+    renderApp("/");
+    const changes = await screen.findByRole("region", { name: "Recently changed" });
+    expect(
+      within(changes).getByRole("link", { name: "All in the audit log" }).getAttribute("href"),
+    ).toBe("/admin/audit");
+  });
+
   it("shows a viewer only the numbers it may see", async () => {
-    setup("viewer");
+    const server = setup("viewer");
     renderApp("/");
     const stats = await screen.findByRole("region", { name: "Overview" });
     await within(stats).findByRole("link", { name: /^Dashboards/ });
     expect(within(stats).queryByRole("link", { name: /^Members/ })).toBeNull();
     expect(within(stats).queryByRole("link", { name: /^Changes/ })).toBeNull();
+    // Without audit:read there is no list of changes, and the audit log is never asked.
+    expect(screen.queryByRole("region", { name: "Recently changed" })).toBeNull();
+    expect(server.calls.some((call) => call.path.includes("/audit"))).toBe(false);
+  });
+
+  it("takes a dashboard off the favorites with its star", async () => {
+    const server = setup();
+    server.areas.shell.stars.push({ dashboardId: "d-sales", at: 1 });
+    const { user } = renderApp("/");
+    const favorites = await screen.findByRole("region", { name: "Favorites" });
+    const star = await within(favorites).findByRole("button", { name: "Favorite" });
+    expect(star.getAttribute("aria-pressed")).toBe("true");
+    await user.click(star);
+    await waitFor(() =>
+      expect(
+        server.calls.some(
+          (call) =>
+            call.method === "DELETE" && call.path === "/api/orgs/o1/dashboards/d-sales/star",
+        ),
+      ).toBe(true),
+    );
   });
 
   it("guides a fresh organization with a checklist of the steps the user may take", async () => {
@@ -428,7 +463,7 @@ describe("start page", () => {
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     await user.click(within(nav).getByRole("link", { name: "Home" }));
     await waitFor(() => expect(location().pathname).toBe("/"));
-    expect(await screen.findByRole("region", { name: "Starred dashboards" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Favorites" })).toBeTruthy();
   });
 });
 

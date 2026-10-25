@@ -23,5 +23,6 @@
   "explore.add.pick": "Choose a dashboard",
   "explore.add.pickRequired": "Choose a dashboard.",
   "explore.add.submit": "Add panel",
-  "explore.add.message": "Panel added from Explore"
+  "explore.add.message": "Panel added from Explore",
+  "explore.aside": "Steps and actions"
 }

@@ -85,11 +85,7 @@ export function ExplorePage() {
       </EmptyState>
     );
   }
-  return (
-    <Page title={t("explore.title")} lead={t("explore.lead")}>
-      {body}
-    </Page>
-  );
+  return <Page title={t("explore.title")}>{body}</Page>;
 }
 
 function Explore({ orgId }: { orgId: string }) {
@@ -292,83 +288,179 @@ function Explore({ orgId }: { orgId: string }) {
             ))}
           </select>
         </div>
-        <TimeRangePicker
-          value={range}
-          onChange={(next) => {
-            setRange(next);
-            if (submitted !== null) {
-              run(next);
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="button button--primary"
-          onClick={() => run()}
-          disabled={!hasQuery(query, datasource.kind) || queryBlocked}
-        >
-          {result.isFetching ? t("explore.running") : t("explore.run")}
-        </button>
+        <div className="explore__run">
+          <TimeRangePicker
+            value={range}
+            onChange={(next) => {
+              setRange(next);
+              if (submitted !== null) {
+                run(next);
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => run()}
+            disabled={!hasQuery(query, datasource.kind) || queryBlocked}
+          >
+            {result.isFetching ? t("explore.running") : t("explore.run")}
+          </button>
+        </div>
       </div>
-      {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
-      {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
-      <QueryEditor
-        key={datasource.id}
-        orgId={orgId}
-        datasource={datasource}
-        query={query}
-        onChange={(next) => setQueries((current) => ({ ...current, [datasource.id]: next }))}
-        onRun={() => run()}
-        onPendingText={(pending) =>
-          setPendingText((current) =>
-            current[datasource.id] === pending ? current : { ...current, [datasource.id]: pending },
-          )
-        }
-        previewRun={() => {
-          // Previews run over the range Explore shows, resolved when asked; Explore has no variables.
-          const resolved = resolveRange(range, Date.now());
-          const now = Date.now();
-          return {
-            range: resolved.ok ? resolved.range : { from: now - 3_600_000, to: now },
-            variables: {},
-          };
-        }}
-      />
-      {takesDocuments ? (
-        <ProjectionEditor
-          projection={projection}
-          fields={[...new Set(resultFields)]}
-          onChange={(next) =>
-            // The projection joins the one list of steps, before the analysis steps.
-            setSteps((all) => asSteps(withProjection(all, REF_ID, next)))
-          }
-        />
-      ) : null}
-      {submitted === null ? (
-        <p className="explore__hint">{t("explore.hint")}</p>
-      ) : (
-        <section
-          className="explore__result"
-          aria-label={t("explore.result")}
-          aria-busy={result.isFetching}
-        >
-          <div className="explore__result-bar">
-            <Tabs idPrefix={tabsId} tab={tab} onTab={setTab} />
-            <div className="preference">
-              <label htmlFor={`${datasourceId}-panel`}>{t("explore.visualization")}</label>
-              <select
-                id={`${datasourceId}-panel`}
-                className="select"
-                value={type}
-                onChange={(event) => setPanelType(event.currentTarget.value)}
+      <div className="explore__body">
+        <div className="explore__main">
+          {rangeError === null ? null : <FormAlert>{rangeError}</FormAlert>}
+          {filterError === null ? null : <FormAlert>{filterError}</FormAlert>}
+          <QueryEditor
+            key={datasource.id}
+            orgId={orgId}
+            datasource={datasource}
+            query={query}
+            onChange={(next) => setQueries((current) => ({ ...current, [datasource.id]: next }))}
+            onRun={() => run()}
+            onPendingText={(pending) =>
+              setPendingText((current) =>
+                current[datasource.id] === pending
+                  ? current
+                  : { ...current, [datasource.id]: pending },
+              )
+            }
+            previewRun={() => {
+              // Previews run over the range Explore shows, resolved when asked; Explore has no variables.
+              const resolved = resolveRange(range, Date.now());
+              const now = Date.now();
+              return {
+                range: resolved.ok ? resolved.range : { from: now - 3_600_000, to: now },
+                variables: {},
+              };
+            }}
+          />
+          {takesDocuments ? (
+            <ProjectionEditor
+              projection={projection}
+              fields={[...new Set(resultFields)]}
+              onChange={(next) =>
+                // The projection joins the one list of steps, before the analysis steps.
+                setSteps((all) => asSteps(withProjection(all, REF_ID, next)))
+              }
+            />
+          ) : null}
+          {submitted === null ? (
+            <p className="explore__hint">{t("explore.hint")}</p>
+          ) : (
+            <section
+              className="explore__result"
+              aria-label={t("explore.result")}
+              aria-busy={result.isFetching}
+            >
+              <div className="explore__result-bar">
+                <Tabs idPrefix={tabsId} tab={tab} onTab={setTab} />
+                <div className="preference">
+                  <label htmlFor={`${datasourceId}-panel`}>{t("explore.visualization")}</label>
+                  <select
+                    id={`${datasourceId}-panel`}
+                    className="select"
+                    value={type}
+                    onChange={(event) => setPanelType(event.currentTarget.value)}
+                  >
+                    {choices.map(({ panel: choice }) => (
+                      <option key={choice.type} value={choice.type}>
+                        {t(choice.name)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {blocked ? (
+                  <p className="field__error" id={`${tabsId}-blocked`}>
+                    {t("documents.projection.blockedExplore")}
+                  </p>
+                ) : null}
+              </div>
+              {/* Both panels exist, so every tab's aria-controls points at an element. */}
+              <div
+                className="explore__panel"
+                role="tabpanel"
+                id={`${tabsId}-result`}
+                aria-labelledby={`${tabsId}-result-tab`}
+                hidden={tab !== "result"}
               >
-                {choices.map(({ panel: choice }) => (
-                  <option key={choice.type} value={choice.type}>
-                    {t(choice.name)}
-                  </option>
-                ))}
-              </select>
-            </div>
+                {tab === "result" ? (
+                  <PanelHostContext value={{ orgId }}>
+                    <PanelBody
+                      panel={panel}
+                      title={t("explore.result")}
+                      range={{ from: submitted.from, to: submitted.to }}
+                      pending={result.isPending}
+                      error={result.error}
+                      outcomes={outcomes}
+                      revision={`${submitted.run}:${current.pages.length}`}
+                      onFilter={
+                        isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
+                          ? (_refId, path, value) => {
+                              // The filter joins the query in the editor (the one that gave this
+                              // result, or the draft typed since) as a visible $match stage, and runs.
+                              // Text that does not parse, in the query or still in a field, is never
+                              // replaced: the filter waits for it.
+                              if (pendingText[datasource.id] === true) {
+                                setFilterError(t("documents.filter.refused.draft"));
+                                return;
+                              }
+                              const added = addMatch(parseMongoQuery(query), path, value);
+                              if ("refused" in added) {
+                                setFilterError(t(`documents.filter.refused.${added.refused}`));
+                                return;
+                              }
+                              setFilterError(null);
+                              setQueries((current) => ({
+                                ...current,
+                                [datasource.id]: added.query,
+                              }));
+                              run(range, added.query);
+                            }
+                          : undefined
+                      }
+                      stepsRun={stepsRun}
+                      kindOf={(id) => list.find((source) => source.id === id)?.kind}
+                    />
+                  </PanelHostContext>
+                ) : null}
+              </div>
+              <div
+                className="explore__panel"
+                role="tabpanel"
+                id={`${tabsId}-inspect`}
+                aria-labelledby={`${tabsId}-inspect-tab`}
+                hidden={tab !== "inspect"}
+              >
+                {tab === "inspect" ? <Inspect outcomes={outcomes} /> : null}
+              </div>
+              {nextCursor === undefined ? null : (
+                <div className="explore__more">
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    disabled={current.loading}
+                    onClick={() => void loadMore(nextCursor)}
+                  >
+                    {current.loading ? t("common.loading") : t("documents.more.load")}
+                  </button>
+                </div>
+              )}
+              {current.error === null ? null : <FormAlert>{current.error}</FormAlert>}
+            </section>
+          )}
+        </div>
+        {/* The steps and what to do with the result, beside it as on the blueprint. */}
+        <aside className="explore__aside" aria-label={t("explore.aside")}>
+          <StepsEditor
+            steps={steps}
+            onChange={setSteps}
+            refIds={[REF_ID]}
+            inputs={namedInputs(outcomes)}
+            run={stepsRun}
+          />
+          <div className="explore__aside-actions">
             {permissions.has("data:export") ? (
               <button
                 type="button"
@@ -391,91 +483,9 @@ function Explore({ orgId }: { orgId: string }) {
                 {t("explore.addToDashboard")}
               </button>
             ) : null}
-            {blocked ? (
-              <p className="field__error" id={`${tabsId}-blocked`}>
-                {t("documents.projection.blockedExplore")}
-              </p>
-            ) : null}
           </div>
-          {/* Both panels exist, so every tab's aria-controls points at an element. */}
-          <div
-            className="explore__panel"
-            role="tabpanel"
-            id={`${tabsId}-result`}
-            aria-labelledby={`${tabsId}-result-tab`}
-            hidden={tab !== "result"}
-          >
-            {tab === "result" ? (
-              <PanelHostContext value={{ orgId }}>
-                <PanelBody
-                  panel={panel}
-                  title={t("explore.result")}
-                  range={{ from: submitted.from, to: submitted.to }}
-                  pending={result.isPending}
-                  error={result.error}
-                  outcomes={outcomes}
-                  revision={`${submitted.run}:${current.pages.length}`}
-                  onFilter={
-                    isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
-                      ? (_refId, path, value) => {
-                          // The filter joins the query in the editor (the one that gave this
-                          // result, or the draft typed since) as a visible $match stage, and runs.
-                          // Text that does not parse, in the query or still in a field, is never
-                          // replaced: the filter waits for it.
-                          if (pendingText[datasource.id] === true) {
-                            setFilterError(t("documents.filter.refused.draft"));
-                            return;
-                          }
-                          const added = addMatch(parseMongoQuery(query), path, value);
-                          if ("refused" in added) {
-                            setFilterError(t(`documents.filter.refused.${added.refused}`));
-                            return;
-                          }
-                          setFilterError(null);
-                          setQueries((current) => ({ ...current, [datasource.id]: added.query }));
-                          run(range, added.query);
-                        }
-                      : undefined
-                  }
-                  stepsRun={stepsRun}
-                  kindOf={(id) => list.find((source) => source.id === id)?.kind}
-                />
-              </PanelHostContext>
-            ) : null}
-          </div>
-          <div
-            className="explore__panel"
-            role="tabpanel"
-            id={`${tabsId}-inspect`}
-            aria-labelledby={`${tabsId}-inspect-tab`}
-            hidden={tab !== "inspect"}
-          >
-            {tab === "inspect" ? <Inspect outcomes={outcomes} /> : null}
-          </div>
-          {nextCursor === undefined ? null : (
-            <div className="explore__more">
-              <button
-                type="button"
-                className="button button--secondary"
-                disabled={current.loading}
-                onClick={() => void loadMore(nextCursor)}
-              >
-                {current.loading ? t("common.loading") : t("documents.more.load")}
-              </button>
-            </div>
-          )}
-          {current.error === null ? null : <FormAlert>{current.error}</FormAlert>}
-        </section>
-      )}
-      {submitted === null ? null : (
-        <StepsEditor
-          steps={steps}
-          onChange={setSteps}
-          refIds={[REF_ID]}
-          inputs={namedInputs(outcomes)}
-          run={stepsRun}
-        />
-      )}
+        </aside>
+      </div>
       {exporting && submitted !== null ? (
         <ExportDialog
           frames={stepsRun.frames.map((f) => f.name)}
