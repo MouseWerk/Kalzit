@@ -53,8 +53,6 @@
   "toolbar.rail.collapsedRow": "folded",
   "toolbar.rail.collapseRow": "Fold row {title}",
   "toolbar.rail.expandRow": "Unfold row {title}",
-  "toolbar.rail.collapse": "Fold the tools away",
-  "toolbar.rail.expand": "Show the tools",
   "toolbar.share.copyLink": "Copy link with time range",
   "toolbar.share.linkCopied": "Link copied.",
   "toolbar.share.linkFailed": "The link could not be copied. Your browser did not allow access to the clipboard.",

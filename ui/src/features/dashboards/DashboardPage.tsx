@@ -1529,7 +1529,6 @@ function DashboardView({
                         ? undefined
                         : { onToggle: editActions.onRowToggle, onEdit: editActions.onRowEdit }
                     }
-                    userId={userId}
                     editing={draft !== null}
                     panels={model.panels}
                     rows={rows}

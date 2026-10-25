@@ -50,7 +50,12 @@ export function useMenuButton(options: { onOpen?: () => void } = {}) {
   }, [open, focusTarget]);
 
   const onOutsidePointer = useEffectEvent((event: PointerEvent) => {
-    if (event.target instanceof Node && anchorRef.current?.contains(event.target) !== true) {
+    // The menu counts as inside even when it is drawn elsewhere in the page (a portal).
+    if (
+      event.target instanceof Node &&
+      anchorRef.current?.contains(event.target) !== true &&
+      menuRef.current?.contains(event.target) !== true
+    ) {
       // Focus follows the click to wherever the user pointed, so it is not pulled back.
       closeMenu(false);
     }

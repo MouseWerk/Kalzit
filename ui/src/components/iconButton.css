@@ -29,7 +29,7 @@
     padding-inline: var(--space-1);
   }
 
-  /* Menus of a toolbar: drawn in the window under their button. */
+  /* Menus of a toolbar or the sidebar: drawn in the window next to their button (placeMenu). */
 
   .toolbar-menu {
     position: static;
@@ -38,11 +38,10 @@
   .toolbar-menu__list,
   .toolbar-menu__list.menu {
     position: fixed;
-    inset: var(--menu-top, 0) var(--menu-right, 0) auto auto;
+    inset: var(--menu-top, 0) auto auto var(--menu-left, 0);
     width: max-content;
     min-width: var(--size-field);
     max-width: var(--size-menu-max);
-    margin-block-start: var(--space-1);
   }
 
   .toolbar-menu__check {
