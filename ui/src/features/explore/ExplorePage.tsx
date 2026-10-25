@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type KeyboardEvent, useDeferredValue, useId, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { type KeyboardEvent, useDeferredValue, useEffect, useId, useRef, useState } from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
@@ -24,6 +25,7 @@ import {
 import { schemaOf } from "../../documents/schema";
 import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
+import { tabForKey } from "../../lib/tabKeys";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
@@ -122,6 +124,10 @@ function Explore({ orgId }: { orgId: string }) {
   }>({ of: null, pages: [], loading: false, error: null });
   const [range, setRange] = useState<TextRange>({ from: "now-1h", to: "now" });
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
+  // The "load more" request on its way; a new run or leaving the page stops it on the server.
+  const moreAbort = useRef<AbortController | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup is what runs when a new run starts
+  useEffect(() => () => moreAbort.current?.abort(), [submitted]);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [filterError, setFilterError] = useState<string | null>(null);
   // Per data source: whether its editor holds text that does not parse yet.
@@ -220,8 +226,21 @@ function Explore({ orgId }: { orgId: string }) {
   }
   if (datasource === undefined || query === null) {
     return (
-      <EmptyState icon="dataSources" title={t("explore.noDatasources.title")}>
-        {t("explore.noDatasources.text")}
+      <EmptyState
+        icon="dataSources"
+        title={t("explore.noDatasources.title")}
+        actions={
+          permissions.has("datasources:write") ? (
+            <Link to="/data-sources/new" search={{}} className="button button--secondary">
+              <Icon name="plus" />
+              {t("explore.noDatasources.add")}
+            </Link>
+          ) : undefined
+        }
+      >
+        {permissions.has("datasources:write")
+          ? t("explore.noDatasources.textAdmin")
+          : t("explore.noDatasources.text")}
       </EmptyState>
     );
   }
@@ -238,15 +257,22 @@ function Explore({ orgId }: { orgId: string }) {
     setMore({ of: run, pages: current.pages, loading: true, error: null });
     const keep = (update: (pages: DocumentSet[]) => typeof more) =>
       setMore((state) => (state.of === run ? update(state.pages) : state));
+    moreAbort.current?.abort();
+    const controller = new AbortController();
+    moreAbort.current = controller;
     try {
       const timeRange = { from: run.from, to: run.to };
-      const response = await runQuery(orgId, {
-        queries: [{ refId: REF_ID, datasourceId: run.datasourceId, query: run.query, cursor }],
-        timeRange,
-        maxDataPoints: MAX_DATA_POINTS,
-        intervalMs: intervalFor(timeRange),
-        variables: {},
-      });
+      const response = await runQuery(
+        orgId,
+        {
+          queries: [{ refId: REF_ID, datasourceId: run.datasourceId, query: run.query, cursor }],
+          timeRange,
+          maxDataPoints: MAX_DATA_POINTS,
+          intervalMs: intervalFor(timeRange),
+          variables: {},
+        },
+        controller.signal,
+      );
       const [outcome] = outcomesOf(response, [REF_ID]);
       if (outcome !== undefined && "result" in outcome && outcome.result.shape === "documents") {
         const page = outcome.result.documents;
@@ -259,6 +285,10 @@ function Explore({ orgId }: { orgId: string }) {
         keep((pages) => ({ of: run, pages, loading: false, error: message }));
       }
     } catch (problem) {
+      // Stopped on purpose (a new run, or the page was left): nothing to report.
+      if (controller.signal.aborted) {
+        return;
+      }
       keep((pages) => ({ of: run, pages, loading: false, error: errorMessage(t, problem) }));
     }
   }
@@ -618,13 +648,11 @@ function Tabs({
   const { t } = useI18n();
   const listRef = useRef<HTMLDivElement>(null);
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+    const next = tabForKey(TABS, tab, event.key);
+    if (next === undefined) {
       return;
     }
     event.preventDefault();
-    const index = TABS.indexOf(tab);
-    const next =
-      TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length] ?? "result";
     onTab(next);
     document.getElementById(`${idPrefix}-${next}-tab`)?.focus();
   }

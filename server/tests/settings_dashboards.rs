@@ -1375,7 +1375,14 @@ async fn dashboards_save_versions_and_refuse_stale_writes(t: TestApp) {
     for missing in ["9", "eins", "-1"] {
         assert_eq!(t.get(&format!("~/dashboards/{id}/versions/{missing}"), &t.owner).await.code(), "not_found");
     }
-    let back = t.post(&format!("~/dashboards/{id}/versions/1/restore"), json!({}), &t.owner).await;
+    // A restore that names the version it saw is refused once the dashboard was saved since,
+    // with the stored dashboard; the version it names now goes through.
+    let stale = t.post(&format!("~/dashboards/{id}/versions/1/restore?expectedVersion=1"), json!({}), &t.owner).await;
+    assert_eq!((stale.status, stale.code()), (StatusCode::CONFLICT, "version_conflict"), "{}", stale.body);
+    assert_eq!(stale.body["current"]["version"], json!(2));
+    let bad = t.post(&format!("~/dashboards/{id}/versions/1/restore?expected=2"), json!({}), &t.owner).await;
+    assert_eq!(bad.code(), "validation", "{}", bad.body);
+    let back = t.post(&format!("~/dashboards/{id}/versions/1/restore?expectedVersion=2"), json!({}), &t.owner).await;
     assert_eq!(
         (back.status, &back.body["version"], &back.body["title"]),
         (StatusCode::OK, &json!(3), &json!("Umsatz Übersicht")),
@@ -2310,14 +2317,37 @@ async fn a_reset_in_a_batch_brings_the_default_back(t: TestApp) {
         )
         .await;
     assert_eq!(reset.status, StatusCode::OK, "{}", reset.body);
-    assert_eq!((&reset.body["items"][0]["source"], &reset.body["items"][0]["version"]), (&json!("default"), &json!(0)));
-    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM server_settings WHERE key = 'appearance.density'")
-        .fetch_one(&t.state.db)
+    // The version keeps counting: the default applies, and the stored value is only a marker.
+    assert_eq!((&reset.body["items"][0]["source"], &reset.body["items"][0]["version"]), (&json!("default"), &json!(2)));
+    let stored: Vec<(String,)> = sqlx::query_as("SELECT value FROM server_settings WHERE key = 'appearance.density'")
+        .fetch_all(&t.state.db)
         .await
         .unwrap();
-    assert_eq!(rows, 0, "a reset stores nothing");
+    assert_eq!(stored, [("null".to_string(),)], "a reset stores no value of the setting");
     let list = t.get("/admin/settings", &t.owner).await;
     assert_eq!(setting(&list, "appearance.density")["source"], json!("default"));
+    assert_eq!(setting(&list, "appearance.density")["value"], json!("balanced"));
+    assert_eq!(setting(&list, "appearance.density")["version"], json!(2));
+
+    // A write from before the reset names version 1 (or 0) and is refused, it is not taken as a
+    // write over the fresh default; one that names the reset's version goes through.
+    for stale in [0, 1] {
+        let r = t
+            .patch("/admin/settings/appearance.density", json!({ "value": "compact", "version": stale }), &t.owner)
+            .await;
+        assert_eq!(r.code(), "version_conflict", "version {stale}: {}", r.body);
+    }
+    let fresh =
+        t.patch("/admin/settings/appearance.density", json!({ "value": "compact", "version": 2 }), &t.owner).await;
+    assert_eq!((fresh.status, &fresh.body["version"]), (StatusCode::OK, &json!(3)), "{}", fresh.body);
+    let again = t
+        .post(
+            "/admin/settings/batch",
+            json!({ "changes": [{ "key": "appearance.density", "reset": true, "version": 3 }] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(again.body["items"][0]["version"], json!(4), "{}", again.body);
 
     for bad in [
         json!({ "key": "appearance.density", "version": 0 }),

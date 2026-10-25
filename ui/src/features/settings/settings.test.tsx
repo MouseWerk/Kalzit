@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { checkAccent } from "../../appearance/contrast";
 import { installFakeServer } from "../../test/fakeServer";
 import { generatedUnion } from "../../test/generated";
@@ -156,7 +156,9 @@ describe("server settings rows", () => {
   });
 
   it("applies the default theme at once, with undo", async () => {
-    const { user, admin } = await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const { user, admin, server } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+    });
     const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
     expect(
       within(theme)
@@ -168,7 +170,43 @@ describe("server settings rows", () => {
     const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
     expect(stored).toMatchObject({ value: "dark", version: 1 });
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(stored).toMatchObject({ value: "system", version: 2 }));
+    // It had no value of its own: undo resets it rather than storing a copy of the default.
+    await waitFor(() =>
+      expect(stored).toMatchObject({ value: "system", version: 2, source: "default" }),
+    );
+    const batches = server.calls.filter((call) => call.path === "/api/admin/settings/batch");
+    expect(batches.at(-1)?.body).toEqual({
+      changes: [{ key: "appearance.default_theme", reset: true, version: 1 }],
+    });
+  });
+
+  it("sends a change made while another is saving afterwards, instead of dropping it", async () => {
+    const { user, admin } = await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    // Hold the first save on its way.
+    const fake = globalThis.fetch;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (first && init?.method === "PATCH") {
+        first = false;
+        await held;
+      }
+      return fake(input, init);
+    });
+    try {
+      await user.click(within(theme).getByRole("radio", { name: "Dark" }));
+      await user.click(within(theme).getByRole("radio", { name: "Light" }));
+      release();
+      const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
+      // The second change goes after the first, over the version the first one saved.
+      await waitFor(() => expect(stored).toMatchObject({ value: "light", version: 2 }));
+    } finally {
+      vi.stubGlobal("fetch", fake);
+    }
   });
 
   it("applies a changed default theme to the open app, and takes it back with undo", async () => {
@@ -336,9 +374,10 @@ describe("export and import", () => {
     const rows = admin.serverSettings.find((s) => s.key === "datasources.max_rows");
     expect(rows).toMatchObject({ value: 500, version: 1 });
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    // The setting had no value of its own, so undo resets it instead of storing the default.
+    // The setting had no value of its own, so undo resets it instead of storing the default;
+    // the version keeps counting.
     await waitFor(() =>
-      expect(rows).toMatchObject({ value: 100000, version: 0, source: "default" }),
+      expect(rows).toMatchObject({ value: 100000, version: 2, source: "default" }),
     );
     const batches = server.calls.filter((call) => call.path === "/api/admin/settings/batch");
     expect(batches.at(-1)?.body).toEqual({

@@ -9,8 +9,11 @@ import "./shared.css";
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** What Tab reaches in `root`: not disabled, and not inside a hidden or inert part (a tab panel). */
 function focusables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (element) => element.closest("[hidden], [inert]") === null,
+  );
 }
 
 interface DialogProps {
@@ -79,7 +82,11 @@ export function Dialog({
       event.preventDefault();
       return;
     }
-    if (event.shiftKey && document.activeElement === first) {
+    // Focus on the dialog itself (after a click on its background) counts as before the first.
+    if (
+      event.shiftKey &&
+      (document.activeElement === first || document.activeElement === ref.current)
+    ) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {

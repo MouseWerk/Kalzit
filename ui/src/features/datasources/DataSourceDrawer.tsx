@@ -4,6 +4,7 @@ import type { Shape } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { tabForKey } from "../../lib/tabKeys";
 import { zoneOption } from "../../lib/timeSettings";
 import { useOrgPermissions } from "../../org/useOrg";
 import { AccessDialog } from "../admin/access";
@@ -72,19 +73,11 @@ export function DataSourceDrawer({
   const status = statusOf(entry);
 
   function onTabKey(event: KeyboardEvent<HTMLDivElement>) {
-    const index = tabs.indexOf(tab as never);
-    const target: Record<string, number> = {
-      ArrowRight: (index + 1) % tabs.length,
-      ArrowLeft: (index + tabs.length - 1) % tabs.length,
-      Home: 0,
-      End: tabs.length - 1,
-    };
-    const position = target[event.key];
-    if (position === undefined) {
+    const next = tabForKey(tabs, tab as (typeof tabs)[number], event.key);
+    if (next === undefined) {
       return;
     }
     event.preventDefault();
-    const next = tabs[position] ?? "overview";
     setChosen(next);
     document.getElementById(`${tabsId}-${next}-tab`)?.focus();
   }

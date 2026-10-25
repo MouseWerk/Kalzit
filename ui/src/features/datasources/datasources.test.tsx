@@ -265,6 +265,10 @@ describe("data source list", () => {
       expect(text.textContent).toContain(kind.name);
     }
     expect(text.textContent).toContain("MongoDB");
+    // The way forward is in the empty list itself, for those who may add a source.
+    expect(
+      screen.getByRole("link", { name: "Add the first data source" }).getAttribute("href"),
+    ).toBe("/data-sources/new");
   });
 
   it("shows viewers without a grant an empty list and no Explore", async () => {
@@ -272,6 +276,7 @@ describe("data source list", () => {
     // The server lists only what the caller may read, so a viewer without a grant sees nothing.
     expect(await screen.findByRole("heading", { name: "No data sources yet" })).toBeTruthy();
     expect(screen.getByText(/the data sources your role or access given to you/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Add the first data source" })).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     expect(within(nav).getByRole("link", { name: "Data sources" })).toBeTruthy();
     expect(within(nav).queryByRole("link", { name: "Explore" })).toBeNull();

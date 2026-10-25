@@ -497,11 +497,13 @@ describe("dashboard page", () => {
     expect(within(crumbs).getByText("Sales overview").getAttribute("aria-current")).toBe("page");
     await waitFor(() => expect(server.areas.shell.views[0]?.dashboardId).toBe("d-sales"));
 
-    const star = await screen.findByRole("button", { name: "Star" });
+    // One name in both states; aria-pressed says which.
+    const star = await screen.findByRole("button", { name: "Favorite" });
     expect(star.getAttribute("aria-pressed")).toBe("false");
     await user.click(star);
-    const starred = await screen.findByRole("button", { name: "Starred" });
-    expect(starred.getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(star.getAttribute("aria-pressed")).toBe("true"));
+    const starred = screen.getByRole("button", { name: "Favorite" });
+    expect(starred).toBe(star);
     expect(server.areas.shell.stars.map((s) => s.dashboardId)).toEqual(["d-sales"]);
     await user.click(starred);
     await waitFor(() => expect(server.areas.shell.stars).toEqual([]));
@@ -510,13 +512,13 @@ describe("dashboard page", () => {
   it("takes a failed star back and says so", async () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
-    const star = await screen.findByRole("button", { name: "Star" });
+    const star = await screen.findByRole("button", { name: "Favorite" });
     server.failNext("/api/orgs/o1/dashboards/d-sales/star", 503, "busy", "PUT");
     await user.click(star);
     expect((await screen.findByText(/server is busy/)).closest('[role="alert"]')).not.toBeNull();
-    expect((await screen.findByRole("button", { name: "Star" })).getAttribute("aria-pressed")).toBe(
-      "false",
-    );
+    expect(
+      (await screen.findByRole("button", { name: "Favorite" })).getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 });
 

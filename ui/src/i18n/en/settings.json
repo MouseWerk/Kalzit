@@ -60,7 +60,7 @@
   "settings.off": "Off",
   "settings.inherit": "Like the server",
   "settings.listHint": "One entry per line.",
-  "settings.browserZone": "The browser's time zone",
+  "settings.browserZone": "The browser’s time zone",
   "settings.fontSize": "{size} px",
   "settings.density.compact": "Compact",
   "settings.density.balanced": "Balanced",

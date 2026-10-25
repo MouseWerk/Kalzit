@@ -89,12 +89,16 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
         <BrandMark />
       </span>
       <span className="org-switcher__text">
-        <span className="org-switcher__name truncate">{name}</span>
+        <span className="org-switcher__name truncate" title={name}>
+          {name}
+        </span>
         {/* A space between the parts, so the accessible name reads as words. */}
         {detail === null ? null : (
           <>
             {" "}
-            <span className="org-switcher__role truncate">{detail}</span>
+            <span className="org-switcher__role truncate" title={detail}>
+              {detail}
+            </span>
           </>
         )}
       </span>
@@ -162,7 +166,9 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
                   }}
                 >
                   <Icon name="check" className="menu__check" />
-                  <span className="truncate">{option.name}</span>
+                  <span className="truncate" title={option.name}>
+                    {option.name}
+                  </span>
                 </button>
               ))}
             </div>
@@ -194,7 +200,9 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
                     }}
                   >
                     <Icon name="check" className="menu__check" />
-                    <span className="truncate">{option?.name ?? t("shell.org.team.allAreas")}</span>
+                    <span className="truncate" title={option?.name ?? t("shell.org.team.allAreas")}>
+                      {option?.name ?? t("shell.org.team.allAreas")}
+                    </span>
                   </button>
                 ))}
               </div>

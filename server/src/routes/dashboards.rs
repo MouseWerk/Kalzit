@@ -1032,15 +1032,27 @@ async fn version(
 }
 
 /// Saves an older version's model as a new version; the history keeps everything in between.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestoreQuery {
+    /// The current version the caller saw; a dashboard saved since answers `version_conflict`,
+    /// so restoring an old version never silently replaces a save the caller has not seen.
+    expected_version: Option<i64>,
+}
+
 async fn restore_version(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
     Path((_, id, number)): Path<(String, String, String)>,
+    QueryParams(q): QueryParams<RestoreQuery>,
 ) -> ApiResult<Json<Dashboard>> {
     let row = load(&state, &ctx, &id, Permission::DashboardsWrite).await?;
     if row.deleted_at.is_some() {
         return Err(conflict("the dashboard is in the trash; restore it first"));
+    }
+    if q.expected_version.is_some_and(|v| v != row.version) {
+        return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
     let (summary, raw) = load_version(&state, &id, &number).await?;
     let stored: Value = serde_json::from_str(&raw).map_err(|e| ApiError::internal("dashboards", e))?;

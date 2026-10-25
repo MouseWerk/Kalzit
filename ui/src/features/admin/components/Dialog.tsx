@@ -18,8 +18,11 @@ import "../admin.css";
 const FOCUSABLE =
   'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
+/** What Tab reaches in `root`: not disabled, and not inside a hidden or inert part. */
 function focusables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (element) => element.closest("[hidden], [inert]") === null,
+  );
 }
 
 export interface DialogProps {

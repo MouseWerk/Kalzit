@@ -140,6 +140,18 @@ describe("dashboard browser", () => {
     expect(screen.getByRole("link", { name: "Headcount" })).toBeTruthy();
   });
 
+  it("offers to clear a search that found nothing", async () => {
+    setup("admin");
+    const { user } = renderApp("/dashboards");
+    await screen.findByRole("link", { name: "Sales" });
+    const field = screen.getByRole("searchbox", { name: "Search dashboards" }) as HTMLInputElement;
+    await user.type(field, "zzz");
+    expect(await screen.findByRole("heading", { name: "No matching dashboards" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
+    expect(field.value).toBe("");
+  });
+
   it("creates a dashboard and opens it in edit mode", async () => {
     const server = setup();
     const { user, location } = renderApp("/dashboards");
@@ -1017,6 +1029,22 @@ describe("history and trash", () => {
     expect(latest(stored)).toMatchObject({ version: 3, restoredFrom: 1, message: "" });
     expect(latest(stored).model.panels).toHaveLength(3);
     expect(screen.getAllByRole("article")).toHaveLength(3);
+  });
+
+  it("does not restore over a save made after the list was opened", async () => {
+    const server = setup();
+    const stored = storedSales(server);
+    saveAsOther(stored, emptyModel("Sales"), "Removed everything");
+    const { user } = renderApp("/dashboards/d-sales/versions");
+    await user.click(await screen.findByRole("button", { name: "Restore… version 1" }));
+    // Someone else saves while the dialog is open.
+    saveAsOther(stored, emptyModel("Sales"), "Saved meanwhile");
+    const dialog = screen.getByRole("dialog", { name: "Restore this version?" });
+    await user.click(within(dialog).getByRole("button", { name: "Restore" }));
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect(latest(stored)).toMatchObject({ version: 3, message: "Saved meanwhile" });
+    const call = server.calls.filter((c) => c.path.includes("/versions/1/restore")).at(-1);
+    expect(call?.path).toContain("expectedVersion=2");
   });
 
   it("lists a trashed dashboard even when its folder is not in the caller's list", async () => {

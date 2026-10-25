@@ -7,6 +7,7 @@
   "libraryPanels.pickSubmit": "Hinzufügen",
   "libraryPanels.search": "Bibliothekspanels suchen",
   "libraryPanels.empty": "Keine Bibliothekspanels",
+  "libraryPanels.openDashboards": "Zu den Dashboards",
   "libraryPanels.emptyText": "Mach ein Panel in seinem Editor zum Bibliothekspanel und füge es dann anderen Dashboards hinzu.",
   "libraryPanels.uses": "In {count} Dashboards",
   "libraryPanels.where": "Ordner: {folder}",

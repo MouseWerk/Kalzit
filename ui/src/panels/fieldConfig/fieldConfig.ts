@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import type { Field, FieldType } from "../../api/generated/shapes";
+import { clipChars } from "../../lib/chars";
 import { getTimeZone } from "../../lib/timeSettings";
 import { formatValue, isNumeric, seriesName, toNumber } from "../frame";
 import {
@@ -206,7 +207,7 @@ function finite(value: unknown): number | undefined {
 }
 
 function text(value: unknown, max: number): string | undefined {
-  return typeof value === "string" ? value.slice(0, max) : undefined;
+  return typeof value === "string" ? clipChars(value, max) : undefined;
 }
 
 function parseThresholds(value: unknown): Thresholds | undefined {

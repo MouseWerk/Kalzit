@@ -445,7 +445,9 @@ function RowHeader({
         <span className="dash-row__chevron" aria-hidden="true">
           {collapsed ? "▸" : "▾"}
         </span>
-        <span className="dash-row__title truncate">{title}</span>
+        <span className="dash-row__title truncate" title={title}>
+          {title}
+        </span>
         {collapsed && section.panels.length > 0 ? (
           <span className="dash-row__count">
             {t("dashboardTools.rows.panelCount", { count: section.panels.length })}

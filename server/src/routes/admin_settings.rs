@@ -457,15 +457,15 @@ async fn batch(
             Some(value) => settings::store(&mut tx, org_id, def.key, value, change.version, &user.id, now)
                 .await?
                 .map(|version| (version, stored_view(value.clone(), version, user, now))),
-            None => settings::reset(&mut tx, org_id, def.key, change.version).await?.then(|| {
+            None => settings::reset(&mut tx, org_id, def.key, change.version, &user.id, now).await?.map(|version| {
                 let default = Effective {
                     value: (def.default)(),
                     source: Source::Default,
-                    version: 0,
-                    updated_by: None,
-                    updated_at: None,
+                    version,
+                    updated_by: (version > 0).then(|| user.id.clone()),
+                    updated_at: (version > 0).then_some(now),
                 };
-                (0, default)
+                (version, default)
             }),
         };
         let Some((version, effective)) = done else {

@@ -252,7 +252,9 @@ function Outline({
           onClick={() => (onSelect === undefined ? onGoTo(panel) : onSelect(panel))}
         >
           <Icon name={panelIcon(panel.type)} />
-          <span className="truncate">{titleOf(panel)}</span>
+          <span className="truncate" title={titleOf(panel)}>
+            {titleOf(panel)}
+          </span>
           {name === undefined ? null : <span className="visually-hidden">{t(name)}</span>}
           <span className="dash-pane__size" aria-hidden="true">
             {panel.grid.w}×{panel.grid.h}
@@ -305,7 +307,9 @@ function Outline({
                 return (
                   <li key={row.id}>
                     <div className="dash-pane__row">
-                      <span className="dash-pane__row-title truncate">{rowTitle}</span>
+                      <span className="dash-pane__row-title truncate" title={rowTitle}>
+                        {rowTitle}
+                      </span>
                       <span className="dash-pane__count">{all}</span>
                       {row.collapsed ? (
                         <span className="dash-pane__note">{t("toolbar.rail.collapsedRow")}</span>
@@ -497,7 +501,9 @@ function AddPane({
                 onClick={run(() => actions.addPanel(tile.type))}
               >
                 <Icon name={tile.icon} />
-                <span className="truncate">{tile.label}</span>
+                <span className="truncate" title={tile.label}>
+                  {tile.label}
+                </span>
               </button>
             ))}
             {needle === "" ? (
@@ -507,7 +513,9 @@ function AddPane({
                 onClick={run(() => actions.addPanel())}
               >
                 <Icon name="more" />
-                <span className="truncate">{t("toolbar.add.all")}</span>
+                <span className="truncate" title={t("toolbar.add.all")}>
+                  {t("toolbar.add.all")}
+                </span>
               </button>
             ) : null}
           </div>

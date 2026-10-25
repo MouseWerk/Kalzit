@@ -162,7 +162,11 @@ function GaugePanel({
           {items.map((item, index) => (
             <li key={item.index} className="gauge__item" onPointerEnter={() => hover(index)}>
               <Gauge item={item} active={active === index} markers={options.showThresholdMarkers} />
-              {items.length > 1 ? <span className="gauge__name truncate">{item.name}</span> : null}
+              {items.length > 1 ? (
+                <span className="gauge__name truncate" title={item.name}>
+                  {item.name}
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>

@@ -41,12 +41,13 @@ export function Breadcrumbs({
               {crumb.link === undefined || last ? (
                 <span
                   className="breadcrumbs__current truncate"
+                  title={crumb.label}
                   aria-current={last ? "page" : undefined}
                 >
                   {crumb.label}
                 </span>
               ) : (
-                <Link {...crumb.link} className="breadcrumbs__link truncate">
+                <Link {...crumb.link} className="breadcrumbs__link truncate" title={crumb.label}>
                   {crumb.label}
                 </Link>
               )}

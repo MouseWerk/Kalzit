@@ -8,7 +8,8 @@ const GAP_PX = 6;
  * one, next to the focused control, with the same text. Screen readers already hear the
  * control's name, so it is hidden from them. Entries with sub-pages open their flyout instead.
  * Escape hides it (without taking the key from the page) until the next focus, and a pointer
- * over the sidebar hides it, so it never shows next to the native tooltip.
+ * over the sidebar hides it, so it never shows next to the native tooltip. Its place is measured
+ * once, so scrolling (the rail or the page) and resizing hide it instead of leaving it behind.
  */
 export function RailTooltip({
   rail,
@@ -63,8 +64,18 @@ export function RailTooltip({
         setTarget(null);
       }
     }
+    function hide() {
+      setTarget(null);
+    }
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    // Capture: scroll events do not bubble, and the rail scrolls inside the sidebar.
+    document.addEventListener("scroll", hide, { capture: true, passive: true });
+    window.addEventListener("resize", hide);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("scroll", hide, { capture: true });
+      window.removeEventListener("resize", hide);
+    };
   }, [shown]);
 
   useLayoutEffect(() => {

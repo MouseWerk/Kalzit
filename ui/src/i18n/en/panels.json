@@ -205,7 +205,7 @@
   "panels.bargauge.reducerHint": "Used when every field becomes one bar. A result with a name and a value per row shows one bar per row.",
   "panels.bargauge.valueDisplay": "Value",
   "panels.bargauge.valueDisplay.text": "In the text color",
-  "panels.bargauge.valueDisplay.color": "In the bar's color",
+  "panels.bargauge.valueDisplay.color": "In the bar’s color",
   "panels.bargauge.valueDisplay.hidden": "Hidden",
   "panels.bargauge.namePlacement": "Names",
   "panels.bargauge.namePlacement.left": "Before the bar",

@@ -5,6 +5,8 @@
   "dashboards.empty.title": "No dashboards yet",
   "dashboards.empty.text": "Dashboards you can open will appear here. Create one, or add a query from Explore to a new dashboard.",
   "dashboards.empty.search": "No matching dashboards",
+  "dashboards.empty.clearSearch": "Clear search",
+  "dashboards.empty.create": "Create a dashboard here",
   "dashboards.empty.searchText": "No dashboard title contains this text. Check the spelling or search in all folders.",
   "dashboards.noOrg.title": "No organization",
   "dashboards.noOrg.text": "Dashboards belong to an organization. Ask an admin to add you to one.",

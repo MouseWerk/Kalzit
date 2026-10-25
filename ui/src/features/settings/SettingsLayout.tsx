@@ -120,7 +120,9 @@ export function SettingsLayout() {
                         className="settings-nav__link"
                         aria-current={section.id === current ? "page" : undefined}
                       >
-                        <span className="truncate">{sectionLabel(t, section, org?.name)}</span>
+                        <span className="truncate" title={sectionLabel(t, section, org?.name)}>
+                          {sectionLabel(t, section, org?.name)}
+                        </span>
                       </Link>
                     </li>
                   ))}
@@ -262,11 +264,13 @@ function SettingsSearch({
             </div>
           ))}
         </div>
-        {open && results.length === 0 ? (
-          <p className="settings-search__none" role="status">
-            {t("settings.search.none", { query: query.trim() })}
-          </p>
-        ) : null}
+        <div className="live-region" role="status">
+          {open && results.length === 0 ? (
+            <p className="settings-search__none">
+              {t("settings.search.none", { query: query.trim() })}
+            </p>
+          ) : null}
+        </div>
       </div>
     </div>
   );

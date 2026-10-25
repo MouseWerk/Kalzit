@@ -56,6 +56,12 @@ describe("catalogs", () => {
   });
 
   it("use German quotes „…“ in German and “…” in English, never straight quotes", () => {
+    // Apostrophes too: ’ (data source’s), never the typewriter '.
+    for (const language of ["de", "en"] as const) {
+      for (const [key, message] of entries(language)) {
+        expect(message.includes("'"), `${language}:${key} uses ' instead of ’`).toBe(false);
+      }
+    }
     for (const [key, message] of entries("de")) {
       expect(/["”]/.test(message), `de:${key}`).toBe(false);
       expect((message.match(/„/g) ?? []).length, `de:${key}`).toBe(

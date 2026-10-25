@@ -179,7 +179,18 @@ function DataSourceList({
             {t("datasources.trash.emptyText")}
           </EmptyState>
         ) : (
-          <EmptyState icon="dataSources" title={t("datasources.empty.title")}>
+          <EmptyState
+            icon="dataSources"
+            title={t("datasources.empty.title")}
+            actions={
+              canCreate ? (
+                <Link to="/data-sources/new" search={{}} className="button button--secondary">
+                  <Icon name="plus" />
+                  {t("datasources.empty.addFirst")}
+                </Link>
+              ) : undefined
+            }
+          >
             {!canCreate
               ? t("datasources.empty.textReadOnly")
               : names.length === 0

@@ -15,6 +15,7 @@ interface Conflict {
   key: string;
   mine: unknown;
   stored: unknown;
+  storedSource: string;
   version: number;
 }
 
@@ -48,9 +49,15 @@ function useShownValue(): (key: string, value: unknown) => string {
 export function useSettingChanges({
   queryKey,
   patch,
+  reset,
 }: {
   queryKey: QueryKey;
   patch: (key: string, value: unknown, version: number) => Promise<Setting>;
+  /**
+   * Removes the stored value so the default applies again. Undo of a change to a setting that
+   * had no value of its own uses it, so undo does not store a copy of the default.
+   */
+  reset?: (key: string, version: number) => Promise<Setting>;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -58,11 +65,46 @@ export function useSettingChanges({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   // A value the server rejected, shown at its setting's field.
   const [rejected, setRejected] = useState<{ key: string; message: string } | null>(null);
+  // Changes committed while a save is on its way, the latest per setting; they are sent in turn
+  // with the version the settings have then, instead of being dropped.
+  const queued = useRef(new Map<string, unknown>());
+
+  function sendNext() {
+    const next = queued.current.entries().next();
+    if (next.done === true) {
+      return;
+    }
+    const [key, value] = next.value;
+    queued.current.delete(key);
+    const setting = queryClient.getQueryData<Setting[]>(queryKey)?.find((s) => s.key === key);
+    if (setting === undefined) {
+      sendNext();
+      return;
+    }
+    save.mutate({
+      key,
+      value,
+      previous: setting.value,
+      previousSource: setting.source,
+      version: setting.version,
+    });
+  }
 
   const save = useMutation({
-    mutationFn: (input: { key: string; value: unknown; previous: unknown; version: number }) =>
-      patch(input.key, input.value, input.version),
-    onSuccess: async (saved, { previous }) => {
+    mutationFn: (input: {
+      key: string;
+      value: unknown;
+      previous: unknown;
+      /** Where the value before this change came from; undo resets a `default`. */
+      previousSource: string;
+      version: number;
+      /** Remove the stored value instead of writing `value` (the undo of such a change). */
+      reset?: boolean;
+    }) =>
+      input.reset === true && reset !== undefined
+        ? reset(input.key, input.version)
+        : patch(input.key, input.value, input.version),
+    onSuccess: async (saved, { previous, previousSource }) => {
       setRejected(null);
       await queryClient.invalidateQueries({ queryKey });
       notice.show({
@@ -72,11 +114,17 @@ export function useSettingChanges({
             key: saved.key,
             value: previous,
             previous: saved.value,
+            previousSource: saved.source,
             version: saved.version,
+            reset: previousSource === "default",
           }),
       });
     },
+    // The next queued change starts once this one is done, with the versions it left.
+    onSettled: () => queueMicrotask(sendNext),
     onError: (error, { key, value }) => {
+      // A later change of the same setting would go over what this error is about.
+      queued.current.delete(key);
       if (isApiError(error, "validation") && error.field === "value") {
         notice.clear();
         setRejected({ key, message: errorText(t, error, SETTING_ERRORS) });
@@ -99,7 +147,13 @@ export function useSettingChanges({
         settings?.map((setting) => (setting.key === key ? stored : setting)),
       );
       void queryClient.invalidateQueries({ queryKey });
-      setConflict({ key, mine: value, stored: stored.value, version: stored.version });
+      setConflict({
+        key,
+        mine: value,
+        stored: stored.value,
+        storedSource: stored.source,
+        version: stored.version,
+      });
     },
   });
 
@@ -109,10 +163,19 @@ export function useSettingChanges({
     rejected,
     pending: save.isPending,
     apply: (setting: Setting, value: unknown) => {
-      if (!save.isPending) {
-        setRejected(null);
-        save.mutate({ key: setting.key, value, previous: setting.value, version: setting.version });
+      setRejected(null);
+      if (save.isPending) {
+        queued.current.delete(setting.key);
+        queued.current.set(setting.key, value);
+        return;
       }
+      save.mutate({
+        key: setting.key,
+        value,
+        previous: setting.value,
+        previousSource: setting.source,
+        version: setting.version,
+      });
     },
     keepStored: () => setConflict(null),
     overwrite: () => {
@@ -122,6 +185,7 @@ export function useSettingChanges({
           key: conflict.key,
           value: conflict.mine,
           previous: conflict.stored,
+          previousSource: conflict.storedSource,
           version: conflict.version,
         });
       }

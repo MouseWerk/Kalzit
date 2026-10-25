@@ -75,8 +75,32 @@ pub async fn connect_with(url: &str, max_connections: u32, busy_timeout: Duratio
         }
     }
     drop(conn);
+    if let Err(e) = refuse_newer_schema(&pool).await {
+        pool.close().await;
+        return Err(e);
+    }
     MIGRATOR.run(&pool).await.context("running database migrations")?;
     Ok(pool)
+}
+
+/// A database a newer Kalzit migrated cannot be used by this one (its tables changed in ways
+/// this build does not know). Says so in words, instead of the migrator's "migration N was
+/// previously applied but is missing", and names the way back. A new database has no migration
+/// table yet and passes.
+async fn refuse_newer_schema(pool: &AnyPool) -> Result<()> {
+    let stored: Option<(i64,)> = sqlx::query_as("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success")
+        .fetch_one(pool)
+        .await
+        .ok();
+    let latest = latest_migration();
+    match stored {
+        Some((stored,)) if stored > latest => anyhow::bail!(
+            "this database was written by a newer Kalzit (schema {stored}; this version knows up to {latest}). \
+             Install that newer version again, or restore the database backup this version made before the \
+             update (updates/backups in the data directory)"
+        ),
+        _ => Ok(()),
+    }
 }
 
 /// A second, small pool on the same SQLite file whose connections wait only `busy_timeout` for a
@@ -720,6 +744,29 @@ mod tests {
             assert!(read_pool(&memory, url, 1).is_none(), "{url}");
             assert!(side_pool(&memory, url, 1, Duration::from_millis(10)).is_none(), "{url}");
         }
+    }
+
+    /// A database a newer Kalzit migrated is refused with words that say so and name the backup,
+    /// not with the migrator's message about a missing migration.
+    #[tokio::test]
+    async fn a_database_from_a_newer_version_is_refused_in_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = crate::config::sqlite_url(&dir.path().join("k.db"));
+        let pool = connect(&url, 1).await.unwrap();
+        let future = latest_migration() + 1;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+             VALUES ({future}, 'from a newer Kalzit', 1, X'00', 0)"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let err = format!("{:#}", connect(&url, 1).await.unwrap_err());
+        assert!(err.contains("written by a newer Kalzit"), "{err}");
+        assert!(err.contains(&format!("schema {future}")) && err.contains("updates/backups"), "{err}");
+        assert!(!err.contains("previously applied"), "{err}");
+        dir.close().unwrap();
     }
 
     #[tokio::test]

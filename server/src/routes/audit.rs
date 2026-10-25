@@ -265,18 +265,18 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
     purge_expired_in(state, &state.db).await
 }
 
+/// Events deleted per transaction, so a large backlog (a shortened retention, a first run after
+/// a long time) never holds the write lock for long; requests write in between.
+const PURGE_BATCH: i64 = 5_000;
+
 /// `purge_expired` through `db`: the hourly job uses the background pool.
 async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
     let days = settings::get(state, "audit.retention_days").await?;
     let days = days.as_i64().ok_or_else(|| ApiError::internal("audit", "audit.retention_days is not a number"))?;
     let now = state.clock.now_ms();
     let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
+    let deleted = delete_before(db, cutoff, PURGE_BATCH).await?;
     let mut tx = crate::db::begin(db).await?;
-    let deleted = sqlx::query("DELETE FROM audit_events WHERE created_at < $1")
-        .bind(cutoff)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
     if deleted > 0 {
         let event = AuditEvent {
             org_id: None,
@@ -292,6 +292,27 @@ async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64
     }
     crate::db::commit(tx).await?;
     Ok(deleted)
+}
+
+/// Deletes the events from before `cutoff`, `batch` at a time, each batch in its own transaction.
+async fn delete_before(db: &sqlx::AnyPool, cutoff: i64, batch: i64) -> ApiResult<u64> {
+    let mut deleted = 0;
+    loop {
+        let mut tx = crate::db::begin(db).await?;
+        let done = sqlx::query(
+            "DELETE FROM audit_events WHERE id IN (SELECT id FROM audit_events WHERE created_at < $1 LIMIT $2)",
+        )
+        .bind(cutoff)
+        .bind(batch)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        crate::db::commit(tx).await?;
+        deleted += done;
+        if done < batch as u64 {
+            return Ok(deleted);
+        }
+    }
 }
 
 /// Runs `purge_expired` every hour, like the session cleanup. The retention is a privacy rule,
@@ -323,6 +344,24 @@ pub fn spawn_retention_on(state: AppState, schedule: crate::db::Schedule) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Old events go in batches, each its own transaction, until none is left; newer ones stay.
+    #[tokio::test]
+    async fn expired_events_are_deleted_in_batches() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for i in 0..8_i64 {
+            sqlx::query("INSERT INTO audit_events (id, action, summary, created_at) VALUES ($1, 'x.y', '{}', $2)")
+                .bind(format!("e{i}"))
+                .bind(if i < 7 { 10 + i } else { 1_000 })
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        assert_eq!(delete_before(&db, 500, 3).await.unwrap(), 7);
+        let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events").fetch_one(&db).await.unwrap();
+        assert_eq!(left, 1);
+        assert_eq!(delete_before(&db, 500, 3).await.unwrap(), 0);
+    }
 
     /// The audit pages use the indexes on SQLite instead of scanning every event (checked with
     /// EXPLAIN QUERY PLAN), for an organization with and without hidden folders, by resource,

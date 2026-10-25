@@ -737,7 +737,8 @@ pub fn resolve(
             return Ok(row(value, Source::Env));
         }
     }
-    if let Some(stored) = stored {
+    // A reset leaves `null` behind with its version (`RESET_VALUE`): the default applies.
+    if let Some(stored) = stored.filter(|s| !s.value.is_null()) {
         match validate(def, &stored.value) {
             Ok(()) => return Ok(row(stored.value.clone(), Source::Database)),
             // A rule tightened by an update must not break the server; the default applies until
@@ -923,11 +924,23 @@ pub fn editable(def: &SettingDef, effective: &Effective) -> bool {
     def.ui_editable && matches!(effective.source, Source::Database | Source::Default)
 }
 
-/// Deletes a setting's stored value if its version is still `expected`, so the default applies
-/// again (rather than a stored copy of it). Answers false when someone else saved first; a setting
-/// never saved (`expected` 0) has nothing to delete and answers true. Same transaction and cache
-/// rules as `store`.
-pub async fn reset(conn: &mut sqlx::AnyConnection, org_id: Option<&str>, key: &str, expected: i64) -> ApiResult<bool> {
+/// The stored value of a setting that was reset: the row stays with its version, so versions keep
+/// counting up and a write that names a version from before the reset is refused. No setting
+/// accepts `null`, so it never stands for a real value.
+const RESET_VALUE: &str = "null";
+
+/// Removes a setting's stored value if its version is still `expected`, so the default applies
+/// again (rather than a stored copy of it). The row stays as a marker with the next version (see
+/// `RESET_VALUE`). Answers the new version (0 for a setting never saved, which has nothing to
+/// remove), or `None` when someone else saved first. Same transaction and cache rules as `store`.
+pub async fn reset(
+    conn: &mut sqlx::AnyConnection,
+    org_id: Option<&str>,
+    key: &str,
+    expected: i64,
+    user_id: &str,
+    now_ms: i64,
+) -> ApiResult<Option<i64>> {
     if expected == 0 {
         let stored: Option<(i64,)> = match org_id {
             None => {
@@ -944,27 +957,42 @@ pub async fn reset(conn: &mut sqlx::AnyConnection, org_id: Option<&str>, key: &s
                     .await?
             }
         };
-        return Ok(stored.is_none());
+        return Ok(stored.is_none().then_some(0));
     }
+    let next = expected + 1;
     let affected = match org_id {
         None => {
-            sqlx::query("DELETE FROM server_settings WHERE key = $1 AND version = $2")
-                .bind(key)
-                .bind(expected)
-                .execute(&mut *conn)
-                .await?
+            sqlx::query(
+                "UPDATE server_settings SET value = $1, version = $2, updated_by = $3, updated_at = $4 \
+                 WHERE key = $5 AND version = $6",
+            )
+            .bind(RESET_VALUE)
+            .bind(next)
+            .bind(user_id)
+            .bind(now_ms)
+            .bind(key)
+            .bind(expected)
+            .execute(&mut *conn)
+            .await?
         }
         Some(org) => {
-            sqlx::query("DELETE FROM org_settings WHERE org_id = $1 AND key = $2 AND version = $3")
-                .bind(org)
-                .bind(key)
-                .bind(expected)
-                .execute(&mut *conn)
-                .await?
+            sqlx::query(
+                "UPDATE org_settings SET value = $1, version = $2, updated_by = $3, updated_at = $4 \
+                 WHERE org_id = $5 AND key = $6 AND version = $7",
+            )
+            .bind(RESET_VALUE)
+            .bind(next)
+            .bind(user_id)
+            .bind(now_ms)
+            .bind(org)
+            .bind(key)
+            .bind(expected)
+            .execute(&mut *conn)
+            .await?
         }
     }
     .rows_affected();
-    Ok(affected == 1)
+    Ok((affected == 1).then_some(next))
 }
 
 /// Writes a setting if its stored version is still `expected` (0: never saved). Answers the new

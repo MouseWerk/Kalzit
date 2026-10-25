@@ -21,6 +21,7 @@ import { LoadState } from "../admin/components/Section";
 import { ConflictDialog, useSettingChanges } from "../admin/components/Settings";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
+import { resetSetting } from "./api";
 import { type Changes, SettingRow } from "./rows";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
 import { findSection, rowId, SECTIONS, type SectionDef } from "./sections";
@@ -236,6 +237,8 @@ function ServerSettings({ section }: { section: SectionDef }) {
     queryKey,
     patch: async (key, value, version) =>
       refreshLook(queryClient, await updateServerSetting(key, value, version)),
+    reset: async (key, version) =>
+      refreshLook(queryClient, await resetSetting({ kind: "server" }, key, version)),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
@@ -268,6 +271,8 @@ function OrgSettings({ section }: { section: SectionDef }) {
     queryKey,
     patch: async (key, value, version) =>
       refreshLook(queryClient, await updateOrgSetting(orgId, key, value, version)),
+    reset: async (key, version) =>
+      refreshLook(queryClient, await resetSetting({ kind: "org", orgId }, key, version)),
   });
   if (settings.data === undefined) {
     return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;

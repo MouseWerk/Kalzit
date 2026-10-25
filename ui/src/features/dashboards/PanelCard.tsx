@@ -842,10 +842,12 @@ function MiniToolbar({
   onDuplicate: () => void;
 }) {
   const { t } = useI18n();
+  // A group, not role="toolbar": a toolbar promises one Tab stop with arrow keys inside.
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a field set
     <div
       className="panel-card__mini"
-      role="toolbar"
+      role="group"
       aria-label={t("dashboards.panel.actionsFor", { title })}
     >
       <button

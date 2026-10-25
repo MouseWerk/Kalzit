@@ -225,10 +225,13 @@ apply all of them or none, answering `Page<Setting>` with the new versions. Ever
 before anything is written: an unknown key or a refused value is `422 validation` with field
 `changes`, a locked setting `409 conflict`, a stale version `409 version_conflict` with
 `current: Page<Setting>` of the named keys. Each change is audited as `settings.updated` with
-`"batch": true` in the summary. A `reset` deletes the stored value, so the default applies again
-(the answer has `source: "default"` and `version: 0`). Undo is another batch with the new
+`"batch": true` in the summary. A `reset` removes the stored value, so the default applies again
+(the answer has `source: "default"`). Its version keeps counting (the next version, or `0` for a
+setting never saved), so a write that names a version from before the reset is refused with
+`version_conflict` instead of silently replacing the default. Undo is another batch with the new
 versions: the previous value for a setting whose `source` was `database`, a `reset` for one that
-was `default`, so undo never stores a copy of the default.
+was `default`, so undo never stores a copy of the default. The settings pages undo a single
+change the same way.
 
 ## Appearance and brand
 
@@ -603,6 +606,9 @@ Any member; needs `dashboards:write` on the dashboard. No body. Saves that versi
 new version (with `restoredFrom` set, `message` empty) and answers the `Dashboard`. The old model
 must pass today's validation (`422 validation` field `model` otherwise) and the data source check.
 `409 conflict` while the dashboard is in the trash; `404 not_found` for an unknown version.
+`?expectedVersion=` names the current version the caller saw (the UI always sends it): a dashboard
+saved since answers `409 version_conflict` with the stored `Dashboard` as `current`, so a restore
+never replaces a save the caller has not seen. Other parameters are a `validation` error.
 
 ## Analysis steps
 

@@ -1485,6 +1485,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
+| `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |
 | `elasticsearch.shard_failures` | `count` | notice: `count` shards failed; the result may be incomplete |

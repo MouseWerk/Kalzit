@@ -54,12 +54,15 @@ function VersionList({ orgId }: { orgId: string }) {
   const [confirm, setConfirm] = useState<DashboardVersion | null>(null);
   const [compare, setCompare] = useState<number | null>(null);
   const restore = useMutation({
-    mutationFn: (version: number) => restoreVersion(orgId, dashboardId, version),
+    mutationFn: (version: number) =>
+      restoreVersion(orgId, dashboardId, version, dashboard.data?.version),
     onSuccess: async () => {
       setConfirm(null);
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       await navigate({ to: "/dashboards/$dashboardId", params: { dashboardId }, search: {} });
     },
+    // Saved by someone else meanwhile: the dialog says so, and the list shows the new version.
+    onError: () => void queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] }),
   });
   const format = new Intl.DateTimeFormat(language, {
     dateStyle: "medium",
