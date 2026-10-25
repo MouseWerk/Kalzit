@@ -13,9 +13,15 @@ import { THEMES, useTheme } from "../theme/theme";
 import { apiErrorText } from "./shellErrors";
 import { useMenuButton } from "./useMenuButton";
 
-function initialOf(name: string): string {
-  const first = Array.from(name.trim())[0];
-  return first === undefined ? "?" : first.toLocaleUpperCase();
+/** Up to two initials for the avatar: of the first and the last word, as on the blueprint. */
+export function initialsOf(name: string): string {
+  const words = name
+    .trim()
+    .split(/\s+/u)
+    .filter((word) => word !== "");
+  const first = Array.from(words[0] ?? "")[0];
+  const last = words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : undefined;
+  return first === undefined ? "?" : `${first}${last ?? ""}`.toLocaleUpperCase();
 }
 
 /**
@@ -75,7 +81,7 @@ export function UserMenu({ me, rail = false }: { me: Me; rail?: boolean }) {
           onKeyDown={menu.onButtonKeyDown}
         >
           <span className="user-button__avatar" aria-hidden="true">
-            {initialOf(me.name)}
+            {initialsOf(me.name)}
           </span>
           <span className="user-button__text">
             <span className="user-button__name truncate">{me.name}</span>

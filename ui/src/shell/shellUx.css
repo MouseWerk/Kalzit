@@ -218,6 +218,130 @@
     background: var(--border);
   }
 
+  /* A group's small heading (ORGANIZATION, PINNED), as on the blueprint. */
+  .shell__group-heading {
+    margin: var(--space-1) var(--space-2) var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .shell__pins {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  /* A pinned dashboard: its link and the button of its menu. */
+  .shell__pin {
+    position: relative;
+  }
+
+  .shell__pin > .nav-link {
+    padding-inline-end: var(--space-8);
+  }
+
+  .shell__pin-menu {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: var(--space-1);
+    display: grid;
+    align-items: center;
+  }
+
+  .shell__pin-more {
+    display: grid;
+    width: var(--space-6);
+    height: var(--space-6);
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .shell__pin-more:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .shell__pin-more:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* "Pin dashboard": a quiet dashed frame, the way the blueprint marks a place to add to. */
+  .shell__pin-add {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--nav-row-height);
+    padding: 0 var(--space-2);
+    border: var(--border-width) dashed var(--border-strong);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .shell__pin-add:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .shell__pin-add:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .shell__pins-full {
+    margin: 0 var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .pin-picker {
+    display: grid;
+    gap: var(--space-half);
+    max-height: var(--size-result);
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  .pin-picker__item {
+    display: grid;
+    width: 100%;
+    gap: var(--space-half);
+    padding: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .pin-picker__item:hover {
+    background: var(--bg-hover);
+  }
+
+  .pin-picker__item:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+
+  .pin-picker__path {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
   @media (max-width: 48rem) {
     /* The bar on top: the groups run on in one wrapping row, without dividers. */
     .shell__nav {

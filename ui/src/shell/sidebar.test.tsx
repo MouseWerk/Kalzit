@@ -190,7 +190,12 @@ describe("sub-pages in the navigation", () => {
       within(org)
         .getAllByRole("link")
         .map((link) => link.textContent),
-    ).toEqual(["Members", "Roles", "Organization settings", "Audit log"]);
+    ).toEqual(["Roles", "Organization settings", "Audit log"]);
+    // Members has its own entry in the organization group above.
+    const orgGroup = within(nav)
+      .getAllByRole("list", { name: "Organization" })
+      .find((group) => !list.contains(group)) as HTMLElement;
+    expect(within(orgGroup).getByRole("link", { name: "Members" })).toBeTruthy();
     expect(within(list).getAllByRole("list", { name: "Server" })).toHaveLength(1);
     // Sub-pages have no icon, so the rail and phones must not hide their labels as they do the
     // entries' (.nav-link__label).
@@ -236,7 +241,8 @@ describe("sub-pages in the navigation", () => {
   it("lists only the sections the user may open", async () => {
     const { nav } = await openShell("/admin", ORG_ADMIN);
     const list = await within(nav).findByRole("list", { name: "Administration sections" });
-    await within(list).findByRole("link", { name: "Members" });
+    await within(list).findByRole("link", { name: "Roles" });
+    expect(within(nav).getByRole("link", { name: "Members" })).toBeTruthy();
     expect(within(list).queryByRole("list", { name: "Server" })).toBeNull();
     expect(within(list).queryByRole("link", { name: "Server settings" })).toBeNull();
   });
@@ -282,7 +288,7 @@ describe("flyout in the rail", () => {
     const entry = within(nav).getByRole("link", { name: "Administration" });
     await user.hover(entry);
     const list = within(nav).getByRole("list", { name: "Administration sections" });
-    expect(within(list).getByRole("link", { name: "Members" })).toBeTruthy();
+    expect(within(list).getByRole("link", { name: "Roles" })).toBeTruthy();
 
     await user.click(screen.getByRole("heading", { level: 1 }));
     expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
@@ -306,7 +312,7 @@ describe("flyout in the rail", () => {
     expect(openLayerCount()).toBe(1);
     const list = within(nav).getByRole("list", { name: "Administration sections" });
     await user.tab();
-    expect(document.activeElement).toBe(within(list).getByRole("link", { name: "Members" }));
+    expect(document.activeElement).toBe(within(list).getByRole("link", { name: "Roles" }));
 
     await user.keyboard("{Escape}");
     expect(within(nav).queryByRole("list", { name: "Administration sections" })).toBeNull();
@@ -406,6 +412,7 @@ describe("flyout in the rail", () => {
     act(() => within(nav).getByRole("link", { name: "Dashboards" }).focus());
     await user.tab();
     // Entries with sub-pages show their flyout instead.
+    await user.tab();
     await user.tab();
     await user.tab();
     await user.tab();

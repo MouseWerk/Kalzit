@@ -37,6 +37,7 @@ import { showErrorToast, showToast } from "../../lib/toasts";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
+import { PinButton } from "../../shell/PinButton";
 import { StarButton, useRecordView } from "../../shell/StarButton";
 import { useWideLayout } from "../../shell/sidebarState";
 import { AccessDialog } from "../admin/access";
@@ -1456,6 +1457,7 @@ function DashboardView({
                 )}
                 {showRail ? (
                   <DashboardRail
+                    pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
                     userId={userId}
                     editing={draft !== null}
                     panels={model.panels}

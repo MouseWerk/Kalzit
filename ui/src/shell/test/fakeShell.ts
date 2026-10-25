@@ -16,6 +16,8 @@ import { fuzzyScore } from "../fuzzy";
  */
 export interface FakeShellState {
   stars: { dashboardId: string; at: number }[];
+  /** Pinned dashboards in their order. */
+  pins: { dashboardId: string; at: number }[];
   views: { dashboardId: string; at: number }[];
   /** Every search request's query string, to check debouncing and paging. */
   searches: string[];
@@ -25,7 +27,7 @@ export interface FakeShellState {
 const START = Date.UTC(2026, 9, 20);
 
 export function shellFake(areas: FakeAreaStates): FakeArea<FakeShellState> {
-  const state: FakeShellState = { stars: [], views: [], searches: [], now: START };
+  const state: FakeShellState = { stars: [], pins: [], views: [], searches: [], now: START };
 
   function handle(request: FakeRequest): Response | undefined {
     const { method, route, search, permissions } = request;
@@ -136,6 +138,51 @@ export function shellFake(areas: FakeAreaStates): FakeArea<FakeShellState> {
         .filter((e) => e !== undefined)
         .sort((a, b) => a.title.localeCompare(b.title));
       return json(200, { items, nextCursor: null });
+    }
+    const visiblePins = () =>
+      state.pins.map((p) => entry(p.dashboardId, p.at)).filter((e) => e !== undefined);
+    if (parts[0] === "pins" && parts.length === 1 && method === "GET") {
+      return json(200, { items: visiblePins().slice(0, 10), nextCursor: null });
+    }
+    if (parts[0] === "pins" && parts.length === 1 && method === "PUT") {
+      const ids = request.body.dashboardIds;
+      const visible = visiblePins().map((e) => e.id);
+      if (
+        !Array.isArray(ids) ||
+        [...ids].sort().join("\u0000") !== [...visible].sort().join("\u0000")
+      ) {
+        return error(422, "validation", "dashboardIds");
+      }
+      const hidden = state.pins.filter((p) => !visible.includes(p.dashboardId));
+      state.pins = [
+        ...(ids as string[]).map(
+          (id) =>
+            state.pins.find((p) => p.dashboardId === id) as {
+              dashboardId: string;
+              at: number;
+            },
+        ),
+        ...hidden,
+      ];
+      return json(200, { items: visiblePins(), nextCursor: null });
+    }
+    if (parts[0] === "dashboards" && parts[2] === "pin" && parts.length === 3) {
+      const id = decodeURIComponent(parts[1] ?? "");
+      if (method === "DELETE") {
+        state.pins = state.pins.filter((p) => p.dashboardId !== id);
+        return new Response(null, { status: 204 });
+      }
+      const d = readable(id);
+      if (d === undefined) return error(404, "not_found");
+      if (method === "PUT") {
+        if (d.deletedAt !== null) return error(409, "conflict");
+        if (!state.pins.some((p) => p.dashboardId === id)) {
+          if (visiblePins().length >= 10) return error(422, "validation");
+          state.now += 1000;
+          state.pins.push({ dashboardId: id, at: state.now });
+        }
+        return new Response(null, { status: 204 });
+      }
     }
     if (parts[0] === "recents" && method === "GET") {
       const items = [...state.views]

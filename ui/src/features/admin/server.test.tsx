@@ -70,7 +70,9 @@ describe("server users", () => {
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     const sections = within(nav).getByRole("list", { name: "Administration sections" });
     expect(within(sections).queryByRole("link", { name: "Server settings" })).toBeNull();
-    expect(within(sections).getByRole("link", { name: "Members" })).toBeTruthy();
+    // The organization's sections stay: Members has its own entry, Roles is listed here.
+    expect(within(sections).getByRole("link", { name: "Roles" })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: "Members" })).toBeTruthy();
   });
 
   it("explains that the last server admin stays", async () => {
@@ -183,7 +185,7 @@ describe("server users", () => {
     await openAdmin("/admin", { isServerAdmin: false });
     const sections = await screen.findByRole("list", { name: "Administration sections" });
     expect(within(sections).queryByRole("link", { name: "Users" })).toBeNull();
-    expect(within(sections).getByRole("link", { name: "Members" })).toBeTruthy();
+    expect(within(sections).getByRole("link", { name: "Roles" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Server" })).toBeNull();
   });
 });

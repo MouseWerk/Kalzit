@@ -4,7 +4,7 @@ import { BrandMark } from "../appearance/BrandMark";
 import { useBrand } from "../appearance/brand";
 import { Icon } from "../components/Icon";
 import { type MessageKey, useI18n } from "../i18n/i18n";
-import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
+import { currentOrgOf, switchOrg, useOrgPermissions } from "../org/useOrg";
 import { useMenuButton } from "./useMenuButton";
 import "./shellUx.css";
 
@@ -67,7 +67,8 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
     </>
   );
 
-  if (links.length === 0) {
+  const others = me.orgs.length > 1;
+  if (links.length === 0 && !others) {
     return (
       <div className="org-switcher org-switcher--static" title={rail ? name : undefined}>
         <span className="visually-hidden">{t("shell.org.label")}</span> {content}
@@ -107,6 +108,32 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
             )}
           </div>
           <hr className="menu__separator" />
+          {others ? (
+            // biome-ignore lint/a11y/useSemanticElements: a fieldset is not allowed inside role="menu"; the ARIA menu pattern groups radio items with role="group".
+            <div role="group" aria-labelledby={`${menu.menuId}-orgs`} className="menu__group">
+              <div className="menu__label" id={`${menu.menuId}-orgs`}>
+                {t("shell.org.switch")}
+              </div>
+              {me.orgs.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={option.id === org?.id}
+                  tabIndex={-1}
+                  className="menu__item"
+                  onClick={() => {
+                    menu.closeMenu(true);
+                    if (option.id !== org?.id) switchOrg(me, option.id);
+                  }}
+                >
+                  <Icon name="check" className="menu__check" />
+                  <span className="truncate">{option.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {others && links.length > 0 ? <hr className="menu__separator" /> : null}
           {links.map((link) => (
             <Link
               key={link.to}

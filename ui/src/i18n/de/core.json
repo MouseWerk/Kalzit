@@ -8,6 +8,8 @@
   "common.skipToContent": "Zum Inhalt springen",
   "nav.label": "Hauptnavigation",
   "nav.home": "Start",
+  "nav.members": "Mitglieder",
+  "nav.group.org": "Organisation",
   "nav.sidebar": "Seitenleiste",
   "nav.sidebarHint": "Seitenleiste ein- oder ausklappen ({shortcut})",
   "nav.children": "Bereiche: {name}",

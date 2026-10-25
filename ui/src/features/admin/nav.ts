@@ -14,8 +14,13 @@ export const adminNav: NavItem = {
   icon: "admin",
   visible: canOpenAdministration,
   childrenLabel: "admin.sections",
+  // Members has its own entry in the organization group; the overview page still lists it.
+  outside: ["/admin/members"],
   children: [
-    ...sectionChildren(ORG_SECTIONS, "admin.group.org"),
+    ...sectionChildren(
+      ORG_SECTIONS.filter((section) => section.to !== "/admin/members"),
+      "admin.group.org",
+    ),
     ...sectionChildren(SERVER_SECTIONS, "admin.group.server"),
   ],
 };

@@ -8,6 +8,8 @@
   "common.skipToContent": "Skip to content",
   "nav.label": "Main navigation",
   "nav.home": "Home",
+  "nav.members": "Members",
+  "nav.group.org": "Organization",
   "nav.sidebar": "Sidebar",
   "nav.sidebarHint": "Collapse or expand the sidebar ({shortcut})",
   "nav.children": "{name} sections",

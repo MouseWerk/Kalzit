@@ -127,6 +127,31 @@ export async function setStarred(orgId: string, dashboardId: string, starred: bo
   await request(starred ? "PUT" : "DELETE", orgPath(orgId, "dashboards", dashboardId, "star"));
 }
 
+/** The caller's pinned dashboards, in their order (at most 10, one page). */
+export async function fetchPins(orgId: string, signal?: AbortSignal) {
+  return parsePage(
+    await request("GET", orgPath(orgId, "pins"), undefined, { signal }),
+    parseEntry,
+    "pins",
+  );
+}
+
+export async function setPinned(orgId: string, dashboardId: string, pinned: boolean) {
+  await request(pinned ? "PUT" : "DELETE", orgPath(orgId, "dashboards", dashboardId, "pin"));
+}
+
+/** Puts the pins in a new order: every pinned dashboard the caller sees, each once. */
+export async function orderPins(orgId: string, dashboardIds: readonly string[]) {
+  return parsePage(
+    await request("PUT", orgPath(orgId, "pins"), { dashboardIds }),
+    parseEntry,
+    "pins",
+  );
+}
+
+/** At most this many pins; the server refuses more. */
+export const MAX_PINS = 10;
+
 export async function recordView(orgId: string, dashboardId: string) {
   await request("POST", orgPath(orgId, "dashboards", dashboardId, "views"));
 }
@@ -137,6 +162,13 @@ export function starsQuery(orgId: string) {
   return queryOptions({
     queryKey: [HOME_KEY, orgId, "stars"],
     queryFn: ({ signal }) => fetchStars(orgId, signal),
+  });
+}
+
+export function pinsQuery(orgId: string) {
+  return queryOptions({
+    queryKey: [HOME_KEY, orgId, "pins"],
+    queryFn: ({ signal }) => fetchPins(orgId, signal),
   });
 }
 
