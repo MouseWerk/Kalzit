@@ -12,8 +12,9 @@ export interface FolderNode {
 /**
  * Builds the tree from the flat list the server sends. It contains only folders the caller may
  * see; a folder whose parent is hidden from them is shown at the top level instead of vanishing.
+ * The spaces of `firstTeam` (the active team) come first at the top level.
  */
-export function buildTree(folders: readonly Folder[]): FolderNode[] {
+export function buildTree(folders: readonly Folder[], firstTeam?: string): FolderNode[] {
   const nodes = new Map(
     folders.map((folder) => [folder.id, { folder, children: [] as FolderNode[] }]),
   );
@@ -29,6 +30,11 @@ export function buildTree(folders: readonly Folder[]): FolderNode[] {
     }
   };
   sort(roots);
+  if (firstTeam !== undefined) {
+    const own = (node: FolderNode) =>
+      node.folder.teamSpace && node.folder.ownerTeam?.id === firstTeam;
+    return [...roots.filter(own), ...roots.filter((node) => !own(node))];
+  }
   return roots;
 }
 
@@ -64,10 +70,15 @@ interface FolderTreeProps {
   folders: readonly Folder[];
   selected: string | undefined;
   onSelect: (id: string | undefined) => void;
+  /** The active team of the team context: its spaces come first. */
+  activeTeam?: string | undefined;
 }
 
-/** Folder navigation; Up and Down move between entries, Home and End jump. */
-export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
+/**
+ * Folder navigation; Up and Down move between entries, Home and End jump. Team spaces and
+ * team-owned folders carry the team icon and their team's name.
+ */
+export function FolderTree({ folders, selected, onSelect, activeTeam }: FolderTreeProps) {
   const { t } = useI18n();
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
@@ -105,8 +116,18 @@ export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
             }
           >
             <span className="folder-tree__name">
-              <Icon name="folder" />
+              <Icon name={folder.ownerTeam === null ? "folder" : "members"} />
               <span className="truncate">{folder.name}</span>
+              {folder.ownerTeam === null ? null : (
+                <span className="folder-tree__team truncate">
+                  <span className="visually-hidden">
+                    {`, ${t(folder.teamSpace ? "dashboards.team.spaceOf" : "dashboards.team.ownedBy", { team: folder.ownerTeam.name })}`}
+                  </span>
+                  {folder.ownerTeam.name === folder.name ? null : (
+                    <span aria-hidden="true">{folder.ownerTeam.name}</span>
+                  )}
+                </span>
+              )}
             </span>
             {folder.restricted || inherited ? (
               <span className="folder-tree__restricted">
@@ -138,7 +159,7 @@ export function FolderTree({ folders, selected, onSelect }: FolderTreeProps) {
           </button>
         </li>
       </ul>
-      {renderNodes(buildTree(folders))}
+      {renderNodes(buildTree(folders, activeTeam))}
     </nav>
   );
 }

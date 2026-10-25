@@ -698,6 +698,7 @@ async fn a_dropped_request_cancels_its_queries() {
         org_id: t.org.clone(),
         role: "owner".into(),
         permissions: crate::authz::BuiltinRole::Owner.permissions(),
+        at_ms: 0,
     };
     let items: Vec<crate::shapes::QueryItem> = (0..3)
         .map(|i| {

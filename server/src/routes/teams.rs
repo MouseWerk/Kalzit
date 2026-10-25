@@ -11,7 +11,7 @@ use serde_json::json;
 use super::support::{Actor, PageQuery, Paging, QueryParams, audit, conflict, is_unique_violation};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
-use crate::authz::{Access, BuiltinRole, OrgCtx, Permission, ensure_holds, lock_org, lock_role, resolve_role};
+use crate::authz::{self, Access, BuiltinRole, OrgCtx, Permission, ensure_holds, lock_org, lock_role, resolve_role};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -204,16 +204,109 @@ async fn team_permissions(
     Ok(out)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteQuery {
+    /// Who takes over the team's spaces, folders and dashboards: another team's id, or `org`.
+    transfer_to: Option<String>,
+}
+
+/// Hands everything the team owns to `to` (`None`: the organization) inside the deletion's
+/// transaction. Answers how many folders and dashboards changed hands.
+async fn hand_over(conn: &mut sqlx::AnyConnection, org_id: &str, team_id: &str, to: Option<&str>) -> ApiResult<u64> {
+    let mut moved = 0;
+    for sql in [
+        "UPDATE folders SET owner_team_id = $1, version = version + 1 WHERE org_id = $2 AND owner_team_id = $3",
+        "UPDATE dashboards SET owner_team_id = $1 WHERE org_id = $2 AND owner_team_id = $3",
+    ] {
+        moved += sqlx::query(sql).bind(to).bind(org_id).bind(team_id).execute(&mut *conn).await?.rows_affected();
+    }
+    Ok(moved)
+}
+
+/// Whether the caller maintains the team.
+async fn maintains(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> ApiResult<bool> {
+    Ok(authz::team_membership(&mut *conn, ctx, team_id).await?.as_deref() == Some("maintainer"))
+}
+
 async fn delete(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
     Path((_, team_id)): Path<(String, String)>,
+    QueryParams(q): QueryParams<DeleteQuery>,
 ) -> ApiResult<StatusCode> {
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     load(&mut tx, &ctx.org_id, &team_id).await?;
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
+    // A team's spaces, folders and dashboards are handed over before it goes: to another team, or
+    // to the organization (where only org admins and grants reach team-only content).
+    let (owned,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2) \
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2)",
+    )
+    .bind(&ctx.org_id)
+    .bind(&team_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let transfer = match q.transfer_to.as_deref() {
+        None | Some("org") => None,
+        Some(other) if other == team_id => {
+            return Err(ApiError::validation("a team cannot take over its own content").with_field("transferTo"));
+        }
+        Some(other) => {
+            let found: Option<(String,)> = sqlx::query_as("SELECT id FROM teams WHERE org_id = $1 AND id = $2")
+                .bind(&ctx.org_id)
+                .bind(other)
+                .fetch_optional(&mut *tx)
+                .await?;
+            if found.is_none() {
+                return Err(ApiError::validation("no such team here").with_field("transferTo"));
+            }
+            Some(other)
+        }
+    };
+    if owned > 0 && q.transfer_to.is_none() {
+        return Err(
+            conflict("the team owns team spaces, folders or dashboards; hand them over first").with_field("transferTo")
+        );
+    }
+    // Team spaces and team-only content change hands only through org admins or maintainers of
+    // both teams (of the one going, for a handover to the organization): `teams:write` alone
+    // would let a custom role carry a team's hidden content to a team it maintains.
+    let (restricted,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+    )
+    .bind(&ctx.org_id)
+    .bind(&team_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let mut admin_access = false;
+    if restricted > 0 {
+        let mut both = maintains(&mut tx, &ctx, &team_id).await?;
+        if let Some(other) = transfer {
+            both = both && maintains(&mut tx, &ctx, other).await?;
+        }
+        if !both && !authz::role_sees_restricted(&ctx.permissions) {
+            return Err(ApiError::forbidden(
+                "the team owns team spaces or team-only content; only org admins or maintainers of both teams hand it over",
+            ));
+        }
+        admin_access = !both;
+    }
+    let handed = hand_over(&mut tx, &ctx.org_id, &team_id, transfer).await?;
+    if admin_access {
+        let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
+        let access = json!({ "action": "team.deleted", "teamId": team_id, "transferTo": q.transfer_to });
+        audit(&mut tx, &actor, Some(&ctx.org_id), "team_space.admin_access", ("team", &team_id), access).await?;
+    }
+    sqlx::query("DELETE FROM team_contexts WHERE org_id = $1 AND team_id = $2")
+        .bind(&ctx.org_id)
+        .bind(&team_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND subject_type = 'team' AND subject_id = $2")
         .bind(&ctx.org_id)
         .bind(&team_id)
@@ -230,7 +323,8 @@ async fn delete(
         .execute(&mut *tx)
         .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
-    audit(&mut tx, &actor, Some(&ctx.org_id), "team.deleted", ("team", &team_id), json!({ "teamId": team_id })).await?;
+    let summary = json!({ "teamId": team_id, "transferTo": q.transfer_to, "handedOver": handed });
+    audit(&mut tx, &actor, Some(&ctx.org_id), "team.deleted", ("team", &team_id), summary).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -327,6 +421,23 @@ async fn put_member(
     }
     // Joining a team hands out its roles.
     ensure_holds(&ctx.permissions, &team_permissions(&mut tx, &ctx.org_id, &team_id).await?)?;
+    // And its team spaces and team-only content: that is for the team's maintainers, and for org
+    // admins, whose access to a team's content is audited.
+    let (owned,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+    )
+    .bind(&ctx.org_id)
+    .bind(&team_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let maintainer = authz::team_membership(&mut *tx, &ctx, &team_id).await?.as_deref() == Some("maintainer");
+    let admin_access = owned > 0 && !maintainer;
+    if admin_access && !authz::role_sees_restricted(&ctx.permissions) {
+        return Err(ApiError::forbidden(
+            "the team owns team spaces or team-only content; only its maintainers and org admins add members",
+        ));
+    }
     let current: Option<(String,)> =
         sqlx::query_as("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2")
             .bind(&team_id)
@@ -345,7 +456,12 @@ async fn put_member(
                 .bind(now)
                 .execute(&mut *tx)
                 .await?;
-            audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_added", ("team", &team_id), summary).await?;
+            audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_added", ("team", &team_id), summary.clone()).await?;
+            if admin_access {
+                let access = json!({ "action": "team.member_added", "teamId": team_id, "userId": user_id });
+                audit(&mut tx, &actor, Some(&ctx.org_id), "team_space.admin_access", ("team", &team_id), access)
+                    .await?;
+            }
         }
         Some((previous,)) if previous != role => {
             sqlx::query("UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3")
@@ -386,6 +502,14 @@ async fn remove_member(
     if done.rows_affected() == 0 {
         return Err(ApiError::not_found());
     }
+    // A team context on a team the member left falls back on the next read; dropping it here
+    // keeps the stored choice honest.
+    sqlx::query("DELETE FROM team_contexts WHERE org_id = $1 AND user_id = $2 AND team_id = $3")
+        .bind(&ctx.org_id)
+        .bind(&user_id)
+        .bind(&team_id)
+        .execute(&mut *tx)
+        .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "teamId": team_id, "userId": user_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "team.member_removed", ("team", &team_id), summary).await?;

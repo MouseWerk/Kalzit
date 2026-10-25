@@ -11,7 +11,6 @@
   "libraryPanels.uses": "In {count} Dashboards",
   "libraryPanels.where": "Ordner: {folder}",
   "libraryPanels.showUses": "Dashboards, die es zeigen",
-  "libraryPanels.hiddenUses": "und {count}, die du nicht öffnen darfst",
   "libraryPanels.make": "Zum Bibliothekspanel machen…",
   "libraryPanels.makeTitle": "Zum Bibliothekspanel machen",
   "libraryPanels.makeHint": "Das Panel liegt dann in der Bibliothek, und dieses Dashboard zeigt es von dort. Andere Dashboards können es ebenfalls hinzufügen.",
@@ -28,5 +27,5 @@
   "libraryPanels.deleteNamed": "„{name}“ löschen",
   "libraryPanels.deleteTitle": "Bibliothekspanel löschen?",
   "libraryPanels.deleteText": "„{name}“ wird endgültig gelöscht.",
-  "libraryPanels.inUse": "Dashboards zeigen dieses Bibliothekspanel noch; entferne es zuerst dort."
+  "libraryPanels.inUse": "Dashboards zeigen dieses Bibliothekspanel noch, vielleicht auch solche, die du nicht öffnen darfst; entferne es zuerst dort (oder lass es entfernen)."
 }

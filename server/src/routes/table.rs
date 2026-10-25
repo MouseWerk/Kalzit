@@ -119,5 +119,5 @@ async fn org_ctx(state: &AppState, user: SessionUser, org_id: String) -> Result<
         .await?;
     let Some((role,)) = role else { return Err(ApiError::not_found()) };
     let permissions = effective_permissions(&state.db, &user.id, &org_id, &role).await?;
-    Ok(OrgCtx { user, org_id, role, permissions })
+    Ok(OrgCtx { user, org_id, role, permissions, at_ms: state.clock.now_ms() })
 }
