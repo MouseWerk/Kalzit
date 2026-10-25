@@ -59,6 +59,7 @@ import {
   restoreDashboard,
   saveDashboard,
 } from "./api";
+import { PanelInspector } from "./PanelInspector";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
@@ -962,6 +963,13 @@ function DashboardView({
   });
   const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
   const inEditMode = draft !== null;
+  // The panel the inspector shows while editing; gone with edit mode or with the panel.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedPanel =
+    inEditMode && selectedId !== null ? model.panels.find((p) => p.id === selectedId) : undefined;
+  if (selectedId !== null && selectedPanel === undefined) {
+    setSelectedId(null);
+  }
   const editActions = !inEditMode
     ? undefined
     : {
@@ -1007,7 +1015,40 @@ function DashboardView({
               r.id === rowId ? { ...r, collapsed: !r.collapsed } : r,
             ),
           })),
+        selectedId,
+        onSelect: (id: string) => setSelectedId(id),
       };
+  const inspector =
+    editActions === undefined || selectedPanel === undefined ? null : (
+      <PanelInspector
+        key={selectedPanel.id}
+        orgId={orgId}
+        panel={selectedPanel}
+        rows={rows}
+        variables={model.variables}
+        libraryName={
+          selectedPanel.libraryPanelId === undefined
+            ? undefined
+            : library[selectedPanel.libraryPanelId]?.name
+        }
+        actions={{
+          onChange: (change) =>
+            changeDraft((m) => ({
+              ...m,
+              panels: m.panels.map((p) => (p.id === selectedPanel.id ? change(p) : p)),
+            })),
+          onGrid: (grid) => editActions.onGrid(selectedPanel.id, grid),
+          onEdit: () => editActions.onEdit(selectedPanel.id),
+          onDuplicate: () => editActions.onDuplicate(selectedPanel.id),
+          onCopy: () => editActions.onCopy(selectedPanel.id),
+          onRemove: () => {
+            setSelectedId(null);
+            editActions.onRemove(selectedPanel.id);
+          },
+          onMakeLibrary: () => setDialog({ kind: "makeLibrary", panel: selectedPanel }),
+        }}
+      />
+    );
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
@@ -1458,6 +1499,17 @@ function DashboardView({
                 {showRail ? (
                   <DashboardRail
                     pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
+                    selectedId={selectedPanel?.id ?? null}
+                    inspector={inspector}
+                    onSelect={(panel) => {
+                      setSelectedId(panel.id);
+                      goToPanel(panel);
+                    }}
+                    rowActions={
+                      editActions === undefined
+                        ? undefined
+                        : { onToggle: editActions.onRowToggle, onEdit: editActions.onRowEdit }
+                    }
                     userId={userId}
                     editing={draft !== null}
                     panels={model.panels}

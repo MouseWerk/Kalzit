@@ -325,6 +325,103 @@
     touch-action: none;
   }
 
+  /* A transparent panel: no surface and no border, straight on the dashboard. */
+  .panel-card--transparent {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  /* While editing it keeps a quiet dashed outline, so its bounds stay visible. */
+  .panel-card--editing.panel-card--transparent {
+    border-color: var(--border);
+    border-style: dashed;
+  }
+
+  /* The selected panel while editing: a stronger neutral frame, never an accent colour. */
+  .panel-card--selected,
+  .panel-card--editing.panel-card--selected {
+    border-color: var(--border-strong);
+    border-style: solid;
+  }
+
+  .panel-card__corners {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .panel-card__corner {
+    position: absolute;
+    width: var(--space-2);
+    height: var(--space-2);
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+  }
+
+  .panel-card__corner--nw {
+    inset-block-start: var(--space-half);
+    inset-inline-start: var(--space-half);
+  }
+
+  .panel-card__corner--ne {
+    inset-block-start: var(--space-half);
+    inset-inline-end: var(--space-half);
+  }
+
+  .panel-card__corner--sw {
+    inset-block-end: var(--space-half);
+    inset-inline-start: var(--space-half);
+  }
+
+  .panel-card__corner--se {
+    inset-block-end: var(--space-half);
+    inset-inline-end: var(--space-half);
+  }
+
+  /* The selected panel's size in grid units, quiet in the bottom corner. */
+  .panel-card__size {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline-end: var(--space-4);
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-2xs);
+    font-variant-ligatures: none;
+    pointer-events: none;
+  }
+
+  .panel-card__mini {
+    display: flex;
+    gap: var(--space-half);
+  }
+
+  .panel-card__about {
+    display: inline-grid;
+    width: var(--space-5);
+    height: var(--space-5);
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: help;
+  }
+
+  .panel-card__about:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .panel-card__about:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
   /* Option groups of the panel editor and the dashboard settings */
 
   .panel-editor__types,

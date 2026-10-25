@@ -15,6 +15,7 @@ import { runPanelSteps } from "../../analysis/panel";
 import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
+import { WithTooltip } from "../../components/IconButton";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
@@ -83,6 +84,10 @@ export interface PanelEditActions {
   onGrid: (grid: GridPos, byKeyboard: boolean) => void;
   /** Size of one grid cell in px, for turning a pointer drag into cells. */
   cellSize: () => { width: number; height: number };
+  /** The panel is the one the inspector shows. */
+  selected?: boolean;
+  /** Makes the panel the selected one (a click on it, or its arrange handle taking focus). */
+  onSelect?: () => void;
 }
 
 interface PanelCardProps {
@@ -353,9 +358,12 @@ export function PanelCard({
       onSelect: edit.onRemove,
     });
   }
+  const selected = edit?.selected === true && !alone;
   const className = [
     "panel-card",
     edit === undefined ? "" : "panel-card--editing",
+    selected ? "panel-card--selected" : "",
+    panel.transparent === true ? "panel-card--transparent" : "",
     alone ? "panel-card--alone" : "",
     dragging === null ? "" : `panel-card--${dragging === "move" ? "dragging" : "resizing"}`,
   ]
@@ -367,13 +375,30 @@ export function PanelCard({
       {dragging === null ? null : (
         <div className="dash-placeholder" ref={placeholderRef} aria-hidden="true" />
       )}
+      {/* The click is a pointer shortcut; from the keyboard the arrange handle selects on focus. */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the arrange handle selects the panel from the keyboard */}
       <article
         ref={ref}
         className={className}
         data-panel-id={panel.id}
         aria-labelledby={titleId}
         aria-busy={results.isFetching}
+        aria-current={selected ? "true" : undefined}
+        onClick={
+          edit?.onSelect === undefined
+            ? undefined
+            : (event) => {
+                // Controls inside the card do their own thing; anywhere else selects it.
+                if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) {
+                  return;
+                }
+                edit.onSelect?.();
+              }
+        }
       >
+        {selected && edit !== undefined ? (
+          <SelectionFrame w={panel.grid.w} h={panel.grid.h} />
+        ) : null}
         <header
           className="panel-card__header"
           onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
@@ -389,7 +414,13 @@ export function PanelCard({
               {noteText}
             </span>
           )}
+          {panel.description === undefined ? null : (
+            <PanelDescription title={title} description={panel.description} />
+          )}
           <div className="panel-card__actions">
+            {selected && edit !== undefined ? (
+              <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+            ) : null}
             {edit === undefined ? null : (
               <>
                 <button
@@ -400,6 +431,7 @@ export function PanelCard({
                   aria-label={t("dashboards.panel.arrange", { title })}
                   title={t("dashboards.panel.arrangeHint")}
                   onKeyDown={onHandleKey}
+                  onFocus={edit.onSelect}
                 >
                   <span aria-hidden="true">⠿</span>
                 </button>
@@ -743,6 +775,86 @@ export function PanelBody({
       {isTruncated(outcomes) ? (
         <p className="panel-note">{t("dashboards.panel.truncated")}</p>
       ) : null}
+    </div>
+  );
+}
+
+/** The panel's description behind a quiet info button, as a tooltip and for screen readers. */
+function PanelDescription({ title, description }: { title: string; description: string }) {
+  const { t } = useI18n();
+  const id = useId();
+  return (
+    <WithTooltip label={description} className="panel-card__about-anchor">
+      <button
+        type="button"
+        className="panel-card__about"
+        aria-label={t("dashboards.panel.aboutFor", { title })}
+        aria-describedby={id}
+      >
+        <Icon name="help" />
+      </button>
+      <span className="visually-hidden" id={id}>
+        {description}
+      </span>
+    </WithTooltip>
+  );
+}
+
+/**
+ * The selected panel on the canvas: neutral corner handles and its size in grid units. The
+ * handles mark the selection; resizing stays with the corner grip and the arrange handle's keys.
+ */
+function SelectionFrame({ w, h }: { w: number; h: number }) {
+  return (
+    <>
+      <span className="panel-card__corners" aria-hidden="true">
+        <span className="panel-card__corner panel-card__corner--nw" />
+        <span className="panel-card__corner panel-card__corner--ne" />
+        <span className="panel-card__corner panel-card__corner--sw" />
+        <span className="panel-card__corner panel-card__corner--se" />
+      </span>
+      <span className="panel-card__size" aria-hidden="true">
+        {w} × {h}
+      </span>
+    </>
+  );
+}
+
+/** The selected panel's small toolbar in its header: open in the editor, duplicate. */
+function MiniToolbar({
+  title,
+  onEdit,
+  onDuplicate,
+}: {
+  title: string;
+  onEdit: () => void;
+  onDuplicate: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div
+      className="panel-card__mini"
+      role="toolbar"
+      aria-label={t("dashboards.panel.actionsFor", { title })}
+    >
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        aria-label={t("dashboards.panel.editNamed", { title })}
+        onClick={onEdit}
+      >
+        <Icon name="edit" />
+        {t("dashboards.panel.edit")}
+      </button>
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        aria-label={t("dashboards.panel.duplicateNamed", { title })}
+        title={t("dashboards.panel.duplicate")}
+        onClick={onDuplicate}
+      >
+        <Icon name="copy" />
+      </button>
     </div>
   );
 }
