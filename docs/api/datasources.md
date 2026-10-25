@@ -1079,18 +1079,28 @@ browser-side export would need the data in the browser first and could not be re
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
 the format, the time range, the frame, the number of rows and the panel or the data sources,
-never the data; an export refused inside the route writes `data.export_refused` with the code and
-reason as well.
+never the data, once the whole file has been made (before its last byte is sent); an export refused
+inside the route writes `data.export_refused` with the code and reason as well, and one that breaks
+off after its first bytes (the client went away, the file passed the size limit, the client took
+nothing for 60 s) writes `data.export_aborted` with a `reason`.
 
 Resources: a server makes at most 3 export files at once (`503 busy`, reason `export.busy`, for
 more). The steps and the encoder stop when the client goes away and when the query time limit
-(`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`). The
-steps' bounds hold here as in the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16
-units of made text per run), and a file is at most 256 MiB (`export.too_large`): CSV and JSON
-are written in chunks that the answer sends as they are, and stop at the first byte past the
-limit; an Excel file holds every cell until it is done, so it takes at most 1,000,000 cells
-(`export.too_many_cells`, checked before it is built). An export's slot is given back only when
-its work has stopped, also when the client went away. The statement as sent to the database
+(`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`); the
+time limit covers the queries and the steps, not the download. The steps' bounds hold here as in
+the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16 units of made text per run),
+and a file is at most 256 MiB (`export.too_large`).
+
+The file is streamed: the encoder writes chunks of 1 MiB into a queue of two that feeds the
+answer, so a slow client slows the encoder down and memory holds the result frame plus a few
+chunks, however large the file is. CSV and JSON are written row by row and stop at the first
+byte past the size limit. An Excel file is written in constant memory mode (no cell limit): the
+rows go to a temporary file in `export-tmp` inside the data directory, the finished workbook to a
+second one that is then sent, and both are removed afterwards; the size limit is checked on the
+finished workbook, before the first byte is sent. Everything that goes wrong before the first
+chunk (queries, steps, a small file's limits) is an ordinary error answer; a failure later breaks
+the answer off, as the connection does. An export's slot is given back only when its work has
+stopped, also when the client went away. The statement as sent to the database
 (`meta.executedQuery`) is not in the file.
 
 - `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
@@ -1400,7 +1410,6 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.failed` | `detail` | the file could not be written |
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
-| `export.too_many_cells` | `max` | an Excel file takes at most `max` cells (rows times fields); refused before it is built |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
 | `export.time_zone_unknown` | | `timeZone` is not a known time zone (`field: timeZone`) |
 | `export.week_start_unknown` | | `weekStart` is not `monday`, `sunday` or `saturday` (`field: weekStart`) |

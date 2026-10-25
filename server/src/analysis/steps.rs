@@ -86,6 +86,15 @@ impl Control {
         Ok(())
     }
 
+    /// Fails only when the cancel flag is set: for a file being sent to a client, whose pace the
+    /// deadline of the queries and steps does not apply to.
+    pub fn check_cancelled(&self) -> Result<(), Detail> {
+        if self.cancelled.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(detail("steps.cancelled", "the request was cancelled".into()));
+        }
+        Ok(())
+    }
+
     /// `check`, every `CHECK_EVERY` rows.
     pub fn every(&self, row: usize) -> Result<(), Detail> {
         if row.is_multiple_of(CHECK_EVERY) { self.check() } else { Ok(()) }

@@ -14,10 +14,20 @@
 //! steps and encoding run off the request threads, stop when the client goes away (a drop guard
 //! sets the cancel flag) and when the query timeout (`datasources.query_timeout_secs`) has passed,
 //! and the run's cell and text budget bounds what they build.
+//!
+//! The file is streamed: the encoder writes chunks of 1 MiB into a channel of two that feeds the
+//! response body, so a slow client slows the encoder down and memory holds the frame plus a few
+//! chunks, whatever the file's size. The answer is chosen at the first chunk: everything that
+//! goes wrong before it (the queries, the steps, a small file's size limit) is a proper error
+//! answer. A failure after it (a CSV or JSON file passing the size limit, the client stalling for
+//! longer than `STALL_SECS`) breaks the response off, and the audit log gets `data.export_aborted`
+//! instead of `data.exported`; the entry of a finished file is written before its last byte is
+//! sent. The query timeout bounds the queries and steps, not the download itself.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use axum::Extension;
 use axum::body::Body;
@@ -25,6 +35,7 @@ use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
 
 use super::query::{api_error, check_variables, readable_model, resolve_variables};
 use super::table::{RouteDef, route};
@@ -48,6 +59,13 @@ use crate::shapes::{
 pub const MAX_EXPORTS: usize = 3;
 /// The steps' and the encoder's time limit when the setting cannot be read.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+/// Chunks waiting between the encoder and the response body.
+const QUEUED_CHUNKS: usize = 2;
+/// A client that takes no chunk for this long loses its export, so a connection that stays open
+/// without reading cannot hold a slot for ever.
+const STALL_SECS: u64 = 60;
+/// Where an export's temporary files go, inside the data directory.
+const SPOOL_DIR: &str = "export-tmp";
 
 /// Sets the cancel flag when the request goes away (the client closed the connection), so the
 /// blocking work stops at its next check instead of running to the end for nobody.
@@ -122,9 +140,25 @@ impl Wanted {
     }
 }
 
-/// A made file and where its audit entry points.
+/// What the encoder tells the response body.
+enum Msg {
+    Chunk(Vec<u8>),
+    /// The file is complete, with the frame's row count for the audit entry.
+    Done(usize),
+    Failed(ApiError),
+}
+
+/// A file being made: its first chunk and the rest to come.
+struct Streaming {
+    first: Vec<u8>,
+    rx: mpsc::Receiver<Msg>,
+    kind: export::Kind,
+    cancel: CancelOnDrop,
+}
+
+/// A file being made and where its audit entry points.
 struct Made {
-    file: export::File,
+    stream: Streaming,
     title: String,
     summary: serde_json::Map<String, Value>,
 }
@@ -168,10 +202,8 @@ async fn make_query(state: &AppState, ctx: &OrgCtx, req: ExportRequest, wanted: 
         run_queries(state, ctx, req.queries, req.time_range, req.interval_ms, req.max_data_points, &req.variables)
             .await;
     let title = req.title.unwrap_or_else(|| "kalzit-export".into());
-    let (file, rows) = produce(state, response, &order, steps, wanted, permit).await?;
-    let mut summary = wanted.summary();
-    summary.insert("rows".into(), json!(rows));
-    Ok(Made { file, title, summary })
+    let stream = produce(state, response, &order, steps, wanted, permit).await?;
+    Ok(Made { stream, title, summary: wanted.summary() })
 }
 
 async fn export_panel(
@@ -248,11 +280,10 @@ async fn make_panel(
     )
     .await;
     let title = if panel.title.trim().is_empty() { model.title.clone() } else { panel.title.clone() };
-    let (file, rows) = produce(state, response, &order, steps, wanted, permit).await?;
+    let stream = produce(state, response, &order, steps, wanted, permit).await?;
     let mut summary = wanted.summary();
     summary.insert("panelId".into(), json!(panel_id));
-    summary.insert("rows".into(), json!(rows));
-    Ok(Made { file, title, summary })
+    Ok(Made { stream, title, summary })
 }
 
 fn too_busy() -> ApiError {
@@ -271,8 +302,14 @@ async fn finish(
 ) -> ApiResult<Response> {
     match made {
         Ok(made) => {
-            record(state, ctx, info, "data.exported", dashboard_id, Value::Object(made.summary)).await?;
-            Ok(attachment(made.file, &made.title))
+            let pending = Pending {
+                state: state.clone(),
+                ctx: ctx.clone(),
+                info: info.clone(),
+                dashboard_id: dashboard_id.map(String::from),
+                summary: made.summary,
+            };
+            Ok(attachment(made.stream, pending, &made.title))
         }
         Err(e) => {
             where_.insert("code".into(), json!(e.code));
@@ -301,7 +338,7 @@ async fn produce(
     // Held by the blocking work itself: a client that goes away ends the request, not the work,
     // and the slot is free only when the work has stopped.
     permit: tokio::sync::OwnedSemaphorePermit,
-) -> ApiResult<(export::File, usize)> {
+) -> ApiResult<Streaming> {
     let timeout = crate::settings::get(state, "datasources.query_timeout_secs")
         .await
         .ok()
@@ -326,10 +363,13 @@ async fn produce(
     }
     let (format, language, frame) = (wanted.format, wanted.language, wanted.frame.clone());
     let cancelled = Arc::new(AtomicBool::new(false));
-    let _guard = CancelOnDrop(cancelled.clone());
-    let control = Control::new(cancelled, timeout).with_calendar(wanted.calendar);
+    let cancel = CancelOnDrop(cancelled.clone());
+    let control = Control::new(cancelled.clone(), timeout).with_calendar(wanted.calendar);
+    let spool = state.config.paths.data_dir.join(SPOOL_DIR);
+    let (tx, mut rx) = mpsc::channel::<Msg>(QUEUED_CHUNKS);
+    let (tx_end, cancelled_end) = (tx.clone(), cancelled.clone());
     // Steps and encoding take CPU time; they run off the request threads.
-    let work = tokio::task::spawn_blocking(move || -> Result<(export::File, usize), ApiError> {
+    let work = move || -> Result<usize, ApiError> {
         let _permit = permit;
         #[cfg(test)]
         tests::hold_if_asked(&steps);
@@ -363,11 +403,58 @@ async fn produce(
             });
         };
         let frame = &chosen.frame;
-        let file = export::encode(frame, &chosen.name, format, language, &control)
-            .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
-        Ok((file, frame.rows()))
+        // Sending to the client is paced by the client: the deadline covers the steps above.
+        let mut send = |chunk: Vec<u8>| {
+            send_chunk(&tx, &cancelled, Msg::Chunk(chunk), Duration::from_secs(STALL_SECS))
+                .then_some(())
+                .ok_or_else(|| Detail::new("steps.cancelled", "the client stopped taking the file"))
+        };
+        export::encode_to(
+            frame,
+            &chosen.name,
+            format,
+            language,
+            &control,
+            export::Caps::default(),
+            &spool,
+            false,
+            &mut send,
+        )
+        .map_err(|d| if d.reason.starts_with("steps.") { step_error(d.message.clone(), d) } else { refused(d) })?;
+        Ok(frame.rows())
+    };
+    tokio::task::spawn_blocking(move || {
+        let end = match work() {
+            Ok(rows) => Msg::Done(rows),
+            Err(e) => Msg::Failed(e),
+        };
+        // The client may be gone already; then nobody reads the end.
+        let _ = send_chunk(&tx_end, &cancelled_end, end, Duration::from_secs(STALL_SECS));
     });
-    work.await.map_err(|e| ApiError::internal("export", e))?
+    match rx.recv().await {
+        Some(Msg::Chunk(first)) => Ok(Streaming { first, rx, kind: export::kind(format), cancel }),
+        Some(Msg::Failed(e)) => Err(e),
+        Some(Msg::Done(_)) | None => Err(ApiError::internal("export", "the export made no file")),
+    }
+}
+
+/// Puts `msg` on the channel, waiting while it is full. Fails when the client went away (the
+/// receiver is gone), the cancel flag is set or nothing was taken for `stall`.
+fn send_chunk(tx: &mpsc::Sender<Msg>, cancelled: &AtomicBool, mut msg: Msg, stall: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        match tx.try_send(msg) {
+            Ok(()) => return true,
+            Err(mpsc::error::TrySendError::Closed(_)) => return false,
+            Err(mpsc::error::TrySendError::Full(back)) => {
+                if cancelled.load(Ordering::Relaxed) || start.elapsed() > stall {
+                    return false;
+                }
+                msg = back;
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
 }
 
 /// A step's failure as an answer: the time limit as `query_timeout`, anything else as a
@@ -405,14 +492,89 @@ async fn record(
     Ok(())
 }
 
-fn attachment(file: export::File, title: &str) -> Response {
-    let name = export::file_name(title, file.extension);
-    // The chunks are sent as they are, so the file is not copied into one buffer first.
-    let chunks = file.chunks.into_iter().map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::from(c)));
-    let mut response = Response::new(Body::from_stream(futures_util::stream::iter(chunks)));
+/// What the audit entry of a streamed file needs once it ends.
+struct Pending {
+    state: AppState,
+    ctx: OrgCtx,
+    info: RequestInfo,
+    dashboard_id: Option<String>,
+    summary: serde_json::Map<String, Value>,
+}
+
+impl Pending {
+    async fn record(mut self, action: &str, extra: Vec<(&str, Value)>) {
+        for (k, v) in extra {
+            self.summary.insert(k.into(), v);
+        }
+        let done = record(
+            &self.state,
+            &self.ctx,
+            &self.info,
+            action,
+            self.dashboard_id.as_deref(),
+            Value::Object(self.summary),
+        )
+        .await;
+        if let Err(e) = done {
+            tracing::warn!("audit entry of an export: {}", e.message);
+        }
+    }
+}
+
+/// The response body's state; its audit entry is written when the file ends, or, if the body is
+/// dropped before that (the client went away), as an aborted export.
+struct BodyState {
+    first: Option<Vec<u8>>,
+    rx: mpsc::Receiver<Msg>,
+    pending: Option<Pending>,
+    _cancel: CancelOnDrop,
+}
+
+impl Drop for BodyState {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending.take()
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            runtime.spawn(pending.record("data.export_aborted", vec![("reason", json!("client_gone"))]));
+        }
+    }
+}
+
+fn attachment(stream: Streaming, pending: Pending, title: &str) -> Response {
+    let name = export::file_name(title, stream.kind.extension);
+    let state = BodyState { first: Some(stream.first), rx: stream.rx, pending: Some(pending), _cancel: stream.cancel };
+    let chunks = futures_util::stream::unfold(state, |mut s| async move {
+        if let Some(first) = s.first.take() {
+            return Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(first)), s));
+        }
+        match s.rx.recv().await {
+            Some(Msg::Chunk(c)) => Some((Ok(axum::body::Bytes::from(c)), s)),
+            Some(Msg::Done(rows)) => {
+                // Before the last byte goes out, so a client that has the whole file finds its entry.
+                if let Some(p) = s.pending.take() {
+                    p.record("data.exported", vec![("rows", json!(rows))]).await;
+                }
+                None
+            }
+            Some(Msg::Failed(e)) => {
+                if let Some(p) = s.pending.take() {
+                    let reason = e.reason.as_ref().map_or(e.code, |r| r.code.as_str()).to_string();
+                    p.record("data.export_aborted", vec![("reason", json!(reason))]).await;
+                }
+                Some((Err(std::io::Error::other(e.message)), s))
+            }
+            None => {
+                if let Some(p) = s.pending.take() {
+                    p.record("data.export_aborted", vec![("reason", json!("stopped"))]).await;
+                }
+                Some((Err(std::io::Error::other("the export stopped")), s))
+            }
+        }
+    });
+    let mut response = Response::new(Body::from_stream(chunks));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(file.content_type));
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static(stream.kind.content_type));
     // `file_name` leaves only ASCII letters, digits, `-`, `_` and the dot: always a valid header.
     if let Ok(value) = header::HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
         headers.insert(header::CONTENT_DISPOSITION, value);
