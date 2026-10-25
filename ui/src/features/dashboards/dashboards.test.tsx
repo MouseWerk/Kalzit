@@ -385,6 +385,35 @@ describe("dashboard view", () => {
     expect(await screen.findByText(/More values exist than are listed/)).toBeTruthy();
   });
 
+  it("never claims all values of a cut-short list, and keeps the hint readable as a title", async () => {
+    const server = setup("viewer", []);
+    latest(storedSales(server)).model = {
+      ...latest(storedSales(server)).model,
+      variables: [
+        {
+          name: "city",
+          label: "City",
+          type: "query",
+          multi: true,
+          datasourceId: PG_ID,
+          query: { sql: "SELECT city FROM a" },
+        },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [
+      { value: "graz", label: "Graz" },
+      { value: "wien", label: "Wien" },
+    ];
+    server.areas.dashboards.truncatedOptions.push("city");
+    const { user } = renderApp("/dashboards/d-sales");
+    const hint = await screen.findByText(/More values exist than are listed/);
+    expect(hint.getAttribute("title")).toBe(hint.textContent);
+    await user.click(await screen.findByRole("button", { name: "City: Graz" }));
+    expect(screen.queryByRole("menuitem", { name: "Select all" })).toBeNull();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Wien" }));
+    expect(screen.getByRole("button", { name: "City: 2 values" })).toBeTruthy();
+  });
+
   it("explains a variable the saved dashboard does not have", async () => {
     const server = setup("viewer", []);
     const stored = storedSales(server);
