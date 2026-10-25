@@ -879,6 +879,33 @@ async fn changed_settings_rebuild_the_connection() {
 }
 
 #[tokio::test]
+async fn parallel_first_queries_share_one_connection() {
+    let t = T::new().await;
+    let file = t.sqlite_file("parallel.db", SALES).await;
+    let id = t.create_sqlite("Parallel", &file).await;
+    let ds = super::resolve_in_org(&t.state.db, &t.org, &id).await.unwrap();
+    // Cold cache: every caller waits for the same build instead of opening its own pool.
+    let conns = futures_util::future::join_all((0..20).map(|_| t.state.datasources.connection(&t.state, &ds))).await;
+    let first = conns[0].as_ref().unwrap().clone();
+    assert!(conns.iter().all(|c| Arc::ptr_eq(c.as_ref().unwrap(), &first)), "one connection per data source");
+    let builds = || t.state.datasources.connection_builds.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(builds(), 1);
+    t.state.datasources.forget(&id);
+    // The same through the query route: twenty panels in one request, one cached connection.
+    let queries: Vec<Value> = (0..20)
+        .map(|i| json!({ "refId": format!("Q{i}"), "datasourceId": id, "query": { "sql": "SELECT id FROM verkauf" } }))
+        .collect();
+    let r = t.query(&t.owner, Value::Array(queries)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert!(r.body["results"]["Q19"]["result"]["frame"].is_object(), "{}", r.text);
+    assert_eq!(builds(), 2, "one build for the twenty parallel queries");
+    let cached = t.state.datasources.cached_connection(&id).expect("cached");
+    let again = t.state.datasources.connection(&t.state, &ds).await.unwrap();
+    assert!(Arc::ptr_eq(&cached, &again));
+    t.finish().await;
+}
+
+#[tokio::test]
 async fn roles_and_organizations_are_enforced() {
     let t = T::new().await;
     let file = t.sqlite_file("umsatz.db", SALES).await;

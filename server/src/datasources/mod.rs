@@ -866,11 +866,13 @@ pub struct QuerySlots {
     _server: tokio::sync::OwnedSemaphorePermit,
 }
 
+/// One cache entry. The connection is built once per entry: parallel first queries of a source
+/// wait for the same build instead of each opening its own pool and logging in.
 struct Cached {
     updated_at: i64,
     policy: Arc<TargetPolicy>,
     built: Instant,
-    conn: Arc<Connection>,
+    conn: Arc<OnceCell<Arc<Connection>>>,
 }
 
 /// The data source kinds and the live connections. One per server, in `AppState`.
@@ -893,6 +895,9 @@ pub struct DataSources {
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
+    /// Connections built for the cache, for the single-build test.
+    #[cfg(test)]
+    pub(crate) connection_builds: std::sync::atomic::AtomicUsize,
 }
 
 impl DataSources {
@@ -924,6 +929,8 @@ impl DataSources {
             policy_cache: Mutex::new(None),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            connection_builds: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -941,8 +948,13 @@ impl DataSources {
 
     /// Closes and drops every cached connection (see `AppState::close`).
     pub async fn close(&self) {
-        let cached: Vec<Arc<Connection>> =
-            self.connections.lock().expect("connection cache lock").drain().map(|(_, c)| c.conn).collect();
+        let cached: Vec<Arc<Connection>> = self
+            .connections
+            .lock()
+            .expect("connection cache lock")
+            .drain()
+            .filter_map(|(_, c)| c.conn.get().cloned())
+            .collect();
         for conn in cached {
             conn.close().await;
         }
@@ -952,8 +964,10 @@ impl DataSources {
     pub fn forget(&self, datasource_id: &str) {
         let removed = self.connections.lock().expect("connection cache lock").remove(datasource_id);
         // A SQLite pool closes its file now, not whenever the last query holding it ends.
-        if let (Some(cached), Ok(rt)) = (removed, tokio::runtime::Handle::try_current()) {
-            rt.spawn(async move { cached.conn.close().await });
+        if let (Some(conn), Ok(rt)) =
+            (removed.and_then(|c| c.conn.get().cloned()), tokio::runtime::Handle::try_current())
+        {
+            rt.spawn(async move { conn.close().await });
         }
     }
 
@@ -1047,23 +1061,46 @@ impl DataSources {
         Ok(ResponseBudget::within(max, pool))
     }
 
-    /// The cached connection of a data source, or a new one.
+    /// The cached connection of a data source, or a new one. Parallel callers that find no
+    /// usable entry share one entry and wait for one build; a failed build leaves the entry empty,
+    /// so the next caller tries again.
     pub async fn connection(&self, state: &AppState, ds: &Datasource) -> Result<Arc<Connection>, SourceError> {
         let policy = self.policy(state).await.map_err(|e| SourceError::failed("internal", e.message))?;
-        {
-            let cache = self.connections.lock().expect("connection cache lock");
-            if let Some(c) = cache.get(&ds.id)
-                && c.updated_at == ds.updated_at
-                && *c.policy == *policy
-                && c.built.elapsed() < CONNECTION_REFRESH
-            {
-                return Ok(c.conn.clone());
+        let cell = {
+            let mut cache = self.connections.lock().expect("connection cache lock");
+            match cache.get(&ds.id) {
+                Some(c)
+                    if c.updated_at == ds.updated_at
+                        && *c.policy == *policy
+                        && c.built.elapsed() < CONNECTION_REFRESH =>
+                {
+                    c.conn.clone()
+                }
+                _ => {
+                    let cell = Arc::new(OnceCell::new());
+                    let entry = Cached {
+                        updated_at: ds.updated_at,
+                        policy: policy.clone(),
+                        built: Instant::now(),
+                        conn: cell.clone(),
+                    };
+                    cache.insert(ds.id.clone(), entry);
+                    cell
+                }
             }
-        }
-        let conn = self.fresh_connection(state, ds, policy.clone()).await?;
-        let cached = Cached { updated_at: ds.updated_at, policy, built: Instant::now(), conn: conn.clone() };
-        self.connections.lock().expect("connection cache lock").insert(ds.id.clone(), cached);
-        Ok(conn)
+        };
+        cell.get_or_try_init(|| async {
+            #[cfg(test)]
+            self.connection_builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.fresh_connection(state, ds, policy).await
+        })
+        .await
+        .cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_connection(&self, datasource_id: &str) -> Option<Arc<Connection>> {
+        self.connections.lock().expect("connection cache lock").get(datasource_id).and_then(|c| c.conn.get().cloned())
     }
 
     /// A connection that is not cached, so "Test connection" never reuses an older pool.

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PanelPlugin } from "../../panels/types";
 import type { PanelModel } from "./model";
 import { PanelBody } from "./PanelCard";
-import { firstLoad, usePanelResults } from "./usePanelResults";
+import { firstLoad, PANEL_DATA_KEY, usePanelResults } from "./usePanelResults";
 
 /** Counts how often a chart is built, as a uPlot instance is on mount. */
 const built = vi.hoisted(() => ({ count: 0 }));
@@ -126,10 +126,10 @@ function answer(value: number) {
   act(() => pending.resolve(value));
 }
 
-/** Renders the panel and lets its first answer (1) arrive. */
-async function drawn() {
+/** Renders the panel and lets its first answer (1) arrive; answers the query client. */
+async function drawn(client = new QueryClient()) {
   render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={client}>
       <Harness />
     </QueryClientProvider>,
   );
@@ -137,6 +137,7 @@ async function drawn() {
   await waitFor(() => expect(answers.pending).toHaveLength(1));
   answer(1);
   await waitFor(() => expect(screen.getByTestId("chart").textContent).toBe("1"));
+  return client;
 }
 
 beforeEach(() => {
@@ -196,5 +197,21 @@ describe("a panel that refreshes", () => {
     await waitFor(() => expect(screen.queryByText("1")).toBeNull());
     expect(screen.queryByText("Loading…")).toBeNull();
     expect(answers.pending).toHaveLength(0);
+  });
+
+  it("keeps only its latest answer in the cache, briefly once unshown", async () => {
+    const client = await drawn();
+    for (const value of [2, 3, 4]) {
+      act(() => refresh());
+      await waitFor(() => expect(answers.pending).toHaveLength(1));
+      answer(value);
+      await waitFor(() => expect(screen.getByTestId("chart").textContent).toBe(String(value)));
+    }
+    const kept = client.getQueryCache().findAll({ queryKey: [PANEL_DATA_KEY] });
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.state.data).toEqual([
+      { refId: "A", result: expect.objectContaining({ shape: "frame" }) },
+    ]);
+    expect(kept[0]?.gcTime).toBeLessThanOrEqual(5_000);
   });
 });

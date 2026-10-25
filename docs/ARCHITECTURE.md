@@ -238,7 +238,17 @@ type QueryResult =
 - **Limits** per data source within server-wide maxima: timeout (default 30 s), rows/points
   (default 100,000), response size; exceeding them answers `query_timeout` or a truncated result
   with `meta.rowsTruncated`.
-- Connections are pooled per data source and rebuilt when its settings change.
+  - Reading stops on the source once the row limit is reached: PostgreSQL reads through a cursor
+    (`DECLARE ... NO SCROLL CURSOR`, `FETCH` of at most the limit plus one row per round trip),
+    MySQL/MariaDB and SQL Server close the connection of a cut result, so the server stops the
+    statement instead of sending the rest, and SQLite stops stepping the statement.
+  - The response size budget counts what a result holds in memory, not only its JSON text: 32
+    bytes for every value (also nulls and numbers), the text of strings (their capacity, at least
+    their JSON form), and the keys and entries of documents, graph properties and nested values
+    (`frame::value_size`).
+- Connections are pooled per data source and rebuilt when its settings change. The pool is built
+  once per data source: parallel first queries (a dashboard opening with a cold cache) wait for
+  the same build instead of each opening a pool and logging in.
 - **Secrets** (passwords, tokens, client keys) never live in plain settings: settings with a URL
   or DSN reject embedded credentials, which go into dedicated secret fields.
   - Stored in `datasource_secrets`, encrypted with AES-256-GCM, a random 96-bit nonce per
@@ -383,6 +393,10 @@ type QueryResult =
   secrets and never what a user typed (a failed sign-in records the account id if it exists, not
   the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
   since they hold client addresses.
+- The audit list query carries only the filters that are set, and pages by the row value
+  `(created_at, id)`, so it runs on the indexes `audit_events_org_time_id` and
+  `audit_events_org_resource` (migration 0015) without a sort; a test checks the plan with
+  `EXPLAIN QUERY PLAN` on SQLite.
 
 ## Data directory
 
@@ -508,6 +522,11 @@ type QueryResult =
   A supervisor must allow for that: stop the container with `docker stop -t 20`, or create it
   with `docker run --stop-timeout 20` (Docker's default of 10 s is shorter than the 10 s grace
   plus the close); systemd's default of 90 s is enough.
+- Writes queue for the one write lock on the main pool, each holding a connection while it waits
+  (up to the busy timeout). The reads every request makes, the session lookup, the sign-in's user
+  lookup and the organization membership and permissions, go through a separate pool of
+  read-only connections (`AppState::read_db`, `query_only`), so a queue of writers cannot use up
+  the connections they need; SQLite keeps its single writer. On PostgreSQL both are the same pool.
 - Reads never wait on writers: the one write a read request makes, the session's last-seen time,
   runs in a background task, so a cancelled request cannot cut it short. At most a quarter of
   the pool (1 to 4) runs at once; past that a touch is skipped, and the session's next request
@@ -672,6 +691,7 @@ Numbered and never edited after release (`engineering/data-and-apis.md`).
 | 0012 | not used (left free when 0013 and 0014 were numbered in parallel) | |
 | 0013 | Explore query history (per user, 30 days) | explore history (#76) |
 | 0014 | team ownership of folders and dashboards (team spaces), team contexts | feat/team-spaces |
+| 0015 | audit log indexes by organization, time and id, and by resource | fix/m1-wave-3-perf |
 
 ## M1 work streams
 
@@ -707,6 +727,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   shared keys. Tests check prefixes, duplicates and per-file parity.
 - The current organization's permissions come from `GET /api/orgs/{orgId}`; areas hide what the
   server would refuse, and the server checks every request regardless.
+- Query results (panel answers, Explore runs) can each hold up to the response size limit. They
+  stay in the TanStack Query cache for `RESULT_GC_MS` (5 s) once nothing shows them, and when a
+  new answer arrives the older unshown ones of the same panel or of Explore are dropped
+  (`api/resultCache.ts`), so a refreshing dashboard keeps one answer per panel.
 
 ## Testing contracts
 
