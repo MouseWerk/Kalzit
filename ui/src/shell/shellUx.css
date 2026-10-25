@@ -702,10 +702,10 @@
   .top-bar {
     position: sticky;
     inset-block-start: 0;
-    z-index: var(--z-sticky);
-    margin-block-start: calc(var(--space-5) * -1);
+    z-index: var(--z-bar);
+    margin-block-start: calc(var(--page-pad-top) * -1);
     margin-inline: calc(var(--space-gutter) * -1);
-    padding: var(--space-5) var(--space-gutter) var(--space-3);
+    padding: var(--page-pad-top) var(--space-gutter) var(--space-3);
     border-block-end: var(--border-width) solid var(--border);
     background: var(--bg);
   }

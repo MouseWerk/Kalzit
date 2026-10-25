@@ -531,7 +531,7 @@
 
   .shell__main {
     min-width: 0;
-    padding: var(--space-5) var(--space-gutter) var(--space-10);
+    padding: var(--page-pad-top) var(--space-gutter) var(--page-pad-bottom);
   }
 
   /*
@@ -620,7 +620,7 @@
     }
 
     .shell__main {
-      padding: var(--space-5) var(--space-4) var(--space-10);
+      padding: var(--page-pad-top) var(--space-4) var(--page-pad-bottom);
     }
   }
 

@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../components/Icon";
-import { placeMenu } from "../components/menuPlacement";
 import { Dialog } from "../features/dashboards/ui/Dialog";
 import { useI18n } from "../i18n/i18n";
 import { showErrorToast } from "../lib/toasts";
 import { type DashboardEntry, MAX_PINS, orderPins, pinsQuery, search, setPinned } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
+import { useFloatingMenu } from "./useFloatingMenu";
 import { useMenuButton } from "./useMenuButton";
 import "../components/iconButton.css";
 import "./shellUx.css";
@@ -137,34 +137,13 @@ function PinnedEntry({
 }) {
   const { t } = useI18n();
   const menu = useMenuButton();
-  const { open, buttonRef, menuRef, closeMenu } = menu;
+  const { open, closeMenu } = menu;
   const choose = (action: () => void, returnFocus = true) => {
     action();
     closeMenu(returnFocus);
   };
   // Drawn in the window beside its button: the sidebar's overflow never clips it.
-  useLayoutEffect(() => {
-    const button = buttonRef.current;
-    const list = menuRef.current;
-    if (open && button !== null && list !== null) {
-      placeMenu(button, list, "beside");
-    }
-  }, [open, buttonRef, menuRef]);
-  useEffect(() => {
-    if (!open) return;
-    const close = () => closeMenu(false);
-    window.addEventListener("resize", close);
-    return () => window.removeEventListener("resize", close);
-  }, [open, closeMenu]);
-  // Tab leaves the menu back at its button (the menu is drawn at the end of the page).
-  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Tab") {
-      event.preventDefault();
-      closeMenu(true);
-      return;
-    }
-    menu.onMenuKeyDown(event);
-  }
+  const onMenuKeyDown = useFloatingMenu(menu, "beside");
   return (
     <li className="shell__pin">
       <Link

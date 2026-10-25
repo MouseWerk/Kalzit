@@ -1,9 +1,9 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
 import { Icon, type IconName } from "./Icon";
 import { type ShortcutKeys, WithTooltip } from "./IconButton";
-import { placeMenu } from "./menuPlacement";
 import "../shell/shellUx.css";
 import "./iconButton.css";
 
@@ -45,34 +45,7 @@ interface ToolbarMenuProps {
 export function ToolbarMenu({ label, icon, text, entries, shortcut, className }: ToolbarMenuProps) {
   const menu = useMenuButton();
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
-
-  useLayoutEffect(() => {
-    const button = buttonRef.current;
-    const list = menuRef.current;
-    if (!open || button === null || list === null) {
-      return;
-    }
-    placeMenu(button, list);
-  }, [open, buttonRef, menuRef]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const close = () => closeMenu(false);
-    window.addEventListener("resize", close);
-    return () => window.removeEventListener("resize", close);
-  }, [open, closeMenu]);
-
-  // Tab leaves the menu back at its button (the menu is drawn at the end of the page).
-  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Tab") {
-      event.preventDefault();
-      closeMenu(true);
-      return;
-    }
-    menu.onMenuKeyDown(event);
-  }
+  const onMenuKeyDown = useFloatingMenu(menu);
 
   return (
     <div className="menu-anchor toolbar-menu" ref={anchorRef}>
@@ -105,8 +78,6 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
               aria-label={label}
               className="menu toolbar-menu__list"
               onKeyDown={onMenuKeyDown}
-              // A click in the menu is the menu's, not a click outside that closes it.
-              onPointerDown={(event) => event.stopPropagation()}
             >
               {entries.map((entry) => {
                 switch (entry.kind) {

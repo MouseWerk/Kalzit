@@ -94,7 +94,7 @@ export function DashboardToolbar({
   const { t } = useI18n();
   // The toolbar sticks under the top bar; the rail sticks under both.
   const toolbarRef = useRef<HTMLDivElement>(null);
-  useHeightVar(toolbarRef, "--dash-toolbar-height");
+  useHeightVar(toolbarRef, "--dash-toolbar-height", "(min-width: 48rem)");
   const wide = useWideLayout();
   const tv = mode === "tv";
 
