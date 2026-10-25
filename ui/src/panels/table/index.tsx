@@ -16,7 +16,7 @@ import {
   findMapping,
   toneClass,
 } from "../fieldConfig/fieldConfig";
-import { compareValues, formatValue, int64Key, rowCount, toNumber } from "../frame";
+import { compareValues, formatValue, int64Key, isNumeric, rowCount, toNumber } from "../frame";
 import { TablePreview } from "../picker/previews";
 import { fraction, toneName } from "../reduce";
 import { CheckboxField, EmptyPanel, NumberField } from "../shared";
@@ -102,7 +102,7 @@ export function parseFilter(
   if (wanted === "") {
     return null;
   }
-  const numeric = field.type === "number" || field.type === "int64";
+  const numeric = isNumeric(field.type);
   const comparison = numeric ? COMPARISON.exec(wanted) : null;
   if (comparison !== null) {
     const operator = comparison[1];

@@ -248,6 +248,11 @@ impl DataSourcePlugin for Prometheus {
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let q: PromQuery = req.parse()?;
+        // `$__interval` and `$__rate_interval` follow the step Prometheus is asked for, so a
+        // window like `[$__interval]` covers exactly one point.
+        let step_ms = step_ms(&q, &req);
+        let mut req = req;
+        req.interval_ms = step_ms as u64;
         let expr = expand(&q.expr, &req)?;
         let c = client(conn).await?;
         let max_bytes = req.limits.budget.remaining();
@@ -256,11 +261,6 @@ impl DataSourcePlugin for Prometheus {
             let time = seconds(req.range.to);
             c.api("api/v1/query", &[("query", expr.clone()), ("time", time)], max_bytes, Some(&mut charge)).await?
         } else {
-            let span = req.range.to.saturating_sub(req.range.from).max(0);
-            let step_ms = (req.interval_ms as i64)
-                .max(q.min_step_ms.unwrap_or(0) as i64)
-                .max(span / MAX_POINTS_PER_SERIES + 1)
-                .max(1);
             let params = [
                 ("query", expr.clone()),
                 ("start", seconds(req.range.from)),
@@ -281,6 +281,18 @@ impl DataSourcePlugin for Prometheus {
         drop(charge);
         Ok(QueryResult::Frame { frame })
     }
+}
+
+/// The step of a range query in milliseconds: the panel's interval, at least the query's minimum
+/// step, and wide enough that no series exceeds Prometheus' point limit. An instant query has no
+/// step; its interval is the panel's, at least the minimum step.
+fn step_ms(q: &PromQuery, req: &SourceQuery) -> i64 {
+    let step = (req.interval_ms as i64).max(q.min_step_ms.unwrap_or(0) as i64);
+    if q.instant {
+        return step.max(1);
+    }
+    let span = req.range.to.saturating_sub(req.range.from).max(0);
+    step.max(span / MAX_POINTS_PER_SERIES + 1).max(1)
 }
 
 /// Unix seconds with millisecond precision, as Prometheus takes them.

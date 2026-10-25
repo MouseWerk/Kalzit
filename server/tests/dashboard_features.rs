@@ -1139,7 +1139,9 @@ async fn library_panels_are_shared_by_dashboards(t: TestApp) {
     );
 
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &viewer).await;
-    assert_eq!((uses.body["items"].as_array().unwrap().len(), uses.body["hidden"].as_i64()), (2, Some(0)));
+    assert_eq!(uses.body["items"].as_array().unwrap().len(), 2);
+    // Dashboards the caller cannot see are not counted either.
+    assert!(uses.body.get("hidden").is_none(), "{}", uses.body);
     assert_eq!(t.get(&format!("~/library-panels/{lib}"), &viewer).await.body["uses"], 2);
     // The list counts the same, for every row at once.
     let listed = t.get("~/library-panels", &viewer).await;
@@ -1206,20 +1208,17 @@ async fn library_panels_in_restricted_folders(t: TestApp) {
     assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
     // The editor cannot open the library panel itself, so its uses are not theirs to list.
     assert_eq!(t.get(&format!("~/library-panels/{lib}/uses"), &editor).await.status, StatusCode::NOT_FOUND);
-    // A dashboard in another restricted folder counts as hidden for whoever cannot see it.
+    // A dashboard in another restricted folder is neither listed nor counted for whoever cannot
+    // see it.
     let other = t.folder("Vorstand", true).await;
     t.dashboard(Some(&other), showing("Vorstand", &lib), &t.owner).await;
     let vera = t.member("Vera", "viewer").await;
     t.grant("Vera", "folder", &secret, "view").await;
     let partial = t.get(&format!("~/library-panels/{lib}/uses"), &vera).await;
-    assert_eq!(
-        (partial.body["items"].as_array().unwrap().len(), partial.body["hidden"].as_i64()),
-        (2, Some(1)),
-        "{}",
-        partial.body
-    );
+    assert_eq!(partial.body["items"].as_array().unwrap().len(), 2, "{}", partial.body);
+    assert_eq!(t.get(&format!("~/library-panels/{lib}"), &vera).await.body["uses"], 2);
     let all = t.get(&format!("~/library-panels/{lib}/uses"), &t.owner).await;
-    assert_eq!((all.body["items"].as_array().unwrap().len(), all.body["hidden"].as_i64()), (3, Some(0)));
+    assert_eq!(all.body["items"].as_array().unwrap().len(), 3);
     t.grant("Emil", "folder", &secret, "view").await;
     let uses = t.get(&format!("~/library-panels/{lib}/uses"), &editor).await;
     assert_eq!(uses.body["items"].as_array().unwrap().len(), 2, "{}", uses.body);

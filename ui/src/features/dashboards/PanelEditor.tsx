@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { namedInputs, runPanelSteps } from "../../analysis/panel";
+import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, stepFrames, withUnknown } from "../../analysis/steps";
 import type { Shape, TimeRange } from "../../api/generated/shapes";
@@ -36,7 +36,7 @@ import { openLayerCount } from "../../lib/layers";
 import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
-import { seriesName } from "../../panels/frame";
+import { isNumeric, seriesName } from "../../panels/frame";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
@@ -249,16 +249,18 @@ export function PanelEditor({
     run: preview.run + refresh,
   });
   const outcomes = useMemo(() => results.data ?? [], [results.data]);
-  const stepsRun = useMemo(() => runPanelSteps(deferredSteps, outcomes), [deferredSteps, outcomes]);
+  const calendar = useAnalysisCalendar();
+  const stepsRun = useMemo(
+    () => runPanelSteps(deferredSteps, outcomes, calendar),
+    [deferredSteps, outcomes, calendar],
+  );
   const inputs = useMemo(() => namedInputs(outcomes), [outcomes]);
   // The number series the panel shows now, for the colours editor's rows, each name once.
   const seriesNames = useMemo(
     () => [
       ...new Set(
         stepsRun.frames.flatMap(({ frame }) =>
-          frame.fields
-            .filter((field) => field.type === "number" || field.type === "int64")
-            .map((field) => seriesName(field)),
+          frame.fields.filter((field) => isNumeric(field.type)).map((field) => seriesName(field)),
         ),
       ),
     ],

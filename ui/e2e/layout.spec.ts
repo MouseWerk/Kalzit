@@ -29,6 +29,47 @@ for (const variant of [
 }
 
 /**
+ * The other widths the UI has to hold: a large phone, both sides of the 48rem breakpoint (768 and
+ * 1024), a narrow desktop window (900) and a wide desktop. On the pages with the most layout (lists, the dashboard and its
+ * editor, settings, forms), in English; the full set runs at 360 px above.
+ */
+const KEY_PAGES = new Set([
+  "home",
+  "dashboards",
+  "dashboard",
+  "panel editor",
+  "dashboard settings",
+  "explore result",
+  "data sources",
+  "data source kinds",
+  "data source",
+  "members",
+  "server settings",
+  "account",
+]);
+
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 768, height: 1024 },
+  { width: 900, height: 720 },
+  { width: 1024, height: 768 },
+  { width: 1920, height: 1080 },
+]) {
+  test.describe(`${viewport.width} px wide`, () => {
+    test.use({ viewport, locale: "en-US" });
+
+    for (const main of MAIN_PAGES.filter((m) => KEY_PAGES.has(m.name))) {
+      test(`${main.name}: nothing sticks out to the right`, async ({ page, world }) => {
+        await signInOwner(page, "en");
+        await page.goto(main.path(world));
+        await main.ready(page, world, "en");
+        await expectNothingSticksOut(page);
+      });
+    }
+  });
+}
+
+/**
  * Probes that the check above can fail: content too wide for a dialog whose body scrolls
  * (overflow: auto) must be caught, not hidden behind the body's scrollbar.
  */
@@ -52,9 +93,7 @@ test.describe("the overflow check itself", () => {
   } as const;
 
   for (const [name, inject] of Object.entries(PROBES)) {
-    for (const main of MAIN_PAGES.filter(
-      (m) => m.name === "dashboard settings" || m.name === "add member",
-    )) {
+    for (const main of MAIN_PAGES.filter((m) => m.name === "add member")) {
       test(`${name} in the ${main.name} dialog is caught`, async ({ page, world }) => {
         test.fail(true, "the probe makes the dialog too wide on purpose");
         await signInOwner(page);

@@ -6,6 +6,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useSearch,
 } from "@tanstack/react-router";
 import {
   type ReactNode,
@@ -61,12 +62,18 @@ import {
   saveDashboard,
 } from "./api";
 import { PanelInspector } from "./PanelInspector";
+import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardInfo } from "./DashboardInfo";
 import { DashboardLinks } from "./DashboardLinks";
 import { DashboardRail } from "./DashboardRail";
+import {
+  DashboardSettingsPage,
+  SETTINGS_SECTIONS,
+  type SettingsSection,
+} from "./DashboardSettingsPage";
 import { DashboardToolbar } from "./DashboardToolbar";
 import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson } from "./exportImport";
@@ -88,7 +95,6 @@ import { panelRange } from "./panelTime";
 import { RefreshControl } from "./RefreshControl";
 import type { DashboardSearch } from "./routes";
 import { ConflictDialog, SaveDialog } from "./SaveDialogs";
-import { SettingsDialog } from "./SettingsDialog";
 import { TimeControls } from "./TimeRangePicker";
 import {
   CopyPanelDialog,
@@ -305,8 +311,8 @@ export function DashboardScreen({ orgId, dashboardId, display, onDisplay, contro
 }
 
 type DialogState =
-  | { kind: "settings" }
-  | { kind: "save" }
+  /** `base`: the version the change was made on (the settings page), else the newest. */
+  | { kind: "save"; base?: number | undefined }
   | { kind: "conflict"; current: Dashboard; message: string }
   | { kind: "discard" }
   | { kind: "delete" }
@@ -314,7 +320,8 @@ type DialogState =
   | { kind: "removeRow"; row: RowModel }
   | { kind: "copy"; panel: PanelModel }
   | { kind: "saveAs" }
-  | { kind: "json"; readOnly: boolean }
+  /** `model`: what the JSON starts from when it is not the dashboard as it is (the settings page). */
+  | { kind: "json"; readOnly: boolean; model?: DashboardModel | undefined }
   | { kind: "libraryPick" }
   | { kind: "makeLibrary"; panel: PanelModel }
   | { kind: "librarySave"; panel: PanelModel; isNew: boolean }
@@ -322,6 +329,7 @@ type DialogState =
   | { kind: "mark"; mark: DashboardMark }
   | { kind: "discardPanel"; fresh: boolean }
   | { kind: "access" }
+  | { kind: "owner" }
   | { kind: "info" }
   | null;
 
@@ -409,6 +417,28 @@ function DashboardView({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const headingId = useId();
+  // The settings page is a child route of the dashboard; its section comes from the address.
+  const onSettings = useLocation({
+    select: (location) => location.pathname === `/dashboards/${dashboard.id}/settings`,
+  });
+  const sectionParam = useSearch({ strict: false, select: (search) => search.section });
+  const settingsSection: SettingsSection = SETTINGS_SECTIONS.includes(
+    sectionParam as SettingsSection,
+  )
+    ? (sectionParam as SettingsSection)
+    : "general";
+  // Bumped when the JSON model is applied from the settings page, so it starts from the result.
+  const [settingsKey, setSettingsKey] = useState(0);
+  // Changes made on the settings page and not yet taken into the dashboard; the dashboard's leave
+  // guard asks for them too.
+  const settingsDirty = useRef(false);
+  const [settingsChanged, setSettingsChanged] = useState(false);
+  // The saved version the settings page started from: a newer one saved elsewhere restarts an
+  // untouched page, while a page with changes keeps them and says so.
+  const [settingsVersion, setSettingsVersion] = useState(dashboard.version);
+  if (settingsVersion !== dashboard.version && !settingsChanged) {
+    setSettingsVersion(dashboard.version);
+  }
   // Dashboards in restricted folders are hidden altogether, so whoever sees one may edit it when
   // their role allows; the server checks the folder grant on save. A trashed one is read-only.
   const inTrash = dashboard.deletedAt !== null;
@@ -714,6 +744,15 @@ function DashboardView({
       setDialog(null);
       setDraft(null);
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+      // Saved from the settings page: back to the dashboard with the new settings.
+      if (onSettings) {
+        settingsDirty.current = false;
+        await navigate({
+          to: "/dashboards/$dashboardId",
+          params: { dashboardId: dashboard.id },
+          search: (prev) => ({ ...prev, section: undefined }),
+        });
+      }
     },
     onError: async (error, { message }) => {
       if (isApiError(error, "version_conflict")) {
@@ -951,16 +990,26 @@ function DashboardView({
   // Leaving the dashboard with unsaved changes asks first; so does leaving the editor without
   // its buttons (the browser's back button) when that would drop a change to the panel.
   const editorChanged = () => snapshot.current?.changed() ?? false;
-  const unsaved = () => dirtyRef.current || editorChanged();
+  const unsaved = () => dirtyRef.current || editorChanged() || settingsDirty.current;
   const here = `/dashboards/${dashboard.id}`;
+  const settingsPath = `${here}/settings`;
   const staysHere = (pathname: string) =>
-    pathname === here || pathname.startsWith(`${here}/panels/`);
+    pathname === here || pathname === `${here}/settings` || pathname.startsWith(`${here}/panels/`);
   const blocker = useBlocker({
     shouldBlockFn: ({ current, next, action }) => {
       // Back and Forward under an open dialog or overlay act on that layer first (its own guard
       // holds the navigation); the leave question comes with the next press.
       if ((action === "BACK" || action === "FORWARD") && hasBackGuard()) {
         return false;
+      }
+      // Leaving the settings page with changes made there asks, wherever it goes. Moving between
+      // its sections stays on the page.
+      if (
+        current.pathname === settingsPath &&
+        next.pathname !== settingsPath &&
+        settingsDirty.current
+      ) {
+        return true;
       }
       if (staysHere(next.pathname)) {
         const fromEditor = current.pathname.startsWith(`${here}/panels/`);
@@ -970,9 +1019,15 @@ function DashboardView({
     },
     enableBeforeUnload: unsaved,
     withResolver: true,
-    disabled: draft === null,
+    // One guard for the dashboard and its settings page, so leaving asks once.
+    disabled: draft === null && !onSettings,
   });
-  const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
+  const leavingSettings =
+    blocker.status === "blocked" &&
+    blocker.current.pathname === settingsPath &&
+    staysHere(blocker.next.pathname);
+  const droppingPanel =
+    blocker.status === "blocked" && !leavingSettings && staysHere(blocker.next.pathname);
   const inEditMode = draft !== null;
   // The panel the inspector shows while editing; gone with edit mode or with the panel.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1288,11 +1343,13 @@ function DashboardView({
     addPanel: () => addPanel(),
     addRow,
     addLibraryPanel: () => setDialog({ kind: "libraryPick" }),
-    // From view mode the settings start edit mode: they change the draft.
-    settings: () => {
-      setDraft((current) => current ?? dashboard.model);
-      setDialog({ kind: "settings" });
-    },
+    // The settings are a page of their own; saving there saves the dashboard.
+    settings: () =>
+      void navigate({
+        to: "/dashboards/$dashboardId/settings",
+        params: { dashboardId: dashboard.id },
+        search: (prev) => ({ ...prev, section: undefined }),
+      }),
     json: () => setDialog({ kind: "json", readOnly: draft === null }),
     exportJson: () => void exportJson(),
     copyLink: () => void copyLink(),
@@ -1303,6 +1360,7 @@ function DashboardView({
         params: { dashboardId: dashboard.id },
       }),
     access: () => setDialog({ kind: "access" }),
+    owner: () => setDialog({ kind: "owner" }),
     remove: () => setDialog({ kind: "delete" }),
     kiosk: () => onDisplay({ mode: "kiosk" }),
     tv: () => onDisplay({ mode: "tv" }),
@@ -1368,9 +1426,60 @@ function DashboardView({
     }
   }
 
+  const settingsView =
+    editorView !== null || !onSettings ? null : (
+      <DashboardSettingsPage
+        key={`${settingsKey}:${settingsVersion}:${draft === null ? "saved" : "draft"}`}
+        orgId={orgId}
+        dashboardId={dashboard.id}
+        model={model}
+        version={dashboard.version}
+        section={settingsSection}
+        trail={editorTrail}
+        canEdit={canEdit}
+        unsaved={dirty}
+        access={
+          canAccess ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => setDialog({ kind: "access" })}
+            >
+              {t("dashboards.access")}
+            </button>
+          ) : null
+        }
+        onDirtyChange={(changed) => {
+          settingsDirty.current = changed;
+          setSettingsChanged(changed);
+        }}
+        onSave={(next, base) => {
+          setDraft(next);
+          setValues((v) => ({ ...initialVariables(next.variables), ...v }));
+          setDialog({ kind: "save", base });
+        }}
+        onApply={
+          draft === null
+            ? undefined
+            : (next) => {
+                changeDraft(() => next);
+                setValues((v) => ({ ...initialVariables(next.variables), ...v }));
+                void navigate({
+                  to: "/dashboards/$dashboardId",
+                  params: { dashboardId: dashboard.id },
+                  search: (prev) => ({ ...prev, section: undefined }),
+                });
+              }
+        }
+        onJson={(pending) =>
+          setDialog({ kind: "json", readOnly: !canEdit, model: canEdit ? pending : undefined })
+        }
+      />
+    );
+
   return (
     <div className={className}>
-      {editorView ?? (
+      {editorView ?? settingsView ?? (
         <>
           {mode === "kiosk" ? (
             // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
@@ -1400,6 +1509,7 @@ function DashboardView({
                 edit: canEdit,
                 remove: canDelete && !inTrash,
                 access: canAccess,
+                owner: canAccess && canEdit,
                 saveAs: permissions.has("dashboards:write") || canEdit,
               }}
               controls={controls}
@@ -1593,7 +1703,22 @@ function DashboardView({
           {isNewPanel ? t("dashboards.editor.discardNewText") : t("dashboards.editor.discardText")}
         </ConfirmDialog>
       ) : null}
-      {blocker.status === "blocked" && !droppingPanel ? (
+      {leavingSettings ? (
+        <ConfirmDialog
+          title={t("dashboards.leave.title")}
+          confirmLabel={t("dashboards.leave.confirm")}
+          onCancel={() => blocker.reset()}
+          backGuard={false}
+          onConfirm={() => {
+            // Back on the dashboard: its own unsaved changes stay.
+            settingsDirty.current = false;
+            blocker.proceed();
+          }}
+        >
+          {t("dashboards.settingsPage.leaveText")}
+        </ConfirmDialog>
+      ) : null}
+      {blocker.status === "blocked" && !droppingPanel && !leavingSettings ? (
         <ConfirmDialog
           title={t("dashboards.leave.title")}
           confirmLabel={t("dashboards.leave.confirm")}
@@ -1602,34 +1727,24 @@ function DashboardView({
           onConfirm={() => {
             // Left on purpose: a reload of this dashboard later starts clean.
             writeDraft(owner, dashboard.id, null);
+            settingsDirty.current = false;
             blocker.proceed();
           }}
         >
-          {t("dashboards.discard.text")}
+          {draft === null ? t("dashboards.settingsPage.leaveText") : t("dashboards.discard.text")}
         </ConfirmDialog>
-      ) : null}
-      {dialog?.kind === "settings" ? (
-        <SettingsDialog
-          orgId={orgId}
-          model={model}
-          onApply={(next) => {
-            changeDraft(() => next);
-            setValues((v) => ({ ...initialVariables(next.variables), ...v }));
-            setDialog(null);
-          }}
-          onJson={() => setDialog({ kind: "json", readOnly: false })}
-          onClose={() => setDialog(null)}
-        />
       ) : null}
       {dialog?.kind === "json" ? (
         <JsonModelDialog
           orgId={orgId}
-          model={model}
-          readOnly={dialog.readOnly || draft === null}
+          model={dialog.model ?? model}
+          readOnly={dialog.readOnly || (draft === null && dialog.model === undefined)}
           onApply={(next) => {
-            changeDraft(() => next);
+            // From the settings page in view mode, applying the JSON starts edit mode.
+            setDraft(next);
             setValues((v) => ({ ...initialVariables(next.variables), ...v }));
             setDialog(null);
+            setSettingsKey((key) => key + 1);
           }}
           onClose={() => setDialog(null)}
         />
@@ -1782,7 +1897,9 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
-          onSave={(message) => save.mutate({ next: draft, version: dashboard.version, message })}
+          onSave={(message) =>
+            save.mutate({ next: draft, version: dialog.base ?? dashboard.version, message })
+          }
           onClose={() => {
             save.reset();
             setDialog(null);
@@ -1807,6 +1924,14 @@ function DashboardView({
             setDialog(null);
             setDraft(null);
             queryClient.setQueryData(dashboardQuery(orgId, dashboard.id).queryKey, dialog.current);
+            // From the settings page: back to the dashboard, which now shows their version.
+            if (onSettings) {
+              void navigate({
+                to: "/dashboards/$dashboardId",
+                params: { dashboardId: dashboard.id },
+                search: (prev) => ({ ...prev, section: undefined }),
+              });
+            }
           }}
           onClose={() => setDialog(null)}
         />
@@ -1848,6 +1973,18 @@ function DashboardView({
           open
           onClose={() => setDialog(null)}
           resource={{ type: "dashboard", id: dashboard.id, name: dashboard.title }}
+        />
+      ) : null}
+      {dialog?.kind === "owner" ? (
+        <OwnerDialog
+          orgId={orgId}
+          kind="dashboards"
+          id={dashboard.id}
+          name={dashboard.title}
+          owner={dashboard.ownerTeam}
+          visibility={dashboard.teamOnly ? "team" : "shared"}
+          version={dashboard.version}
+          onClose={() => setDialog(null)}
         />
       ) : null}
       {save.isError && dialog === null && !isApiError(save.error, "version_conflict") ? (

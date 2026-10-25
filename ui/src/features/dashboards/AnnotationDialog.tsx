@@ -4,6 +4,7 @@ import { isApiError } from "../../api/client";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { showErrorToast, showToast } from "../../lib/toasts";
+import { wallOf } from "../../lib/zonedTime";
 import type { DashboardMark } from "./annotations";
 import {
   ANNOTATIONS_KEY,
@@ -13,7 +14,7 @@ import {
   parseAnnotation,
   updateAnnotation,
 } from "./featuresApi";
-import { toLocalInput } from "./timeRange";
+import { resolveTime, toLocalInput } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import "./dashboardTools.css";
@@ -26,14 +27,17 @@ type Props = {
   onClose: () => void;
 } & ({ mode: "add"; time: number; panelId: string | null } | { mode: "open"; mark: DashboardMark });
 
+/** A typed time as wall-clock time in the zone in effect, the zone the input was filled in. */
 function fromLocalInput(text: string): number | null {
-  const ms = new Date(text).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  return text.includes("T") ? resolveTime(text, Date.now()) : null;
 }
 
-/** Local time with seconds for a datetime-local input with `step="1"`: "2026-10-20T08:00:05". */
+/**
+ * Wall-clock time with seconds, in the zone in effect, for a datetime-local input with
+ * `step="1"`: "2026-10-20T08:00:05". Browsers report a value on a full minute without ":00".
+ */
 export function toLocalInputSeconds(ms: number): string {
-  const seconds = String(new Date(ms).getSeconds()).padStart(2, "0");
+  const seconds = String(wallOf(ms).second).padStart(2, "0");
   return `${toLocalInput(ms)}:${seconds}`;
 }
 

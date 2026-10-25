@@ -165,6 +165,8 @@ pub struct OrgCtx {
     pub org_id: String,
     pub role: String,
     pub permissions: BTreeSet<Permission>,
+    /// When the request arrived (the app's clock), for audit entries written while checking access.
+    pub at_ms: i64,
 }
 
 impl OrgCtx {
@@ -349,6 +351,9 @@ pub enum GrantSource {
     /// A role of a team the member belongs to; `role` is a built-in name or a custom role id.
     #[serde(rename_all = "camelCase")]
     TeamRole { team_id: String, team_name: String, role: String, role_name: String },
+    /// Membership in the team that owns the resource or a folder above it.
+    #[serde(rename_all = "camelCase")]
+    TeamOwner { team_id: String, team_name: String },
     /// A grant on the resource or, for folders, on a folder above it.
     #[serde(rename_all = "camelCase")]
     Grant {
@@ -433,12 +438,115 @@ impl GrantRow {
     }
 }
 
-/// What decides the caller's access to one resource: whether a restricted folder governs it, and
-/// the caller's grants that reach it.
+/// The permissions anyone outside a resource's owner team loses on it through their role: a
+/// team-owned folder or dashboard is edited only by its team and by grants (docs/api/access.md,
+/// "Team ownership").
+const OWNER_EDIT: [Permission; 6] = [
+    Permission::AnnotationsWrite,
+    Permission::FoldersWrite,
+    Permission::FoldersPermissions,
+    Permission::DashboardsWrite,
+    Permission::DashboardsDelete,
+    Permission::DashboardsShare,
+];
+
+/// Who the caller is for grants and team ownership: their teams, every role they hold, and what
+/// membership in each of their teams gives inside what that team owns.
+#[derive(Debug, Default)]
+struct Subjects {
+    user_id: String,
+    team_ids: BTreeSet<String>,
+    /// The teams the caller maintains.
+    maintains: BTreeSet<String>,
+    role_keys: BTreeSet<String>,
+    /// Per team: the member's org role, the team's roles, and for maintainers the right to manage
+    /// grants.
+    member: std::collections::HashMap<String, BTreeSet<Permission>>,
+}
+
+impl Subjects {
+    /// Reads through `conn`: a pooled connection, or a transaction that holds `lock_org`.
+    async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT t.id, m.role, r.role FROM team_members m JOIN teams t ON t.id = m.team_id \
+             LEFT JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2",
+        )
+        .bind(&ctx.user.id)
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let mut resolved = std::collections::HashMap::new();
+        let base = cached_role(conn, &ctx.org_id, &ctx.role, &mut resolved).await?;
+        let mut out = Subjects { user_id: ctx.user.id.clone(), ..Default::default() };
+        out.role_keys.insert(ctx.role.clone());
+        for (team, member_role, role) in rows {
+            out.team_ids.insert(team.clone());
+            let team_key = team.clone();
+            let entry = out.member.entry(team).or_insert_with(|| base.clone());
+            if member_role == "maintainer" {
+                entry.extend([Permission::FoldersPermissions, Permission::DashboardsShare]);
+                out.maintains.insert(team_key.clone());
+            }
+            if let Some(role) = role {
+                let held = cached_role(conn, &ctx.org_id, &role, &mut resolved).await?;
+                out.member.get_mut(&team_key).into_iter().for_each(|e| e.extend(held.iter().copied()));
+                out.role_keys.insert(role);
+            }
+        }
+        Ok(out)
+    }
+
+    fn is_caller(&self, g: &GrantRow) -> bool {
+        match g.subject_type.as_str() {
+            "user" => g.subject_id == self.user_id,
+            "team" => self.team_ids.contains(&g.subject_id),
+            "role" => self.role_keys.contains(&g.subject_id),
+            _ => false,
+        }
+    }
+}
+
+/// The permissions of a role key, looked up once per `Subjects::load`. A custom role deleted in
+/// the meantime grants nothing.
+async fn cached_role(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    key: &str,
+    cache: &mut std::collections::HashMap<String, BTreeSet<Permission>>,
+) -> ApiResult<BTreeSet<Permission>> {
+    if let Some(held) = cache.get(key) {
+        return Ok(held.clone());
+    }
+    let held = resolve_role(&mut *conn, org_id, key).await?.map(|r| r.permissions).unwrap_or_default();
+    cache.insert(key.to_string(), held.clone());
+    Ok(held)
+}
+
+/// What decides the caller's access to one resource: whether a restricted folder (or a team-only
+/// dashboard) governs it, the caller's grants that reach it, and team ownership.
 #[derive(Debug, Default)]
 struct ResourceFacts {
     restricted: bool,
     grants: Vec<GrantRow>,
+    /// The nearest owner team within reach, and whether the caller is one of its members.
+    owner: Option<(String, bool)>,
+    /// What the caller's team memberships give within reach (`None`: no membership counts).
+    member: Option<BTreeSet<Permission>>,
+    /// The nearest team within reach the caller is a member of.
+    member_team: Option<String>,
+    /// The governing restricted resource and the team that owns it: (type, id, team).
+    governing: Option<(ResourceType, String, Option<String>)>,
+    /// The nearest team that owns the resource or any folder above it, within reach or not.
+    chain_team: Option<String>,
+}
+
+/// Who owns a folder or dashboard as far as changing its owner goes (`routes::folders`, owner
+/// changes): the nearest owner within reach, whether the caller belongs to it, and the governing
+/// restricted folder above the item (the item itself left out) with its owner team.
+#[derive(Clone, Debug, Default)]
+pub struct Ownership {
+    pub owner: Option<(String, bool)>,
+    pub governing_above: Option<(String, Option<String>)>,
 }
 
 /// One step from the resource up to the top folder: the resource itself, then its folders.
@@ -446,63 +554,82 @@ struct ResourceFacts {
 struct ChainLink {
     resource_type: ResourceType,
     id: String,
+    /// A restricted folder, or a team-only dashboard: it governs what is below it.
     restricted: bool,
+    owner_team: Option<String>,
 }
 
-/// The nearest restricted folder governs: only grants on it or below it count, so a restricted
+/// The nearest restricted link governs: only grants on it or below it count, so a restricted
 /// subfolder narrows access and grants on folders above it do not reach into it. Without a
-/// restricted folder, grants anywhere in the chain count. `grants` are the caller's grants on any
-/// link of `chain` (nearest first).
-fn narrow(chain: &[ChainLink], grants: Vec<GrantRow>) -> ResourceFacts {
+/// restricted link, grants anywhere in the chain count. Membership in a team that owns a link
+/// within that reach counts like a grant: on the nearest owned link with what the team gives its
+/// members, on links further up with seeing them. `grants` are the caller's grants on any link of
+/// `chain` (nearest first).
+fn narrow(chain: &[ChainLink], grants: Vec<GrantRow>, subjects: &Subjects) -> ResourceFacts {
     let governing = chain.iter().position(|link| link.restricted);
     let reach = &chain[..governing.map_or(chain.len(), |i| i + 1)];
     let grants = grants
         .into_iter()
         .filter(|g| reach.iter().any(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id))
         .collect();
-    ResourceFacts { restricted: governing.is_some(), grants }
+    let mut owner = None;
+    let mut member: Option<BTreeSet<Permission>> = None;
+    let mut member_team = None;
+    for link in reach {
+        let Some(team) = link.owner_team.as_deref() else { continue };
+        let held = subjects.member.get(team);
+        let view = level_permissions(link.resource_type, "view").unwrap_or_default();
+        if let Some(held) = held {
+            member_team.get_or_insert_with(|| team.to_string());
+            let gives = member.get_or_insert_with(BTreeSet::new);
+            gives.extend(view);
+            if owner.is_none() {
+                gives.extend(held.iter().copied());
+            }
+        }
+        owner.get_or_insert_with(|| (team.to_string(), held.is_some()));
+    }
+    let chain_team = chain.iter().find_map(|l| l.owner_team.clone());
+    let restricted = governing.is_some();
+    let governing = governing.map(|i| &chain[i]).map(|l| (l.resource_type, l.id.clone(), l.owner_team.clone()));
+    ResourceFacts { restricted, grants, owner, member, member_team, governing, chain_team }
 }
 
 async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>) -> ApiResult<ResourceFacts> {
     let org_id = ctx.org_id.as_str();
-    let link = |resource_type, id: &str, restricted| ChainLink { resource_type, id: id.to_string(), restricted };
+    let link = |resource_type, id: &str, restricted, owner_team| ChainLink {
+        resource_type,
+        id: id.to_string(),
+        restricted,
+        owner_team,
+    };
     let mut chain = Vec::new();
     let folder = match resource {
         Resource::Folder(id) => Some(id.to_string()),
         Resource::Dashboard(id) => {
-            chain.push(link(ResourceType::Dashboard, id, false));
-            dashboard_folder(db, org_id, id).await?
+            let row: Option<(Option<String>, Option<String>, i64)> = sqlx::query_as(
+                "SELECT folder_id, owner_team_id, team_only FROM dashboards WHERE org_id = $1 AND id = $2",
+            )
+            .bind(org_id)
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
+            let (folder, owner, team_only) = row.ok_or_else(ApiError::not_found)?;
+            chain.push(link(ResourceType::Dashboard, id, team_only != 0, owner));
+            folder
         }
         Resource::Datasource(id) => {
-            chain.push(link(ResourceType::Datasource, id, false));
+            chain.push(link(ResourceType::Datasource, id, false, None));
             None
         }
     };
     if let Some(folder) = folder {
         for f in folder_chain(db, org_id, &folder).await? {
-            chain.push(link(ResourceType::Folder, &f.id, f.restricted));
+            chain.push(link(ResourceType::Folder, &f.id, f.restricted, f.owner_team));
         }
     }
 
-    // The subjects the caller is: themselves, their teams, and every role they hold.
-    let teams: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT t.id, r.role FROM team_members m JOIN teams t ON t.id = m.team_id \
-         LEFT JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2",
-    )
-    .bind(&ctx.user.id)
-    .bind(org_id)
-    .fetch_all(db)
-    .await?;
-    let team_ids: BTreeSet<&str> = teams.iter().map(|(id, _)| id.as_str()).collect();
-    let mut role_keys: BTreeSet<&str> = teams.iter().filter_map(|(_, r)| r.as_deref()).collect();
-    role_keys.insert(&ctx.role);
-    let is_caller = |g: &GrantRow| match g.subject_type.as_str() {
-        "user" => g.subject_id == ctx.user.id,
-        "team" => team_ids.contains(g.subject_id.as_str()),
-        "role" => role_keys.contains(g.subject_id.as_str()),
-        _ => false,
-    };
-
+    let subjects = Subjects::load(&mut *db.acquire().await?, ctx).await?;
     let mut grants = Vec::new();
     for link in &chain {
         let rows: Vec<GrantRow> = sqlx::query_as(
@@ -514,37 +641,42 @@ async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>
         .bind(&link.id)
         .fetch_all(db)
         .await?;
-        grants.extend(rows.into_iter().filter(|g| is_caller(g)));
+        grants.extend(rows.into_iter().filter(|g| subjects.is_caller(g)));
     }
-    Ok(narrow(&chain, grants))
+    Ok(narrow(&chain, grants, &subjects))
 }
 
-/// What decides access to many folders and dashboards at once, read in three queries, so lists can
-/// say per row what the caller may do without a query per row. It applies the same rule as
+/// What decides access to many folders and dashboards at once, read in a few queries, so lists
+/// can say per row what the caller may do without a query per row. It applies the same rule as
 /// `check_resource` (`narrow` and `permissions_on`); a test keeps the two in step.
 pub struct AccessIndex {
     org: BTreeSet<Permission>,
-    /// Folder id to (parent, restricted).
-    folders: std::collections::HashMap<String, (Option<String>, bool)>,
+    /// Folder id to (parent, restricted, owner team).
+    folders: std::collections::HashMap<String, (Option<String>, bool, Option<String>)>,
+    /// Team-owned or team-only dashboards: id to (owner team, team only). Others are in neither.
+    dashboards: std::collections::HashMap<String, (Option<String>, bool)>,
     grants: Vec<GrantRow>,
+    subjects: Subjects,
+    /// Team id to name, for naming the owner of folders and dashboards in answers.
+    team_names: std::collections::HashMap<String, String>,
 }
 
 impl AccessIndex {
     /// Reads through `conn`: a pooled connection, or a transaction that holds `lock_org`.
     pub async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
-        let folders: Vec<(String, Option<String>, i64)> =
-            sqlx::query_as("SELECT id, parent_id, restricted FROM folders WHERE org_id = $1")
+        let folders: Vec<(String, Option<String>, i64, Option<String>)> =
+            sqlx::query_as("SELECT id, parent_id, restricted, owner_team_id FROM folders WHERE org_id = $1")
                 .bind(&ctx.org_id)
                 .fetch_all(&mut *conn)
                 .await?;
-        let teams: Vec<(String, Option<String>)> = sqlx::query_as(
-            "SELECT t.id, r.role FROM team_members m JOIN teams t ON t.id = m.team_id \
-             LEFT JOIN team_roles r ON r.team_id = t.id WHERE m.user_id = $1 AND t.org_id = $2",
+        let dashboards: Vec<(String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT id, owner_team_id, team_only FROM dashboards WHERE org_id = $1 \
+             AND (owner_team_id IS NOT NULL OR team_only = 1)",
         )
-        .bind(&ctx.user.id)
         .bind(&ctx.org_id)
         .fetch_all(&mut *conn)
         .await?;
+        let subjects = Subjects::load(conn, ctx).await?;
         let grants: Vec<GrantRow> = sqlx::query_as(
             "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
              WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard', 'datasource') ORDER BY id",
@@ -552,22 +684,18 @@ impl AccessIndex {
         .bind(&ctx.org_id)
         .fetch_all(&mut *conn)
         .await?;
-        let team_ids: BTreeSet<&str> = teams.iter().map(|(id, _)| id.as_str()).collect();
-        let mut role_keys: BTreeSet<&str> = teams.iter().filter_map(|(_, r)| r.as_deref()).collect();
-        role_keys.insert(&ctx.role);
-        let grants = grants
-            .into_iter()
-            .filter(|g| match g.subject_type.as_str() {
-                "user" => g.subject_id == ctx.user.id,
-                "team" => team_ids.contains(g.subject_id.as_str()),
-                "role" => role_keys.contains(g.subject_id.as_str()),
-                _ => false,
-            })
-            .collect();
+        let grants = grants.into_iter().filter(|g| subjects.is_caller(g)).collect();
+        let team_names: Vec<(String, String)> = sqlx::query_as("SELECT id, name FROM teams WHERE org_id = $1")
+            .bind(&ctx.org_id)
+            .fetch_all(&mut *conn)
+            .await?;
         Ok(Self {
+            team_names: team_names.into_iter().collect(),
             org: ctx.permissions.clone(),
-            folders: folders.into_iter().map(|(id, parent, r)| (id, (parent, r != 0))).collect(),
+            folders: folders.into_iter().map(|(id, parent, r, owner)| (id, (parent, r != 0, owner))).collect(),
+            dashboards: dashboards.into_iter().map(|(id, owner, team_only)| (id, (owner, team_only != 0))).collect(),
             grants,
+            subjects,
         })
     }
 
@@ -578,10 +706,25 @@ impl AccessIndex {
             if chain.len() > 64 {
                 break;
             }
-            let Some((parent, restricted)) = self.folders.get(&id) else { break };
+            let Some((parent, restricted, owner)) = self.folders.get(&id) else { break };
             next = parent.clone();
-            chain.push(ChainLink { resource_type: ResourceType::Folder, id, restricted: *restricted });
+            chain.push(ChainLink {
+                resource_type: ResourceType::Folder,
+                id,
+                restricted: *restricted,
+                owner_team: owner.clone(),
+            });
         }
+    }
+
+    /// The name of a team of the organization.
+    pub fn team_name(&self, team_id: &str) -> Option<&str> {
+        self.team_names.get(team_id).map(String::as_str)
+    }
+
+    /// Whether the caller is a member of the team.
+    pub fn is_member(&self, team_id: &str) -> bool {
+        self.subjects.team_ids.contains(team_id)
     }
 
     /// What the caller may do on a folder, or `None` when they may not see it.
@@ -593,8 +736,12 @@ impl AccessIndex {
 
     /// What the caller may do on a data source, or `None` when they may not see it.
     pub fn datasource(&self, datasource_id: &str) -> Option<BTreeSet<Permission>> {
-        let chain =
-            [ChainLink { resource_type: ResourceType::Datasource, id: datasource_id.to_string(), restricted: false }];
+        let chain = [ChainLink {
+            resource_type: ResourceType::Datasource,
+            id: datasource_id.to_string(),
+            restricted: false,
+            owner_team: None,
+        }];
         self.decide(ResourceType::Datasource, &chain)
     }
 
@@ -609,8 +756,13 @@ impl AccessIndex {
 
     /// What the caller may do on a dashboard in `folder_id`, or `None` when they may not see it.
     pub fn dashboard(&self, dashboard_id: &str, folder_id: Option<&str>) -> Option<BTreeSet<Permission>> {
-        let mut chain =
-            vec![ChainLink { resource_type: ResourceType::Dashboard, id: dashboard_id.to_string(), restricted: false }];
+        let (owner_team, team_only) = self.dashboards.get(dashboard_id).cloned().unwrap_or_default();
+        let mut chain = vec![ChainLink {
+            resource_type: ResourceType::Dashboard,
+            id: dashboard_id.to_string(),
+            restricted: team_only,
+            owner_team,
+        }];
         if let Some(folder) = folder_id {
             self.folder_links(folder, &mut chain);
         }
@@ -618,13 +770,52 @@ impl AccessIndex {
     }
 
     fn decide(&self, resource_type: ResourceType, chain: &[ChainLink]) -> Option<BTreeSet<Permission>> {
+        permissions_on(&self.org, resource_type, &self.facts(chain))
+    }
+
+    fn facts(&self, chain: &[ChainLink]) -> ResourceFacts {
         let reaching = self
             .grants
             .iter()
             .filter(|g| chain.iter().any(|l| l.resource_type.as_str() == g.resource_type && l.id == g.resource_id))
             .cloned()
             .collect();
-        permissions_on(&self.org, resource_type, &narrow(chain, reaching))
+        narrow(chain, reaching, &self.subjects)
+    }
+
+    fn ownership(&self, chain: &[ChainLink]) -> Ownership {
+        let above = chain.get(1..).unwrap_or_default();
+        Ownership {
+            owner: self.facts(chain).owner,
+            governing_above: above.iter().find(|l| l.restricted).map(|l| (l.id.clone(), l.owner_team.clone())),
+        }
+    }
+
+    /// Who owns the folder (see `Ownership`).
+    pub fn folder_ownership(&self, folder_id: &str) -> Ownership {
+        let mut chain = Vec::new();
+        self.folder_links(folder_id, &mut chain);
+        self.ownership(&chain)
+    }
+
+    /// Who owns the dashboard in `folder_id` (see `Ownership`).
+    pub fn dashboard_ownership(&self, dashboard_id: &str, folder_id: Option<&str>) -> Ownership {
+        let (owner_team, team_only) = self.dashboards.get(dashboard_id).cloned().unwrap_or_default();
+        let mut chain = vec![ChainLink {
+            resource_type: ResourceType::Dashboard,
+            id: dashboard_id.to_string(),
+            restricted: team_only,
+            owner_team,
+        }];
+        if let Some(folder) = folder_id {
+            self.folder_links(folder, &mut chain);
+        }
+        self.ownership(&chain)
+    }
+
+    /// Whether the caller maintains the team.
+    pub fn is_maintainer(&self, team_id: &str) -> bool {
+        self.subjects.maintains.contains(team_id)
     }
 }
 
@@ -635,9 +826,21 @@ pub fn role_sees_restricted(org: &BTreeSet<Permission>) -> bool {
     org.contains(&Permission::FoldersPermissions)
 }
 
-/// Whether the org-wide permissions count on this resource (see `role_sees_restricted`).
-fn role_applies(org: &BTreeSet<Permission>, facts: &ResourceFacts) -> bool {
-    !facts.restricted || role_sees_restricted(org)
+/// Whether the org-wide permissions count on this resource (see `role_sees_restricted`). With
+/// `bypass` false the admins' reach into restricted and team content is left out, to tell what
+/// their access rests on (`audit_admin_access`).
+fn role_applies(org: &BTreeSet<Permission>, facts: &ResourceFacts, bypass: bool) -> bool {
+    !facts.restricted || (bypass && role_sees_restricted(org))
+}
+
+/// What the org-wide permissions give on the resource: nothing where they do not apply, and
+/// without the edit permissions on content another team owns (admins keep everything).
+fn role_part(org: &BTreeSet<Permission>, facts: &ResourceFacts, bypass: bool) -> BTreeSet<Permission> {
+    if !role_applies(org, facts, bypass) {
+        return BTreeSet::new();
+    }
+    let outsider = matches!(facts.owner, Some((_, false))) && !(bypass && role_sees_restricted(org));
+    org.iter().copied().filter(|p| !(outsider && OWNER_EDIT.contains(p))).collect()
 }
 
 /// What the caller may do on a resource, or `None` when they may not see it at all.
@@ -646,8 +849,18 @@ fn permissions_on(
     resource_type: ResourceType,
     facts: &ResourceFacts,
 ) -> Option<BTreeSet<Permission>> {
-    let role_applies = role_applies(org, facts);
-    let role_sees = role_applies
+    permissions_with(org, resource_type, facts, true)
+}
+
+/// `permissions_on`, with or without the admins' reach (see `role_applies`).
+fn permissions_with(
+    org: &BTreeSet<Permission>,
+    resource_type: ResourceType,
+    facts: &ResourceFacts,
+    bypass: bool,
+) -> Option<BTreeSet<Permission>> {
+    let role = role_part(org, facts, bypass);
+    let role_sees = role_applies(org, facts, bypass)
         && match resource_type {
             ResourceType::Folder => org.contains(&Permission::FoldersRead),
             ResourceType::Dashboard => org.contains(&Permission::DashboardsRead),
@@ -656,25 +869,135 @@ fn permissions_on(
                 org.contains(&Permission::DatasourcesRead) || org.contains(&Permission::DatasourcesQuery)
             }
         };
-    if !role_sees && facts.grants.is_empty() {
+    if !role_sees && facts.grants.is_empty() && facts.member.is_none() {
         return None;
     }
     let mut out: BTreeSet<Permission> = facts.grants.iter().flat_map(GrantRow::permissions).collect();
-    if role_applies {
-        out.extend(org.iter().copied());
-    }
+    out.extend(role);
+    out.extend(facts.member.iter().flatten().copied());
     Some(out)
 }
 
+/// How long one admin's access to one resource in a team's space is recorded once: opening a
+/// dashboard runs a check per panel query and refresh, which would otherwise flood the log.
+const ADMIN_ACCESS_QUIET_MS: i64 = 10 * 60 * 1000;
+
+/// Whether an org admin's access rests on their reach into restricted and team content: without
+/// it they would not hold `permission` (`None`: would not even see the resource).
+fn rests_on_bypass(
+    org: &BTreeSet<Permission>,
+    resource_type: ResourceType,
+    facts: &ResourceFacts,
+    permission: Option<Permission>,
+) -> bool {
+    if !role_sees_restricted(org) {
+        return false;
+    }
+    let without = permissions_with(org, resource_type, facts, false);
+    match permission {
+        Some(p) => !without.is_some_and(|held| held.contains(&p)),
+        None => without.is_none(),
+    }
+}
+
+/// Records that an org admin reached a resource through their reach into restricted and team
+/// content: a team's space, team-only or team-owned content, a restricted folder (also one handed
+/// to the organization). Once per admin and resource within `ADMIN_ACCESS_QUIET_MS`.
+async fn audit_admin_access(
+    db: &sqlx::AnyPool,
+    ctx: &OrgCtx,
+    resource: Resource<'_>,
+    facts: &ResourceFacts,
+    permission: Option<Permission>,
+) -> ApiResult<()> {
+    if !rests_on_bypass(&ctx.permissions, resource.resource_type(), facts, permission) {
+        return Ok(());
+    }
+    let (recent,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM audit_events WHERE org_id = $1 AND actor_user_id = $2 \
+         AND action = 'team_space.admin_access' AND resource_type = $3 AND resource_id = $4 AND created_at > $5",
+    )
+    .bind(&ctx.org_id)
+    .bind(&ctx.user.id)
+    .bind(resource.resource_type().as_str())
+    .bind(resource.id())
+    .bind(ctx.at_ms - ADMIN_ACCESS_QUIET_MS)
+    .fetch_one(db)
+    .await?;
+    if recent > 0 {
+        return Ok(());
+    }
+    let summary = serde_json::json!({
+        "permission": permission.map(Permission::as_str),
+        "teamId": facts.chain_team,
+        "governingType": facts.governing.as_ref().map(|(t, _, _)| t.as_str()),
+        "governingId": facts.governing.as_ref().map(|(_, id, _)| id),
+    });
+    crate::audit::record(
+        &mut *db.acquire().await?,
+        &crate::audit::AuditEvent {
+            org_id: Some(&ctx.org_id),
+            actor_user_id: Some(&ctx.user.id),
+            actor_address: None,
+            action: "team_space.admin_access",
+            resource_type: Some(resource.resource_type().as_str()),
+            resource_id: Some(resource.id()),
+            summary,
+            at_ms: ctx.at_ms,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 /// Everything the caller may do on `resource` (org-wide permissions where they apply, plus
-/// grants), or `None` when they may not see it.
+/// grants and team membership), or `None` when they may not see it. An org admin's access into
+/// a team's space is audited.
 pub async fn resource_permissions(
     db: &sqlx::AnyPool,
     ctx: &OrgCtx,
     resource: Resource<'_>,
 ) -> ApiResult<Option<BTreeSet<Permission>>> {
     let facts = resource_facts(db, ctx, resource).await?;
-    Ok(permissions_on(&ctx.permissions, resource.resource_type(), &facts))
+    let held = permissions_on(&ctx.permissions, resource.resource_type(), &facts);
+    if held.is_some() {
+        audit_admin_access(db, ctx, resource, &facts, None).await?;
+    }
+    Ok(held)
+}
+
+/// `resource_permissions`, audited as an access for `permission` when the caller holds it: for
+/// routes that check the permission themselves (grants, annotations).
+pub async fn resource_permissions_for(
+    db: &sqlx::AnyPool,
+    ctx: &OrgCtx,
+    resource: Resource<'_>,
+    permission: Permission,
+) -> ApiResult<Option<BTreeSet<Permission>>> {
+    let facts = resource_facts(db, ctx, resource).await?;
+    let held = permissions_on(&ctx.permissions, resource.resource_type(), &facts);
+    if held.as_ref().is_some_and(|h| h.contains(&permission)) {
+        audit_admin_access(db, ctx, resource, &facts, Some(permission)).await?;
+    }
+    Ok(held)
+}
+
+/// What the caller may do on a dashboard they read (audited as a read), and whether a team they
+/// are not in owns it (itself or through a folder), which keeps org-wide rights such as
+/// `annotations:write` off it. `None` when they may not see it.
+pub async fn dashboard_reader(
+    db: &sqlx::AnyPool,
+    ctx: &OrgCtx,
+    dashboard_id: &str,
+) -> ApiResult<Option<(BTreeSet<Permission>, bool)>> {
+    let resource = Resource::Dashboard(dashboard_id);
+    let facts = resource_facts(db, ctx, resource).await?;
+    let Some(held) = permissions_on(&ctx.permissions, ResourceType::Dashboard, &facts) else { return Ok(None) };
+    if held.contains(&Permission::DashboardsRead) {
+        audit_admin_access(db, ctx, resource, &facts, Some(Permission::DashboardsRead)).await?;
+    }
+    let outsider = matches!(facts.owner, Some((_, false))) && !role_sees_restricted(&ctx.permissions);
+    Ok(Some((held, outsider)))
 }
 
 /// Checks `permission` on one resource: `not_found` when the caller may not even see it (a
@@ -685,9 +1008,13 @@ pub async fn check_resource(
     permission: Permission,
     resource: Resource<'_>,
 ) -> ApiResult<()> {
-    match resource_permissions(db, ctx, resource).await? {
+    let facts = resource_facts(db, ctx, resource).await?;
+    match permissions_on(&ctx.permissions, resource.resource_type(), &facts) {
         None => Err(ApiError::not_found()),
-        Some(held) if held.contains(&permission) => Ok(()),
+        Some(held) if held.contains(&permission) => {
+            audit_admin_access(db, ctx, resource, &facts, Some(permission)).await?;
+            Ok(())
+        }
         Some(_) => Err(ApiError::forbidden(format!("missing permission {}", permission.as_str()))),
     }
 }
@@ -707,10 +1034,40 @@ pub async fn explain(
     if permissions_on(&ctx.permissions, resource.resource_type(), &facts).is_none() {
         return Err(ApiError::not_found());
     }
+    audit_admin_access(db, ctx, resource, &facts, Some(permission)).await?;
     let mut out: Vec<GrantSource> =
-        if role_applies(&ctx.permissions, &facts) { from_roles.collect() } else { Vec::new() };
+        if role_part(&ctx.permissions, &facts, true).contains(&permission) { from_roles.collect() } else { Vec::new() };
     out.extend(facts.grants.iter().filter(|g| g.permissions().contains(&permission)).map(GrantRow::source));
+    if facts.member.as_ref().is_some_and(|m| m.contains(&permission))
+        && let Some(team_id) = &facts.member_team
+    {
+        let name: Option<(String,)> = sqlx::query_as("SELECT name FROM teams WHERE org_id = $1 AND id = $2")
+            .bind(&ctx.org_id)
+            .bind(team_id)
+            .fetch_optional(db)
+            .await?;
+        let team_name = name.map(|(n,)| n).unwrap_or_default();
+        out.push(GrantSource::TeamOwner { team_id: team_id.clone(), team_name });
+    }
     Ok(out)
+}
+
+/// The caller's role in a team of the organization (`member` or `maintainer`), or `None` when
+/// they are not in it (or there is no such team here). Works on the pool or inside a transaction.
+pub async fn team_membership<'c, E>(db: E, ctx: &OrgCtx, team_id: &str) -> ApiResult<Option<String>>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Any>,
+{
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT m.role FROM team_members m JOIN teams t ON t.id = m.team_id \
+         WHERE t.org_id = $1 AND m.team_id = $2 AND m.user_id = $3",
+    )
+    .bind(&ctx.org_id)
+    .bind(team_id)
+    .bind(&ctx.user.id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|(r,)| r))
 }
 
 /// Nobody hands out a permission they do not hold: creating or changing a custom role, assigning
@@ -929,6 +1286,7 @@ mod resource_tests {
             org_id: "o".into(),
             role: role.into(),
             permissions,
+            at_ms: 0,
         }
     }
 
@@ -1017,13 +1375,15 @@ mod resource_tests {
     #[test]
     fn grants_extend_the_role_per_level() {
         let viewer = BuiltinRole::Viewer.permissions();
-        let facts = ResourceFacts { restricted: false, grants: vec![grant("dashboard", "d", "edit")] };
+        let facts =
+            ResourceFacts { restricted: false, grants: vec![grant("dashboard", "d", "edit")], ..Default::default() };
         let held = permissions_on(&viewer, ResourceType::Dashboard, &facts).unwrap();
         assert!(held.contains(&Permission::DashboardsWrite) && !held.contains(&Permission::DashboardsShare));
         // A query grant makes a data source visible to a viewer, who otherwise does not see it.
         let none = ResourceFacts::default();
         assert!(permissions_on(&viewer, ResourceType::Datasource, &none).is_none());
-        let facts = ResourceFacts { restricted: false, grants: vec![grant("datasource", "s", "query")] };
+        let facts =
+            ResourceFacts { restricted: false, grants: vec![grant("datasource", "s", "query")], ..Default::default() };
         let held = permissions_on(&viewer, ResourceType::Datasource, &facts).unwrap();
         assert!(held.contains(&Permission::DatasourcesQuery) && !held.contains(&Permission::DatasourcesWrite));
     }
@@ -1032,14 +1392,15 @@ mod resource_tests {
     fn folder_grants_inherit_to_dashboards_inside() {
         // A grant found on a folder above the dashboard (the chain `resource_facts` collects)
         // carries the folder level's dashboard permissions.
-        let facts = ResourceFacts { restricted: false, grants: vec![grant("folder", "parent", "admin")] };
+        let facts =
+            ResourceFacts { restricted: false, grants: vec![grant("folder", "parent", "admin")], ..Default::default() };
         let held = permissions_on(&BTreeSet::new(), ResourceType::Dashboard, &facts).unwrap();
         assert!(held.contains(&Permission::DashboardsShare) && held.contains(&Permission::DashboardsDelete));
     }
 
     #[test]
     fn restricted_folders_need_a_grant_unless_you_manage_permissions() {
-        let restricted = ResourceFacts { restricted: true, grants: vec![] };
+        let restricted = ResourceFacts { restricted: true, grants: vec![], ..Default::default() };
         let editor = BuiltinRole::Editor.permissions();
         assert!(permissions_on(&editor, ResourceType::Folder, &restricted).is_none());
         assert!(permissions_on(&editor, ResourceType::Dashboard, &restricted).is_none());
@@ -1050,13 +1411,14 @@ mod resource_tests {
                 .contains(&Permission::DashboardsWrite)
         );
         // With a view grant, an editor sees it but the role's write permission does not apply.
-        let granted = ResourceFacts { restricted: true, grants: vec![grant("folder", "f", "view")] };
+        let granted =
+            ResourceFacts { restricted: true, grants: vec![grant("folder", "f", "view")], ..Default::default() };
         let held = permissions_on(&editor, ResourceType::Folder, &granted).unwrap();
         assert!(held.contains(&Permission::FoldersRead) && !held.contains(&Permission::FoldersWrite));
     }
 
     fn link(resource_type: ResourceType, id: &str, restricted: bool) -> ChainLink {
-        ChainLink { resource_type, id: id.into(), restricted }
+        ChainLink { resource_type, id: id.into(), restricted, owner_team: None }
     }
 
     fn team_grant(team: &str, resource_type: &str, resource_id: &str) -> GrantRow {
@@ -1074,25 +1436,42 @@ mod resource_tests {
             link(ResourceType::Folder, "root", false),
         ];
         let viewer = BuiltinRole::Viewer.permissions();
-        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&finanzen, finance_grants())).is_some());
-        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&gehaelter, finance_grants())).is_none());
+        assert!(
+            permissions_on(&viewer, ResourceType::Folder, &narrow(&finanzen, finance_grants(), &Subjects::default()))
+                .is_some()
+        );
+        assert!(
+            permissions_on(&viewer, ResourceType::Folder, &narrow(&gehaelter, finance_grants(), &Subjects::default()))
+                .is_none()
+        );
         let hr = vec![team_grant("hr", "folder", "gehaelter")];
-        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&gehaelter, hr)).is_some());
+        assert!(permissions_on(&viewer, ResourceType::Folder, &narrow(&gehaelter, hr, &Subjects::default())).is_some());
 
         // A dashboard inside "Gehaelter": its own grants and the folder's count, not those above.
         let mut dashboard = vec![link(ResourceType::Dashboard, "lohn", false)];
         dashboard.extend(gehaelter.iter().cloned());
-        assert!(permissions_on(&viewer, ResourceType::Dashboard, &narrow(&dashboard, finance_grants())).is_none());
+        assert!(
+            permissions_on(
+                &viewer,
+                ResourceType::Dashboard,
+                &narrow(&dashboard, finance_grants(), &Subjects::default())
+            )
+            .is_none()
+        );
         let own = vec![grant("dashboard", "lohn", "view")];
-        assert!(permissions_on(&viewer, ResourceType::Dashboard, &narrow(&dashboard, own)).is_some());
+        assert!(
+            permissions_on(&viewer, ResourceType::Dashboard, &narrow(&dashboard, own, &Subjects::default())).is_some()
+        );
 
         // Without a restricted folder, grants anywhere in the chain inherit down.
         let open = [link(ResourceType::Folder, "sub", false), link(ResourceType::Folder, "top", false)];
-        let facts = narrow(&open, vec![grant("folder", "top", "edit")]);
+        let facts = narrow(&open, vec![grant("folder", "top", "edit")], &Subjects::default());
         assert!(!facts.restricted && facts.grants.len() == 1);
         // Admins see restricted folders through their role.
         let admin = BuiltinRole::Admin.permissions();
-        assert!(permissions_on(&admin, ResourceType::Folder, &narrow(&gehaelter, vec![])).is_some());
+        assert!(
+            permissions_on(&admin, ResourceType::Folder, &narrow(&gehaelter, vec![], &Subjects::default())).is_some()
+        );
     }
 
     #[tokio::test]
@@ -1212,6 +1591,93 @@ mod resource_tests {
         assert!(viewer.dashboard("own_grant", Some("secret")).unwrap().contains(&Permission::DashboardsWrite));
         assert!(viewer.dashboard("hidden", Some("secret")).is_none());
         assert!(viewer.folder("secret").is_none());
+    }
+
+    /// Team spaces, team-owned folders and dashboards in shared folders, and team-only dashboards:
+    /// the access index agrees with `check_resource`, and the rules hold per role.
+    #[tokio::test]
+    async fn team_ownership_decides_by_membership() {
+        let db = db().await;
+        for sql in [
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('a', 'o', 'A', 'a', 0), \
+             ('b', 'o', 'B', 'b', 0)",
+            "INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('a', 'u', 'member', 0)",
+            // space_a (team A's space) > sub; space_b (team B's space); open > owned_b (B, shared)
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at, \
+             owner_team_id) VALUES ('space_a', 'o', NULL, 'A', 1, 1, 0, 0, 'a'), \
+             ('sub', 'o', 'space_a', 'S', 0, 1, 0, 0, NULL), ('space_b', 'o', NULL, 'B', 1, 1, 0, 0, 'b'), \
+             ('open', 'o', NULL, 'O', 0, 1, 0, 0, NULL), ('owned_b', 'o', 'open', 'OB', 0, 1, 0, 0, 'b')",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at, \
+             owner_team_id, team_only) VALUES \
+             ('in_a', 'o', 'sub', 'D', 'd', 1, 0, 0, NULL, 0), ('in_b', 'o', 'space_b', 'D', 'd', 1, 0, 0, NULL, 0), \
+             ('shared_b', 'o', 'open', 'D', 'd', 1, 0, 0, 'b', 0), ('only_b', 'o', 'open', 'D', 'd', 1, 0, 0, 'b', 1), \
+             ('only_a', 'o', 'open', 'D', 'd', 1, 0, 0, 'a', 1), ('in_owned_b', 'o', 'owned_b', 'D', 'd', 1, 0, 0, NULL, 0), \
+             ('mine_in_b', 'o', 'owned_b', 'D', 'd', 1, 0, 0, 'a', 0)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let dashboards = [
+            ("in_a", Some("sub")),
+            ("in_b", Some("space_b")),
+            ("shared_b", Some("open")),
+            ("only_b", Some("open")),
+            ("only_a", Some("open")),
+            ("in_owned_b", Some("owned_b")),
+            ("mine_in_b", Some("owned_b")),
+        ];
+        for role in [BuiltinRole::Viewer, BuiltinRole::Editor, BuiltinRole::Admin] {
+            let ctx = ctx(role);
+            let index = AccessIndex::load(&mut db.acquire().await.unwrap(), &ctx).await.unwrap();
+            for (id, folder) in dashboards {
+                let held = resource_permissions(&db, &ctx, Resource::Dashboard(id)).await.unwrap();
+                assert_eq!(index.dashboard(id, folder), held, "{role:?} {id}");
+            }
+            for id in ["space_a", "sub", "space_b", "open", "owned_b"] {
+                let held = resource_permissions(&db, &ctx, Resource::Folder(id)).await.unwrap();
+                assert_eq!(index.folder(id), held, "{role:?} {id}");
+            }
+        }
+        let editor = ctx(BuiltinRole::Editor);
+        let can = |p, r| check_resource(&db, &editor, p, r);
+        // Inside the own team's space the member's role applies: an editor edits.
+        assert!(can(Permission::DashboardsWrite, Resource::Dashboard("in_a")).await.is_ok());
+        // Another team's space does not exist for them.
+        assert_eq!(can(Permission::DashboardsRead, Resource::Dashboard("in_b")).await.unwrap_err().code, "not_found");
+        assert_eq!(can(Permission::FoldersRead, Resource::Folder("space_b")).await.unwrap_err().code, "not_found");
+        // Another team's dashboard in a shared folder: read, not edit; team only: hidden.
+        assert!(can(Permission::DashboardsRead, Resource::Dashboard("shared_b")).await.is_ok());
+        assert_eq!(
+            can(Permission::DashboardsWrite, Resource::Dashboard("shared_b")).await.unwrap_err().code,
+            "forbidden"
+        );
+        assert_eq!(can(Permission::DashboardsRead, Resource::Dashboard("only_b")).await.unwrap_err().code, "not_found");
+        assert!(can(Permission::DashboardsWrite, Resource::Dashboard("only_a")).await.is_ok());
+        // A team-owned folder passes its ownership down; the nearest owner decides.
+        assert_eq!(
+            can(Permission::DashboardsWrite, Resource::Dashboard("in_owned_b")).await.unwrap_err().code,
+            "forbidden"
+        );
+        assert!(can(Permission::DashboardsWrite, Resource::Dashboard("mine_in_b")).await.is_ok());
+        // A viewer in the team reads its space but does not edit it.
+        let viewer = ctx(BuiltinRole::Viewer);
+        assert!(check_resource(&db, &viewer, Permission::DashboardsRead, Resource::Dashboard("in_a")).await.is_ok());
+        let e =
+            check_resource(&db, &viewer, Permission::DashboardsWrite, Resource::Dashboard("in_a")).await.unwrap_err();
+        assert_eq!(e.code, "forbidden");
+        // Admins see and change everything.
+        let admin = ctx(BuiltinRole::Admin);
+        assert!(check_resource(&db, &admin, Permission::DashboardsWrite, Resource::Dashboard("only_b")).await.is_ok());
+        assert!(check_resource(&db, &admin, Permission::DashboardsWrite, Resource::Dashboard("in_b")).await.is_ok());
+        // A team grant shares the space read only.
+        sqlx::query(
+            "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
+             created_at) VALUES ('g', 'o', 'team', 'a', 'folder', 'space_b', 'view', 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        assert!(can(Permission::DashboardsRead, Resource::Dashboard("in_b")).await.is_ok());
+        assert_eq!(can(Permission::DashboardsWrite, Resource::Dashboard("in_b")).await.unwrap_err().code, "forbidden");
     }
 
     #[tokio::test]

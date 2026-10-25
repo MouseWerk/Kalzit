@@ -1,8 +1,8 @@
-import { baseUrl } from "./support/api";
+import { baseUrl, OWNER_CONTRAST } from "./support/api";
 import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
 import { MAIN_PAGES } from "./support/pages";
-import { expect, signInOwner, test } from "./support/test";
+import { expect, signIn, signInOwner, test } from "./support/test";
 
 test("sign-in page: no serious accessibility violations", async ({ browser }) => {
   // Signed out, as a visitor sees it.
@@ -34,6 +34,24 @@ for (const variant of VARIANTS) {
     }
   });
 }
+
+/**
+ * The high-contrast theme, as the theme of the owner's contrast twin, at a narrow desktop width
+ * (900 px), where the layouts switch between their wide and narrow forms.
+ */
+test.describe("contrast theme, en, 900 px", () => {
+  test.use({ viewport: { width: 900, height: 720 }, locale: "en-US" });
+
+  for (const main of MAIN_PAGES) {
+    test(`${main.name}: no serious accessibility violations`, async ({ page, world }) => {
+      await signIn(page, OWNER_CONTRAST.email, OWNER_CONTRAST.password, "en");
+      await page.goto(main.path(world));
+      await main.ready(page, world, "en");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "contrast");
+      expect(await seriousViolations(page)).toEqual([]);
+    });
+  }
+});
 
 test.describe("stacked list on a phone", () => {
   test.use({ viewport: { width: 360, height: 780 } });

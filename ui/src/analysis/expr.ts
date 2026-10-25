@@ -1,11 +1,15 @@
 import type { Field } from "../api/generated/shapes";
+import type { WeekStart } from "../lib/timeSettings";
+import { utcOf, wallOf } from "../lib/zonedTime";
 
 /**
  * The expression language of calculated fields (docs/api/settings-dashboards.md, "Analysis steps"), the same as the server's
  * `server/src/analysis/expr.rs`: parsed into a tree and type-checked against the frame's fields,
  * never evaluated as code. Both engines pass the cases of `server/src/analysis/conformance.json`.
  *
- * Positions count characters (code points), as the server does. Calendar functions use UTC.
+ * Positions count characters (code points), as the server does. Calendar functions (`year` ...
+ * `weekday`, `startOf`) read times in the calendar of the run: a time zone and the first day of
+ * the week (UTC and Monday unless given); `weekday` always counts 1 Monday to 7 Sunday.
  */
 
 export const MAX_CHARS = 2000;
@@ -18,6 +22,65 @@ const MAX_ARGS = 100;
 export const MIN_TIME_MS = -62_135_596_800_000;
 export const MAX_TIME_MS = 253_402_300_799_999;
 export const DAY_MS = 86_400_000;
+
+/** The time zone (an IANA name) and first day of the week calendar functions read times in. */
+export interface Calendar {
+  timeZone: string;
+  weekStart: WeekStart;
+}
+
+export const UTC_CALENDAR: Calendar = { timeZone: "UTC", weekStart: "monday" };
+
+/** ISO weekday a week starts on: 1 Monday, 6 Saturday, 7 Sunday. */
+const FIRST_WEEKDAY: Record<WeekStart, number> = { monday: 1, saturday: 6, sunday: 7 };
+
+/** The zone's offset from UTC at the instant `t`, in ms, read from the browser's zone data. */
+function zoneOffset(zone: string, t: number): number {
+  return utcOf(wallOf(t, zone)) - t;
+}
+
+// Per zone and UTC day: the offset that holds all day, or null on a day the offset changes.
+// Reading the offset costs a formatToParts; a frame's rows mostly share days, so the calendar
+// functions read it about twice per day instead of once per row.
+const dayOffsets = new Map<string, Map<number, number | null>>();
+const MAX_CACHED_DAYS = 100_000;
+
+/** The zone's offset from UTC at the instant `t`, in ms. */
+function offsetAt(cal: Calendar, t: number): number {
+  const zone = cal.timeZone;
+  if (zone === "UTC") return 0;
+  let days = dayOffsets.get(zone);
+  if (days === undefined) {
+    days = new Map();
+    dayOffsets.set(zone, days);
+  }
+  const day = Math.floor(t / DAY_MS);
+  let known = days.get(day);
+  if (known === undefined) {
+    const start = zoneOffset(zone, day * DAY_MS);
+    known = start === zoneOffset(zone, (day + 1) * DAY_MS - 1) ? start : null;
+    if (days.size >= MAX_CACHED_DAYS) days.clear();
+    days.set(day, known);
+  }
+  return known ?? zoneOffset(zone, t);
+}
+
+/** The wall-clock reading of `t` as ms since 1970-01-01 00:00 on that wall clock. */
+const localOf = (cal: Calendar, t: number) => t + offsetAt(cal, t);
+
+/**
+ * The instant a wall-clock reading names. A reading a daylight saving change skips moves forward
+ * by the skipped length; one that occurs twice is the first of the two (as the server does).
+ */
+function fromLocal(cal: Calendar, wanted: number): number {
+  if (cal.timeZone === "UTC") return wanted;
+  const before = wanted - offsetAt(cal, wanted - DAY_MS);
+  const after = wanted - offsetAt(cal, wanted + DAY_MS);
+  const [first, second] = before <= after ? [before, after] : [after, before];
+  if (localOf(cal, first) === wanted) return first;
+  if (localOf(cal, second) === wanted) return second;
+  return before;
+}
 
 /** A stable reason with its params, as the server sends them; `message` is English. */
 export interface Detail {
@@ -662,24 +725,31 @@ export function isoTime(ms: number): string {
   )}:${pad(Math.floor((inDay % 60_000) / 1000), 2)}.${pad(inDay % 1000, 3)}Z`;
 }
 
-function startOf(t: number, unit: Unit): number {
-  const floorTo = (step: number) => Math.floor(t / step) * step;
+/**
+ * The start of the unit `t` lies in, on the wall clock of `cal`. Minutes and hours step back on
+ * the time line (the repeated hour at the end of summer time has two starts); days and longer go
+ * back to the wall clock's midnight.
+ */
+function startOf(t: number, unit: Unit, cal: Calendar): number {
+  const local = localOf(cal, t);
+  const backTo = (step: number) => t - remEuclid(local, step);
+  const midnight = (days: number) => fromLocal(cal, days * DAY_MS);
   switch (unit) {
     case "minute":
-      return floorTo(60_000);
+      return backTo(60_000);
     case "hour":
-      return floorTo(3_600_000);
+      return backTo(3_600_000);
     case "day":
-      return floorTo(DAY_MS);
+      return midnight(Math.floor(local / DAY_MS));
     case "week": {
-      const days = Math.floor(t / DAY_MS);
-      return (days - (weekday(days) - 1)) * DAY_MS;
+      const days = Math.floor(local / DAY_MS);
+      return midnight(days - remEuclid(weekday(days) - FIRST_WEEKDAY[cal.weekStart], 7));
     }
     default: {
-      const c = civilOf(t);
+      const c = civilOf(local);
       const month =
         unit === "month" ? c.month : unit === "quarter" ? Math.floor((c.month - 1) / 3) * 3 + 1 : 1;
-      return daysFromCivil(c.year, month, 1) * DAY_MS;
+      return midnight(daysFromCivil(c.year, month, 1));
     }
   }
 }
@@ -724,7 +794,9 @@ export interface Compiled {
 const FIELD_TYPES: Record<string, Type | undefined> = {
   number: "number",
   int64: "number",
+  decimal: "number",
   time: "time",
+  date: "time",
   string: "text",
   bool: "bool",
 };
@@ -807,9 +879,16 @@ export const textTooLong = () =>
     { max: MAX_TEXT_UNITS },
   );
 
-/** Compiles; `eval` throws `expression.text_too_long` for a row whose text grows too long. */
-export function compile(expr: Expr, fields: readonly Field[]): Compiled {
-  const [fn, result] = check(expr, fields);
+/**
+ * Compiles; `eval` throws `expression.text_too_long` for a row whose text grows too long.
+ * Calendar functions read times in `calendar`.
+ */
+export function compile(
+  expr: Expr,
+  fields: readonly Field[],
+  calendar: Calendar = UTC_CALENDAR,
+): Compiled {
+  const [fn, result] = check(expr, fields, calendar);
   if (result === "null") throw detail("expression.no_type", "the expression is always empty");
   return {
     result,
@@ -824,7 +903,7 @@ export function compile(expr: Expr, fields: readonly Field[]): Compiled {
   };
 }
 
-function check(expr: Expr, fields: readonly Field[]): [Fn, Type] {
+function check(expr: Expr, fields: readonly Field[], cal: Calendar): [Fn, Type] {
   switch (expr.kind) {
     case "num":
       return [() => expr.value, "number"];
@@ -850,9 +929,19 @@ function check(expr: Expr, fields: readonly Field[]): [Fn, Type] {
         case "number":
           return [(r) => (typeof values[r] === "number" ? num(values[r] as number) : null), type];
         case "int64":
+        case "decimal":
           return [(r) => readNumber(values[r]), type];
         case "time":
           return [(r) => (typeof values[r] === "number" ? time(values[r] as number) : null), type];
+        case "date":
+          // A day as midnight UTC, read as midnight of that day on the run's wall clock.
+          return [
+            (r) => {
+              const day = typeof values[r] === "number" ? time(values[r] as number) : null;
+              return day === null ? null : time(fromLocal(cal, day));
+            },
+            type,
+          ];
         case "string":
           return [(r) => (typeof values[r] === "string" ? values[r] : null), type];
         default:
@@ -860,7 +949,7 @@ function check(expr: Expr, fields: readonly Field[]): [Fn, Type] {
       }
     }
     case "neg": {
-      const [f, t] = check(expr.inner, fields);
+      const [f, t] = check(expr.inner, fields, cal);
       if (t !== "number" && t !== "null") throw operands("-", t, t);
       return [
         (r) => {
@@ -871,7 +960,7 @@ function check(expr: Expr, fields: readonly Field[]): [Fn, Type] {
       ];
     }
     case "not": {
-      const [f, t] = check(expr.inner, fields);
+      const [f, t] = check(expr.inner, fields, cal);
       if (t !== "bool" && t !== "null") throw operands("not", t, t);
       return [
         (r) => {
@@ -882,9 +971,9 @@ function check(expr: Expr, fields: readonly Field[]): [Fn, Type] {
       ];
     }
     case "bin":
-      return binary(expr.op, expr.left, expr.right, fields);
+      return binary(expr.op, expr.left, expr.right, fields, cal);
     case "call":
-      return call(expr.name, expr.unit, expr.args, fields);
+      return call(expr.name, expr.unit, expr.args, fields, cal);
   }
 }
 
@@ -946,9 +1035,15 @@ function compareValues(kind: Kind, a: unknown, b: unknown): number {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
-function binary(op: BinOp, left: Expr, right: Expr, fields: readonly Field[]): [Fn, Type] {
-  const [lf, lt] = check(left, fields);
-  const [rf, rt] = check(right, fields);
+function binary(
+  op: BinOp,
+  left: Expr,
+  right: Expr,
+  fields: readonly Field[],
+  cal: Calendar,
+): [Fn, Type] {
+  const [lf, lt] = check(left, fields, cal);
+  const [rf, rt] = check(right, fields, cal);
   const [kind, result] = binTypes(op, lt, rt, left, right);
   if (op === "and" || op === "or") {
     const stop = op === "or";
@@ -1029,8 +1124,14 @@ function argumentType(name: string, position: number, expected: string, found: T
   );
 }
 
-function call(name: string, unit: Unit | null, args: Expr[], fields: readonly Field[]): [Fn, Type] {
-  const checked = args.map((a) => check(a, fields));
+function call(
+  name: string,
+  unit: Unit | null,
+  args: Expr[],
+  fields: readonly Field[],
+  cal: Calendar,
+): [Fn, Type] {
+  const checked = args.map((a) => check(a, fields, cal));
   const fns = checked.map((c) => c[0]);
   const types = checked.map((c) => c[1]);
   const want = (i: number, allowed: Type[], expected: string) => {
@@ -1054,7 +1155,7 @@ function call(name: string, unit: Unit | null, args: Expr[], fields: readonly Fi
     return [
       (r) => {
         const t = f0(r);
-        return t === null ? null : num(f(Math.floor(t as number)));
+        return t === null ? null : num(f(localOf(cal, Math.floor(t as number))));
       },
       "number",
     ];
@@ -1179,7 +1280,7 @@ function call(name: string, unit: Unit | null, args: Expr[], fields: readonly Fi
       return [
         (r) => {
           const t = f0(r);
-          return t === null ? null : time(startOf(Math.floor(t as number), unit ?? "day"));
+          return t === null ? null : time(startOf(Math.floor(t as number), unit ?? "day", cal));
         },
         "time",
       ];

@@ -100,20 +100,22 @@ export async function search(
   return parsePage(await request("GET", path, undefined, { signal }), parseHit, "search");
 }
 
-export async function fetchStars(orgId: string, signal?: AbortSignal) {
+/** `?team=` for a list in a team context (docs/api/access.md, "Team spaces"). */
+function teamParam(team: string | undefined, joiner: "?" | "&"): string {
+  return team === undefined ? "" : `${joiner}team=${encodeURIComponent(team)}`;
+}
+
+export async function fetchStars(orgId: string, signal?: AbortSignal, team?: string) {
   return parsePage(
-    await request("GET", orgPath(orgId, "stars"), undefined, { signal }),
+    await request("GET", orgPath(orgId, "stars") + teamParam(team, "?"), undefined, { signal }),
     parseEntry,
     "stars",
   );
 }
 
-export async function fetchRecents(orgId: string, signal?: AbortSignal) {
-  return parsePage(
-    await request("GET", `${orgPath(orgId, "recents")}?limit=10`, undefined, { signal }),
-    parseEntry,
-    "recents",
-  );
+export async function fetchRecents(orgId: string, signal?: AbortSignal, team?: string) {
+  const path = `${orgPath(orgId, "recents")}?limit=10${teamParam(team, "&")}`;
+  return parsePage(await request("GET", path, undefined, { signal }), parseEntry, "recents");
 }
 
 export async function fetchStarred(orgId: string, dashboardId: string, signal?: AbortSignal) {
@@ -158,10 +160,11 @@ export async function recordView(orgId: string, dashboardId: string) {
 
 export const HOME_KEY = "home";
 
-export function starsQuery(orgId: string) {
+/** The starred dashboards; with `team`, those in that team context. */
+export function starsQuery(orgId: string, team?: string) {
   return queryOptions({
-    queryKey: [HOME_KEY, orgId, "stars"],
-    queryFn: ({ signal }) => fetchStars(orgId, signal),
+    queryKey: [HOME_KEY, orgId, "stars", team ?? null],
+    queryFn: ({ signal }) => fetchStars(orgId, signal, team),
   });
 }
 
@@ -172,10 +175,11 @@ export function pinsQuery(orgId: string) {
   });
 }
 
-export function recentsQuery(orgId: string) {
+/** The recently viewed dashboards; with `team`, those in that team context. */
+export function recentsQuery(orgId: string, team?: string) {
   return queryOptions({
-    queryKey: [HOME_KEY, orgId, "recents"],
-    queryFn: ({ signal }) => fetchRecents(orgId, signal),
+    queryKey: [HOME_KEY, orgId, "recents", team ?? null],
+    queryFn: ({ signal }) => fetchRecents(orgId, signal, team),
   });
 }
 

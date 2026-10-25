@@ -309,14 +309,28 @@ fn hint(t: ColumnType) -> Option<FieldType> {
         ColumnType::Int1 | ColumnType::Int2 | ColumnType::Int4 | ColumnType::Float4 | ColumnType::Float8 => {
             Some(FieldType::Number)
         }
+        ColumnType::Decimaln | ColumnType::Numericn => Some(FieldType::Decimal),
         ColumnType::Datetime
         | ColumnType::Datetime4
         | ColumnType::Datetimen
         | ColumnType::Datetime2
-        | ColumnType::Daten
         | ColumnType::DatetimeOffsetn => Some(FieldType::Time),
+        ColumnType::Daten => Some(FieldType::Date),
         _ => None,
     }
+}
+
+/// A DECIMAL's unscaled value and scale as exact decimal text: 12345 with scale 2 is "123.45".
+fn numeric_text(value: i128, scale: u8) -> String {
+    let digits = value.unsigned_abs().to_string();
+    let scale = usize::from(scale);
+    let sign = if value < 0 { "-" } else { "" };
+    if scale == 0 {
+        return format!("{sign}{digits}");
+    }
+    let padded = format!("{digits:0>width$}", width = scale + 1);
+    let (whole, fraction) = padded.split_at(padded.len() - scale);
+    format!("{sign}{whole}.{fraction}")
 }
 
 fn finite(f: f64) -> Value {
@@ -336,7 +350,7 @@ fn convert(data: &ColumnData<'static>, field_type: &mut Option<FieldType>) -> (V
         ColumnData::Bit(Some(b)) => (FieldType::Bool, json!(b)),
         ColumnData::String(Some(s)) => (FieldType::String, json!(s)),
         ColumnData::Guid(Some(g)) => (FieldType::String, json!(g.to_string())),
-        ColumnData::Numeric(Some(n)) => (FieldType::Number, finite(f64::from(*n))),
+        ColumnData::Numeric(Some(n)) => (FieldType::Decimal, json!(numeric_text(n.value(), n.scale()))),
         ColumnData::Xml(Some(x)) => (FieldType::String, json!(x.to_string())),
         ColumnData::Binary(Some(b)) => match std::str::from_utf8(b) {
             Ok(t) => (FieldType::String, json!(t)),
@@ -352,7 +366,7 @@ fn convert(data: &ColumnData<'static>, field_type: &mut Option<FieldType>) -> (V
         }
         ColumnData::Date(Some(_)) => {
             let d = chrono::NaiveDate::from_sql(data).ok().flatten().and_then(|d| d.and_hms_opt(0, 0, 0));
-            (FieldType::Time, d.map_or(Value::Null, |t| json!(super::naive_to_ms(t))))
+            (FieldType::Date, d.map_or(Value::Null, |t| json!(super::naive_to_ms(t))))
         }
         ColumnData::Time(Some(_)) => {
             let t = chrono::NaiveTime::from_sql(data).ok().flatten();
@@ -365,9 +379,14 @@ fn convert(data: &ColumnData<'static>, field_type: &mut Option<FieldType>) -> (V
     let value = match (column_type, natural_type) {
         (a, b) if a == b => value,
         (FieldType::Int64, FieldType::Number) => json!(value.to_string()),
-        (FieldType::Number, FieldType::Int64) => {
+        (FieldType::Number, FieldType::Int64 | FieldType::Decimal) => {
             value.as_str().and_then(|s| s.parse::<f64>().ok()).map_or(Value::Null, finite)
         }
+        (FieldType::Decimal, FieldType::Number | FieldType::Int64) => match &value {
+            Value::Number(n) => n.as_f64().map_or(Value::Null, |x| json!(crate::analysis::expr::number_text(x))),
+            other => other.clone(),
+        },
+        (FieldType::Time, FieldType::Date) => value,
         (FieldType::String, _) => json!(value.as_str().map_or_else(|| value.to_string(), String::from)),
         _ => Value::Null,
     };
@@ -392,5 +411,24 @@ mod tests {
         assert_eq!(convert(&ColumnData::Binary(Some(vec![0xff, 0x00].into())), &mut t), (Value::Null, true));
         let mut t = None;
         assert_eq!(convert(&ColumnData::F64(Some(f64::NAN)), &mut t).0, Value::Null);
+    }
+
+    #[test]
+    fn decimals_stay_exact_and_dates_are_days() {
+        assert_eq!(numeric_text(12345, 2), "123.45");
+        assert_eq!(numeric_text(-5, 3), "-0.005");
+        assert_eq!(numeric_text(1250, 2), "12.50");
+        assert_eq!(numeric_text(7, 0), "7");
+        assert_eq!(numeric_text(i128::from(i64::MAX) * 1000 + 999, 3), "9223372036854775807.999");
+        let mut t = None;
+        let n = tiberius::numeric::Numeric::new_with_scale(123_456_789_012_345_678, 4);
+        assert_eq!(convert(&ColumnData::Numeric(Some(n)), &mut t).0, json!("12345678901234.5678"));
+        assert_eq!(t, Some(FieldType::Decimal));
+        let mut t = Some(FieldType::Date);
+        // Days since 0001-01-01, as SQL Server sends a DATE.
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 25).unwrap();
+        let days = day.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1, 1, 1).unwrap()).num_days();
+        let data = ColumnData::Date(Some(tiberius::time::Date::new(days as u32)));
+        assert_eq!(convert(&data, &mut t).0, json!(1_792_886_400_000_i64));
     }
 }

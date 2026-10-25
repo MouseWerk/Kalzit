@@ -12,7 +12,7 @@ use std::io::Write;
 use rust_xlsxwriter::{Format, Workbook};
 use serde_json::Value;
 
-use super::expr::{iso_time, number_text};
+use super::expr::{self, iso_time, number_text};
 use super::steps::{Control, int_of};
 use crate::datasources::detail::Detail;
 use crate::shapes::{ExportFormat, ExportLanguage, FieldType, Frame, FrameMeta};
@@ -206,6 +206,26 @@ fn defuse(text: &str) -> String {
     if risky { format!("'{text}") } else { text.to_string() }
 }
 
+/// `2026-01-01` for the ms of a day's midnight UTC.
+fn iso_date(ms: i64) -> String {
+    iso_time(ms)[..10].to_string()
+}
+
+/// Digits with an optional sign and decimal point, as databases write decimals.
+fn is_plain_decimal(s: &str) -> bool {
+    expr::parse_number(s).is_some() && s.bytes().all(|b| b.is_ascii_digit() || b == b'-' || b == b'.')
+}
+
+/// Significant digits of a plain decimal: without sign, point, leading zeros and the zeros that
+/// end it ("0012.500" has 3, "1200" has 2).
+fn significant_digits(s: &str) -> usize {
+    let digits: String = s.bytes().filter(u8::is_ascii_digit).map(char::from).collect();
+    digits.trim_start_matches('0').trim_end_matches('0').len()
+}
+
+/// Digits Excel keeps of a number; a decimal with more stays text so none is rounded.
+const EXCEL_DIGITS: usize = 15;
+
 /// A time cell's ms: fractions of a millisecond are cut (floor), never dropped.
 fn time_ms(n: &serde_json::Number) -> Option<i64> {
     n.as_i64().or_else(|| n.as_f64().filter(|x| x.is_finite() && x.abs() < 9.2e18).map(|x| x.floor() as i64))
@@ -216,7 +236,11 @@ fn csv_cell(value: &Value, field_type: FieldType, language: ExportLanguage) -> S
     match (field_type, value) {
         (_, Value::Null) => String::new(),
         (FieldType::Time, Value::Number(n)) => time_ms(n).map(iso_time).unwrap_or_default(),
+        // A day as it is, without a time or zone.
+        (FieldType::Date, Value::Number(n)) => time_ms(n).map(iso_date).unwrap_or_default(),
         (FieldType::Number, Value::Number(n)) => n.as_f64().map(|x| decimal(number_text(x))).unwrap_or_default(),
+        // Every digit as the database sent it; anything else in a decimal field is text and defused.
+        (FieldType::Decimal, Value::String(s)) if is_plain_decimal(s) => decimal(s.clone()),
         // Digits as they are; anything else in an int64 field is text and defused.
         (FieldType::Int64, Value::String(s)) => match int_of(value) {
             Some(_) if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') => s.clone(),
@@ -331,11 +355,15 @@ fn xlsx_within(frame: &Frame, name: &str, control: &Control, caps: Caps) -> Resu
     sheet.set_name(sheet_name(name)).map_err(xlsx_error)?;
     let bold = Format::new().set_bold();
     let date = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss.000");
+    let day = Format::new().set_num_format("yyyy-mm-dd");
     for (c, field) in frame.fields().iter().enumerate() {
         let col = c as u16;
         sheet.write_string_with_format(0, col, truncate(&field.name), &bold).map_err(xlsx_error)?;
         if field.field_type == FieldType::Time {
             sheet.set_column_width(col, 22).map_err(xlsx_error)?;
+        }
+        if field.field_type == FieldType::Date {
+            sheet.set_column_width(col, 12).map_err(xlsx_error)?;
         }
         for (r, value) in field.values.iter().enumerate() {
             control.every(r)?;
@@ -348,6 +376,20 @@ fn xlsx_within(frame: &Frame, name: &str, control: &Control, caps: Caps) -> Resu
                         None => sheet.write_string(row, col, iso_time(ms)),
                     },
                     None => continue,
+                },
+                (FieldType::Date, Value::Number(n)) => match time_ms(n) {
+                    Some(ms) => match excel_date(ms) {
+                        Some(d) => sheet.write_number_with_format(row, col, d, &day),
+                        None => sheet.write_string(row, col, iso_date(ms)),
+                    },
+                    None => continue,
+                },
+                // Excel keeps 15 digits of a number; a decimal it cannot hold stays text.
+                (FieldType::Decimal, Value::String(s)) => match expr::parse_number(s) {
+                    Some(x) if is_plain_decimal(s) && significant_digits(s) <= EXCEL_DIGITS => {
+                        sheet.write_number(row, col, x)
+                    }
+                    _ => sheet.write_string(row, col, truncate(s)),
                 },
                 (FieldType::Int64, Value::String(s)) => match int_of(value) {
                     Some(n) if n.unsigned_abs() <= 1 << 53 => sheet.write_number(row, col, n as f64),
@@ -501,6 +543,24 @@ mod tests {
         let mut book = String::new();
         zip.by_name("xl/workbook.xml").unwrap().read_to_string(&mut book).unwrap();
         assert!(book.contains(r#"name="Umsatz AB""#), "{book}");
+    }
+
+    #[test]
+    fn excel_keeps_decimals_it_cannot_hold_as_text() {
+        let frame = Frame::new(vec![
+            field("betrag", FieldType::Decimal, vec![json!("12.50"), json!("1234567890123.4567"), json!("-0.000123")]),
+            field("tag", FieldType::Date, vec![json!(1_767_225_600_000_i64), Value::Null, Value::Null]),
+        ])
+        .unwrap();
+        let (sheet, strings) = sheet_xml(&xlsx(&frame, "x").unwrap());
+        assert!(sheet.contains("<v>12.5</v>") && sheet.contains("<v>-0.000123</v>"), "{sheet}");
+        // 17 significant digits: Excel would round it, so it stays text, every digit kept.
+        assert!(strings.contains("1234567890123.4567"), "{strings}");
+        assert!(!sheet.contains("<v>1234567890123.45"), "{sheet}");
+        assert!(sheet.contains("<v>46023</v>"), "the day as an Excel date: {sheet}");
+        assert_eq!(significant_digits("0012.500"), 3);
+        assert_eq!(significant_digits("1200"), 2);
+        assert_eq!(significant_digits("123456789012345"), 15);
     }
 
     #[test]

@@ -60,8 +60,10 @@ export const MAIN_PAGES: readonly MainPage[] = [
       await dashboardReady(page, world);
       await startEditing(page, language);
       await toolbarButton(page, "dashboards.settings", language);
-      await dialog(page, "dashboards.settings.title", language);
-      await expect(page.getByRole("dialog").locator(".cm-editor")).toBeVisible();
+      await heading("dashboards.settings.title")(page, world, language);
+      await expect(
+        page.getByLabel(t("dashboards.settings.dashboardTitle", {}, language)),
+      ).toBeVisible();
     },
   },
   {
@@ -130,7 +132,11 @@ export const MAIN_PAGES: readonly MainPage[] = [
   {
     name: "data source",
     path: (w) => `/data-sources/${w.sourceId}`,
-    ready: heading("datasources.edit.title"),
+    ready: async (page, world) => {
+      await expect(
+        page.getByRole("heading", { level: 1, name: world.sourceName, exact: true }),
+      ).toBeVisible();
+    },
   },
   { name: "members", path: () => "/admin/members", ready: heading("admin.members.title") },
   {

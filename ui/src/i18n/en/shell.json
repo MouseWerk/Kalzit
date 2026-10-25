@@ -96,6 +96,8 @@
   "shell.org.teams": "Teams",
   "shell.org.all": "All organizations",
   "shell.org.switch": "Switch organization",
+  "shell.org.team.label": "Team",
+  "shell.org.team.allAreas": "All areas",
   "shell.pins.title": "Pinned",
   "shell.pins.add": "Pin dashboard",
   "shell.pins.full": "{count} dashboards pinned, the most there can be.",

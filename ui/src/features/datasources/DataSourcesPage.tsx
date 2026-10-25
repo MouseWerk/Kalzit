@@ -405,7 +405,13 @@ function SourceOverview({
   function select(id: string) {
     setSelected(id);
     // The panel follows the table (below it on narrow screens): bring the reader along.
-    requestAnimationFrame(() => drawerHeading.current?.querySelector("h2")?.focus());
+    requestAnimationFrame(() => {
+      const panel = drawerHeading.current;
+      // Not when the reader already moved on into the panel (a tab clicked before this frame).
+      if (panel !== null && !panel.contains(document.activeElement)) {
+        panel.querySelector("h2")?.focus();
+      }
+    });
   }
 
   function close() {

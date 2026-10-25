@@ -103,6 +103,8 @@
   "analysis.valueType.time": "time",
   "analysis.valueType.null": "empty",
   "analysis.valueType.int64": "whole number",
+  "analysis.valueType.decimal": "decimal number",
+  "analysis.valueType.date": "date",
   "analysis.valueType.string": "text",
   "analysis.valueType.json": "JSON",
   "analysis.valueType.orderable": "a number, text or time",

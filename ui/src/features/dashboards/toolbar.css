@@ -807,9 +807,10 @@
       align-self: stretch;
     }
 
+    /* One row where it fits; between a phone and a wide window (900 px) the tools wrap. */
     .dash-toolbar__tools {
-      flex: 0 0 auto;
-      flex-wrap: nowrap;
+      flex: 0 1 auto;
+      flex-wrap: wrap;
       min-height: var(--control-height);
       margin-inline-start: auto;
     }

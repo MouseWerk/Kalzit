@@ -44,13 +44,24 @@ export function useMenuButton(options: { onOpen?: () => void } = {}) {
 
   useEscapeLayer(open, () => closeMenu(true));
 
+  // Runs after every render while open, until focus has moved into the menu: items that arrive
+  // after it opened (permissions or teams still loading) get the focus the opening asked for.
+  const focused = useRef(false);
   useEffect(() => {
     if (!open) {
+      focused.current = false;
+      return;
+    }
+    if (focused.current) {
       return;
     }
     const items = menuItems(menuRef.current);
-    (focusTarget === "last" ? items.at(-1) : items[0])?.focus();
-  }, [open, focusTarget]);
+    const target = focusTarget === "last" ? items.at(-1) : items[0];
+    if (target !== undefined) {
+      target.focus();
+      focused.current = true;
+    }
+  });
 
   const onOutsidePointer = useEffectEvent((event: PointerEvent) => {
     // The menu counts as inside even when it is drawn elsewhere in the page (a portal).

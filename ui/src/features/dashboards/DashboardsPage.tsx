@@ -17,6 +17,7 @@ import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
+import { useTeamContext } from "../../org/teamContext";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AccessButton } from "./accessIntegration";
 import {
@@ -36,10 +37,12 @@ import { zoneOption } from "../../lib/timeSettings";
 import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
 import { ImportDialog } from "./ImportDialog";
 import { emptyModel } from "./model";
+import { OwnerDialog, spaceTeams, TeamSpaceDialog } from "./TeamDialogs";
 import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
 const listRoute = getRouteApi("/_app/dashboards");
+const appRoute = getRouteApi("/_app");
 
 /** Pause in typing after which the dashboard search runs. */
 const SEARCH_DELAY_MS = 250;
@@ -64,11 +67,18 @@ export function DashboardsPage() {
 function DashboardBrowser({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
+  const userId = appRoute.useRouteContext().me.id;
   const search = listRoute.useSearch();
   const navigate = listRoute.useNavigate();
   const searchId = useId();
-  const folders = useQuery(foldersQuery(orgId));
-  const [creating, setCreating] = useState<"dashboard" | "folder" | "import" | null>(null);
+  // The team context scopes the tree and the list; both wait for it, so they load once.
+  const teams = useTeamContext();
+  const folders = useQuery({ ...foldersQuery(orgId, teams.scope), enabled: teams.settled });
+  const [creating, setCreating] = useState<"dashboard" | "folder" | "import" | "space" | null>(
+    null,
+  );
+  const mayCreateSpace =
+    spaceTeams(teams.context.teams, permissions.has("folders:permissions")).length > 0;
   // A link with `create` opens its dialog once; the parameter is dropped right away.
   useEffect(() => {
     if (search.create !== undefined) {
@@ -112,14 +122,31 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
         {folders.isError ? (
           <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
         ) : (
-          <FolderTree folders={folders.data ?? []} selected={search.folder} onSelect={select} />
+          <FolderTree
+            folders={folders.data ?? []}
+            selected={search.folder}
+            onSelect={select}
+            storageKey={`kalzit.folderTree.${userId}`}
+            activeTeam={teams.scope}
+          />
         )}
+        {mayCreateSpace ? (
+          <button
+            type="button"
+            className="button button--secondary button--small browser__new-folder"
+            onClick={() => setCreating("space")}
+          >
+            <Icon name="members" />
+            {t("dashboards.team.newSpace")}
+          </button>
+        ) : null}
         {permissions.has("folders:write") ? (
           <button
             type="button"
-            className="button button--secondary"
+            className="button button--secondary button--small browser__new-folder"
             onClick={() => setCreating("folder")}
           >
+            <Icon name="plus" />
             {t("dashboards.folders.new")}
           </button>
         ) : null}
@@ -155,7 +182,15 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
         <div className="browser__header">
           <h2 className="section-title" id={`${searchId}-title`}>
             {folder?.name ?? t("dashboards.folders.all")}
-            {isRestricted(folders.data ?? [], search.folder) ? (
+            {folder?.ownerTeam ? (
+              <span className="browser__restricted">
+                <Icon name="members" />
+                {t(folder.teamSpace ? "dashboards.team.spaceOf" : "dashboards.team.ownedBy", {
+                  team: folder.ownerTeam.name,
+                })}
+              </span>
+            ) : null}
+            {isRestricted(folders.data ?? [], search.folder) && !folder?.teamSpace ? (
               <span className="browser__restricted">
                 <Icon name="lock" />
                 {t("dashboards.folders.restricted")}
@@ -214,15 +249,20 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
           folderId={search.folder}
           q={search.q}
           folders={folders.data ?? []}
+          team={teams.scope}
+          enabled={teams.settled}
         />
       </section>
       {creating === "dashboard" ? (
         <NewDashboardDialog
           orgId={orgId}
           folders={folders.data ?? []}
-          folderId={search.folder}
+          folderId={search.folder ?? teams.context.defaultFolderId ?? undefined}
           onClose={() => setCreating(null)}
         />
+      ) : null}
+      {creating === "space" ? (
+        <TeamSpaceDialog orgId={orgId} onClose={() => setCreating(null)} onCreated={select} />
       ) : null}
       {creating === "import" ? (
         <ImportDialog
@@ -248,17 +288,23 @@ function DashboardList({
   folderId,
   q,
   folders,
+  team,
+  enabled,
 }: {
   orgId: string;
   folderId: string | undefined;
   q: string | undefined;
   folders: readonly Folder[];
+  /** The active team: the list leaves out other teams' spaces. */
+  team: string | undefined;
+  enabled: boolean;
 }) {
   const { t, language, timeZone } = useI18n();
   const list = useInfiniteQuery({
-    queryKey: [DASHBOARDS_KEY, orgId, "list", folderId ?? null, q ?? ""],
+    queryKey: [DASHBOARDS_KEY, orgId, "list", folderId ?? null, q ?? "", team ?? null],
     queryFn: ({ pageParam, signal }) =>
-      fetchDashboards(orgId, { folderId, q, cursor: pageParam }, signal),
+      fetchDashboards(orgId, { folderId, q, team, cursor: pageParam }, signal),
+    enabled,
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     // A new search keeps showing the previous results until its own arrive, without "Loading".
@@ -311,6 +357,14 @@ function DashboardList({
                 <Link to="/dashboards/$dashboardId" params={{ dashboardId: item.id }} search={{}}>
                   {item.title === "" ? t("dashboards.untitled") : item.title}
                 </Link>
+                {item.ownerTeam === null ? null : (
+                  <span className="dashboard-list__team">
+                    <Icon name="members" />
+                    {t(item.teamOnly ? "dashboards.team.onlyTeam" : "dashboards.team.ownedBy", {
+                      team: item.ownerTeam.name,
+                    })}
+                  </span>
+                )}
               </td>
               {/* Optional: a dashboard outside any folder leaves no empty line on a phone. */}
               <td
@@ -584,7 +638,7 @@ function FolderActions({
   const { t } = useI18n();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
-  const [dialog, setDialog] = useState<"edit" | "delete" | null>(null);
+  const [dialog, setDialog] = useState<"edit" | "delete" | "owner" | null>(null);
   // Deleting or restoring a folder moves its dashboards too, so both lists are read again.
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: [FOLDERS_KEY, orgId] });
@@ -631,6 +685,15 @@ function FolderActions({
             resource={{ kind: "folder", id: folder.id, name: folder.name }}
             allowed={folder.access?.permissions}
           />
+          {folder.access?.permissions === true && folder.access.write ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => setDialog("owner")}
+            >
+              {t("dashboards.team.ownerButton")}
+            </button>
+          ) : null}
           <button
             type="button"
             className="button button--secondary"
@@ -646,6 +709,18 @@ function FolderActions({
           folders={folders}
           parentId={folder.parentId}
           folder={folder}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "owner" ? (
+        <OwnerDialog
+          orgId={orgId}
+          kind="folders"
+          id={folder.id}
+          name={folder.name}
+          owner={folder.ownerTeam}
+          visibility={folder.restricted ? "team" : "shared"}
+          version={folder.version}
           onClose={() => setDialog(null)}
         />
       ) : null}

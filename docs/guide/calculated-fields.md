@@ -58,7 +58,9 @@ Functions: `if`, `coalesce`, `isnull`, `round(x, digits)`, `floor`, `ceil`, `abs
 `ln`, `log10`, `pow`, `min`, `max`, `year`, `month`, `day`, `hour`, `minute`, `second`,
 `weekday`, `startOf(t, unit)` with unit `minute`, `hour`, `day`, `week`, `month`, `quarter` or
 `year`, `concat`, `text`, `number`, `lower`, `upper`, `length`, `contains`. Calendar functions use
-UTC. An error names the place (`unexpected input at 4`).
+the time zone the dashboard shows (the dashboard's, else yours), and a week starts on the first
+day of the week set there; `weekday` stays 1 (Monday) to 7 (Sunday). An error names the place
+(`unexpected input at 4`).
 
 ## Join queries
 

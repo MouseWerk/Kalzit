@@ -185,6 +185,13 @@ pub const REGISTRY: &[SettingDef] = &[
         ui_editable: true,
         description: "Time range of new dashboards in this organization.",
     },
+    SettingDef {
+        key: "dashboards.new_in_team_space",
+        scope: Scope::Org,
+        default: || json!(false),
+        ui_editable: true,
+        description: "New dashboards go into the team space of the member's current team.",
+    },
     // Appearance and brand. The organization entries of the same keys start as "inherit" and then
     // follow the server's value (`routes::branding`).
     SettingDef {
@@ -483,6 +490,7 @@ fn rule(key: &str) -> Option<Rule> {
         "sessions.idle_timeout_hours" => Rule::Int { min: 0, max: 10 * 365 * 24 },
         "dashboards.version_retention" => Rule::Int { min: 0, max: 100_000 },
         "dashboards.default_time_range" => Rule::TimeRange,
+        "dashboards.new_in_team_space" => Rule::Bool,
         "appearance.product_name" => Rule::Text { max_chars: 40, multiline: false, required: true },
         "appearance.accent" => Rule::Accent,
         "appearance.density" => Rule::OneOf(crate::appearance::DENSITIES),

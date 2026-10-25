@@ -37,6 +37,20 @@ export function reduceField(
       // Not a decimal string after all; fall through to numbers.
     }
   }
+  if (field.type === "decimal" && (reducer === "min" || reducer === "max")) {
+    // The smallest or largest decimal as written, every digit kept.
+    let best: unknown = null;
+    let bestValue = 0;
+    for (const raw of present) {
+      const value = toNumber(raw);
+      if (value === null) continue;
+      if (best === null || (reducer === "min" ? value < bestValue : value > bestValue)) {
+        best = raw;
+        bestValue = value;
+      }
+    }
+    if (best !== null) return { value: best, type: "decimal" };
+  }
   // One pass in a loop: spreading 100,000 values into Math.min would overflow the call stack.
   let count = 0;
   let sum = 0;

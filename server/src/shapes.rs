@@ -148,6 +148,12 @@ pub enum FieldType {
     String,
     Bool,
     Json,
+    /// Exact decimal numbers (NUMERIC, DECIMAL, MONEY) as decimal strings such as "-1234.50",
+    /// so no digit is rounded; charts draw the nearest double.
+    Decimal,
+    /// Calendar days without a time of day or zone (DATE), as Unix milliseconds of midnight UTC;
+    /// shown as that day in every time zone.
+    Date,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -481,6 +487,15 @@ pub struct ExportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub title: Option<String>,
+    /// The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+    /// dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub time_zone: Option<String>,
+    /// The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "\"monday\" | \"sunday\" | \"saturday\""))]
+    pub week_start: Option<String>,
 }
 
 /// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`: the stored
@@ -505,6 +520,15 @@ pub struct PanelExportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub frame: Option<String>,
+    /// The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+    /// dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub time_zone: Option<String>,
+    /// The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "\"monday\" | \"sunday\" | \"saturday\""))]
+    pub week_start: Option<String>,
 }
 
 /// Absolute Unix milliseconds; the UI resolves relative ranges such as "now-6h".

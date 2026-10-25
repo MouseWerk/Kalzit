@@ -11,7 +11,6 @@
   "libraryPanels.uses": "Used by {count} dashboards",
   "libraryPanels.where": "Folder: {folder}",
   "libraryPanels.showUses": "Dashboards showing it",
-  "libraryPanels.hiddenUses": "and {count} you may not open",
   "libraryPanels.make": "Make library panel…",
   "libraryPanels.makeTitle": "Make library panel",
   "libraryPanels.makeHint": "The panel is kept in the library and this dashboard shows it from there. Other dashboards can add it too.",
@@ -28,5 +27,5 @@
   "libraryPanels.deleteNamed": "Delete “{name}”",
   "libraryPanels.deleteTitle": "Delete library panel?",
   "libraryPanels.deleteText": "“{name}” is deleted for good.",
-  "libraryPanels.inUse": "Dashboards still show this library panel; remove it from them first."
+  "libraryPanels.inUse": "Dashboards still show this library panel, perhaps also ones you cannot open; remove it from them first (whoever may open them can)."
 }

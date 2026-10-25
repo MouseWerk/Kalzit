@@ -1,7 +1,7 @@
 import { isRecord } from "../../api/client";
 import type { Field, FieldType } from "../../api/generated/shapes";
 import { getTimeZone } from "../../lib/timeSettings";
-import { formatValue, seriesName, toNumber } from "../frame";
+import { formatValue, isNumeric, seriesName, toNumber } from "../frame";
 import {
   CUSTOM_PREFIX,
   customSuffix,
@@ -491,7 +491,7 @@ export function displayValue(
   /** The user's time zone for time values (`useI18n().timeZone`), null for the browser's. */
   zone: string | null = getTimeZone(),
 ): DisplayValue {
-  const numeric = type === "number" || type === "int64" ? toNumber(raw) : null;
+  const numeric = isNumeric(type) ? toNumber(raw) : null;
   const missing =
     raw === null || raw === undefined || (typeof raw === "number" && !Number.isFinite(raw));
   if (missing) {

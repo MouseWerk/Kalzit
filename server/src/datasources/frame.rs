@@ -137,6 +137,15 @@ impl Column {
     pub fn new(name: impl Into<String>, field_type: Option<FieldType>) -> Self {
         Self { name: name.into(), field_type, labels: None, values: Vec::new() }
     }
+
+    /// Changes the column's type and converts the values read so far, for engines that type
+    /// each value and reveal a wider column type only later (a decimal after whole numbers).
+    pub fn retype(&mut self, field_type: FieldType, convert: impl Fn(&Value) -> Value) {
+        self.field_type = Some(field_type);
+        for value in &mut self.values {
+            *value = convert(value);
+        }
+    }
 }
 
 pub struct FrameBuilder {

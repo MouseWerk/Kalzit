@@ -258,7 +258,7 @@ function VariableControl({
       variable.type === "custom" || variable.type === "interval"
         ? optionChoices(variable)
         : (options.data?.options ?? []);
-    const picked = valueList(value);
+    const picked = valueList(value).map((v) => optionValue(list, v));
     const unknown = picked.filter((v) => !list.some((option) => option.value === v));
     control = multi ? (
       <VariableMultiSelect
@@ -274,13 +274,13 @@ function VariableControl({
       <select
         id={id}
         className="select"
-        value={valueText(value)}
+        value={valueText(picked)}
         onChange={(event) => onChange(event.currentTarget.value)}
         aria-describedby={optionsError === null ? undefined : `${id}-error`}
       >
         {unknown.length === 0 && picked.length > 0 ? null : (
-          <option value={valueText(value)}>
-            {picked.length === 0 ? t("dashboards.variables.none") : valueText(value)}
+          <option value={valueText(picked)}>
+            {picked.length === 0 ? t("dashboards.variables.none") : valueText(picked)}
           </option>
         )}
         {list.map((option) => (
@@ -308,5 +308,20 @@ function VariableControl({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * The option a stored value names: the same text, or the same number written another way. A
+ * decimal column's options are exact text ("12.50", "1"), while a selection saved before may
+ * read "12.5" or "1.0"; it stays selected instead of showing as an unknown value.
+ */
+export function optionValue(list: readonly { value: string }[], value: string): string {
+  if (list.some((option) => option.value === value)) return value;
+  const number = value.trim() === "" ? Number.NaN : Number(value);
+  if (!Number.isFinite(number)) return value;
+  return (
+    list.find((option) => option.value.trim() !== "" && Number(option.value) === number)?.value ??
+    value
   );
 }

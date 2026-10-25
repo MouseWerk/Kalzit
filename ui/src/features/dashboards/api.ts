@@ -36,12 +36,31 @@ function parseAccess(value: unknown): Access | undefined {
   };
 }
 
+/** The team that owns a folder or dashboard (docs/api/access.md, "Team ownership"). */
+export interface OwnerTeam {
+  id: string;
+  name: string;
+}
+
+/** Who besides the owner team sees team-owned content: everyone with access (read only), or nobody. */
+export type Visibility = "shared" | "team";
+
+function parseOwner(value: unknown): OwnerTeam | null {
+  return isRecord(value) && typeof value.id === "string"
+    ? { id: value.id, name: typeof value.name === "string" ? value.name : "" }
+    : null;
+}
+
 export interface Folder {
   id: string;
   parentId: string | null;
   name: string;
   /** The folder's own flag; subfolders inherit the restriction. */
   restricted: boolean;
+  /** The team that owns the folder; `null` for folders of the organization. */
+  ownerTeam: OwnerTeam | null;
+  /** A team space: a restricted top-level folder that a team owns. */
+  teamSpace: boolean;
   version: number;
   deletedAt: number | null;
   access?: Access;
@@ -57,6 +76,10 @@ export interface DashboardSummary {
   access?: Access;
   /** The current version's tags; absent when it has none. */
   tags?: string[];
+  /** The team that owns the dashboard; `null` when it belongs to the organization. */
+  ownerTeam: OwnerTeam | null;
+  /** Only the owner team, grants on it and org admins see it. */
+  teamOnly: boolean;
 }
 
 /** A library panel as a dashboard shows it (docs/api/dashboard-features.md). */
@@ -147,6 +170,8 @@ function flattenFolders(nodes: unknown[], into: Folder[] = []): Folder[] {
       parentId: nullableId(node.parentId),
       name: str(node.name),
       restricted: node.restricted === true,
+      ownerTeam: parseOwner(node.ownerTeam),
+      teamSpace: node.teamSpace === true,
       version: num(node.version),
       deletedAt: nullableNum(node.deletedAt),
     };
@@ -173,6 +198,8 @@ function parseSummary(value: unknown): DashboardSummary | null {
     version: num(value.version),
     updatedAt: num(value.updatedAt),
     deletedAt: nullableNum(value.deletedAt),
+    ownerTeam: parseOwner(value.ownerTeam),
+    teamOnly: value.teamOnly === true,
   };
   const access = parseAccess(value.access);
   if (access !== undefined) {
@@ -220,8 +247,13 @@ async function folderPage(
   orgId: string,
   trashed: boolean,
   signal?: AbortSignal,
+  team?: string,
 ): Promise<Folder[]> {
-  const path = orgPath(orgId, "folders") + (trashed ? "?trashed=true" : "");
+  const params = new URLSearchParams();
+  if (trashed) params.set("trashed", "true");
+  if (team !== undefined) params.set("team", team);
+  const query = params.toString();
+  const path = orgPath(orgId, "folders") + (query === "" ? "" : `?${query}`);
   const value = await send("GET", path, undefined, signal);
   if (!isRecord(value) || !Array.isArray(value.items)) {
     return invalid("folder list");
@@ -229,9 +261,16 @@ async function folderPage(
   return flattenFolders(value.items);
 }
 
-/** The visible folders not in the trash, parents before their children. */
-export function fetchFolders(orgId: string, signal?: AbortSignal): Promise<Folder[]> {
-  return folderPage(orgId, false, signal);
+/**
+ * The visible folders not in the trash, parents before their children; with `team`, only those
+ * in that team context (outside other teams' spaces, or shared with the team).
+ */
+export function fetchFolders(
+  orgId: string,
+  signal?: AbortSignal,
+  team?: string,
+): Promise<Folder[]> {
+  return folderPage(orgId, false, signal, team);
 }
 
 /** The top folder of every trashed subtree. */
@@ -244,6 +283,25 @@ export async function createFolder(
   input: { name: string; parentId: string | null },
 ): Promise<void> {
   await send("POST", orgPath(orgId, "folders"), input);
+}
+
+/** Creates a team space: a restricted top-level folder the team owns. */
+export async function createTeamSpace(
+  orgId: string,
+  input: { name: string; ownerTeamId: string },
+): Promise<{ id: string }> {
+  const value = await send("POST", orgPath(orgId, "folders"), input);
+  return { id: isRecord(value) && typeof value.id === "string" ? value.id : "" };
+}
+
+/** Sets the team that owns a folder or dashboard and who else sees it. */
+export async function setOwner(
+  orgId: string,
+  kind: "folders" | "dashboards",
+  id: string,
+  input: { ownerTeamId: string | null; visibility: Visibility; version: number },
+): Promise<void> {
+  await send("PUT", orgPath(orgId, kind, id, "owner"), input);
 }
 
 export async function updateFolder(
@@ -273,6 +331,8 @@ export interface DashboardFilter {
   trashed?: boolean;
   /** Only dashboards with this tag. */
   tag?: string | undefined;
+  /** A team context: only dashboards outside other teams' spaces, or shared with the team. */
+  team?: string | undefined;
   cursor?: string | undefined;
 }
 
@@ -286,6 +346,7 @@ export async function fetchDashboards(
   if (filter.q !== undefined && filter.q !== "") params.set("q", filter.q);
   if (filter.trashed === true) params.set("trashed", "true");
   if (filter.tag !== undefined && filter.tag !== "") params.set("tag", filter.tag);
+  if (filter.team !== undefined) params.set("team", filter.team);
   if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
   const query = params.toString();
   const path = orgPath(orgId, "dashboards") + (query === "" ? "" : `?${query}`);
@@ -434,10 +495,10 @@ export async function fetchVariableOptions(
 export const FOLDERS_KEY = "folders";
 export const DASHBOARDS_KEY = "dashboards";
 
-export function foldersQuery(orgId: string) {
+export function foldersQuery(orgId: string, team?: string) {
   return queryOptions({
-    queryKey: [FOLDERS_KEY, orgId],
-    queryFn: ({ signal }) => fetchFolders(orgId, signal),
+    queryKey: team === undefined ? [FOLDERS_KEY, orgId] : [FOLDERS_KEY, orgId, "team", team],
+    queryFn: ({ signal }) => fetchFolders(orgId, signal, team),
   });
 }
 

@@ -4,7 +4,7 @@ export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_fo
 
 export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
 
-export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "audit.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "dashboards.default_time_range" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.welcome" | "signin.notice" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "log.level" | "log.format";
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "audit.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.welcome" | "signin.notice" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "log.level" | "log.format";
 
 export type Shape = "frame" | "documents" | "graph";
 
@@ -34,7 +34,7 @@ text: string, };
 
 export type NoticeSeverity = "info" | "warning";
 
-export type FieldType = "time" | "number" | "int64" | "string" | "bool" | "json";
+export type FieldType = "time" | "number" | "int64" | "string" | "bool" | "json" | "decimal" | "date";
 
 export type Field = { name: string, type: FieldType, unit?: string, 
 /**
@@ -202,6 +202,24 @@ frame?: string,
 /**
  * The file name's base, such as the Explore data source's name.
  */
-title?: string, };
+title?: string, 
+/**
+ * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+ * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+ */
+timeZone?: string, 
+/**
+ * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+ */
+weekStart?: "monday" | "sunday" | "saturday", };
 
-export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, };
+export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, 
+/**
+ * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+ * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+ */
+timeZone?: string, 
+/**
+ * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+ */
+weekStart?: "monday" | "sunday" | "saturday", };

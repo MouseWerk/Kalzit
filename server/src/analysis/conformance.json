@@ -1,5 +1,5 @@
 {
-  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case gives its inputs by refId (in the order of the refIds sorted), lists the fields to check per frame and, with names, the full field order; outputOrder is the order of the frames after the steps.",
+  "about": "Cases both analysis engines must pass: server/src/analysis (Rust) and ui/src/analysis (TypeScript). Numbers compare with a relative tolerance of 1e-9; everything else exactly. A step case gives its inputs by refId (in the order of the refIds sorted), lists the fields to check per frame and, with names, the full field order; outputOrder is the order of the frames after the steps. An expression case with a calendar runs in that time zone (UTC when absent) and with that first day of the week (monday when absent).",
   "frames": {
     "sales": [
       { "name": "zeit", "type": "time", "values": [1767225600000, 1767312000000, 1767398400000, 1767484800000] },
@@ -33,6 +33,21 @@
       { "name": "land", "type": "string", "values": ["AT", "AT", "CH", "AT"] },
       { "name": "jahr", "type": "int64", "values": ["2025", "2026", "2026", "2026"] },
       { "name": "betrag", "type": "number", "values": [1, 2, 3, 4] }
+    ],
+    "exact": [
+      { "name": "d", "type": "date", "values": [1792886400000, 1792886400000, 1767225600000, null] },
+      { "name": "n", "type": "decimal", "values": ["12.50", "12.5", "-0.05", null] }
+    ],
+    "amounts": [
+      { "name": "a", "type": "decimal", "values": ["12.00", "7.50", "3"] },
+      { "name": "b", "type": "number", "values": [10, 20, 30] }
+    ],
+    "counts": [
+      { "name": "k", "type": "int64", "values": ["12", "7"] },
+      { "name": "v", "type": "number", "values": [1, 2] }
+    ],
+    "zones": [
+      { "name": "t", "type": "time", "values": [1792888200000, 1792891800000, 1792881000000, 1774747800000, 1767528000000, -62135553600000] }
     ]
   },
   "documents": {
@@ -101,9 +116,66 @@
     { "frame": "sales", "expression": "Wurzel(4)", "error": { "reason": "expression.unknown_function", "params": { "name": "Wurzel" } } },
     { "frame": "sales", "expression": "  ", "error": { "reason": "expression.empty", "params": {} } },
     { "frame": "sales", "expression": "coalesce(null)", "error": { "reason": "expression.no_type", "params": {} } },
-    { "frame": "sales", "expression": "startOf(zeit, 'tag')", "error": { "reason": "expression.unit", "params": {} } }
+    { "frame": "sales", "expression": "startOf(zeit, 'tag')", "error": { "reason": "expression.unit", "params": {} } },
+    { "frame": "zones", "expression": "hour(t) * 100 + minute(t)", "calendar": { "timeZone": "Europe/Berlin" }, "type": "number", "values": [230, 230, 30, 330, 1300, 1253] },
+    { "frame": "zones", "expression": "year(t) * 10000 + month(t) * 100 + day(t)", "calendar": { "timeZone": "Europe/Berlin" }, "type": "number", "values": [20261025, 20261025, 20261025, 20260329, 20260104, 10101] },
+    { "frame": "zones", "expression": "weekday(t)", "calendar": { "timeZone": "Europe/Berlin" }, "type": "number", "values": [7, 7, 7, 7, 7, 1] },
+    { "frame": "zones", "expression": "startOf(t, 'hour')", "calendar": { "timeZone": "Europe/Berlin" }, "type": "time", "values": [1792886400000, 1792890000000, 1792879200000, 1774746000000, 1767528000000, -62135556808000] },
+    { "frame": "zones", "expression": "(t - startOf(t, 'day')) / 60000", "calendar": { "timeZone": "Europe/Berlin" }, "type": "number", "values": [150, 210, 30, 150, 780, null] },
+    { "frame": "zones", "expression": "startOf(t, 'week')", "calendar": { "timeZone": "Europe/Berlin" }, "type": "time", "values": [1792360800000, 1792360800000, 1792360800000, 1774220400000, 1766962800000, null] },
+    { "frame": "zones", "expression": "startOf(t, 'week')", "calendar": { "timeZone": "Europe/Berlin", "weekStart": "sunday" }, "type": "time", "values": [1792879200000, 1792879200000, 1792879200000, 1774738800000, 1767481200000, null] },
+    { "frame": "zones", "expression": "startOf(t, 'month')", "calendar": { "timeZone": "Europe/Berlin" }, "type": "time", "values": [1790805600000, 1790805600000, 1790805600000, 1772319600000, 1767222000000, null] },
+    { "frame": "zones", "expression": "startOf(t, 'week')", "calendar": { "weekStart": "sunday" }, "type": "time", "values": [1792886400000, 1792886400000, 1792281600000, 1774742400000, 1767484800000, null] },
+    { "frame": "zones", "expression": "startOf(t, 'week')", "calendar": { "weekStart": "saturday" }, "type": "time", "values": [1792800000000, 1792800000000, 1792800000000, 1774656000000, 1767398400000, null] },
+    { "frame": "zones", "expression": "startOf(t, 'hour')", "calendar": { "timeZone": "Asia/Kolkata" }, "type": "time", "values": [1792888200000, 1792891800000, 1792881000000, 1774747800000, 1767526200000, -62135556808000] },
+    { "frame": "zones", "expression": "year(t) * 10000 + month(t) * 100 + day(t)", "calendar": { "timeZone": "America/New_York" }, "type": "number", "values": [20261024, 20261024, 20261024, 20260328, 20260104, 10101] },
+    { "frame": "zones", "expression": "startOf(t, 'day')", "calendar": { "timeZone": "America/New_York" }, "type": "time", "values": [1792814400000, 1792814400000, 1792814400000, 1774670400000, 1767502800000, -62135579038000] },
+    { "frame": "exact", "expression": "n * 2", "type": "number", "values": [25, 25, -0.1, null] },
+    { "frame": "exact", "expression": "year(d) * 10000 + month(d) * 100 + day(d)", "calendar": { "timeZone": "America/New_York" }, "type": "number", "values": [20261025, 20261025, 20260101, null] },
+    { "frame": "exact", "expression": "startOf(d, 'day')", "calendar": { "timeZone": "America/New_York" }, "type": "time", "values": [1792900800000, 1792900800000, 1767243600000, null] }
   ],
   "steps": [
+    {
+      "name": "days join times by time",
+      "frames": { "A": "exact", "B": "visits" },
+      "steps": [{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "time" }, "mode": "inner" }],
+      "expect": { "A": { "names": ["d", "A.n", "B.sitzungen"], "fields": [
+        { "name": "d", "type": "date", "values": [1767225600000] },
+        { "name": "B.sitzungen", "type": "number", "values": [5] }
+      ] } },
+      "gone": ["B"]
+    },
+    {
+      "name": "decimal keys join int64 keys by value",
+      "frames": { "A": "amounts", "B": "counts" },
+      "steps": [{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "key", "leftField": "a", "rightField": "k" }, "mode": "outer" }],
+      "expect": { "A": { "fields": [
+        { "name": "a", "type": "decimal", "values": ["12.00", "7.50", "3", "7"] },
+        { "name": "B.v", "type": "number", "values": [1, null, null, 2] }
+      ] } }
+    },
+    {
+      "name": "int64 keys join decimal keys by value",
+      "frames": { "A": "counts", "B": "amounts" },
+      "steps": [{ "id": "j", "type": "join", "left": "A", "right": "B", "on": { "by": "key", "leftField": "k", "rightField": "a" }, "mode": "outer" }],
+      "expect": { "A": { "fields": [
+        { "name": "k", "type": "int64", "values": ["12", "7", "7.5", "3"] },
+        { "name": "B.b", "type": "number", "values": [10, null, 20, 30] }
+      ] } }
+    },
+    {
+      "name": "decimals group by their value, days stay days",
+      "frames": { "A": "exact" },
+      "steps": [{ "id": "g", "type": "group", "frame": "A", "by": ["n"], "aggregations": [
+        { "field": "d", "op": "count", "name": "tage" }, { "field": "n", "op": "sum" }, { "field": "d", "op": "min" }
+      ] }],
+      "expect": { "A": { "names": ["n", "tage", "sum(n)", "min(d)"], "fields": [
+        { "name": "n", "type": "decimal", "values": ["12.50", "-0.05", null] },
+        { "name": "tage", "type": "number", "values": [2, 1, 0] },
+        { "name": "sum(n)", "type": "number", "values": [25, -0.05, null] },
+        { "name": "min(d)", "type": "date", "values": [1792886400000, 1767225600000, null] }
+      ] } }
+    },
     {
       "name": "calculate adds a field",
       "frames": { "A": "sales" },

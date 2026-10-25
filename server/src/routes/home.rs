@@ -13,7 +13,7 @@ use axum::http::{Method, StatusCode};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 
-use super::support::{PageQuery, Paging, QueryParams, conflict, decode_cursor, encode_cursor, page_limit};
+use super::support::{Paging, QueryParams, conflict, decode_cursor, encode_cursor, page_limit};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
@@ -255,11 +255,10 @@ async fn search(
         // takes the place of visible matches.
         let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{} SELECT id, folder_id, title, search_title FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL \
-             AND search_title LIKE $5 ESCAPE '\\' \
-             AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders) \
-                  OR id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')) \
+             AND search_title LIKE $5 ESCAPE '\\' AND {} \
              ORDER BY id LIMIT $6",
-            folders::VISIBILITY_CTE
+            folders::VISIBILITY_CTE,
+            folders::dashboard_visible("dashboards"),
         )))
         .bind(&ctx.org_id)
         .bind(&ctx.user.id)
@@ -389,14 +388,17 @@ async fn readable(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<Option<
     Ok(deleted_at)
 }
 
-/// Rows of `(dashboard id, folder id, title, at)` that the caller may read, as entries.
+/// Rows of `(dashboard id, folder id, title, at)` that the caller may read, as entries; with a
+/// team context only those in its scope.
 fn entries(
     rows: Vec<(String, Option<String>, String, i64)>,
     index: &AccessIndex,
     folders: &FolderNames,
+    scope: Option<&folders::TeamScope>,
 ) -> Vec<DashboardEntry> {
     rows.into_iter()
         .filter(|(id, folder, _, _)| may_read_dashboard(index, id, folder.as_deref()))
+        .filter(|(id, folder, _, _)| scope.is_none_or(|s| s.dashboard(id, folder.as_deref())))
         .map(|(id, folder, title, at)| {
             let folder_id = visible_folder(folder, index);
             let path = folders.path(folder_id.as_deref(), index);
@@ -478,17 +480,33 @@ async fn unstar(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// A page of a start page list, optionally in a team context (see `team_context::scope`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedPageQuery {
+    limit: Option<u32>,
+    cursor: Option<String>,
+    team: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeQuery {
+    team: Option<String>,
+}
+
 /// The caller's starred dashboards they may still read, not in the trash, by title.
 async fn list_stars(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
-    QueryParams(q): QueryParams<PageQuery>,
+    QueryParams(q): QueryParams<ScopedPageQuery>,
 ) -> ApiResult<Json<Page<DashboardEntry>>> {
     let limit = page_limit(q.limit)? as usize;
     let after: Option<(String, String)> = decode_cursor(q.cursor.as_deref())?;
     let mut conn = state.db.acquire().await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
     let folders = FolderNames::load(&mut conn, &ctx.org_id).await?;
+    let scope = super::team_context::scope(&mut conn, &ctx, q.team.as_deref()).await?;
     // At most `MAX_STARS` rows, filtered in memory by the access index, so pages stay full.
     let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
         "SELECT d.id, d.folder_id, d.title, s.created_at FROM dashboard_stars s \
@@ -499,7 +517,7 @@ async fn list_stars(
     .bind(&ctx.org_id)
     .fetch_all(&mut *conn)
     .await?;
-    let mut items = entries(rows, &index, &folders);
+    let mut items = entries(rows, &index, &folders, scope.as_ref());
     let sort_key = |e: &DashboardEntry| (e.title.to_lowercase(), e.id.clone());
     // Ordered here, by the same key the cursor compares: the database's collation may order
     // punctuation differently (PostgreSQL follows the locale), which would repeat or skip items.
@@ -518,7 +536,11 @@ async fn list_stars(
 
 /// The caller's pins they may still read and that are not in the trash, in their order. Pins of
 /// dashboards they lost access to stay stored and are left out; they come back with the access.
-async fn visible_pins(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Vec<DashboardEntry>> {
+async fn visible_pins(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    scope: Option<&folders::TeamScope>,
+) -> ApiResult<Vec<DashboardEntry>> {
     let index = AccessIndex::load(conn, ctx).await?;
     let folders = FolderNames::load(conn, &ctx.org_id).await?;
     let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
@@ -530,7 +552,7 @@ async fn visible_pins(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult
     .bind(&ctx.org_id)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(entries(rows, &index, &folders))
+    Ok(entries(rows, &index, &folders, scope))
 }
 
 /// Serializes the caller's pin changes for the rest of the transaction, so two at once can not
@@ -546,9 +568,15 @@ async fn lock_pins(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<()
 async fn list_pins(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
+    QueryParams(q): QueryParams<ScopeQuery>,
 ) -> ApiResult<Json<Page<DashboardEntry>>> {
     let mut conn = state.db.acquire().await?;
-    let mut items = visible_pins(&mut conn, &ctx).await?;
+    let scope = super::team_context::scope(&mut conn, &ctx, q.team.as_deref()).await?;
+    let mut items = visible_pins(&mut conn, &ctx, None).await?;
+    // The limit counts every visible pin, as pinning does; the team context only filters.
+    if let Some(scope) = &scope {
+        items.retain(|e| scope.dashboard(&e.id, e.folder_id.as_deref()));
+    }
     // Access that came back can bring a hidden pin back beyond the limit; the first ones show.
     items.truncate(MAX_PINS);
     Ok(Json(Page { items, next_cursor: None }))
@@ -566,7 +594,7 @@ async fn pin(
     }
     let mut tx = crate::db::begin(&state.db).await?;
     lock_pins(&mut tx, &ctx).await?;
-    let visible = visible_pins(&mut tx, &ctx).await?;
+    let visible = visible_pins(&mut tx, &ctx, None).await?;
     if visible.iter().any(|entry| entry.id == id) {
         crate::db::commit(tx).await?;
         return Ok(StatusCode::NO_CONTENT);
@@ -630,7 +658,7 @@ async fn order_pins(
     let mut tx = crate::db::begin(&state.db).await?;
     lock_pins(&mut tx, &ctx).await?;
     // The pins the list shows: a reorder names those, as many as `list_pins` answers.
-    let mut visible = visible_pins(&mut tx, &ctx).await?;
+    let mut visible = visible_pins(&mut tx, &ctx, None).await?;
     visible.truncate(MAX_PINS);
     let mut wanted: Vec<&str> = body.dashboard_ids.iter().map(String::as_str).collect();
     let mut have: Vec<&str> = visible.iter().map(|e| e.id.as_str()).collect();
@@ -661,7 +689,7 @@ async fn order_pins(
             .execute(&mut *tx)
             .await?;
     }
-    let items = visible_pins(&mut tx, &ctx).await?;
+    let items = visible_pins(&mut tx, &ctx, None).await?;
     crate::db::commit(tx).await?;
     Ok(Json(Page { items, next_cursor: None }))
 }
@@ -704,12 +732,13 @@ async fn record_view(
 async fn list_recents(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
-    QueryParams(q): QueryParams<PageQuery>,
+    QueryParams(q): QueryParams<ScopedPageQuery>,
 ) -> ApiResult<Json<Page<DashboardEntry>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     let mut conn = state.db.acquire().await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
     let folders = FolderNames::load(&mut conn, &ctx.org_id).await?;
+    let scope = super::team_context::scope(&mut conn, &ctx, q.team.as_deref()).await?;
     let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
         "SELECT d.id, d.folder_id, d.title, v.viewed_at FROM dashboard_views v \
          JOIN dashboards d ON d.id = v.dashboard_id AND d.org_id = v.org_id \
@@ -723,7 +752,7 @@ async fn list_recents(
     .bind(paging.before_id())
     .fetch_all(&mut *conn)
     .await?;
-    let items = entries(rows, &index, &folders);
+    let items = entries(rows, &index, &folders, scope.as_ref());
     Ok(Json(paging.page(items, |e| (e.at, e.id.as_str()))))
 }
 

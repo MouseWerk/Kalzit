@@ -143,10 +143,36 @@ describe("folder tree", () => {
       restricted: false,
       version: 1,
       deletedAt: null,
+      ownerTeam: null,
+      teamSpace: false,
     });
     const tree = buildTree([folder("b", "a"), folder("a", null), folder("orphan", "hidden")]);
     expect(tree.map((n) => n.folder.id)).toEqual(["a", "orphan"]);
     expect(tree[0]?.children.map((n) => n.folder.id)).toEqual(["b"]);
+  });
+
+  it("puts the active team's spaces first", () => {
+    const folder = (id: string, team: string | null) => ({
+      id,
+      parentId: null,
+      name: id,
+      restricted: team !== null,
+      version: 1,
+      deletedAt: null,
+      ownerTeam: team === null ? null : { id: team, name: team },
+      teamSpace: team !== null,
+    });
+    const folders = [folder("allgemein", null), folder("betrieb", "t1"), folder("vertrieb", "t2")];
+    expect(buildTree(folders).map((n) => n.folder.id)).toEqual([
+      "allgemein",
+      "betrieb",
+      "vertrieb",
+    ]);
+    expect(buildTree(folders, "t2").map((n) => n.folder.id)).toEqual([
+      "vertrieb",
+      "allgemein",
+      "betrieb",
+    ]);
   });
 });
 
