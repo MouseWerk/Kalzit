@@ -1,5 +1,5 @@
-//! Data sources of an organization: kinds, CRUD with trash, "Test connection" and the schema for
-//! query editors. Secrets are written through `secrets` and never returned, only `{"set": true}`.
+//! Data sources of an organization: kinds, CRUD with trash and purge, "Test connection" (of a
+//! stored source, and of settings not saved yet) and the schema for query editors. Secrets are written through `secrets` and never returned, only `{"set": true}`.
 //! Documented in docs/api/datasources.md.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,10 +33,15 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/datasource-kinds", Access::OrgMember, kinds),
         route(Method::GET, "/orgs/{orgId}/datasources", Access::OrgMember, list),
         route(Method::POST, "/orgs/{orgId}/datasources", Access::Org(Permission::DatasourcesWrite), create),
+        // Settings not saved yet; no source id is involved, `test` is a path of its own.
+        // Member, then the right to change: on the source when `datasourceId` names one (a grant is
+        // enough there), else org-wide (as adding a source).
+        route(Method::POST, "/orgs/{orgId}/datasources/test", Access::OrgMember, test_unsaved),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, get_one),
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/restore", Access::OrgMember, restore),
+        route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}/purge", Access::OrgMember, purge),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema),
     ]
@@ -50,9 +55,13 @@ fn field_error(e: FieldError) -> ApiError {
 }
 
 fn blocked(detail: crate::datasources::Detail, field: &'static str) -> ApiError {
-    ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "datasource_target_blocked", detail.message)
-        .with_field(field)
-        .with_reason(detail.reason, detail.params)
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "datasource_target_blocked",
+        datasources::hide_logins(&detail.message),
+    )
+    .with_field(field)
+    .with_reason(detail.reason, detail.params)
 }
 
 #[derive(Serialize)]
@@ -498,30 +507,7 @@ async fn update(
         None => ds.settings.clone(),
     };
     kind.validate_secrets(&body.secrets).map_err(field_error)?;
-    // A new target must not receive the secrets stored for the old one: every stored secret is
-    // sent again (or removed) in the same change.
-    if let Some(target) = kind.changed_targets(&ds.settings, &settings).first() {
-        let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
-        if !may_change_target(&ctx, &held) {
-            return Err(ApiError::forbidden(format!(
-                "changing {target} needs datasources:write for the organization or an admin grant on this source"
-            ))
-            .because("datasource.target_change_forbidden")
-            .param("field", target));
-        }
-        for stored in secrets::set_fields(&state.db, &ds.id).await? {
-            if !body.secrets.contains_key(&stored) {
-                let field = kind.all_settings().find(|f| f.name == stored).map_or("secrets", |f| f.name);
-                return Err(ApiError::validation(format!(
-                    "{target} changes where the data source connects; send {stored} again or remove it"
-                ))
-                .with_field(field)
-                .because("secrets.resend_on_target_change")
-                .param("field", target)
-                .param("secret", &stored));
-            }
-        }
-    }
+    check_target_change(&state, &ctx, kind, &ds, &settings, &body.secrets).await?;
     changed.extend(body.secrets.keys().map(|k| format!("secrets.{k}")));
     if changed.is_empty() {
         return Ok(Json(view(&state, &ctx, ds).await?));
@@ -561,6 +547,162 @@ async fn update(
     crate::db::commit(tx).await?;
     state.datasources.forget(&ds.id);
     Ok(Json(answer))
+}
+
+/// A new target must not receive the secrets stored for the old one: whoever moves it needs the
+/// right to, and every stored secret is sent again (or removed) in the same change. Saving and
+/// testing unsaved settings both apply it, so a test cannot send a stored password anywhere a
+/// save could not.
+async fn check_target_change(
+    state: &AppState,
+    ctx: &OrgCtx,
+    kind: &Kind,
+    ds: &Datasource,
+    settings: &Value,
+    patch: &SecretPatch,
+) -> ApiResult<()> {
+    let Some(target) = kind.changed_targets(&ds.settings, settings).first().copied() else {
+        return Ok(());
+    };
+    let held = resource_permissions(&state.db, ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+    if !may_change_target(ctx, &held) {
+        return Err(ApiError::forbidden(format!(
+            "changing {target} needs datasources:write for the organization or an admin grant on this source"
+        ))
+        .because("datasource.target_change_forbidden")
+        .param("field", target));
+    }
+    for stored in secrets::set_fields(&state.db, &ds.id).await? {
+        if !patch.contains_key(&stored) {
+            let field = kind.all_settings().find(|f| f.name == stored).map_or("secrets", |f| f.name);
+            return Err(ApiError::validation(format!(
+                "{target} changes where the data source connects; send {stored} again or remove it"
+            ))
+            .with_field(field)
+            .because("secrets.resend_on_target_change")
+            .param("field", target)
+            .param("secret", &stored));
+        }
+    }
+    Ok(())
+}
+
+/// Tests per user and per client address in `PROBE_WINDOW_SECS`: "Test" before saving can reach
+/// any address the data source rules allow, so it must not be a way to scan a network.
+pub(crate) const PROBE_MAX: u32 = 20;
+pub(crate) const PROBE_WINDOW_SECS: u64 = 60;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TestBody {
+    kind: String,
+    /// The stored source an edit form tests: unchanged secrets come from it, and `settings` may be
+    /// left out to test its stored ones.
+    datasource_id: Option<String>,
+    settings: Option<Value>,
+    /// As in `PATCH`: absent keeps the stored secret (edit), null removes it, a string sets it.
+    #[serde(default)]
+    secrets: SecretPatch,
+}
+
+/// The host a test goes to, for the log: the first host, URL host or "file". Never a secret.
+fn target_of(settings: &Value) -> String {
+    let text = |key: &str| settings.get(key).and_then(Value::as_str).filter(|v| !v.is_empty());
+    if let Some(host) = text("host").or_else(|| text("hosts")) {
+        return host.chars().take(200).collect();
+    }
+    for key in ["url", "restppUrl"] {
+        if let Some(host) =
+            text(key).and_then(|u| reqwest::Url::parse(u).ok()).and_then(|u| u.host_str().map(String::from))
+        {
+            return host.chars().take(200).collect();
+        }
+    }
+    if text("path").is_some() { "file".into() } else { "-".into() }
+}
+
+/// "Test connection" for what the add or edit form holds, before anything is saved. The body
+/// carries secrets: it is read into memory, used for the probe and dropped; it is not logged, not
+/// stored and not part of the answer (messages are scrubbed of the secrets, and a malformed body
+/// is refused without repeating any of it). The test is logged with user, organization, kind and
+/// target, never with a secret.
+async fn test_unsaved(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(raw): JsonBody<Value>,
+) -> ApiResult<Json<HealthReport>> {
+    let body: TestBody = serde_json::from_value(raw).map_err(|_| {
+        ApiError::validation("the body is not a valid test request; see docs/api/datasources.md")
+            .because("request.body_invalid")
+            .param("detail", "not a valid test request")
+    })?;
+    // The right first, so that members who may not test cannot use up the limit of those who may.
+    let stored = match &body.datasource_id {
+        Some(id) => Some(resource(&state, &ctx, id, Permission::DatasourcesWrite, false).await?),
+        None => {
+            // A new source: what adding one takes.
+            if !ctx.permissions.contains(&Permission::DatasourcesWrite) {
+                return Err(ApiError::forbidden("testing a new data source needs datasources:write")
+                    .because("datasource.test_forbidden"));
+            }
+            None
+        }
+    };
+    // Per user and per client address within the organization.
+    let user_key = format!("datasource-test:user:{}", ctx.user.id);
+    let address_key = format!("datasource-test:{}:address:{}", ctx.org_id, info.client_ip);
+    if !state.probe_limiter.try_acquire(&[&user_key, &address_key], state.clock.now_ms()) {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many connection tests; wait a minute",
+        )
+        .because("datasource.test_rate_limited")
+        .param("max", PROBE_MAX));
+    }
+    let kind = state.datasources.kind(&body.kind).ok_or_else(|| {
+        ApiError::validation(format!("{} is not a data source kind", body.kind))
+            .with_field("kind")
+            .because("datasource.kind_unknown")
+            .param("kind", &body.kind)
+    })?;
+    if stored.as_ref().is_some_and(|ds| ds.kind != kind.kind()) {
+        return Err(ApiError::validation("the kind of a stored data source cannot change")
+            .with_field("kind")
+            .because("datasource.kind_changed"));
+    }
+    let settings = match (&body.settings, &stored) {
+        (Some(s), _) => kind.validate_settings(s).map_err(field_error)?,
+        (None, Some(ds)) => ds.settings.clone(),
+        (None, None) => kind.validate_settings(&empty_object()).map_err(field_error)?,
+    };
+    // A secret that is null for a new source is simply not set.
+    let patch: SecretPatch =
+        if stored.is_some() { body.secrets } else { body.secrets.into_iter().filter(|(_, v)| v.is_some()).collect() };
+    kind.validate_secrets(&patch).map_err(field_error)?;
+    precheck_targets(&state, kind, &settings).await?;
+    if let Some(ds) = &stored {
+        check_target_change(&state, &ctx, kind, ds, &settings, &patch).await?;
+    }
+    tracing::info!(
+        user = %ctx.user.id,
+        org = %ctx.org_id,
+        kind = kind.kind(),
+        target = %target_of(&settings),
+        stored = stored.is_some(),
+        "connection test of data source settings that are not saved"
+    );
+    let report = datasources::check_unsaved(
+        &state,
+        &ctx.user.id,
+        kind,
+        stored.as_ref().map(|d| d.id.as_str()),
+        &settings,
+        &patch,
+    )
+    .await?;
+    Ok(Json(report))
 }
 
 async fn delete(
@@ -607,18 +749,135 @@ async fn restore(
     }
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
-    sqlx::query("UPDATE datasources SET deleted_at = NULL, updated_at = $1 WHERE id = $2 AND org_id = $3")
-        .bind(now)
-        .bind(&ds.id)
-        .bind(&ctx.org_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(conflict_on_name)?;
+    // Purging locks the organization too: a source is either restored or purged, never both.
+    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let restored = sqlx::query(
+        "UPDATE datasources SET deleted_at = NULL, updated_at = $1 \
+         WHERE id = $2 AND org_id = $3 AND deleted_at IS NOT NULL",
+    )
+    .bind(now)
+    .bind(&ds.id)
+    .bind(&ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(conflict_on_name)?
+    .rows_affected();
+    if restored != 1 {
+        // Purged (or restored by someone else) since it was read.
+        return Err(ApiError::not_found());
+    }
     record(&mut tx, &event(&ctx, &info, "datasource.restored", &ds.id, json!({}), now)).await?;
     let restored = datasources::resolve_in_org(&mut *tx, &ctx.org_id, &ds.id).await?;
     let answer = view_in(&mut tx, &ctx, restored).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
+}
+
+/// Deletes a data source in the trash for good, with its stored secrets, its grants and the
+/// Explore history of its queries. Refused while a dashboard (the trash included, it can come
+/// back) or a library panel still uses it, since they would be left with a source that is gone.
+/// Needs what deleting needs: `datasources:write` on the source.
+async fn purge(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<DsPath>,
+) -> ApiResult<StatusCode> {
+    let not_trashed = || {
+        ApiError::new(StatusCode::CONFLICT, "conflict", "only data sources in the trash can be purged")
+            .because("datasource.not_in_trash")
+    };
+    let ds = match resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, true).await {
+        Ok(ds) => ds,
+        // A live source the caller may change: say why, instead of "not found".
+        Err(e) if e.code == "not_found" => {
+            resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+            return Err(not_trashed());
+        }
+        Err(e) => return Err(e),
+    };
+    // Deleting for good cannot be undone, so it takes the right to move targets: the org-wide
+    // `datasources:write` or an admin grant on the source, not an edit grant.
+    let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
+    if !may_change_target(&ctx, &held) {
+        return Err(ApiError::forbidden(
+            "deleting a data source for good needs datasources:write for the organization or an admin grant on it",
+        )
+        .because("datasource.purge_forbidden"));
+    }
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    // Saves of dashboards and restores lock the organization too: what is counted here holds
+    // until the commit.
+    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let still: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT deleted_at FROM datasources WHERE id = $1 AND org_id = $2")
+            .bind(&ds.id)
+            .bind(&ctx.org_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match still {
+        None => return Err(ApiError::not_found()),
+        Some((None,)) => return Err(not_trashed()),
+        Some((Some(_),)) => {}
+    }
+    // The ids are UUIDs, so the quoted id in a stored model is a reference and nothing else.
+    let needle = format!("%\"{}\"%", ds.id);
+    let (dashboards,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM dashboards d JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
+         WHERE d.org_id = $1 AND v.model LIKE $2",
+    )
+    .bind(&ctx.org_id)
+    .bind(&needle)
+    .fetch_one(&mut *tx)
+    .await?;
+    let (library_panels,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM library_panels WHERE org_id = $1 AND model LIKE $2")
+            .bind(&ctx.org_id)
+            .bind(&needle)
+            .fetch_one(&mut *tx)
+            .await?;
+    if dashboards > 0 || library_panels > 0 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            format!(
+                "the data source is still used by {dashboards} dashboards and {library_panels} library panels; \
+                 remove it from them first"
+            ),
+        )
+        .because("datasource.in_use")
+        .param("dashboards", dashboards)
+        .param("libraryPanels", library_panels));
+    }
+    sqlx::query("DELETE FROM datasource_secrets WHERE datasource_id = $1").bind(&ds.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM explore_history WHERE datasource_id = $1").bind(&ds.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'datasource' AND resource_id = $2")
+        .bind(&ctx.org_id)
+        .bind(&ds.id)
+        .execute(&mut *tx)
+        .await?;
+    let removed = sqlx::query("DELETE FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NOT NULL")
+        .bind(&ds.id)
+        .bind(&ctx.org_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if removed != 1 {
+        // Restored in the meantime: nothing is deleted, not even its secrets.
+        tx.rollback().await?;
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "the data source was restored in the meantime; it was not deleted",
+        )
+        .because("datasource.not_in_trash"));
+    }
+    let summary = json!({ "name": ds.name, "kind": ds.kind });
+    record(&mut tx, &event(&ctx, &info, "datasource.purged", &ds.id, summary, now)).await?;
+    crate::db::commit(tx).await?;
+    state.datasources.forget(&ds.id);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn health(
