@@ -250,6 +250,7 @@
     --size-legend-max: 4.5rem;
     --size-preview: 18rem;
     --size-result: 24rem;
+    --offset-overlay-top: 9vh;
   }
 }
 
