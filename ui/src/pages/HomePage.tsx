@@ -1,15 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, type LinkProps } from "@tanstack/react-router";
-import { type ReactNode, useId } from "react";
+import { type ReactNode, useId, useMemo } from "react";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { EmptyState } from "../components/EmptyState";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
-import { listAudit } from "../features/admin/api";
 import { auditActionLabel } from "../features/admin/catalog";
 import { datasourcesNav } from "../features/datasources/nav";
 import { type MessageKey, useI18n } from "../i18n/i18n";
-import { zoneOption } from "../lib/timeSettings";
 import { showErrorToast } from "../lib/toasts";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
@@ -31,9 +29,12 @@ import {
   ACTIVITY_DAYS,
   activityQuery,
   type Count,
+  changeTime,
   dashboardCountQuery,
   datasourceCountQuery,
   memberCountQuery,
+  recentChangesQuery,
+  relativeTime,
 } from "../shell/startData";
 import "../shell/shellUx.css";
 
@@ -41,8 +42,6 @@ const appRoute = getRouteApi("/_app");
 
 /** Recently opened dashboards shown as cards; the server keeps more for the palette. */
 const RECENT_CARDS = 8;
-/** Changes listed on the start page; the audit log has the rest. */
-const CHANGE_ROWS = 5;
 
 /**
  * The start page ("Start"), per user: a greeting with quick actions, the organization in numbers,
@@ -483,27 +482,15 @@ function folderOf(t: ReturnType<typeof useI18n>["t"], entry: DashboardEntry): st
   return entry.path.length === 0 ? t("shell.start.noFolder") : entry.path.join(" / ");
 }
 
-/** "2 hours ago" in the UI language, rounded to the largest whole unit. */
+/** "2 hours ago" in the UI language for a time in Unix milliseconds (relativeTime). */
 function useRelativeTime(): (at: number) => string {
-  const { language } = useI18n();
-  const format = new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" });
-  return (at) => {
-    // Never in the future: a server clock a little ahead reads as "now".
-    const seconds = Math.min(0, Math.round((at - Date.now()) / 1000));
-    const steps: [Intl.RelativeTimeFormatUnit, number][] = [
-      ["day", 86_400],
-      ["hour", 3_600],
-      ["minute", 60],
-    ];
-    for (const [unit, size] of steps) {
-      if (Math.abs(seconds) >= size) {
-        return format.format(Math.round(seconds / size), unit);
-      }
-    }
-    return format.format(0, "minute");
-  };
+  const { t, language } = useI18n();
+  const format = useMemo(
+    () => new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" }),
+    [language],
+  );
+  return (at) => relativeTime(format, at, Date.now(), t("shell.start.justNow"));
 }
-
 /** The card's thumbnail: a small sheet of panels, the same for every dashboard. */
 function DashboardThumb() {
   return (
@@ -622,53 +609,33 @@ function RecentCard({ entry }: { entry: DashboardEntry }) {
 function RecentChanges({ orgId }: { orgId: string }) {
   const { t, language, timeZone } = useI18n();
   const titleId = useId();
-  const changes = useQuery({
-    queryKey: ["admin", "audit", orgId, "start"],
-    queryFn: ({ signal }) => listAudit(orgId, {}, undefined, { limit: CHANGE_ROWS * 2, signal }),
-    staleTime: 60_000,
-  });
-  const today = new Intl.DateTimeFormat(language, {
-    hour: "2-digit",
-    minute: "2-digit",
-    ...zoneOption(timeZone),
-  });
-  const earlier = new Intl.DateTimeFormat(language, {
-    day: "2-digit",
-    month: "2-digit",
-    ...zoneOption(timeZone),
-  });
-  const dayOf = (at: number) => earlier.format(at);
+  const changes = useQuery(recentChangesQuery(orgId));
   let body: ReactNode;
   if (changes.isPending) {
     body = <p className="loading">{t("common.loading")}</p>;
   } else if (changes.data === undefined) {
     body = <FormAlert>{apiErrorText(t, changes.error)}</FormAlert>;
+  } else if (changes.data.length === 0) {
+    body = <p className="start__muted">{t("shell.start.changesEmpty")}</p>;
   } else {
-    const rows = changes.data.items
-      .filter((event) => !event.action.startsWith("auth."))
-      .slice(0, CHANGE_ROWS);
-    body =
-      rows.length === 0 ? (
-        <p className="start__muted">{t("shell.start.changesEmpty")}</p>
-      ) : (
-        <ul className="start__changes">
-          {rows.map((event) => (
-            <li key={event.id} className="start__change">
-              <span className="start__change-time">
-                {dayOf(event.createdAt) === dayOf(Date.now())
-                  ? today.format(event.createdAt)
-                  : earlier.format(event.createdAt)}
-              </span>
-              <span className="truncate">
-                {t("shell.start.change", {
-                  actor: event.actorName ?? t("shell.start.someone"),
-                  action: auditActionLabel(t, event.action),
-                })}
-              </span>
-            </li>
-          ))}
-        </ul>
-      );
+    const now = Date.now();
+    body = (
+      <ul className="start__changes">
+        {changes.data.map((event) => (
+          <li key={event.id} className="start__change">
+            <span className="start__change-time">
+              {changeTime(event.createdAt, now, language, timeZone)}
+            </span>
+            <span className="truncate">
+              {t("shell.start.change", {
+                actor: event.actorName ?? t("shell.start.someone"),
+                action: auditActionLabel(t, event.action),
+              })}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
   }
   return (
     <section className="start__section" aria-labelledby={titleId}>

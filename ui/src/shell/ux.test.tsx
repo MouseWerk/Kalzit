@@ -351,12 +351,33 @@ describe("start page", () => {
   });
 
   it("shows a viewer only the numbers it may see", async () => {
-    setup("viewer");
+    const server = setup("viewer");
     renderApp("/");
     const stats = await screen.findByRole("region", { name: "Overview" });
     await within(stats).findByRole("link", { name: /^Dashboards/ });
     expect(within(stats).queryByRole("link", { name: /^Members/ })).toBeNull();
     expect(within(stats).queryByRole("link", { name: /^Changes/ })).toBeNull();
+    // Without audit:read there is no list of changes, and the audit log is never asked.
+    expect(screen.queryByRole("region", { name: "Recently changed" })).toBeNull();
+    expect(server.calls.some((call) => call.path.includes("/audit"))).toBe(false);
+  });
+
+  it("takes a dashboard off the favorites with its star", async () => {
+    const server = setup();
+    server.areas.shell.stars.push({ dashboardId: "d-sales", at: 1 });
+    const { user } = renderApp("/");
+    const favorites = await screen.findByRole("region", { name: "Favorites" });
+    const star = await within(favorites).findByRole("button", { name: "Favorite" });
+    expect(star.getAttribute("aria-pressed")).toBe("true");
+    await user.click(star);
+    await waitFor(() =>
+      expect(
+        server.calls.some(
+          (call) =>
+            call.method === "DELETE" && call.path === "/api/orgs/o1/dashboards/d-sales/star",
+        ),
+      ).toBe(true),
+    );
   });
 
   it("guides a fresh organization with a checklist of the steps the user may take", async () => {

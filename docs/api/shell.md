@@ -67,7 +67,7 @@ interface DashboardEntry {
   title: string;
   folderId: string | null;
   path: string[];
-  at: number;   // when it was starred, or last opened
+  at: number;   // when it was starred, or last opened, in Unix milliseconds
 }
 ```
 

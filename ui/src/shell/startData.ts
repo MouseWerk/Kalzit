@@ -1,7 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
-import { listAudit, listMembers, MAX_PAGE_SIZE } from "../features/admin/api";
+import { type AuditEvent, listAudit, listMembers, MAX_PAGE_SIZE } from "../features/admin/api";
 import { DASHBOARDS_KEY } from "../features/dashboards/api";
 import { DATASOURCES_KEY } from "../features/datasources/api";
+import { zoneOption } from "../lib/timeSettings";
 import { fromWall, wallOf } from "../lib/zonedTime";
 import { type SearchKind, search } from "./homeApi";
 
@@ -186,4 +187,81 @@ export function activityQuery(orgId: string) {
     queryFn: ({ signal }) => fetchActivity(orgId, Date.now(), signal),
     staleTime: COUNT_STALE_MS,
   });
+}
+
+/** Changes listed on the start page; the audit log has the rest. */
+export const CHANGE_ROWS = 5;
+
+/** Pages of the audit log read for the latest changes, so many sign-ins cannot hide them. */
+const CHANGE_PAGES = 3;
+
+/**
+ * The latest changes in the organization, newest first: up to `limit` audit events that are not
+ * sign-ins or sessions, read page by page past any run of auth events (needs `audit:read`).
+ */
+export async function fetchRecentChanges(
+  orgId: string,
+  limit = CHANGE_ROWS,
+  signal?: AbortSignal,
+): Promise<AuditEvent[]> {
+  const found: AuditEvent[] = [];
+  let cursor: string | undefined;
+  for (let index = 0; index < CHANGE_PAGES && found.length < limit; index++) {
+    const page = await listAudit(orgId, {}, cursor, { limit: MAX_PAGE_SIZE, signal });
+    found.push(...page.items.filter((event) => isChange(event.action)));
+    if (page.nextCursor === null) {
+      break;
+    }
+    cursor = page.nextCursor;
+  }
+  return found.slice(0, limit);
+}
+
+export function recentChangesQuery(orgId: string) {
+  return queryOptions({
+    queryKey: ["admin", "audit", orgId, "start"],
+    queryFn: ({ signal }) => fetchRecentChanges(orgId, CHANGE_ROWS, signal),
+    staleTime: COUNT_STALE_MS,
+  });
+}
+
+/**
+ * When a change happened, as the start page lists it: the time of day for today, else the day
+ * and month, both on the wall clock of the time zone (the whole date decides "today").
+ */
+export function changeTime(at: number, now: number, language: string, zone: string | null): string {
+  const day = wallOf(at, zone);
+  const today = wallOf(now, zone);
+  const sameDay = day.year === today.year && day.month === today.month && day.day === today.day;
+  return new Intl.DateTimeFormat(
+    language,
+    sameDay
+      ? { hour: "2-digit", minute: "2-digit", ...zoneOption(zone) }
+      : { day: "2-digit", month: "2-digit", ...zoneOption(zone) },
+  ).format(at);
+}
+
+/**
+ * "2 hours ago" for a time in Unix milliseconds, rounded to the largest whole unit (days, hours,
+ * minutes); under a minute, and for a time ahead of `now` (a server clock a little ahead),
+ * `justNow`.
+ */
+export function relativeTime(
+  format: Intl.RelativeTimeFormat,
+  at: number,
+  now: number,
+  justNow: string,
+): string {
+  const seconds = Math.round((at - now) / 1000);
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["day", 86_400],
+    ["hour", 3_600],
+    ["minute", 60],
+  ];
+  for (const [unit, size] of steps) {
+    if (-seconds >= size) {
+      return format.format(Math.round(seconds / size), unit);
+    }
+  }
+  return justNow;
 }
