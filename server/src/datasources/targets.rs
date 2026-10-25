@@ -378,13 +378,18 @@ fn within(path: &Path, dir: &Path) -> bool {
     }
 }
 
-/// Link-local (including the cloud metadata endpoint 169.254.169.254) and the AWS IPv6 metadata
-/// address, also when written as an IPv4-mapped, -compatible or NAT64 address.
+/// Link-local (including the cloud metadata endpoint 169.254.169.254 of AWS, Azure, GCP and
+/// Oracle) and the other cloud metadata addresses: Alibaba's 100.100.100.200, Azure's WireServer
+/// 168.63.129.16, and the IPv6 endpoints of AWS (fd00:ec2::254) and GCP (fd20:ce::254). Also when
+/// written as an IPv4-mapped, -translated, -compatible or NAT64 address.
 pub fn is_always_blocked(ip: IpAddr) -> bool {
+    const ALIBABA_METADATA: Ipv4Addr = Ipv4Addr::new(100, 100, 100, 200);
+    const AZURE_WIRESERVER: Ipv4Addr = Ipv4Addr::new(168, 63, 129, 16);
     const AWS_V6_METADATA: Ipv6Addr = Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254);
+    const GCP_V6_METADATA: Ipv6Addr = Ipv6Addr::new(0xfd20, 0xce, 0, 0, 0, 0, 0, 0x254);
     match canonical_ip(ip) {
-        IpAddr::V4(v4) => v4.is_link_local(),
-        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80 || v6 == AWS_V6_METADATA,
+        IpAddr::V4(v4) => v4.is_link_local() || v4 == ALIBABA_METADATA || v4 == AZURE_WIRESERVER,
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80 || v6 == AWS_V6_METADATA || v6 == GCP_V6_METADATA,
     }
 }
 
@@ -400,6 +405,10 @@ fn canonical_ip(ip: IpAddr) -> IpAddr {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return IpAddr::V4(v4);
             }
+            // IPv4-translated addresses (::ffff:0:a.b.c.d, RFC 2765).
+            if s[..6] == [0, 0, 0, 0, 0xffff, 0] {
+                return IpAddr::V4(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
+            }
             // Deprecated IPv4-compatible addresses (::a.b.c.d), but not :: and ::1.
             if s[..6] == [0; 6] && (s[6] != 0 || s[7] > 1) {
                 return IpAddr::V4(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8));
@@ -410,9 +419,18 @@ fn canonical_ip(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// An address literal, bare or in brackets. An IPv6 zone (`fe80::1%eth0`, `%25eth0` as written in
+/// a URL) names only the interface, so the address is checked without it.
 pub fn parse_ip_literal(host: &str) -> Option<IpAddr> {
     let inner = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
-    inner.parse().ok()
+    if let Ok(ip) = inner.parse() {
+        return Some(ip);
+    }
+    let (address, zone) = inner.split_once('%')?;
+    if zone.is_empty() {
+        return None;
+    }
+    address.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
 }
 
 fn normalize_host(host: &str) -> String {
@@ -512,11 +530,38 @@ mod tests {
             "::ffff:169.254.169.254",
             "64:ff9b::a9fe:a9fe",
             "::a9fe:a9fe",
+            // Alibaba, Azure WireServer and GCP's IPv6 endpoint.
+            "100.100.100.200",
+            "168.63.129.16",
+            "fd20:ce::254",
+            // The same in the IPv4-mapped and IPv4-translated forms.
+            "::ffff:100.100.100.200",
+            "::ffff:168.63.129.16",
+            "::ffff:0:169.254.169.254",
+            "::ffff:0:a9fe:a9fe",
+            "::ffff:0:100.100.100.200",
+            "::ffff:0:168.63.129.16",
+            "64:ff9b::a83f:8110",
         ] {
             assert!(is_always_blocked(ip(bad)), "{bad}");
             assert!(policy(&[]).check_ip("x", ip(bad)).is_err(), "{bad}");
+            // The allow-list never lifts the block, whatever form the address is written in.
+            assert!(policy(&["0.0.0.0/0", "::/0"]).check_ip("x", ip(bad)).is_err(), "{bad}");
         }
-        for ok in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "::1", "::", "fd00:ec2::253", "fec0::1", "8.8.8.8"] {
+        for ok in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "192.168.1.1",
+            "::1",
+            "::",
+            "fd00:ec2::253",
+            "fd20:ce::253",
+            "fec0::1",
+            "8.8.8.8",
+            "100.100.100.100",
+            "168.63.129.17",
+            "::ffff:0:10.0.0.5",
+        ] {
             assert!(!is_always_blocked(ip(ok)), "{ok}");
             assert!(policy(&[]).check_ip("x", ip(ok)).is_ok(), "{ok}");
         }
@@ -543,6 +588,21 @@ mod tests {
     fn prechecks_need_no_network() {
         assert!(policy(&[]).precheck_host("169.254.169.254").is_err());
         assert!(policy(&[]).precheck_host("[fe80::1]").is_err());
+        // Brackets and zones do not hide an address.
+        for bad in [
+            "[fd20:ce::254]",
+            "[::ffff:0:169.254.169.254]",
+            "[::ffff:168.63.129.16]",
+            "fe80::1%eth0",
+            "[fe80::1%25eth0]",
+            "[fd00:ec2::254%1]",
+            "100.100.100.200",
+        ] {
+            assert!(policy(&[]).precheck_host(bad).is_err(), "{bad}");
+        }
+        assert_eq!(parse_ip_literal("[fe80::1%eth0]"), Some(ip("fe80::1")));
+        assert_eq!(parse_ip_literal("fe80::1%"), None);
+        assert_eq!(parse_ip_literal("db%eth0"), None);
         assert!(policy(&[]).precheck_host("db.example.com").is_ok());
         assert!(policy(&["db.example.com"]).precheck_host("other.example.com").is_err());
         assert!(policy(&["10.0.0.0/8"]).precheck_host("other.example.com").is_ok(), "may resolve into the network");
@@ -554,6 +614,11 @@ mod tests {
         assert_eq!(p.resolve("127.0.0.1", 5432).await.unwrap(), "127.0.0.1:5432".parse().unwrap());
         assert_eq!(p.resolve("[::1]", 5432).await.unwrap(), "[::1]:5432".parse().unwrap());
         assert!(matches!(p.resolve("169.254.169.254", 80).await, Err(ResolveError::Blocked(_))));
+        for bad in
+            ["100.100.100.200", "168.63.129.16", "[fd20:ce::254]", "[::ffff:0:169.254.169.254]", "[fe80::1%25eth0]"]
+        {
+            assert!(matches!(p.resolve(bad, 80).await, Err(ResolveError::Blocked(_))), "{bad}");
+        }
         let localhost = p.resolve("localhost", 9090).await.unwrap();
         assert!(localhost.ip().is_loopback() && localhost.port() == 9090);
         let only_ten = policy(&["10.0.0.0/8"]);

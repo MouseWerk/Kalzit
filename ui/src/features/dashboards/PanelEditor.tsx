@@ -59,7 +59,7 @@ import {
 import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { documentsOf } from "./results";
-import { usePanelResults } from "./usePanelResults";
+import { firstLoad, usePanelResults } from "./usePanelResults";
 import "./panelEditor.css";
 
 /** What the dashboard reads from the open editor when it is left another way than Discard. */
@@ -474,7 +474,7 @@ export function PanelEditor({
     () => (onMakeLibrary === undefined ? undefined : () => onMakeLibrary(latest.current())),
     [onMakeLibrary],
   );
-  const pending = results.isPending && results.fetchStatus !== "idle";
+  const pending = firstLoad(results);
 
   function back() {
     if (blocked || panelExtrasProblem(look) !== null) {

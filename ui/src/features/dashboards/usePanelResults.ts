@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
@@ -57,7 +57,7 @@ export function usePanelResults(input: PanelQueryInput) {
           .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
           .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
   const refIds = targets.map((t) => t.refId);
-  return useQuery({
+  return useQuery<TargetOutcome[]>({
     queryKey: [
       PANEL_DATA_KEY,
       orgId,
@@ -73,6 +73,13 @@ export function usePanelResults(input: PanelQueryInput) {
     enabled: targets.length > 0,
     // Results belong to one time range; a newer range replaces them instead of serving them old.
     staleTime: Number.POSITIVE_INFINITY,
+    // A refresh, a new range or new variables keep the panel's last answer on screen until the
+    // new one is there, so charts, table sort, scroll and page survive. Only the same panel's
+    // answer is kept: another panel's (or a draft's for the stored panel) never stands in.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[3] === panel.id && previousQuery.queryKey[4] === source
+        ? previous
+        : undefined,
     gcTime: 60_000,
     ...BUSY_RETRY,
     queryFn: ({ signal }): Promise<TargetOutcome[]> =>
@@ -101,4 +108,12 @@ export function usePanelResults(input: PanelQueryInput) {
         return outcomesOf(response, refIds);
       }, signal),
   });
+}
+
+/**
+ * Whether the panel waits for its first answer. A refetch with an answer on screen is not a
+ * load: the panel keeps drawing it and only marks itself busy.
+ */
+export function firstLoad(results: UseQueryResult<TargetOutcome[]>): boolean {
+  return results.isPending && results.fetchStatus !== "idle";
 }

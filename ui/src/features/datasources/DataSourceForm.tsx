@@ -13,10 +13,11 @@ import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AccessButton } from "../dashboards/accessIntegration";
-import { ConfirmDialog } from "../dashboards/ui/Dialog";
+import { ConfirmDialog, Dialog } from "../dashboards/ui/Dialog";
 import { errorCodeMessage, errorMessage } from "../dashboards/ui/errors";
 import {
   checkHealth,
+  conflictingDatasource,
   createDatasource,
   DATASOURCES_KEY,
   type Datasource,
@@ -416,22 +417,46 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Bumped after a save so the form starts again from what the server stored.
   const [formKey, setFormKey] = useState(0);
+  // The `updatedAt` of the source the form started from. Saves and deletes send it, so a change
+  // someone else saved in the meantime is never overwritten without being shown. A background
+  // refetch does not move it: the form still shows what it started from.
+  const [base, setBase] = useState<number | undefined>(undefined);
+  if (base === undefined && source.data?.updatedAt !== undefined) {
+    setBase(source.data.updatedAt);
+  }
+  // A save or delete the server refused because the source changed since the form started.
+  const [conflict, setConflict] = useState<Conflict | null>(null);
+
+  /** Starts the form again from `stored`, dropping what was typed. */
+  function startFrom(stored: Datasource) {
+    queryClient.setQueryData(datasourceQuery(orgId, datasourceId).queryKey, stored);
+    setBase(stored.updatedAt);
+    setFormKey((key) => key + 1);
+  }
 
   const save = useMutation({
-    mutationFn: (output: FormOutput) =>
+    mutationFn: ({ output, expected }: { output: FormOutput; expected: number | undefined }) =>
       updateDatasource(orgId, datasourceId, {
         name: output.name,
         secrets: output.secrets,
         ...(output.settings === undefined ? {} : { settings: output.settings }),
+        ...(expected === undefined ? {} : { expectedUpdatedAt: expected }),
       }),
     onSuccess: (saved) => {
-      queryClient.setQueryData(datasourceQuery(orgId, datasourceId).queryKey, saved);
       // The last test was of the old settings.
       forgetHealth(queryClient, orgId, datasourceId);
       void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
-      setFormKey((key) => key + 1);
+      startFrom(saved);
+    },
+    onError: (error, { output }) => {
+      const stored = conflictingDatasource(error);
+      if (stored !== null) {
+        setConflict({ stored, retry: { kind: "save", output } });
+      }
     },
   });
+  const submit = (output: FormOutput, then?: () => void) =>
+    save.mutate({ output, expected: base }, then === undefined ? undefined : { onSuccess: then });
   const test = useMutation({
     mutationFn: () => checkHealth(orgId, datasourceId),
     onMutate: () => setHealth(null),
@@ -442,7 +467,15 @@ function EditDataSource({ orgId }: { orgId: string }) {
     },
   });
   const remove = useMutation({
-    mutationFn: () => deleteDatasource(orgId, datasourceId),
+    mutationFn: (expected: number | undefined) => deleteDatasource(orgId, datasourceId, expected),
+    onError: (error) => {
+      const stored = conflictingDatasource(error);
+      if (stored !== null) {
+        remove.reset();
+        setConfirmDelete(false);
+        setConflict({ stored, retry: { kind: "delete" } });
+      }
+    },
     onSuccess: async () => {
       forgetHealth(queryClient, orgId, datasourceId);
       // The deleted source's own queries (this page, its schema) would only answer 404 now:
@@ -494,15 +527,14 @@ function EditDataSource({ orgId }: { orgId: string }) {
         kind={kind}
         initial={source.data}
         busy={save.isPending}
-        error={save.error}
+        error={conflictingDatasource(save.error) === null ? save.error : null}
         submitLabel={t("datasources.form.save")}
-        onSubmit={(output) => save.mutate(output)}
+        onSubmit={(output) => submit(output)}
         readOnly={!access.write}
         targetLocked={targetLocked}
         {...(canTest && access.write
           ? {
-              onSubmitAndTest: (output: FormOutput) =>
-                save.mutate(output, { onSuccess: () => test.mutate() }),
+              onSubmitAndTest: (output: FormOutput) => submit(output, () => test.mutate()),
               onTest: () => test.mutate(),
             }
           : {})}
@@ -564,14 +596,89 @@ function EditDataSource({ orgId }: { orgId: string }) {
             remove.reset();
             setConfirmDelete(false);
           }}
-          onConfirm={() => remove.mutate()}
+          onConfirm={() => remove.mutate(base)}
           busy={remove.isPending}
           error={remove.isError ? errorMessage(t, remove.error) : undefined}
         >
           {t("datasources.delete.text", { name: source.data.name })}
         </ConfirmDialog>
       ) : null}
+      {conflict === null ? null : (
+        <ConflictDialog
+          conflict={conflict}
+          onLoadStored={() => {
+            save.reset();
+            startFrom(conflict.stored);
+            setConflict(null);
+          }}
+          onOverwrite={() => {
+            const { stored, retry } = conflict;
+            setConflict(null);
+            setBase(stored.updatedAt);
+            if (retry.kind === "save") {
+              // Sent again over the stored source: the server checks the change against it, so
+              // a target someone else moved still asks for its secrets again.
+              save.mutate({ output: retry.output, expected: stored.updatedAt });
+            } else {
+              remove.mutate(stored.updatedAt);
+            }
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+interface Conflict {
+  /** The data source as it is stored now. */
+  stored: Datasource;
+  /** What was refused: a save of the form's output, or the delete. */
+  retry: { kind: "save"; output: FormOutput } | { kind: "delete" };
+}
+
+/**
+ * Someone else changed the source after this form started. Loading the stored source is the
+ * default; the refused save or delete can also go through over it.
+ */
+function ConflictDialog({
+  conflict,
+  onLoadStored,
+  onOverwrite,
+}: {
+  conflict: Conflict;
+  onLoadStored: () => void;
+  onOverwrite: () => void;
+}) {
+  const { t } = useI18n();
+  const deleting = conflict.retry.kind === "delete";
+  return (
+    <Dialog
+      title={t("datasources.conflict.title")}
+      onClose={onLoadStored}
+      actions={
+        <>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={onLoadStored}
+            data-autofocus
+          >
+            {t("datasources.conflict.loadStored")}
+          </button>
+          <button type="button" className="button button--primary" onClick={onOverwrite}>
+            {deleting
+              ? t("datasources.conflict.deleteAnyway")
+              : t("datasources.conflict.overwrite")}
+          </button>
+        </>
+      }
+    >
+      <p>
+        {deleting
+          ? t("datasources.conflict.deleteText", { name: conflict.stored.name })
+          : t("datasources.conflict.text", { name: conflict.stored.name })}
+      </p>
+    </Dialog>
   );
 }
 

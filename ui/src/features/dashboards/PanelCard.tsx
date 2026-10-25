@@ -57,7 +57,7 @@ import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
-import { type PanelQueryInput, usePanelResults } from "./usePanelResults";
+import { firstLoad, type PanelQueryInput, usePanelResults } from "./usePanelResults";
 
 /** The width at which dashboards.css switches to one column. */
 const SINGLE_COLUMN = "(max-width: 48rem)";
@@ -417,7 +417,7 @@ export function PanelCard({
               panel={panel}
               title={title}
               range={query.range}
-              pending={results.isPending && results.fetchStatus !== "idle"}
+              pending={firstLoad(results)}
               error={results.error}
               outcomes={outcomes}
               revision={results.dataUpdatedAt}

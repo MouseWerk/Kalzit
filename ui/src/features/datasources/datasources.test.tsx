@@ -663,7 +663,11 @@ describe("editing a data source", () => {
     await user.type(name, "Shop");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("Saved.");
-    expect(lastCall(server, "PATCH", "ds-lean")?.body).toEqual({ name: "Shop", secrets: {} });
+    expect(lastCall(server, "PATCH", "ds-lean")?.body).toEqual({
+      name: "Shop",
+      secrets: {},
+      expectedUpdatedAt: 1,
+    });
     const stored = server.areas.datasources.datasources.find((d) => d.id === "ds-lean");
     expect(stored?.settings).toEqual({ host: "db.internal", database: "shop", user: "reader" });
     expect(stored?.secrets).toEqual({ password: "s3cret" });
@@ -784,9 +788,55 @@ describe("editing a data source", () => {
       expect(lastCall(server, "PATCH", PG_ID)?.body).toEqual({
         name: "Sales DB",
         secrets: { password: null },
+        expectedUpdatedAt: expect.any(Number),
       }),
     );
     expect(server.areas.datasources.datasources[0]?.secrets).toEqual({});
+  });
+
+  it("shows a change saved by someone else in the meantime instead of overwriting it", async () => {
+    const { server, user } = open(`/data-sources/${PG_ID}`);
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "Mine");
+    // Someone else renames the source after this page loaded.
+    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (stored === undefined) throw new Error("no source");
+    stored.name = "Theirs";
+    stored.updatedAt += 1;
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(dialog.textContent).toMatch(/Someone else saved “Theirs”/);
+    expect(stored.name).toBe("Theirs");
+    // Loading the saved version shows it in the form.
+    await user.click(screen.getByRole("button", { name: "Load saved version" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByDisplayValue("Theirs")).toBeTruthy();
+
+    // A second stale save, this time put through over the stored source.
+    const field = screen.getByRole("textbox", { name: "Name" });
+    await user.clear(field);
+    await user.type(field, "Mine");
+    stored.name = "Theirs again";
+    stored.updatedAt += 1;
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Save mine over it" }));
+    await screen.findByText("Saved.");
+    expect(stored.name).toBe("Mine");
+    expect(lastCall(server, "PATCH", PG_ID)?.body).toMatchObject({ name: "Mine" });
+  });
+
+  it("does not delete a source someone else changed since the page loaded", async () => {
+    const { server, user } = open(`/data-sources/${PG_ID}`);
+    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (stored === undefined) throw new Error("no source");
+    stored.updatedAt += 1;
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await screen.findByRole("dialog", { name: "Changed in the meantime" });
+    expect(stored.deletedAt).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "Delete anyway" }));
+    await waitFor(() => expect(stored.deletedAt).toBeDefined());
   });
 
   it("shows the server's demand for a secret it stored in the meantime at that field", async () => {

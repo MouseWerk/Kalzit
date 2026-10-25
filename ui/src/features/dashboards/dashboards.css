@@ -238,6 +238,11 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /* A refresh keeps the last answer drawn; only the title quiets while the new one is on its way. */
+  .panel-card[aria-busy="true"] .panel-card__title {
+    color: var(--text-muted);
+  }
+
   .panel-card__actions {
     display: flex;
     flex: 0 1 auto;

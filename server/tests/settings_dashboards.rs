@@ -291,6 +291,7 @@ on_both_databases! {
     folders_nest_move_without_cycles_and_go_through_the_trash: |_| {};
     restricted_folders_do_not_exist_for_members_without_access: |_| {};
     dashboards_save_versions_and_refuse_stale_writes: |_| {};
+    datasource_edits_refuse_stale_writes: |_| {};
     dashboards_go_through_the_trash: |_| {};
     dashboard_lists_search_move_and_page: |_| {};
     old_versions_beyond_the_retention_are_dropped: |_| {};
@@ -1215,6 +1216,77 @@ async fn restricted_folders_do_not_exist_for_members_without_access(t: TestApp) 
         t.patch(&format!("~/folders/{secret_id}"), json!({ "restricted": false, "version": 1 }), &t.owner).await;
     assert_eq!(lifted.status, StatusCode::OK, "{}", lifted.body);
     assert_eq!(t.get(&format!("~/dashboards/{hidden_id}"), &viewer).await.status, StatusCode::OK);
+}
+
+/// The decrypted password stored for a data source.
+async fn stored_password(t: &TestApp, id: &str) -> Option<String> {
+    let all = kalzit::secrets::load_all(&t.state.db, t.state.datasources.keyring(), id).await.unwrap();
+    all.get("password").map(|p| p.to_string())
+}
+
+async fn datasource_edits_refuse_stale_writes(t: TestApp) {
+    let created = t
+        .post(
+            "~/datasources",
+            json!({ "name": "Lager", "kind": "postgres",
+                    "settings": { "host": "10.0.0.5", "database": "lager", "user": "leser" },
+                    "secrets": { "password": "Passwort-A" } }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let id = created.body["id"].as_str().unwrap().to_string();
+    let path = format!("~/datasources/{id}");
+    let read = created.body["updatedAt"].as_i64().unwrap();
+
+    // B moves the source to another host with that host's password.
+    let moved = t
+        .patch(
+            &path,
+            json!({ "settings": { "host": "10.0.0.6", "database": "lager", "user": "leser" },
+                    "secrets": { "password": "Passwort-B" }, "expectedUpdatedAt": read }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
+    let fresh = moved.body["updatedAt"].as_i64().unwrap();
+    assert!(fresh > read);
+
+    // A, still on the old form, saves a new password meant for the first host: refused, with the
+    // stored source, and B's password stays with B's host.
+    let stale =
+        t.patch(&path, json!({ "secrets": { "password": "Passwort-A2" }, "expectedUpdatedAt": read }), &t.owner).await;
+    assert_eq!((stale.status, stale.code()), (StatusCode::CONFLICT, "version_conflict"), "{}", stale.body);
+    assert_eq!(stale.body["current"]["settings"]["host"], "10.0.0.6");
+    assert_eq!(stale.body["current"]["updatedAt"], json!(fresh));
+    assert_eq!(stored_password(&t, &id).await.as_deref(), Some("Passwort-B"));
+    // A stale rename is refused the same way.
+    let stale = t.patch(&path, json!({ "name": "Alt", "expectedUpdatedAt": read }), &t.owner).await;
+    assert_eq!((stale.status, stale.code()), (StatusCode::CONFLICT, "version_conflict"));
+    assert_eq!(t.get(&path, &t.owner).await.body["name"], "Lager");
+
+    // Writers that read the same row race: exactly one wins, the others get the conflict.
+    let writers = (0..6).map(|n| {
+        let body = json!({ "name": format!("Lager {n}"), "expectedUpdatedAt": fresh });
+        let path = path.clone();
+        let t = &t;
+        async move { t.patch(&path, body, &t.owner).await }
+    });
+    let replies = futures_util::future::join_all(writers).await;
+    let won = replies.iter().filter(|r| r.status == StatusCode::OK).count();
+    let lost = replies.iter().filter(|r| r.status == StatusCode::CONFLICT && r.code() == "version_conflict").count();
+    assert_eq!((won, lost), (1, 5), "{:?}", replies.iter().map(|r| r.body.to_string()).collect::<Vec<_>>());
+
+    // Deleting from a stale view is refused too; from the current one it goes to the trash.
+    let current = t.get(&path, &t.owner).await.body["updatedAt"].as_i64().unwrap();
+    let stale = t.delete(&format!("{path}?expectedUpdatedAt={fresh}"), &t.owner).await;
+    assert_eq!((stale.status, stale.code()), (StatusCode::CONFLICT, "version_conflict"));
+    assert_eq!(t.get(&path, &t.owner).await.status, StatusCode::OK);
+    let gone = t.delete(&format!("{path}?expectedUpdatedAt={current}"), &t.owner).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.body);
+    // A save on a source trashed in the meantime finds nothing to save.
+    let late = t.patch(&path, json!({ "name": "Spät", "expectedUpdatedAt": current }), &t.owner).await;
+    assert_eq!(late.status, StatusCode::NOT_FOUND, "{}", late.body);
 }
 
 async fn dashboards_save_versions_and_refuse_stale_writes(t: TestApp) {

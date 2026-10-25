@@ -6,6 +6,8 @@ pub mod model;
 pub mod panel_options;
 pub mod pattern_syntax;
 
+use std::collections::BTreeSet;
+
 use sqlx::AnyPool;
 
 use crate::authz::{self, OrgCtx, Permission, Resource};
@@ -19,7 +21,9 @@ use model::DashboardModel;
 ///
 /// Queries already in `previous` (the stored version) with the same data source and text are not
 /// checked again, as long as no variable changed in what affects queries (`variables_for_queries`), so someone may rename or rearrange a dashboard whose queries they could not
-/// write themselves. Each newly used id must name a data source of this organization (one in the
+/// write themselves. The queries of linked library panels count as the dashboard's own: they run
+/// with the dashboard's variables, so linking one, or changing a variable it reads, is a change
+/// to those queries. Each newly used id must name a data source of this organization (one in the
 /// trash counts, it can come back): `422 validation` otherwise. A source the caller may not query
 /// (or not see) is `403 forbidden`, naming it.
 /// What of a variable affects the stored queries.
@@ -45,6 +49,25 @@ fn variables_for_queries(model: &DashboardModel) -> Vec<QueryRelevant<'_>> {
         .collect()
 }
 
+/// Every stored query of the dashboard as (data source, query text), with those of the library
+/// panels it links. A library panel that does not exist (any more) has none here; the reference
+/// check reports it.
+async fn queries_with_library(
+    db: &AnyPool,
+    org_id: &str,
+    model: &DashboardModel,
+) -> ApiResult<BTreeSet<(String, String)>> {
+    let mut queries: BTreeSet<(String, String)> =
+        model.stored_queries().into_iter().map(|(id, query)| (id.to_string(), query)).collect();
+    for id in model.library_panel_ids() {
+        let Some(row) = library::fetch(db, org_id, id).await? else { continue };
+        let content = library::stored_content(&row.model)?;
+        let panel = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
+        queries.extend(panel.targets.into_iter().map(|t| (t.datasource_id, t.query.to_string())));
+    }
+    Ok(queries)
+}
+
 pub async fn check_dashboard_sources(
     db: &AnyPool,
     ctx: &OrgCtx,
@@ -54,12 +77,18 @@ pub async fn check_dashboard_sources(
     // Variables shape what every stored query reads (a constant's value, a custom variable's
     // options, a variable's type), so any change to them makes every query count as changed.
     let unchanged = match previous {
-        Some(p) if variables_for_queries(p) == variables_for_queries(model) => p.stored_queries(),
-        _ => Default::default(),
+        Some(p) if variables_for_queries(p) == variables_for_queries(model) => {
+            queries_with_library(db, &ctx.org_id, p).await?
+        }
+        _ => BTreeSet::new(),
     };
-    let changed: std::collections::BTreeSet<&str> =
-        model.stored_queries().into_iter().filter(|q| !unchanged.contains(q)).map(|(id, _)| id).collect();
-    for id in changed {
+    let changed: BTreeSet<String> = queries_with_library(db, &ctx.org_id, model)
+        .await?
+        .into_iter()
+        .filter(|q| !unchanged.contains(q))
+        .map(|(id, _)| id)
+        .collect();
+    for id in changed.iter().map(String::as_str) {
         if !authz::resource_exists(db, &ctx.org_id, Resource::Datasource(id)).await? {
             return Err(ApiError::validation(format!("data source {id} does not exist")).with_field("model"));
         }

@@ -846,10 +846,22 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     if (!may(ds.id, "write")) {
       return error(403, "forbidden");
     }
+    // A save or delete from a form loaded before the last change (Update in the doc).
+    const stale = (expected: unknown) =>
+      typeof expected === "number" && expected !== ds.updatedAt
+        ? json(409, {
+            error: { code: "version_conflict", message: "a newer version was saved" },
+            current: view(ds),
+          })
+        : null;
     if (parts.length === 2 && method === "PATCH") {
-      const extra = unknownKey(body, ["name", "settings", "secrets"]);
+      const extra = unknownKey(body, ["name", "settings", "secrets", "expectedUpdatedAt"]);
       if (extra !== undefined) {
         return validation(extra);
+      }
+      const refusedStale = stale(body.expectedUpdatedAt);
+      if (refusedStale !== null) {
+        return refusedStale;
       }
       const kind = FAKE_KINDS.find((k) => k.kind === ds.kind) as WireKind;
       const settings = (body.settings ?? ds.settings) as Record<string, unknown>;
@@ -903,6 +915,11 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return json(200, view(ds));
     }
     if (parts.length === 2 && method === "DELETE") {
+      const expected = search.get("expectedUpdatedAt");
+      const refusedStale = stale(expected === null ? undefined : Number(expected));
+      if (refusedStale !== null) {
+        return refusedStale;
+      }
       ds.deletedAt = Date.now();
       return new Response(null, { status: 204 });
     }
