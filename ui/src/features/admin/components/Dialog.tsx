@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import { showToast } from "../../../lib/toasts";
-import { useBackGuard } from "../../../lib/useBackGuard";
+import { useBackGuard, useTypedInput } from "../../../lib/useBackGuard";
 // Dialogs and the popover are used outside the administration too (stream areas).
 import "../admin.css";
 
@@ -53,14 +53,11 @@ export function Dialog({
   const { t } = useI18n();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const typed = useRef(false);
-  useEscapeLayer(open, onClose);
+  const typed = useTypedInput();
+  const keep = () => showToast({ message: t("common.dialog.backKept") });
+  useEscapeLayer(open, () => (typed.has() ? keep() : onClose()));
   // The Back button closes the dialog (or keeps typed input) rather than leaving the page.
-  useBackGuard(open, {
-    onClose,
-    hasInput: () => typed.current,
-    onKept: () => showToast({ message: t("common.dialog.backKept") }),
-  });
+  useBackGuard(open, { onClose, hasInput: typed.has, onKept: keep });
 
   const focusInitial = useEffectEvent(() => {
     const dialog = dialogRef.current;
@@ -75,7 +72,7 @@ export function Dialog({
       return;
     }
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    typed.current = false;
+    typed.reset();
     focusInitial();
     return () => {
       // Only if it still exists: the row that opened a delete dialog may be gone afterwards.
@@ -83,7 +80,7 @@ export function Dialog({
         opener.focus();
       }
     };
-  }, [open]);
+  }, [open, typed.reset]);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const dialog = dialogRef.current;
@@ -120,9 +117,7 @@ export function Dialog({
         tabIndex={-1}
         className={wide ? "admin-dialog admin-dialog--wide" : "admin-dialog"}
         onKeyDown={onKeyDown}
-        onInput={() => {
-          typed.current = true;
-        }}
+        onInput={typed.onInput}
       >
         <h2 className="admin-dialog__title" id={titleId}>
           {title}

@@ -196,7 +196,7 @@ export function PanelCard({
       ArrowDown: [0, 1],
     };
     // Enter or Space on the arrange handle selects the panel, the keyboard's click on it.
-    if (event.key === "Enter" || event.key === " ") {
+    if ((event.key === "Enter" || event.key === " ") && !isComposingKey(event)) {
       event.preventDefault();
       edit.onSelect?.();
       return;

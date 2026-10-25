@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import { showToast } from "../../../lib/toasts";
-import { useBackGuard } from "../../../lib/useBackGuard";
+import { useBackGuard, useTypedInput } from "../../../lib/useBackGuard";
 import "./shared.css";
 
 const FOCUSABLE =
@@ -22,11 +22,19 @@ interface DialogProps {
   size?: "small" | "large";
   /** The id of the element that describes the dialog (read after the title); a confirmation's text. */
   describedBy?: string;
+  /**
+   * Whether the Back button and Escape hold typed input (and Back closes the dialog instead of
+   * leaving the page). Off for the dialogs a router blocker opens to ask about leaving.
+   */
+  backGuard?: boolean;
+  /** Off for a dialog whose own close handler asks about unsaved changes (Escape reaches it). */
+  escapeKeepsInput?: boolean;
 }
 
 /**
  * A modal dialog: Escape closes it (only when it is the topmost layer), Tab stays inside, and
- * focus returns to where it was when the dialog closes.
+ * focus returns to where it was when the dialog closes. Escape and the Back button keep what was
+ * typed (and say so); Cancel and the close button discard it.
  */
 export function Dialog({
   title,
@@ -35,20 +43,19 @@ export function Dialog({
   actions,
   size = "small",
   describedBy,
+  backGuard = true,
+  escapeKeepsInput = true,
 }: DialogProps) {
   const { t } = useI18n();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
 
-  const typed = useRef(false);
+  const typed = useTypedInput();
+  const keep = () => showToast({ message: t("common.dialog.backKept") });
 
-  useEscapeLayer(true, onClose);
+  useEscapeLayer(true, () => (backGuard && escapeKeepsInput && typed.has() ? keep() : onClose()));
   // The Back button closes the dialog (or keeps typed input) rather than leaving the page.
-  useBackGuard(true, {
-    onClose,
-    hasInput: () => typed.current,
-    onKept: () => showToast({ message: t("common.dialog.backKept") }),
-  });
+  useBackGuard(backGuard, { onClose, hasInput: typed.has, onKept: keep });
 
   useLayoutEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -92,9 +99,7 @@ export function Dialog({
         aria-describedby={describedBy}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        onInput={() => {
-          typed.current = true;
-        }}
+        onInput={typed.onInput}
       >
         <div className="dialog__header">
           <h2 className="dialog__title" id={titleId}>
@@ -127,6 +132,8 @@ interface ConfirmDialogProps {
   busy?: boolean;
   /** Error text from a failed attempt, shown inside the dialog. */
   error?: string | undefined;
+  /** Off for a dialog a router blocker opens: Back must reach the blocker, not this dialog. */
+  backGuard?: boolean;
 }
 
 /** Confirmation for a destructive action. Focus starts on Cancel, so Enter does not confirm. */
@@ -138,6 +145,7 @@ export function ConfirmDialog({
   onCancel,
   busy = false,
   error,
+  backGuard = true,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const textId = useId();
@@ -146,6 +154,7 @@ export function ConfirmDialog({
       title={title}
       onClose={onCancel}
       describedBy={textId}
+      backGuard={backGuard}
       actions={
         <>
           <button

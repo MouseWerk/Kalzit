@@ -26,27 +26,31 @@ function walk(dir: string): string[] {
   });
 }
 
-/** Handlers for Enter or Escape that are not about text an input method may be composing. */
-const NOT_TEXT_INPUT = new Set([
-  // Arrow keys and Enter on a graph node (a canvas, no text field).
-  "panels/graph/GraphPanel.tsx",
-  // Enter and Space on the arrange handle (a button).
-  "features/dashboards/PanelCard.tsx",
-]);
+/** A key check for Enter or Escape: `key === "Enter"`, `key !== 'Escape'` or `case "Enter":`. */
+const HANDLER = /(key\s*[!=]==\s*["'](Enter|Escape)["']|case\s+["'](Enter|Escape)["']\s*:)/g;
+const GUARD = /isComposing|isComposingKey|keyCode\s*===\s*229/;
+/** Lines around a check in which the composition guard has to stand. */
+const REACH = 45;
 
 describe("Enter and Escape handlers", () => {
-  it("check for input method composition in every file that handles them", () => {
-    const missing = walk(SRC)
-      .filter((path) => /\.tsx?$/.test(path) && !/\.test\.tsx?$/.test(path))
-      .filter((path) => {
-        const text = readFileSync(path, "utf8");
-        return (
-          /key === "(Enter|Escape)"/.test(text) &&
-          !/isComposing|isComposingKey|keyCode === 229/.test(text)
-        );
-      })
-      .map((path) => relative(SRC, path).replaceAll("\\", "/"))
-      .filter((path) => !NOT_TEXT_INPUT.has(path));
+  it("each check for input method composition near the key test", () => {
+    const missing: string[] = [];
+    for (const path of walk(SRC)) {
+      if (!/\.tsx?$/.test(path) || /\.test\.tsx?$/.test(path)) {
+        continue;
+      }
+      const lines = readFileSync(path, "utf8").split("\n");
+      lines.forEach((line, index) => {
+        HANDLER.lastIndex = 0;
+        if (!HANDLER.test(line)) {
+          return;
+        }
+        const near = lines.slice(Math.max(0, index - REACH), index + REACH + 1).join("\n");
+        if (!GUARD.test(near)) {
+          missing.push(`${relative(SRC, path).replaceAll("\\", "/")}:${index + 1}`);
+        }
+      });
+    }
     expect(missing).toEqual([]);
   });
 });

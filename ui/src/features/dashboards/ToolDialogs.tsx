@@ -393,6 +393,7 @@ export function JsonModelDialog({
       title={t("dashboardTools.json.title")}
       onClose={close}
       size="large"
+      escapeKeepsInput={false}
       actions={
         <>
           <button type="button" className="button button--secondary" onClick={close}>

@@ -34,6 +34,7 @@ import {
   type TimeSettings,
 } from "../../lib/timeSettings";
 import { showErrorToast, showToast } from "../../lib/toasts";
+import { hasBackGuard } from "../../lib/useBackGuard";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
@@ -672,12 +673,12 @@ function DashboardView({
   useEscapeLayer(
     display.viewPanel !== undefined && dialog === null,
     () => onDisplay({ viewPanel: undefined }),
-    { blocking: false },
+    { blocking: false, base: true },
   );
   useEscapeLayer(
     display.viewPanel === undefined && display.mode !== "normal" && dialog === null,
     () => onDisplay({ mode: "normal" }),
-    { blocking: false },
+    { blocking: false, base: true },
   );
 
   const annotations = useDashboardAnnotations({
@@ -955,7 +956,12 @@ function DashboardView({
   const staysHere = (pathname: string) =>
     pathname === here || pathname.startsWith(`${here}/panels/`);
   const blocker = useBlocker({
-    shouldBlockFn: ({ current, next }) => {
+    shouldBlockFn: ({ current, next, action }) => {
+      // Back and Forward under an open dialog or overlay act on that layer first (its own guard
+      // holds the navigation); the leave question comes with the next press.
+      if ((action === "BACK" || action === "FORWARD") && hasBackGuard()) {
+        return false;
+      }
       if (staysHere(next.pathname)) {
         const fromEditor = current.pathname.startsWith(`${here}/panels/`);
         return fromEditor && leaveMode.current === null && editorChanged();
@@ -1582,6 +1588,7 @@ function DashboardView({
           confirmLabel={t("dashboards.discard.confirm")}
           onCancel={() => blocker.reset()}
           onConfirm={() => blocker.proceed()}
+          backGuard={false}
         >
           {isNewPanel ? t("dashboards.editor.discardNewText") : t("dashboards.editor.discardText")}
         </ConfirmDialog>
@@ -1591,6 +1598,7 @@ function DashboardView({
           title={t("dashboards.leave.title")}
           confirmLabel={t("dashboards.leave.confirm")}
           onCancel={() => blocker.reset()}
+          backGuard={false}
           onConfirm={() => {
             // Left on purpose: a reload of this dashboard later starts clean.
             writeDraft(owner, dashboard.id, null);

@@ -123,7 +123,7 @@ function DataSourceList({
   });
   const kinds = useQuery(kindsQuery(orgId));
   // Every kind the server offers (its registry), for the empty list's text.
-  const names = (kinds.data ?? []).map((kind) => kind.name);
+  const names = (kinds.isSuccess ? kinds.data : []).map((kind) => kind.name);
   const restore = useMutation({
     mutationFn: (id: string) => restoreDatasource(orgId, id),
     onSuccess: async (_, id) => {

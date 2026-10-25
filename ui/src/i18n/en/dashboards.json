@@ -113,7 +113,7 @@
   "dashboards.history.current": "(current)",
   "dashboards.history.compare": "Compare",
   "dashboards.history.compareNamed": "Compare version {version} with the current version",
-  "dashboards.history.restoreNamed": "Restore version {version}…",
+  "dashboards.history.restoreNamed": "Restore… version {version}",
   "dashboards.history.compareTitle": "Changes from version {version} to the current version",
   "dashboards.history.restore": "Restore…",
   "dashboards.history.restoreTitle": "Restore this version?",

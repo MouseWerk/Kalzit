@@ -378,14 +378,15 @@ describe("annotations", () => {
     expect(dialog).toBeNull();
   });
 
-  it("takes back a deleted annotation with Undo", async () => {
+  it("takes back a deleted annotation with Undo, with its span and panel", async () => {
     const { server } = setup("editor", timeModel());
+    const start = Date.now() - 3_600_000;
     server.areas.dashboardFeatures.annotations.push({
       id: "a1",
       dashboardId: "d-main",
-      panelId: null,
-      time: Date.now() - 3_600_000,
-      timeEnd: null,
+      panelId: "p1",
+      time: start,
+      timeEnd: start + 600_000,
       text: "Release 2.1",
       tags: ["deploy"],
       version: 1,
@@ -401,10 +402,10 @@ describe("annotations", () => {
     expect(server.areas.dashboardFeatures.annotations[0]).toMatchObject({
       text: "Release 2.1",
       tags: ["deploy"],
+      panelId: "p1",
+      time: start,
+      timeEnd: start + 600_000,
     });
-    expect(
-      await screen.findByRole("button", { name: /Annotation at .*: Release 2\.1/ }),
-    ).toBeTruthy();
   });
 
   it("shows annotations read-only to viewers, and nothing to add", async () => {
@@ -687,7 +688,7 @@ describe("view modes", () => {
     }
   });
 
-  it("keeps search and help in kiosk mode and over a panel shown alone", async () => {
+  it("keeps help and search over a panel shown alone, and Escape closes the top layer first", async () => {
     setup("viewer", {
       ...emptyModel("Main"),
       panels: [panel("p1", "Orders"), panel("p2", "Spend", { grid: { x: 12, y: 0, w: 12, h: 8 } })],
@@ -698,25 +699,33 @@ describe("view modes", () => {
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // Escape closed the help first; the panel is still shown alone.
+    // That Escape closed the help; the panel is still shown alone.
     expect(location().search).toMatchObject({ viewPanel: "p1" });
     await user.keyboard("/");
     expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
     await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(location().search).toMatchObject({ viewPanel: "p1" });
     await user.keyboard("{Escape}");
     await waitFor(() => expect(location().search).not.toHaveProperty("viewPanel"));
   });
 
-  it("keeps search and help in kiosk mode", async () => {
+  it("keeps only help and Escape in kiosk mode: no search, no palette", async () => {
     setup("viewer", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
-    const { user } = renderApp("/dashboards/d-main?kiosk=kiosk");
+    const { user, location } = renderApp("/dashboards/d-main?kiosk=kiosk");
     expect(await screen.findByRole("button", { name: "Leave full screen" })).toBeTruthy();
+    await user.keyboard("/");
+    await user.keyboard("{Control>}k{/Control}");
+    expect(screen.queryByRole("dialog")).toBeNull();
     await user.keyboard("?");
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await user.keyboard("{Control>}k{/Control}");
-    expect(await screen.findByRole("dialog", { name: "Command palette" })).toBeTruthy();
+    // The help closed; kiosk mode is still on.
+    expect(location().search).toMatchObject({ kiosk: "kiosk" });
+    expect(screen.getByRole("button", { name: "Leave full screen" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(location().search).not.toHaveProperty("kiosk"));
   });
 
   it("shows one panel alone and returns", async () => {

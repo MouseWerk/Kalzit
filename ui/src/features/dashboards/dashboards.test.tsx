@@ -971,7 +971,7 @@ describe("history and trash", () => {
     saveAsOther(stored, emptyModel("Sales"), "Removed everything");
     const { user } = renderApp("/dashboards/d-sales/versions");
     expect(await screen.findByText("Removed everything")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Restore version 1…" }));
+    await user.click(screen.getByRole("button", { name: "Restore… version 1" }));
     const dialog = screen.getByRole("dialog", { name: "Restore this version?" });
     await user.click(within(dialog).getByRole("button", { name: "Restore" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Sales" })).toBeTruthy();

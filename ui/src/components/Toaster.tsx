@@ -41,7 +41,10 @@ export function Toaster() {
 
 function ToastBody({ toast }: { toast: Toast }) {
   const { t } = useI18n();
-  const [held, setHeld] = useState(false);
+  // Held while the pointer is over it or focus is inside; either keeps it, whichever leaves first.
+  const [pointer, setPointer] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const held = pointer || focus;
   // Where focus was before it came into the toast, to go back there when the toast closes.
   const returnTo = useRef<HTMLElement | null>(null);
 
@@ -76,11 +79,12 @@ function ToastBody({ toast }: { toast: Toast }) {
     // biome-ignore lint/a11y/noStaticElementInteractions: holding the timer is not an interaction.
     <div
       ref={ref}
+      data-undo={toast.undo === undefined ? undefined : ""}
       className={toast.error === true ? "toast notice notice--danger" : "toast notice"}
-      onPointerEnter={() => setHeld(true)}
-      onPointerLeave={() => setHeld(false)}
+      onPointerEnter={() => setPointer(true)}
+      onPointerLeave={() => setPointer(false)}
       onFocus={(event) => {
-        setHeld(true);
+        setFocus(true);
         if (
           event.relatedTarget instanceof HTMLElement &&
           !event.currentTarget.contains(event.relatedTarget)
@@ -94,7 +98,7 @@ function ToastBody({ toast }: { toast: Toast }) {
             event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)
           )
         ) {
-          setHeld(false);
+          setFocus(false);
         }
       }}
     >
