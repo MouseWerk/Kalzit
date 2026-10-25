@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { ApiError, expectShape, isRecord, request } from "../../api/client";
+import { ApiError, expectShape, isApiError, isRecord, request } from "../../api/client";
 import type {
   DatasourceAccess,
   FieldSchema,
@@ -99,6 +99,8 @@ export interface Datasource {
   /** Only the secret fields that have a value. */
   secrets: Record<string, { set: boolean }>;
   access?: DatasourceAccess;
+  /** When it was last changed; a save or delete sends it back to refuse overwriting a newer one. */
+  updatedAt?: number;
 }
 
 /**
@@ -229,6 +231,8 @@ export interface DatasourcePatch {
   name?: string;
   settings?: Record<string, unknown>;
   secrets?: Record<string, string | null>;
+  /** The `updatedAt` the form was loaded from; a newer stored source answers `version_conflict`. */
+  expectedUpdatedAt?: number;
 }
 
 function invalid(what: string): never {
@@ -327,7 +331,20 @@ function parseDatasource(value: unknown): Datasource {
     settings: value.settings,
     secrets,
     ...(summary.access === undefined ? {} : { access: summary.access }),
+    ...(typeof value.updatedAt === "number" ? { updatedAt: value.updatedAt } : {}),
   };
+}
+
+/** The stored data source of a `version_conflict` answer, or null when it is not one. */
+export function conflictingDatasource(error: unknown): Datasource | null {
+  if (!isApiError(error, "version_conflict")) {
+    return null;
+  }
+  try {
+    return parseDatasource(error.current);
+  } catch {
+    return null;
+  }
 }
 
 function isHealth(value: unknown): value is Health {
@@ -402,8 +419,17 @@ export async function updateDatasource(
   return parseDatasource(await send("PATCH", orgPath(orgId, "datasources", id), patch));
 }
 
-export async function deleteDatasource(orgId: string, id: string): Promise<void> {
-  await send("DELETE", orgPath(orgId, "datasources", id));
+/** Moves a source to the trash; with `expectedUpdatedAt`, only while nobody changed it since. */
+export async function deleteDatasource(
+  orgId: string,
+  id: string,
+  expectedUpdatedAt?: number,
+): Promise<void> {
+  const path = orgPath(orgId, "datasources", id);
+  await send(
+    "DELETE",
+    expectedUpdatedAt === undefined ? path : `${path}?expectedUpdatedAt=${expectedUpdatedAt}`,
+  );
 }
 
 export async function restoreDatasource(orgId: string, id: string): Promise<void> {

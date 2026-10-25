@@ -200,7 +200,8 @@ type QueryResult =
   means databases in the own network). Always refused, answering `datasource_target_blocked`:
   Kalzit's own data directory and database (also through a PostgreSQL source at the same server
   and database), link-local and cloud metadata addresses (`169.254.0.0/16`, `fe80::/10`,
-  `fd00:ec2::254`), and SQLite files outside the directories a server admin allowed
+  `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, in every
+  IPv6 form that carries them), and SQLite files outside the directories a server admin allowed
   (`datasources.sqlite_dirs`, empty by default, never including the data directory); CSV and
   JSON files of file sources follow the same rules within `datasources.file_dirs`. A server
   admin can additionally restrict sources to a list of allowed hosts and networks

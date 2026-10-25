@@ -59,6 +59,7 @@ import {
   restoreDashboard,
   saveDashboard,
 } from "./api";
+import { PanelInspector } from "./PanelInspector";
 import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
@@ -964,6 +965,13 @@ function DashboardView({
   });
   const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
   const inEditMode = draft !== null;
+  // The panel the inspector shows while editing; gone with edit mode or with the panel.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedPanel =
+    inEditMode && selectedId !== null ? model.panels.find((p) => p.id === selectedId) : undefined;
+  if (selectedId !== null && selectedPanel === undefined) {
+    setSelectedId(null);
+  }
   const editActions = !inEditMode
     ? undefined
     : {
@@ -1009,7 +1017,56 @@ function DashboardView({
               r.id === rowId ? { ...r, collapsed: !r.collapsed } : r,
             ),
           })),
+        selectedId,
+        onSelect: (id: string) => setSelectedId(id),
       };
+  const inspector =
+    editActions === undefined || selectedPanel === undefined ? null : (
+      <PanelInspector
+        key={selectedPanel.id}
+        orgId={orgId}
+        panel={selectedPanel}
+        rows={rows}
+        variables={model.variables}
+        libraryName={
+          selectedPanel.libraryPanelId === undefined
+            ? undefined
+            : library[selectedPanel.libraryPanelId]?.name
+        }
+        actions={{
+          onChange: (change) =>
+            changeDraft((m) => ({
+              ...m,
+              panels: m.panels.map((p) => (p.id === selectedPanel.id ? change(p) : p)),
+            })),
+          onGrid: (grid) => editActions.onGrid(selectedPanel.id, grid),
+          onEdit: () => editActions.onEdit(selectedPanel.id),
+          onDuplicate: () => editActions.onDuplicate(selectedPanel.id),
+          onCopy: () => editActions.onCopy(selectedPanel.id),
+          onRemove: () => {
+            // Focus moves on to the next outline entry (or the one before), not to the page.
+            const entries = [
+              ...document.querySelectorAll<HTMLElement>(".dash-pane [data-outline-id]"),
+            ];
+            const at = entries.findIndex((e) => e.dataset.outlineId === selectedPanel.id);
+            const next = entries[at + 1] ?? entries[at - 1];
+            setSelectedId(null);
+            editActions.onRemove(selectedPanel.id);
+            const nextId = next?.dataset.outlineId;
+            if (nextId !== undefined) {
+              window.requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLElement>(
+                    `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
+                  )
+                  ?.focus(),
+              );
+            }
+          },
+          onMakeLibrary: () => setDialog({ kind: "makeLibrary", panel: selectedPanel }),
+        }}
+      />
+    );
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
@@ -1273,8 +1330,11 @@ function DashboardView({
 
   const showRail = wideLayout && mode === "normal";
 
-  /** Shows a panel from the outline: its row opens when it is folded, then it scrolls in. */
-  function goToPanel(panel: PanelModel) {
+  /**
+   * Shows a panel from the outline: its row opens when it is folded, then it scrolls in. Focus
+   * moves to the panel unless it should stay where the choice was made (selecting while editing).
+   */
+  function goToPanel(panel: PanelModel, focus = true) {
     const row = rows.find((r) => r.id === panel.rowId);
     if (row !== undefined && (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id])) {
       setOpenRows((current) => ({ ...current, [row.id]: true }));
@@ -1283,7 +1343,7 @@ function DashboardView({
       const card = document.querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(panel.id)}"]`);
       // jsdom has no scrollIntoView; every browser has.
       card?.scrollIntoView?.({ block: "nearest" });
-      card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
+      if (focus) card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
     });
   }
 
@@ -1461,13 +1521,24 @@ function DashboardView({
                 {showRail ? (
                   <DashboardRail
                     pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
+                    selectedId={selectedPanel?.id ?? null}
+                    inspector={inspector}
+                    onSelect={(panel) => {
+                      setSelectedId(panel.id);
+                      goToPanel(panel, false);
+                    }}
+                    rowActions={
+                      editActions === undefined
+                        ? undefined
+                        : { onToggle: editActions.onRowToggle, onEdit: editActions.onRowEdit }
+                    }
                     userId={userId}
                     editing={draft !== null}
                     panels={model.panels}
                     rows={rows}
                     untitled={t("dashboards.panel.untitled")}
                     canEdit={canEdit}
-                    onGoTo={goToPanel}
+                    onGoTo={(panel) => goToPanel(panel)}
                     filtersShown={filtersShown}
                     onFilters={() => setFiltersShown((shown) => !shown)}
                     annotationsShown={annotationsShown}

@@ -255,6 +255,11 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /* A refresh keeps the last answer drawn; only the title quiets while the new one is on its way. */
+  .panel-card[aria-busy="true"] .panel-card__title {
+    color: var(--text-muted);
+  }
+
   .panel-card__actions {
     display: flex;
     flex: 0 1 auto;
@@ -340,6 +345,110 @@
     border-bottom: var(--border-width) solid var(--border-strong);
     cursor: nwse-resize;
     touch-action: none;
+  }
+
+  /* A transparent panel: no surface and no border, straight on the dashboard. */
+  .panel-card--transparent {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  /* While editing it keeps a quiet dashed outline, so its bounds stay visible. */
+  .panel-card--editing.panel-card--transparent {
+    border-color: var(--border);
+    border-style: dashed;
+  }
+
+  /* The selected panel while editing: a stronger neutral frame, never an accent colour. */
+  .panel-card--selected,
+  .panel-card--editing.panel-card--selected {
+    border-color: var(--border-strong);
+    border-style: solid;
+  }
+
+  /* The selected panel's size in grid units, quiet in the bottom corner. */
+  .panel-card__size {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline-end: var(--space-4);
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-2xs);
+    font-variant-ligatures: none;
+    pointer-events: none;
+  }
+
+  .panel-card__mini {
+    display: flex;
+    gap: var(--space-half);
+  }
+
+  .panel-card__about {
+    display: inline-grid;
+    width: var(--space-5);
+    height: var(--space-5);
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: help;
+  }
+
+  .panel-card__about:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .panel-card__about:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* Static, so the description lays over the card itself (the card clips what sticks out). */
+  .panel-card__about-anchor {
+    position: static;
+    display: inline-flex;
+  }
+
+  /*
+   * The description: its own lines kept, long words broken, at most a few lines high with its own
+   * scroll. Shown on hover, on keyboard focus and when tapped open.
+   */
+  .panel-card__about-text {
+    position: absolute;
+    inset-block-start: var(--size-panel-header);
+    inset-inline: var(--space-2);
+    z-index: var(--z-menu);
+    display: none;
+    max-height: calc(100% - var(--size-panel-header) - var(--space-2));
+    overflow-y: auto;
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-tight);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+
+  @media (hover: hover) {
+    .panel-card__about-anchor:hover > .panel-card__about-text {
+      display: block;
+    }
+  }
+
+  .panel-card__about-anchor[data-open] > .panel-card__about-text,
+  .panel-card__about-anchor:has(> :focus-visible) > .panel-card__about-text {
+    display: block;
   }
 
   /* Option groups of the panel editor and the dashboard settings */
