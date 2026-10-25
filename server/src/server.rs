@@ -261,6 +261,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     };
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());
+    crate::routes::explore_history::spawn_retention(state.clone());
     match listen(&config, &state).await {
         Ok(running) => Ok(running),
         Err(e) => {
