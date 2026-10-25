@@ -44,6 +44,9 @@ pub struct ApiError {
     /// docs/api/datasources.md), with the values its text needs. Boxed, so every `ApiResult`
     /// stays small.
     pub reason: Option<Box<Reason>>,
+    /// For `internal`: the id of the request that failed. It is in the server log next to the
+    /// cause, and the UI shows it, so the line can be found.
+    pub request_id: Option<Box<str>>,
 }
 
 #[derive(Debug, Default)]
@@ -54,10 +57,33 @@ pub struct Reason {
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
+tokio::task_local! {
+    static REQUEST_ID: String;
+}
+
+/// The id of the request being handled, `None` outside a request (startup, background tasks).
+pub fn request_id() -> Option<Box<str>> {
+    REQUEST_ID.try_with(|id| id.as_str().into()).ok()
+}
+
+/// Gives every request an id of its own: errors log it, `internal` answers carry it, and the
+/// response sends it as `X-Request-Id`. The id is always made here; a client's header is not
+/// trusted into the log.
+pub async fn assign_request_id(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    // The tail of a v7 id is random; its head is the clock and would repeat.
+    let simple = uuid::Uuid::now_v7().simple().to_string();
+    let id = simple[simple.len() - 12..].to_string();
+    let mut res = REQUEST_ID.scope(id.clone(), next.run(req)).await;
+    if let Ok(value) = axum::http::HeaderValue::from_str(&id) {
+        res.headers_mut().insert("x-request-id", value);
+    }
+    res
+}
+
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         debug_assert!(ERROR_CODES.contains(&code), "error code {code} is missing from ERROR_CODES");
-        Self { status, code, message: message.into(), field: None, current: None, reason: None }
+        Self { status, code, message: message.into(), field: None, current: None, reason: None, request_id: None }
     }
 
     /// The caller edited an older version; `current` is the stored resource to merge with.
@@ -114,10 +140,17 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "not_found", "no such resource")
     }
 
-    /// An unexpected failure. The cause is logged; the client only learns that it happened.
+    /// An unexpected failure. The cause is logged with the request's id; the client only learns
+    /// that it happened and the id to look for.
     pub fn internal(context: &str, cause: impl std::fmt::Display) -> Self {
-        tracing::error!("{context}: {cause}");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal error, see the server log")
+        let request_id = request_id();
+        match &request_id {
+            Some(id) => tracing::error!(request_id = %id, "{context}: {cause}"),
+            None => tracing::error!("{context}: {cause}"),
+        }
+        let mut e = Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal error, see the server log");
+        e.request_id = request_id;
+        e
     }
 }
 
@@ -199,6 +232,9 @@ impl IntoResponse for ApiError {
         if let Some(field) = self.field {
             error["field"] = json!(field);
         }
+        if let Some(id) = self.request_id {
+            error["requestId"] = json!(id);
+        }
         if let Some(reason) = self.reason {
             error["reason"] = json!(reason.code);
             if !reason.params.is_empty() {
@@ -271,6 +307,31 @@ mod tests {
         holder.close().await.unwrap();
         other.close().await.unwrap();
         dir.close().unwrap();
+    }
+
+    /// An internal error names the request in the answer, and the middleware sends the same id
+    /// as a header, so the log line can be found from what the UI shows.
+    #[expect(clippy::disallowed_methods, reason = "a one-route router that only carries the middleware under test")]
+    #[tokio::test]
+    async fn internal_errors_carry_the_request_id() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        assert!(request_id().is_none());
+        assert_eq!(ApiError::internal("outside a request", "cause").request_id, None);
+        let app = Router::new()
+            .route("/boom", get(|| async { Err::<(), _>(ApiError::internal("test", "cause")) }))
+            .layer(axum::middleware::from_fn(assign_request_id));
+        let res = app.oneshot(Request::get("/boom").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let header = res.headers()["x-request-id"].to_str().unwrap().to_string();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["requestId"], header.as_str());
+        assert_eq!(header.len(), 12);
     }
 
     #[test]

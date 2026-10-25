@@ -83,6 +83,7 @@
   "errors.invalid_setup_token": "Der Einrichtungscode stimmt nicht. Kopier ihn noch einmal aus „setup-token.txt“.",
   "errors.not_found": "Das wurde nicht gefunden.",
   "errors.internal": "Auf dem Server ist ein Fehler aufgetreten. Versuch es noch einmal; wenn es wieder passiert, sieh im Server-Log nach.",
+  "errors.requestId": "Anfrage-ID: {id}",
   "errors.method_not_allowed": "Der Server nimmt diese Art von Anfrage hier nicht an. Prüf, ob die Versionen von Oberfläche und Server zusammenpassen.",
   "errors.payload_too_large": "Das sind zu viele Daten für eine Anfrage. Verkleinere sie und versuch es noch einmal.",
   "errors.conflict": "Das kollidiert mit etwas Vorhandenem, zum Beispiel einem vergebenen Namen. Ändere es und versuch es noch einmal.",

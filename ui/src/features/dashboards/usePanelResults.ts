@@ -1,4 +1,5 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
+import { asSteps, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
@@ -48,8 +49,12 @@ export function usePanelResults(input: PanelQueryInput) {
       : input.variables;
   // The panel route runs every stored target, empty ones included, and answers each refId; a
   // draft only sends the targets that can run.
-  // Hidden targets run in neither case (the server leaves them out of the panel route too).
-  const shown = panel.targets.filter((t) => t.hide !== true);
+  // Hidden targets run in neither case (the server leaves them out of the panel route too),
+  // unless an enabled step reads them: the step needs their frame.
+  const read = new Set(
+    asSteps(panel.transformations).flatMap((s) => (s.disabled === true ? [] : stepFrames(s))),
+  );
+  const shown = panel.targets.filter((t) => t.hide !== true || read.has(t.refId));
   const targets =
     source === "stored"
       ? shown
