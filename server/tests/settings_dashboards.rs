@@ -2328,6 +2328,13 @@ async fn a_reset_in_a_batch_brings_the_default_back(t: TestApp) {
     assert_eq!(setting(&list, "appearance.density")["source"], json!("default"));
     assert_eq!(setting(&list, "appearance.density")["value"], json!("balanced"));
     assert_eq!(setting(&list, "appearance.density")["version"], json!(2));
+    // Every reader skips the marker: the value in effect, the export and the import preview.
+    assert_eq!(kalzit::settings::get(&t.state, "appearance.density").await.unwrap(), json!("balanced"));
+    let export = t.get("/admin/settings/export", &t.owner).await;
+    assert_eq!(export.body["settings"]["appearance.density"], json!("balanced"), "{}", export.body);
+    let preview = t.post("/admin/settings/import/preview", json!({ "document": document }), &t.owner).await;
+    assert_eq!(preview.body["items"][0]["source"], json!("default"), "{}", preview.body);
+    assert_eq!(preview.body["items"][0]["current"], json!("balanced"), "{}", preview.body);
 
     // A write from before the reset names version 1 (or 0) and is refused, it is not taken as a
     // write over the fresh default; one that names the reset's version goes through.

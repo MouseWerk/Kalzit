@@ -1031,6 +1031,16 @@ describe("history and trash", () => {
     expect(screen.getAllByRole("article")).toHaveLength(3);
   });
 
+  it("offers restore only once the dashboard's current version is known", async () => {
+    const server = setup();
+    const stored = storedSales(server);
+    saveAsOther(stored, emptyModel("Sales"), "Removed everything");
+    server.failNext("/api/orgs/o1/dashboards/d-sales", 503, "busy", "GET");
+    renderApp("/dashboards/d-sales/versions");
+    expect(await screen.findByText("Removed everything")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Restore… version 1" })).toBeNull();
+  });
+
   it("does not restore over a save made after the list was opened", async () => {
     const server = setup();
     const stored = storedSales(server);
@@ -1041,7 +1051,9 @@ describe("history and trash", () => {
     saveAsOther(stored, emptyModel("Sales"), "Saved meanwhile");
     const dialog = screen.getByRole("dialog", { name: "Restore this version?" });
     await user.click(within(dialog).getByRole("button", { name: "Restore" }));
-    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect((await within(dialog).findByRole("alert")).textContent).toContain(
+      "The dashboard was saved since you opened the history.",
+    );
     expect(latest(stored)).toMatchObject({ version: 3, message: "Saved meanwhile" });
     const call = server.calls.filter((c) => c.path.includes("/versions/1/restore")).at(-1);
     expect(call?.path).toContain("expectedVersion=2");

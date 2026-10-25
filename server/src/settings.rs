@@ -927,6 +927,14 @@ pub fn editable(def: &SettingDef, effective: &Effective) -> bool {
 /// The stored value of a setting that was reset: the row stays with its version, so versions keep
 /// counting up and a write that names a version from before the reset is refused. No setting
 /// accepts `null`, so it never stands for a real value.
+///
+/// Why a marker and not a delete: the version is the only thing a write is checked against, and a
+/// deleted row starts again at version 0. Then a page opened before the reset and the first save
+/// after it would name the same versions (0, 1, ...), and a stale write would silently replace
+/// the newer value. Every reader skips the marker: `resolve` (value, list, export, import
+/// preview) treats it as no value, and `updates::cli::health_timeout`, which reads the table
+/// directly, refuses it as invalid (tests `a_reset_in_a_batch_brings_the_default_back` and
+/// `the_health_timeout_skips_a_reset_marker`).
 const RESET_VALUE: &str = "null";
 
 /// Removes a setting's stored value if its version is still `expected`, so the default applies

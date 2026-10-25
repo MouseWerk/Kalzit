@@ -455,13 +455,10 @@ export async function restoreVersion(
   orgId: string,
   id: string,
   version: number,
-  expectedVersion?: number,
+  expectedVersion: number,
 ): Promise<void> {
   const path = orgPath(orgId, "dashboards", id, "versions", String(version), "restore");
-  await send(
-    "POST",
-    expectedVersion === undefined ? path : `${path}?expectedVersion=${expectedVersion}`,
-  );
+  await send("POST", `${path}?expectedVersion=${expectedVersion}`);
 }
 
 function isQueryResponse(value: unknown): value is QueryResponse {

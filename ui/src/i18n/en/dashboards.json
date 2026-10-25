@@ -141,6 +141,7 @@
   "dashboards.history.restoreNamed": "Restore… version {version}",
   "dashboards.history.compareTitle": "Changes from version {version} to the current version",
   "dashboards.history.restore": "Restore…",
+  "dashboards.history.restoreConflict": "The dashboard was saved since you opened the history. The list now shows the new version; choose again.",
   "dashboards.history.restoreTitle": "Restore this version?",
   "dashboards.history.restoreText": "Version {version} becomes the newest version. The current version stays in the history.",
   "dashboards.history.restoreConfirm": "Restore",

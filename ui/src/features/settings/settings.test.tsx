@@ -209,6 +209,69 @@ describe("server settings rows", () => {
     }
   });
 
+  /** Holds the first PATCH until `release` is called; restore with `vi.stubGlobal("fetch", fake)`. */
+  function holdFirstPatch() {
+    const fake = globalThis.fetch;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (first && init?.method === "PATCH") {
+        first = false;
+        await held;
+      }
+      return fake(input, init);
+    });
+    return { fake, release: () => release() };
+  }
+
+  it("drops a waiting change of a setting whose save failed, and sends no second save", async () => {
+    const { user, admin, server } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+    });
+    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const { fake, release } = holdFirstPatch();
+    try {
+      await user.click(within(theme).getByRole("radio", { name: "Dark" }));
+      await user.click(within(theme).getByRole("radio", { name: "Light" }));
+      server.failNext("/api/admin/settings/appearance.default_theme", 503, "busy", "PATCH");
+      release();
+      expect(await screen.findByText(/server is busy/)).toBeTruthy();
+      const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
+      expect(stored).toMatchObject({ value: "system", version: 0 });
+      expect(sent(server, "PATCH")).toHaveLength(1);
+    } finally {
+      vi.stubGlobal("fetch", fake);
+    }
+  });
+
+  it("drops a waiting change when its setting's save ends in the conflict dialog", async () => {
+    const { user, admin, server } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+    });
+    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const stored = admin.serverSettings.find((s) => s.key === "appearance.default_theme");
+    if (stored === undefined) {
+      throw new Error("fixture setting missing");
+    }
+    const { fake, release } = holdFirstPatch();
+    try {
+      await user.click(within(theme).getByRole("radio", { name: "Dark" }));
+      await user.click(within(theme).getByRole("radio", { name: "Light" }));
+      // Someone else saves first.
+      Object.assign(stored, { value: "contrast", version: 4, source: "database" });
+      release();
+      expect(await screen.findByRole("dialog")).toBeTruthy();
+      // Only the first save was sent; the waiting one did not go over the stored value.
+      expect(sent(server, "PATCH")).toHaveLength(1);
+      expect(stored).toMatchObject({ value: "contrast", version: 4 });
+    } finally {
+      vi.stubGlobal("fetch", fake);
+    }
+  });
+
   it("applies a changed default theme to the open app, and takes it back with undo", async () => {
     const { user } = await openAdmin("/settings/appearance", { isServerAdmin: true });
     const theme = await screen.findByRole("radiogroup", { name: "Default theme" });

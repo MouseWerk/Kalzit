@@ -141,6 +141,7 @@
   "dashboards.history.restoreNamed": "Wiederherstellen… Version {version}",
   "dashboards.history.compareTitle": "Änderungen von Version {version} zur aktuellen Version",
   "dashboards.history.restore": "Wiederherstellen…",
+  "dashboards.history.restoreConflict": "Das Dashboard wurde gespeichert, seit du den Verlauf geöffnet hast. Die Liste zeigt jetzt die neue Version; wähle noch einmal.",
   "dashboards.history.restoreTitle": "Diese Version wiederherstellen?",
   "dashboards.history.restoreText": "Version {version} wird zur neuesten Version. Die aktuelle Version bleibt im Verlauf.",
   "dashboards.history.restoreConfirm": "Wiederherstellen",
