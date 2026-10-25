@@ -22,6 +22,9 @@ use crate::{db, net, web};
 #[derive(Clone)]
 pub struct AppState {
     pub db: AnyPool,
+    /// Read-only connections for the reads of every request: session and permission lookups
+    /// (`db::read_pool`). The same pool as `db` on PostgreSQL and for an in-memory database.
+    pub read_db: AnyPool,
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
     pub login_limiter: Arc<RateLimiter>,
@@ -53,8 +56,11 @@ impl AppState {
         let background = Arc::new(db::Background::new(&db, &config.database_url(), touch_limit + 2));
         let touches = Arc::new(crate::auth::session::Touches::new(background.clone(), touch_limit));
         let updates = Arc::new(crate::updates::Updates::new(&config.paths.data_dir, &config.database_url()));
+        let read_db = db::read_pool(&db, &config.database_url(), db.options().get_max_connections())
+            .unwrap_or_else(|| db.clone());
         Ok(Self {
             db,
+            read_db,
             config: Arc::new(config),
             clock,
             login_limiter: Arc::new(login_limiter),
@@ -73,12 +79,13 @@ impl AppState {
     }
 
     /// Stops the background writes and closes every database pool this state opened: the
-    /// server's, the background writes' own and the data sources' SQLite files. Until then the
+    /// server's, its read pool, the background writes' own and the data sources' SQLite files. Until then the
     /// files in the data directory stay open, and Windows cannot delete them (tests delete their
     /// temporary data directory right after).
     pub async fn close(&self) {
         self.background.stop().await;
         self.datasources.close().await;
+        self.read_db.close().await;
         self.db.close().await;
     }
 }

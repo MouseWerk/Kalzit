@@ -56,6 +56,18 @@ describe("Explore", () => {
     expect(sent.timeRange.to - sent.timeRange.from).toBe(3_600_000);
   });
 
+  it("keeps only the latest run's result in the cache", async () => {
+    const { app, user } = open();
+    await screen.findByRole("combobox", { name: "Data source" });
+    for (const sql of ["SELECT 1", "SELECT 2", "SELECT * FROM customers"]) {
+      await runSql(user, sql);
+    }
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    const runs = app.queryClient.getQueryCache().findAll({ queryKey: ["explore"] });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.gcTime).toBeLessThanOrEqual(5_000);
+  });
+
   it("shows the executed query, notices and truncation in the inspector", async () => {
     const { server, user } = open();
     server.areas.datasources.respond = () => ({

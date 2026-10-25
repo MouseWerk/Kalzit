@@ -75,7 +75,7 @@ pub async fn login(
     let row: Option<LoginRow> =
         sqlx::query_as("SELECT id, email, name, password_hash, is_server_admin, disabled FROM users WHERE email = $1")
             .bind(&email)
-            .fetch_optional(&state.db)
+            .fetch_optional(&state.read_db)
             .await?;
     let stored = row.as_ref().and_then(|r| r.password_hash.clone());
     let ok = password::verify(req.password, stored).await;

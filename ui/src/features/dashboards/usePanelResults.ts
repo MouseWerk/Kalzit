@@ -1,6 +1,7 @@
-import { type UseQueryResult, useQuery } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
 import { asSteps, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
+import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
 import { runQuery } from "../datasources/api";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
@@ -42,6 +43,7 @@ export interface PanelQueryInput {
  */
 export function usePanelResults(input: PanelQueryInput) {
   const { orgId, dashboardId, panel, range, source, run } = input;
+  const client = useQueryClient();
   const kindOf = useSourceKinds(orgId);
   const variables =
     source === "stored"
@@ -89,9 +91,11 @@ export function usePanelResults(input: PanelQueryInput) {
       samePanel(previousQuery?.queryKey, [orgId, dashboardId, panel.id, source])
         ? previous
         : undefined,
-    gcTime: 60_000,
+    // Every refresh makes a new answer of up to the response size limit: only the latest one
+    // per panel stays (older ones are dropped when it arrives), and briefly once unshown.
+    gcTime: RESULT_GC_MS,
     ...BUSY_RETRY,
-    queryFn: ({ signal }): Promise<TargetOutcome[]> =>
+    queryFn: ({ signal, queryKey }): Promise<TargetOutcome[]> =>
       panelQueries.run(async () => {
         const common = {
           timeRange: range,
@@ -114,6 +118,7 @@ export function usePanelResults(input: PanelQueryInput) {
                 },
                 signal,
               );
+        dropOlderResults(client, [PANEL_DATA_KEY, orgId, dashboardId, panel.id, source], queryKey);
         return outcomesOf(response, refIds);
       }, signal),
   });
