@@ -90,5 +90,9 @@ test("a viewer with query access to one data source can use Explore", async ({ p
   const result = page.getByRole("region", { name: t("explore.result") });
   await expect(result.locator(".ts__plot")).toBeVisible();
   // A viewer may query but not build dashboards.
-  await expect(result.getByRole("button", { name: t("explore.addToDashboard") })).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("complementary", { name: t("explore.aside") })
+      .getByRole("button", { name: t("explore.addToDashboard") }),
+  ).toHaveCount(0);
 });

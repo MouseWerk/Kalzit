@@ -44,7 +44,10 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await expect(result).toContainText(/\d+ rows, 2 fields/);
 
   // Into a new dashboard.
-  await result.getByRole("button", { name: t("explore.addToDashboard") }).click();
+  await page
+    .getByRole("complementary", { name: t("explore.aside") })
+    .getByRole("button", { name: t("explore.addToDashboard") })
+    .click();
   const add = page.getByRole("dialog", { name: t("explore.add.title") });
   await add.getByLabel(t("explore.add.new")).check();
   await add.getByLabel(t("dashboards.new.titleLabel")).fill(title);
