@@ -1,8 +1,8 @@
-# Shell API: search, stars, recently viewed dashboards, preferences
+# Shell API: search, stars, pins, recently viewed dashboards, preferences
 
 What the app shell needs per user: the command palette's search, starred and recently viewed
 dashboards for the start page, and personal preferences. Implemented in
-`server/src/routes/{home,preferences}.rs`, stored by migration 0008. The conventions of
+`server/src/routes/{home,preferences}.rs`, stored by migrations 0008 and 0011 (pins). The conventions of
 `docs/api/access.md` ("Conventions") apply: paths under `/api`, `Page<T>` lists with `limit` and
 `cursor`, `422 validation` with `field`, unknown fields and query parameters refused.
 
@@ -75,6 +75,25 @@ interface DashboardEntry {
 a dashboard in the trash is `409 conflict`; at most 1000 stars per user and organization
 (`validation`). `DELETE` removes the caller's own star and answers `204` whether or not there was
 one. Stars are personal and not audited.
+
+## Pins
+
+Dashboards pinned to the sidebar, per user and organization, in the user's own order.
+
+| Method and path | Answer |
+|---|---|
+| `GET /orgs/{orgId}/pins` | `200 Page<DashboardEntry>` in the user's order, `at` when pinned; one page, `nextCursor` null |
+| `PUT /orgs/{orgId}/dashboards/{dashboardId}/pin` | `204`, pinned at the end |
+| `DELETE /orgs/{orgId}/dashboards/{dashboardId}/pin` | `204` |
+| `PUT /orgs/{orgId}/pins` `{ "dashboardIds": string[] }` | `200 Page<DashboardEntry>` in the new order |
+
+`PUT .../pin` answers `404` for a dashboard the caller cannot read and `409 conflict` for one in
+the trash; pinning again changes nothing. At most 10 pins the caller can read
+(`validation`); pins of dashboards they lost access to, or in the trash, are left out of every
+answer and do not count, and come back in their place with the access (the list then shows the
+first 10). `DELETE` removes the caller's own pin and answers `204` whether or not there was one.
+The order body names every pin the caller sees exactly once (else `validation` `dashboardIds`);
+hidden pins keep their place after them. Pins are personal and not audited.
 
 ## Recently viewed
 

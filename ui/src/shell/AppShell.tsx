@@ -3,7 +3,7 @@ import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState
 import { useAppearanceSync } from "../appearance/api";
 import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
-import { useI18n } from "../i18n/i18n";
+import { type MessageKey, useI18n } from "../i18n/i18n";
 import { openLayerCount } from "../lib/layers";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
 import { usePreferencesSync } from "../preferences/preferences";
@@ -14,6 +14,7 @@ import { NavEntry } from "./NavEntry";
 import type { NavItem } from "./navItem";
 import { OrgSwitcher } from "./OrgSwitcher";
 import { setOverlay, useOverlay } from "./overlay";
+import { PinnedSection } from "./PinnedSection";
 import { RailTooltip } from "./RailTooltip";
 import { SetupChecklist } from "./SetupChecklist";
 import {
@@ -50,11 +51,12 @@ export function AppShell() {
   const sidebarId = useId();
   const permissions = useOrgPermissions();
   // Hidden by the permissions: an entry with `useGranted` may still show, from its own data.
-  const sections = NAV_SECTIONS.map((section) =>
-    section.filter(
+  const sections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter(
       (item) => (item.visible?.(permissions) ?? true) || item.useGranted !== undefined,
     ),
-  ).filter((section) => section.length > 0);
+  })).filter((section) => section.items.length > 0);
   const currentOrg = currentOrgOf(me);
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const wide = useWideLayout();
@@ -174,15 +176,25 @@ export function AppShell() {
         <nav ref={navRef} className="shell__nav" aria-label={t("nav.label")}>
           {sections.map((section, index) => (
             <NavSection
-              key={section[0]?.to ?? index}
+              // By place, not by first entry: an entry the permissions show later must not remount it.
+              // biome-ignore lint/suspicious/noArrayIndexKey: the groups are a fixed list in a fixed order
+              key={index}
               first={index === 0}
-              items={section}
+              heading={rail || !wide ? undefined : section.heading}
+              items={section.items}
               rail={rail}
               wide={wide}
               permissions={permissions}
               onFlyoutLayerChange={onFlyoutLayerChange}
             />
           ))}
+          {/* The pins need room for their titles: the column, not the rail or the bar on top. */}
+          {currentOrg === undefined || rail || !wide ? null : (
+            <>
+              <hr className="shell__divider" />
+              <PinnedSection key={currentOrg.id} orgId={currentOrg.id} />
+            </>
+          )}
         </nav>
         {currentOrg === undefined || rail || !wide ? null : (
           <SetupChecklist
@@ -227,19 +239,34 @@ export function AppShell() {
   );
 }
 
-/** One group of the navigation, set apart from the one before by a thin divider. */
+/**
+ * One group of the navigation, set apart from the one before by a thin divider, and named by a
+ * small heading where it has one (the organization group, in the column).
+ */
 function NavSection({
   first,
+  heading,
   items,
   ...entry
 }: Omit<ComponentProps<typeof NavEntry>, "item"> & {
   first: boolean;
+  heading: MessageKey | undefined;
   items: readonly NavItem[];
 }) {
+  const { t } = useI18n();
+  const headingId = useId();
   return (
     <>
       {first ? null : <hr className="shell__divider" />}
-      <ul className="shell__nav-list">
+      {heading === undefined ? null : (
+        <h2 id={headingId} className="shell__group-heading">
+          {t(heading)}
+        </h2>
+      )}
+      <ul
+        className="shell__nav-list"
+        aria-labelledby={heading === undefined ? undefined : headingId}
+      >
         {items.map((item) =>
           (item.visible?.(entry.permissions) ?? true) || item.useGranted === undefined ? (
             <NavEntry key={item.to} item={item} {...entry} />

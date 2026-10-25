@@ -36,6 +36,8 @@ export interface NavItem {
   children?: readonly NavChild[];
   /** Accessible name of the sub-page list; defaults to "nav.children" with the entry's label. */
   childrenLabel?: MessageKey;
+  /** Pages under `to` that belong to an entry of their own (members under the administration). */
+  outside?: readonly string[];
 }
 
 export const HOME_NAV: NavItem = { to: "/", label: "nav.home", icon: "home", exact: true };

@@ -260,6 +260,7 @@ on_both_databases! {
     hidden_targets_are_kept_but_not_run,
     time_options_are_stored_and_checked,
     colour_options_are_stored_and_checked,
+    pins_keep_their_order_limit_and_access,
 }
 
 fn model(title: &str) -> Value {
@@ -493,6 +494,125 @@ async fn colour_options_are_stored_and_checked(t: TestApp) {
         let detail = refused.body["error"]["params"]["detail"].as_str().unwrap_or_default();
         assert!(detail.contains(expect), "{path}: {}", refused.body);
     }
+}
+
+/// Dashboards pinned to the sidebar: per user and organization, in the user's order, at most ten
+/// readable ones, and pins of dashboards the user lost (access, trash) left out without an error.
+async fn pins_keep_their_order_limit_and_access(t: TestApp) {
+    let viewer = t.member("Vera", "viewer").await;
+    let ids = |r: &Reply| -> Vec<String> {
+        r.body["items"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap().to_string()).collect()
+    };
+    let mut boards = Vec::new();
+    for i in 0..11 {
+        boards.push(t.dashboard(None, plain(&format!("Tafel {i}")), &t.owner).await);
+    }
+    let pin = |id: &str| format!("~/dashboards/{id}/pin");
+    for id in &boards[..3] {
+        let r = t.put(&pin(id), json!({}), &viewer).await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    }
+    // Again changes nothing; the order is the order of pinning.
+    assert_eq!(t.put(&pin(&boards[0]), json!({}), &viewer).await.status, StatusCode::NO_CONTENT);
+    let listed = t.get("~/pins", &viewer).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    assert_eq!(ids(&listed), boards[..3].to_vec());
+    assert_eq!(listed.body["items"][0]["title"], "Tafel 0");
+    // Pins are personal: the owner has none.
+    assert!(ids(&t.get("~/pins", &t.owner).await).is_empty());
+
+    // A new order names every pin once.
+    let order = vec![boards[2].clone(), boards[0].clone(), boards[1].clone()];
+    let ordered = t.put("~/pins", json!({ "dashboardIds": order }), &viewer).await;
+    assert_eq!(ordered.status, StatusCode::OK, "{}", ordered.body);
+    assert_eq!(ids(&ordered), order);
+    assert_eq!(ids(&t.get("~/pins", &viewer).await), order);
+    for bad in [json!([boards[0], boards[1]]), json!([boards[0], boards[0], boards[1], boards[2]]), json!([boards[5]])]
+    {
+        let refused = t.put("~/pins", json!({ "dashboardIds": bad }), &viewer).await;
+        assert_eq!((refused.code(), refused.field()), ("validation", "dashboardIds"), "{}", refused.body);
+    }
+
+    // At most ten.
+    for id in &boards[3..10] {
+        assert_eq!(t.put(&pin(id), json!({}), &viewer).await.status, StatusCode::NO_CONTENT);
+    }
+    let refused = t.put(&pin(&boards[10]), json!({}), &viewer).await;
+    assert_eq!(refused.code(), "validation", "{}", refused.body);
+    assert!(refused.message().contains("at most 10"), "{}", refused.body);
+
+    // Only readable dashboards: one in a restricted folder is not found, and a trashed one is a
+    // conflict.
+    let folder = t.folder("Geheim", true).await;
+    let hidden = t.dashboard(Some(&folder), plain("Geheim"), &t.owner).await;
+    assert_eq!(t.delete(&pin(&boards[9]), &viewer).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.put(&pin(&hidden), json!({}), &viewer).await.status, StatusCode::NOT_FOUND);
+
+    // A grant makes it readable and pinnable; losing the grant hides the pin without an error, and
+    // it frees a place for another pin.
+    t.grant("Vera", "dashboard", &hidden, "view").await;
+    assert_eq!(t.put(&pin(&hidden), json!({}), &viewer).await.status, StatusCode::NO_CONTENT);
+    assert!(ids(&t.get("~/pins", &viewer).await).contains(&hidden));
+    sqlx::query("DELETE FROM resource_grants WHERE resource_id = $1").bind(&hidden).execute(&t.state.db).await.unwrap();
+    let after = t.get("~/pins", &viewer).await;
+    assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+    assert!(!ids(&after).contains(&hidden));
+    assert_eq!(ids(&after).len(), 9);
+    // A reorder names only the pins the user sees; the hidden one keeps its place after them.
+    let visible = ids(&after);
+    let mut reversed = visible.clone();
+    reversed.reverse();
+    let ordered = t.put("~/pins", json!({ "dashboardIds": reversed.clone() }), &viewer).await;
+    assert_eq!(ids(&ordered), reversed, "{}", ordered.body);
+
+    // A trashed dashboard drops out; restored, it comes back in its place.
+    let trashed = reversed[0].clone();
+    assert_eq!(t.delete(&format!("~/dashboards/{trashed}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert!(!ids(&t.get("~/pins", &viewer).await).contains(&trashed));
+    assert_eq!(t.put(&pin(&trashed), json!({}), &viewer).await.code(), "conflict");
+    let restored = t.post(&format!("~/dashboards/{trashed}/restore"), json!({}), &t.owner).await;
+    assert!(restored.status.is_success(), "{}", restored.body);
+    assert_eq!(ids(&t.get("~/pins", &viewer).await)[0], trashed);
+    // Unpinning is quiet, also for a dashboard that was never pinned.
+    assert_eq!(t.delete(&pin(&boards[10]), &viewer).await.status, StatusCode::NO_CONTENT);
+
+    // Access that came back can leave more than ten readable pins (here 12, the grant returns and
+    // one more is stored as returning access would leave it): the list shows the first ten, and a
+    // reorder names those ten; the others keep their place after them.
+    t.grant("Vera", "dashboard", &hidden, "view").await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = $1").bind("Vera").fetch_one(&t.state.db).await.unwrap();
+    for (position, id) in [(100, &boards[9]), (101, &boards[10])] {
+        sqlx::query(
+            "INSERT INTO dashboard_pins (user_id, org_id, dashboard_id, position, created_at) VALUES ($1, $2, $3, $4, 0) \
+             ON CONFLICT (user_id, dashboard_id) DO NOTHING",
+        )
+        .bind(&vera)
+        .bind(&t.org)
+        .bind(id)
+        .bind(position)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    }
+    let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dashboard_pins WHERE user_id = $1")
+        .bind(&vera)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 12);
+    let shown = ids(&t.get("~/pins", &viewer).await);
+    assert_eq!(shown.len(), 10);
+    let mut turned = shown.clone();
+    turned.reverse();
+    let ordered = t.put("~/pins", json!({ "dashboardIds": turned.clone() }), &viewer).await;
+    assert_eq!(ordered.status, StatusCode::OK, "{}", ordered.body);
+    assert_eq!(ids(&ordered)[..10], turned[..]);
+    assert_eq!(ids(&t.get("~/pins", &viewer).await), turned);
+    // Pinning one that is already pinned stays a no-op beyond the limit; a new one is refused.
+    assert_eq!(t.put(&pin(&boards[10]), json!({}), &viewer).await.status, StatusCode::NO_CONTENT);
+    let extra = t.dashboard(None, plain("Noch eine"), &t.owner).await;
+    assert_eq!(t.put(&pin(&extra), json!({}), &viewer).await.code(), "validation");
 }
 
 async fn annotations_follow_the_dashboard_access(t: TestApp) {

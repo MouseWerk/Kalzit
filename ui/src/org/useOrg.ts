@@ -3,15 +3,31 @@ import { getRouteApi } from "@tanstack/react-router";
 import type { Me, OrgMembership } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { orgQuery } from "../api/orgs";
+import { readPreference, writePreference } from "../lib/storage";
 
 const appRoute = getRouteApi("/_app");
 
+/** Kept in this browser per account: the organization last switched to. */
+function orgKey(userId: string): string {
+  return `kalzit.org.${userId}`;
+}
+
 /**
- * The organization the UI works in. Until an organization switcher exists, it is the first
- * membership from /api/me; a server admin may belong to none.
+ * The organization the UI works in: the one last picked in the workspace menu while the user is
+ * still a member of it, else the first membership from /api/me; a server admin may belong to none.
  */
 export function currentOrgOf(me: Me): OrgMembership | undefined {
-  return me.orgs[0];
+  const chosen = readPreference(orgKey(me.id));
+  return me.orgs.find((org) => org.id === chosen) ?? me.orgs[0];
+}
+
+/**
+ * Works in another organization from now on. Every page reads its organization when it loads, so
+ * the app starts over on the start page of the new one.
+ */
+export function switchOrg(me: Me, orgId: string): void {
+  writePreference(orgKey(me.id), orgId);
+  window.location.assign("/");
 }
 
 export function useCurrentOrg(): OrgMembership | undefined {

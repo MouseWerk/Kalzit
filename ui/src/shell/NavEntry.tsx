@@ -74,7 +74,8 @@ function NavGroup({
 }: NavEntryProps & { childItems: readonly NavChild[] }) {
   const { t } = useI18n();
   const pathname = useLocation({ select: (location) => location.pathname });
-  const within = isWithin(pathname, item.to);
+  const within =
+    isWithin(pathname, item.to) && !(item.outside ?? []).some((path) => isWithin(pathname, path));
   const listId = useId();
   const label = t(item.label);
   const childrenLabel =

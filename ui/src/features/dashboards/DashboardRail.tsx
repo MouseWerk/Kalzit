@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
@@ -55,6 +55,8 @@ interface DashboardRailProps {
   annotationsShown: boolean;
   onAnnotations: () => void;
   actions: RailActions;
+  /** "Pin to sidebar", from the shell (`PinButton`). */
+  pin?: ReactNode;
 }
 
 type Pane = "outline" | "add" | null;
@@ -80,6 +82,7 @@ export function DashboardRail({
   annotationsShown,
   onAnnotations,
   actions,
+  pin,
 }: DashboardRailProps) {
   const { t } = useI18n();
   const paneId = useId();
@@ -185,6 +188,7 @@ export function DashboardRail({
                   />
                 </div>
                 <div className="dash-rail__group">
+                  {pin}
                   <IconButton
                     icon="history"
                     label={t("dashboards.versions")}

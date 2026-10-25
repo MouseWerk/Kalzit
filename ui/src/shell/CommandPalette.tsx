@@ -138,7 +138,13 @@ export function CommandPalette({
     }
   }
   for (const section of [...ORG_SECTIONS, ...SERVER_SECTIONS]) {
-    if (section.visible(permissions) && (permissions.isServerAdmin || org !== undefined)) {
+    // A section with an entry of its own in the navigation (members) is listed once.
+    const listed = pages.some((page) => page.key === `page:${section.to}`);
+    if (
+      !listed &&
+      section.visible(permissions) &&
+      (permissions.isServerAdmin || org !== undefined)
+    ) {
       pages.push({
         key: `page:${section.to}`,
         label: t(section.label),
