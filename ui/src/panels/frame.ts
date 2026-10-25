@@ -209,15 +209,25 @@ function dayFormat(language: string): Intl.DateTimeFormat {
   return format;
 }
 
+/** Fraction digits up to which a decimal keeps the zeros its scale gives it. */
+const MAX_SHOWN_SCALE = 6;
+
 /**
  * Decimal text with the language's grouping and decimal sign, every digit kept: "-1234.50" is
- * "-1.234,50" in German.
+ * "-1.234,50" in German. Above a scale of six, zeros at the end are left out (fixed decimals in
+ * the field options format the value instead).
  */
 function formatDecimal(value: unknown, language: string): string {
   const text = String(value);
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text);
   if (match === null) return text;
-  const [, sign, whole, fraction] = match;
+  const [, sign, whole, scaled] = match;
+  // A short scale is part of the value's form (12.50 money stays 12.50); a long one (a NUMERIC
+  // with scale 10) would pad every value with zeros, so those are trimmed.
+  const fraction =
+    scaled !== undefined && scaled.length > MAX_SHOWN_SCALE
+      ? scaled.replace(/0+$/, "") || undefined
+      : scaled;
   const grouped = formatInt64(whole, language);
   if (fraction === undefined) return `${sign}${grouped}`;
   const point =

@@ -742,10 +742,13 @@ fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg, control: 
     frame_of(fields, frame.meta())
 }
 
-/// Whether two key fields can be compared: numbers with int64, or the same type.
+/// Whether two key fields can be compared: numbers, int64 and decimals with each other, times
+/// with days (both Unix ms), or the same type.
 fn same_family(a: FieldType, b: FieldType) -> bool {
     use FieldType::*;
-    matches!((a, b), (Number | Int64, Number | Int64)) || (a == b && a != Json)
+    matches!((a, b), (Number | Int64 | Decimal, Number | Int64 | Decimal))
+        || (is_time(a) && is_time(b))
+        || (a == b && a != Json)
 }
 
 fn join(
@@ -897,11 +900,13 @@ fn join(
     Ok(())
 }
 
-/// A key cell of the right frame in the type of the left key field (int64 and number mix).
+/// A key cell of the right frame in the type of the left key field: numbers, int64 and decimals
+/// mix (int64 and decimals as their decimal text); times and days are both Unix ms.
 fn convert_key(value: &Value, from: FieldType, to: FieldType) -> Value {
+    use FieldType::*;
     match (from, to) {
-        (FieldType::Int64, FieldType::Number) => num_value(number_at(value)),
-        (FieldType::Number, FieldType::Int64) => key_of(value, from).map_or(Value::Null, Value::String),
+        (Int64 | Decimal, Number) => num_value(number_at(value)),
+        (Number | Decimal, Int64) | (Number | Int64, Decimal) => key_of(value, from).map_or(Value::Null, Value::String),
         _ => value.clone(),
     }
 }

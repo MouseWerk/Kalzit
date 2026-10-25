@@ -417,11 +417,16 @@ limit). SQL and Prometheus results are frames, MongoDB results are documents (se
 
 - Field types: `time` (Unix ms), `number`, `int64` (decimal strings, e.g. `COUNT(*)` and `BIGINT`),
   `decimal` (exact decimal strings with the column's scale, such as `"12.50"`: `NUMERIC`/`DECIMAL`
-  in PostgreSQL, MySQL/MariaDB and SQL Server, PostgreSQL's `MONEY` with two fraction digits),
+  in PostgreSQL, MySQL/MariaDB and SQL Server, PostgreSQL's `MONEY` with the fraction digits of
+  the server's `lc_monetary`, asked per query),
   `date` (a day without time or zone, `DATE`, as the Unix ms of its midnight UTC; the UI shows it
   as that day in every zone and draws it at that day's midnight on the viewer's clock), `string`,
   `bool`, `json`; missing values are `null`. A decimal that is not a number (PostgreSQL's `NaN`,
-  infinities) is `null`.
+  infinities) is `null`. Exact means: tables, stats showing the last, smallest or largest value,
+  CSV and JSON exports and Excel cells (up to 15 significant digits; longer decimals are text
+  cells) keep every digit. Sums, means and other calculations, charts and calculated fields work
+  with the nearest floating point number. The UI leaves out the zeros at the end of a decimal
+  with more than six fraction digits.
 - SQLite types a column by its declared type, by SQLite's affinity rules: `INTEGER` (and every
   type containing `INT`) is `int64`; `REAL`, `FLOAT`, `DOUBLE` are `number`; `TEXT`, `CHAR`,
   `VARCHAR`, `CLOB` are `string`; `BOOLEAN` is `bool`; `DATE`, `TIME`, `DATETIME`, `TIMESTAMP` are
@@ -429,7 +434,9 @@ limit). SQL and Prometheus results are frames, MongoDB results are documents (se
   (expressions such as `r * 2`), with `NUMERIC`/`DECIMAL` (which hold integers and reals alike) or
   with an unknown type take the type of their first value; without any value they are `string`.
   Such a column that started with whole numbers becomes `number` at its first value with a
-  fraction (the values before it are converted), so later decimals are never lost.
+  fraction (the values before it are converted), so later decimals are never lost; whole numbers
+  beyond 2^53 in it are rounded to the nearest number, which one `frame.value_rounded` notice
+  per column counts (`count`).
   A value is converted to the column's type where nothing is lost: an integer in a `number`
   column, a whole-number REAL in an `int64` column (its integer). Any other value that does not
   fit, such as `2.5` in an `int64` column, is `null`; one `frame.value_mismatch` notice per
@@ -474,7 +481,7 @@ identifier, and only from the source's schema:
 
 | Write | Becomes |
 |---|---|
-| `$__timeFilter(col)` | `(col BETWEEN <from> AND <to>)`; SQLite compares times, not text: Unix seconds or milliseconds (as numbers, the rule above) against the range in ms, text through `julianday`, so ISO times with `T` or a space, with or without a zone, match exactly at the edges |
+| `$__timeFilter(col)` | `(col BETWEEN <from> AND <to>)`; SQLite compares times, not text: Unix seconds or milliseconds (as numbers, the rule above) against the range in ms, text through `julianday`, so ISO times with `T` or a space, with or without a zone, match exactly at the edges. Plain ranges in front of that test (seconds, milliseconds, text from the day before to the day after) let SQLite use an index on the column |
 | `$__timeFrom`, `$__timeTo` | the range's ends as timestamps (SQLite: text `YYYY-MM-DD HH:MM:SS.SSS`, UTC) |
 | `$__interval` | the interval (PostgreSQL: an `interval`; others: text such as `30s`) |
 | `$__interval_ms` | the interval in milliseconds (integer) |
@@ -1066,7 +1073,8 @@ browser-side export would need the data in the browser first and could not be re
 - `timeZone` (an IANA name such as `Europe/Berlin`) and `weekStart` (`monday`, `sunday` or
   `saturday`) are the calendar calculated fields read times in, so the file shows what the panel
   shows: the UI sends the dashboard's zone and week start, else the viewer's. Absent: UTC and
-  Monday.
+  Monday. A zone the server does not know is refused (`export.time_zone_unknown`); the UI then
+  asks again without it, so the file is made in UTC.
 
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
@@ -1474,6 +1482,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
 | `frame.type_unsupported` | `column`, `type` | notice: a column type the server cannot show |
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
+| `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |

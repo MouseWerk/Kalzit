@@ -144,6 +144,10 @@ describe("decimal and date fields", () => {
     );
     expect(formatValue("decimal", "-1234.50", "de")).toBe("-1.234,50");
     expect(formatValue("decimal", "0.10", "en")).toBe("0.10");
+    // A long scale's zeros are left out; up to six fraction digits they stay.
+    expect(formatValue("decimal", "1.2500000000", "en")).toBe("1.25");
+    expect(formatValue("decimal", "3.0000000000", "de")).toBe("3");
+    expect(formatValue("decimal", "12.500000", "en")).toBe("12.500000");
     // Midnight UTC of 2026-10-25 is the evening before in New York; the day stays the 25th.
     const day = Date.UTC(2026, 9, 25);
     expect(formatValue("date", day, "en", "America/New_York")).toBe("10/25/26");

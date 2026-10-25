@@ -600,9 +600,17 @@ describe("annotations", () => {
     );
     // Six hours for the dashboard, and 30 calendar days for the wide panel: 30 times 24 hours,
     // or an hour more or less when a daylight saving change lies in between.
-    for (const r of server.areas.dashboardFeatures.annotationListRequests) {
-      expect([r.to - 6 * 3_600_000, resolveTime("now-30d", r.to)]).toContain(r.from);
-    }
+    const requests = server.areas.dashboardFeatures.annotationListRequests;
+    const kinds = new Set(
+      requests.map((r) =>
+        r.from === r.to - 6 * 3_600_000
+          ? "dashboard"
+          : r.from === resolveTime("now-30d", r.to)
+            ? "panel"
+            : "other",
+      ),
+    );
+    expect(kinds).toEqual(new Set(["dashboard", "panel"]));
   });
 
   it("asks for annotation times to the second, and keeps a new mark's exact time", async () => {

@@ -818,14 +818,22 @@ function pivot(
   return frameOf(fields, frame.meta);
 }
 
+/**
+ * Whether two key fields can be compared: numbers, int64 and decimals with each other, times
+ * with days (both Unix ms), or the same type.
+ */
 function sameFamily(a: FieldType, b: FieldType): boolean {
-  const numeric = (t: FieldType) => t === "number" || t === "int64";
-  return (numeric(a) && numeric(b)) || (a === b && a !== "json");
+  return (isNumeric(a) && isNumeric(b)) || (isTime(a) && isTime(b)) || (a === b && a !== "json");
 }
 
+/**
+ * A key cell of the right frame in the type of the left key field: numbers, int64 and decimals
+ * mix (int64 and decimals as their decimal text); times and days are both Unix ms.
+ */
 function convertKey(value: unknown, from: FieldType, to: FieldType): unknown {
-  if (from === "int64" && to === "number") return numCell(numberAt(value));
-  if (from === "number" && to === "int64") return keyOf(value, from);
+  if (from !== to && isNumeric(from) && isNumeric(to)) {
+    return to === "number" ? numCell(numberAt(value)) : keyOf(value, from);
+  }
   return value ?? null;
 }
 

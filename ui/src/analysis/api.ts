@@ -1,4 +1,4 @@
-import { type DownloadedFile, requestFile } from "../api/client";
+import { type DownloadedFile, isApiError, requestFile } from "../api/client";
 import type { ExportRequest, PanelExportRequest } from "../api/generated/shapes";
 import { orgPath } from "../features/datasources/api";
 import { getTimeSettings } from "../lib/timeSettings";
@@ -11,9 +11,26 @@ import { calendarOf } from "./panel";
  * `weekStart`), unless the caller names one.
  */
 
-function withCalendar<T extends { timeZone?: string; weekStart?: string }>(body: T): T {
+/**
+ * Asks for the file with the calendar in effect. A zone the browser knows but the server's zone
+ * data does not (a newer name) is refused; the file is then made in UTC rather than not at all.
+ */
+async function requestWithCalendar<T extends { timeZone?: string; weekStart?: string }>(
+  path: string,
+  body: T,
+  signal: AbortSignal | undefined,
+): Promise<DownloadedFile> {
   const calendar = calendarOf(getTimeSettings());
-  return { timeZone: calendar.timeZone, weekStart: calendar.weekStart, ...body };
+  const full = { timeZone: calendar.timeZone, weekStart: calendar.weekStart, ...body };
+  try {
+    return await requestFile(path, full, { signal });
+  } catch (e) {
+    if (body.timeZone !== undefined || !isApiError(e, "validation") || e.field !== "timeZone") {
+      throw e;
+    }
+    const { timeZone: _unknown, ...withoutZone } = full;
+    return requestFile(path, withoutZone, { signal });
+  }
 }
 
 export function exportQuery(
@@ -21,7 +38,7 @@ export function exportQuery(
   body: ExportRequest,
   signal?: AbortSignal,
 ): Promise<DownloadedFile> {
-  return requestFile(orgPath(orgId, "export"), withCalendar(body), { signal });
+  return requestWithCalendar(orgPath(orgId, "export"), body, signal);
 }
 
 export function exportPanel(
@@ -32,7 +49,7 @@ export function exportPanel(
   signal?: AbortSignal,
 ): Promise<DownloadedFile> {
   const path = orgPath(orgId, "dashboards", dashboardId, "panels", panelId, "export");
-  return requestFile(path, withCalendar(body), { signal });
+  return requestWithCalendar(path, body, signal);
 }
 
 /** Hands a file to the browser's download. */

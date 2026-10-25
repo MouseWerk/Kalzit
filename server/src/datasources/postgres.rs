@@ -294,10 +294,19 @@ impl DataSourcePlugin for Postgres {
                 }
             };
         }
+        // MONEY travels as a count of the smallest unit; how many fraction digits that has
+        // depends on the server's `lc_monetary`, so it is asked, never assumed.
+        let money_scale = if decoders.iter().any(|d| matches!(d, Decoder::Money)) {
+            let (scale,): (i32,) =
+                sqlx::query_as("SELECT scale(1::money::numeric)").fetch_one(&mut *tx).await.map_err(failed)?;
+            u32::try_from(scale).unwrap_or(0).min(18)
+        } else {
+            0
+        };
         {
             let mut rows = query.fetch(&mut *tx);
             while let Some(row) = rows.try_next().await.map_err(failed)? {
-                let values = decoders.iter().enumerate().map(|(i, d)| d.decode(&row, i)).collect();
+                let values = decoders.iter().enumerate().map(|(i, d)| d.decode(&row, i, money_scale)).collect();
                 if !frame.push_row(values) {
                     break;
                 }
@@ -383,7 +392,8 @@ impl Decoder {
         }
     }
 
-    fn decode(self, row: &PgRow, i: usize) -> Value {
+    /// One cell; `money_scale` is the fraction digits of the server's MONEY.
+    fn decode(self, row: &PgRow, i: usize, money_scale: u32) -> Value {
         if row.try_get_raw(i).map_or(true, |v| v.is_null()) {
             return Value::Null;
         }
@@ -406,7 +416,7 @@ impl Decoder {
                 return row
                     .try_get_raw(i)
                     .ok()
-                    .and_then(|raw| raw.as_bytes().ok().and_then(money_text))
+                    .and_then(|raw| raw.as_bytes().ok().and_then(|b| money_text(b, money_scale)))
                     .map_or(Value::Null, Value::String);
             }
             Self::Text => row.try_get::<String, _>(i).map(|s| json!(s)),
@@ -481,13 +491,18 @@ fn numeric_text(bytes: &[u8]) -> Option<String> {
     Some(if negative && !zero { format!("-{out}") } else { out })
 }
 
-/// PostgreSQL's binary MONEY: a 64-bit count of cents (two fraction digits, as `lc_monetary`
-/// has in nearly every locale), as decimal text such as "-1234.56".
-fn money_text(bytes: &[u8]) -> Option<String> {
-    let cents = i64::from_be_bytes(bytes.try_into().ok()?);
-    let sign = if cents < 0 { "-" } else { "" };
-    let abs = cents.unsigned_abs();
-    Some(format!("{sign}{}.{:02}", abs / 100, abs % 100))
+/// PostgreSQL's binary MONEY: a 64-bit count of the smallest unit, with `scale` fraction digits
+/// (the server's `lc_monetary`: 2 for euros and dollars, 0 for yen), as decimal text such as
+/// "-1234.56".
+fn money_text(bytes: &[u8], scale: u32) -> Option<String> {
+    let units = i64::from_be_bytes(bytes.try_into().ok()?);
+    let sign = if units < 0 { "-" } else { "" };
+    let abs = units.unsigned_abs();
+    if scale == 0 {
+        return Some(format!("{sign}{abs}"));
+    }
+    let unit = 10_u64.pow(scale);
+    Some(format!("{sign}{}.{:0width$}", abs / unit, abs % unit, width = scale as usize))
 }
 
 #[cfg(test)]
@@ -536,10 +551,13 @@ mod tests {
 
     #[test]
     fn money_is_cents_as_decimal_text() {
-        assert_eq!(money_text(&123_456_i64.to_be_bytes()).as_deref(), Some("1234.56"));
-        assert_eq!(money_text(&(-5_i64).to_be_bytes()).as_deref(), Some("-0.05"));
-        assert_eq!(money_text(&i64::MIN.to_be_bytes()).as_deref(), Some("-92233720368547758.08"));
-        assert_eq!(money_text(&[0, 1]), None);
+        assert_eq!(money_text(&123_456_i64.to_be_bytes(), 2).as_deref(), Some("1234.56"));
+        assert_eq!(money_text(&(-5_i64).to_be_bytes(), 2).as_deref(), Some("-0.05"));
+        assert_eq!(money_text(&i64::MIN.to_be_bytes(), 2).as_deref(), Some("-92233720368547758.08"));
+        // Yen have no fraction digits, a Bahraini dinar three.
+        assert_eq!(money_text(&123_456_i64.to_be_bytes(), 0).as_deref(), Some("123456"));
+        assert_eq!(money_text(&(-5_i64).to_be_bytes(), 3).as_deref(), Some("-0.005"));
+        assert_eq!(money_text(&[0, 1], 2), None);
     }
 
     #[test]

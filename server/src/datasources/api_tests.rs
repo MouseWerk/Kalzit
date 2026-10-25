@@ -567,6 +567,20 @@ async fn sqlite_numeric_columns_keep_decimals_after_whole_numbers() {
     assert_eq!(frame["fields"][1]["values"], json!(["1", "2", "3", "4", "5"]));
     assert_eq!(frame["fields"][2]["values"], json!([20.0, 25.0, 14.0, null, -0.5]));
     assert!(frame["meta"]["notices"].as_array().unwrap().is_empty(), "no value was lost: {}", r.text);
+
+    // Whole numbers beyond 2^53 in a column that turns out to hold decimals are rounded, and
+    // the answer says how many: one read before the first decimal, one after it.
+    let r = t
+        .query(
+            &t.owner,
+            json!([{ "refId": "A", "datasourceId": id,
+                     "query": { "sql": "SELECT column1 AS x FROM (VALUES (9007199254740993), (2), (1.5), (9007199254740995))" } }]),
+        )
+        .await;
+    let frame = &r.body["results"]["A"]["result"]["frame"];
+    assert_eq!(frame["fields"][0]["type"], "number", "{}", r.text);
+    let notice = frame["meta"]["notices"].as_array().unwrap().iter().find(|n| n["code"] == "frame.value_rounded");
+    assert_eq!(notice.map(|n| n["params"].clone()), Some(json!({ "column": "x", "count": "2" })), "{}", r.text);
     t.finish().await;
 }
 
@@ -650,9 +664,10 @@ async fn macros_and_variables_are_bound() {
     assert_eq!(
         frame["meta"]["executedQuery"],
         concat!(
-            "SELECT land FROM verkauf WHERE (CASE WHEN typeof(am) IN ('integer', 'real') THEN (CASE WHEN abs(am) > ",
-            "100000000000 THEN am ELSE am * 1000 END) BETWEEN ? AND ? ELSE julianday(am) BETWEEN julianday(?) AND ",
-            "julianday(?) END) AND land IN (?, ?) AND land <> ?"
+            "SELECT land FROM verkauf WHERE ((am BETWEEN ? AND ? OR am BETWEEN ? AND ? OR am BETWEEN ? AND ?) AND ",
+            "(CASE WHEN typeof(am) IN ('integer', 'real') THEN (CASE WHEN abs(am) > 100000000000 THEN am ELSE ",
+            "am * 1000 END) BETWEEN ? AND ? ELSE julianday(am) BETWEEN julianday(?) AND julianday(?) END)) ",
+            "AND land IN (?, ?) AND land <> ?"
         )
     );
 

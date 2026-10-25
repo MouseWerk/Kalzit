@@ -433,6 +433,7 @@
   "datasources.reason.frame.binary_hidden": "Binäre Werte von {column} werden nicht angezeigt.",
   "datasources.reason.frame.type_unsupported": "Kalzit kann den Typ {type} von {column} nicht anzeigen.",
   "datasources.reason.frame.value_mismatch": "{count} Werte von {column} passen nicht zu ihrem Typ und bleiben leer.",
+  "datasources.reason.frame.value_rounded": "{column} enthält Dezimalzahlen, daher werden {count} sehr große Ganzzahlen darin gerundet angezeigt.",
   "datasources.reason.prometheus.warning": "Prometheus warnt: {detail}",
   "datasources.form.atLeast": "Gib einen Wert von mindestens {min} ein.",
   "datasources.settings.apiKey": "API-Schlüssel",

@@ -1,6 +1,6 @@
 import type { Field } from "../api/generated/shapes";
 import type { WeekStart } from "../lib/timeSettings";
-import { wallOf } from "../lib/zonedTime";
+import { utcOf, wallOf } from "../lib/zonedTime";
 
 /**
  * The expression language of calculated fields (docs/api/settings-dashboards.md, "Analysis steps"), the same as the server's
@@ -34,11 +34,35 @@ export const UTC_CALENDAR: Calendar = { timeZone: "UTC", weekStart: "monday" };
 /** ISO weekday a week starts on: 1 Monday, 6 Saturday, 7 Sunday. */
 const FIRST_WEEKDAY: Record<WeekStart, number> = { monday: 1, saturday: 6, sunday: 7 };
 
+/** The zone's offset from UTC at the instant `t`, in ms, read from the browser's zone data. */
+function zoneOffset(zone: string, t: number): number {
+  return utcOf(wallOf(t, zone)) - t;
+}
+
+// Per zone and UTC day: the offset that holds all day, or null on a day the offset changes.
+// Reading the offset costs a formatToParts; a frame's rows mostly share days, so the calendar
+// functions read it about twice per day instead of once per row.
+const dayOffsets = new Map<string, Map<number, number | null>>();
+const MAX_CACHED_DAYS = 100_000;
+
 /** The zone's offset from UTC at the instant `t`, in ms. */
 function offsetAt(cal: Calendar, t: number): number {
-  if (cal.timeZone === "UTC") return 0;
-  const w = wallOf(t, cal.timeZone);
-  return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second, w.millisecond) - t;
+  const zone = cal.timeZone;
+  if (zone === "UTC") return 0;
+  let days = dayOffsets.get(zone);
+  if (days === undefined) {
+    days = new Map();
+    dayOffsets.set(zone, days);
+  }
+  const day = Math.floor(t / DAY_MS);
+  let known = days.get(day);
+  if (known === undefined) {
+    const start = zoneOffset(zone, day * DAY_MS);
+    known = start === zoneOffset(zone, (day + 1) * DAY_MS - 1) ? start : null;
+    if (days.size >= MAX_CACHED_DAYS) days.clear();
+    days.set(day, known);
+  }
+  return known ?? zoneOffset(zone, t);
 }
 
 /** The wall-clock reading of `t` as ms since 1970-01-01 00:00 on that wall clock. */
