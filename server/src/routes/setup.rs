@@ -164,7 +164,7 @@ pub async fn complete(
     JsonBody(req): JsonBody<SetupRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let now = state.clock.now_ms();
-    let limit_key = format!("setup-ip:{}", info.client_ip);
+    let limit_key = crate::auth::ratelimit::address_key("setup", info.client_ip);
     if !state.login_limiter.try_acquire(&[&limit_key], now) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
@@ -255,7 +255,7 @@ pub async fn complete(
     tracing::info!(user = %user_id, org = %org_id, "setup complete");
 
     let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
+    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.secure_cookies));
     Ok((headers, Json(answer)))
 }
 

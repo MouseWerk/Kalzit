@@ -37,6 +37,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/restore", Access::OrgMember, restore),
+        route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}/purge", Access::OrgMember, purge),
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema),
     ]
@@ -619,6 +620,137 @@ async fn restore(
     let answer = view_in(&mut tx, &ctx, restored).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
+}
+
+/// Deletes a data source in the trash for good, with its encrypted secrets, its grants and the
+/// Explore history that ran on it. Only sources in the trash can be purged.
+async fn purge(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path(path): Path<DsPath>,
+) -> ApiResult<StatusCode> {
+    let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, true).await?;
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    // Restored by someone else meanwhile: it stays, and the caller learns it is not in the trash.
+    if !purge_rows(&mut tx, &ctx.org_id, &ds.id).await? {
+        tx.rollback().await?;
+        return Err(ApiError::not_found());
+    }
+    record(&mut tx, &event(&ctx, &info, "datasource.purged", &ds.id, json!({}), now)).await?;
+    crate::db::commit(tx).await?;
+    state.datasources.forget(&ds.id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a trashed data source and everything that belongs to it; `false` when it is not (or
+/// no longer) in the trash. The source row goes first, so a concurrent restore either wins
+/// before (nothing is deleted) or finds no row.
+async fn purge_rows(conn: &mut sqlx::AnyConnection, org_id: &str, id: &str) -> ApiResult<bool> {
+    let deleted = sqlx::query("DELETE FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NOT NULL")
+        .bind(id)
+        .bind(org_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Ok(false);
+    }
+    // Explicit, not left to ON DELETE CASCADE: the secrets must go even where foreign keys are
+    // not enforced.
+    sqlx::query("DELETE FROM datasource_secrets WHERE datasource_id = $1").bind(id).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM explore_history WHERE datasource_id = $1 AND org_id = $2")
+        .bind(id)
+        .bind(org_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'datasource' AND resource_id = $2")
+        .bind(org_id)
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(true)
+}
+
+/// Days a deleted data source stays in the trash before it is purged with its secrets.
+pub const TRASH_DAYS: i64 = 30;
+const DAY_MS: i64 = 24 * 3600 * 1000;
+
+/// Purges the data sources that have been in the trash for longer than `TRASH_DAYS`, each in its
+/// own transaction with an audit entry. Answers the number purged.
+pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
+    purge_expired_in(state, &state.db).await
+}
+
+async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
+    let now = state.clock.now_ms();
+    let cutoff = now.saturating_sub(TRASH_DAYS * DAY_MS);
+    let expired: Vec<(String, String)> = sqlx::query_as(
+        "SELECT org_id, id FROM datasources WHERE deleted_at IS NOT NULL AND deleted_at < $1 ORDER BY deleted_at",
+    )
+    .bind(cutoff)
+    .fetch_all(db)
+    .await?;
+    let mut purged = 0;
+    for (org_id, id) in expired {
+        let mut tx = crate::db::begin(db).await?;
+        // `deleted_at` is checked again inside the delete: a source restored since the list was
+        // read keeps everything.
+        let gone = sqlx::query(
+            "SELECT id FROM datasources WHERE id = $1 AND org_id = $2 AND deleted_at IS NOT NULL AND deleted_at < $3",
+        )
+        .bind(&id)
+        .bind(&org_id)
+        .bind(cutoff)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some();
+        if !gone || !purge_rows(&mut tx, &org_id, &id).await? {
+            tx.rollback().await?;
+            continue;
+        }
+        let event = AuditEvent {
+            org_id: Some(&org_id),
+            actor_user_id: None,
+            actor_address: None,
+            action: "datasource.purged",
+            resource_type: Some("datasource"),
+            resource_id: Some(&id),
+            summary: json!({ "trashDays": TRASH_DAYS }),
+            at_ms: now,
+        };
+        record(&mut tx, &event).await?;
+        crate::db::commit(tx).await?;
+        state.datasources.forget(&id);
+        purged += 1;
+    }
+    Ok(purged)
+}
+
+/// Runs `purge_expired` every hour, like the audit retention.
+pub fn spawn_trash_purge(state: AppState) {
+    spawn_trash_purge_on(state, crate::db::Schedule::hourly());
+}
+
+/// `spawn_trash_purge` on another schedule (tests).
+pub fn spawn_trash_purge_on(state: AppState, schedule: crate::db::Schedule) {
+    use crate::db::JobError;
+    let background = state.background.clone();
+    crate::db::spawn_job(&background, "purging trashed data sources", schedule, move || {
+        let state = state.clone();
+        async move {
+            match purge_expired_in(&state, state.background.db()).await {
+                Ok(0) => Ok(()),
+                Ok(n) => {
+                    tracing::info!("purged {n} data sources that were in the trash for {TRASH_DAYS} days");
+                    Ok(())
+                }
+                Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),
+                Err(e) => Err(JobError::Failed(e.message)),
+            }
+        }
+    });
 }
 
 async fn health(

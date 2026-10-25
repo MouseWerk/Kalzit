@@ -873,6 +873,23 @@ struct Cached {
     conn: Arc<Connection>,
 }
 
+/// Kalzit's own files outside the data directory that no file or SQLite source may read: the
+/// configuration file and the TLS certificate and key; and the directories of its secrets
+/// (systemd's `$CREDENTIALS_DIRECTORY`).
+fn own_files(config: &Config) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+    let files = [config.config_file.as_ref(), config.tls.cert_file.as_ref(), config.tls.key_file.as_ref()]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    let dirs = std::env::var_os("CREDENTIALS_DIRECTORY")
+        .filter(|d| !d.is_empty())
+        .map(std::path::PathBuf::from)
+        .into_iter()
+        .collect();
+    (files, dirs)
+}
+
 /// The data source kinds and the live connections. One per server, in `AppState`.
 pub struct DataSources {
     kinds: Vec<Kind>,
@@ -880,6 +897,8 @@ pub struct DataSources {
     own: Arc<OwnDatabase>,
     data_dir: std::path::PathBuf,
     database_url: String,
+    /// Kalzit's own files and secret directories outside the data directory (`own_files`).
+    protected: (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>),
     connections: Mutex<HashMap<String, Cached>>,
     user_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
     /// Queries running at once on the whole server (`datasources.max_parallel_queries`), with the
@@ -917,6 +936,7 @@ impl DataSources {
             own: Arc::new(OwnDatabase::new(db, &database_url)),
             data_dir: config.paths.data_dir.clone(),
             database_url,
+            protected: own_files(config),
             connections: Mutex::new(HashMap::new()),
             user_slots: Mutex::new(HashMap::new()),
             running: Mutex::new((0, Arc::new(Semaphore::new(0)))),
@@ -993,8 +1013,11 @@ impl DataSources {
         {
             return Ok(c.policy.clone());
         }
-        let policy =
-            Arc::new(TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed).with_file_dirs(&file_dirs));
+        let policy = Arc::new(
+            TargetPolicy::new(&self.data_dir, &self.database_url, &dirs, &allowed)
+                .with_file_dirs(&file_dirs)
+                .with_protected(&self.protected.0, &self.protected.1),
+        );
         *cache = Some(CachedPolicy { dirs, allowed, file_dirs, built: Instant::now(), policy: policy.clone() });
         Ok(policy)
     }

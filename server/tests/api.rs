@@ -244,6 +244,37 @@ async fn login_logout_and_me() {
     assert!(out.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap().contains("Max-Age=0"));
     let after = t.get("/api/me", Some(&cookie)).await;
     assert_eq!((after.status, after.code()), (StatusCode::UNAUTHORIZED, "unauthenticated"));
+    // Signing out is audited once; an ended session's cookie signs out without a second entry.
+    let again = t.send(Method::POST, "/api/auth/logout", None, &[("cookie", &cookie)]).await;
+    assert_eq!(again.status, StatusCode::NO_CONTENT);
+    let signed_out: Vec<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT actor_user_id, actor_address FROM audit_events WHERE action = 'auth.signed_out'")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(signed_out.len(), 1);
+    assert!(signed_out[0].0.is_some());
+    assert_eq!(signed_out[0].1.as_deref(), Some("127.0.0.1"));
+    t.finish().await;
+}
+
+/// An HTTPS public URL makes the session cookie `Secure` with the `__Host-` prefix even when
+/// the proxy in front is not trusted to report HTTPS, and then a plain cookie is not accepted.
+#[tokio::test]
+async fn an_https_public_url_makes_the_session_cookie_secure() {
+    let t = test_app("127.0.0.1:50000", |c| c.server.public_url = Some("https://kalzit.example.com".into())).await;
+    t.setup().await;
+    let body = json!({ "email": "joerg@example.de", "password": PASSWORD });
+    let ok = t.send(Method::POST, "/api/auth/login", Some(body), &[("origin", "https://kalzit.example.com")]).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    let set_cookie = ok.headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(set_cookie.starts_with("__Host-kalzit_session="), "{set_cookie}");
+    assert!(set_cookie.contains("; Secure") && set_cookie.contains("Path=/") && !set_cookie.contains("Domain"));
+    let cookie = ok.session_cookie();
+    assert_eq!(t.get("/api/me", Some(&cookie)).await.status, StatusCode::OK);
+    let token = cookie.split_once('=').unwrap().1;
+    let plain = format!("kalzit_session={token}");
+    assert_eq!(t.get("/api/me", Some(&plain)).await.status, StatusCode::UNAUTHORIZED);
     t.finish().await;
 }
 

@@ -935,6 +935,27 @@ describe("editing a data source", () => {
     await waitFor(() => expect(server.areas.datasources.datasources[0]?.deletedAt).toBeUndefined());
     expect(await screen.findByText("The trash is empty")).toBeTruthy();
   });
+
+  it("deletes a data source in the trash for good after asking", async () => {
+    const { server, user } = open("/data-sources?trash=true");
+    const trashed = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (trashed === undefined) {
+      throw new Error("fixture source missing");
+    }
+    trashed.deletedAt = Date.now();
+    await user.click(await screen.findByRole("button", { name: "Delete “Sales DB” for good" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete for good?" });
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(within(dialog).getByText(/stored passwords and keys will be deleted/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Delete for good" }));
+    await waitFor(() =>
+      expect(server.areas.datasources.datasources.some((d) => d.id === PG_ID)).toBe(false),
+    );
+    expect(
+      server.calls.some((c) => c.method === "DELETE" && c.path.endsWith(`/${PG_ID}/purge`)),
+    ).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
 });
 
 describe("the data source page", () => {

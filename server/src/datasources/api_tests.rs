@@ -25,6 +25,7 @@ const PASSWORD: &str = "Grün und sicher 2026";
 struct T {
     app: Router,
     state: AppState,
+    clock: Arc<ManualClock>,
     org: String,
     owner: String,
     dir: tempfile::TempDir,
@@ -57,7 +58,7 @@ impl T {
         std::fs::create_dir_all(&config.paths.data_dir).unwrap();
         let pool = crate::db::connect(&config.database_url(), 4).await.unwrap();
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
-        let state = AppState::new(config, pool, clock, Some(SETUP_CODE.into())).await.unwrap();
+        let state = AppState::new(config, pool, clock.clone(), Some(SETUP_CODE.into())).await.unwrap();
         let allowed = dir.path().join("erlaubt");
         std::fs::create_dir_all(&allowed).unwrap();
         state
@@ -68,7 +69,7 @@ impl T {
             .insert("datasources.sqlite_dirs".into(), json!([allowed.to_string_lossy()]));
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let app = router(state.clone()).layer(MockConnectInfo(peer));
-        let mut t = T { app, state, org: String::new(), owner: String::new(), dir };
+        let mut t = T { app, state, clock, org: String::new(), owner: String::new(), dir };
         let r = t
             .send(
                 Method::POST,
@@ -318,6 +319,78 @@ async fn create_read_update_trash_and_restore() {
             "datasource.restored"
         ]
     );
+    t.finish().await;
+}
+
+/// Trashed sources keep their encrypted secrets only until they are purged: by hand, or after
+/// `TRASH_DAYS` in the trash.
+#[tokio::test]
+async fn purging_a_trashed_source_deletes_its_secrets() {
+    let t = T::new().await;
+    let mut ids = Vec::new();
+    for name in ["Alt", "Vergessen", "Frisch"] {
+        let r = t
+            .post(
+                "/datasources",
+                json!({ "name": name, "kind": "postgres",
+                        "settings": { "host": "db.intern", "database": "lager", "user": "leser" },
+                        "secrets": { "password": "Sehr-Geheim-42" } }),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+        ids.push(r.body["id"].as_str().unwrap().to_string());
+    }
+    let secrets = |id: String| {
+        let db = t.state.db.clone();
+        async move {
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            n
+        }
+    };
+    let purge_path = |id: &str| t.path(&format!("/datasources/{id}/purge"));
+
+    // Only a source in the trash can be purged.
+    assert_eq!(t.send(Method::DELETE, &purge_path(&ids[0]), None, Some(&t.owner)).await.status, StatusCode::NOT_FOUND);
+    for id in &ids[..2] {
+        let del = t.send(Method::DELETE, &t.path(&format!("/datasources/{id}")), None, Some(&t.owner)).await;
+        assert_eq!(del.status, StatusCode::NO_CONTENT);
+    }
+    assert_eq!(secrets(ids[0].clone()).await, 1, "the trash keeps the secrets for a restore");
+
+    let purged = t.send(Method::DELETE, &purge_path(&ids[0]), None, Some(&t.owner)).await;
+    assert_eq!(purged.status, StatusCode::NO_CONTENT, "{}", purged.text);
+    assert_eq!(secrets(ids[0].clone()).await, 0);
+    assert_eq!(t.post(&format!("/datasources/{}/restore", ids[0]), json!({})).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.send(Method::DELETE, &purge_path(&ids[0]), None, Some(&t.owner)).await.status, StatusCode::NOT_FOUND);
+
+    // After the trash period the hourly job purges what is left in the trash, and only that.
+    // (The session has ended by then, so the third source is trashed in the database.)
+    t.clock.advance_ms(crate::routes::datasources::TRASH_DAYS * 24 * 3600 * 1000 - 1);
+    assert_eq!(crate::routes::datasources::purge_expired(&t.state).await.unwrap(), 0);
+    sqlx::query("UPDATE datasources SET deleted_at = $1 WHERE id = $2")
+        .bind(t.state.clock.now_ms())
+        .bind(&ids[2])
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    t.clock.advance_ms(1000);
+    assert_eq!(crate::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
+    assert_eq!(secrets(ids[1].clone()).await, 0);
+    assert_eq!(secrets(ids[2].clone()).await, 1, "trashed just now, still restorable");
+    let left: Vec<(String,)> = sqlx::query_as("SELECT id FROM datasources").fetch_all(&t.state.db).await.unwrap();
+    assert_eq!(left, [(ids[2].clone(),)]);
+
+    let purged: Vec<(Option<String>,)> =
+        sqlx::query_as("SELECT actor_user_id FROM audit_events WHERE action = 'datasource.purged' ORDER BY rowid")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(purged.len(), 2);
+    assert!(purged[0].0.is_some() && purged[1].0.is_none(), "by hand, then by the job");
     t.finish().await;
 }
 

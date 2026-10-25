@@ -439,6 +439,11 @@ export async function restoreDatasource(orgId: string, id: string): Promise<void
   await send("POST", orgPath(orgId, "datasources", id, "restore"));
 }
 
+/** Deletes a data source in the trash for good, with its stored secrets. */
+export async function purgeDatasource(orgId: string, id: string): Promise<void> {
+  await send("DELETE", orgPath(orgId, "datasources", id, "purge"));
+}
+
 export async function checkHealth(orgId: string, id: string): Promise<Health> {
   const health = expectShape(
     await send("POST", orgPath(orgId, "datasources", id, "health")),

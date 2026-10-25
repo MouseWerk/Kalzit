@@ -27,6 +27,7 @@ import { isComposingKey } from "../../lib/ime";
 import { zoneOption } from "../../lib/timeSettings";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorMessage } from "../dashboards/ui/errors";
 import {
   DATASOURCES_KEY,
@@ -34,6 +35,7 @@ import {
   fetchDatasourcePage,
   type Health,
   kindsQuery,
+  purgeDatasource,
   restoreDatasource,
   sourceAccess,
 } from "./api";
@@ -131,6 +133,15 @@ function DataSourceList({
       await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
     },
   });
+  const [purging, setPurging] = useState<DatasourceSummary | null>(null);
+  const purge = useMutation({
+    mutationFn: (id: string) => purgeDatasource(orgId, id),
+    onSuccess: async (_, id) => {
+      forgetHealth(queryClient, orgId, id);
+      setPurging(null);
+      await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
+    },
+  });
   const kindName = (kind: string) => kinds.data?.find((k) => k.kind === kind)?.name ?? kind;
   const items = list.data?.pages.flatMap((page) => page.items) ?? [];
   const accessOf = (source: DatasourceSummary) => sourceAccess(source.access, permissions);
@@ -212,8 +223,27 @@ function DataSourceList({
           kindName={kindName}
           date={(source) => dateFormat.format(source.deletedAt ?? 0)}
           onRestore={(id) => restore.mutate(id)}
+          onPurge={(source) => {
+            purge.reset();
+            setPurging(source);
+          }}
         />
         {more}
+        {purging !== null ? (
+          <ConfirmDialog
+            title={t("datasources.trash.purgeTitle")}
+            confirmLabel={t("datasources.trash.purgeConfirm")}
+            onCancel={() => {
+              purge.reset();
+              setPurging(null);
+            }}
+            onConfirm={() => purge.mutate(purging.id)}
+            busy={purge.isPending}
+            error={purge.isError ? errorMessage(t, purge.error) : undefined}
+          >
+            {t("datasources.trash.purgeText", { name: purging.name })}
+          </ConfirmDialog>
+        ) : null}
       </div>
     );
   }
@@ -239,17 +269,19 @@ function DataSourceList({
   );
 }
 
-/** The trash: name, kind, when it was deleted, and restore. */
+/** The trash: name, kind, when it was deleted, restore and delete for good. */
 function TrashTable({
   items,
   kindName,
   date,
   onRestore,
+  onPurge,
 }: {
   items: readonly DatasourceSummary[];
   kindName: (kind: string) => string;
   date: (source: DatasourceSummary) => string;
   onRestore: (id: string) => void;
+  onPurge: (source: DatasourceSummary) => void;
 }) {
   const { t } = useI18n();
   const dateLabel = t("datasources.column.deleted");
@@ -289,6 +321,14 @@ function TrashTable({
                 aria-label={t("datasources.restoreNamed", { name: source.name })}
               >
                 {t("datasources.restore")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={() => onPurge(source)}
+                aria-label={t("datasources.trash.purgeNamed", { name: source.name })}
+              >
+                {t("datasources.trash.purge")}
               </button>
             </td>
           </tr>

@@ -11,6 +11,9 @@ use crate::config::SessionConfig;
 use crate::error::ApiResult;
 
 pub const COOKIE_NAME: &str = "kalzit_session";
+/// The name over HTTPS. Browsers accept a `__Host-` cookie only with `Secure`, `Path=/` and no
+/// `Domain`, so a site on a sibling subdomain cannot set or shadow it.
+pub const SECURE_COOKIE_NAME: &str = "__Host-kalzit_session";
 /// `last_seen_at` is written at most this often, so reads do not turn into writes.
 const TOUCH_INTERVAL_MS: i64 = 5 * 60 * 1000;
 const HOUR_MS: i64 = 3_600_000;
@@ -181,25 +184,32 @@ where
     Ok(done.rows_affected())
 }
 
-pub fn read_cookie(headers: &HeaderMap) -> Option<String> {
+fn cookie_name(secure: bool) -> &'static str {
+    if secure { SECURE_COOKIE_NAME } else { COOKIE_NAME }
+}
+
+/// The session token of the request. With `secure` (`RequestInfo::secure_cookies`) only the
+/// `__Host-` cookie counts, so a plain cookie planted over HTTP or by a subdomain is ignored.
+pub fn read_cookie(headers: &HeaderMap, secure: bool) -> Option<String> {
+    let wanted = cookie_name(secure);
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE_NAME)
+        .find(|(name, _)| *name == wanted)
         .map(|(_, value)| value.to_string())
         .filter(|v| !v.is_empty())
 }
 
 pub fn set_cookie(token: &str, cfg: &SessionConfig, secure: bool) -> HeaderValue {
     let max_age = cfg.lifetime_hours * 3600;
-    cookie_header(&format!("{COOKIE_NAME}={token}; Max-Age={max_age}"), secure)
+    cookie_header(&format!("{}={token}; Max-Age={max_age}", cookie_name(secure)), secure)
 }
 
 pub fn clear_cookie(secure: bool) -> HeaderValue {
-    cookie_header(&format!("{COOKIE_NAME}=; Max-Age=0"), secure)
+    cookie_header(&format!("{}=; Max-Age=0", cookie_name(secure)), secure)
 }
 
 fn cookie_header(base: &str, secure: bool) -> HeaderValue {
@@ -236,7 +246,11 @@ mod tests {
     fn reads_session_cookie_among_others() {
         let mut h = HeaderMap::new();
         h.insert(header::COOKIE, HeaderValue::from_static("theme=dark; kalzit_session=abc123; x=1"));
-        assert_eq!(read_cookie(&h).as_deref(), Some("abc123"));
+        assert_eq!(read_cookie(&h, false).as_deref(), Some("abc123"));
+        assert_eq!(read_cookie(&h, true), None, "over HTTPS only the __Host- cookie counts");
+        h.insert(header::COOKIE, HeaderValue::from_static("kalzit_session=planted; __Host-kalzit_session=real"));
+        assert_eq!(read_cookie(&h, true).as_deref(), Some("real"));
+        assert_eq!(read_cookie(&h, false).as_deref(), Some("planted"));
     }
 
     #[test]
@@ -246,6 +260,10 @@ mod tests {
         let s = v.to_str().unwrap();
         assert!(s.contains("HttpOnly") && s.contains("SameSite=Lax") && s.contains("Secure"));
         assert!(s.contains("Max-Age=3600"));
-        assert!(!set_cookie("t", &cfg, false).to_str().unwrap().contains("Secure"));
+        assert!(s.starts_with("__Host-kalzit_session=t;") && s.contains("Path=/") && !s.contains("Domain"));
+        let plain = set_cookie("t", &cfg, false);
+        let plain = plain.to_str().unwrap();
+        assert!(!plain.contains("Secure") && plain.starts_with("kalzit_session=t;"));
+        assert!(clear_cookie(true).to_str().unwrap().starts_with("__Host-kalzit_session=;"));
     }
 }

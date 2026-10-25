@@ -2,7 +2,7 @@
 
 All paths are under `/api`. Conventions (errors, ids, times, `Page<T>`) are in
 `docs/ARCHITECTURE.md`. `{orgId}` and `{datasourceId}` are canonical UUIDs; any other value, an id
-of another organization, or an id in the trash (except for `restore`) answers `404 not_found`.
+of another organization, or an id in the trash (except for `restore` and `purge`) answers `404 not_found`.
 Without a session every route answers `401 unauthenticated`; a non-member of `{orgId}` gets `404`.
 
 | Method | Path | Access |
@@ -14,6 +14,7 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | PATCH | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
 | DELETE | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
 | POST | `/orgs/{orgId}/datasources/{datasourceId}/restore` | member; `datasources:write` on the source |
+| DELETE | `/orgs/{orgId}/datasources/{datasourceId}/purge` | member; `datasources:write` on the source |
 | POST | `/orgs/{orgId}/datasources/{datasourceId}/health` | member; `datasources:query` on the source |
 | GET | `/orgs/{orgId}/datasources/{datasourceId}/schema` | member; `datasources:query` on the source |
 | POST | `/orgs/{orgId}/query` | member; `datasources:query` on each query's source |
@@ -220,7 +221,13 @@ never sent to a new host without being entered again.
 
 `DELETE` moves the data source to the trash and answers `204`. `?expectedUpdatedAt=` works as
 in `PATCH`: a source changed since answers `409 version_conflict` with it as `current`. `POST .../restore` brings it back
-(`404` when it is not in the trash). Purging is not available yet.
+(`404` when it is not in the trash).
+
+`DELETE .../purge` deletes a source in the trash for good and answers `204` (`404` when it is not
+in the trash): its encrypted secrets, its grants and the Explore history that ran on it go with it,
+and the audit log records `datasource.purged`. A source that has been in the trash for 30 days is
+purged the same way by an hourly job (audited without an actor), so deleted credentials are not
+kept forever. Panels that still name a purged source answer `not_found` for that query.
 
 ### Errors when saving
 
@@ -230,7 +237,7 @@ Each row's `reason` is in [Reasons](#reasons) (`settings.*`, `secrets.*`, `targe
 | Status, code | When | `field` |
 |---|---|---|
 | `422 validation` | name empty or longer than 100 characters, unknown kind, unknown setting, wrong type, missing required field, secret sent in `settings`, unknown secret, port outside 1..65535, host with credentials, SQLite path not absolute, URL with credentials, query or fragment, `caCert` without a PEM certificate | the field name: `name`, `kind`, a settings field name such as `host`, `settings` (unknown setting), `secrets` (unknown secret) |
-| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or cloud metadata address (`169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, also as IPv4-mapped, IPv4-translated or IPv4-compatible address, through NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 or Teredo, and with an IPv6 zone); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
+| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory, Kalzit's own database, Kalzit's configuration file, TLS certificate or key, systemd's `$CREDENTIALS_DIRECTORY`, a file with more than one name (a hard link), missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or cloud metadata address (`169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, also as IPv4-mapped, IPv4-translated or IPv4-compatible address, through NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 or Teredo, and with an IPv6 zone); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
 | `409 conflict` | another data source in use has this name (also when restoring) | `name` |
 | `409 version_conflict` | `expectedUpdatedAt` is older than the stored source, or another change was saved while this one was checked; `current` holds the stored source | |
 | `422 validation` | MongoDB: the login may do more than read, or the server has no access control (see [MongoDB](#mongodb-a-pipeline-or-find)) | `user` |
@@ -462,7 +469,8 @@ limit). SQL and Prometheus results are frames, MongoDB results are documents (se
 Exactly one `SELECT` or `WITH` statement. Rejected: other statements, several statements,
 `SELECT ... INTO`, `FOR UPDATE`/`FOR SHARE` and other locking clauses, data-modifying `WITH`,
 MySQL executable comments (`/*! ... */`), and file, network and session functions (`LOAD_FILE`,
-`pg_read_file`, `lo_import`, `dblink`, `query_to_xml`, `OPENROWSET`, `OPENDATASOURCE`,
+`pg_read_file`, the `pg_ls_` directory listings, `lo_import`, `dblink`, `query_to_xml`, `OPENROWSET`,
+`OPENDATASOURCE`, `sys.dm_os_enumerate_filesystem`, `sys.dm_os_file_exists`,
 `OPENQUERY`, `load_extension`, named locks, `NEXT VALUE FOR`, functions with server-side effects
 such as WAL switches, statistics resets, replication slots, backups, advisory locks and
 sequences, ...), also when used as a table in `FROM`. PostgreSQL Unicode-escaped names and strings
@@ -1185,10 +1193,10 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 
 | Reason | Params | When |
 |---|---|---|
-| `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
+| `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data directory, Kalzit's own database or one of its own files (configuration, TLS certificate and key, `$CREDENTIALS_DIRECTORY`), a hard link, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
 | `target.sqlite_path_relative` | | the SQLite path is not absolute |
 | `target.url_credentials` | | an HTTP request or redirect URL contains a user name or password |
-| `target.file_path_refused` | | the CSV or JSON file is outside `datasources.file_dirs`, in Kalzit's data directory, Kalzit's own database, missing, or a network path (one reason for all) |
+| `target.file_path_refused` | | the CSV or JSON file is outside `datasources.file_dirs`, in Kalzit's data directory, Kalzit's own database or one of its own files (configuration, TLS certificate and key, `$CREDENTIALS_DIRECTORY`), a hard link, missing, or a network path (one reason for all) |
 | `target.file_path_relative` | | the file path is not absolute |
 | `target.metadata_address` | `address` or `host` | a link-local or cloud metadata address (also when a name resolves to one) |
 | `target.not_allowed` | `host` | the host is outside `datasources.allowed_targets` |

@@ -20,7 +20,8 @@ impl FromRequestParts<AppState> for CurrentUser {
         if let Some(user) = parts.extensions.get::<SessionUser>() {
             return Ok(CurrentUser(user.clone()));
         }
-        let token = session::read_cookie(&parts.headers).ok_or_else(ApiError::unauthenticated)?;
+        let secure = parts.extensions.get::<crate::net::RequestInfo>().is_some_and(|i| i.secure_cookies);
+        let token = session::read_cookie(&parts.headers, secure).ok_or_else(ApiError::unauthenticated)?;
         let now = state.clock.now_ms();
         session::lookup(&state.db, &state.touches, &state.config.sessions, now, &token)
             .await?

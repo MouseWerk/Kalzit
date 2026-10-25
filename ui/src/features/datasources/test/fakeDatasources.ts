@@ -838,7 +838,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     }
     const ds = state.datasources.find((d) => d.id === decodeURIComponent(parts[1] ?? ""));
     const inTrash = ds?.deletedAt !== undefined;
-    if (ds === undefined || (inTrash && parts[2] !== "restore")) {
+    if (ds === undefined || (inTrash && parts[2] !== "restore" && parts[2] !== "purge")) {
       return error(404, "not_found");
     }
     if (!sees(ds.id)) {
@@ -967,6 +967,13 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       }
       delete ds.deletedAt;
       return json(200, view(ds));
+    }
+    if (parts[2] === "purge" && method === "DELETE") {
+      if (!inTrash) {
+        return error(404, "not_found");
+      }
+      state.datasources.splice(state.datasources.indexOf(ds), 1);
+      return new Response(null, { status: 204 });
     }
     return undefined;
   }

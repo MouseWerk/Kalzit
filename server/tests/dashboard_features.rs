@@ -258,6 +258,7 @@ on_both_databases! {
     library_panels_in_restricted_folders,
     library_panels_check_panel_options,
     library_panel_queries_count_as_stored_queries,
+    unhiding_or_moving_a_stored_query_counts_as_a_change,
     hidden_targets_are_kept_but_not_run,
     time_options_are_stored_and_checked,
     colour_options_are_stored_and_checked,
@@ -376,6 +377,57 @@ async fn library_panel_queries_count_as_stored_queries(t: TestApp) {
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
     assert_eq!(saved.body["libraryPanels"], json!({}), "{}", saved.body);
     assert_eq!(t.get(&path, &viewer).await.status, StatusCode::OK);
+}
+
+/// What a stored query shows depends on whether it runs and where: un-hiding it, letting a step
+/// read it or moving it to another panel needs `datasources:query`, as changing its text does.
+/// Moving or resizing the panel does not.
+async fn unhiding_or_moving_a_stored_query_counts_as_a_change(t: TestApp) {
+    let source = t.working_source().await;
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Gestalter", "permissions": ["dashboards:read", "dashboards:write", "folders:read", "datasources:read"] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let designer = t.member("Gerd", role.body["id"].as_str().unwrap()).await;
+    let mut m = model("Versteckt");
+    m["panels"][0]["targets"] = json!([
+        { "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } },
+        { "refId": "B", "datasourceId": source, "query": { "sql": "SELECT secret FROM releases" }, "hide": true }
+    ]);
+    m["panels"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "p2", "type": "table", "grid": { "x": 12, "y": 0, "w": 12, "h": 8 }, "targets": [] }));
+    let id = t.dashboard(None, m.clone(), &t.owner).await;
+    let path = format!("~/dashboards/{id}");
+    let save = |model: &Value| json!({ "model": model, "version": 1 });
+
+    let mut unhidden = m.clone();
+    unhidden["panels"][0]["targets"][1].as_object_mut().unwrap().remove("hide");
+    let mut read_by_step = m.clone();
+    read_by_step["panels"][0]["transformations"] =
+        json!([{ "id": "s", "type": "calculate", "frame": "B", "name": "n", "expression": "1" }]);
+    let mut moved = m.clone();
+    let b = moved["panels"][0]["targets"].as_array_mut().unwrap().remove(1);
+    moved["panels"][1]["targets"] = json!([b]);
+    for (what, changed) in [("unhidden", &unhidden), ("read by a step", &read_by_step), ("moved", &moved)] {
+        let refused = t.put(&path, save(changed), &designer).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{what}: {}", refused.body);
+    }
+
+    // Moving and resizing the panel itself changes no query.
+    let mut rearranged = m.clone();
+    rearranged["panels"][0]["grid"] = json!({ "x": 0, "y": 8, "w": 24, "h": 6 });
+    rearranged["panels"][0]["title"] = json!("Neu angeordnet");
+    let saved = t.put(&path, save(&rearranged), &designer).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    // The owner may un-hide it.
+    let saved = t.put(&path, json!({ "model": unhidden, "version": 2 }), &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
 }
 
 async fn hidden_targets_are_kept_but_not_run(t: TestApp) {

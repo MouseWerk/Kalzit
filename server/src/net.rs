@@ -25,6 +25,9 @@ pub struct RequestInfo {
     pub https: bool,
     /// Host the user addressed, from `Host` or a trusted proxy's `X-Forwarded-Host`.
     pub host: Option<String>,
+    /// The session cookie is `Secure` with the `__Host-` prefix: the request is HTTPS, or
+    /// `server.public_url` is, so a proxy we do not trust to say so cannot turn it off.
+    pub secure_cookies: bool,
 }
 
 pub async fn request_info(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
@@ -37,9 +40,15 @@ pub async fn request_info(State(state): State<AppState>, mut req: Request, next:
         .or_else(|| ext.get::<MockConnectInfo<SocketAddr>>().map(|m| m.0.ip()))
         .unwrap_or(IpAddr::from([0, 0, 0, 0]));
     let tls = req.extensions().get::<ListenerTls>().map(|t| t.0).unwrap_or(false);
-    let info = resolve(peer, tls, req.headers(), &state.config.security.trusted_proxies);
+    let mut info = resolve(peer, tls, req.headers(), &state.config.security.trusted_proxies);
+    info.secure_cookies |= public_url_is_https(state.config.server.public_url.as_deref());
     req.extensions_mut().insert(info);
     next.run(req).await
+}
+
+/// `server.public_url` starts with `https://`.
+fn public_url_is_https(url: Option<&str>) -> bool {
+    url.and_then(|u| u.get(..8)).is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
 }
 
 pub(crate) fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[IpNet]) -> RequestInfo {
@@ -49,7 +58,7 @@ pub(crate) fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[I
     let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
     let host = single_header(headers, "host");
     if !is_trusted(&peer) {
-        return RequestInfo { client_ip: peer, https: tls, host };
+        return RequestInfo { client_ip: peer, https: tls, host, secure_cookies: tls };
     }
     // Proxies either extend one X-Forwarded-For line or add another (HAProxy), so all lines are
     // read in order. Walk from the right: each trusted hop vouches for the entry to its left. The
@@ -79,7 +88,7 @@ pub(crate) fn resolve(peer: IpAddr, tls: bool, headers: &HeaderMap, trusted: &[I
     let host = single_header(headers, "x-forwarded-host")
         .and_then(|h| h.split(',').next().map(|h| h.trim().to_string()))
         .or(host);
-    RequestInfo { client_ip, https, host }
+    RequestInfo { client_ip, https, host, secure_cookies: https }
 }
 
 fn single_header(headers: &HeaderMap, name: &str) -> Option<String> {
