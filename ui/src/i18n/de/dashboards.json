@@ -112,6 +112,8 @@
   "dashboards.history.actions": "Aktionen",
   "dashboards.history.current": "(aktuell)",
   "dashboards.history.compare": "Vergleichen",
+  "dashboards.history.compareNamed": "Version {version} mit der aktuellen Version vergleichen",
+  "dashboards.history.restoreNamed": "Version {version} wiederherstellen…",
   "dashboards.history.compareTitle": "Änderungen von Version {version} zur aktuellen Version",
   "dashboards.history.restore": "Wiederherstellen…",
   "dashboards.history.restoreTitle": "Diese Version wiederherstellen?",

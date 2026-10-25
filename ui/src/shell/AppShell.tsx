@@ -74,6 +74,16 @@ export function AppShell() {
       markEntered(false);
     };
   }, []);
+  // The browser's or mouse's Back button leaves an open overlay behind otherwise: the palette and
+  // the shortcut help close with the navigation, they hold nothing worth keeping.
+  useEffect(() => {
+    if (overlay === null) {
+      return;
+    }
+    const close = () => setOverlay(null);
+    window.addEventListener("popstate", close);
+    return () => window.removeEventListener("popstate", close);
+  }, [overlay]);
   usePreferencesSync(me.id);
   useAppearanceSync(currentOrgOf(me)?.id);
 
@@ -137,17 +147,27 @@ export function AppShell() {
       return;
     }
     event.preventDefault();
-    // With two regions, F6 and Shift+F6 both land on the other one; from anywhere else (the
-    // account menu button) focus goes to the navigation first.
-    if (nav.contains(document.activeElement)) {
-      main.focus();
+    // The regions F6 cycles through: navigation, content and, while a notification shows, the
+    // notifications (so Undo is reachable in time). From anywhere else (the account menu
+    // button) focus goes to the navigation first. With two regions both directions land on the
+    // other one.
+    const toast = document.querySelector<HTMLElement>(".toaster .toast");
+    const stops: HTMLElement[] = [nav, main, ...(toast === null ? [] : [toast])];
+    const active = document.activeElement;
+    const at = stops.findIndex((stop) => stop.contains(active));
+    if (at === -1) {
+      focusNav(nav);
       return;
     }
-    // The current page, else the entry it lies in (the rail hides sub-pages), else the first.
-    const current =
-      nav.querySelector<HTMLElement>('[aria-current="page"]') ??
-      nav.querySelector<HTMLElement>('[aria-current="true"]');
-    (current ?? nav.querySelector<HTMLElement>("a"))?.focus();
+    const step = event.shiftKey ? -1 : 1;
+    const next = stops[(at + step + stops.length) % stops.length];
+    if (next === nav) {
+      focusNav(nav);
+    } else if (next === toast) {
+      toast.querySelector<HTMLElement>("button")?.focus();
+    } else {
+      next?.focus();
+    }
   });
 
   useEffect(() => {
@@ -237,6 +257,14 @@ export function AppShell() {
       {overlay === "shortcuts" ? <ShortcutsHelp onClose={() => setOverlay(null)} /> : null}
     </div>
   );
+}
+
+/** The current page, else the entry it lies in (the rail hides sub-pages), else the first. */
+function focusNav(nav: HTMLElement): void {
+  const current =
+    nav.querySelector<HTMLElement>('[aria-current="page"]') ??
+    nav.querySelector<HTMLElement>('[aria-current="true"]');
+  (current ?? nav.querySelector<HTMLElement>("a"))?.focus();
 }
 
 /**

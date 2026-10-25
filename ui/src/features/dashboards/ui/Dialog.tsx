@@ -2,6 +2,8 @@ import { type KeyboardEvent, type ReactNode, useId, useLayoutEffect, useRef } fr
 import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
+import { showToast } from "../../../lib/toasts";
+import { useBackGuard } from "../../../lib/useBackGuard";
 import "./shared.css";
 
 const FOCUSABLE =
@@ -18,18 +20,35 @@ interface DialogProps {
   /** Buttons at the bottom; the first element with `data-autofocus` receives focus on open. */
   actions?: ReactNode;
   size?: "small" | "large";
+  /** The id of the element that describes the dialog (read after the title); a confirmation's text. */
+  describedBy?: string;
 }
 
 /**
  * A modal dialog: Escape closes it (only when it is the topmost layer), Tab stays inside, and
  * focus returns to where it was when the dialog closes.
  */
-export function Dialog({ title, onClose, children, actions, size = "small" }: DialogProps) {
+export function Dialog({
+  title,
+  onClose,
+  children,
+  actions,
+  size = "small",
+  describedBy,
+}: DialogProps) {
   const { t } = useI18n();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
 
+  const typed = useRef(false);
+
   useEscapeLayer(true, onClose);
+  // The Back button closes the dialog (or keeps typed input) rather than leaving the page.
+  useBackGuard(true, {
+    onClose,
+    hasInput: () => typed.current,
+    onKept: () => showToast({ message: t("common.dialog.backKept") }),
+  });
 
   useLayoutEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -70,8 +89,12 @@ export function Dialog({ title, onClose, children, actions, size = "small" }: Di
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={describedBy}
         tabIndex={-1}
         onKeyDown={onKeyDown}
+        onInput={() => {
+          typed.current = true;
+        }}
       >
         <div className="dialog__header">
           <h2 className="dialog__title" id={titleId}>
@@ -117,10 +140,12 @@ export function ConfirmDialog({
   error,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
+  const textId = useId();
   return (
     <Dialog
       title={title}
       onClose={onCancel}
+      describedBy={textId}
       actions={
         <>
           <button
@@ -143,7 +168,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p>{children}</p>
+      <p id={textId}>{children}</p>
       {error === undefined ? null : (
         <p className="notice notice--danger" role="alert">
           {error}

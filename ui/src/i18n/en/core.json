@@ -4,6 +4,7 @@
   "common.loading": "Loading…",
   "common.retry": "Try again",
   "common.undo": "Undo",
+  "common.dialog.backKept": "Your input is still in the dialog. Cancel it to leave this page.",
   "common.dismiss": "Dismiss",
   "common.skipToContent": "Skip to content",
   "nav.label": "Main navigation",

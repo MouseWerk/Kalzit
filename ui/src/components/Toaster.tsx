@@ -10,10 +10,12 @@ import "../shell/shellUx.css";
  * confirmations go to the polite one ("Notifications"), errors to the assertive one ("Errors").
  * A confirmation leaves on its own after a while, but never while the pointer or keyboard focus
  * is on it; an error stays until it is dismissed, and a later confirmation does not replace it.
+ * A toast with Undo sits in its own slot, so a plain confirmation never takes it away, and F6
+ * reaches it from the keyboard (the live region says so).
  */
 export function Toaster() {
   const { t } = useI18n();
-  const { confirmation, error } = useToasts();
+  const { confirmation, undo, error } = useToasts();
   return (
     <div className="toaster">
       <div
@@ -30,6 +32,7 @@ export function Toaster() {
         aria-label={t("shell.toast.region")}
         className="toaster__region"
       >
+        {undo === null ? null : <ToastBody key={undo.id} toast={undo} />}
         {confirmation === null ? null : <ToastBody key={confirmation.id} toast={confirmation} />}
       </div>
     </div>
@@ -97,6 +100,9 @@ function ToastBody({ toast }: { toast: Toast }) {
     >
       <Icon name={toast.error === true ? "alert" : "check"} />
       <div className="toast__text">{toast.message}</div>
+      {toast.undo === undefined ? null : (
+        <span className="visually-hidden">{t("shell.toast.undoHint")}</span>
+      )}
       <div className="toast__actions">
         {toast.undo === undefined ? null : (
           <button type="button" className="toast__button" onClick={() => close(toast.undo)}>

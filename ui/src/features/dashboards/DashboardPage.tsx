@@ -666,13 +666,18 @@ function DashboardView({
       window.removeEventListener("keydown", wake);
     };
   }, [display.mode]);
-  // Escape leaves a panel shown alone first, then kiosk or TV mode.
-  useEscapeLayer(display.viewPanel !== undefined && dialog === null, () =>
-    onDisplay({ viewPanel: undefined }),
+  // Escape leaves a panel shown alone first, then kiosk or TV mode. These layers do not hold
+  // back the global shortcuts (search, help, Escape): a panel shown alone and kiosk mode keep
+  // them, and the palette opens over the dashboard.
+  useEscapeLayer(
+    display.viewPanel !== undefined && dialog === null,
+    () => onDisplay({ viewPanel: undefined }),
+    { blocking: false },
   );
   useEscapeLayer(
     display.viewPanel === undefined && display.mode !== "normal" && dialog === null,
     () => onDisplay({ mode: "normal" }),
+    { blocking: false },
   );
 
   const annotations = useDashboardAnnotations({
@@ -1417,6 +1422,7 @@ function DashboardView({
                   className="button button--secondary button--small"
                   onClick={() => restore.mutate()}
                   disabled={restore.isPending}
+                  aria-label={t("dashboards.trash.restoreNamed", { title: dashboardTitle })}
                 >
                   {t("dashboards.trash.restore")}
                 </button>
