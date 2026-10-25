@@ -126,6 +126,8 @@
   "dashboards.panel.editNamed": "Edit “{title}”",
   "dashboards.panel.duplicate": "Duplicate",
   "dashboards.panel.duplicateNamed": "Duplicate “{title}”",
+  "dashboards.panel.aboutFor": "About {title}",
+  "dashboards.panel.actionsFor": "Actions for {title}",
   "dashboards.panel.remove": "Remove",
   "dashboards.panel.removeNamed": "Remove “{title}”",
   "dashboards.panel.arrange": "Arrange “{title}”",

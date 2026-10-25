@@ -413,7 +413,14 @@ export const PANEL_QUERY_REQUEST_FIELDS = [
   "maxDataPoints",
   "variables",
 ];
-const QUERY_REQUEST_FIELDS = ["queries", "timeRange", "intervalMs", "maxDataPoints", "variables"];
+const QUERY_REQUEST_FIELDS = [
+  "queries",
+  "timeRange",
+  "intervalMs",
+  "maxDataPoints",
+  "variables",
+  "explore",
+];
 const QUERY_ITEM_FIELDS = ["refId", "datasourceId", "query", "cursor", "limit"];
 
 /** The documented query form of the kind; null when it fits, else the rejection message. */
@@ -602,7 +609,7 @@ function checkSettings(
   return null;
 }
 
-export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasourcesState> {
+export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasourcesState> {
   let nextId = 1;
   const created = Date.UTC(2026, 0, 15);
   const state: FakeDatasourcesState = {
@@ -725,6 +732,7 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       }
       state.queries.push(body);
       const results: Record<string, QueryOutcome> = {};
+      const history = body.explore === true ? areas.exploreHistory?.entries : undefined;
       for (const item of items) {
         // Per query: an unseen source is not_found, a seen one without the right forbidden.
         results[item.refId] = !sees(item.datasourceId)
@@ -737,6 +745,23 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
                 range,
                 (body.variables ?? {}) as Record<string, unknown>,
               );
+      }
+      // Explore keeps the successful runs of the caller (docs/api/explore-history.md).
+      for (const item of items) {
+        const ds = state.datasources.find((d) => d.id === item.datasourceId);
+        if (history !== undefined && ds !== undefined && "result" in (results[item.refId] ?? {})) {
+          history.unshift({
+            id: `h${history.length + 1}-${Date.now()}`,
+            datasourceId: ds.id,
+            datasourceName: ds.name,
+            datasourceKind: ds.kind,
+            query: item.query,
+            shape: "frame",
+            rowCount: null,
+            durationMs: 1,
+            createdAt: Date.now(),
+          });
+        }
       }
       return json(200, { results });
     }
@@ -846,10 +871,35 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
     if (!may(ds.id, "write")) {
       return error(403, "forbidden");
     }
+    // A save or delete from a form loaded before the last change (Update in the doc).
+    const stale = (expected: unknown) =>
+      typeof expected === "number" && expected !== ds.updatedAt
+        ? json(409, {
+            error: { code: "version_conflict", message: "a newer version was saved" },
+            current: view(ds),
+          })
+        : null;
     if (parts.length === 2 && method === "PATCH") {
-      const extra = unknownKey(body, ["name", "settings", "secrets"]);
+      const extra = unknownKey(body, ["name", "settings", "secrets", "expectedUpdatedAt"]);
       if (extra !== undefined) {
         return validation(extra);
+      }
+      const refusedStale = stale(body.expectedUpdatedAt);
+      if (refusedStale !== null) {
+        return refusedStale;
+      }
+      // Settings and secrets change only over a named version (Update in the doc).
+      const changesTarget =
+        body.settings !== undefined || Object.keys((body.secrets ?? {}) as object).length > 0;
+      if (changesTarget && typeof body.expectedUpdatedAt !== "number") {
+        return json(422, {
+          error: {
+            code: "validation",
+            message: "expectedUpdatedAt is required when settings or secrets change",
+            field: "expectedUpdatedAt",
+            reason: "datasource.expected_version_missing",
+          },
+        });
       }
       const kind = FAKE_KINDS.find((k) => k.kind === ds.kind) as WireKind;
       const settings = (body.settings ?? ds.settings) as Record<string, unknown>;
@@ -903,6 +953,11 @@ export function datasourcesFake(_areas: FakeAreaStates): FakeArea<FakeDatasource
       return json(200, view(ds));
     }
     if (parts.length === 2 && method === "DELETE") {
+      const expected = search.get("expectedUpdatedAt");
+      const refusedStale = stale(expected === null ? undefined : Number(expected));
+      if (refusedStale !== null) {
+        return refusedStale;
+      }
       ds.deletedAt = Date.now();
       return new Response(null, { status: 204 });
     }

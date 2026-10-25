@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
 import { cutGraph, FAKE_GRAPH, ID } from "../../features/datasources/test/fakeGraph";
 import { setLanguage } from "../../i18n/i18n";
+import { openLayerCount } from "../../lib/layers";
 import { type PanelHost, PanelHostContext } from "../host";
 import { pathSteps } from "../path/PathPanel";
 import { getPanel, suggestPanel } from "../registry";
@@ -60,6 +61,41 @@ describe("network panel", () => {
     expect(screen.getByRole("button", { name: "Ada" }).getAttribute("aria-pressed")).toBe("true");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("region", { name: "Details of Ada" })).toBeNull();
+  });
+
+  it("leaves the shell's shortcuts working after a node is clicked, and Escape to the page once the focus leaves", async () => {
+    const user = userEvent.setup();
+    render(
+      <button type="button" data-testid="outside">
+        outside
+      </button>,
+    );
+    await renderGraph("network", FAKE_GRAPH);
+    await user.click(screen.getByRole("button", { name: "Ada" }));
+    expect(screen.getByRole("region", { name: "Details of Ada" })).toBeTruthy();
+    // The shell holds Ctrl+K, ?, / and F6 back only while a blocking layer (a dialog, a menu) is
+    // open; a selected node is none.
+    expect(openLayerCount()).toBe(0);
+    let reached = false;
+    const listener = (event: KeyboardEvent) => {
+      if (event.key === "Escape") reached = !event.defaultPrevented;
+    };
+    document.addEventListener("keydown", listener);
+    try {
+      // With the focus elsewhere, Escape belongs to the page and keeps the selection.
+      await user.click(screen.getByTestId("outside"));
+      await user.keyboard("{Escape}");
+      expect(reached).toBe(true);
+      expect(screen.getByRole("region", { name: "Details of Ada" })).toBeTruthy();
+      // With the focus back in the panel, Escape clears the selection and stays there.
+      reached = false;
+      act(() => screen.getByRole("button", { name: "Ada" }).focus());
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("region", { name: "Details of Ada" })).toBeNull();
+      expect(reached).toBe(false);
+    } finally {
+      document.removeEventListener("keydown", listener);
+    }
   });
 
   it("cuts to the node limit with a notice, and shows the source's own notices", async () => {

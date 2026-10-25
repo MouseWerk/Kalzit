@@ -126,6 +126,8 @@
   "dashboards.panel.editNamed": "„{title}“ bearbeiten",
   "dashboards.panel.duplicate": "Duplizieren",
   "dashboards.panel.duplicateNamed": "„{title}“ duplizieren",
+  "dashboards.panel.aboutFor": "Über {title}",
+  "dashboards.panel.actionsFor": "Aktionen für {title}",
   "dashboards.panel.remove": "Entfernen",
   "dashboards.panel.removeNamed": "„{title}“ entfernen",
   "dashboards.panel.arrange": "„{title}“ anordnen",

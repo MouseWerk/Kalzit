@@ -7,12 +7,14 @@ import "./i18n/i18n";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App, createApp } from "./app/app";
+import { removeRetiredPreferences } from "./lib/storage";
 
 const container = document.getElementById("root");
 if (container === null) {
   throw new Error("index.html is missing the #root element");
 }
 
+removeRetiredPreferences();
 const app = createApp();
 
 createRoot(container).render(
