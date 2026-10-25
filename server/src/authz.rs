@@ -883,7 +883,7 @@ fn permissions_with(
 const ADMIN_ACCESS_QUIET_MS: i64 = 10 * 60 * 1000;
 
 /// Whether an org admin's access rests on their reach into restricted and team content: without
-/// it they would not hold `permission` (`None`: would hold less, or not see the resource).
+/// it they would not hold `permission` (`None`: would not even see the resource).
 fn rests_on_bypass(
     org: &BTreeSet<Permission>,
     resource_type: ResourceType,
@@ -896,7 +896,7 @@ fn rests_on_bypass(
     let without = permissions_with(org, resource_type, facts, false);
     match permission {
         Some(p) => !without.is_some_and(|held| held.contains(&p)),
-        None => without != permissions_with(org, resource_type, facts, true),
+        None => without.is_none(),
     }
 }
 
@@ -964,6 +964,40 @@ pub async fn resource_permissions(
         audit_admin_access(db, ctx, resource, &facts, None).await?;
     }
     Ok(held)
+}
+
+/// `resource_permissions`, audited as an access for `permission` when the caller holds it: for
+/// routes that check the permission themselves (grants, annotations).
+pub async fn resource_permissions_for(
+    db: &sqlx::AnyPool,
+    ctx: &OrgCtx,
+    resource: Resource<'_>,
+    permission: Permission,
+) -> ApiResult<Option<BTreeSet<Permission>>> {
+    let facts = resource_facts(db, ctx, resource).await?;
+    let held = permissions_on(&ctx.permissions, resource.resource_type(), &facts);
+    if held.as_ref().is_some_and(|h| h.contains(&permission)) {
+        audit_admin_access(db, ctx, resource, &facts, Some(permission)).await?;
+    }
+    Ok(held)
+}
+
+/// What the caller may do on a dashboard they read (audited as a read), and whether a team they
+/// are not in owns it (itself or through a folder), which keeps org-wide rights such as
+/// `annotations:write` off it. `None` when they may not see it.
+pub async fn dashboard_reader(
+    db: &sqlx::AnyPool,
+    ctx: &OrgCtx,
+    dashboard_id: &str,
+) -> ApiResult<Option<(BTreeSet<Permission>, bool)>> {
+    let resource = Resource::Dashboard(dashboard_id);
+    let facts = resource_facts(db, ctx, resource).await?;
+    let Some(held) = permissions_on(&ctx.permissions, ResourceType::Dashboard, &facts) else { return Ok(None) };
+    if held.contains(&Permission::DashboardsRead) {
+        audit_admin_access(db, ctx, resource, &facts, Some(Permission::DashboardsRead)).await?;
+    }
+    let outsider = matches!(facts.owner, Some((_, false))) && !role_sees_restricted(&ctx.permissions);
+    Ok(Some((held, outsider)))
 }
 
 /// Checks `permission` on one resource: `not_found` when the caller may not even see it (a

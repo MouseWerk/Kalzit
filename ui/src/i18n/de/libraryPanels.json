@@ -27,5 +27,5 @@
   "libraryPanels.deleteNamed": "„{name}“ löschen",
   "libraryPanels.deleteTitle": "Bibliothekspanel löschen?",
   "libraryPanels.deleteText": "„{name}“ wird endgültig gelöscht.",
-  "libraryPanels.inUse": "Dashboards zeigen dieses Bibliothekspanel noch; entferne es zuerst dort."
+  "libraryPanels.inUse": "Dashboards zeigen dieses Bibliothekspanel noch, vielleicht auch solche, die du nicht öffnen darfst; entferne es zuerst dort (oder lass es entfernen)."
 }

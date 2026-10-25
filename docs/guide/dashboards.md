@@ -237,7 +237,13 @@ Who may change this:
 
 Moving content out of a team space (into the shared tree or another team's space) is for
 maintainers of the team and admins; editors move within the space. Each such move is recorded in
-the audit log.
+the audit log. Another team's content goes into a team space only through admins, and a library
+panel kept in a team space shows on dashboards outside it only when the team's maintainers or
+admins put it there.
+
+If you make a folder or dashboard **Team only** for a team you are not in, you keep access to it
+through a grant in your name. That grant stays when your teams change; remove it under
+**Access...** when it is no longer needed.
 
 The team you work in shows below the organization's name in the workspace card at the top of the
 sidebar. With more than one team, pick another one or **All areas** (Alle Bereiche) in its menu: the

@@ -374,7 +374,6 @@ async fn save(
                 })?;
             }
         }
-        check_space_move(&state, &ctx, &tree, &index, &id, row.folder_id.as_deref(), folder_id.as_deref()).await?;
     }
     if body.version != row.version {
         let current = answer(&mut *state.db.acquire().await?, &ctx, row).await?;
@@ -386,8 +385,10 @@ async fn save(
     let text = serde_json::to_string(&content).map_err(|e| ApiError::internal("library panels", e))?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    let mut moved_out = None;
     if folder_id != row.folder_id {
         lock_folder(&mut tx, &ctx.org_id, folder_id.as_deref()).await?;
+        moved_out = check_space_move(&mut tx, &ctx, &id, row.folder_id.as_deref(), folder_id.as_deref()).await?;
     }
     let updated = sqlx::query(
         "UPDATE library_panels SET name = $1, search_name = $2, model = $3, folder_id = $4, version = version + 1, \
@@ -414,35 +415,36 @@ async fn save(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({ "version": row.version + 1, "moved": folder_id != row.folder_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "library_panel.saved", ("library_panel", &id), summary).await?;
+    if let Some(summary) = moved_out {
+        audit(&mut tx, &actor, Some(&ctx.org_id), "team_space.moved_out", ("library_panel", &id), summary).await?;
+    }
     let saved = library::fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     let out = answer(&mut tx, &ctx, saved).await?;
     crate::db::commit(tx).await?;
     Ok(Json(out))
 }
 
-/// Only a library panel no dashboard shows can be deleted (trashed dashboards count); it is gone
-/// for good.
-/// Moves of a library panel across team spaces (docs/api/access.md, "Team spaces"): out of a
-/// space only by maintainers of its team and org admins, as for dashboards; into a space only
-/// while no dashboard outside that space shows it, since those would show content their viewers
-/// may no longer see.
+/// Moves of a library panel across team spaces (docs/api/access.md, "Team spaces"), read through
+/// the move's transaction after the organization's lock: out of a space only by maintainers of
+/// its team and org admins, as for dashboards; into a space only while no dashboard outside that
+/// space shows it, since those would show content their viewers may no longer see. Answers the
+/// summary of the `team_space.moved_out` event, or `None` when the move leaves no space.
 async fn check_space_move(
-    state: &AppState,
+    conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
-    tree: &Tree,
-    index: &AccessIndex,
     id: &str,
     from: Option<&str>,
     to: Option<&str>,
-) -> ApiResult<()> {
+) -> ApiResult<Option<Value>> {
+    let tree = Tree::load(&mut *conn, ctx).await?;
     let from_space = from.and_then(|f| tree.space_of(f));
     let to_space = to.and_then(|f| tree.space_of(f));
     if from_space.map(|(s, _)| s) == to_space.map(|(s, _)| s) {
-        return Ok(());
+        return Ok(None);
     }
     if let Some((_, team)) = from_space
         && !authz::role_sees_restricted(&ctx.permissions)
-        && !index.is_maintainer(team)
+        && authz::team_membership(&mut *conn, ctx, team).await?.as_deref() != Some("maintainer")
     {
         return Err(ApiError::forbidden(
             "only maintainers of the team and org admins move content out of its team space",
@@ -455,7 +457,7 @@ async fn check_space_move(
         )
         .bind(id)
         .bind(&ctx.org_id)
-        .fetch_all(&state.db)
+        .fetch_all(&mut *conn)
         .await?;
         if users.iter().any(|(folder,)| folder.as_deref().and_then(|f| tree.space_of(f)).map(|(s, _)| s) != Some(space))
         {
@@ -464,9 +466,11 @@ async fn check_space_move(
             ));
         }
     }
-    Ok(())
+    Ok(from_space.map(|(space, team)| json!({ "spaceId": space, "teamId": team, "from": from, "to": to })))
 }
 
+/// Only a library panel no dashboard shows can be deleted (trashed dashboards count); it is gone
+/// for good.
 async fn remove(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,

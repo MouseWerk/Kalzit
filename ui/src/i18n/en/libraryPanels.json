@@ -27,5 +27,5 @@
   "libraryPanels.deleteNamed": "Delete “{name}”",
   "libraryPanels.deleteTitle": "Delete library panel?",
   "libraryPanels.deleteText": "“{name}” is deleted for good.",
-  "libraryPanels.inUse": "Dashboards still show this library panel; remove it from them first."
+  "libraryPanels.inUse": "Dashboards still show this library panel, perhaps also ones you cannot open; remove it from them first (whoever may open them can)."
 }

@@ -273,8 +273,6 @@ struct NewVersion<'a> {
     /// Library panels this version references and the stored one did not; checked again under
     /// the organization's lock, so a library panel deleted meanwhile is not referenced.
     added_library: std::collections::BTreeSet<&'a str>,
-    /// A move out of a team space: the summary of its `team_space.moved_out` event.
-    moved_out: Option<Value>,
 }
 
 /// The library panels `model` references that `previous` did not.
@@ -520,12 +518,12 @@ async fn create(
     // `lock_place` took the organization's lock; a library panel deleted since the check above
     // is refused here rather than referenced.
     library::recheck_added(&mut tx, &ctx.org_id, &model.library_panel_ids()).await?;
+    library::recheck_space_links(&mut tx, &ctx, body.folder_id.as_deref(), &model.library_panel_ids()).await?;
     let new = NewVersion {
         model: &model,
         message: &message,
         restored_from: None,
         added_library: added_library(&model, None),
-        moved_out: None,
     };
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &id, &model).await?;
@@ -586,6 +584,7 @@ async fn write_version(
     let now = state.clock.now_ms();
     let next = row.version + 1;
     let moved = folder_id != row.folder_id.as_deref();
+    let mut moved_out = None;
     let mut tx = crate::db::begin(&state.db).await?;
     // New library panel references take the organization's lock first, as a library panel's
     // delete does, so a reference never outlives the panel it names.
@@ -594,6 +593,7 @@ async fn write_version(
     }
     if moved {
         lock_place(&mut tx, &ctx.org_id, folder_id).await?;
+        moved_out = check_space_move(&mut tx, ctx, row, folder_id).await?;
         // Leaving a restricted folder is remembered, so the purge still hides its old events.
         if let Some(old) = row.folder_id.as_deref()
             && folders::restricted_in(&mut tx, &ctx.org_id, old).await?
@@ -630,6 +630,9 @@ async fn write_version(
         return Err(ApiError::version_conflict(json!(pool_view(state, ctx, stored).await?)));
     }
     library::recheck_added(&mut tx, &ctx.org_id, &new.added_library).await?;
+    // A move takes every library panel along; otherwise only the new ones need a look.
+    let linked = if moved { new.model.library_panel_ids() } else { new.added_library.clone() };
+    library::recheck_space_links(&mut tx, ctx, folder_id, &linked).await?;
     insert_version(&mut tx, &row.id, next, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &row.id, new.model).await?;
     let (action, summary) = match new.restored_from {
@@ -637,8 +640,8 @@ async fn write_version(
         None => ("dashboard.saved", json!({ "version": next, "moved": moved })),
     };
     audit::record(&mut tx, &event(ctx, info, action, &row.id, summary, now)).await?;
-    if let Some(summary) = &new.moved_out {
-        audit::record(&mut tx, &event(ctx, info, "team_space.moved_out", &row.id, summary.clone(), now)).await?;
+    if let Some(summary) = moved_out {
+        audit::record(&mut tx, &event(ctx, info, "team_space.moved_out", &row.id, summary, now)).await?;
     }
     let saved = fetch(&mut *tx, &ctx.org_id, &row.id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut tx, ctx, saved).await?;
@@ -689,8 +692,6 @@ async fn save(
             }
         }
     }
-    let moved_out =
-        if folder_id == row.folder_id { None } else { leaving_space(&state, &ctx, &row, folder_id.as_deref()).await? };
     if body.version != row.version {
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
@@ -703,29 +704,37 @@ async fn save(
         message: &message,
         restored_from: None,
         added_library: added_library(&model, Some(&stored)),
-        moved_out,
     };
     Ok(Json(write_version(&state, &ctx, &info, &row, folder_id.as_deref(), new).await?))
 }
 
-/// Moving a dashboard out of a team space (into the open tree or another space) is for
-/// maintainers of the space's team and org admins; team editors move within the space only. A
-/// dashboard another team owns needs the same right for that team. Answers the summary of the
-/// `team_space.moved_out` event, or `None` when the move stays inside (or never was in) a space.
-async fn leaving_space(
-    state: &AppState,
+/// A move across team spaces, read through the move's transaction after the organization's lock.
+/// Out of a space (into the open tree or another space) only maintainers of the space's team and
+/// org admins move content; team editors move within the space. A dashboard another team owns
+/// needs the same right for that team, and goes into a team space of another team only through
+/// org admins. Answers the summary of the `team_space.moved_out` event, or `None` when the move
+/// leaves no space.
+async fn check_space_move(
+    conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
     row: &DashboardRow,
     to: Option<&str>,
 ) -> ApiResult<Option<Value>> {
-    let mut conn = state.db.acquire().await?;
-    let tree = Tree::load(&mut conn, ctx).await?;
-    let Some((space, team)) = row.folder_id.as_deref().and_then(|f| tree.space_of(f)) else { return Ok(None) };
-    if to.and_then(|f| tree.space_of(f)).map(|(s, _)| s) == Some(space) {
+    let tree = Tree::load(&mut *conn, ctx).await?;
+    let from = row.folder_id.as_deref().and_then(|f| tree.space_of(f));
+    let into = to.and_then(|f| tree.space_of(f));
+    if from.map(|(s, _)| s) == into.map(|(s, _)| s) {
         return Ok(None);
     }
-    let index = AccessIndex::load(&mut conn, ctx).await?;
     let admin = authz::role_sees_restricted(&ctx.permissions);
+    if let (Some((_, team)), Some(owner)) = (into, row.owner_team_id.as_deref())
+        && owner != team
+        && !admin
+    {
+        return Err(ApiError::forbidden("content another team owns goes into a team space only through org admins"));
+    }
+    let Some((space, team)) = from else { return Ok(None) };
+    let index = AccessIndex::load(&mut *conn, ctx).await?;
     let may_take = |team: &str| admin || index.is_maintainer(team);
     if !may_take(team) || row.owner_team_id.as_deref().is_some_and(|owner| !may_take(owner)) {
         return Err(ApiError::forbidden(
@@ -1046,7 +1055,6 @@ async fn restore_version(
         message: "",
         restored_from: Some(summary.version),
         added_library: added_library(&model, Some(&current)),
-        moved_out: None,
     };
     Ok(Json(write_version(&state, &ctx, &info, &row, row.folder_id.as_deref(), new).await?))
 }

@@ -131,7 +131,11 @@ to another team of the organization, or with `org` to the organization (owner cl
 content stays team only, so only org admins and grants reach it). A team that owns anything and a
 call without `transferTo` answer `409 conflict` field `transferTo`; `transferTo` naming the team
 itself or an unknown team is `422 validation` field `transferTo`. Audit `team.deleted` with
-`transferTo` and `handedOver` (how many folders and dashboards changed hands).
+`transferTo` and `handedOver` (how many folders and dashboards changed hands). When the team owns
+team spaces or team-only content, only org admins and maintainers of both teams (of the deleted
+team, for a handover to `org`) may delete it (`403` otherwise, also with `teams:write`); an org
+admin who is not a maintainer of both is recorded with `team_space.admin_access`
+(`summary.action` `team.deleted`).
 
 **`PUT .../members/{userId}`** `{ "role"?: "member" | "maintainer" }` (default `member`) adds the
 member or changes their team role; repeating it changes nothing. The route is declared for
@@ -203,8 +207,9 @@ organization. Every rule is checked again under the organization's lock (`403` u
   validation` `ownerTeamId` for an unknown team).
 
 Whoever makes an item team only without belonging to its team keeps a grant on it, at the
-strongest level within what they held there before (never more). Audit `folder.owner_changed`,
-`dashboard.owner_changed`.
+strongest level within what they held there before (never more). The kept grant is an ordinary
+grant to that person: it outlasts their team memberships and stays until someone removes it in
+the access dialog. Audit `folder.owner_changed`, `dashboard.owner_changed`.
 
 Moves: moving a folder or dashboard between the open tree and a team space, or between two team
 spaces, needs edit rights on both sides (`dashboards:write` on the dashboard and on the target
@@ -213,8 +218,12 @@ folder, `folders:write` for folders); moves into or out of other restricted fold
 space's team and org admins only; team editors move within the space. A folder moved out takes
 content another team owns along only when the caller is a maintainer of that team or an org admin.
 Each such move writes `team_space.moved_out` on the item with `spaceId`, `teamId`, `from` and
-`to`. Library panels follow the same rules, and move into a team space only while no dashboard
-outside that space shows them (`409 conflict`).
+`to`, library panels included. Content another team owns goes into a team space only through org
+admins. These checks run in the move's transaction, after the organization's lock. Library panels
+follow the same rules, and move into a team space only while no dashboard outside that space shows
+them (`409 conflict`). A dashboard outside a space may show a library panel kept in it only when
+the caller maintains the space's team or is an org admin (`403`; checked for the library panels a
+save adds, and for all of them when the save moves the dashboard).
 
 ### Admins and the audit log
 
@@ -226,7 +235,9 @@ opening another team's space, a team-only dashboard or a restricted folder (also
 the organization), changing another team's shared content, saving, moving, trashing, exporting,
 the versions, the access dialog, "why can I". The summary names the `permission`, the nearest
 owner team in the chain (`teamId`) and the governing restricted resource (`governingType`,
-`governingId`). Repeated accesses to the same resource by the same admin are written once per ten
+`governingId`). Reading a dashboard's annotations counts as reading the dashboard, so reading
+shared content, or reading through an own grant, leaves no entry. Repeated accesses to the same
+resource by the same admin are written once per ten
 minutes, since opening a dashboard checks access for every panel query. Lists and the folder tree
 do not write it.
 

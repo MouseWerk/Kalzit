@@ -690,13 +690,16 @@ pub async fn check_leaving_space(
     folder_id: &str,
     to: Option<&str>,
 ) -> ApiResult<Option<Value>> {
-    let Some((space, team)) = tree.space_of(folder_id) else { return Ok(None) };
-    if to.and_then(|p| tree.space_of(p)).map(|(s, _)| s) == Some(space) {
+    let from = tree.space_of(folder_id);
+    let into = to.and_then(|p| tree.space_of(p));
+    if from.map(|(s, _)| s) == into.map(|(s, _)| s) {
         return Ok(None);
     }
     let admin = authz::role_sees_restricted(&ctx.permissions);
     let may_take = |team: &str| admin || index.is_maintainer(team);
-    if !may_take(team) {
+    if let Some((_, team)) = from
+        && !may_take(team)
+    {
         return Err(ApiError::forbidden(
             "only maintainers of the team and org admins move content out of its team space",
         ));
@@ -717,6 +720,14 @@ pub async fn check_leaving_space(
         .await?;
         owners.extend(rows.into_iter().map(|(t,)| t));
     }
+    // Content another team owns goes into a team space only through org admins.
+    if let Some((_, into_team)) = into
+        && !admin
+        && owners.iter().any(|owner| owner != into_team)
+    {
+        return Err(ApiError::forbidden("content another team owns goes into a team space only through org admins"));
+    }
+    let Some((space, team)) = from else { return Ok(None) };
     if owners.iter().any(|owner| owner != team && !may_take(owner)) {
         return Err(ApiError::forbidden("the folder holds content another team owns; that team must move it"));
     }

@@ -224,6 +224,11 @@ async fn hand_over(conn: &mut sqlx::AnyConnection, org_id: &str, team_id: &str, 
     Ok(moved)
 }
 
+/// Whether the caller maintains the team.
+async fn maintains(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, team_id: &str) -> ApiResult<bool> {
+    Ok(authz::team_membership(&mut *conn, ctx, team_id).await?.as_deref() == Some("maintainer"))
+}
+
 async fn delete(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -267,7 +272,36 @@ async fn delete(
             conflict("the team owns team spaces, folders or dashboards; hand them over first").with_field("transferTo")
         );
     }
+    // Team spaces and team-only content change hands only through org admins or maintainers of
+    // both teams (of the one going, for a handover to the organization): `teams:write` alone
+    // would let a custom role carry a team's hidden content to a team it maintains.
+    let (restricted,): (i64,) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM folders WHERE org_id = $1 AND owner_team_id = $2 AND restricted = 1) \
+         + (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND owner_team_id = $2 AND team_only = 1)",
+    )
+    .bind(&ctx.org_id)
+    .bind(&team_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let mut admin_access = false;
+    if restricted > 0 {
+        let mut both = maintains(&mut tx, &ctx, &team_id).await?;
+        if let Some(other) = transfer {
+            both = both && maintains(&mut tx, &ctx, other).await?;
+        }
+        if !both && !authz::role_sees_restricted(&ctx.permissions) {
+            return Err(ApiError::forbidden(
+                "the team owns team spaces or team-only content; only org admins or maintainers of both teams hand it over",
+            ));
+        }
+        admin_access = !both;
+    }
     let handed = hand_over(&mut tx, &ctx.org_id, &team_id, transfer).await?;
+    if admin_access {
+        let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
+        let access = json!({ "action": "team.deleted", "teamId": team_id, "transferTo": q.transfer_to });
+        audit(&mut tx, &actor, Some(&ctx.org_id), "team_space.admin_access", ("team", &team_id), access).await?;
+    }
     sqlx::query("DELETE FROM team_contexts WHERE org_id = $1 AND team_id = $2")
         .bind(&ctx.org_id)
         .bind(&team_id)
