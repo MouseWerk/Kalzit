@@ -68,8 +68,15 @@ export function wallOf(ms: number, zone: string | null = getTimeZone()): Wall {
   };
 }
 
-function utcOf(w: Wall): number {
-  return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second, w.millisecond);
+/**
+ * The wall-clock reading as if it were UTC, in ms. Built with setUTCFullYear: Date.UTC reads the
+ * years 0 to 99 as 1900 to 1999.
+ */
+export function utcOf(w: Wall): number {
+  const d = new Date(0);
+  d.setUTCFullYear(w.year, w.month - 1, w.day);
+  d.setUTCHours(w.hour, w.minute, w.second, w.millisecond);
+  return d.getTime();
 }
 
 /** Fields that ran over (day 0, month 13, hour 24) carried into the next larger one, as Date does. */
@@ -93,15 +100,11 @@ export function normalizeWall(w: Wall): Wall {
  */
 export function fromWall(w: Wall, zone: string | null = getTimeZone()): number {
   if (zone === null) {
-    return new Date(
-      w.year,
-      w.month - 1,
-      w.day,
-      w.hour,
-      w.minute,
-      w.second,
-      w.millisecond,
-    ).getTime();
+    // setFullYear, not the constructor, which reads the years 0 to 99 as 1900 to 1999.
+    const d = new Date(0);
+    d.setFullYear(w.year, w.month - 1, w.day);
+    d.setHours(w.hour, w.minute, w.second, w.millisecond);
+    return d.getTime();
   }
   const wanted = utcOf(w);
   const offsetAt = (t: number) => utcOf(wallOf(t, zone)) - t;
@@ -120,7 +123,7 @@ export function fromWall(w: Wall, zone: string | null = getTimeZone()): number {
 
 /** 0 for Sunday to 6 for Saturday, as `Date.getDay()` counts. */
 export function weekdayOf(w: Wall): number {
-  return new Date(Date.UTC(w.year, w.month - 1, w.day)).getUTCDay();
+  return new Date(utcOf({ ...w, hour: 0, minute: 0, second: 0, millisecond: 0 })).getUTCDay();
 }
 
 /** The wall clock of `ms` as "2026-10-20T08:00", for a datetime-local input. */

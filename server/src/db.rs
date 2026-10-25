@@ -269,11 +269,16 @@ pub async fn scope_requests(req: axum::extract::Request, next: axum::middleware:
 }
 
 /// The database file of a SQLite URL (as `config::sqlite_url` writes them), `None` for other
-/// databases and for an in-memory one.
+/// databases and for an in-memory one (`sqlite::memory:`, `sqlite:file::memory:`, or any URL with
+/// `mode=memory`).
 pub fn sqlite_file(url: &str) -> Option<PathBuf> {
     let rest = url.strip_prefix("sqlite:")?;
     let rest = rest.strip_prefix("//").unwrap_or(rest);
-    let path = rest.split('?').next().unwrap_or(rest);
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if query.split('&').any(|pair| pair.eq_ignore_ascii_case("mode=memory")) {
+        return None;
+    }
+    let path = path.strip_prefix("file:").unwrap_or(path);
     if path.is_empty() || path == ":memory:" {
         return None;
     }
@@ -711,7 +716,10 @@ mod tests {
         dir.close().unwrap();
         // In memory there is no second pool; PostgreSQL has none either.
         let memory = connect_with("sqlite::memory:", 1, Duration::from_millis(10)).await.unwrap();
-        assert!(read_pool(&memory, "sqlite::memory:", 1).is_none());
+        for url in ["sqlite::memory:", "sqlite:file::memory:?cache=shared", "sqlite:k.db?mode=memory"] {
+            assert!(read_pool(&memory, url, 1).is_none(), "{url}");
+            assert!(side_pool(&memory, url, 1, Duration::from_millis(10)).is_none(), "{url}");
+        }
     }
 
     #[tokio::test]
@@ -749,6 +757,10 @@ mod tests {
             Some("C:/ProgramData/Kalzit/kalzit.db".into())
         );
         assert_eq!(sqlite_file("sqlite::memory:"), None);
+        assert_eq!(sqlite_file("sqlite:file::memory:?cache=shared"), None);
+        assert_eq!(sqlite_file("sqlite:file:k.db?mode=memory&cache=shared"), None);
+        assert_eq!(sqlite_file("sqlite:k.db?Mode=Memory"), None);
+        assert_eq!(sqlite_file("sqlite:k.db?mode=rwc"), Some("k.db".into()));
         assert_eq!(sqlite_file("postgres://db/kalzit"), None);
     }
 

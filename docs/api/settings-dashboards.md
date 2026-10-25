@@ -123,7 +123,7 @@ Server settings:
 | `datasources.allowed_targets` | `[]` | up to 100 texts of 1 to 1024 characters |
 | `datasources.query_timeout_secs` | `30` | whole number 1 to 3600 |
 | `datasources.max_rows` | `100000` | whole number 1 to 10,000,000 |
-| `datasources.max_response_bytes` | `52428800` | whole number 1024 to 1 GiB |
+| `datasources.max_response_bytes` | `134217728` (128 MiB) | whole number 1024 to 1 GiB; a memory budget: results count what they hold in memory, not their JSON text |
 | `audit.retention_days` | `365` | whole number 1 to 36500 |
 | `appearance.default_language` | `"de"` | `"de"`, `"en"` |
 | `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"` |
@@ -707,8 +707,12 @@ Positions count characters from 1.
   text or times; empty values left out), `year`, `month`, `day`, `hour`, `minute`, `second`,
   `weekday` (1 Monday to 7 Sunday), `startOf(t, 'minute' | 'hour' | 'day' | 'week' | 'month' |
   'quarter' | 'year')`, `concat`, `text` (numbers as JavaScript writes them, times as ISO 8601),
-  `number`, `lower`, `upper`, `length`, `contains`. Calendar functions use UTC; a time outside the
-  years 1 to 9999 is empty.
+  `number`, `lower`, `upper`, `length`, `contains`. Calendar functions read times in the time zone
+  in effect (the dashboard's, else the viewer's; an export names it in `timeZone`, UTC when
+  absent), and `startOf(t, 'week')` starts on the first day of the week in effect (Monday unless
+  set); `weekday` always counts 1 Monday to 7 Sunday. Minutes and hours step back on the time line;
+  days and longer start at the wall clock's midnight (the first instant after it when a daylight
+  saving change skips midnight). A time outside the years 1 to 9999 is empty.
 - Limits: 2000 characters, nesting 64 levels while parsing and a tree at most 128 high (chains
   inside parentheses grow it), 100 values per call, text results at most 32,767 UTF-16 units per
   cell (`expression.text_too_long`).

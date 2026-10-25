@@ -9,27 +9,20 @@ import { Icon } from "../../components/Icon";
 import { Page, PageActions } from "../../components/Page";
 import { TextField } from "../../components/TextField";
 import { catalogs, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
-import { showErrorToast, showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
-import { AccessButton } from "../dashboards/accessIntegration";
-import { ConfirmDialog, Dialog } from "../dashboards/ui/Dialog";
+import { Dialog } from "../dashboards/ui/Dialog";
 import { errorCodeMessage, errorMessage } from "../dashboards/ui/errors";
 import {
   checkHealth,
-  conflictingDatasource,
   createDatasource,
   DATASOURCES_KEY,
   type Datasource,
   type DatasourceKind,
   datasourceQuery,
-  deleteDatasource,
   type Health,
   kindsQuery,
-  restoreDatasource,
   type SettingSpec,
-  sourceAccess,
-  updateDatasource,
 } from "./api";
 import {
   connectionFields,
@@ -50,14 +43,14 @@ import {
   type SummaryPart,
   summarize,
 } from "./settingSections";
-import { forgetHealth, healthQuery } from "./sourceStatus";
+import { healthQuery } from "./sourceStatus";
 import "./datasources.css";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
 
 /** A test that could not run right after adding a source, kept for the page it lands on. */
-const testErrorKey = (orgId: string, id: string) => ["datasource-test-error", orgId, id] as const;
-const editRoute = getRouteApi("/_app/data-sources/$datasourceId");
+export const testErrorKey = (orgId: string, id: string) =>
+  ["datasource-test-error", orgId, id] as const;
 
 /** Server-provided label keys are used when this UI knows them; otherwise the field name. */
 function settingLabel(t: Translate, spec: SettingSpec): string {
@@ -153,11 +146,21 @@ function NewDataSource({ orgId }: { orgId: string }) {
   const { t, language } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { kind: chosen } = newRoute.useSearch();
+  const { kind: chosen, from } = newRoute.useSearch();
   const permissions = useOrgPermissions();
   const pickerId = useId();
   const [search, setSearch] = useState("");
   const kinds = useQuery(kindsQuery(orgId));
+  // Duplicate starts from another source of the same kind: its name and settings, not secrets.
+  const original = useQuery({ ...datasourceQuery(orgId, from ?? ""), enabled: from !== undefined });
+  const prefill =
+    original.data === undefined || original.data.kind !== chosen
+      ? undefined
+      : {
+          ...original.data,
+          name: t("datasources.duplicate.name", { name: original.data.name }),
+          secrets: {},
+        };
   const create = useMutation({
     // A new source can only be tested once it is stored: "Save and test" stores it, tests it,
     // and the edit page it lands on shows the result (shared through the test cache).
@@ -196,7 +199,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
     });
   }
 
-  if (kinds.isPending) {
+  if (kinds.isPending || (from !== undefined && original.isPending)) {
     return <p className="loading">{t("common.loading")}</p>;
   }
   if (kinds.isError) {
@@ -297,6 +300,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
               key={kind.kind}
               kind={kind}
               initial={undefined}
+              prefill={prefill}
               busy={create.isPending}
               error={create.error}
               submitLabel={t("datasources.form.create")}
@@ -363,279 +367,7 @@ function Stepper({ current }: { current: number }) {
   );
 }
 
-/** Data sources, then the source's name once it is loaded (the form reads the same query). */
-function EditCrumbs({ orgId }: { orgId: string }) {
-  const { t } = useI18n();
-  const { datasourceId } = editRoute.useParams();
-  const source = useQuery(datasourceQuery(orgId, datasourceId));
-  return (
-    <Breadcrumbs
-      crumbs={[
-        { label: t("datasources.title"), link: { to: "/data-sources", search: {} } },
-        { label: source.data?.name ?? t("datasources.edit.title") },
-      ]}
-    />
-  );
-}
-
-export function EditDataSourcePage() {
-  const { t } = useI18n();
-  useDocumentTitle("datasources.edit.title");
-  const org = useCurrentOrg();
-  // A grant on this source can allow editing without the org-wide permission, so the server
-  // decides: it answers 404 for a source the caller may not see and 403 for a change they may
-  // not make.
-  return (
-    <>
-      {org === undefined ? null : <EditCrumbs orgId={org.id} />}
-      <Page title={t("datasources.edit.title")}>
-        {org === undefined ? null : <EditDataSource orgId={org.id} />}
-      </Page>
-    </>
-  );
-}
-
-function EditDataSource({ orgId }: { orgId: string }) {
-  const { t } = useI18n();
-  const { datasourceId } = editRoute.useParams();
-  const permissions = useOrgPermissions();
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const source = useQuery(datasourceQuery(orgId, datasourceId));
-  const kinds = useQuery(kindsQuery(orgId));
-  // A test run just before (Save and test on the add page, or the list) shows at once.
-  const [health, setHealth] = useState<Health | null>(
-    () => queryClient.getQueryData(healthQuery(orgId, datasourceId).queryKey) ?? null,
-  );
-  // Read once: a later test replaces it.
-  const [addTestError] = useState<Error | null>(
-    () => queryClient.getQueryData<Error>(testErrorKey(orgId, datasourceId)) ?? null,
-  );
-  useEffect(() => {
-    queryClient.removeQueries({ queryKey: testErrorKey(orgId, datasourceId), exact: true });
-  }, [queryClient, orgId, datasourceId]);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  // Bumped after a save so the form starts again from what the server stored.
-  const [formKey, setFormKey] = useState(0);
-  // The `updatedAt` of the source the form started from. Saves and deletes send it, so a change
-  // someone else saved in the meantime is never overwritten without being shown. A background
-  // refetch does not move it: the form still shows what it started from.
-  const [base, setBase] = useState<number | undefined>(undefined);
-  if (base === undefined && source.data?.updatedAt !== undefined) {
-    setBase(source.data.updatedAt);
-  }
-  // A save or delete the server refused because the source changed since the form started.
-  const [conflict, setConflict] = useState<Conflict | null>(null);
-
-  /** Starts the form again from `stored`, dropping what was typed. */
-  function startFrom(stored: Datasource) {
-    queryClient.setQueryData(datasourceQuery(orgId, datasourceId).queryKey, stored);
-    setBase(stored.updatedAt);
-    setFormKey((key) => key + 1);
-  }
-
-  const save = useMutation({
-    mutationFn: ({ output, expected }: SaveRequest) =>
-      updateDatasource(orgId, datasourceId, {
-        name: output.name,
-        secrets: output.secrets,
-        ...(output.settings === undefined ? {} : { settings: output.settings }),
-        ...(expected === undefined ? {} : { expectedUpdatedAt: expected }),
-      }),
-    onSuccess: (saved, { afterSave }) => {
-      // The last test was of the old settings.
-      forgetHealth(queryClient, orgId, datasourceId);
-      void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
-      startFrom(saved);
-      afterSave?.();
-    },
-    onError: (error, { output, afterSave }) => {
-      const stored = conflictingDatasource(error);
-      if (stored !== null) {
-        setConflict({ stored, retry: { kind: "save", output, afterSave } });
-      }
-    },
-  });
-  const submit = (output: FormOutput, then?: () => void) =>
-    save.mutate({ output, expected: base, afterSave: then });
-  const test = useMutation({
-    mutationFn: () => checkHealth(orgId, datasourceId),
-    onMutate: () => setHealth(null),
-    onSuccess: (result) => {
-      setHealth(result);
-      // The list shows the same result.
-      queryClient.setQueryData(healthQuery(orgId, datasourceId).queryKey, result);
-    },
-  });
-  const remove = useMutation({
-    mutationFn: (expected: number | undefined) => deleteDatasource(orgId, datasourceId, expected),
-    onError: (error) => {
-      const stored = conflictingDatasource(error);
-      if (stored !== null) {
-        remove.reset();
-        setConfirmDelete(false);
-        setConflict({ stored, retry: { kind: "delete" } });
-      }
-    },
-    onSuccess: async () => {
-      forgetHealth(queryClient, orgId, datasourceId);
-      // The deleted source's own queries (this page, its schema) would only answer 404 now:
-      // they are dropped after leaving the page instead of being loaded again.
-      const ofThisSource = (query: { queryKey: readonly unknown[] }) =>
-        query.queryKey.includes(datasourceId);
-      await queryClient.invalidateQueries({
-        queryKey: [DATASOURCES_KEY, orgId],
-        predicate: (query) => !ofThisSource(query),
-      });
-      showToast({
-        message: t("datasources.deleted"),
-        undo: () => {
-          restoreDatasource(orgId, datasourceId).then(
-            () => {
-              forgetHealth(queryClient, orgId, datasourceId);
-              return queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
-            },
-            (error: unknown) => showErrorToast(errorMessage(t, error)),
-          );
-        },
-      });
-      await navigate({ to: "/data-sources", search: {} });
-      queryClient.removeQueries({ queryKey: [DATASOURCES_KEY, orgId], predicate: ofThisSource });
-    },
-  });
-
-  if (source.isPending || kinds.isPending) {
-    return <p className="loading">{t("common.loading")}</p>;
-  }
-  if (source.isError || kinds.isError) {
-    return <FormAlert>{errorMessage(t, source.error ?? kinds.error)}</FormAlert>;
-  }
-  const kind = kinds.data.find((k) => k.kind === source.data.kind);
-  if (kind === undefined) {
-    return <FormAlert>{t("datasources.form.unknownKind")}</FormAlert>;
-  }
-  // The source's own rights (grants included), else the org role. Testing needs query, which
-  // admins hold with the built-in roles; a custom role may allow changing without querying.
-  const access = sourceAccess(source.data.access, permissions);
-  const canTest = access.query;
-  // Where the source connects needs `changeTarget`: the org-wide write or an admin grant.
-  const targetLocked = !access.changeTarget;
-
-  return (
-    <div className="ds-edit">
-      <SettingsForm
-        key={formKey}
-        kind={kind}
-        initial={source.data}
-        busy={save.isPending}
-        error={conflictingDatasource(save.error) === null ? save.error : null}
-        submitLabel={t("datasources.form.save")}
-        onSubmit={(output) => submit(output)}
-        readOnly={!access.write}
-        targetLocked={targetLocked}
-        {...(canTest && access.write
-          ? {
-              onSubmitAndTest: (output: FormOutput) => submit(output, () => test.mutate()),
-              onTest: () => test.mutate(),
-            }
-          : {})}
-        testing={test.isPending}
-        saved={save.isSuccess}
-        status={
-          access.write ? (
-            <>
-              {addTestError !== null && test.isIdle ? (
-                <p className="field__hint">{t("datasources.new.testFailed")}</p>
-              ) : null}
-              <HealthResult
-                health={health}
-                error={test.error ?? (test.isIdle ? addTestError : null)}
-                empty={canTest ? <UntestedNote /> : null}
-              />
-            </>
-          ) : undefined
-        }
-        cancel={
-          <Link to="/data-sources" search={{}} className="button button--ghost">
-            {t("datasources.form.cancel")}
-          </Link>
-        }
-      />
-      {canTest && !access.write ? (
-        <div className="form__actions">
-          <button
-            type="button"
-            className="button button--secondary"
-            disabled={test.isPending}
-            onClick={() => test.mutate()}
-          >
-            {test.isPending ? t("datasources.health.testing") : t("datasources.health.test")}
-          </button>
-        </div>
-      ) : null}
-      {access.write ? null : <HealthResult health={health} error={test.error} />}
-      <div className="ds-edit__footer">
-        <AccessButton
-          resource={{ kind: "datasource", id: datasourceId, name: source.data.name }}
-          allowed={source.data.access?.permissions}
-        />
-        {access.write ? (
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={() => setConfirmDelete(true)}
-          >
-            {t("datasources.delete")}
-          </button>
-        ) : null}
-      </div>
-      {confirmDelete ? (
-        <ConfirmDialog
-          title={t("datasources.delete.title")}
-          confirmLabel={t("datasources.delete.confirm")}
-          onCancel={() => {
-            remove.reset();
-            setConfirmDelete(false);
-          }}
-          onConfirm={() => remove.mutate(base)}
-          busy={remove.isPending}
-          error={remove.isError ? errorMessage(t, remove.error) : undefined}
-        >
-          {t("datasources.delete.text", { name: source.data.name })}
-        </ConfirmDialog>
-      ) : null}
-      {conflict === null ? null : (
-        <ConflictDialog
-          conflict={conflict}
-          onLoadStored={() => {
-            save.reset();
-            startFrom(conflict.stored);
-            setConflict(null);
-          }}
-          onOverwrite={() => {
-            const { stored, retry } = conflict;
-            setConflict(null);
-            setBase(stored.updatedAt);
-            if (retry.kind === "save") {
-              // Sent again over the stored source: the server checks the change against it, so
-              // a target someone else moved still asks for its secrets again.
-              // "Save and test" still tests once the save went through.
-              save.mutate({
-                output: retry.output,
-                expected: stored.updatedAt,
-                afterSave: retry.afterSave,
-              });
-            } else {
-              remove.mutate(stored.updatedAt);
-            }
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-interface SaveRequest {
+export interface SaveRequest {
   output: FormOutput;
   /** The `updatedAt` the change is made on. */
   expected: number | undefined;
@@ -643,7 +375,7 @@ interface SaveRequest {
   afterSave?: (() => void) | undefined;
 }
 
-interface Conflict {
+export interface Conflict {
   /** The data source as it is stored now. */
   stored: Datasource;
   /** What was refused: a save of the form's output (and what follows it), or the delete. */
@@ -656,7 +388,7 @@ interface Conflict {
  * Someone else changed the source after this form started. Loading the stored source is the
  * default; the refused save or delete can also go through over it.
  */
-function ConflictDialog({
+export function ConflictDialog({
   conflict,
   onLoadStored,
   onOverwrite,
@@ -764,7 +496,7 @@ export function HealthResult({
 }
 
 /** Before the first test: says what the test checks. */
-function UntestedNote() {
+export function UntestedNote() {
   const { t } = useI18n();
   return (
     <div className="ds-test-status" data-state="untested">
@@ -781,7 +513,7 @@ function UntestedNote() {
  * What the form produces; secrets follow the API's patch semantics (absent keep, null remove).
  * `settings` is left out when nothing in them changed.
  */
-interface FormOutput {
+export interface FormOutput {
   name: string;
   settings?: Record<string, unknown>;
   secrets: Record<string, string | null>;
@@ -810,11 +542,17 @@ interface SettingsFormProps {
   /** The card's heading; the kind's name when left out. */
   title?: string;
   /** One line under the heading (the step and what the kind covers). */
-  subtitle?: string;
+  subtitle?: string | undefined;
   /** The test status block above the buttons. */
   status?: ReactNode;
   /** The way out, left of the buttons. */
   cancel?: ReactNode;
+  /** A source to start a new one from (Duplicate): its name and settings, never its secrets. */
+  prefill?: Datasource | undefined;
+  /** Told whenever the form gets or loses unsaved changes (the page's leave guard). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** The page tests the stored settings itself: the form offers "Save and test" only for changes. */
+  testOnlyChanges?: boolean;
 }
 
 /**
@@ -837,7 +575,7 @@ const WHOLE_NUMBER = /^\d+$/;
  * The settings form of one kind, rendered from the kind's schema. Secret fields are write-only:
  * a stored secret shows as "set" and can be replaced or removed, never read.
  */
-function SettingsForm({
+export function SettingsForm({
   kind,
   initial,
   busy,
@@ -854,13 +592,18 @@ function SettingsForm({
   subtitle,
   status,
   cancel,
+  prefill,
+  onDirtyChange,
+  testOnlyChanges = false,
 }: SettingsFormProps) {
   const { t } = useI18n();
   const plain = kind.settings.filter((spec) => !spec.secret);
   const secret = kind.settings.filter((spec) => spec.secret);
-  const [name, setName] = useState(initial?.name ?? "");
+  // What the fields start with: the stored source, or the one a new source is copied from.
+  const seed = initial ?? prefill;
+  const [name, setName] = useState(seed?.name ?? "");
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
-    Object.fromEntries(plain.map((spec) => [spec.name, initialValue(spec, initial)])),
+    Object.fromEntries(plain.map((spec) => [spec.name, initialValue(spec, seed)])),
   );
   const [secrets, setSecrets] = useState<Record<string, SecretState>>(() =>
     Object.fromEntries(
@@ -872,6 +615,11 @@ function SettingsForm({
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  // A form that goes away (saved and started again, or left) holds nothing unsaved any more.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [focusInvalid, setFocusInvalid] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const groups = groupSettings(kind.settings);
@@ -1055,9 +803,15 @@ function SettingsForm({
       <div className="ds-card__body">
         <p className="field__hint ds-card__hint">{readOnlyHint(t, kind)}</p>
         {readOnly ? (
-          <p className="field__hint">{t("datasources.form.readOnlyAccess")}</p>
+          <p className="ds-locked">
+            <Icon name="lock" />
+            <span>{t("datasources.form.readOnlyAccess")}</span>
+          </p>
         ) : targetLocked && plain.some((spec) => spec.target) ? (
-          <p className="field__hint">{t("datasources.form.targetLocked")}</p>
+          <p className="ds-locked">
+            <Icon name="lock" />
+            <span>{t("datasources.form.targetLocked")}</span>
+          </p>
         ) : null}
         <FormAlert>{error === null || server !== null ? null : errorMessage(t, error)}</FormAlert>
         <TextField
@@ -1087,6 +841,7 @@ function SettingsForm({
             }
             summary={summarize(specs, values, secretSet, section === "behavior")}
             specs={specs}
+            locked={readOnly || (targetLocked && specs.some((spec) => spec.target))}
           >
             {section === "connection" && supportsConnectionString(kind.kind) && !readOnly ? (
               <ConnectionStringBlock
@@ -1163,7 +918,8 @@ function SettingsForm({
           <span className="ds-form__saved" role="status">
             {saved && !dirty ? t("datasources.form.saved") : ""}
           </span>
-          {onTest === undefined && onSubmitAndTest === undefined ? null : (
+          {(onTest === undefined && onSubmitAndTest === undefined) ||
+          (testOnlyChanges && !dirty) ? null : (
             <button
               type="button"
               className="button button--secondary"
@@ -1209,6 +965,7 @@ function FormSection({
   onToggle,
   summary,
   specs,
+  locked = false,
   children,
 }: {
   section: Section;
@@ -1216,6 +973,8 @@ function FormSection({
   onToggle: () => void;
   summary: SummaryPart[];
   specs: readonly SettingSpec[];
+  /** Some of its fields cannot be changed by the caller: marked with a lock. */
+  locked?: boolean;
   children: ReactNode;
 }) {
   const { t } = useI18n();
@@ -1270,6 +1029,13 @@ function FormSection({
               ) : null}
             </span>
           )}
+          {locked ? " " : null}
+          {locked ? (
+            <span className="ds-chip ds-chip--locked">
+              <Icon name="lock" />
+              {t("datasources.section.locked")}
+            </span>
+          ) : null}
         </button>
       </h3>
       <div id={`${id}-body`} className="ds-section__body" hidden={!open}>

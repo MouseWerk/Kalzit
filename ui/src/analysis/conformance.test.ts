@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DocumentSet, Field, Frame } from "../api/generated/shapes";
-import { compile, DetailError, FIELD_TYPE_OF, parse, toCell } from "./expr";
+import type { WeekStart } from "../lib/timeSettings";
+import { compile, DetailError, FIELD_TYPE_OF, parse, toCell, UTC_CALENDAR } from "./expr";
 import { asSteps, type NamedInput, runSteps } from "./steps";
 
 /**
@@ -17,6 +18,7 @@ interface Cases {
     expression: string;
     type?: string;
     ulp?: boolean;
+    calendar?: { timeZone?: string; weekStart?: WeekStart };
     values?: unknown[];
     error?: { reason: string; params: Record<string, string> };
   }[];
@@ -84,11 +86,14 @@ describe("conformance with the server's engine", () => {
     expect(cases.steps.length).toBeGreaterThan(15);
   });
 
-  it.each(cases.expressions.map((c) => [c.expression, c] as const))("expression %s", (_, c) => {
+  const title = (c: Cases["expressions"][number]) =>
+    c.calendar === undefined ? c.expression : `${c.expression} in ${JSON.stringify(c.calendar)}`;
+  it.each(cases.expressions.map((c) => [title(c), c] as const))("expression %s", (_, c) => {
     const f = frame(c.frame);
     const rows = f.fields[0]?.values.length ?? 0;
+    const calendar = { ...UTC_CALENDAR, ...c.calendar };
     try {
-      const compiled = compile(parse(c.expression), f.fields);
+      const compiled = compile(parse(c.expression), f.fields, calendar);
       const got = Array.from({ length: rows }, (_, row) =>
         toCell(compiled.result, compiled.eval(row)),
       );

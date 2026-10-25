@@ -239,16 +239,22 @@ type QueryResult =
   (default 100,000), response size; exceeding them answers `query_timeout` or a truncated result
   with `meta.rowsTruncated`.
   - Reading stops on the source once the row limit is reached: PostgreSQL reads through a cursor
-    (`DECLARE ... NO SCROLL CURSOR`, `FETCH` of at most the limit plus one row per round trip),
+    (`DECLARE ... NO SCROLL CURSOR`, `FETCH` of at most the limit plus one row per round trip,
+    planned for all rows with `cursor_tuple_fraction = 1.0`, each `FETCH` limited by
+    `statement_timeout` to the time the query has left),
     MySQL/MariaDB and SQL Server close the connection of a cut result, so the server stops the
     statement instead of sending the rest, and SQLite stops stepping the statement.
-  - The response size budget counts what a result holds in memory, not only its JSON text: 32
+  - The response size budget (`datasources.max_response_bytes`, default 128 MiB per request;
+    `datasources.max_inflight_bytes`, 1 GiB for all requests) is a memory budget: it counts what
+    a result holds in memory, not only its JSON text: 32
     bytes for every value (also nulls and numbers), the text of strings (their capacity, at least
     their JSON form), and the keys and entries of documents, graph properties and nested values
     (`frame::value_size`).
 - Connections are pooled per data source and rebuilt when its settings change. The pool is built
   once per data source: parallel first queries (a dashboard opening with a cold cache) wait for
-  the same build instead of each opening a pool and logging in.
+  the same build instead of each opening a pool and logging in. A connection nobody holds closes
+  its SQLite file when dropped (also one whose entry was forgotten while it was built), and a
+  build that finishes after the server began to stop is closed instead of used.
 - **Secrets** (passwords, tokens, client keys) never live in plain settings: settings with a URL
   or DSN reject embedded credentials, which go into dedicated secret fields.
   - Stored in `datasource_secrets`, encrypted with AES-256-GCM, a random 96-bit nonce per

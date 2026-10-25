@@ -67,7 +67,7 @@ test("a data source is renamed, moved to the trash and restored", async ({ page 
   await page.getByRole("button", { name: t("datasources.form.save"), exact: true }).click();
   await expect(page.getByText(t("datasources.form.saved"))).toBeVisible();
 
-  await page.getByRole("button", { name: t("datasources.delete") }).click();
+  await page.getByRole("button", { name: t("datasources.edit.trash"), exact: true }).click();
   const confirm = page.getByRole("dialog", { name: t("datasources.delete.title") });
   await confirm.getByRole("button", { name: t("datasources.delete.confirm") }).click();
   await expect(page).toHaveURL(/\/data-sources/);

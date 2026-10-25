@@ -539,6 +539,113 @@ async fn sqlite_queries_answer_typed_frames() {
     t.finish().await;
 }
 
+/// A NUMERIC column (and an expression) whose first values are whole numbers keeps the decimals
+/// that come later: the column becomes a number instead of int64 with empty decimals.
+#[tokio::test]
+async fn sqlite_numeric_columns_keep_decimals_after_whole_numbers() {
+    let t = T::new().await;
+    let file = t
+        .sqlite_file(
+            "preise.db",
+            "CREATE TABLE p (id INTEGER, preis NUMERIC(10, 2), ganz NUMERIC);
+             INSERT INTO p VALUES (1, 10, 1), (2, 12.5, 2), (3, 7, 3), (4, NULL, 4), (5, -0.25, 5);",
+        )
+        .await;
+    let id = t.create_sqlite("Preise", &file).await;
+    let r = t
+        .query(
+            &t.owner,
+            json!([{ "refId": "A", "datasourceId": id,
+                     "query": { "sql": "SELECT preis, ganz, preis * 2 AS doppelt FROM p ORDER BY id" } }]),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let frame = &r.body["results"]["A"]["result"]["frame"];
+    let types: Vec<&str> = frame["fields"].as_array().unwrap().iter().map(|f| f["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["number", "int64", "number"], "{}", r.text);
+    assert_eq!(frame["fields"][0]["values"], json!([10.0, 12.5, 7.0, null, -0.25]));
+    assert_eq!(frame["fields"][1]["values"], json!(["1", "2", "3", "4", "5"]));
+    assert_eq!(frame["fields"][2]["values"], json!([20.0, 25.0, 14.0, null, -0.5]));
+    assert!(frame["meta"]["notices"].as_array().unwrap().is_empty(), "no value was lost: {}", r.text);
+
+    // Whole numbers beyond 2^53 in a column that turns out to hold decimals are rounded, and
+    // the answer says how many: one read before the first decimal, one after it.
+    let r = t
+        .query(
+            &t.owner,
+            json!([{ "refId": "A", "datasourceId": id,
+                     "query": { "sql": "SELECT column1 AS x FROM (VALUES (9007199254740993), (2), (1.5), (9007199254740995))" } }]),
+        )
+        .await;
+    let frame = &r.body["results"]["A"]["result"]["frame"];
+    assert_eq!(frame["fields"][0]["type"], "number", "{}", r.text);
+    let notice = frame["meta"]["notices"].as_array().unwrap().iter().find(|n| n["code"] == "frame.value_rounded");
+    assert_eq!(notice.map(|n| n["params"].clone()), Some(json!({ "column": "x", "count": "2" })), "{}", r.text);
+    t.finish().await;
+}
+
+/// `$__timeFilter` on SQLite compares times, not text: ISO values with "T" or a space and Unix
+/// seconds or milliseconds all match exactly at the range edges.
+#[tokio::test]
+async fn sqlite_time_filter_compares_times_in_every_stored_form() {
+    let t = T::new().await;
+    // The range is 2026-01-01 10:00:00 to 2026-01-01 12:00:00 UTC.
+    const FROM: i64 = 1_767_261_600_000;
+    const TO: i64 = 1_767_268_800_000;
+    let file = t
+        .sqlite_file(
+            "zeiten.db",
+            &format!(
+                "CREATE TABLE e (name TEXT, am);
+                 INSERT INTO e VALUES
+                 ('iso_t_from', '2026-01-01T10:00:00'), ('iso_t_to', '2026-01-01T12:00:00.000Z'),
+                 ('iso_t_inside', '2026-01-01T11:00:00'), ('iso_t_before', '2026-01-01T09:59:59.999'),
+                 ('iso_t_after', '2026-01-01T12:00:00.001'), ('iso_t_zone', '2026-01-01T12:30:00+01:00'),
+                 ('space_from', '2026-01-01 10:00:00'), ('space_to', '2026-01-01 12:00:00'),
+                 ('space_before', '2026-01-01 09:59:59.999'), ('space_after', '2026-01-01 12:00:00.001'),
+                 ('s_from', {s_from}), ('s_to', {s_to}), ('s_before', {s_before}), ('s_after', {s_after}),
+                 ('s_real', {s_real}),
+                 ('ms_from', {FROM}), ('ms_to', {TO}), ('ms_before', {ms_before}), ('ms_after', {ms_after}),
+                 ('leer', NULL);",
+                s_from = FROM / 1000,
+                s_to = TO / 1000,
+                s_before = FROM / 1000 - 1,
+                s_after = TO / 1000 + 1,
+                s_real = (FROM as f64 + 500.0) / 1000.0,
+                ms_before = FROM - 1,
+                ms_after = TO + 1,
+            ),
+        )
+        .await;
+    let id = t.create_sqlite("Zeiten", &file).await;
+    let body = json!({
+        "queries": [{ "refId": "A", "datasourceId": id,
+                      "query": { "sql": "SELECT name FROM e WHERE $__timeFilter(am) ORDER BY name" } }],
+        "timeRange": { "from": FROM, "to": TO }
+    });
+    let r = t.send(Method::POST, &t.path("/query"), Some(body), Some(&t.owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(
+        r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"],
+        json!([
+            "iso_t_from",
+            "iso_t_inside",
+            "iso_t_to",
+            "iso_t_zone",
+            "ms_from",
+            "ms_to",
+            "s_from",
+            "s_real",
+            "s_to",
+            "space_from",
+            "space_to"
+        ]),
+        "{}",
+        r.text
+    );
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn macros_and_variables_are_bound() {
     let t = T::new().await;
@@ -556,7 +663,12 @@ async fn macros_and_variables_are_bound() {
     assert_eq!(frame["fields"][0]["values"], json!(["Schweiz"]), "{}", r.text);
     assert_eq!(
         frame["meta"]["executedQuery"],
-        "SELECT land FROM verkauf WHERE (am BETWEEN ? AND ?) AND land IN (?, ?) AND land <> ?"
+        concat!(
+            "SELECT land FROM verkauf WHERE ((am BETWEEN ? AND ? OR am BETWEEN ? AND ? OR am BETWEEN ? AND ?) AND ",
+            "(CASE WHEN typeof(am) IN ('integer', 'real') THEN (CASE WHEN abs(am) > 100000000000 THEN am ELSE ",
+            "am * 1000 END) BETWEEN ? AND ? ELSE julianday(am) BETWEEN julianday(?) AND julianday(?) END)) ",
+            "AND land IN (?, ?) AND land <> ?"
+        )
     );
 
     let ident = json!({
@@ -743,8 +855,9 @@ async fn empty_sqlite_tables_keep_their_declared_types() {
 }
 
 /// Values are converted to the column's type where nothing is lost: a whole REAL in an int64
-/// column is its integer, a fraction is `null` and counted; numbers in a time column are Unix
-/// seconds up to 10^11 and milliseconds above.
+/// column is its integer, a fraction in a declared INTEGER column is `null` and counted, and a
+/// column typed by its values becomes `number` at its first fraction; numbers in a time column
+/// are Unix seconds up to 10^11 and milliseconds above.
 #[tokio::test]
 async fn sqlite_values_keep_to_their_column_type() {
     let t = T::new().await;
@@ -782,16 +895,22 @@ async fn sqlite_values_keep_to_their_column_type() {
     assert_eq!(notice["params"], json!({ "column": "i", "count": "2" }));
     assert_eq!(frame["meta"]["notices"].as_array().unwrap().len(), 1, "one notice per column: {frame}");
 
-    // The view's expression has no declared type; its first value makes it int64.
+    // The view's expression has no declared type: its first values make it int64, and its first
+    // fraction makes it a number, with the values before it converted.
     let frame = run("SELECT j FROM plus").await;
-    assert_eq!(frame["fields"][0]["type"], "int64");
-    assert_eq!(frame["fields"][0]["values"], json!(["2", "4", null, null]));
-    assert_eq!(mismatch(&frame).unwrap()["params"]["count"], "2");
+    assert_eq!(frame["fields"][0]["type"], "number");
+    assert_eq!(frame["fields"][0]["values"], json!([2.0, 4.0, 2.5, 3.5]));
+    assert!(mismatch(&frame).is_none(), "{frame}");
 
-    // A whole number stored as REAL becomes its integer.
+    // A whole number stored as REAL stays an integer until the first fraction.
+    let frame = run("SELECT 1 AS n UNION ALL SELECT 4.0").await;
+    assert_eq!(
+        (frame["fields"][0]["type"].clone(), frame["fields"][0]["values"].clone()),
+        (json!("int64"), json!(["1", "4"]))
+    );
     let frame = run("SELECT 1 AS n UNION ALL SELECT 4.0 UNION ALL SELECT 2.5").await;
-    assert_eq!(frame["fields"][0]["values"], json!(["1", "4", null]));
-    assert_eq!(mismatch(&frame).unwrap()["params"], json!({ "column": "n", "count": "1" }));
+    assert_eq!(frame["fields"][0]["values"], json!([1.0, 4.0, 2.5]));
+    assert!(mismatch(&frame).is_none(), "{frame}");
 
     // Seconds, milliseconds, fractional seconds and text all name the same time; numbers past
     // the year 9999 are no time.
@@ -878,6 +997,32 @@ async fn changed_settings_rebuild_the_connection() {
     t.finish().await;
 }
 
+/// Sessions and permissions are read through the read-only pool; a change committed on the main
+/// pool counts at the very next request.
+#[tokio::test]
+async fn revoked_sessions_and_new_permissions_count_at_once() {
+    let t = T::new().await;
+    let (query_only,): (i64,) = sqlx::query_as("PRAGMA query_only").fetch_one(&t.state.read_db).await.unwrap();
+    assert_eq!(query_only, 1, "a file database reads through its read-only pool");
+    let member = t.session_for_role("lese", Some("viewer")).await;
+    let audit = t.path("/audit");
+    let r = t.send(Method::GET, &audit, None, Some(&member)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    sqlx::query("UPDATE org_members SET role = 'admin' WHERE user_id = (SELECT id FROM users WHERE name = 'lese')")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.send(Method::GET, &audit, None, Some(&member)).await;
+    assert_eq!(r.status, StatusCode::OK, "the new role counts at once: {}", r.text);
+    sqlx::query("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE name = 'lese')")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.send(Method::GET, &audit, None, Some(&member)).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "the revoked session ends at once: {}", r.text);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn parallel_first_queries_share_one_connection() {
     let t = T::new().await;
@@ -902,6 +1047,11 @@ async fn parallel_first_queries_share_one_connection() {
     let cached = t.state.datasources.cached_connection(&id).expect("cached");
     let again = t.state.datasources.connection(&t.state, &ds).await.unwrap();
     assert!(Arc::ptr_eq(&cached, &again));
+    // After the stop began, a new build is closed again instead of handed out.
+    drop((cached, again, first, conns));
+    t.state.datasources.close().await;
+    let e = t.state.datasources.connection(&t.state, &ds).await.err().expect("refused after close");
+    assert!(format!("{e:?}").contains("server.shutting_down"), "{e:?}");
     t.finish().await;
 }
 
@@ -1059,6 +1209,31 @@ async fn prometheus_through_the_client_factory() {
     assert_eq!(frame["fields"][0]["values"], json!([1_700_000_000_000_i64, 1_700_000_060_000_i64]), "{}", q.text);
     assert_eq!(frame["fields"][1]["labels"]["job"], "api");
     assert_eq!(frame["meta"]["notices"][0]["text"], "nur ein Test");
+
+    // `$__interval` and `$__rate_interval` follow the step actually asked for: the minimum step
+    // when it is above the panel's interval, and the point limit's step over a long range.
+    let interval_query = |range: (i64, i64), min_step: Option<u64>| {
+        let mut query =
+            json!({ "expr": "rate(up[$__rate_interval]) / avg_over_time(up[$__interval]) > $__interval_ms" });
+        if let Some(step) = min_step {
+            query["minStepMs"] = json!(step);
+        }
+        json!({ "queries": [{ "refId": "A", "datasourceId": id, "query": query }],
+                "timeRange": { "from": range.0, "to": range.1 }, "intervalMs": 15_000 })
+    };
+    let hour = (1_700_000_000_000_i64, 1_700_003_600_000_i64);
+    for (body, expected) in [
+        (interval_query(hour, None), "rate(up[1m]) / avg_over_time(up[15s]) > 15000"),
+        (interval_query(hour, Some(120_000)), "rate(up[8m]) / avg_over_time(up[2m]) > 120000"),
+        // 110 days at 11,000 points per series need a step of 864,001 ms.
+        (
+            interval_query((1_700_000_000_000, 1_700_000_000_000 + 110 * 86_400_000), None),
+            "rate(up[3456004ms]) / avg_over_time(up[864001ms]) > 864001",
+        ),
+    ] {
+        let r = t.send(Method::POST, &t.path("/query"), Some(body), Some(&t.owner)).await;
+        assert_eq!(r.body["results"]["A"]["result"]["frame"]["meta"]["executedQuery"], expected, "{}", r.text);
+    }
 
     let bad = t.query(&t.owner, json!([{ "refId": "A", "datasourceId": id, "query": { "expr": "kaputt(" } }])).await;
     assert_eq!(bad.body["results"]["A"]["error"]["code"], "datasource_error");

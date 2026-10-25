@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent, useDeferredValue, useId, useRef, useState } from "react";
 import { exportQuery } from "../../analysis/api";
 import { ExportDialog } from "../../analysis/ExportDialog";
-import { namedInputs, runPanelSteps } from "../../analysis/panel";
+import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, type Step } from "../../analysis/steps";
 import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
@@ -102,6 +102,7 @@ export function ExplorePage() {
 
 function Explore({ orgId }: { orgId: string }) {
   const { t } = useI18n();
+  const calendar = useAnalysisCalendar();
   const permissions = useOrgPermissions();
   const datasourceId = useId();
   const datasources = useQuery(datasourcesQuery(orgId));
@@ -288,7 +289,7 @@ function Explore({ orgId }: { orgId: string }) {
   const projected = projection !== undefined && projectionApplies(projection);
   // A projection step the server would refuse waits for a fix before it leaves the page.
   const blocked = hasProjectionProblems(steps);
-  const stepsRun = runPanelSteps(deferredSteps, outcomes);
+  const stepsRun = runPanelSteps(deferredSteps, outcomes, calendar);
   // The suggestion follows what the panel will get: documents, or the frame of a projection.
   const results: QueryResult[] = [
     ...outcomes.flatMap((o) =>

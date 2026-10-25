@@ -386,6 +386,18 @@ pub struct Connection {
     shared: OnceCell<Arc<dyn Any + Send + Sync>>,
 }
 
+/// A connection nobody holds anymore closes its SQLite file, also one that was never cached or
+/// whose cache entry was replaced while a query still used it.
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let (Some(pool), Ok(rt)) = (self.sqlite_pool().cloned(), tokio::runtime::Handle::try_current())
+            && !pool.is_closed()
+        {
+            rt.spawn(async move { pool.close().await });
+        }
+    }
+}
+
 impl Connection {
     pub fn new(
         datasource_id: impl Into<String>,
@@ -447,9 +459,13 @@ impl Connection {
 
     /// Closes the SQLite pool this connection keeps, if any: the other kinds hold no files.
     async fn close(&self) {
-        if let Some(pool) = self.shared.get().and_then(|s| s.downcast_ref::<sqlx::sqlite::SqlitePool>()) {
+        if let Some(pool) = self.sqlite_pool() {
             pool.close().await;
         }
+    }
+
+    fn sqlite_pool(&self) -> Option<&sqlx::sqlite::SqlitePool> {
+        self.shared.get().and_then(|s| s.downcast_ref::<sqlx::sqlite::SqlitePool>())
     }
 
     /// The text without this source's secrets.
@@ -892,6 +908,8 @@ pub struct DataSources {
     /// the same way when the setting changes.
     inflight_bytes: Mutex<(usize, Arc<std::sync::atomic::AtomicUsize>)>,
     policy_cache: Mutex<Option<CachedPolicy>>,
+    /// Set by `close`: a connection built after that is closed again instead of handed out.
+    closed: std::sync::atomic::AtomicBool,
     /// Setting values for tests, until the settings layers (stream B) can be written to.
     #[cfg(test)]
     pub(crate) test_settings: Mutex<BTreeMap<String, Value>>,
@@ -927,6 +945,7 @@ impl DataSources {
             running: Mutex::new((0, Arc::new(Semaphore::new(0)))),
             inflight_bytes: Mutex::new((0, Arc::new(std::sync::atomic::AtomicUsize::new(0)))),
             policy_cache: Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             test_settings: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
@@ -948,6 +967,7 @@ impl DataSources {
 
     /// Closes and drops every cached connection (see `AppState::close`).
     pub async fn close(&self) {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         let cached: Vec<Arc<Connection>> = self
             .connections
             .lock()
@@ -1089,13 +1109,22 @@ impl DataSources {
                 }
             }
         };
-        cell.get_or_try_init(|| async {
-            #[cfg(test)]
-            self.connection_builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.fresh_connection(state, ds, policy).await
-        })
-        .await
-        .cloned()
+        let conn = cell
+            .get_or_try_init(|| async {
+                #[cfg(test)]
+                self.connection_builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.fresh_connection(state, ds, policy).await
+            })
+            .await
+            .cloned()?;
+        // A build that finished after the server began to stop is closed at once: `close` has
+        // already gone through the cache. One whose entry was forgotten or replaced meanwhile is
+        // used for this query only; dropping it closes its files (`Connection`'s `Drop`).
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            conn.close().await;
+            return Err(SourceError::failed("server.shutting_down", "the server is shutting down"));
+        }
+        Ok(conn)
     }
 
     #[cfg(test)]

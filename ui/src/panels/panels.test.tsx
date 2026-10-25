@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Field, Frame } from "../api/generated/shapes";
 import { Dialog } from "../features/dashboards/ui/Dialog";
-import { formatValue } from "./frame";
+import { setTimeZone } from "../lib/timeSettings";
+import { formatValue, timeField, valueFields } from "./frame";
 import { getPanel, panelsForShapes, suggestPanel } from "./registry";
 import { reduceField } from "./stat";
 import { sortedRows } from "./table";
@@ -133,6 +134,45 @@ describe("table panel", () => {
     const rendered = within(table).getAllByRole("row").length;
     expect(rendered).toBeGreaterThan(5);
     expect(rendered).toBeLessThan(60);
+  });
+});
+
+describe("decimal and date fields", () => {
+  it("shows decimals with every digit and days without moving them to another day", () => {
+    expect(formatValue("decimal", "12345678901234567.8901", "en")).toBe(
+      "12,345,678,901,234,567.8901",
+    );
+    expect(formatValue("decimal", "-1234.50", "de")).toBe("-1.234,50");
+    expect(formatValue("decimal", "0.10", "en")).toBe("0.10");
+    // A long scale's zeros are left out; up to six fraction digits they stay.
+    expect(formatValue("decimal", "1.2500000000", "en")).toBe("1.25");
+    expect(formatValue("decimal", "3.0000000000", "de")).toBe("3");
+    expect(formatValue("decimal", "12.500000", "en")).toBe("12.500000");
+    // Midnight UTC of 2026-10-25 is the evening before in New York; the day stays the 25th.
+    const day = Date.UTC(2026, 9, 25);
+    expect(formatValue("date", day, "en", "America/New_York")).toBe("10/25/26");
+    expect(formatValue("date", day, "de", "Pacific/Honolulu")).toBe("25.10.26");
+  });
+
+  it("draws days at their midnight on the wall clock and sorts and reduces decimals by value", () => {
+    setTimeZone("America/New_York");
+    const day = Date.UTC(2026, 9, 25);
+    const frame: Frame = {
+      fields: [
+        { name: "tag", type: "date", values: [day, null] },
+        { name: "betrag", type: "decimal", values: ["9.5", "10.25"] },
+      ],
+    };
+    const axis = timeField(frame);
+    expect(axis?.type).toBe("time");
+    // 2026-10-25 00:00 in New York (EDT, UTC-4).
+    expect(axis?.values).toEqual([Date.UTC(2026, 9, 25, 4), null]);
+    expect(timeField(frame)).toBe(axis);
+    expect(valueFields(frame).map((f) => f.name)).toEqual(["betrag"]);
+    expect(Array.from(sortedRows(frame, { column: 1, direction: "descending" }))).toEqual([1, 0]);
+    const betrag = frame.fields[1] as Field;
+    expect(reduceField(betrag, "max")).toEqual({ value: "10.25", type: "decimal" });
+    expect(reduceField(betrag, "sum")).toEqual({ value: 19.75, type: "number" });
   });
 });
 

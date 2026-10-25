@@ -7,7 +7,7 @@ import {
   fieldOptionsFor,
   toneClass,
 } from "../fieldConfig/fieldConfig";
-import { distinctSeriesNames, frameName, timeField, toNumber } from "../frame";
+import { distinctSeriesNames, frameName, isTimeType, timeField, toNumber } from "../frame";
 
 /** Time points a state panel works with at most; longer results are thinned to this. */
 export const MAX_STATE_POINTS = 500;
@@ -101,7 +101,7 @@ export function stateData(
   hold = true,
 ): StateData | null {
   const sources = frames
-    .filter((f) => timeField(f) !== undefined && f.fields.some((field) => field.type !== "time"))
+    .filter((f) => timeField(f) !== undefined && f.fields.some((field) => !isTimeType(field.type)))
     .map((frame) => ({ frame, points: timeOrder(frame) }));
   if (sources.length === 0) {
     return null;
@@ -133,7 +133,7 @@ export function stateData(
       at.push(last === undefined || (!hold && last.time !== time) ? null : last.index);
     }
     return frame.fields
-      .filter((field) => field.type !== "time")
+      .filter((field) => !isTimeType(field.type))
       .map((field) => {
         const options = fieldOptionsFor(field, config);
         const values = at.map((index) => {

@@ -352,10 +352,12 @@ impl Decoder {
     fn field_type(self) -> FieldType {
         match self {
             Self::Bool => FieldType::Bool,
-            Self::Int | Self::Unsigned | Self::Year | Self::Float | Self::Double | Self::Decimal => FieldType::Number,
+            Self::Int | Self::Unsigned | Self::Year | Self::Float | Self::Double => FieldType::Number,
+            Self::Decimal => FieldType::Decimal,
             Self::BigInt | Self::UnsignedBigInt => FieldType::Int64,
             Self::Text | Self::Binary | Self::Time | Self::Unsupported => FieldType::String,
-            Self::DateTime | Self::Date => FieldType::Time,
+            Self::DateTime => FieldType::Time,
+            Self::Date => FieldType::Date,
             Self::Json => FieldType::Json,
         }
     }
@@ -374,10 +376,8 @@ impl Decoder {
             Self::Year => row.try_get_unchecked::<i64, _>(i).map(|n| json!(n)),
             Self::Float => row.try_get::<f32, _>(i).map(|f| finite(f64::from(f))),
             Self::Double => row.try_get::<f64, _>(i).map(finite),
-            // DECIMAL travels as text in both protocols; the float is what a chart needs.
-            Self::Decimal => {
-                row.try_get_unchecked::<String, _>(i).map(|s| s.parse::<f64>().map_or(Value::Null, finite))
-            }
+            // DECIMAL travels as text in both protocols, every digit kept ("12.50").
+            Self::Decimal => row.try_get_unchecked::<String, _>(i).map(|s| decimal_text(&s)),
             Self::Text => row.try_get_unchecked::<String, _>(i).map(|s| json!(s)),
             Self::Binary => {
                 let text = row.try_get_unchecked::<Vec<u8>, _>(i).ok().and_then(|b| String::from_utf8(b).ok());
@@ -400,6 +400,16 @@ impl Decoder {
 
 fn finite(f: f64) -> Value {
     serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
+}
+
+/// A DECIMAL as the server wrote it, when it is a plain decimal (sign, digits, point).
+fn decimal_text(s: &str) -> Value {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    let plain = !digits.is_empty()
+        && digits.bytes().filter(|b| *b == b'.').count() <= 1
+        && digits.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        && digits.bytes().any(|b| b.is_ascii_digit());
+    if plain { Value::String(s.to_string()) } else { Value::Null }
 }
 
 #[cfg(test)]

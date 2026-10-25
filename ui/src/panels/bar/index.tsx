@@ -121,7 +121,8 @@ export function barData(
     return null;
   }
   const label: Field | undefined =
-    frame.fields.find((f) => f.type === "string") ?? frame.fields.find((f) => f.type === "time");
+    frame.fields.find((f) => f.type === "string") ??
+    frame.fields.find((f) => f.type === "time" || f.type === "date");
   const count = Math.min(rowCount(frame), MAX_BARS);
   const categories = Array.from({ length: count }, (_, row) =>
     label === undefined

@@ -416,13 +416,27 @@ limit). SQL and Prometheus results are frames, MongoDB results are documents (se
 [MongoDB](#mongodb-a-pipeline-or-find)). Frames:
 
 - Field types: `time` (Unix ms), `number`, `int64` (decimal strings, e.g. `COUNT(*)` and `BIGINT`),
-  `string`, `bool`, `json`; missing values are `null`. `NUMERIC`/`DECIMAL` are `number`.
+  `decimal` (exact decimal strings with the column's scale, such as `"12.50"`: `NUMERIC`/`DECIMAL`
+  in PostgreSQL, MySQL/MariaDB and SQL Server, PostgreSQL's `MONEY` with the fraction digits of
+  the server's `lc_monetary`, asked per query),
+  `date` (a day without time or zone, `DATE`, as the Unix ms of its midnight UTC; the UI shows it
+  as that day in every zone and draws it at that day's midnight on the viewer's clock), `string`,
+  `bool`, `json`; missing values are `null`. A decimal that is not a number (PostgreSQL's `NaN`,
+  infinities) is `null`. Exact means: tables, stats showing the last, smallest or largest value,
+  CSV and JSON exports and Excel cells (up to 15 significant digits; longer decimals are text
+  cells) keep every digit. Sums, means and other calculations, charts and calculated fields work
+  with the nearest floating point number. The UI leaves out the zeros at the end of a decimal
+  with more than six fraction digits.
 - SQLite types a column by its declared type, by SQLite's affinity rules: `INTEGER` (and every
   type containing `INT`) is `int64`; `REAL`, `FLOAT`, `DOUBLE` are `number`; `TEXT`, `CHAR`,
   `VARCHAR`, `CLOB` are `string`; `BOOLEAN` is `bool`; `DATE`, `TIME`, `DATETIME`, `TIMESTAMP` are
   `time`. So a table without rows still answers its types. Columns without a declared type
   (expressions such as `r * 2`), with `NUMERIC`/`DECIMAL` (which hold integers and reals alike) or
   with an unknown type take the type of their first value; without any value they are `string`.
+  Such a column that started with whole numbers becomes `number` at its first value with a
+  fraction (the values before it are converted), so later decimals are never lost; whole numbers
+  beyond 2^53 in it are rounded to the nearest number, which one `frame.value_rounded` notice
+  per column counts (`count`).
   A value is converted to the column's type where nothing is lost: an integer in a `number`
   column, a whole-number REAL in an `int64` column (its integer). Any other value that does not
   fit, such as `2.5` in an `int64` column, is `null`; one `frame.value_mismatch` notice per
@@ -437,8 +451,9 @@ limit). SQL and Prometheus results are frames, MongoDB results are documents (se
   types answers with its new types at once.
 - `meta.executedQuery` is the statement as sent, with placeholders instead of values.
 - Hitting the row limit (`datasources.max_rows`, the source's `maxRows`, the query's `limit`) or the
-  response size limit (`datasources.max_response_bytes`, shared by all queries of the request)
-  cuts the frame: `meta.rowsTruncated` is true and `meta.notices` says why. Columns of types the
+  response memory limit (`datasources.max_response_bytes`, default 128 MiB, shared by all queries
+  of the request and counted as the results hold them in memory: 32 bytes per value plus string
+  text and document entries) cuts the frame: `meta.rowsTruncated` is true and `meta.notices` says why. Columns of types the
   server cannot show are `null` with a notice.
 - A notice is `{ "severity": "info" | "warning", "code", "params", "text" }`: `code` is a reason
   from [Reasons](#reasons) (`frame.*`, `prometheus.warning`), `text` the English fallback.
@@ -467,7 +482,7 @@ identifier, and only from the source's schema:
 
 | Write | Becomes |
 |---|---|
-| `$__timeFilter(col)` | `(col BETWEEN <from> AND <to>)` |
+| `$__timeFilter(col)` | `(col BETWEEN <from> AND <to>)`; SQLite compares times, not text: Unix seconds or milliseconds (as numbers, the rule above) against the range in ms, text through `julianday`, so ISO times with `T` or a space, with or without a zone, match exactly at the edges. Plain ranges in front of that test (seconds, milliseconds, text from the day before to the day after) let SQLite use an index on the column |
 | `$__timeFrom`, `$__timeTo` | the range's ends as timestamps (SQLite: text `YYYY-MM-DD HH:MM:SS.SSS`, UTC) |
 | `$__interval` | the interval (PostgreSQL: an `interval`; others: text such as `30s`) |
 | `$__interval_ms` | the interval in milliseconds (integer) |
@@ -485,7 +500,9 @@ series), an instant query at `timeRange.to` with `"instant": true`. The frame ha
 one `number` field per series, named like `up{job="api"}` with the series' `labels`. Warnings from
 the server become notices.
 
-Macros: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at least `1m`),
+Macros: `$__interval`, `$__interval_ms`, `$__rate_interval` (four intervals, at least `1m`); the
+interval is the step actually asked for (the panel's interval raised to `minStepMs` and to the point
+limit), so `[$__interval]` covers one step;
 `$__range`, `$__timeFrom`, `$__timeTo` (Unix seconds). Variables are allowed only inside quoted
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
@@ -1046,13 +1063,19 @@ browser-side export would need the data in the browser first and could not be re
 - `POST /orgs/{orgId}/export`, body `ExportRequest`: the fields of `QueryRequest` (`queries`,
   `timeRange`, `intervalMs`, `maxDataPoints`, `variables`), plus `steps` (default none),
   `format`, `language`, `frame` (the `refId` to export after the steps; the first frame when
-  absent) and `title` (the file name's base). Every data source needs `datasources:query` (role
-  or grant); one the caller may not query refuses the whole export (`403` or `404`).
+  absent), `title` (the file name's base), `timeZone` and `weekStart` (below). Every data source
+  needs `datasources:query` (role or grant); one the caller may not query refuses the whole
+  export (`403` or `404`).
 - `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, body
   `PanelExportRequest` (`timeRange`, `intervalMs`, `maxDataPoints`, `variables`, `format`,
-  `language`, `frame`): the panel's stored queries and stored steps, with the rules of the panel
-  query route (`dashboards:read` on the dashboard, variables checked against it). Named after the
-  panel's title, or the dashboard's.
+  `language`, `frame`, `timeZone`, `weekStart`): the panel's stored queries and stored steps, with
+  the rules of the panel query route (`dashboards:read` on the dashboard, variables checked
+  against it). Named after the panel's title, or the dashboard's.
+- `timeZone` (an IANA name such as `Europe/Berlin`) and `weekStart` (`monday`, `sunday` or
+  `saturday`) are the calendar calculated fields read times in, so the file shows what the panel
+  shows: the UI sends the dashboard's zone and week start, else the viewer's. Absent: UTC and
+  Monday. A zone the server does not know is refused (`export.time_zone_unknown`); the UI then
+  asks again without it, so the file is made in UTC.
 
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
@@ -1327,7 +1350,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 
 The browser shows these at the step; the export routes answer them as `422 validation` with
 `field: steps` (docs/api/settings-dashboards.md, "Analysis steps"). `type` params are field types (`time`, `number`, `int64`,
-`string`, `bool`, `json`), `left`, `right`, `expected`, `found`, `first` and `second` in
+`decimal`, `date`, `string`, `bool`, `json`), `left`, `right`, `expected`, `found`, `first` and `second` in
 `expression.*` are expression types (`number`, `text`, `bool`, `time`, `null`).
 
 | Reason | Params | When |
@@ -1380,6 +1403,8 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
 | `export.too_many_cells` | `max` | an Excel file takes at most `max` cells (rows times fields); refused before it is built |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
+| `export.time_zone_unknown` | | `timeZone` is not a known time zone (`field: timeZone`) |
+| `export.week_start_unknown` | | `weekStart` is not `monday`, `sunday` or `saturday` (`field: weekStart`) |
 
 ### Dashboards (`422 validation`, `field: model`)
 
@@ -1458,6 +1483,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
 | `frame.type_unsupported` | `column`, `type` | notice: a column type the server cannot show |
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
+| `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |
