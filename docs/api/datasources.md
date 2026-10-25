@@ -2,7 +2,7 @@
 
 All paths are under `/api`. Conventions (errors, ids, times, `Page<T>`) are in
 `docs/ARCHITECTURE.md`. `{orgId}` and `{datasourceId}` are canonical UUIDs; any other value, an id
-of another organization, or an id in the trash (except for `restore`) answers `404 not_found`.
+of another organization, or an id in the trash (except for `restore` and `purge`) answers `404 not_found`.
 Without a session every route answers `401 unauthenticated`; a non-member of `{orgId}` gets `404`.
 
 | Method | Path | Access |
@@ -14,6 +14,8 @@ Without a session every route answers `401 unauthenticated`; a non-member of `{o
 | PATCH | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
 | DELETE | `/orgs/{orgId}/datasources/{datasourceId}` | member; `datasources:write` on the source |
 | POST | `/orgs/{orgId}/datasources/{datasourceId}/restore` | member; `datasources:write` on the source |
+| DELETE | `/orgs/{orgId}/datasources/{datasourceId}/purge` | member; `datasources:write` on the source |
+| POST | `/orgs/{orgId}/datasources/test` | `datasources:write` (org-wide); with `datasourceId`, also on that source |
 | POST | `/orgs/{orgId}/datasources/{datasourceId}/health` | member; `datasources:query` on the source |
 | GET | `/orgs/{orgId}/datasources/{datasourceId}/schema` | member; `datasources:query` on the source |
 | POST | `/orgs/{orgId}/query` | member; `datasources:query` on each query's source |
@@ -220,7 +222,20 @@ never sent to a new host without being entered again.
 
 `DELETE` moves the data source to the trash and answers `204`. `?expectedUpdatedAt=` works as
 in `PATCH`: a source changed since answers `409 version_conflict` with it as `current`. `POST .../restore` brings it back
-(`404` when it is not in the trash). Purging is not available yet.
+(`404` when it is not in the trash).
+
+`DELETE .../purge` deletes a source in the trash for good and answers `204`; it needs what
+deleting needs (`datasources:write` on the source). It removes the stored secrets, the grants on
+the source and the Explore history of its queries, and writes the audit event
+`datasource.purged` (name and kind, nothing else). It refuses with `409 conflict`:
+
+- `datasource.not_in_trash`: the source is live; delete it first.
+- `datasource.in_use` (`dashboards`, `libraryPanels`): the current version of that many dashboards
+  (the trash included, they can come back) or library panels still refers to the source. Take it
+  out of them first; nothing is changed. The answer counts and does not name them, since the
+  caller may not see every dashboard.
+
+After a purge the source is gone: `restore` and a second `purge` answer `404`.
 
 ### Errors when saving
 
@@ -318,6 +333,35 @@ Body: none or `{}`. Always `200`, also when the source fails:
 - `code` (only when `ok` is false) is `datasource_error`, `datasource_target_blocked` or
   `query_timeout`, with the failure's reason.
 - Messages and params never contain secrets.
+
+## Testing before saving: `POST /orgs/{orgId}/datasources/test`
+
+Tests what the add or edit form holds without storing anything. It needs `datasources:write`
+(org-wide), and with `datasourceId` also on that source. Body:
+
+```json
+{ "kind": "postgres", "datasourceId": "...", "settings": { "host": "db.internal", "database": "shop" },
+  "secrets": { "password": "..." } }
+```
+
+- `kind` and `settings` are validated like `POST` does. `datasourceId` (an edit) names the stored
+  source: it must be of that `kind`, `settings` may then be left out to test the stored ones, and
+  `secrets` follows `PATCH` (a field left out keeps the stored secret, `null` removes it, a string
+  sets it). Without `datasourceId` a `null` secret is simply not set.
+- The answer is the one of "Test connection" above (`200`, `ok` true or false), from the same
+  probe on a connection that is used once and not cached. Nothing is stored, no audit event is
+  written, and the request body is never logged. Messages and params are scrubbed of the secrets,
+  also of what the upstream repeats of them.
+- The target rules are the ones of saving: a refused target (private network rules, Kalzit's own
+  database and data directory, SQLite and file folders, metadata addresses) answers
+  `422 datasource_target_blocked` with `field`, the same as `POST` would, and nothing is
+  contacted. An edit that moves a target with stored secrets must send them again, and needs the
+  right to move targets (`secrets.resend_on_target_change`, `datasource.target_change_forbidden`), so
+  a test cannot send a stored password to a new host.
+- Limited to 20 tests per minute per user and per client address (`429 rate_limited`, reason
+  `datasource.test_rate_limited`), since it can reach any address the rules allow. Tests of stored
+  sources (`.../health`) are not counted.
+- `datasource.kind_changed` (`422`): `datasourceId` is of another kind than `kind`.
 
 ## Schema: `GET /orgs/{orgId}/datasources/{datasourceId}/schema`
 
@@ -1139,6 +1183,10 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `datasource.kind_unavailable` | `kind` | the stored source's kind is not available on this server |
 | `datasource.name_taken` | | another data source in use has this name (`409 conflict`) |
 | `datasource.target_change_forbidden` | `field` | `403 forbidden`: changing a target field needs the admin level |
+| `datasource.not_in_trash` | | `409 conflict`: only a source in the trash can be purged |
+| `datasource.in_use` | `dashboards`, `libraryPanels` | `409 conflict`: dashboards or library panels still use the source, so it is not purged |
+| `datasource.test_rate_limited` | `max` | `429 rate_limited`: more than `max` tests of unsaved settings per minute |
+| `datasource.kind_changed` | | `422 validation` on `kind`: a stored source's kind cannot change |
 | `datasource.expected_version_missing` | | `422 validation` on `expectedUpdatedAt`: a patch with `settings` or `secrets` must say which version it changes |
 
 ### Settings and secrets (`422 validation`, `field` set)
@@ -1549,6 +1597,5 @@ history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only
 
 ## Not here yet
 
-- Purging data sources from the trash, testing settings before saving.
 - Continuing document results with `cursor`; Elasticsearch date math index names; HTTP JSON
   methods other than GET.

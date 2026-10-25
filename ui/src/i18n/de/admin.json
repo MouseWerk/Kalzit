@@ -406,6 +406,7 @@
   "admin.auditAction.datasource.updated": "Datenquelle geändert",
   "admin.auditAction.datasource.deleted": "Datenquelle in den Papierkorb verschoben",
   "admin.auditAction.datasource.restored": "Datenquelle wiederhergestellt",
+  "admin.auditAction.datasource.purged": "Datenquelle endgültig gelöscht",
   "admin.auditAction.annotation.created": "Anmerkung hinzugefügt",
   "admin.auditAction.annotation.updated": "Anmerkung geändert",
   "admin.auditAction.annotation.deleted": "Anmerkung gelöscht",

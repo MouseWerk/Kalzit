@@ -25,6 +25,10 @@ type Server = ReturnType<typeof installFakeServer>;
 const lastCall = (server: Server, method: string, part: string) =>
   server.calls.filter((call) => call.method === method && call.path.includes(part)).at(-1);
 
+/** The requests that added a data source (not the tests of unsaved settings). */
+const adds = (server: Server) =>
+  server.calls.filter((call) => call.method === "POST" && call.path.endsWith("/datasources"));
+
 /** Opens a closed section of the form by its title (its name also holds the summary). */
 async function openSection(user: ReturnType<typeof open>["user"], title: string) {
   await user.click(screen.getByRole("button", { name: new RegExp(`^${title}`) }));
@@ -542,7 +546,7 @@ describe("adding a data source", () => {
     expect(lastCall(server, "POST", "/datasources")).toBeUndefined();
   });
 
-  it("saves and tests a new source and shows the result on its page", async () => {
+  it("tests what is entered before anything is saved", async () => {
     const { server, user, location } = open("/data-sources/new?kind=sqlite");
     await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Local");
     await fill(
@@ -550,27 +554,55 @@ describe("adding a data source", () => {
       screen.getByRole("textbox", { name: "Absolute path of the file" }),
       "/data/a.db",
     );
-    await user.click(screen.getByRole("button", { name: "Save and test" }));
-    await waitFor(() => expect(location().pathname).toBe("/data-sources/ds-new-1"));
-    expect(lastCall(server, "POST", "ds-new-1/health")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
     expect(await screen.findByText(/Connected in \d+ ms/)).toBeTruthy();
+    expect(server.areas.datasources.tests).toEqual([
+      { kind: "sqlite", settings: { path: "/data/a.db" }, secrets: {} },
+    ]);
+    // Nothing was stored and the form is still there.
+    expect(adds(server)).toEqual([]);
+    expect(server.areas.datasources.datasources.some((d) => d.name === "Local")).toBe(false);
+    expect(location().pathname).toBe("/data-sources/new");
+    // Saving is its own step, without another test.
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
+    await waitFor(() => expect(location().pathname).toBe("/data-sources/ds-new-1"));
+    expect(lastCall(server, "POST", "/health")).toBeUndefined();
   });
 
-  it("says when a new source was saved but its test could not run", async () => {
+  it("shows a failed test and the secrets it sent only once to the test route", async () => {
+    const { server, user } = open("/data-sources/new?kind=postgres");
+    server.areas.datasources.testHealth = {
+      ok: false,
+      message: "password authentication failed",
+      latencyMs: 4,
+    };
+    await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Shop");
+    await fill(user, screen.getByRole("textbox", { name: "Host" }), "db.intern");
+    await fill(user, screen.getByRole("textbox", { name: "Database" }), "shop");
+    await fill(user, screen.getByRole("textbox", { name: "User name" }), "leser");
+    await fill(user, screen.getByLabelText("Password (optional)"), "Geheim-1");
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText("The connection failed")).toBeTruthy();
+    expect(server.areas.datasources.tests[0]).toMatchObject({
+      kind: "postgres",
+      secrets: { password: "Geheim-1" },
+    });
+    expect(adds(server)).toEqual([]);
+  });
+
+  it("says when the test could not run", async () => {
     const { server, user, location } = open("/data-sources/new?kind=sqlite");
-    server.failNext("/api/orgs/o1/datasources/ds-new-1/health", 403, "forbidden", "POST");
+    server.failNext("/api/orgs/o1/datasources/test", 429, "rate_limited", "POST");
     await fill(user, await screen.findByRole("textbox", { name: "Name" }), "Local");
     await fill(
       user,
       screen.getByRole("textbox", { name: "Absolute path of the file" }),
       "/data/a.db",
     );
-    await user.click(screen.getByRole("button", { name: "Save and test" }));
-    await waitFor(() => expect(location().pathname).toBe("/data-sources/ds-new-1"));
-    expect(
-      await screen.findByText("The data source was added, but the test could not run."),
-    ).toBeTruthy();
-    expect(screen.queryByText("Not tested yet")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect((await screen.findAllByRole("status")).some((el) => el.textContent !== "")).toBe(true);
+    expect(location().pathname).toBe("/data-sources/new");
+    expect(adds(server)).toEqual([]);
   });
 
   it("stays on the form when saving fails", async () => {
@@ -582,7 +614,7 @@ describe("adding a data source", () => {
       screen.getByRole("textbox", { name: "Absolute path of the file" }),
       "/data/a.db",
     );
-    await user.click(screen.getByRole("button", { name: "Save and test" }));
+    await user.click(screen.getByRole("button", { name: "Add data source" }));
     expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
     expect(location().pathname).toBe("/data-sources/new");
     expect(lastCall(server, "POST", "/health")).toBeUndefined();
@@ -868,7 +900,7 @@ describe("editing a data source", () => {
     expect(screen.getByText(/The connection target changed/)).toBeTruthy();
   });
 
-  it("tests the connection, saving unsaved changes first", async () => {
+  it("tests the connection of the saved source and, from the form, unsaved changes", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
     await user.click(await screen.findByRole("button", { name: "Test" }));
     expect(await screen.findByText("Connected in 12 ms")).toBeTruthy();
@@ -884,30 +916,34 @@ describe("editing a data source", () => {
     // The row limit is no target, so no secret has to be entered again.
     await openSection(user, "Limits");
     await user.type(screen.getByRole("textbox", { name: "Row limit (optional)" }), "1000");
-    await user.click(screen.getByRole("button", { name: "Save and test" }));
+    server.areas.datasources.testHealth = server.areas.datasources.health[PG_ID] as never;
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
     expect(await screen.findByText("The connection failed")).toBeTruthy();
     expect(screen.getByText(/does not allow connections to this address/)).toBeTruthy();
-    expect(lastCall(server, "PATCH", PG_ID)?.body).toMatchObject({
+    expect(screen.getByText(/Tested with the settings you entered/)).toBeTruthy();
+    // The changes were tested, not saved; unchanged secrets stay on the server.
+    expect(server.areas.datasources.tests.at(-1)).toMatchObject({
+      kind: "postgres",
+      datasourceId: PG_ID,
       settings: { maxRows: 1000, host: "db.internal" },
       secrets: {},
     });
+    expect(lastCall(server, "PATCH", PG_ID)).toBeUndefined();
+    expect(server.areas.datasources.datasources.find((d) => d.id === PG_ID)?.settings.maxRows).toBe(
+      undefined,
+    );
   });
 
-  it("still tests after saving over a change made in the meantime with Save and test", async () => {
+  it("tests the stored settings from the form when nothing was changed", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
-    await screen.findByRole("textbox", { name: "Name" });
-    await openSection(user, "Limits");
-    await user.type(await screen.findByRole("textbox", { name: "Row limit (optional)" }), "1000");
-    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
-    if (stored === undefined) throw new Error("no source");
-    stored.updatedAt += 1;
-    const tests = () =>
-      server.calls.filter((c) => c.method === "POST" && c.path.endsWith(`/${PG_ID}/health`)).length;
-    await user.click(screen.getByRole("button", { name: "Save and test" }));
-    await user.click(await screen.findByRole("button", { name: "Save mine over it" }));
-    expect(await screen.findByText("Connected in 12 ms")).toBeTruthy();
-    expect(tests()).toBe(1);
-    expect(stored.settings.maxRows).toBe(1000);
+    await user.click(await screen.findByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText("Connected in 7 ms")).toBeTruthy();
+    expect(server.areas.datasources.tests.at(-1)).toEqual({
+      kind: "postgres",
+      datasourceId: PG_ID,
+      secrets: {},
+    });
+    expect(screen.queryByText(/Tested with the settings you entered/)).toBeNull();
   });
 
   it("moves a data source to the trash, lists it there and restores it", async () => {
@@ -934,6 +970,38 @@ describe("editing a data source", () => {
     await user.click(await screen.findByRole("button", { name: "Restore “Sales DB”" }));
     await waitFor(() => expect(server.areas.datasources.datasources[0]?.deletedAt).toBeUndefined());
     expect(await screen.findByText("The trash is empty")).toBeTruthy();
+  });
+
+  it("deletes a data source in the trash for good after asking", async () => {
+    const { server, user } = open("/data-sources");
+    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (stored === undefined) throw new Error("no source");
+    stored.deletedAt = Date.now();
+    await user.click(await screen.findByRole("link", { name: "Trash" }));
+    await user.click(await screen.findByRole("button", { name: "Delete “Sales DB” for good" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete for good?" });
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(lastCall(server, "DELETE", "/purge")).toBeUndefined();
+    await user.click(within(dialog).getByRole("button", { name: "Delete for good" }));
+    await waitFor(() =>
+      expect(server.areas.datasources.datasources.some((d) => d.id === PG_ID)).toBe(false),
+    );
+    expect(await screen.findByText("The trash is empty")).toBeTruthy();
+  });
+
+  it("keeps a trashed source that dashboards still use and says why", async () => {
+    const { server, user } = open("/data-sources");
+    const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
+    if (stored === undefined) throw new Error("no source");
+    stored.deletedAt = Date.now();
+    server.areas.datasources.purgeBlocked[PG_ID] = 2;
+    await user.click(await screen.findByRole("link", { name: "Trash" }));
+    await user.click(await screen.findByRole("button", { name: "Delete “Sales DB” for good" }));
+    await user.click(screen.getByRole("button", { name: "Delete for good" }));
+    expect(await screen.findByText(/2 dashboards and 0 library panels still use/)).toBeTruthy();
+    // The dialog stays open, the source stays in the trash.
+    expect(screen.getByRole("dialog", { name: "Delete for good?" })).toBeTruthy();
+    expect(server.areas.datasources.datasources.some((d) => d.id === PG_ID)).toBe(true);
   });
 });
 
