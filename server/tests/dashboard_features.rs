@@ -261,6 +261,7 @@ on_both_databases! {
     time_options_are_stored_and_checked,
     colour_options_are_stored_and_checked,
     pins_keep_their_order_limit_and_access,
+    panel_descriptions_and_transparency_are_stored_and_checked,
 }
 
 fn model(title: &str) -> Value {
@@ -494,6 +495,28 @@ async fn colour_options_are_stored_and_checked(t: TestApp) {
         let detail = refused.body["error"]["params"]["detail"].as_str().unwrap_or_default();
         assert!(detail.contains(expect), "{path}: {}", refused.body);
     }
+}
+
+/// The panel inspector's own panel fields: a description and a transparent card. They come back as
+/// stored, stay out of the model when unset, and an oversized description is refused by place.
+async fn panel_descriptions_and_transparency_are_stored_and_checked(t: TestApp) {
+    let mut described = model("Beschrieben");
+    described["panels"][0]["description"] = json!("Netto-Umsatz pro Tag.\nVerglichen mit dem Vorjahr.");
+    described["panels"][0]["transparent"] = json!(true);
+    let id = t.dashboard(None, described.clone(), &t.owner).await;
+    let stored = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
+    assert_eq!(stored.status, StatusCode::OK, "{}", stored.body);
+    let panel = &stored.body["model"]["panels"][0];
+    assert_eq!(panel["description"], described["panels"][0]["description"]);
+    assert_eq!(panel["transparent"], true);
+    let plain_id = t.dashboard(None, model("Schlicht"), &t.owner).await;
+    let plain_panel = t.get(&format!("~/dashboards/{plain_id}"), &t.owner).await.body["model"]["panels"][0].clone();
+    assert!(plain_panel.get("description").is_none() && plain_panel.get("transparent").is_none(), "{plain_panel}");
+    let mut long = model("Zu lang");
+    long["panels"][0]["description"] = json!("x".repeat(1001));
+    let refused = t.put(&format!("~/dashboards/{id}"), json!({ "model": long, "version": 1 }), &t.owner).await;
+    assert_eq!((refused.code(), refused.field()), ("validation", "model"), "{}", refused.body);
+    assert!(refused.message().contains("panels[0].description"), "{}", refused.body);
 }
 
 /// Dashboards pinned to the sidebar: per user and organization, in the user's order, at most ten
