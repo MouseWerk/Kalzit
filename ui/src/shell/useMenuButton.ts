@@ -98,9 +98,8 @@ export function useMenuButton(options: { onOpen?: () => void } = {}) {
         next = items.at(-1);
         break;
       case "Tab":
-        // The menu may be drawn at the end of the page: Tab leaves it back at its button.
-        closeMenu(true);
-        break;
+        closeMenu(false);
+        return;
       default:
         return;
     }

@@ -2,9 +2,9 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { useFloatingMenu } from "../../shell/useFloatingMenu";
 import { useMenuButton } from "../../shell/useMenuButton";
 import type { VariableOption } from "./api";
-import { useMenuPlacement } from "./menuPlacement";
 import "../../components/iconButton.css";
 import "../../shell/shellUx.css";
 import "./dashboardTools.css";
@@ -65,7 +65,7 @@ export function VariableMultiSelect({
 }) {
   const { t } = useI18n();
   const menu = useMenuButton();
-  const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
+  const { open, anchorRef, buttonRef, menuRef, menuId } = menu;
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -94,7 +94,8 @@ export function VariableMultiSelect({
     onChange(next.sort((a, b) => order.indexOf(a) - order.indexOf(b)));
   }
 
-  useMenuPlacement(open, buttonRef, menuRef, () => closeMenu(false), [shown.length, query]);
+  // Placed next to the button, closed on resize or scroll; Tab leaves it back at the button.
+  const floatingKeyDown = useFloatingMenu(menu);
 
   // Opening a searchable menu puts the focus in the search; Down leads on to the entries.
   useEffect(() => {
@@ -120,7 +121,7 @@ export function VariableMultiSelect({
         return;
       }
     }
-    menu.onMenuKeyDown(event);
+    floatingKeyDown(event);
   }
 
   return (

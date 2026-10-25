@@ -4,10 +4,10 @@ import type { MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { useFloatingMenu } from "../../shell/useFloatingMenu";
 import { useMenuButton } from "../../shell/useMenuButton";
 import { DASHBOARDS_KEY, fetchDashboards } from "./api";
 import { linkHref } from "./links";
-import { useMenuPlacement } from "./menuPlacement";
 import type { DashboardLinkModel, VariableValues } from "./model";
 import "../../shell/shellUx.css";
 import "./dashboardTools.css";
@@ -146,7 +146,7 @@ function LinksMenu({
     }
   }
 
-  useMenuPlacement(open, buttonRef, menuRef, () => closeMenu(false), []);
+  const onMenuKeyDown = useFloatingMenu(menu);
 
   // The tag lists are read before the menu opens, so it opens with its entries.
   const tagLists = useQueries({
@@ -188,7 +188,7 @@ function LinksMenu({
                 role="menu"
                 aria-label={t("dashboardTools.links.title")}
                 className="menu variables__menu"
-                onKeyDown={menu.onMenuKeyDown}
+                onKeyDown={onMenuKeyDown}
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 {links.map((link, index) => {

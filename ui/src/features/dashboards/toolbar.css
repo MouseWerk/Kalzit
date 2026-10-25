@@ -758,9 +758,8 @@
     flex-direction: column;
     gap: var(--space-1);
     width: max-content;
-    min-width: max(var(--menu-min, 0px), var(--size-field));
+    min-width: var(--size-field);
     max-width: min(var(--size-menu-max), 100vw - 2 * var(--space-4));
-    max-height: min(var(--menu-max-height, 100dvh), calc(100dvh - var(--space-16)));
     margin-block-start: var(--space-1);
     overflow-y: auto;
   }
