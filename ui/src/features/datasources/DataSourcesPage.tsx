@@ -1,4 +1,5 @@
 import {
+  type QueryObserverResult,
   useInfiniteQuery,
   useMutation,
   useQueries,
@@ -6,7 +7,15 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { type MouseEvent, type ReactNode, useId, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -22,6 +31,7 @@ import {
   DATASOURCES_KEY,
   type DatasourceSummary,
   fetchDatasourcePage,
+  type Health,
   kindsQuery,
   restoreDatasource,
   sourceAccess,
@@ -31,7 +41,9 @@ import { KindLabel, KindMark } from "./kindMarks";
 import { StatusLabel } from "./StatusLabel";
 import {
   filterSources,
+  forgetHealth,
   type HealthEntry,
+  healthEntry,
   healthQuery,
   isFiltered,
   KIND_GROUPS,
@@ -40,12 +52,14 @@ import {
   type ListFilter,
   median,
   NO_FILTER,
+  needsAllPages,
   runHealthCheck,
   runHealthChecks,
   SORTS,
   type SourceStatus,
   STATUS_FILTERS,
   statusOf,
+  testableIds,
 } from "./sourceStatus";
 import "./datasources.css";
 
@@ -109,7 +123,8 @@ function DataSourceList({
   const kinds = useQuery(kindsQuery(orgId));
   const restore = useMutation({
     mutationFn: (id: string) => restoreDatasource(orgId, id),
-    onSuccess: async () => {
+    onSuccess: async (_, id) => {
+      forgetHealth(queryClient, orgId, id);
       await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
     },
   });
@@ -204,6 +219,12 @@ function DataSourceList({
         added={(source) => dateFormat.format(source.createdAt)}
         more={more}
         partial={list.hasNextPage}
+        loadingMore={list.isFetchingNextPage}
+        onNeedAll={() => {
+          if (list.hasNextPage && !list.isFetchingNextPage) {
+            void list.fetchNextPage();
+          }
+        }}
       />
     </div>
   );
@@ -281,6 +302,8 @@ function SourceOverview({
   added,
   more,
   partial,
+  loadingMore,
+  onNeedAll,
 }: {
   orgId: string;
   items: readonly DatasourceSummary[];
@@ -290,6 +313,9 @@ function SourceOverview({
   more: ReactNode;
   /** More pages exist: counts and filters cover the loaded rows only. */
   partial: boolean;
+  loadingMore: boolean;
+  /** Loads the next page; called while a filter or sort needs every source. */
+  onNeedAll: () => void;
 }) {
   const { t, language } = useI18n();
   const permissions = useOrgPermissions();
@@ -301,35 +327,70 @@ function SourceOverview({
   const [announcement, setAnnouncement] = useState("");
   const drawerHeading = useRef<HTMLDivElement>(null);
   const detailButtons = useRef(new Map<string, HTMLButtonElement>());
+  // Aborted when the page is left: "Test all" starts no further tests then.
+  const leaving = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    leaving.current = controller;
+    return () => controller.abort();
+  }, []);
 
-  const entries = useQueries({
-    queries: items.map((source) => healthQuery(orgId, source.id)),
-    combine: (results) =>
+  // A filter or a sort over a partly loaded list would leave out or misplace the rest: load
+  // every page while one is set, a page at a time.
+  const wantAll = needsAllPages(filter);
+  useEffect(() => {
+    if (wantAll && partial && !loadingMore) {
+      onNeedAll();
+    }
+  }, [wantAll, partial, loadingMore, onNeedAll]);
+
+  const combine = useCallback(
+    (results: readonly QueryObserverResult<Health, Error>[]) =>
       new Map(
         results.map((result, index): [string, HealthEntry | undefined] => [
           items[index]?.id ?? "",
-          result.data === undefined && result.error === null && result.fetchStatus !== "fetching"
-            ? undefined
-            : {
-                health: result.data,
-                error: result.error,
-                pending: result.fetchStatus === "fetching",
-              },
+          healthEntry(result),
         ]),
       ),
+    [items],
+  );
+  const entries = useQueries({
+    queries: items.map((source) => healthQuery(orgId, source.id)),
+    combine,
   });
   const statusById = (id: string): SourceStatus => statusOf(entries.get(id));
   const accessOf = (source: DatasourceSummary) => sourceAccess(source.access, permissions);
-  const testable = items.filter((source) => accessOf(source).query).map((source) => source.id);
+  const testable = testableIds(items, accessOf);
   const rows = filterSources(items, filter, kindName, statusById, language);
   const current = items.find((source) => source.id === selected);
 
   async function testAll() {
+    const signal = leaving.current?.signal;
     setTestingAll(true);
     setAnnouncement("");
-    await runHealthChecks(queryClient, orgId, testable);
+    await runHealthChecks(queryClient, orgId, testable, signal === undefined ? {} : { signal });
+    if (signal?.aborted === true) {
+      return;
+    }
     setTestingAll(false);
     setAnnouncement(t("datasources.testAll.done", { count: testable.length }));
+  }
+
+  /** One test; its outcome goes to the page's one live region. */
+  async function testOne(source: DatasourceSummary) {
+    setAnnouncement("");
+    await runHealthCheck(queryClient, orgId, source.id);
+    const state = queryClient.getQueryState(healthQuery(orgId, source.id).queryKey);
+    if (state === undefined || leaving.current?.signal.aborted === true) {
+      return;
+    }
+    const status = statusOf(healthEntry(state));
+    setAnnouncement(
+      t("datasources.testOne.done", {
+        name: source.name,
+        status: t(`datasources.status.${status}`),
+      }),
+    );
   }
 
   function select(id: string) {
@@ -351,7 +412,7 @@ function SourceOverview({
     if ((event.target as HTMLElement).closest("a, button") !== null) {
       return;
     }
-    setSelected(id);
+    select(id);
   }
 
   const groupCounts = new Map<KindGroup, number>();
@@ -467,8 +528,13 @@ function SourceOverview({
               ))}
           </fieldset>
           <p className="ds-filters__count">
-            <span role="status">
-              {t("datasources.filter.shown", { shown: rows.length, total: items.length })}
+            <span>
+              {t("datasources.filter.shown", {
+                shown: rows.length,
+                total: partial
+                  ? t("datasources.tiles.atLeast", { count: items.length })
+                  : items.length,
+              })}
             </span>
             {isFiltered(filter) ? (
               <button
@@ -489,7 +555,7 @@ function SourceOverview({
         <div className="ds-layout__main">
           {rows.length === 0 ? (
             <EmptyState icon="search" title={t("datasources.filter.none")}>
-              {t("datasources.filter.noneText")}
+              {partial ? t("datasources.filter.noneLoading") : t("datasources.filter.noneText")}
             </EmptyState>
           ) : (
             <table className="data-table data-table--stack ds-table" {...STACK_ROLES.table}>
@@ -521,7 +587,7 @@ function SourceOverview({
                     <tr
                       key={source.id}
                       {...STACK_ROLES.row}
-                      aria-current={isSelected ? "true" : undefined}
+                      aria-selected={isSelected}
                       onClick={(event) => onRowClick(event, source.id)}
                     >
                       <td {...STACK_ROLES.cell}>
@@ -548,18 +614,16 @@ function SourceOverview({
                         </span>
                       </td>
                       <td {...STACK_ROLES.cell} data-label={t("datasources.column.status")}>
-                        <span aria-live="polite">
-                          {access.query ? (
-                            <StatusLabel
-                              status={statusById(source.id)}
-                              latencyMs={entry?.health?.latencyMs}
-                            />
-                          ) : (
-                            <span className="data-table__muted">
-                              {t("datasources.status.noQuery")}
-                            </span>
-                          )}
-                        </span>
+                        {access.query ? (
+                          <StatusLabel
+                            status={statusById(source.id)}
+                            latencyMs={entry?.health?.latencyMs}
+                          />
+                        ) : (
+                          <span className="data-table__muted">
+                            {t("datasources.status.noQuery")}
+                          </span>
+                        )}
                       </td>
                       <td
                         {...STACK_ROLES.cell}
@@ -574,7 +638,7 @@ function SourceOverview({
                           <IconButton
                             icon="refresh"
                             label={t("datasources.health.testNamed", { name: source.name })}
-                            onClick={() => void runHealthCheck(queryClient, orgId, source.id)}
+                            onClick={() => void testOne(source)}
                             disabled={entry?.pending === true}
                           />
                         ) : null}
@@ -624,7 +688,7 @@ function SourceOverview({
               added={added(current)}
               access={accessOf(current)}
               entry={entries.get(current.id)}
-              onTest={() => void runHealthCheck(queryClient, orgId, current.id)}
+              onTest={() => void testOne(current)}
               onClose={close}
             />
           </div>
@@ -659,7 +723,9 @@ function StatusTiles({
   const connected = of("connected");
   const slow = of("slow");
   const unreachable = of("unreachable");
-  const tested = connected.length + slow.length + unreachable.length;
+  const tested = items.filter(
+    (source) => !["untested", "testing"].includes(statusById(source.id)),
+  ).length;
   const latency = (source: DatasourceSummary) => entries.get(source.id)?.health?.latencyMs ?? 0;
   const middle = median([...connected, ...slow].map(latency));
   const firstSlow = slow[0];

@@ -1,24 +1,70 @@
-import { type QueryClient, queryOptions } from "@tanstack/react-query";
-import { checkHealth, type DatasourceSummary, type Health } from "./api";
+import { type QueryClient, type QueryState, queryOptions } from "@tanstack/react-query";
+import { isApiError } from "../../api/client";
+import { checkHealth, type DatasourceAccess, type DatasourceSummary, type Health } from "./api";
 import { kindFamily } from "./kindMarks";
 
 /**
  * What the list knows about a source's connection. The server has no stored status: it is the
- * result of the last connection test run in this session, on request.
+ * result of the last connection test run in this session, on request. `unreachable` is the
+ * source's own answer (the server reached out and failed); `forbidden` and `failed` are the test
+ * request itself refused or lost on the way, which says nothing about the source.
  */
-export type SourceStatus = "untested" | "testing" | "connected" | "slow" | "unreachable";
+export type SourceStatus =
+  | "untested"
+  | "testing"
+  | "connected"
+  | "slow"
+  | "unreachable"
+  | "forbidden"
+  | "failed";
 
 /** A test that answers but takes longer than this counts as slow. */
 export const SLOW_MS = 500;
+
+/** A result older than this no longer stands for the source: it counts as untested again. */
+export const HEALTH_TTL_MS = 10 * 60_000;
 
 /** The last test of one source: its answer or the error of the request, and whether one runs. */
 export interface HealthEntry {
   health: Health | undefined;
   error: Error | null;
   pending: boolean;
+  /** When the answer or the error came, in ms since the epoch; 0 while the first test runs. */
+  at: number;
 }
 
 export const HEALTH_KEY = "datasource-health";
+
+/** The entry of one cached test, or undefined when it never ran. */
+export function healthEntry(
+  state: Pick<
+    QueryState<Health, Error>,
+    "data" | "error" | "fetchStatus" | "dataUpdatedAt" | "errorUpdatedAt"
+  >,
+): HealthEntry | undefined {
+  if (state.data === undefined && state.error === null && state.fetchStatus !== "fetching") {
+    return undefined;
+  }
+  return {
+    health: state.data,
+    error: state.error,
+    pending: state.fetchStatus === "fetching",
+    at: state.error === null ? state.dataUpdatedAt : state.errorUpdatedAt,
+  };
+}
+
+/** Drops a source's test result: after a change, a deletion or a restore it no longer applies. */
+export function forgetHealth(queryClient: QueryClient, orgId: string, id: string) {
+  queryClient.removeQueries({ queryKey: [HEALTH_KEY, orgId, id], exact: true });
+}
+
+/** The sources a test may run on: those the caller may query. */
+export function testableIds(
+  items: readonly DatasourceSummary[],
+  accessOf: (source: DatasourceSummary) => DatasourceAccess,
+): string[] {
+  return items.filter((source) => accessOf(source).query).map((source) => source.id);
+}
 
 /**
  * One source's test as a cached query that never runs by itself (`enabled: false`): the rows and
@@ -45,35 +91,41 @@ export async function runHealthCheck(queryClient: QueryClient, orgId: string, id
   }
 }
 
-/** Tests several sources, a few at a time, so a long list does not open every connection at once. */
+/**
+ * Tests several sources, a few at a time, so a long list does not open every connection at once.
+ * Once `signal` aborts (the page was left), no further test starts; running ones finish.
+ */
 export async function runHealthChecks(
-  queryClient: QueryClient,
+  queryClient: Pick<QueryClient, "fetchQuery">,
   orgId: string,
   ids: readonly string[],
-  parallel = 4,
+  { parallel = 4, signal }: { parallel?: number; signal?: AbortSignal } = {},
 ) {
   let next = 0;
   async function worker() {
-    while (next < ids.length) {
+    while (next < ids.length && signal?.aborted !== true) {
       const id = ids[next];
       next += 1;
       if (id !== undefined) {
-        await runHealthCheck(queryClient, orgId, id);
+        await runHealthCheck(queryClient as QueryClient, orgId, id);
       }
     }
   }
   await Promise.all(Array.from({ length: Math.min(parallel, ids.length) }, worker));
 }
 
-export function statusOf(entry: HealthEntry | undefined): SourceStatus {
+export function statusOf(entry: HealthEntry | undefined, now = Date.now()): SourceStatus {
   if (entry === undefined) {
     return "untested";
   }
   if (entry.pending) {
     return "testing";
   }
+  if (now - entry.at > HEALTH_TTL_MS) {
+    return "untested";
+  }
   if (entry.error !== null) {
-    return "unreachable";
+    return isApiError(entry.error, "forbidden") ? "forbidden" : "failed";
   }
   if (entry.health === undefined) {
     return "untested";
@@ -117,7 +169,7 @@ export function kindGroup(kind: string): KindGroup {
   }
 }
 
-export const STATUS_FILTERS = ["connected", "slow", "unreachable", "untested"] as const;
+export const STATUS_FILTERS = ["connected", "slow", "unreachable", "failed", "untested"] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 export const SORTS = ["name", "status", "added"] as const;
@@ -136,18 +188,30 @@ export function isFiltered(filter: ListFilter): boolean {
   return filter.search.trim() !== "" || filter.group !== "all" || filter.status !== "all";
 }
 
-/** A running test counts as untested until it answers. */
+/**
+ * A running test counts as untested until it answers; a refused or lost test request is one
+ * "test failed" group, whatever the reason.
+ */
 function filterStatus(status: SourceStatus): StatusFilter {
-  return status === "testing" ? "untested" : status;
+  if (status === "testing") {
+    return "untested";
+  }
+  return status === "forbidden" ? "failed" : status;
 }
 
 /** Problems first when sorting by status: the sources that need a look come to the top. */
 const STATUS_ORDER: Record<StatusFilter, number> = {
   unreachable: 0,
-  slow: 1,
-  connected: 2,
-  untested: 3,
+  failed: 1,
+  slow: 2,
+  connected: 3,
+  untested: 4,
 };
+
+/** Whether the shown rows depend on every source, not only on the loaded pages. */
+export function needsAllPages(filter: ListFilter): boolean {
+  return isFiltered(filter) || filter.sort !== "name";
+}
 
 /**
  * The rows to show: matching the search (name, kind key or kind name, any case) and the filters,

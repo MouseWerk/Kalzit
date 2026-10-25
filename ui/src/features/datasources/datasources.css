@@ -505,8 +505,8 @@
   }
 
   /* The selected row: the neutral tint of a pressed control, never a colored edge. */
-  .ds-table tbody tr[aria-current="true"] td,
-  .ds-table tbody tr[aria-current="true"] {
+  .ds-table tbody tr[aria-selected="true"] td,
+  .ds-table tbody tr[aria-selected="true"] {
     background: var(--bg-active);
   }
 

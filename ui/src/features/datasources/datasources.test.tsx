@@ -147,6 +147,96 @@ describe("data source list", () => {
     expect(await screen.findByRole("dialog", { name: "Access to “Sales DB”" })).toBeTruthy();
   });
 
+  it("loads every page while searching a list that is not fully loaded", async () => {
+    const { server, user } = open("/data-sources");
+    for (let i = 0; i < 60; i++) {
+      server.areas.datasources.datasources.push({
+        id: `ds-${i}`,
+        name: `Source ${String(i).padStart(2, "0")}`,
+        kind: "sqlite",
+        settings: { path: `/data/${i}.db` },
+        secrets: {},
+        createdAt: Date.UTC(2026, 5, 1) + i,
+        updatedAt: Date.UTC(2026, 5, 1) + i,
+      });
+    }
+    await screen.findByRole("table");
+    // Only the first page is loaded: the total says there may be more.
+    expect(screen.getByText("50 of 50+ sources")).toBeTruthy();
+    await user.type(screen.getByRole("searchbox", { name: "Search name or kind" }), "Source 5");
+    expect(await screen.findByRole("link", { name: "Source 59" })).toBeTruthy();
+    expect(lastCall(server, "GET", "/datasources?")?.path).toContain("cursor=50");
+    expect(screen.getByText("10 of 62 sources")).toBeTruthy();
+  });
+
+  it("shows a refused test as no access, not as an unreachable source", async () => {
+    const { server, user } = open("/data-sources");
+    const table = await screen.findByRole("table");
+    server.failNext(`/api/orgs/o1/datasources/${PG_ID}/health`, 403, "forbidden", "POST");
+    await user.click(screen.getByRole("button", { name: "Test connection of “Sales DB”" }));
+    const row = within(table).getByRole("row", { name: /Sales DB/ });
+    expect(await within(row).findByText("No access")).toBeTruthy();
+    // One live region for the page tells the outcome.
+    expect(screen.getByText("Sales DB: No access")).toBeTruthy();
+  });
+
+  it("forgets a test result once the source is saved again", async () => {
+    const { server, user } = open("/data-sources");
+    server.areas.datasources.health[PG_ID] = { ok: true, message: "", latencyMs: 12 };
+    const table = await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Test connection of “Sales DB”" }));
+    const row = () => within(screen.getByRole("table")).getByRole("row", { name: /Sales DB/ });
+    expect(await within(row()).findByText("Connected")).toBeTruthy();
+    await user.click(within(table).getByRole("link", { name: "Sales DB" }));
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    await user.type(name, " 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    await user.click(within(nav).getByRole("link", { name: "Data sources" }));
+    await screen.findByRole("table");
+    await waitFor(() =>
+      expect(
+        within(
+          within(screen.getByRole("table")).getByRole("row", { name: /Sales DB 2/ }),
+        ).getByText("Not tested"),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("says so when the grants cannot be read", async () => {
+    const { server, user } = open("/data-sources");
+    fakeAdmin(server).managesResources = false;
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Details of “Sales DB”" }));
+    const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    await user.click(within(panel).getByRole("tab", { name: "Access" }));
+    expect(
+      await within(panel).findByText(
+        "You cannot see who has access to this. Ask someone who manages its access.",
+      ),
+    ).toBeTruthy();
+    // Home and End move between the tabs.
+    await user.keyboard("{Home}");
+    expect(within(panel).getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    await user.keyboard("{End}");
+    expect(within(panel).getByRole("tab", { name: "Access" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+  });
+
+  it("opens the side panel from a row click and moves focus to it", async () => {
+    const { user } = open("/data-sources");
+    const table = await screen.findByRole("table");
+    const row = within(table).getByRole("row", { name: /Metrics/ });
+    await user.click(within(row).getAllByRole("cell")[2] as HTMLElement);
+    await screen.findByRole("complementary", { name: "Metrics" });
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Metrics"));
+    expect(row.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("closes the side panel with Escape and returns focus to the row", async () => {
     const { user } = open("/data-sources");
     const table = await screen.findByRole("table");

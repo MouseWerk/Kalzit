@@ -1,38 +1,141 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import type { DatasourceSummary } from "./api";
+import { ApiError } from "../../api/client";
+import type { DatasourceAccess, DatasourceSummary } from "./api";
 import { initials } from "./DataSourceDrawer";
 import {
   filterSources,
+  HEALTH_TTL_MS,
   type HealthEntry,
+  healthEntry,
   isFiltered,
   kindGroup,
   median,
   NO_FILTER,
+  needsAllPages,
+  runHealthChecks,
   type SourceStatus,
   statusOf,
+  testableIds,
 } from "./sourceStatus";
+
+const NOW = Date.UTC(2026, 9, 25, 12);
 
 const entry = (part: Partial<HealthEntry>): HealthEntry => ({
   health: undefined,
   error: null,
   pending: false,
+  at: NOW,
   ...part,
 });
 
 describe("source status", () => {
+  const status = (part: Partial<HealthEntry>) => statusOf(entry(part), NOW);
+
   it("follows the last test", () => {
-    expect(statusOf(undefined)).toBe("untested");
-    expect(statusOf(entry({ pending: true }))).toBe("testing");
-    expect(statusOf(entry({ error: new Error("x") }))).toBe("unreachable");
-    expect(statusOf(entry({ health: { ok: false, message: "", latencyMs: 3 } }))).toBe(
-      "unreachable",
-    );
-    expect(statusOf(entry({ health: { ok: true, message: "", latencyMs: 499 } }))).toBe(
-      "connected",
-    );
-    expect(statusOf(entry({ health: { ok: true, message: "", latencyMs: 500 } }))).toBe("slow");
+    expect(statusOf(undefined, NOW)).toBe("untested");
+    expect(status({ pending: true, at: 0 })).toBe("testing");
+    expect(status({ health: { ok: false, message: "", latencyMs: 3 } })).toBe("unreachable");
+    expect(status({ health: { ok: true, message: "", latencyMs: 499 } })).toBe("connected");
+    expect(status({ health: { ok: true, message: "", latencyMs: 500 } })).toBe("slow");
   });
 
+  it("tells a refused or lost test request apart from an unreachable source", () => {
+    expect(status({ error: new ApiError("forbidden", 403, "no") })).toBe("forbidden");
+    expect(status({ error: new ApiError("network", 0, "offline") })).toBe("failed");
+    expect(status({ error: new Error("x") })).toBe("failed");
+  });
+
+  it("counts an old result as untested again", () => {
+    const ok = { ok: true, message: "", latencyMs: 10 };
+    expect(status({ health: ok, at: NOW - HEALTH_TTL_MS })).toBe("connected");
+    expect(status({ health: ok, at: NOW - HEALTH_TTL_MS - 1 })).toBe("untested");
+  });
+
+  it("reads an entry from a cached query, or none when it never ran", () => {
+    const base = { data: undefined, error: null, dataUpdatedAt: 0, errorUpdatedAt: 0 };
+    expect(healthEntry({ ...base, fetchStatus: "idle" })).toBeUndefined();
+    expect(healthEntry({ ...base, fetchStatus: "fetching" })).toMatchObject({ pending: true });
+    const error = new Error("x");
+    expect(healthEntry({ ...base, error, errorUpdatedAt: 7, fetchStatus: "idle" })).toEqual({
+      health: undefined,
+      error,
+      pending: false,
+      at: 7,
+    });
+  });
+
+  it("loads every page only while a filter or another sort is set", () => {
+    expect(needsAllPages(NO_FILTER)).toBe(false);
+    expect(needsAllPages({ ...NO_FILTER, search: "a" })).toBe(true);
+    expect(needsAllPages({ ...NO_FILTER, sort: "added" })).toBe(true);
+  });
+});
+
+describe("testing several sources", () => {
+  const access = (query: boolean) => ({ read: true, query }) as DatasourceAccess;
+  const items = ["a", "b", "c"].map((id) => ({ id, name: id }) as DatasourceSummary);
+
+  it("skips sources without query access", () => {
+    expect(testableIds(items, (source) => access(source.id !== "b"))).toEqual(["a", "c"]);
+  });
+
+  /** A query client whose tests wait until released, counting how many run at once. */
+  function fakeClient() {
+    let running = 0;
+    let most = 0;
+    const started: string[] = [];
+    const waiting: (() => void)[] = [];
+    const client = {
+      fetchQuery: (options: { queryKey: readonly unknown[] }) => {
+        started.push(String(options.queryKey[2]));
+        running += 1;
+        most = Math.max(most, running);
+        return new Promise<void>((resolve) =>
+          waiting.push(() => {
+            running -= 1;
+            resolve();
+          }),
+        );
+      },
+    } as unknown as Pick<QueryClient, "fetchQuery">;
+    const releaseAll = async () => {
+      while (waiting.length > 0) {
+        for (const release of waiting.splice(0)) {
+          release();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
+    return { client, started, most: () => most, releaseAll };
+  }
+
+  it("runs at most four tests at once and tests each source once", async () => {
+    const fake = fakeClient();
+    const ids = Array.from({ length: 10 }, (_, i) => `s${i}`);
+    const done = runHealthChecks(fake.client, "o1", ids);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fake.started).toHaveLength(4);
+    await fake.releaseAll();
+    await done;
+    expect(fake.most()).toBe(4);
+    expect([...fake.started].sort()).toEqual([...ids].sort());
+  });
+
+  it("starts no further test once cancelled", async () => {
+    const fake = fakeClient();
+    const controller = new AbortController();
+    const ids = Array.from({ length: 10 }, (_, i) => `s${i}`);
+    const done = runHealthChecks(fake.client, "o1", ids, { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    await fake.releaseAll();
+    await done;
+    expect(fake.started).toHaveLength(4);
+  });
+});
+
+describe("kinds, medians and initials", () => {
   it("groups kinds as the filter shows them", () => {
     expect(kindGroup("postgres")).toBe("tables");
     expect(kindGroup("sqlite")).toBe("tables");
