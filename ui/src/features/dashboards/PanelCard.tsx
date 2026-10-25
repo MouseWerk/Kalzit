@@ -11,7 +11,7 @@ import {
 } from "react";
 import { exportPanel, exportQuery } from "../../analysis/api";
 import { type ExportChoice, ExportDialog } from "../../analysis/ExportDialog";
-import { runPanelSteps } from "../../analysis/panel";
+import { runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
@@ -112,6 +112,7 @@ export function PanelCard({
   alone = false,
 }: PanelCardProps) {
   const { t } = useI18n();
+  const calendar = useAnalysisCalendar();
   const ref = useRef<HTMLElement>(null);
   const titleId = useId();
   const hintId = useId();
@@ -479,7 +480,9 @@ export function PanelCard({
         ) : null}
         {exporting ? (
           <ExportDialog
-            frames={runPanelSteps(panel.transformations, outcomes).frames.map((f) => f.name)}
+            frames={runPanelSteps(panel.transformations, outcomes, calendar).frames.map(
+              (f) => f.name,
+            )}
             note={
               query.source === "stored" && edit !== undefined
                 ? t("analysis.export.stored")
@@ -607,6 +610,7 @@ export function PanelBody({
   kindOf = () => undefined,
 }: PanelBodyProps) {
   const { t } = useI18n();
+  const calendar = useAnalysisCalendar();
   // Field option patterns need re2js, which loads with the first panel that uses one. The panel
   // is drawn again once it is there: until then its patterns matched nothing.
   const patterns = usePatternEngine(usesPatterns(panel.fieldConfig)) ? "patterns" : "waiting";
@@ -616,8 +620,8 @@ export function PanelBody({
   // frames and the chart is not drawn again.
   const transformations = panel.transformations;
   const stepsRun = useMemo(
-    () => given ?? runPanelSteps(transformations, outcomes),
-    [given, transformations, outcomes],
+    () => given ?? runPanelSteps(transformations, outcomes, calendar),
+    [given, transformations, outcomes, calendar],
   );
   const frames = useMemo(() => stepsRun.frames.map((f) => f.frame), [stepsRun]);
   const plugin = getPanel(panel.type);

@@ -28,6 +28,7 @@ use serde_json::{Value, json};
 
 use super::query::{api_error, check_variables, readable_model, resolve_variables};
 use super::table::{RouteDef, route};
+use crate::analysis::expr::Calendar;
 use crate::analysis::steps::{self, Control, Input};
 use crate::analysis::{Step, check_steps, export};
 use crate::app::AppState;
@@ -82,6 +83,32 @@ struct Wanted {
     language: ExportLanguage,
     frame: Option<String>,
     time_range: TimeRange,
+    calendar: Calendar,
+}
+
+/// The calendar calculated fields read times in, from the request: a known IANA zone (UTC when
+/// absent) and the first day of the week (Monday when absent).
+fn calendar(time_zone: Option<&str>, week_start: Option<&str>) -> ApiResult<Calendar> {
+    use crate::dashboards::model::WeekStart;
+    let zone = match time_zone {
+        None => None,
+        Some(name) => Some(name.parse::<chrono_tz::Tz>().map_err(|_| {
+            ApiError::validation("timeZone must be a time zone name such as Europe/Berlin")
+                .with_field("timeZone")
+                .because("export.time_zone_unknown")
+        })?),
+    };
+    let week_start = match week_start {
+        None | Some("monday") => WeekStart::Monday,
+        Some("sunday") => WeekStart::Sunday,
+        Some("saturday") => WeekStart::Saturday,
+        Some(_) => {
+            return Err(ApiError::validation("weekStart must be monday, sunday or saturday")
+                .with_field("weekStart")
+                .because("export.week_start_unknown"));
+        }
+    };
+    Ok(Calendar::new(zone, week_start))
 }
 
 impl Wanted {
@@ -108,8 +135,13 @@ async fn export_query(
     Extension(info): Extension<RequestInfo>,
     JsonBody(req): JsonBody<ExportRequest>,
 ) -> ApiResult<Response> {
-    let wanted =
-        Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
+    let wanted = Wanted {
+        format: req.format,
+        language: req.language,
+        frame: req.frame.clone(),
+        time_range: req.time_range,
+        calendar: calendar(req.time_zone.as_deref(), req.week_start.as_deref())?,
+    };
     let sources: BTreeSet<String> = req.queries.iter().map(|q| q.datasource_id.clone()).collect();
     let mut where_ = wanted.summary();
     where_.insert("datasourceIds".into(), json!(sources));
@@ -149,8 +181,13 @@ async fn export_panel(
     Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
     JsonBody(req): JsonBody<PanelExportRequest>,
 ) -> ApiResult<Response> {
-    let wanted =
-        Wanted { format: req.format, language: req.language, frame: req.frame.clone(), time_range: req.time_range };
+    let wanted = Wanted {
+        format: req.format,
+        language: req.language,
+        frame: req.frame.clone(),
+        time_range: req.time_range,
+        calendar: calendar(req.time_zone.as_deref(), req.week_start.as_deref())?,
+    };
     let mut where_ = wanted.summary();
     where_.insert("panelId".into(), json!(panel_id));
     let made = make_panel(&state, &ctx, &dashboard_id, &panel_id, req, &wanted).await;
@@ -288,7 +325,7 @@ async fn produce(
     let (format, language, frame) = (wanted.format, wanted.language, wanted.frame.clone());
     let cancelled = Arc::new(AtomicBool::new(false));
     let _guard = CancelOnDrop(cancelled.clone());
-    let control = Control::new(cancelled, timeout);
+    let control = Control::new(cancelled, timeout).with_calendar(wanted.calendar);
     // Steps and encoding take CPU time; they run off the request threads.
     let work = tokio::task::spawn_blocking(move || -> Result<(export::File, usize), ApiError> {
         let _permit = permit;

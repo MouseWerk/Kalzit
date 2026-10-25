@@ -10,7 +10,10 @@
 //!   >=`, not chained), `+ -`, `* / %`, unary `-`, `^` (right-associative).
 //! - Empty values propagate (`null + 1` is `null`); `and`/`or` follow three-valued logic;
 //!   division by zero and results that are not finite are empty, never an error.
-//! - All calendar functions work in UTC.
+//! - Calendar functions (`year` ... `weekday`, `startOf`) read times in the calendar of the run:
+//!   a time zone and the first day of the week (`Calendar`; UTC and Monday unless the request
+//!   names the dashboard's or the viewer's). `weekday` always counts 1 Monday to 7 Sunday; the
+//!   first day of the week decides where `startOf(t, 'week')` begins.
 
 use serde_json::Value;
 
@@ -704,6 +707,8 @@ enum Read {
     Number,
     Int64,
     Time,
+    /// A day as midnight UTC, read as midnight of that day on the run's wall clock.
+    Date,
     Text,
     Bool,
 }
@@ -737,6 +742,68 @@ enum Kind {
 pub struct Compiled {
     node: Node,
     pub result: Type,
+    calendar: Calendar,
+}
+
+/// The time zone and first day of the week calendar functions read times in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Calendar {
+    /// `None` is UTC.
+    zone: Option<chrono_tz::Tz>,
+    /// ISO weekday a week starts on: 1 Monday, 6 Saturday, 7 Sunday.
+    first_weekday: i64,
+}
+
+impl Default for Calendar {
+    fn default() -> Self {
+        Self { zone: None, first_weekday: 1 }
+    }
+}
+
+impl Calendar {
+    pub fn new(zone: Option<chrono_tz::Tz>, week_start: crate::dashboards::model::WeekStart) -> Self {
+        use crate::dashboards::model::WeekStart;
+        let first_weekday = match week_start {
+            WeekStart::Monday => 1,
+            WeekStart::Saturday => 6,
+            WeekStart::Sunday => 7,
+        };
+        Self { zone: zone.filter(|z| *z != chrono_tz::UTC), first_weekday }
+    }
+
+    /// The zone's offset from UTC at the instant `t`, in ms.
+    fn offset_at(&self, t: f64) -> f64 {
+        use chrono::{Offset, TimeZone};
+        let Some(zone) = self.zone else { return 0.0 };
+        match chrono::DateTime::from_timestamp_millis(t.floor() as i64) {
+            Some(utc) => f64::from(zone.offset_from_utc_datetime(&utc.naive_utc()).fix().local_minus_utc()) * 1000.0,
+            None => 0.0,
+        }
+    }
+
+    /// The wall-clock reading of `t` as ms since 1970-01-01 00:00 on that wall clock.
+    fn local(&self, t: f64) -> f64 {
+        t + self.offset_at(t)
+    }
+
+    /// The instant a wall-clock reading names. A reading a daylight saving change skips moves
+    /// forward by the skipped length; one that occurs twice is the first of the two (as the UI's
+    /// `fromWall` and the browser's own Date do).
+    fn instant_of_local(&self, wanted: f64) -> f64 {
+        if self.zone.is_none() {
+            return wanted;
+        }
+        let before = wanted - self.offset_at(wanted - DAY_MS);
+        let after = wanted - self.offset_at(wanted + DAY_MS);
+        let (first, second) = if before <= after { (before, after) } else { (after, before) };
+        if self.local(first) == wanted {
+            first
+        } else if self.local(second) == wanted {
+            second
+        } else {
+            before
+        }
+    }
 }
 
 /// Finds a field by name: exactly one field of the frame must have it.
@@ -774,13 +841,18 @@ fn argument_type(name: &str, position: usize, expected: &str, found: Type) -> De
         .with("found", found.name())
 }
 
-/// Type-checks `expr` against the fields of a frame.
+/// Type-checks `expr` against the fields of a frame, for UTC and weeks from Monday.
 pub fn compile(expr: &Expr, fields: &[Field]) -> Result<Compiled, Detail> {
+    compile_in(expr, fields, Calendar::default())
+}
+
+/// Type-checks `expr` against the fields of a frame; calendar functions read times in `calendar`.
+pub fn compile_in(expr: &Expr, fields: &[Field], calendar: Calendar) -> Result<Compiled, Detail> {
     let (node, result) = check(expr, fields)?;
     if result == Type::Null {
         return Err(error("expression.no_type", "the expression is always empty".into()));
     }
-    Ok(Compiled { node, result })
+    Ok(Compiled { node, result, calendar })
 }
 
 fn check(expr: &Expr, fields: &[Field]) -> Result<(Node, Type), Detail> {
@@ -793,8 +865,9 @@ fn check(expr: &Expr, fields: &[Field]) -> Result<(Node, Type), Detail> {
             let index = find_field(fields, name)?;
             let (read, t) = match fields[index].field_type {
                 FieldType::Number => (Read::Number, Type::Number),
-                FieldType::Int64 => (Read::Int64, Type::Number),
+                FieldType::Int64 | FieldType::Decimal => (Read::Int64, Type::Number),
                 FieldType::Time => (Read::Time, Type::Time),
+                FieldType::Date => (Read::Date, Type::Time),
                 FieldType::String => (Read::Text, Type::Text),
                 FieldType::Bool => (Read::Bool, Type::Bool),
                 FieldType::Json => {
@@ -1016,7 +1089,7 @@ fn read(value: &Value, how: Read) -> V {
         (Read::Number, Value::Number(n)) => n.as_f64().map_or(V::Null, num),
         (Read::Int64, Value::String(s)) => parse_number(s).map_or(V::Null, num),
         (Read::Int64, Value::Number(n)) => n.as_f64().map_or(V::Null, num),
-        (Read::Time, Value::Number(n)) => n.as_f64().map_or(V::Null, time),
+        (Read::Time | Read::Date, Value::Number(n)) => n.as_f64().map_or(V::Null, time),
         (Read::Text, Value::String(s)) => V::Text(s.clone()),
         (Read::Bool, Value::Bool(b)) => V::Bool(*b),
         _ => V::Null,
@@ -1055,7 +1128,7 @@ impl Compiled {
     /// fails the row.
     pub fn eval(&self, fields: &[Field], row: usize) -> Result<V, Detail> {
         TOO_LONG.with(|f| f.set(false));
-        let v = eval(&self.node, fields, row);
+        let v = eval(&self.node, fields, row, &self.calendar);
         let too_long = TOO_LONG.with(|f| f.replace(false));
         match v {
             V::Text(s) if utf16_len(&s) > MAX_TEXT_UNITS => Err(text_too_long()),
@@ -1081,33 +1154,36 @@ pub fn to_json(v: V) -> Value {
     }
 }
 
-fn eval(node: &Node, fields: &[Field], row: usize) -> V {
+fn eval(node: &Node, fields: &[Field], row: usize, cal: &Calendar) -> V {
     match node {
         Node::Const(v) => v.clone(),
-        Node::Field(i, how) => fields[*i].values.get(row).map_or(V::Null, |v| read(v, *how)),
-        Node::Neg(inner) => match eval(inner, fields, row) {
+        Node::Field(i, how) => match (how, fields[*i].values.get(row).map_or(V::Null, |v| read(v, *how))) {
+            (Read::Date, V::Time(day)) => time(cal.instant_of_local(day)),
+            (_, v) => v,
+        },
+        Node::Neg(inner) => match eval(inner, fields, row, cal) {
             V::Num(x) => num(-x),
             _ => V::Null,
         },
-        Node::Not(inner) => match eval(inner, fields, row) {
+        Node::Not(inner) => match eval(inner, fields, row, cal) {
             V::Bool(b) => V::Bool(!b),
             _ => V::Null,
         },
-        Node::Bin(op, kind, l, r) => bin(*op, *kind, l, r, fields, row),
-        Node::Call(func, unit, args) => call(*func, *unit, args, fields, row),
+        Node::Bin(op, kind, l, r) => bin(*op, *kind, l, r, fields, row, cal),
+        Node::Call(func, unit, args) => call(*func, *unit, args, fields, row, cal),
     }
 }
 
-fn bin(op: BinOp, kind: Kind, l: &Node, r: &Node, fields: &[Field], row: usize) -> V {
+fn bin(op: BinOp, kind: Kind, l: &Node, r: &Node, fields: &[Field], row: usize, cal: &Calendar) -> V {
     if matches!(op, BinOp::And | BinOp::Or) {
-        let a = eval(l, fields, row);
+        let a = eval(l, fields, row, cal);
         // Three-valued logic: false and x is false, true or x is true, whatever x is.
         match (op, &a) {
             (BinOp::And, V::Bool(false)) => return V::Bool(false),
             (BinOp::Or, V::Bool(true)) => return V::Bool(true),
             _ => {}
         }
-        let b = eval(r, fields, row);
+        let b = eval(r, fields, row, cal);
         return match (op, a, b) {
             (BinOp::And, _, V::Bool(false)) => V::Bool(false),
             (BinOp::Or, _, V::Bool(true)) => V::Bool(true),
@@ -1115,8 +1191,8 @@ fn bin(op: BinOp, kind: Kind, l: &Node, r: &Node, fields: &[Field], row: usize) 
             _ => V::Null,
         };
     }
-    let a = eval(l, fields, row);
-    let b = eval(r, fields, row);
+    let a = eval(l, fields, row, cal);
+    let b = eval(r, fields, row, cal);
     if a == V::Null || b == V::Null {
         return V::Null;
     }
@@ -1166,8 +1242,8 @@ fn bin(op: BinOp, kind: Kind, l: &Node, r: &Node, fields: &[Field], row: usize) 
     }
 }
 
-fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: usize) -> V {
-    let arg = |i: usize| eval(&args[i], fields, row);
+fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: usize, cal: &Calendar) -> V {
+    let arg = |i: usize| eval(&args[i], fields, row, cal);
     let number = |i: usize| match arg(i) {
         V::Num(x) => Some(x),
         _ => None,
@@ -1177,13 +1253,15 @@ fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: us
         V::Time(t) => Some(t.floor()),
         _ => None,
     };
-    let calendar = |f: fn(Civil) -> f64| at(0).map_or(V::Null, |t| num(f(Civil::of(t))));
+    // The wall-clock reading in the run's zone, as ms since 1970-01-01 on that clock.
+    let local = |i: usize| at(i).map(|t| cal.local(t));
+    let calendar = |f: fn(Civil) -> f64| local(0).map_or(V::Null, |t| num(f(Civil::of(t))));
     match func {
         Func::If => match arg(0) {
             V::Bool(true) => arg(1),
             _ => arg(2),
         },
-        Func::Coalesce => args.iter().map(|a| eval(a, fields, row)).find(|v| *v != V::Null).unwrap_or(V::Null),
+        Func::Coalesce => args.iter().map(|a| eval(a, fields, row, cal)).find(|v| *v != V::Null).unwrap_or(V::Null),
         Func::IsNull => V::Bool(arg(0) == V::Null),
         Func::Round => {
             let Some(x) = number(0) else { return V::Null };
@@ -1212,7 +1290,7 @@ fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: us
         Func::Min | Func::Max => {
             let mut best: Option<V> = None;
             for a in args {
-                let v = eval(a, fields, row);
+                let v = eval(a, fields, row, cal);
                 if v == V::Null {
                     continue;
                 }
@@ -1233,15 +1311,15 @@ fn call(func: Func, unit: Option<Unit>, args: &[Node], fields: &[Field], row: us
         Func::Year => calendar(|c| c.year as f64),
         Func::Month => calendar(|c| c.month as f64),
         Func::Day => calendar(|c| c.day as f64),
-        Func::Hour => at(0).map_or(V::Null, |t| num(((t.rem_euclid(DAY_MS)) / 3_600_000.0).floor())),
-        Func::Minute => at(0).map_or(V::Null, |t| num((t.rem_euclid(3_600_000.0) / 60_000.0).floor())),
-        Func::Second => at(0).map_or(V::Null, |t| num((t.rem_euclid(60_000.0) / 1000.0).floor())),
-        Func::Weekday => at(0).map_or(V::Null, |t| num(weekday((t / DAY_MS).floor() as i64) as f64)),
-        Func::StartOf => at(0).map_or(V::Null, |t| time(start_of(t, unit.unwrap_or(Unit::Day)))),
+        Func::Hour => local(0).map_or(V::Null, |t| num(((t.rem_euclid(DAY_MS)) / 3_600_000.0).floor())),
+        Func::Minute => local(0).map_or(V::Null, |t| num((t.rem_euclid(3_600_000.0) / 60_000.0).floor())),
+        Func::Second => local(0).map_or(V::Null, |t| num((t.rem_euclid(60_000.0) / 1000.0).floor())),
+        Func::Weekday => local(0).map_or(V::Null, |t| num(weekday((t / DAY_MS).floor() as i64) as f64)),
+        Func::StartOf => at(0).map_or(V::Null, |t| time(start_of(t, unit.unwrap_or(Unit::Day), cal))),
         Func::Concat => {
             let (mut out, mut units) = (String::new(), 0);
             for a in args {
-                if let Some(s) = text_of(&eval(a, fields, row)) {
+                if let Some(s) = text_of(&eval(a, fields, row, cal)) {
                     units += utf16_len(&s);
                     if units > MAX_TEXT_UNITS {
                         // Stops before building anything longer.
@@ -1400,24 +1478,29 @@ pub fn weekday(days: i64) -> i64 {
     (days + 3).rem_euclid(7) + 1
 }
 
-fn start_of(t: f64, unit: Unit) -> f64 {
-    let floor_to = |step: f64| (t / step).floor() * step;
+/// The start of the minute, hour, day, week, month, quarter or year `t` lies in, on the wall
+/// clock of `cal`. Minutes and hours step back on the time line (the repeated hour at the end of
+/// summer time has two starts); days and longer go back to the wall clock's midnight.
+fn start_of(t: f64, unit: Unit, cal: &Calendar) -> f64 {
+    let local = cal.local(t);
+    let back_to = |step: f64| t - local.rem_euclid(step);
+    let midnight = |days: i64| cal.instant_of_local(days as f64 * DAY_MS);
     match unit {
-        Unit::Minute => floor_to(60_000.0),
-        Unit::Hour => floor_to(3_600_000.0),
-        Unit::Day => floor_to(DAY_MS),
+        Unit::Minute => back_to(60_000.0),
+        Unit::Hour => back_to(3_600_000.0),
+        Unit::Day => midnight((local / DAY_MS).floor() as i64),
         Unit::Week => {
-            let days = (t / DAY_MS).floor() as i64;
-            (days - (weekday(days) - 1)) as f64 * DAY_MS
+            let days = (local / DAY_MS).floor() as i64;
+            midnight(days - (weekday(days) - cal.first_weekday).rem_euclid(7))
         }
         Unit::Month | Unit::Quarter | Unit::Year => {
-            let c = Civil::of(t);
+            let c = Civil::of(local);
             let month = match unit {
                 Unit::Month => c.month,
                 Unit::Quarter => (c.month - 1) / 3 * 3 + 1,
                 _ => 1,
             };
-            days_from_civil(c.year, month, 1) as f64 * DAY_MS
+            midnight(days_from_civil(c.year, month, 1))
         }
     }
 }

@@ -198,6 +198,8 @@ impl DataSourcePlugin for Sqlite {
             .iter()
             .map(|col| Column::new(col.name(), declared_type(col.type_info().name())))
             .collect();
+        // Columns typed by their values (expressions, NUMERIC, DECIMAL) may widen later.
+        let inferred: Vec<bool> = columns.iter().map(|c| c.field_type.is_none()).collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
         frame.executed_query(prepared.sql.clone());
         let mut query = statement.query();
@@ -215,7 +217,7 @@ impl DataSourcePlugin for Sqlite {
         let mut mismatches = vec![0_u64; frame.columns_mut().len()];
         let mut rows = query.fetch(&mut *c);
         while let Some(row) = rows.try_next().await.map_err(&stopped)? {
-            let (values, mismatched) = row_values(&row, &mut frame);
+            let (values, mismatched) = row_values(&row, &mut frame, &inferred);
             if !frame.push_row(values) {
                 break;
             }
@@ -273,8 +275,10 @@ pub fn parse_time_text(s: &str) -> Option<i64> {
 
 /// SQLite types each value, not each column: a column without a declared type takes the type of
 /// its first value, and later values are converted to the column's type where that is lossless.
-/// Values that do not fit are `null`; the second part names their columns.
-fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usize>) {
+/// Values that do not fit are `null`; the second part names their columns. A column typed by its
+/// values (`inferred`) that started with whole numbers becomes `number` at its first fraction, as
+/// NUMERIC and DECIMAL columns need, instead of losing every later decimal.
+fn row_values(row: &SqliteRow, frame: &mut FrameBuilder, inferred: &[bool]) -> (Vec<Value>, Vec<usize>) {
     let mut out = Vec::with_capacity(row.len());
     let mut mismatched = Vec::new();
     let mut notices = Vec::new();
@@ -302,6 +306,13 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usi
             out.push(Value::Null);
             continue;
         };
+        if let Natural::Real(f) = natural
+            && column.field_type == Some(FieldType::Int64)
+            && inferred.get(i).copied().unwrap_or(false)
+            && f.fract() != 0.0
+        {
+            column.retype(FieldType::Number, widen_to_number);
+        }
         let field_type = *column.field_type.get_or_insert(match natural {
             Natural::Int(_) => FieldType::Int64,
             Natural::Real(_) => FieldType::Number,
@@ -319,6 +330,11 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usi
     (out, mismatched)
 }
 
+/// An int64 value (a decimal string) as a number, for a column that turned out to hold decimals.
+fn widen_to_number(value: &Value) -> Value {
+    value.as_str().and_then(|s| s.parse::<f64>().ok()).map_or(Value::Null, |f| json!(f))
+}
+
 enum Natural {
     Int(i64),
     Real(f64),
@@ -328,7 +344,7 @@ enum Natural {
 /// Above this, a number in a time column is Unix milliseconds, below it Unix seconds (what
 /// SQLite's `unixepoch()` returns). 10^11 seconds lie in the year 5138, 10^11 milliseconds in
 /// 1973, so both readings cover the dates people store.
-const EPOCH_MS_ABOVE: f64 = 1e11;
+const EPOCH_MS_ABOVE: f64 = sql::SQLITE_EPOCH_MS_ABOVE as f64;
 
 /// Unix milliseconds of a number in a time column, or `None` outside the years 1 to 9999 (the
 /// range every time in an answer keeps to).

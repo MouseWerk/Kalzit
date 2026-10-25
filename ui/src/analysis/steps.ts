@@ -1,6 +1,7 @@
 import type { DocumentSet, Field, FieldType, Frame, FrameMeta } from "../api/generated/shapes";
 import {
   addMonths,
+  type Calendar,
   compareText,
   compile,
   DAY_MS,
@@ -13,6 +14,7 @@ import {
   parse,
   parseNumber,
   toCell,
+  UTC_CALENDAR,
 } from "./expr";
 import { type ProjectionColumn, projectDocuments } from "./projection";
 import * as stats from "./stats";
@@ -127,6 +129,8 @@ export const MAX_RUN_TEXT_UNITS = 64 * 1024 * 1024;
 interface Budget {
   textLeft: number;
   maxCells: number;
+  /** The calendar calculated fields read times in. */
+  calendar: Calendar;
 }
 
 function checkCells(budget: Budget, rows: number, fields: number): void {
@@ -208,12 +212,16 @@ export interface StepsRun {
 export function runSteps(
   steps: readonly Step[],
   inputs: readonly NamedInput[],
-  /** Smaller limits for tests; the defaults are the server's. */
-  options: { textBudget?: number; maxCells?: number } = {},
+  /**
+   * The calendar calculated fields read times in (UTC and Monday when absent), and smaller
+   * limits for tests; the default limits are the server's.
+   */
+  options: { textBudget?: number; maxCells?: number; calendar?: Calendar } = {},
 ): StepsRun {
   const budget: Budget = {
     textLeft: options.textBudget ?? MAX_RUN_TEXT_UNITS,
     maxCells: options.maxCells ?? MAX_CELLS,
+    calendar: options.calendar ?? UTC_CALENDAR,
   };
   const order = inputs.map((i) => i.name);
   const documents = inputs.flatMap((i) => ("documents" in i ? [i] : []));
@@ -304,14 +312,39 @@ function fieldIndex(frame: Frame, name: string): number {
 
 const fieldAt = (frame: Frame, i: number) => frame.fields[i] as Field;
 
+/** Numbers, int64 and decimal text: fields steps compute with. */
+const isNumeric = (t: FieldType) => t === "number" || t === "int64" || t === "decimal";
+/** Times and days: both are Unix ms on a time line. */
+const isTime = (t: FieldType) => t === "time" || t === "date";
+
+/**
+ * A decimal's text in one form, so equal decimals group and join together: no leading zeros, no
+ * trailing zeros after the point, no point without a fraction, no negative zero ("-012.50" is
+ * "-12.5"). Text that is no plain decimal stays as it is. The server writes the same.
+ */
+export function canonicalDecimal(s: string): string {
+  const t = s.trim();
+  const negative = t.startsWith("-");
+  const digits = negative || t.startsWith("+") ? t.slice(1) : t;
+  const point = digits.indexOf(".");
+  const whole = point < 0 ? digits : digits.slice(0, point);
+  const fraction = point < 0 ? "" : digits.slice(point + 1);
+  const plain = (p: string) => /^[0-9]*$/.test(p);
+  if (!plain(whole) || !plain(fraction) || (whole === "" && fraction === "")) return s;
+  const w = whole.replace(/^0+/, "") || "0";
+  const f = fraction.replace(/0+$/, "");
+  const body = f === "" ? w : `${w}.${f}`;
+  return negative && body !== "0" ? `-${body}` : body;
+}
+
 function numericField(frame: Frame, name: string): Field {
   const f = fieldAt(frame, fieldIndex(frame, name));
-  if (f.type !== "number" && f.type !== "int64") throw wrongType(f);
+  if (!isNumeric(f.type)) throw wrongType(f);
   return f;
 }
 
 function firstTimeField(nf: NamedFrame): number {
-  const i = nf.frame.fields.findIndex((f) => f.type === "time");
+  const i = nf.frame.fields.findIndex((f) => isTime(f.type));
   if (i < 0) {
     throw detail("steps.no_time_field", `table ${nf.name} has no time field`, { frame: nf.name });
   }
@@ -322,7 +355,7 @@ function timeField(nf: NamedFrame, name: string | undefined): number {
   if (name === undefined) return firstTimeField(nf);
   const i = fieldIndex(nf.frame, name);
   const f = fieldAt(nf.frame, i);
-  if (f.type !== "time") throw wrongType(f);
+  if (!isTime(f.type)) throw wrongType(f);
   return i;
 }
 
@@ -378,6 +411,7 @@ function keyOf(value: unknown, type: FieldType): string | null {
   if (type === "int64" && typeof value === "string") {
     return intOf(value)?.toString() ?? value;
   }
+  if (type === "decimal" && typeof value === "string") return canonicalDecimal(value);
   if (typeof value === "number") return numberText(value);
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -399,7 +433,7 @@ function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedF
   switch (step.type) {
     case "calculate": {
       checkFree(frame, step.name);
-      const compiled = compile(parse(step.expression), frame.fields);
+      const compiled = compile(parse(step.expression), frame.fields, budget.calendar);
       const type = compiled.result === "null" ? "number" : FIELD_TYPE_OF[compiled.result];
       checkCells(budget, rowsOf(frame), frame.fields.length + 1);
       const values = Array.from({ length: rowsOf(frame) }, (_, row) => {
@@ -531,11 +565,11 @@ function trend(
   let overTime: boolean;
   if (x !== undefined) {
     const f = fieldAt(frame, fieldIndex(frame, x));
-    if (f.type !== "number" && f.type !== "int64" && f.type !== "time") throw wrongType(f);
+    if (!isNumeric(f.type) && !isTime(f.type)) throw wrongType(f);
     xs = numbers(f);
-    overTime = f.type === "time";
+    overTime = isTime(f.type);
   } else {
-    const f = frame.fields.find((t) => t.type === "time");
+    const f = frame.fields.find((t) => isTime(t.type));
     xs = f === undefined ? Array.from({ length: rowsOf(frame) }, (_, i) => i) : numbers(f);
     overTime = f !== undefined;
   }
@@ -625,16 +659,10 @@ function aggType(field: Field, op: Agg): FieldType {
   const t = field.type;
   if (op === "count") return "number";
   if (op === "first" || op === "last") return t;
-  if (
-    (op === "min" || op === "max") &&
-    (t === "number" || t === "int64" || t === "time" || t === "string")
-  ) {
+  if ((op === "min" || op === "max") && (isNumeric(t) || isTime(t) || t === "string")) {
     return t;
   }
-  if (
-    (op === "sum" || op === "mean" || op === "median" || op === "stddev") &&
-    (t === "number" || t === "int64")
-  ) {
+  if ((op === "sum" || op === "mean" || op === "median" || op === "stddev") && isNumeric(t)) {
     return "number";
   }
   throw wrongType(field);
@@ -773,7 +801,9 @@ function pivot(
     const name =
       cf.type === "time" && ms !== null
         ? isoTime(Math.trunc(ms))
-        : (keyOf(first, cf.type) ?? "null");
+        : cf.type === "date" && ms !== null
+          ? isoTime(Math.trunc(ms)).slice(0, 10)
+          : (keyOf(first, cf.type) ?? "null");
     if (fields.some((f) => f.name === name)) {
       throw detail("steps.name_taken", `a field is already named ${name}`, { name });
     }

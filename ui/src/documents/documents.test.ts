@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { UTC_CALENDAR } from "../analysis/expr";
 import { runPanelSteps } from "../analysis/panel";
 import { projectDocuments as runProjection } from "../analysis/projection";
 import { appendPages } from "../features/dashboards/results";
@@ -237,7 +238,7 @@ describe("projection step", () => {
       },
     };
     // Without a step, documents are no frame.
-    expect(runPanelSteps([], [outcome]).frames).toEqual([]);
+    expect(runPanelSteps([], [outcome], UTC_CALENDAR).frames).toEqual([]);
     // A new projection goes first, before the steps that read its frame.
     const steps = withProjection([{ type: "other" }], "A", { columns: [{ path: "at" }] });
     const step = steps[0] as Record<string, unknown>;
@@ -248,12 +249,14 @@ describe("projection step", () => {
       columns: [{ path: "at" }],
     });
     expect(projectionFor(steps, "B")).toBeUndefined();
-    expect(runPanelSteps(steps, [outcome]).frames[0]?.frame.fields[0]?.name).toBe("at");
+    expect(runPanelSteps(steps, [outcome], UTC_CALENDAR).frames[0]?.frame.fields[0]?.name).toBe(
+      "at",
+    );
 
     // Changed or switched off, the step keeps its id and place; off, the documents show.
     const off = withProjection(steps, "A", { columns: [{ path: "at" }], disabled: true });
     expect(off[0]).toEqual({ ...step, disabled: true });
-    expect(runPanelSteps(off, [outcome]).frames).toEqual([]);
+    expect(runPanelSteps(off, [outcome], UTC_CALENDAR).frames).toEqual([]);
     expect(withProjection(steps, "A", undefined)).toEqual([{ type: "other" }]);
   });
 

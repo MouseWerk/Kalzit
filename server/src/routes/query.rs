@@ -402,8 +402,8 @@ fn options_from(result: QueryResult) -> ApiResult<VariableOptionsResponse> {
     Ok(VariableOptionsResponse { options, truncated })
 }
 
-/// A cell as option text: int64 stays its decimal string, time becomes ISO 8601 in UTC; `null`
-/// has no option.
+/// A cell as option text: int64 and decimal stay their decimal string, time becomes ISO 8601 in
+/// UTC, a date `2026-01-01`; `null` has no option.
 fn as_text(value: &Value, field_type: FieldType) -> Option<String> {
     match (field_type, value) {
         (_, Value::Null) => None,
@@ -411,6 +411,10 @@ fn as_text(value: &Value, field_type: FieldType) -> Option<String> {
             .as_i64()
             .and_then(chrono::DateTime::from_timestamp_millis)
             .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+        (FieldType::Date, Value::Number(n)) => n
+            .as_i64()
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map(|t| t.date_naive().format("%Y-%m-%d").to_string()),
         (_, Value::String(s)) => Some(s.clone()),
         (_, other) => Some(other.to_string()),
     }

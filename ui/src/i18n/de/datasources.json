@@ -404,6 +404,8 @@
   "datasources.reason.export.too_large": "Die Datei wäre größer als {max} Bytes. Exportiere weniger Zeilen oder als Excel.",
   "datasources.reason.export.too_many_cells": "Eine Excel-Datei nimmt höchstens {max} Zellen. Exportiere stattdessen als CSV.",
   "datasources.reason.export.busy": "Gerade laufen andere Exporte. Versuche es gleich noch einmal.",
+  "datasources.reason.export.time_zone_unknown": "Die Zeitzone ist unbekannt.",
+  "datasources.reason.export.week_start_unknown": "Eine Woche kann am Montag, Sonntag oder Samstag beginnen.",
   "datasources.reason.source.error": "Die Datenquelle hat einen Fehler gemeldet: {detail}",
   "datasources.reason.source.no_answer": "Die Datenquelle hat keine Antwort geschickt.",
   "datasources.reason.sqlite.open_failed": "Die SQLite-Datei ließ sich nicht öffnen: {detail}",

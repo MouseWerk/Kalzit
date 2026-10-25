@@ -37,6 +37,10 @@ fn reject<T>(reason: &'static str, msg: impl Into<String>) -> Result<T, Rejected
     Err(Rejected::new(reason, msg))
 }
 
+/// Above this, a number in a SQLite time column is Unix milliseconds, below it Unix seconds; the
+/// same rule the SQLite source reads time values by.
+pub const SQLITE_EPOCH_MS_ABOVE: i64 = 100_000_000_000;
+
 /// A value bound to one placeholder. Each engine converts it to its own types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Bind {
@@ -222,6 +226,23 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
     for piece in &pieces {
         match piece {
             Piece::Text(t) => out.push_str(t),
+            Piece::TimeFilter(col) if engine == Engine::Sqlite => {
+                // SQLite has no time type: a column holds text (ISO 8601 with "T" or a space,
+                // with or without a zone) or Unix seconds or milliseconds as numbers. Text
+                // compares as a time through julianday (exact to the millisecond, like SQLite's
+                // own clock), numbers as Unix milliseconds; comparing as text would cut ISO
+                // values with "T" at the edges and match no number at all.
+                let from_ms = placeholder(&mut binds, Bind::Int(ctx.range.from));
+                let to_ms = placeholder(&mut binds, Bind::Int(ctx.range.to));
+                let from = placeholder(&mut binds, Bind::Time(ctx.range.from));
+                let to = placeholder(&mut binds, Bind::Time(ctx.range.to));
+                out.push_str(&format!(
+                    "(CASE WHEN typeof({col}) IN ('integer', 'real') \
+                     THEN (CASE WHEN abs({col}) > {SQLITE_EPOCH_MS_ABOVE} THEN {col} ELSE {col} * 1000 END) \
+                     BETWEEN {from_ms} AND {to_ms} \
+                     ELSE julianday({col}) BETWEEN julianday({from}) AND julianday({to}) END)"
+                ));
+            }
             Piece::TimeFilter(col) => {
                 let from = placeholder(&mut binds, Bind::Time(ctx.range.from));
                 let to = placeholder(&mut binds, Bind::Time(ctx.range.to));

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setTimeZone } from "../../lib/timeSettings";
 import {
   annotationRanges,
   type DashboardMark,
@@ -203,6 +204,22 @@ describe("panel time options", () => {
       isTimeShift("1x"),
       isTimeShift("123456s"),
     ]).toEqual([true, false, false, false]);
+  });
+
+  it("keeps an own range's length when the shift crosses a daylight saving change", () => {
+    setTimeZone("Europe/Berlin");
+    // Sunday 2026-10-25 12:00 CET; the day before had 25 hours.
+    const now = Date.UTC(2026, 9, 25, 11, 0, 0);
+    const range = { from: now - 6 * 3_600_000, to: now };
+    const own = panelRange(panel("p", { timeFrom: "now-24h", timeShift: "1d" }), range, now);
+    // 24 hours ending Saturday 12:00 CEST, the same wall-clock time yesterday.
+    expect(own).toEqual({ from: Date.UTC(2026, 9, 23, 10), to: Date.UTC(2026, 9, 24, 10) });
+    // A calendar own range stays a calendar range: it starts at midnight the day before.
+    const day = panelRange(panel("p", { timeFrom: "now-1d/d", timeShift: "1d" }), range, now);
+    expect(day.from).toBe(Date.UTC(2026, 9, 22, 22));
+    // The dashboard's range moves to the same wall-clock times yesterday.
+    const moved = panelRange(panel("p", { timeShift: "1d" }), range, now);
+    expect(moved).toEqual({ from: Date.UTC(2026, 9, 24, 4), to: Date.UTC(2026, 9, 24, 10) });
   });
 });
 

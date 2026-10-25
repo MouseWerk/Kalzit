@@ -290,7 +290,7 @@ fn convert(value: Option<&J>, field_type: FieldType) -> Value {
     let t = typed(value);
     let number = |x: f64| super::expr::to_json(super::expr::V::Num(x));
     match field_type {
-        FieldType::Time => match (t, value) {
+        FieldType::Time | FieldType::Date => match (t, value) {
             (Some(("date", text)), _) => date_ms(text).map_or(Value::Null, ms_cell),
             (None, J::Num(x)) if x.is_finite() => ms_cell(*x),
             _ => Value::Null,
@@ -300,6 +300,12 @@ fn convert(value: Option<&J>, field_type: FieldType) -> Value {
             (Some(("decimal" | "int64", text)), _) => {
                 js_number(text.unwrap_or_default()).filter(|x| x.is_finite()).map_or(Value::Null, number)
             }
+            _ => Value::Null,
+        },
+        // Projections offer no decimal type; a decimal column keeps the digits it is given.
+        FieldType::Decimal => match (t, value) {
+            (Some(("decimal" | "int64", text)), _) => text.map_or(Value::Null, Value::from),
+            (None, J::Num(x)) if x.is_finite() => Value::from(number_text(*x)),
             _ => Value::Null,
         },
         FieldType::Int64 => match (t, value) {

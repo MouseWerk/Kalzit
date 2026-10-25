@@ -34,7 +34,7 @@ text: string, };
 
 export type NoticeSeverity = "info" | "warning";
 
-export type FieldType = "time" | "number" | "int64" | "string" | "bool" | "json";
+export type FieldType = "time" | "number" | "int64" | "string" | "bool" | "json" | "decimal" | "date";
 
 export type Field = { name: string, type: FieldType, unit?: string, 
 /**
@@ -198,6 +198,24 @@ frame?: string,
 /**
  * The file name's base, such as the Explore data source's name.
  */
-title?: string, };
+title?: string, 
+/**
+ * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+ * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+ */
+timeZone?: string, 
+/**
+ * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+ */
+weekStart?: "monday" | "sunday" | "saturday", };
 
-export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, };
+export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, frame?: string, 
+/**
+ * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+ * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+ */
+timeZone?: string, 
+/**
+ * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+ */
+weekStart?: "monday" | "sunday" | "saturday", };

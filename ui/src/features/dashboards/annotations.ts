@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import type { Frame, QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
 import type { PanelAnnotation } from "../../panels/annotations";
+import { dayStarts } from "../../panels/frame";
 import {
   ANNOTATIONS_KEY,
   type Annotation,
@@ -62,7 +63,11 @@ export function marksFromFrames(
   const marks: DashboardMark[] = [];
   for (const [f, frame] of frames.entries()) {
     const fields = frame.fields;
-    const time = fields.find((field) => field.type === "time" && field.name !== "timeEnd");
+    const found = fields.find(
+      (field) => (field.type === "time" || field.type === "date") && field.name !== "timeEnd",
+    );
+    // A day marks its midnight on the dashboard's wall clock, not midnight UTC.
+    const time = found?.type === "date" ? dayStarts(found) : found;
     if (time === undefined) continue;
     const end = fields.find((field) => field.name === "timeEnd");
     const text =
