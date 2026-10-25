@@ -41,7 +41,59 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}", Access::OrgMember, trash),
         route(Method::POST, "/orgs/{orgId}/folders/{folderId}/restore", Access::OrgMember, restore),
         route(Method::DELETE, "/orgs/{orgId}/folders/{folderId}/purge", Access::OrgMember, purge),
+        route(Method::PUT, "/orgs/{orgId}/folders/{folderId}/owner", Access::OrgMember, set_owner),
     ]
+}
+
+/// The team that owns a folder or dashboard, named for display.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerTeam {
+    id: String,
+    name: String,
+}
+
+impl OwnerTeam {
+    pub fn of(team_id: Option<&str>, index: &AccessIndex) -> Option<Self> {
+        team_id.map(|id| Self { id: id.to_string(), name: index.team_name(id).unwrap_or_default().to_string() })
+    }
+}
+
+/// Who may see a team-owned folder or dashboard besides its team: everyone with access to the
+/// place (`shared`, read only), or nobody without a grant (`team`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Visibility {
+    Shared,
+    Team,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerRequest {
+    /// `null` hands the folder or dashboard to the organization.
+    pub owner_team_id: Option<String>,
+    pub visibility: Visibility,
+}
+
+/// Before a change of owner: the new owner team exists in the organization and the caller may
+/// hand content to it, as one of its members or as an org admin.
+pub async fn check_new_owner(state: &AppState, ctx: &OrgCtx, team_id: Option<&str>) -> ApiResult<()> {
+    let Some(team_id) = team_id else { return Ok(()) };
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM teams WHERE org_id = $1 AND id = $2")
+        .bind(&ctx.org_id)
+        .bind(team_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if exists.is_none() {
+        return Err(ApiError::validation("no such team here").with_field("ownerTeamId"));
+    }
+    if authz::role_sees_restricted(&ctx.permissions) || authz::team_membership(&state.db, ctx, team_id).await?.is_some()
+    {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("only members of a team and org admins can hand content to it"))
+    }
 }
 
 /// For patch bodies: a missing field is `None`, an explicit `null` is `Some(None)`.
@@ -89,6 +141,10 @@ pub struct Folder {
     name: String,
     /// The folder's own flag; subfolders of a restricted folder are restricted as well.
     restricted: bool,
+    /// The team that owns the folder; `null` for folders of the organization.
+    owner_team: Option<OwnerTeam>,
+    /// A team space: a restricted folder at the top level that a team owns.
+    team_space: bool,
     version: i64,
     created_at: i64,
     updated_at: i64,
@@ -102,6 +158,8 @@ fn folder(row: &FolderRow, parent_id: Option<String>, index: &AccessIndex) -> Fo
         parent_id,
         name: row.name.clone(),
         restricted: row.restricted != 0,
+        owner_team: OwnerTeam::of(row.owner_team_id.as_deref(), index),
+        team_space: row.owner_team_id.is_some() && row.restricted != 0 && row.parent_id.is_none(),
         version: row.version,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -304,6 +362,9 @@ async fn authorize_subtree(
 pub struct ListQuery {
     /// `true` lists what was put in the trash (each trashed subtree once, by its top folder).
     trashed: Option<bool>,
+    /// A team context: only folders outside other teams' spaces, the team's own spaces and what
+    /// was shared with the team (see `folders::TeamScope`).
+    team: Option<String>,
 }
 
 async fn list(
@@ -314,8 +375,9 @@ async fn list(
     let mut conn = state.db.acquire().await?;
     let tree = Tree::load(&mut conn, &ctx).await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
+    let scope = super::team_context::scope(&mut conn, &ctx, q.team.as_deref()).await?;
     drop(conn);
-    let visible = |r: &&FolderRow| tree.visible(&r.id);
+    let visible = |r: &&FolderRow| tree.visible(&r.id) && scope.as_ref().is_none_or(|s| s.folder(&r.id));
     if q.trashed.unwrap_or(false) {
         let mut roots: Vec<&FolderRow> = tree
             .rows
@@ -363,6 +425,10 @@ pub struct CreateFolder {
     parent_id: Option<String>,
     #[serde(default)]
     restricted: bool,
+    /// Creates a team space: a restricted folder at the top level owned by this team, which its
+    /// members see and nobody else without a grant.
+    #[serde(default)]
+    owner_team_id: Option<String>,
 }
 
 async fn create(
@@ -372,8 +438,21 @@ async fn create(
     JsonBody(body): JsonBody<CreateFolder>,
 ) -> ApiResult<impl IntoResponse> {
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
-    match body.parent_id.as_deref() {
-        Some(parent) => {
+    let space = body.owner_team_id.as_deref();
+    match (body.parent_id.as_deref(), space) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::validation("a team space lives at the top level").with_field("parentId"));
+        }
+        // Team maintainers and org admins create team spaces; the space is the team's, so the
+        // org-wide folder permissions do not decide it.
+        (None, Some(team)) => {
+            let maintainer = authz::team_membership(&state.db, &ctx, team).await?.as_deref() == Some("maintainer");
+            if !maintainer && !authz::role_sees_restricted(&ctx.permissions) {
+                return Err(ApiError::forbidden("only maintainers of the team and org admins create its team space"));
+            }
+            check_new_owner(&state, &ctx, Some(team)).await?;
+        }
+        (Some(parent), None) => {
             authorize(&state, &ctx, parent, Permission::FoldersWrite).await?;
             if body.restricted {
                 // Restriction decides who sees the folder at all, so it is a permissions change.
@@ -381,7 +460,7 @@ async fn create(
             }
         }
         // The top level belongs to no folder, so only the org-wide permissions count.
-        None => {
+        (None, None) => {
             ctx.check(Permission::FoldersWrite)?;
             if body.restricted {
                 ctx.check(Permission::FoldersPermissions)?;
@@ -396,22 +475,24 @@ async fn create(
         check_parent(&tree, parent)?;
         tree.check_placement(None, parent)?;
     }
+    let restricted = body.restricted || space.is_some();
     sqlx::query(
-        "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_by, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $7)",
+        "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_by, created_at, updated_at, \
+         owner_team_id) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $7, $8)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
     .bind(body.parent_id.as_deref())
     .bind(&name)
-    .bind(body.restricted as i64)
+    .bind(restricted as i64)
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(space)
     .execute(&mut *tx)
     .await?;
-    let summary = json!({ "parentId": body.parent_id, "restricted": body.restricted });
+    let summary = json!({ "parentId": body.parent_id, "restricted": restricted, "ownerTeamId": space });
     audit::record(&mut tx, &event(&ctx, &info, "folder.created", &id, summary, now)).await?;
-    if body.restricted {
+    if restricted && space.is_none() {
         keep_access(&mut tx, &ctx, &info, &id, now).await?;
     }
     let created = answer(&mut tx, &ctx, &id).await?;
@@ -526,8 +607,10 @@ async fn update(
             }
         }
         // Moving into or out of a restricted folder changes who sees the folder: a permissions
-        // change on both sides.
-        if top.map(str::to_string) != governing_after_move(&tree, &before, parent.as_deref()) {
+        // change on both sides. Between the open tree and team spaces, edit rights on both
+        // sides (checked above) are enough.
+        let after = governing_after_move(&tree, &before, parent.as_deref());
+        if tree.crossing_needs_permissions(top, after.as_deref()) {
             authorize(&state, &ctx, &folder_id, Permission::FoldersPermissions).await?;
             if let Some(parent) = parent.as_deref() {
                 authorize(&state, &ctx, parent, Permission::FoldersPermissions).await?;
@@ -598,6 +681,64 @@ async fn update(
         let summary = json!({ "fields": changed });
         audit::record(&mut tx, &event(&ctx, &info, "folder.updated", &folder_id, summary, now)).await?;
         if next.restricted != 0 && current.restricted == 0 {
+            keep_access(&mut tx, &ctx, &info, &folder_id, now).await?;
+        }
+    }
+    let updated = answer(&mut tx, &ctx, &folder_id).await?;
+    crate::db::commit(tx).await?;
+    Ok(updated)
+}
+
+/// Sets the team that owns a folder and who else sees it (`team`: a restricted folder). Changing
+/// either decides who sees and edits the folder, so it needs `folders:permissions` on it (team
+/// maintainers hold it inside their team's folders); the new owner team must be the caller's
+/// unless they are an org admin.
+async fn set_owner(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, folder_id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<OwnerRequest>,
+) -> ApiResult<Json<Folder>> {
+    authorize(&state, &ctx, &folder_id, Permission::FoldersPermissions).await?;
+    check_new_owner(&state, &ctx, body.owner_team_id.as_deref()).await?;
+    let restricted = body.visibility == Visibility::Team;
+    let tree = pool_tree(&state, &ctx).await?;
+    let before = visible_row(&tree, &folder_id)?.clone();
+    let mut tx = crate::db::begin(&state.db).await?;
+    let tree = locked_tree(&mut tx, &ctx).await?;
+    let current = visible_row(&tree, &folder_id)?.clone();
+    if current.deleted_at.is_some() {
+        return Err(conflict("the folder is in the trash; restore it first"));
+    }
+    if current.version != before.version {
+        return Err(changed_meanwhile());
+    }
+    let unchanged = current.owner_team_id == body.owner_team_id && (current.restricted != 0) == restricted;
+    if !unchanged {
+        let now = state.clock.now_ms();
+        sqlx::query(
+            "UPDATE folders SET owner_team_id = $1, restricted = $2, version = $3, updated_at = $4 \
+             WHERE org_id = $5 AND id = $6",
+        )
+        .bind(body.owner_team_id.as_deref())
+        .bind(restricted as i64)
+        .bind(current.version + 1)
+        .bind(now)
+        .bind(&ctx.org_id)
+        .bind(&folder_id)
+        .execute(&mut *tx)
+        .await?;
+        let summary = json!({
+            "from": current.owner_team_id, "to": body.owner_team_id, "visibility": body.visibility,
+        });
+        audit::record(&mut tx, &event(&ctx, &info, "folder.owner_changed", &folder_id, summary, now)).await?;
+        // Whoever restricts a folder without belonging to its new owner team keeps sight of it.
+        let member = match body.owner_team_id.as_deref() {
+            Some(team) => authz::team_membership(&mut *tx, &ctx, team).await?.is_some(),
+            None => false,
+        };
+        if restricted && !member {
             keep_access(&mut tx, &ctx, &info, &folder_id, now).await?;
         }
     }

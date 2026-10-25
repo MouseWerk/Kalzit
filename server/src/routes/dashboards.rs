@@ -12,7 +12,7 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::folders::{ResourceAccess, double_option};
+use super::folders::{OwnerRequest, OwnerTeam, ResourceAccess, Visibility, check_new_owner, double_option};
 use super::new_id;
 use super::support::{QueryParams, clean_text, conflict, decode_cursor, encode_cursor, page_limit};
 use super::table::{RouteDef, route};
@@ -48,6 +48,7 @@ pub fn routes() -> Vec<RouteDef> {
             OrgMember,
             restore_version,
         ),
+        route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/owner", OrgMember, set_owner),
     ]
 }
 
@@ -64,9 +65,12 @@ struct DashboardRow {
     deleted_at: Option<i64>,
     /// The current version's tags, as a JSON array.
     tags: String,
+    owner_team_id: Option<String>,
+    team_only: i64,
 }
 
-const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at, tags";
+const COLUMNS: &str = "id, folder_id, title, version, created_by, created_at, updated_by, updated_at, deleted_at, tags, \
+     owner_team_id, team_only";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +87,11 @@ pub struct DashboardSummary {
     deleted_at: Option<i64>,
     tags: Vec<String>,
     access: ResourceAccess,
+    /// The team that owns the dashboard; `null` when it belongs to the organization (it may still
+    /// live in a team's folder).
+    owner_team: Option<OwnerTeam>,
+    /// Only the owner team, grants on the dashboard and org admins see it.
+    team_only: bool,
 }
 
 impl DashboardSummary {
@@ -99,6 +108,8 @@ impl DashboardSummary {
             // Written by the server from a validated model; an unreadable value shows no tags.
             tags: serde_json::from_str(&r.tags).unwrap_or_default(),
             access: ResourceAccess::dashboard(index.dashboard(&r.id, r.folder_id.as_deref())),
+            owner_team: OwnerTeam::of(r.owner_team_id.as_deref(), index),
+            team_only: r.team_only != 0,
         }
     }
 }
@@ -375,6 +386,9 @@ pub struct ListQuery {
     trashed: Option<bool>,
     /// Only dashboards with this tag, any case.
     tag: Option<String>,
+    /// A team context: only dashboards outside other teams' spaces, in the team's own spaces and
+    /// what was shared with the team (see `folders::TeamScope`).
+    team: Option<String>,
     limit: Option<u32>,
     cursor: Option<String>,
 }
@@ -403,35 +417,55 @@ async fn list(
         }
     }
     let index = AccessIndex::load(&mut conn, &ctx).await?;
+    let scope = super::team_context::scope(&mut conn, &ctx, q.team.as_deref()).await?;
     // Lower case by Unicode rules on both sides: `search_title` is written by the server.
     let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
     let (after_title, after_id) = after.unzip();
-    let rows: Vec<DashboardRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    // A team context leaves out other teams' spaces in the query itself, so pages stay full: one
+    // parameter per folder left out and per dashboard shared with the team, from `$12` on.
+    let excluded = scope.as_ref().map(|s| s.excluded_folders()).unwrap_or_default();
+    let shared = scope.as_ref().map(|s| s.shared_dashboards()).unwrap_or_default();
+    let numbered = |from: usize, n: usize| (from..from + n).map(|i| format!("${i}")).collect::<Vec<_>>().join(", ");
+    let scoped = if excluded.is_empty() {
+        String::new()
+    } else {
+        let back = if shared.is_empty() {
+            String::new()
+        } else {
+            format!(" OR id IN ({})", numbered(12 + excluded.len(), shared.len()))
+        };
+        format!("AND (folder_id IS NULL OR folder_id NOT IN ({}){back})", numbered(12, excluded.len()))
+    };
+    let sql = format!(
         "{} SELECT {COLUMNS} FROM dashboards WHERE org_id = $1 \
          AND ((CAST($5 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($5 AS BIGINT) = 0 AND deleted_at IS NULL)) \
          AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
          AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\') \
-         AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM hidden_folders) \
-              OR id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')) \
+         AND {} \
          AND (CAST($8 AS TEXT) IS NULL OR title > $8 OR (title = $8 AND id > $9)) \
          AND (CAST($11 AS TEXT) IS NULL OR id IN \
               (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key = $11)) \
-         ORDER BY title, id LIMIT $10",
-        folders::VISIBILITY_CTE
-    )))
-    .bind(&ctx.org_id)
-    .bind(&ctx.user.id)
-    .bind(&ctx.role)
-    .bind(folders::sees_every_folder(&ctx))
-    .bind(q.trashed.unwrap_or(false) as i64)
-    .bind(q.folder_id.as_deref())
-    .bind(pattern.as_deref())
-    .bind(after_title.as_deref())
-    .bind(after_id.as_deref())
-    .bind(limit as i64 + 1)
-    .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase))
-    .fetch_all(&mut *conn)
-    .await?;
+         {scoped} ORDER BY title, id LIMIT $10",
+        folders::VISIBILITY_CTE,
+        folders::dashboard_visible("dashboards"),
+    );
+    // Built from constants and parameter numbers only, so nothing from the request reaches the SQL.
+    let mut query = sqlx::query_as::<_, DashboardRow>(sqlx::AssertSqlSafe(sql))
+        .bind(&ctx.org_id)
+        .bind(&ctx.user.id)
+        .bind(&ctx.role)
+        .bind(folders::sees_every_folder(&ctx))
+        .bind(q.trashed.unwrap_or(false) as i64)
+        .bind(q.folder_id.as_deref())
+        .bind(pattern.as_deref())
+        .bind(after_title.as_deref())
+        .bind(after_id.as_deref())
+        .bind(limit as i64 + 1)
+        .bind(q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase));
+    for id in excluded.iter().chain(shared.iter()) {
+        query = query.bind(*id);
+    }
+    let rows: Vec<DashboardRow> = query.fetch_all(&mut *conn).await?;
     let mut items: Vec<DashboardSummary> = rows.iter().map(|r| DashboardSummary::new(r, &index)).collect();
     let more = items.len() > limit;
     items.truncate(limit);
@@ -639,10 +673,11 @@ async fn save(
     if folder_id != row.folder_id {
         authorize_place(&state, &ctx, folder_id.as_deref()).await?;
         // Moving into or out of a restricted folder changes who sees the dashboard: a permissions
-        // change on both sides, as for folders.
+        // change on both sides, as for folders. Between the open tree and team spaces, edit
+        // rights on both sides (the dashboard's and the new place's, checked here) are enough.
         let tree = Tree::load(&mut *state.db.acquire().await?, &ctx).await?;
-        let governing = |folder: Option<&str>| folder.and_then(|f| tree.governing(f)).map(str::to_string);
-        if governing(row.folder_id.as_deref()) != governing(folder_id.as_deref()) {
+        let governing = |folder: Option<&str>| folder.and_then(|f| tree.governing(f));
+        if tree.crossing_needs_permissions(governing(row.folder_id.as_deref()), governing(folder_id.as_deref())) {
             for place in [row.folder_id.as_deref(), folder_id.as_deref()].into_iter().flatten() {
                 authz::check_resource(&state.db, &ctx, Permission::FoldersPermissions, Resource::Folder(place))
                     .await
@@ -773,12 +808,13 @@ async fn purge(
         Some((_, None)) => return Err(not_trashed()),
         Some((folder, Some(_))) => folder,
     };
-    let (ever_restricted,): (i64,) =
-        sqlx::query_as("SELECT ever_restricted FROM dashboards WHERE org_id = $1 AND id = $2")
-            .bind(&ctx.org_id)
-            .bind(&id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let (ever_restricted,): (i64,) = sqlx::query_as(
+        "SELECT CASE WHEN team_only = 1 THEN 1 ELSE ever_restricted END FROM dashboards WHERE org_id = $1 AND id = $2",
+    )
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .fetch_one(&mut *tx)
+    .await?;
     let restricted_now = match folder.as_deref() {
         Some(folder) => folders::restricted_in(&mut tx, &ctx.org_id, folder).await?,
         None => false,
@@ -802,6 +838,93 @@ async fn purge(
     audit::record(&mut tx, &event(&ctx, &info, "dashboard.purged", &id, json!({}), now)).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Sets the team that owns a dashboard and who else sees it (`team`: team only). Changing either
+/// decides who sees and edits the dashboard, so it needs `dashboards:share` on it (the owner
+/// team's editors hold it, members outside the team do not); the new owner team must be the
+/// caller's unless they are an org admin.
+async fn set_owner(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<OwnerRequest>,
+) -> ApiResult<Json<Dashboard>> {
+    let row = load(&state, &ctx, &id, Permission::DashboardsShare).await?;
+    if row.deleted_at.is_some() {
+        return Err(conflict("the dashboard is in the trash; restore it first"));
+    }
+    check_new_owner(&state, &ctx, body.owner_team_id.as_deref()).await?;
+    let team_only = body.visibility == Visibility::Team;
+    let member = match body.owner_team_id.as_deref() {
+        Some(team) => authz::team_membership(&state.db, &ctx, team).await?.is_some(),
+        None => false,
+    };
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    authz::lock_org(&mut tx, &ctx.org_id).await?;
+    let changed = sqlx::query(
+        "UPDATE dashboards SET owner_team_id = $1, team_only = $2, \
+         ever_restricted = CASE WHEN $2 = 1 THEN 1 ELSE ever_restricted END \
+         WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL \
+         AND (COALESCE(owner_team_id, '') <> COALESCE(CAST($1 AS TEXT), '') OR team_only <> $2)",
+    )
+    .bind(body.owner_team_id.as_deref())
+    .bind(team_only as i64)
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed > 0 {
+        let summary = json!({ "from": row.owner_team_id, "to": body.owner_team_id, "visibility": body.visibility });
+        audit::record(&mut tx, &event(&ctx, &info, "dashboard.owner_changed", &id, summary, now)).await?;
+        // Whoever makes a dashboard team only without belonging to its team keeps sight of it,
+        // as on restricting a folder.
+        if team_only && !member && !authz::role_sees_restricted(&ctx.permissions) {
+            keep_dashboard_access(&mut tx, &ctx, &info, &id, now).await?;
+        }
+    }
+    let saved = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    let answer = view(&mut tx, &ctx, saved).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(answer))
+}
+
+/// An `admin` grant on the dashboard for the caller, so making it team only does not lock them
+/// out (see `set_owner`).
+async fn keep_dashboard_access(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    id: &str,
+    now: i64,
+) -> ApiResult<()> {
+    sqlx::query(
+        "DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id = $2 \
+         AND subject_type = 'user' AND subject_id = $3",
+    )
+    .bind(&ctx.org_id)
+    .bind(id)
+    .bind(&ctx.user.id)
+    .execute(&mut *conn)
+    .await?;
+    let grant = new_id();
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
+         created_by, created_at) VALUES ($1, $2, 'user', $3, 'dashboard', $4, 'admin', $3, $5)",
+    )
+    .bind(&grant)
+    .bind(&ctx.org_id)
+    .bind(&ctx.user.id)
+    .bind(id)
+    .bind(now)
+    .execute(&mut *conn)
+    .await?;
+    let summary = json!({ "grantId": grant, "subjectType": "user", "subjectId": ctx.user.id, "level": "admin" });
+    audit::record(conn, &event(ctx, info, "grant.created", id, summary, now)).await?;
+    Ok(())
 }
 
 #[derive(Serialize, sqlx::FromRow)]

@@ -339,10 +339,10 @@ async fn save(
     if folder_id != row.folder_id {
         check_place(&state.db, &ctx, Permission::DashboardsWrite, folder_id.as_deref()).await?;
         // Into or out of a restricted folder changes who sees it: a permissions change, as for
-        // dashboards.
+        // dashboards; between the open tree and team spaces edit rights on both sides suffice.
         let tree = Tree::load(&mut *state.db.acquire().await?, &ctx).await?;
-        let governing = |folder: Option<&str>| folder.and_then(|f| tree.governing(f)).map(str::to_string);
-        if governing(row.folder_id.as_deref()) != governing(folder_id.as_deref()) {
+        let governing = |folder: Option<&str>| folder.and_then(|f| tree.governing(f));
+        if tree.crossing_needs_permissions(governing(row.folder_id.as_deref()), governing(folder_id.as_deref())) {
             for place in [row.folder_id.as_deref(), folder_id.as_deref()].into_iter().flatten() {
                 authz::check_resource(&state.db, &ctx, Permission::FoldersPermissions, Resource::Folder(place))
                     .await

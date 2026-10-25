@@ -145,13 +145,13 @@ async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<
            (COALESCE(e.resource_type, '') = 'folder' \
             AND COALESCE(e.resource_id, '') IN (SELECT id FROM hidden_folders)) \
            OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
-             (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND d.folder_id IN (SELECT id FROM hidden_folders) \
-              AND d.id NOT IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard')))) \
+             (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND NOT {}))) \
          AND (CAST($4 AS BIGINT) = 1 OR NOT EXISTS (SELECT 1 FROM restricted_tombstones t \
               WHERE t.org_id = e.org_id AND t.resource_type = COALESCE(e.resource_type, '') \
               AND t.resource_id = COALESCE(e.resource_id, ''))) \
          ORDER BY e.created_at DESC, e.id DESC LIMIT $13",
-        folders::VISIBILITY_CTE
+        folders::VISIBILITY_CTE,
+        folders::dashboard_visible("d"),
     )))
     .bind(viewer.org_id)
     .bind(viewer.user_id)

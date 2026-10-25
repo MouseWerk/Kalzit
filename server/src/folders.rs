@@ -12,23 +12,26 @@ use crate::error::{ApiError, ApiResult};
 /// Folders nest at most this deep, so paths stay readable and every walk up the tree is short.
 pub const MAX_DEPTH: usize = 10;
 
-/// One step up from `folder_id`: its parent and own restricted flag, or `None` if the folder is
-/// not in the organization. Trashed folders count; trash does not change the structure.
-async fn link(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Option<(Option<String>, bool)>> {
-    let row: Option<(Option<String>, i64)> =
-        sqlx::query_as("SELECT parent_id, restricted FROM folders WHERE org_id = $1 AND id = $2")
+type LinkRow = (Option<String>, bool, Option<String>);
+
+/// One step up from `folder_id`: its parent, own restricted flag and owner team, or `None` if the
+/// folder is not in the organization. Trashed folders count; trash does not change the structure.
+async fn link(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiResult<Option<LinkRow>> {
+    let row: Option<(Option<String>, i64, Option<String>)> =
+        sqlx::query_as("SELECT parent_id, restricted, owner_team_id FROM folders WHERE org_id = $1 AND id = $2")
             .bind(org_id)
             .bind(folder_id)
             .fetch_optional(db)
             .await?;
-    Ok(row.map(|(parent, restricted)| (parent, restricted != 0)))
+    Ok(row.map(|(parent, restricted, owner)| (parent, restricted != 0, owner)))
 }
 
-/// One folder of a chain and its own restricted flag.
+/// One folder of a chain, its own restricted flag and the team that owns it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderLink {
     pub id: String,
     pub restricted: bool,
+    pub owner_team: Option<String>,
 }
 
 /// The folder itself first, then its parents up to the top level, with their own restricted
@@ -42,7 +45,7 @@ pub async fn folder_chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiRes
         if out.len() > MAX_DEPTH * 2 || out.iter().any(|seen| seen.id == id) {
             return Err(ApiError::internal("folders", format!("folder {folder_id} has a cycle among its parents")));
         }
-        let Some((parent, restricted)) = link(db, org_id, &id).await? else {
+        let Some((parent, restricted, owner_team)) = link(db, org_id, &id).await? else {
             // The folder itself is missing: not in this organization. A missing parent cannot
             // happen with the foreign key, so it is an error as well.
             return Err(if out.is_empty() {
@@ -51,7 +54,7 @@ pub async fn folder_chain(db: &AnyPool, org_id: &str, folder_id: &str) -> ApiRes
                 ApiError::internal("folders", format!("parent {id} of folder {folder_id} is missing"))
             });
         };
-        out.push(FolderLink { id, restricted });
+        out.push(FolderLink { id, restricted, owner_team });
         next = parent;
     }
     Ok(out)
@@ -71,8 +74,8 @@ pub async fn folder_is_restricted(db: &AnyPool, org_id: &str, folder_id: &str) -
 
 /// SQL that decides which folders the caller sees, by the rule of `authz::check_resource`: the
 /// nearest restricted folder above (or at) a folder governs it, and only the caller's grants on
-/// folders from there down count; members whose org-wide permissions include
-/// `folders:permissions` see every folder. Defines `caller_grants(resource_type, resource_id)`
+/// folders from there down count, membership in a team that owns one of them counting like a
+/// grant; members whose org-wide permissions include `folders:permissions` see every folder. Defines `caller_grants(resource_type, resource_id)`
 /// (the grants of the caller, their teams and roles) and `hidden_folders(id)`. Binds `$1` the
 /// organization, `$2` the user id, `$3` the member's role key, `$4` 1 when the caller sees every
 /// folder; the query that uses it numbers its own parameters from `$5`.
@@ -87,15 +90,31 @@ pub const VISIBILITY_CTE: &str = "WITH RECURSIVE \
     folder_walk(id, restricted, granted, depth) AS ( \
         SELECT f.id, CAST(f.restricted AS BIGINT), \
             CAST(CASE WHEN f.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'folder') \
-                THEN 1 ELSE 0 END AS BIGINT), CAST(1 AS BIGINT) \
+                OR f.owner_team_id IN (SELECT id FROM caller_teams) THEN 1 ELSE 0 END AS BIGINT), \
+            CAST(1 AS BIGINT) \
         FROM folders f WHERE f.org_id = $1 AND f.parent_id IS NULL \
         UNION ALL \
         SELECT c.id, CAST(CASE WHEN c.restricted = 1 OR w.restricted = 1 THEN 1 ELSE 0 END AS BIGINT), \
-            CAST(CASE WHEN c.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'folder') THEN 1 \
+            CAST(CASE WHEN c.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'folder') \
+                OR c.owner_team_id IN (SELECT id FROM caller_teams) THEN 1 \
                 WHEN c.restricted = 1 THEN 0 ELSE w.granted END AS BIGINT), w.depth + 1 \
         FROM folders c JOIN folder_walk w ON c.parent_id = w.id WHERE w.depth < 64), \
     hidden_folders(id) AS (SELECT id FROM folder_walk \
         WHERE CAST($4 AS BIGINT) = 0 AND restricted = 1 AND granted = 0) ";
+
+/// The condition, for a query that starts with `VISIBILITY_CTE`, that the caller sees a row of
+/// `dashboards` named `alias`, by the rule of `authz::check_resource`: a team-only dashboard
+/// governs itself (only grants on it and membership in its owner team count); any other one is
+/// seen where its folder is seen, or through a grant on it or membership in its owner team.
+pub fn dashboard_visible(alias: &str) -> String {
+    let a = alias;
+    format!(
+        "(CAST($4 AS BIGINT) = 1 \
+         OR ({a}.team_only = 0 AND ({a}.folder_id IS NULL OR {a}.folder_id NOT IN (SELECT id FROM hidden_folders))) \
+         OR {a}.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard') \
+         OR {a}.owner_team_id IN (SELECT id FROM caller_teams))"
+    )
+}
 
 /// The value of `$4` in `VISIBILITY_CTE` for the caller.
 pub fn sees_every_folder(ctx: &OrgCtx) -> i64 {
@@ -196,10 +215,12 @@ pub struct FolderRow {
     pub deleted_at: Option<i64>,
     /// Shared by everything trashed in one go, so a restore brings back exactly that.
     pub trash_batch: Option<String>,
+    /// The team that owns the folder: at the top level and restricted, a team space.
+    pub owner_team_id: Option<String>,
 }
 
-pub const FOLDER_COLUMNS: &str =
-    "id, parent_id, name, restricted, version, created_by, created_at, updated_at, deleted_at, trash_batch";
+pub const FOLDER_COLUMNS: &str = "id, parent_id, name, restricted, version, created_by, created_at, updated_at, \
+     deleted_at, trash_batch, owner_team_id";
 
 /// All folders of an organization, trashed ones included, for work on the whole tree in memory,
 /// with the ones hidden from the caller.
@@ -251,6 +272,16 @@ impl Tree {
     /// The id of the restricted folder that governs `id` (see `nearest_restricted`).
     pub fn governing(&self, id: &str) -> Option<&str> {
         self.nearest_restricted(id).map(|r| r.id.as_str())
+    }
+
+    /// Whether a move from under the governing restricted folder `from` to under `to` (see
+    /// `governing`) needs `folders:permissions` on both sides. Moves between the open tree and
+    /// team-owned restricted folders (team spaces) need only edit rights on both sides, which the
+    /// caller checks.
+    pub fn crossing_needs_permissions(&self, from: Option<&str>, to: Option<&str>) -> bool {
+        let team_owned =
+            |g: Option<&str>| g.is_none_or(|id| self.rows.get(id).is_some_and(|r| r.owner_team_id.is_some()));
+        from != to && !(team_owned(from) && team_owned(to))
     }
 
     /// Whether the caller sees the folder (see `VISIBILITY_CTE`).
@@ -323,6 +354,80 @@ impl Tree {
     }
 }
 
+/// What a team context shows in lists (docs/api/access.md, "Team spaces"): everything outside
+/// team spaces, the team's own spaces, and what was shared with the team inside other teams'
+/// spaces. A filter only: access is decided by `authz` as always, so nothing the caller may not
+/// see appears because of it.
+pub struct TeamScope {
+    /// Folders inside another team's space that no grant to the team reaches.
+    out: HashSet<String>,
+    /// Dashboards the team holds a grant on.
+    dashboards: HashSet<String>,
+}
+
+impl TeamScope {
+    /// For `team_id`, which the caller checked against the member's teams.
+    pub async fn load(conn: &mut sqlx::AnyConnection, org_id: &str, team_id: &str) -> ApiResult<Self> {
+        let rows: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, parent_id, owner_team_id FROM folders WHERE org_id = $1")
+                .bind(org_id)
+                .fetch_all(&mut *conn)
+                .await?;
+        let grants: Vec<(String, String)> = sqlx::query_as(
+            "SELECT resource_type, resource_id FROM resource_grants WHERE org_id = $1 AND subject_type = 'team' \
+             AND subject_id = $2 AND resource_type IN ('folder', 'dashboard')",
+        )
+        .bind(org_id)
+        .bind(team_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let shared: HashSet<&str> = grants.iter().filter(|(t, _)| t == "folder").map(|(_, id)| id.as_str()).collect();
+        let folders: HashMap<&str, (Option<&str>, Option<&str>)> =
+            rows.iter().map(|(id, parent, owner)| (id.as_str(), (parent.as_deref(), owner.as_deref()))).collect();
+        let mut out = HashSet::new();
+        for id in folders.keys() {
+            let mut chain = vec![*id];
+            let mut next = folders.get(id).and_then(|(parent, _)| *parent);
+            while let Some(parent) = next {
+                // A cycle cannot be stored (moves refuse it); the bound keeps a damaged table harmless.
+                if chain.len() > MAX_DEPTH * 2 {
+                    break;
+                }
+                chain.push(parent);
+                next = folders.get(parent).and_then(|(p, _)| *p);
+            }
+            let top = chain.last().and_then(|top| folders.get(top)).and_then(|(_, owner)| *owner);
+            if top.is_some_and(|owner| owner != team_id) && !chain.iter().any(|f| shared.contains(f)) {
+                out.insert(id.to_string());
+            }
+        }
+        let dashboards = grants.into_iter().filter(|(t, _)| t == "dashboard").map(|(_, id)| id).collect();
+        Ok(Self { out, dashboards })
+    }
+
+    pub fn folder(&self, id: &str) -> bool {
+        !self.out.contains(id)
+    }
+
+    pub fn dashboard(&self, id: &str, folder: Option<&str>) -> bool {
+        folder.is_none_or(|f| self.folder(f)) || self.dashboards.contains(id)
+    }
+
+    /// The folders left out, sorted, for a query that filters by them.
+    pub fn excluded_folders(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self.out.iter().map(String::as_str).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The dashboards shared with the team, sorted, for a query that brings them back.
+    pub fn shared_dashboards(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self.dashboards.iter().map(String::as_str).collect();
+        out.sort_unstable();
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +444,7 @@ mod tests {
             updated_at: 0,
             deleted_at: None,
             trash_batch: None,
+            owner_team_id: None,
         }
     }
 
@@ -353,6 +459,7 @@ mod tests {
             org_id: "o".into(),
             role: role.as_str().into(),
             permissions: role.permissions(),
+            at_ms: 0,
         }
     }
 
@@ -556,7 +663,7 @@ mod tests {
             .unwrap();
         }
         assert_eq!(folder_ancestors(&db, "o", "e").await.unwrap(), ["e", "d", "a"]);
-        let link = |id: &str, restricted| FolderLink { id: id.into(), restricted };
+        let link = |id: &str, restricted| FolderLink { id: id.into(), restricted, owner_team: None };
         assert_eq!(folder_chain(&db, "o", "e").await.unwrap(), [link("e", false), link("d", true), link("a", false)]);
         assert_eq!(folder_chain(&db, "p", "e").await.unwrap_err().code, "not_found");
         assert!(folder_is_restricted(&db, "o", "e").await.unwrap());
