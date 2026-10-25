@@ -44,12 +44,12 @@ import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { addMatch, isMongoQuery, parseMongoQuery } from "../datasources/mongoQuery";
 import { emptyQuery, familyOf, hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
+import { LAST_DATASOURCE_KEY } from "./lastSource";
 import "./explore.css";
 
 // Explore always shows a query editor; its editor starts loading with the page.
 preloadCodeEditor();
 
-const LAST_DATASOURCE_KEY = "kalzit.explore.datasource";
 /** The single query of Explore; panels created from it keep this reference id. */
 const REF_ID = "A";
 

@@ -440,6 +440,10 @@
     --size-setup-tile: 2.5rem;
     /* Rows of lists and tables. */
     --size-row: 2.25rem;
+    /* The data source list: status dots, the side panel of the selected source, its avatars. */
+    --size-status-dot: 0.5rem;
+    --size-drawer: 22rem;
+    --size-avatar: 1.75rem;
   }
 }
 

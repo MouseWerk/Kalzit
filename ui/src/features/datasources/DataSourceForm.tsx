@@ -32,6 +32,7 @@ import {
 } from "./api";
 import { KindMark, kindSummary } from "./kindMarks";
 import { errorReason, reasonText } from "./reasons";
+import { forgetHealth, healthQuery } from "./sourceStatus";
 import "./datasources.css";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
@@ -256,6 +257,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
       }),
     onSuccess: (saved) => {
       queryClient.setQueryData(datasourceQuery(orgId, datasourceId).queryKey, saved);
+      // The last test was of the old settings.
+      forgetHealth(queryClient, orgId, datasourceId);
       void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
       setFormKey((key) => key + 1);
     },
@@ -263,11 +266,16 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const test = useMutation({
     mutationFn: () => checkHealth(orgId, datasourceId),
     onMutate: () => setHealth(null),
-    onSuccess: setHealth,
+    onSuccess: (result) => {
+      setHealth(result);
+      // The list shows the same result.
+      queryClient.setQueryData(healthQuery(orgId, datasourceId).queryKey, result);
+    },
   });
   const remove = useMutation({
     mutationFn: () => deleteDatasource(orgId, datasourceId),
     onSuccess: async () => {
+      forgetHealth(queryClient, orgId, datasourceId);
       // The deleted source's own queries (this page, its schema) would only answer 404 now:
       // they are dropped after leaving the page instead of being loaded again.
       const ofThisSource = (query: { queryKey: readonly unknown[] }) =>
@@ -280,7 +288,10 @@ function EditDataSource({ orgId }: { orgId: string }) {
         message: t("datasources.deleted"),
         undo: () => {
           restoreDatasource(orgId, datasourceId).then(
-            () => queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] }),
+            () => {
+              forgetHealth(queryClient, orgId, datasourceId);
+              return queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
+            },
             (error: unknown) => showErrorToast(errorMessage(t, error)),
           );
         },
