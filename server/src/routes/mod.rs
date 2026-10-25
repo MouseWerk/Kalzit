@@ -176,6 +176,7 @@ mod access_guard {
     ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
+        "GET /about",
         "GET /me",
         "PATCH /me",
         "POST /me/password",

@@ -14,6 +14,7 @@ import {
   STILL_YAW,
   TURN_RATE,
 } from "./crystal";
+import "./settings.css";
 
 /** The three colors of the picture, read from the design tokens through the canvas's own style. */
 interface Colors {
