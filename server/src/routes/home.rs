@@ -1,5 +1,5 @@
-//! Per-user conveniences in an organization: search across what the caller may see, starred
-//! dashboards and recently viewed dashboards (docs/api/shell.md).
+//! Per-user conveniences in an organization: search across what the caller may see, starred,
+//! pinned and recently viewed dashboards (docs/api/shell.md).
 //!
 //! Every answer is decided by the caller's current access (`AccessIndex`, the same rule as
 //! `check_resource`): a star or view of a dashboard the caller can no longer see is left out, and
@@ -18,6 +18,7 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{self, Access, AccessIndex, OrgCtx, Permission, Resource};
 use crate::error::{ApiError, ApiResult};
+use crate::extract::JsonBody;
 use crate::folders;
 use crate::shapes::Page;
 
@@ -25,6 +26,8 @@ use crate::shapes::Page;
 pub const RECENT_KEEP: i64 = 50;
 /// Stars per user and organization.
 pub const MAX_STARS: i64 = 1000;
+/// Dashboards pinned to the sidebar per user and organization, counting those the user can read.
+pub const MAX_PINS: usize = 10;
 /// Longest search text, in characters.
 const MAX_QUERY_CHARS: usize = 100;
 /// Rows read per kind for one search, after the database left out dashboards in hidden folders.
@@ -40,6 +43,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/star", OrgMember, get_star),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/star", OrgMember, star),
         route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}/star", OrgMember, unstar),
+        route(Method::GET, "/orgs/{orgId}/pins", OrgMember, list_pins),
+        route(Method::PUT, "/orgs/{orgId}/pins", OrgMember, order_pins),
+        route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}/pin", OrgMember, pin),
+        route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}/pin", OrgMember, unpin),
         route(Method::GET, "/orgs/{orgId}/recents", OrgMember, list_recents),
         route(Method::POST, "/orgs/{orgId}/dashboards/{dashboardId}/views", OrgMember, record_view),
     ]
@@ -507,6 +514,143 @@ async fn list_stars(
         _ => None,
     };
     Ok(Json(Page { items, next_cursor }))
+}
+
+/// The caller's pins they may still read and that are not in the trash, in their order. Pins of
+/// dashboards they lost access to stay stored and are left out; they come back with the access.
+async fn visible_pins(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Vec<DashboardEntry>> {
+    let index = AccessIndex::load(conn, ctx).await?;
+    let folders = FolderNames::load(conn, &ctx.org_id).await?;
+    let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT d.id, d.folder_id, d.title, p.created_at FROM dashboard_pins p \
+         JOIN dashboards d ON d.id = p.dashboard_id AND d.org_id = p.org_id \
+         WHERE p.user_id = $1 AND p.org_id = $2 AND d.deleted_at IS NULL ORDER BY p.position, d.id",
+    )
+    .bind(&ctx.user.id)
+    .bind(&ctx.org_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(entries(rows, &index, &folders))
+}
+
+/// The caller's pinned dashboards, in their order: at most `MAX_PINS`, so one page.
+async fn list_pins(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+) -> ApiResult<Json<Page<DashboardEntry>>> {
+    let mut conn = state.db.acquire().await?;
+    let mut items = visible_pins(&mut conn, &ctx).await?;
+    // Access that came back can bring a hidden pin back beyond the limit; the first ones show.
+    items.truncate(MAX_PINS);
+    Ok(Json(Page { items, next_cursor: None }))
+}
+
+/// Pins a dashboard the caller may read at the end of their list. Pinning it again changes
+/// nothing; at most `MAX_PINS` pins the caller can see.
+async fn pin(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    if readable(&state, &ctx, &id).await?.is_some() {
+        return Err(conflict("the dashboard is in the trash; restore it first"));
+    }
+    let mut tx = crate::db::begin(&state.db).await?;
+    let visible = visible_pins(&mut tx, &ctx).await?;
+    if visible.iter().any(|entry| entry.id == id) {
+        crate::db::commit(tx).await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if visible.len() >= MAX_PINS {
+        return Err(ApiError::validation(format!("at most {MAX_PINS} dashboards can be pinned")));
+    }
+    let (last,): (Option<i64>,) =
+        sqlx::query_as("SELECT MAX(position) FROM dashboard_pins WHERE user_id = $1 AND org_id = $2")
+            .bind(&ctx.user.id)
+            .bind(&ctx.org_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    sqlx::query(
+        "INSERT INTO dashboard_pins (user_id, org_id, dashboard_id, position, created_at) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, dashboard_id) DO NOTHING",
+    )
+    .bind(&ctx.user.id)
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .bind(last.map_or(0, |p| p + 1))
+    .bind(state.clock.now_ms())
+    .execute(&mut *tx)
+    .await?;
+    crate::db::commit(tx).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Removes the caller's own pin; also of a dashboard they can no longer see, and without an
+/// answer that tells whether there was one.
+async fn unpin(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    let mut tx = crate::db::begin(&state.db).await?;
+    sqlx::query("DELETE FROM dashboard_pins WHERE user_id = $1 AND org_id = $2 AND dashboard_id = $3")
+        .bind(&ctx.user.id)
+        .bind(&ctx.org_id)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    crate::db::commit(tx).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PinOrder {
+    /// The caller's visible pins in their new order: each exactly once.
+    dashboard_ids: Vec<String>,
+}
+
+/// Puts the caller's pins in a new order. The list names every pin the caller sees, each once;
+/// pins they cannot see keep their place after them.
+async fn order_pins(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    JsonBody(body): JsonBody<PinOrder>,
+) -> ApiResult<Json<Page<DashboardEntry>>> {
+    let mut tx = crate::db::begin(&state.db).await?;
+    let visible = visible_pins(&mut tx, &ctx).await?;
+    let mut wanted: Vec<&str> = body.dashboard_ids.iter().map(String::as_str).collect();
+    let mut have: Vec<&str> = visible.iter().map(|e| e.id.as_str()).collect();
+    wanted.sort_unstable();
+    have.sort_unstable();
+    if wanted != have {
+        return Err(ApiError::validation("dashboardIds must name each pinned dashboard exactly once")
+            .with_field("dashboardIds"));
+    }
+    let hidden: Vec<(String,)> = sqlx::query_as(
+        "SELECT dashboard_id FROM dashboard_pins WHERE user_id = $1 AND org_id = $2 ORDER BY position, dashboard_id",
+    )
+    .bind(&ctx.user.id)
+    .bind(&ctx.org_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let order = body
+        .dashboard_ids
+        .iter()
+        .cloned()
+        .chain(hidden.into_iter().map(|(id,)| id).filter(|id| !body.dashboard_ids.contains(id)));
+    for (position, id) in order.enumerate() {
+        sqlx::query("UPDATE dashboard_pins SET position = $1 WHERE user_id = $2 AND org_id = $3 AND dashboard_id = $4")
+            .bind(position as i64)
+            .bind(&ctx.user.id)
+            .bind(&ctx.org_id)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let items = visible_pins(&mut tx, &ctx).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(Page { items, next_cursor: None }))
 }
 
 /// Records that the caller opened a dashboard they may read, keeping the newest `RECENT_KEEP`
