@@ -59,6 +59,7 @@ import {
   restoreDashboard,
   saveDashboard,
 } from "./api";
+import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
@@ -320,6 +321,7 @@ type DialogState =
   | { kind: "mark"; mark: DashboardMark }
   | { kind: "discardPanel"; fresh: boolean }
   | { kind: "access" }
+  | { kind: "owner" }
   | { kind: "info" }
   | null;
 
@@ -1235,6 +1237,7 @@ function DashboardView({
         params: { dashboardId: dashboard.id },
       }),
     access: () => setDialog({ kind: "access" }),
+    owner: () => setDialog({ kind: "owner" }),
     remove: () => setDialog({ kind: "delete" }),
     kiosk: () => onDisplay({ mode: "kiosk" }),
     tv: () => onDisplay({ mode: "tv" }),
@@ -1764,6 +1767,17 @@ function DashboardView({
           open
           onClose={() => setDialog(null)}
           resource={{ type: "dashboard", id: dashboard.id, name: dashboard.title }}
+        />
+      ) : null}
+      {dialog?.kind === "owner" ? (
+        <OwnerDialog
+          orgId={orgId}
+          kind="dashboards"
+          id={dashboard.id}
+          name={dashboard.title}
+          owner={dashboard.ownerTeam}
+          visibility={dashboard.teamOnly ? "team" : "shared"}
+          onClose={() => setDialog(null)}
         />
       ) : null}
       {save.isError && dialog === null && !isApiError(save.error, "version_conflict") ? (

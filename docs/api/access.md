@@ -124,8 +124,14 @@ characters). Errors: `validation` `name`, `409 conflict` `name` (name taken in t
 compared without regard to case, umlauts included).
 Audit `team.created`, `team.renamed`.
 
-**`DELETE`** removes the team, its memberships, its roles and the grants to it. Needs the caller to
-hold the team's roles. Audit `team.deleted`.
+**`DELETE`** `?transferTo=<teamId>|org` removes the team, its memberships, its roles, the grants to
+it and the team contexts that named it. Needs the caller to hold the team's roles. What the team
+owns (team spaces, folders and dashboards; see "Team spaces") is handed over in the same change:
+to another team of the organization, or with `org` to the organization (owner cleared; team-only
+content stays team only, so only org admins and grants reach it). A team that owns anything and a
+call without `transferTo` answer `409 conflict` field `transferTo`; `transferTo` naming the team
+itself or an unknown team is `422 validation` field `transferTo`. Audit `team.deleted` with
+`transferTo` and `handedOver` (how many folders and dashboards changed hands).
 
 **`PUT .../members/{userId}`** `{ "role"?: "member" | "maintainer" }` (default `member`) adds the
 member or changes their team role; repeating it changes nothing. The route is declared for
@@ -140,6 +146,92 @@ not a member of the organization), `validation` `role`, `403`. Audit `team.membe
 **`PUT .../roles`** `{ "roles": string[] }` replaces the team's roles (duplicates collapse, at most
 20). The caller must hold both the old and the new roles' permissions. Errors: `validation` `roles`
 (unknown key, `owner`, more than 20), `403`. Audit `team.roles_changed`.
+
+## Team spaces
+
+A team space is a restricted folder at the top level that a team owns (`ownerTeamId` on the
+folder, `teamSpace: true` in folder answers). Its members get their roles inside it: their org
+role plus the team's roles (`PUT .../roles`), and maintainers of the team also `folders:permissions`
+and `dashboards:share` there, so they share the space themselves. An editor of the team edits, a
+viewer reads. Everyone else sees nothing of the space, its subfolders and dashboards (`404` on
+every route, left out of lists, search, the start page lists and the audit view, as for any
+restricted folder) until the team or an admin shares the space or a part of it with a grant
+(`view` or `edit`, to a team, a person or a role; see "Grants"). Dashboards and library panels
+inside follow their folder.
+
+Created with `POST /orgs/{orgId}/folders` `{"name", "ownerTeamId"}` (no `parentId`): by a
+maintainer of the team, or by an org admin (`folders:permissions` org-wide). Audit
+`folder.created` with `ownerTeamId`.
+
+### Team ownership
+
+A team can also own single folders and dashboards inside shared folders
+(`PUT /orgs/{orgId}/folders/{folderId}/owner`, `PUT /orgs/{orgId}/dashboards/{dashboardId}/owner`,
+body `{"ownerTeamId": string | null, "visibility": "shared" | "team"}`):
+
+- `shared`: everyone with access to the place reads it; only members of the owner team (with their
+  role there) and grants change, delete or share it. Members outside the team lose
+  `folders:write`, `folders:permissions`, `dashboards:write`, `dashboards:delete` and
+  `dashboards:share` from their role on it; org admins keep them.
+- `team`: team only. For a folder this is `restricted: true`; for a dashboard `teamOnly: true`:
+  the dashboard governs itself like a restricted folder, so only the team, grants on the dashboard
+  and org admins see it.
+
+Ownership passes down: a dashboard in a team-owned folder belongs to that team unless it has an
+owner of its own; the nearest owner decides who edits. Membership in a team that owns a folder
+further up still lets its members see the content. `ownerTeamId: null` hands the item to the
+organization. The change needs `folders:permissions` on the folder or `dashboards:share` on the
+dashboard; the new owner team must be one of the caller's teams unless they are an org admin
+(`403` otherwise, `422 validation` `ownerTeamId` for an unknown team). Whoever makes an item team
+only without belonging to its team keeps an `admin` grant on it. Audit `folder.owner_changed`,
+`dashboard.owner_changed`.
+
+Moves: moving a folder or dashboard between the open tree and a team space, or between two team
+spaces, needs edit rights on both sides (`dashboards:write` on the dashboard and on the target
+folder, `folders:write` for folders); moves into or out of other restricted folders still need
+`folders:permissions` on both sides.
+
+### Admins and the audit log
+
+Org admins (members whose org-wide permissions include `folders:permissions`) see and manage every
+team space and team-only item, for example when a team is dissolved. Every access an admin makes
+to another team's space or team-only dashboard through their role alone (opening, saving, moving,
+trashing, exporting, the versions, the access dialog, "why can I") writes the audit event
+`team_space.admin_access` on the resource reached, with `teamId`, `governingType` and
+`governingId`; repeated accesses to the same resource by the same admin are written once per ten
+minutes, since opening a dashboard checks access for every panel query. Lists and the folder tree
+do not write it.
+
+### Team context
+
+`GET /orgs/{orgId}/team-context` and `PUT /orgs/{orgId}/team-context` (`{"teamId": string |
+null}`), access `OrgMember`: the team a member works in, stored per user and organization.
+
+```ts
+interface TeamContext {
+  teamId: string | null;            // the active team; null: all areas
+  teams: {
+    id: string;
+    name: string;
+    member: boolean;                // org admins also get teams they are not in
+    maintainer: boolean;
+    spaces: { id: string; name: string }[];   // the team's spaces the caller sees, by name
+  }[];                              // the caller's teams first, then (org admins) the others
+  defaultFolderId: string | null;   // where "New dashboard" puts a dashboard
+}
+```
+
+The caller may pick their own teams, and org admins every team; another team is `422 validation`
+`teamId`. Without a stored choice, or when the stored team is no longer one the caller may pick,
+the first of their own teams is active (`null` without a team). `defaultFolderId` is the active
+team's first space when the organization setting `dashboards.new_in_team_space` is on and the
+caller may create dashboards there.
+
+The team context is a view, not a right. Lists take it as `?team=<teamId>`: `GET .../folders`,
+`GET .../dashboards`, `GET .../stars`, `GET .../recents` and `GET .../pins`. They then leave out
+what lies in other teams' spaces, unless a grant to the team reaches it (on the space, a folder in
+it, or the dashboard). The team is checked against the caller's teams on every call (`422
+validation` `team`).
 
 ## Roles
 
@@ -268,6 +360,8 @@ type GrantSource =
   | { kind: "orgRole"; role: string }                                    // built-in org role
   | { kind: "customRole"; roleId: string; roleName: string }             // custom org role
   | { kind: "teamRole"; teamId: string; teamName: string; role: string; roleName: string }
+  | { kind: "teamOwner"; teamId: string; teamName: string }               // membership in the
+                                                                          // owner team
   | { kind: "grant"; grantId: string; subjectType: string; subjectId: string;
       resourceType: string; resourceId: string; level: string };          // may be on a folder above
 ```

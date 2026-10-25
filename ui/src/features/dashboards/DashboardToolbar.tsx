@@ -25,6 +25,8 @@ export interface ToolbarActions {
   saveAs: () => void;
   history: () => void;
   access: () => void;
+  /** The owner team and who else sees the dashboard. */
+  owner: () => void;
   remove: () => void;
   kiosk: () => void;
   tv: () => void;
@@ -155,6 +157,12 @@ export function DashboardToolbar({
       label: t("dashboards.access"),
       icon: "members",
       onSelect: actions.access,
+    });
+    more.push({
+      key: "owner",
+      label: t("dashboards.team.ownerButton"),
+      icon: "members",
+      onSelect: actions.owner,
     });
   }
   if (can.saveAs) {

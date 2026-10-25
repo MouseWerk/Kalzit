@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
 import { adminKeys, createTeam, deleteTeam, listTeams, type Team } from "../api";
 import { ConfirmDialog } from "../components/Dialog";
@@ -25,13 +25,16 @@ export function TeamsPage() {
   const notice = useNotice();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Team | null>(null);
+  // Who takes over the team's spaces, folders and dashboards: the organization or another team.
+  const [transferTo, setTransferTo] = useState("org");
+  const transferId = useId();
   const teams = list.items ?? [];
   const keys = useRowKeys(teams.length);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.org(orgId) });
 
   const remove = useMutation({
-    mutationFn: (team: Team) => deleteTeam(orgId, team.id),
+    mutationFn: (team: Team) => deleteTeam(orgId, team.id, transferTo),
     onSuccess: async (_, team) => {
       setDeleting(null);
       await refresh();
@@ -88,6 +91,7 @@ export function TeamsPage() {
                     aria-label={t("admin.teams.deleteNamed", { name: team.name })}
                     onClick={() => {
                       remove.reset();
+                      setTransferTo("org");
                       setDeleting(team);
                     }}
                   >
@@ -132,7 +136,28 @@ export function TeamsPage() {
           }
         }}
       >
-        {t("admin.teams.deleteText", { name: deleting?.name ?? "" })}
+        <p>{t("admin.teams.deleteText", { name: deleting?.name ?? "" })}</p>
+        <div className="field">
+          <label className="field__label" htmlFor={transferId}>
+            {t("admin.teams.transferTo")}
+          </label>
+          <select
+            id={transferId}
+            className="select"
+            value={transferTo}
+            onChange={(event) => setTransferTo(event.currentTarget.value)}
+          >
+            <option value="org">{t("admin.teams.transferToOrg")}</option>
+            {teams
+              .filter((team) => team.id !== deleting?.id)
+              .map((team) => (
+                <option key={team.id} value={team.id}>
+                  {team.name}
+                </option>
+              ))}
+          </select>
+          <p className="field__hint">{t("admin.teams.transferHint")}</p>
+        </div>
       </ConfirmDialog>
     </Section>
   );

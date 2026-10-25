@@ -90,6 +90,8 @@
   "shell.org.teams": "Teams",
   "shell.org.all": "Alle Organisationen",
   "shell.org.switch": "Organisation wechseln",
+  "shell.org.team.label": "Team",
+  "shell.org.team.allAreas": "Alle Bereiche",
   "shell.pins.title": "Angeheftet",
   "shell.pins.add": "Dashboard anheften",
   "shell.pins.full": "{count} Dashboards angeheftet, mehr gehen nicht.",

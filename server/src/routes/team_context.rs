@@ -29,12 +29,14 @@ struct Choice {
     id: String,
     name: String,
     member: bool,
+    maintainer: bool,
 }
 
 /// The teams the caller may pick, members' teams first by name, then the rest by name.
 async fn choices(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Vec<Choice>> {
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT t.id, t.name, (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id AND m.user_id = $2) \
+    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT t.id, t.name, (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id AND m.user_id = $2), \
+         (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id AND m.user_id = $2 AND m.role = 'maintainer') \
          FROM teams t WHERE t.org_id = $1",
     )
     .bind(&ctx.org_id)
@@ -44,8 +46,8 @@ async fn choices(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Vec<
     let every = authz::role_sees_restricted(&ctx.permissions);
     let mut out: Vec<Choice> = rows
         .into_iter()
-        .filter(|(_, _, member)| every || *member > 0)
-        .map(|(id, name, member)| Choice { id, name, member: member > 0 })
+        .filter(|(_, _, member, _)| every || *member > 0)
+        .map(|(id, name, member, maintainer)| Choice { id, name, member: member > 0, maintainer: maintainer > 0 })
         .collect();
     out.sort_by(|a, b| {
         b.member.cmp(&a.member).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())).then(a.id.cmp(&b.id))
@@ -94,6 +96,8 @@ pub struct TeamChoice {
     name: String,
     /// The caller is a member (org admins also see teams they are not in).
     member: bool,
+    /// The caller maintains the team, so they may create its team spaces.
+    maintainer: bool,
     /// The team's spaces the caller sees, by name.
     spaces: Vec<Space>,
 }
@@ -143,6 +147,7 @@ async fn answer(state: &AppState, ctx: &OrgCtx) -> ApiResult<TeamContext> {
             id: c.id,
             name: c.name,
             member: c.member,
+            maintainer: c.maintainer,
         })
         .collect();
     Ok(TeamContext { team_id, teams, default_folder_id })
