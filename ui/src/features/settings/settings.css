@@ -682,7 +682,189 @@
     gap: var(--space-2);
   }
 
+  /* About: the crystal with the meaning of the name, then cards of facts, links and licenses. */
+  .about {
+    display: grid;
+    gap: var(--space-cards);
+  }
+
+  .about-hero {
+    display: grid;
+    grid-template-columns: minmax(0, var(--size-about-art)) minmax(0, 1fr);
+    gap: var(--space-6);
+    align-items: center;
+    padding: var(--space-card);
+    background: var(--bg-surface);
+  }
+
+  .about-hero__text {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .about-hero__text p {
+    margin: 0;
+  }
+
+  .about-hero__name {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .about-hero__tagline {
+    font-size: var(--font-size-lg);
+  }
+
+  .about-hero__meaning {
+    color: var(--text-muted);
+  }
+
+  /* The canvas reads these three, as colors, each time the look changes. */
+  .about-crystal {
+    --crystal-ink: var(--text);
+    --crystal-quiet: var(--text-muted);
+    --crystal-beam: var(--accent);
+  }
+
+  .about-crystal__canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 2;
+  }
+
+  .about-card {
+    display: grid;
+    gap: var(--space-3);
+    align-content: start;
+  }
+
+  .about-card__title,
+  .about-card__subtitle {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .about-card__subtitle {
+    margin-top: var(--space-2);
+  }
+
+  .about-text,
+  .about-license__name {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .about-license__name {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .about-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .about-facts {
+    display: grid;
+    margin: 0;
+  }
+
+  .about-facts__row {
+    display: grid;
+    grid-template-columns: minmax(0, var(--size-column)) minmax(0, 1fr);
+    gap: var(--space-4);
+    padding: var(--space-2) 0;
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .about-facts__row:first-child {
+    border-top: 0;
+  }
+
+  .about-facts dt {
+    color: var(--text-muted);
+  }
+
+  .about-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .about-facts__mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  .about-licenses__bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .about-licenses__search {
+    flex: 1 1 var(--size-field);
+    max-width: var(--size-column);
+  }
+
+  .about-licenses__count {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .about-licenses__scroll {
+    max-height: var(--size-about-list);
+    overflow: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .about-licenses__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .about-licenses__cell,
+  .about-licenses__head {
+    padding: var(--space-2) var(--space-3);
+    border-top: var(--border-width) solid var(--border);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .about-licenses__head {
+    position: sticky;
+    top: 0;
+    border-top: 0;
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .about-licenses__name {
+    font-weight: var(--font-weight-regular);
+    overflow-wrap: anywhere;
+  }
+
   @media (max-width: 75rem) {
+    .about-hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .about-hero__art {
+      width: 100%;
+      max-width: var(--size-dialog-sm);
+      margin-inline: auto;
+    }
+
     .settings-appearance {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -733,6 +915,15 @@
 
     .settings-value {
       text-align: start;
+    }
+
+    .about-hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .about-facts__row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-half);
     }
   }
 }

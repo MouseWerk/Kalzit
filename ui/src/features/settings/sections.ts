@@ -16,7 +16,8 @@ export type SectionKind =
   | "updates"
   | "profile"
   | "shortcuts"
-  | "transfer";
+  | "transfer"
+  | "about";
 
 export interface SettingsAccess {
   permissions: OrgPermissions;
@@ -241,6 +242,15 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: (access) =>
       access.permissions.isServerAdmin ||
       (access.orgId !== undefined && access.permissions.has("settings:write")),
+  },
+  {
+    id: "about",
+    group: "footer",
+    kind: "about",
+    label: "settings.section.about.label",
+    lead: "settings.section.about.lead",
+    keywords: "settings.section.about.keywords",
+    visible: () => true,
   },
 ];
 

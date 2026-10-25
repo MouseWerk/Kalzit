@@ -76,11 +76,13 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
         working-directory: ui
-      - run: npm run build
-        working-directory: ui
+      # The license lists of the bundle come from cargo, so the toolchain is installed first; the
+      # build fails when they cannot be made (CI is set).
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
           toolchain: stable
+      - run: npm run build
+        working-directory: ui
       # The public release keys, if set as a repository variable (comma-separated base64), are
       # trusted in addition to the keys in server/src/updates/signing.rs.
       - run: cargo build --release --locked -p kalzit --bin kalzit

@@ -328,6 +328,27 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     if (path === "/api/branding" && method === "GET") {
       return json(200, state.branding);
     }
+    if (path === "/api/about" && method === "GET") {
+      if (!state.signedIn) {
+        return error(401, "unauthenticated");
+      }
+      // Server administrators get the build details too (docs/api/shell.md, "About").
+      const everyone = { version: "0.1.0", buildDate: "2026-10-25" };
+      return json(
+        200,
+        state.user.isServerAdmin
+          ? { ...everyone, commit: "a1b2c3d4e", platform: "linux", arch: "x64", database: "sqlite" }
+          : everyone,
+      );
+    }
+    // The list the build writes into the bundle (ui/scripts/licenses.mjs).
+    if (path === "/third-party-licenses.json" && method === "GET") {
+      return json(200, [
+        { name: "axum", version: "0.8.9", license: "MIT", source: "rust" },
+        { name: "sqlx", version: "0.9.0", license: "MIT OR Apache-2.0", source: "rust" },
+        { name: "react", version: "19.3.1", license: "MIT", source: "npm" },
+      ]);
+    }
     if (path.startsWith("/api/admin/branding/logo") && state.signedIn && state.user.isServerAdmin) {
       // The logo and the one before it, which undo swaps back (docs/api/settings-dashboards.md).
       const current = state.branding.logo ?? null;

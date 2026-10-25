@@ -189,6 +189,8 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Settings, dark theme | Settings, light theme |
 | ![Settings on a phone](docs/screenshots/settings-phone.png) | ![Updates: installed version, channel, checks before an update, offline upload and backups](docs/screenshots/updates.png) |
 | Settings on a phone | Updates |
+| ![About Kalzit: the calcite crystal with a beam of light split in two, the build and the license, dark theme](docs/screenshots/about-dark.png) | ![About Kalzit in the light theme](docs/screenshots/about-light.png) |
+| About Kalzit, dark theme | About Kalzit, light theme |
 
 ## Quick start
 
