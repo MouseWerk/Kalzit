@@ -158,6 +158,7 @@ describe("organization group and cards", () => {
     expect(initialsOf("Lea Hoffmann")).toBe("LH");
     expect(initialsOf("Ada Augusta King")).toBe("AK");
     expect(initialsOf("maria")).toBe("M");
+    expect(initialsOf("Maria Keller (de)")).toBe("MK");
     expect(initialsOf("  ")).toBe("?");
   });
 });

@@ -15,12 +15,14 @@ import { useMenuButton } from "./useMenuButton";
 
 /** Up to two initials for the avatar: of the first and the last word, as on the blueprint. */
 export function initialsOf(name: string): string {
-  const words = name
+  // Words that start with a letter, so "(de)" or "&" never gives an initial.
+  const letters = name
     .trim()
     .split(/\s+/u)
-    .filter((word) => word !== "");
-  const first = Array.from(words[0] ?? "")[0];
-  const last = words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : undefined;
+    .map((word) => /^\p{L}/u.exec(word)?.[0])
+    .filter((letter): letter is string => letter !== undefined);
+  const first = letters[0];
+  const last = letters.length > 1 ? letters.at(-1) : undefined;
   return first === undefined ? "?" : `${first}${last ?? ""}`.toLocaleUpperCase();
 }
 
