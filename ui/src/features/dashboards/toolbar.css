@@ -216,7 +216,7 @@
         var(--top-bar-height, 0px) -
         var(--dash-toolbar-height, 0px) -
         var(--space-4) -
-        var(--page-pad-bottom)
+        var(--space-page-bottom)
       )
     );
     padding: var(--space-1);
@@ -264,7 +264,7 @@
       var(--top-bar-height, 0px) -
       var(--dash-toolbar-height, 0px) -
       var(--space-4) -
-      var(--page-pad-bottom)
+      var(--space-page-bottom)
     );
     overflow-y: auto;
     padding: var(--space-3);

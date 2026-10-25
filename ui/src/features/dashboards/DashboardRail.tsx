@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
@@ -7,11 +7,6 @@ import { getPanel } from "../../panels/registry";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import "./toolbar.css";
-
-/** Where an earlier version kept whether the rail was folded away; the rail no longer folds. */
-function oldRailKey(userId: string): string {
-  return `kalzit.dashboardRail.${userId}`;
-}
 
 /** The visualizations the Add pane offers as tiles, each with its icon. */
 const TILES: readonly { type: string; icon: IconName }[] = [
@@ -36,7 +31,6 @@ export type RailActions = Pick<
 };
 
 interface DashboardRailProps {
-  userId: string;
   editing: boolean;
   canEdit: boolean;
   panels: readonly PanelModel[];
@@ -64,7 +58,6 @@ type Pane = "outline" | "add" | null;
  * toolbar's overflow menu holds its actions.
  */
 export function DashboardRail({
-  userId,
   editing,
   canEdit,
   panels,
@@ -81,15 +74,6 @@ export function DashboardRail({
   const { t } = useI18n();
   const paneId = useId();
   const [pane, setPane] = useState<Pane>(null);
-
-  // A one-time cleanup of the folded state an earlier version stored.
-  useEffect(() => {
-    try {
-      window.localStorage.removeItem(oldRailKey(userId));
-    } catch {
-      // Blocked storage holds nothing to clean up that matters.
-    }
-  }, [userId]);
 
   const paneButton = (which: Exclude<Pane, null>) => ({
     "aria-expanded": pane === which,

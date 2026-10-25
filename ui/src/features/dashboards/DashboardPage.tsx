@@ -1458,7 +1458,6 @@ function DashboardView({
                 {showRail ? (
                   <DashboardRail
                     pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
-                    userId={userId}
                     editing={draft !== null}
                     panels={model.panels}
                     rows={rows}

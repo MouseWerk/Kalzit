@@ -1,4 +1,5 @@
-import { Api } from "./support/api";
+import type { Page } from "@playwright/test";
+import { Api, regionDashboard, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
 
@@ -101,7 +102,7 @@ test("every administration section opens from the sidebar", async ({ page }) => 
 });
 
 /** The element's box, which must be inside the window. */
-async function boxInView(page: import("@playwright/test").Page, selector: string) {
+async function boxInView(page: Page, selector: string) {
   const box = await page.locator(selector).first().boundingBox();
   const view = page.viewportSize();
   expect(box).not.toBeNull();
@@ -112,6 +113,12 @@ async function boxInView(page: import("@playwright/test").Page, selector: string
   expect(box.y + box.height).toBeLessThanOrEqual(view.height);
   expect(box.x + box.width).toBeLessThanOrEqual(view.width);
   return box;
+}
+
+/** Scrolls the window, the page's scroll container, and waits until it got there. */
+async function scrollPage(page: Page, y: number) {
+  await page.evaluate((top) => window.scrollTo(0, top), y);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
 }
 
 for (const viewport of [
@@ -125,12 +132,7 @@ for (const viewport of [
     await signInOwner(page);
     await page.goto("/settings/appearance");
     await expect(page.locator(".settings-row").first()).toBeVisible();
-    // Over the page's content, not the sidebar, which scrolls on its own.
-    await page.mouse.move(viewport.width - 40, viewport.height / 2);
-    // Over the section, not the sidebar or the navigation, which scroll on their own.
-    await page.mouse.move(900, 300);
-    await page.mouse.wheel(0, 4000);
-    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
+    await scrollPage(page, 4000);
     const bar = await boxInView(page, ".top-bar");
     expect(bar.y).toBe(0);
   });
@@ -140,19 +142,38 @@ test("the settings navigation stays in view while the section scrolls", async ({
   await page.setViewportSize({ width: 1440, height: 520 });
   await signInOwner(page);
   await page.goto("/settings/appearance");
-  const nav = page.getByRole("navigation", { name: t("settings.navLabel") });
-  await expect(nav).toBeVisible();
-  // Over the section, not the sidebar or the navigation, which scroll on their own.
-  await page.mouse.move(900, 300);
-  await page.mouse.wheel(0, 4000);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
+  await expect(page.getByRole("navigation", { name: t("settings.navLabel") })).toBeVisible();
+  await scrollPage(page, 4000);
   const bar = await boxInView(page, ".top-bar");
-  const after = await boxInView(page, ".settings-nav");
+  const nav = await boxInView(page, ".settings-nav");
   // Right below the bar, filling the height under it.
-  expect(after.y).toBeGreaterThanOrEqual(bar.y + bar.height);
-  expect(after.y).toBeLessThan(bar.y + bar.height + 40);
+  expect(nav.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+  expect(nav.y).toBeLessThan(bar.y + bar.height + 40);
 });
 
+test("a dashboard's toolbar and rail stick right below the top bar", async ({ page, world }) => {
+  const owner = await Api.owner();
+  const model = regionDashboard(unique("Lang"), world.sourceId);
+  const [first] = model.panels as Record<string, unknown>[];
+  model.panels = [0, 1, 2, 3, 4, 5].map((i) => ({
+    ...first,
+    id: `p${i + 1}`,
+    title: `Sales ${i + 1}`,
+    grid: { x: 0, y: i * 8, w: 12, h: 8 },
+  }));
+  const id = await owner.createDashboard(model);
+  await owner.dispose();
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await signInOwner(page);
+  await page.goto(`/dashboards/${id}`);
+  await expect(page.getByRole("group", { name: "Sales 1" })).toBeVisible();
+  await scrollPage(page, 600);
+  const bar = await boxInView(page, ".top-bar");
+  const toolbar = await boxInView(page, ".dash-toolbar");
+  expect(Math.round(toolbar.y)).toBe(Math.round(bar.y + bar.height));
+  const rail = await boxInView(page, ".dash-rail__column");
+  expect(rail.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
+});
 test("a pin's menu opens beside it, whole and usable", async ({ page, world }) => {
   const owner = await Api.owner();
   await owner.context.put(`/api/orgs/${owner.orgId}/dashboards/${world.dashboardId}/pin`);

@@ -22,7 +22,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-half);
-    height: calc(100dvh - var(--top-bar-height, 0px) - var(--space-4) - var(--page-pad-bottom));
+    height: calc(100dvh - var(--top-bar-height, 0px) - var(--space-4) - var(--space-page-bottom));
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: var(--space-5) var(--space-3);
