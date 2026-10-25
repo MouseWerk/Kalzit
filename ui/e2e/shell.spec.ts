@@ -60,7 +60,6 @@ test("Ctrl+B does nothing while typing in a field", async ({ page }) => {
 });
 
 const SECTIONS = [
-  ["admin.members.title", "/admin/members"],
   ["admin.teams.title", "/admin/teams"],
   ["admin.roles.title", "/admin/roles"],
   ["admin.audit.title", "/admin/audit"],
@@ -68,6 +67,18 @@ const SECTIONS = [
   ["admin.orgs.title", "/admin/server/organizations"],
   ["admin.serverAudit.title", "/admin/server/audit"],
 ] as const;
+
+test("members open from their own entry in the organization group", async ({ page }) => {
+  await signInOwner(page);
+  const nav = page.getByRole("navigation", { name: t("nav.label") });
+  const members = nav.getByRole("link", { name: t("nav.members"), exact: true });
+  await members.click();
+  await expect(page).toHaveURL(/\/admin\/members$/);
+  await expect(
+    page.getByRole("heading", { name: t("admin.members.title"), exact: true }),
+  ).toBeVisible();
+  await expect(members).toHaveAttribute("aria-current", "page");
+});
 
 test("every administration section opens from the sidebar", async ({ page }) => {
   await signInOwner(page);
