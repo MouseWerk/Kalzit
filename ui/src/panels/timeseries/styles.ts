@@ -1,4 +1,12 @@
-import { type FieldOptions, type Thresholds, toneClass } from "../fieldConfig/fieldConfig";
+import {
+  type ColorScheme,
+  type FieldOptions,
+  type HexColor,
+  isHexColor,
+  type ThresholdDisplay,
+  type Thresholds,
+  toneClass,
+} from "../fieldConfig/fieldConfig";
 import type {
   ConnectGaps,
   DrawStyle,
@@ -19,8 +27,17 @@ import "../panels.css";
  * and dashed, two or more series take the categorical palette, bars are filled at full strength.
  */
 export interface SeriesStyle {
-  /** The color class (`viz.css`, `panels.css`): a tone, a palette entry or a monochrome class. */
+  /**
+   * The color class (`viz.css`, `panels.css`): a tone, a palette entry, a ramp step, a
+   * monochrome class, or `series-free` for a free colour, which `freeColor` then holds.
+   */
   colorClass: string;
+  /** A free colour (`#rrggbb`), set as `--free-color` where the series is drawn; else null. */
+  freeColor: HexColor | null;
+  /** The series' own opacity, 0 to 1: its line, points and bars. */
+  opacity: number;
+  /** Whether the chart draws this series' thresholds as lines, areas or both. */
+  thresholdDisplay: ThresholdDisplay;
   /** For legend and tooltip swatches: the color class plus the line style's swatch class. */
   swatchClass: string;
   drawStyle: DrawStyle;
@@ -58,6 +75,63 @@ export interface SeriesStyle {
 
 export const MONO_CLASS = "series-mono";
 export const MONO_COMPARE_CLASS = "series-mono-compare";
+export const FREE_CLASS = "series-free";
+
+/** The ramps of the colour schemes, each in five steps (`--ramp-<name>-1` to `-5`). */
+export const RAMPS = { greenYellowRed: "gyr", blues: "blues", grays: "grays" } as const;
+export const RAMP_STEPS = 5;
+
+/** The ramp step classes, for the canvas probes. */
+export const RAMP_CLASSES = Object.values(RAMPS).flatMap((name) =>
+  Array.from({ length: RAMP_STEPS }, (_, i) => `ramp-${name}-${i + 1}`),
+);
+
+/** Series `index` of `count` spread evenly along a ramp, first and last at its ends. */
+export function rampClass(scheme: keyof typeof RAMPS, index: number, count: number): string {
+  const step = count <= 1 ? 1 : Math.round((index * (RAMP_STEPS - 1)) / (count - 1)) + 1;
+  return `ramp-${RAMPS[scheme]}-${step}`;
+}
+
+function isRamp(scheme: ColorScheme | undefined): scheme is keyof typeof RAMPS {
+  return scheme !== undefined && Object.hasOwn(RAMPS, scheme);
+}
+
+/**
+ * The colour of one series, the one place it is decided: a colour of the series' own wins
+ * (a tone or a free colour), then the scheme: the threshold scheme takes the base step's colour
+ * (and the line follows the steps), one colour, a ramp step; then the monochrome look or the
+ * palette. The editor clears the panel's colour when it picks a scheme that does not use it, so
+ * a colour set here is the series' own or the one colour of the "single" scheme.
+ */
+export function seriesColor(
+  options: FieldOptions,
+  index: number,
+  count: number,
+  mono: boolean,
+): { colorClass: string; freeColor: HexColor | null } {
+  if (options.color !== undefined) {
+    return isHexColor(options.color)
+      ? { colorClass: FREE_CLASS, freeColor: options.color }
+      : { colorClass: toneClass(options.color), freeColor: null };
+  }
+  const scheme = options.colorScheme;
+  const base = scheme === "thresholds" ? options.thresholds?.steps[0] : undefined;
+  if (base !== undefined) {
+    return base.color === undefined
+      ? { colorClass: toneClass(base.tone), freeColor: null }
+      : { colorClass: FREE_CLASS, freeColor: base.color };
+  }
+  if (scheme === "single") {
+    return { colorClass: toneClass("chart-1"), freeColor: null };
+  }
+  if (isRamp(scheme)) {
+    return { colorClass: rampClass(scheme, index, count), freeColor: null };
+  }
+  if (options.comparison === true) {
+    return { colorClass: MONO_COMPARE_CLASS, freeColor: null };
+  }
+  return { colorClass: mono ? MONO_CLASS : toneClass(undefined, index), freeColor: null };
+}
 
 /** Fill strength in percent when none is set, by what is filled. */
 const DEFAULT_OPACITY = { bars: 100, stacked: 40, solid: 18, hatch: 100 } as const;
@@ -67,7 +141,12 @@ const BAR_ALIGN = { before: -1, center: 0, after: 1 } as const;
 /** Whether the series of a panel take the monochrome look: one series, no color of its own. */
 export function isMonochrome(series: readonly Series[]): boolean {
   const primary = series.filter((s) => s.options?.comparison !== true);
-  return primary.length === 1 && primary[0]?.options?.color === undefined;
+  const scheme = primary[0]?.options?.colorScheme;
+  return (
+    primary.length === 1 &&
+    primary[0]?.options?.color === undefined &&
+    (scheme === undefined || scheme === "palette")
+  );
 }
 
 /** Dash pattern of a line style at a line width. Dots are zero-length dashes with round caps. */
@@ -84,18 +163,21 @@ export function dashFor(lineStyle: LineStyle, lineWidth: number): number[] {
 }
 
 /** One series' style from its field options and the panel's other series. */
-function resolveOne(options: FieldOptions, index: number, mono: boolean): SeriesStyle {
+function resolveOne(
+  options: FieldOptions,
+  index: number,
+  count: number,
+  mono: boolean,
+): SeriesStyle {
   const comparison = options.comparison === true;
   const drawStyle = options.drawStyle ?? "line";
   const stack = options.stack ?? "none";
-  const colorClass =
-    options.color !== undefined
-      ? toneClass(options.color)
-      : comparison
-        ? MONO_COMPARE_CLASS
-        : mono
-          ? MONO_CLASS
-          : toneClass(undefined, index);
+  const { colorClass, freeColor } = seriesColor(options, index, count, mono);
+  // Only series without a colour of their own follow the steps.
+  const byThresholds =
+    options.colorScheme === "thresholds" &&
+    options.thresholds !== undefined &&
+    options.color === undefined;
   const lineWidth = options.lineWidth ?? (mono ? 2 : 1);
   const lineStyle = options.lineStyle ?? (comparison ? "dashed" : "solid");
   const autoFill: Fill =
@@ -119,11 +201,16 @@ function resolveOne(options: FieldOptions, index: number, mono: boolean): Series
           ? DEFAULT_OPACITY.stacked
           : DEFAULT_OPACITY.solid);
   // The monochrome hatch fades toward the baseline, as in the owner's reference.
+  // The threshold scheme colours the line (and a fill) by the steps unless a gradient is set.
   const gradient =
-    options.gradientMode ?? (fill === "hatch" && options.fill === undefined ? "opacity" : "none");
+    options.gradientMode ??
+    (byThresholds ? "scheme" : fill === "hatch" && options.fill === undefined ? "opacity" : "none");
   const swatch = lineStyle === "solid" || drawStyle !== "line" ? "" : ` ts__swatch--${lineStyle}`;
   return {
     colorClass,
+    freeColor,
+    opacity: (options.opacity ?? 100) / 100,
+    thresholdDisplay: options.thresholdDisplay ?? "off",
     swatchClass: `${colorClass}${swatch}`,
     drawStyle,
     // A lone series is drawn smooth (monotone, so it never overshoots a value).
@@ -151,7 +238,7 @@ function resolveOne(options: FieldOptions, index: number, mono: boolean): Series
 /** The resolved style of every series, in series order. */
 export function resolveStyles(series: readonly Series[]): SeriesStyle[] {
   const mono = isMonochrome(series);
-  return series.map((s, index) => resolveOne(s.options ?? {}, index, mono));
+  return series.map((s, index) => resolveOne(s.options ?? {}, index, series.length, mono));
 }
 
 /**

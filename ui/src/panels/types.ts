@@ -41,6 +41,8 @@ export type FieldOptionGroup =
   | "thresholds"
   | "mappings"
   | "color"
+  /** The time series' colours: scheme, free colours, per-series rows (`ColorsEditor`). */
+  | "colors"
   | "table"
   | "overrides";
 

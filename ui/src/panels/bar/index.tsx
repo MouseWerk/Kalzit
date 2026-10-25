@@ -13,6 +13,7 @@ import {
   fieldOptionsFor,
   type Tone,
   toneClass,
+  toneOf,
 } from "../fieldConfig/fieldConfig";
 import { Legend, WithLegend } from "../fieldConfig/Legend";
 import { LegendTooltipEditor } from "../fieldConfig/LegendTooltipEditor";
@@ -208,7 +209,7 @@ function BarPanel({
       return {
         name: s.name,
         value: display === null ? t("dashboards.panels.noValue") : displayText(display),
-        colorClass: colorOf(display?.tone ?? s.options.color, index),
+        colorClass: colorOf(display?.tone ?? toneOf(s.options.color), index),
       };
     }),
   }));
@@ -220,7 +221,7 @@ function BarPanel({
       const value = stats[key];
       values[key] = Number.isNaN(value) ? "" : displayText(shown(s, value));
     }
-    return { name: s.name, colorClass: colorOf(s.options.color, index), values };
+    return { name: s.name, colorClass: colorOf(toneOf(s.options.color), index), values };
   });
   // One series needs no legend: the title names it.
   const legend =
@@ -275,7 +276,7 @@ function BarPanel({
                         const barTop = y(Math.max(value, 0));
                         const barBottom = y(Math.min(value, 0));
                         const display = shown(s, value);
-                        const tone = display.tone ?? s.options.color;
+                        const tone = display.tone ?? toneOf(s.options.color);
                         const x = x0 + index * slots.step;
                         const text = options.showValues ? displayText(display) : "";
                         // A value is written at its bar's end (above, or below a negative bar) only

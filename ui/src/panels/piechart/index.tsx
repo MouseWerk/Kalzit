@@ -11,6 +11,7 @@ import {
   fieldOptionsFor,
   type Tone,
   toneClass,
+  toneOf,
 } from "../fieldConfig/fieldConfig";
 import { Legend, WithLegend } from "../fieldConfig/Legend";
 import { LegendTooltipEditor } from "../fieldConfig/LegendTooltipEditor";
@@ -125,7 +126,7 @@ export function pieSlices(
         name: item.name,
         value,
         options: item.options,
-        tone: item.display.tone ?? item.options.color,
+        tone: item.display.tone ?? toneOf(item.options.color),
       });
     }
   }

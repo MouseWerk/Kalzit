@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
+import { Swatch } from "./fieldConfig/Legend";
 import type { TooltipMode } from "./fieldConfig/legendOptions";
 import "./panels.css";
 import "./viz.css";
@@ -17,6 +18,8 @@ export interface ReadoutRow {
   value: string;
   /** Swatch class (`series-2`, `tone--ok`); none for rows without a color. */
   colorClass?: string;
+  /** A free colour for the swatch (`series-free`). */
+  freeColor?: string | null;
 }
 
 /** One thing in a chart that can be read out: a slice, a bar, a cell, a gauge. */
@@ -166,7 +169,11 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
           {rows.map((r, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: rows keep their order
             <div key={index} className="ts__tooltip-row">
-              <span className={r.colorClass === undefined ? "" : `ts__swatch ${r.colorClass}`} />
+              {r.colorClass === undefined ? (
+                <span />
+              ) : (
+                <Swatch className={r.colorClass} freeColor={r.freeColor} />
+              )}
               <span className="truncate">{r.name}</span>
               <span className="ts__tooltip-value">{r.value}</span>
             </div>

@@ -36,6 +36,7 @@ import { openLayerCount } from "../../lib/layers";
 import { useOrgPermissions } from "../../org/useOrg";
 import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
+import { seriesName } from "../../panels/frame";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
@@ -250,6 +251,19 @@ export function PanelEditor({
   const outcomes = useMemo(() => results.data ?? [], [results.data]);
   const stepsRun = useMemo(() => runPanelSteps(deferredSteps, outcomes), [deferredSteps, outcomes]);
   const inputs = useMemo(() => namedInputs(outcomes), [outcomes]);
+  // The number series the panel shows now, for the colours editor's rows, each name once.
+  const seriesNames = useMemo(
+    () => [
+      ...new Set(
+        stepsRun.frames.flatMap(({ frame }) =>
+          frame.fields
+            .filter((field) => field.type === "number" || field.type === "int64")
+            .map((field) => seriesName(field)),
+        ),
+      ),
+    ],
+    [stepsRun],
+  );
   const texts = useMemo(() => variableTexts(variables), [variables]);
 
   // Which sources the queries use, as one string: typing a query leaves it equal.
@@ -561,6 +575,7 @@ export function PanelEditor({
       rows={rows}
       variables={dashboardVariables}
       libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
+      seriesNames={seriesNames}
       onLook={setLook}
       onType={changeType}
       onMakeLibrary={makeLibrary}
@@ -946,6 +961,7 @@ function OptionsPane({
   rows,
   variables,
   libraryName,
+  seriesNames,
   onLook,
   onType,
   onMakeLibrary,
@@ -957,6 +973,7 @@ function OptionsPane({
   rows: readonly RowModel[];
   variables: readonly VariableModel[];
   libraryName: string | undefined;
+  seriesNames: readonly string[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onType: (type: string) => void;
   onMakeLibrary: (() => void) | undefined;
@@ -1004,6 +1021,7 @@ function OptionsPane({
           <FieldConfigEditor
             value={look.fieldConfig}
             groups={plugin.fieldOptions}
+            seriesNames={seriesNames}
             onChange={(fieldConfig) => onLook((p) => ({ ...p, fieldConfig }))}
           />
         </OptionGroup>

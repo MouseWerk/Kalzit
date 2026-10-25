@@ -1,7 +1,8 @@
 import uPlot from "uplot";
-import { type Tone, thresholdTone } from "../fieldConfig/fieldConfig";
+import { type ThresholdStep, type Tone, thresholdStep } from "../fieldConfig/fieldConfig";
 import { shiftHue, withAlpha } from "./canvasColor";
 import { refineGaps, type SeriesStyle, type StackedData, spansGaps } from "./styles";
+import { shownThresholds, thresholdBands, thresholdLines } from "./thresholdBands";
 
 /**
  * uPlot series options from resolved series styles: the path builder of the draw style and
@@ -55,6 +56,11 @@ function linePaths(style: SeriesStyle): uPlot.Series.PathBuilder {
   }
 }
 
+/** A threshold step's colour on the canvas: its free colour, else its tone's. */
+export function stepColor(step: ThresholdStep, paint: Pick<Paint, "tones" | "color">): string {
+  return step.color ?? paint.tones[step.tone] ?? paint.color;
+}
+
 /** Where a value lies between the plot's top (0) and bottom (1), for gradient stops. */
 function offsetOf(u: uPlot, value: number): number {
   const y = u.valToPos(value, "y", true);
@@ -73,8 +79,8 @@ function schemeGradient(
   alpha: (offset: number) => number,
 ): CanvasGradient | string {
   const thresholds = style.thresholds;
-  const color = (tone: Tone, offset: number) =>
-    withAlpha(paint.tones[tone] ?? paint.color, alpha(offset));
+  const color = (step: ThresholdStep, offset: number) =>
+    withAlpha(stepColor(step, paint), alpha(offset));
   if (thresholds === undefined) {
     return withAlpha(paint.color, alpha(0));
   }
@@ -87,15 +93,16 @@ function schemeGradient(
     thresholds.mode === "percentage" ? min + (step / 100) * (max - min) : step;
   // From the top down: the tone at the top, then a hard edge at every step boundary.
   const range = { min, max };
-  gradient.addColorStop(0, color(thresholdTone(max, thresholds, range), 0));
+  gradient.addColorStop(0, color(thresholdStep(max, thresholds, range), 0));
   const steps = thresholds.steps.slice(1).sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  const base: ThresholdStep = thresholds.steps[0] ?? { value: null, tone: "neutral" };
   for (const [i, step] of steps.entries()) {
     const offset = offsetOf(u, stepValue(step.value ?? 0));
-    const below = steps[i + 1]?.tone ?? thresholds.steps[0]?.tone ?? "neutral";
-    gradient.addColorStop(offset, color(step.tone, offset));
+    const below = steps[i + 1] ?? base;
+    gradient.addColorStop(offset, color(step, offset));
     gradient.addColorStop(offset, color(below, offset));
   }
-  gradient.addColorStop(1, color(thresholdTone(min, thresholds, range), 1));
+  gradient.addColorStop(1, color(thresholdStep(min, thresholds, range), 1));
   return gradient;
 }
 
@@ -184,9 +191,11 @@ export function cached<T>(
 
 function fillOf(style: SeriesStyle, paint: Paint): uPlot.Series.Fill | undefined {
   const byScale = style.gradient === "scheme";
+  // Bars are the series itself, so its own opacity applies to them as well.
+  const alpha = style.fillOpacity * (style.drawStyle === "bars" ? style.opacity : 1);
   switch (style.fill) {
     case "solid":
-      return cached((u) => gradientStyle(u, u.ctx, style, paint, style.fillOpacity), byScale);
+      return cached((u) => gradientStyle(u, u.ctx, style, paint, alpha), byScale);
     case "hatch":
       return cached((u) => hatchPattern(u, style, paint), byScale);
     default:
@@ -194,12 +203,18 @@ function fillOf(style: SeriesStyle, paint: Paint): uPlot.Series.Fill | undefined
   }
 }
 
+/** The colour of the line and points: the series' colour at its own opacity. */
+function lineColor(style: SeriesStyle, paint: Paint): string {
+  return style.opacity < 1 ? withAlpha(paint.color, style.opacity) : paint.color;
+}
+
 function pointsOf(style: SeriesStyle, paint: Paint): uPlot.Series.Points {
+  const color = lineColor(style, paint);
   const points: uPlot.Series.Points = {
     size: style.pointSize,
     width: 0,
-    fill: paint.color,
-    stroke: paint.color,
+    fill: color,
+    stroke: color,
   };
   if (style.showPoints === "auto") {
     // Only where points stand well apart, so a calm line does not turn into beads.
@@ -225,8 +240,8 @@ export function uplotSeries(
     label,
     stroke:
       style.gradient === "scheme" && style.thresholds !== undefined
-        ? cached((u) => schemeGradient(u, u.ctx, style, paint, () => 1), true)
-        : paint.color,
+        ? cached((u) => schemeGradient(u, u.ctx, style, paint, () => style.opacity), true)
+        : lineColor(style, paint),
     width: style.lineWidth,
     points: pointsOf(style, paint),
     spanGaps: spansGaps(style),
@@ -370,4 +385,59 @@ export function stackedFill(
     paths.fill = fill;
     return paths;
   };
+}
+
+/**
+ * Draws the thresholds a series asks for (`thresholdDisplay`): tinted bands behind the series and
+ * dashed lines on top of them at each step's value, in the steps' colours.
+ */
+export function thresholdHooks(
+  styles: readonly SeriesStyle[],
+  paint: Pick<Paint, "tones" | "color">,
+  bandAlpha: number,
+): uPlot.Hooks.Arrays {
+  const shown = shownThresholds(styles);
+  if (shown === null) {
+    return {};
+  }
+  const { thresholds, display } = shown;
+  const axis = (u: uPlot) => ({ min: u.scales.y?.min ?? 0, max: u.scales.y?.max ?? 1 });
+  const hooks: uPlot.Hooks.Arrays = {};
+  if (display === "areas" || display === "linesAndAreas") {
+    hooks.drawClear = [
+      (u) => {
+        const { min, max } = axis(u);
+        const ctx = u.ctx;
+        ctx.save();
+        for (const band of thresholdBands(thresholds, min, max)) {
+          const top = u.valToPos(band.to, "y", true);
+          const bottom = u.valToPos(band.from, "y", true);
+          ctx.fillStyle = withAlpha(stepColor(band.step, paint), bandAlpha);
+          ctx.fillRect(u.bbox.left, top, u.bbox.width, bottom - top);
+        }
+        ctx.restore();
+      },
+    ];
+  }
+  if (display === "lines" || display === "linesAndAreas") {
+    hooks.draw = [
+      (u) => {
+        const { min, max } = axis(u);
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.lineWidth = uPlot.pxRatio;
+        ctx.setLineDash([4 * uPlot.pxRatio, 4 * uPlot.pxRatio]);
+        for (const line of thresholdLines(thresholds, min, max)) {
+          const y = Math.round(u.valToPos(line.value, "y", true)) + 0.5;
+          ctx.strokeStyle = stepColor(line.step, paint);
+          ctx.beginPath();
+          ctx.moveTo(u.bbox.left, y);
+          ctx.lineTo(u.bbox.left + u.bbox.width, y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      },
+    ];
+  }
+  return hooks;
 }

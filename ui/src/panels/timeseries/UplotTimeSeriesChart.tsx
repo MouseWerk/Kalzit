@@ -6,11 +6,19 @@ import { zoneOption } from "../../lib/timeSettings";
 import { TONES, type Tone } from "../fieldConfig/fieldConfig";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
+import { useThemeVersion } from "../useThemeVersion";
 import { type ChartData, chartData } from "./align";
 import { ChartShell, type PlotArea, SERIES_COLORS, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG, VALUE_AXIS_SIZE, valueAxisSize } from "./layout";
-import { MONO_CLASS, MONO_COMPARE_CLASS, type StackedData, styleKey } from "./styles";
-import { type Paint, uplotSeries } from "./uplotSeries";
+import {
+  FREE_CLASS,
+  MONO_CLASS,
+  MONO_COMPARE_CLASS,
+  RAMP_CLASSES,
+  type StackedData,
+  styleKey,
+} from "./styles";
+import { type Paint, thresholdHooks, uplotSeries } from "./uplotSeries";
 import "../panels.css";
 
 /** The palette, monochrome and tone classes, one probe each. */
@@ -18,36 +26,11 @@ const SERIES_CLASSES = [
   ...Array.from({ length: SERIES_COLORS }, (_, i) => `series-${i + 1}`),
   MONO_CLASS,
   MONO_COMPARE_CLASS,
+  ...RAMP_CLASSES,
   ...TONES.map((tone) => `tone--${tone}`),
 ];
 
 const DAY = 24 * 60 * 60 * 1000;
-
-/**
- * Re-reads theme colors when the theme changes: the data-theme attribute or the system's light
- * and dark preference. A canvas cannot use CSS variables, so the chart is drawn again.
- */
-function useThemeVersion(): number {
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    const bump = () => setVersion((v) => v + 1);
-    const observer = new MutationObserver(bump);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    const media =
-      typeof window.matchMedia === "function"
-        ? window.matchMedia("(prefers-color-scheme: dark)")
-        : null;
-    media?.addEventListener("change", bump);
-    return () => {
-      observer.disconnect();
-      media?.removeEventListener("change", bump);
-    };
-  }, []);
-  return version;
-}
 
 /** The computed color of a probe element: tokens resolved to what a canvas understands. */
 function probeColor(root: HTMLElement, selector: string): string {
@@ -143,6 +126,7 @@ export function UplotTimeSeriesChart({
     const hatchWidth = probeNumber(probes, "--chart-hatch-width", 1);
     const hatchSpacing = probeNumber(probes, "--chart-hatch-spacing", 6);
     const fadeTo = probeNumber(probes, "--chart-fade-to", 0.15);
+    const bandAlpha = probeNumber(probes, "--chart-threshold-alpha", 0.12);
     // Time labels in the UI language: dates for steps of a day or more, else hours and minutes.
     // Ticks and labels on the wall clock of the user's time zone.
     const zone = zoneOption(timeZone);
@@ -164,6 +148,7 @@ export function UplotTimeSeriesChart({
         ? {}
         : { tzDate: (ts: number) => uPlot.tzDate(new Date(ts), timeZone) }),
       legend: { show: false },
+      hooks: thresholdHooks(styles, { tones, color: probeColor(probes, ".series-1") }, bandAlpha),
       // The shell draws the cursor and the readout, the same for keyboard and pointer.
       cursor: { show: false },
       // top, right, bottom, left; null keeps uPlot's own spacing.
@@ -202,7 +187,11 @@ export function UplotTimeSeriesChart({
         ...series.map((s, index) => {
           const style = styles[index];
           const paint: Paint = {
-            color: probeColor(probes, `.${style?.colorClass ?? "series-1"}`),
+            // A free colour is used as it is; the others come from the theme through the probes.
+            color:
+              style?.colorClass === FREE_CLASS && style.freeColor !== null
+                ? style.freeColor
+                : probeColor(probes, `.${style?.colorClass ?? "series-1"}`),
             tones,
             hatchAlpha,
             hatchWidth,

@@ -1207,4 +1207,219 @@
     stroke: var(--border-strong);
     stroke-width: 1.5;
   }
+
+  /* Colour picking: tone swatches as radio buttons, a free colour, and the colours editor. */
+
+  .color-field {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .color-field__legend {
+    margin-block-end: var(--space-1);
+    padding: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .color-field__swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .color-field--compact .color-field__swatches {
+    gap: var(--space-half);
+  }
+
+  .color-field__option {
+    position: relative;
+    display: inline-grid;
+  }
+
+  /* Hidden like .visually-hidden: the label is the target, the input keeps the keyboard. */
+  .color-field__input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* A 24 px target (WCAG 2.5.8); the chip inside it carries the colour. */
+  .color-field__swatch {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: var(--size-color-swatch);
+    height: var(--size-color-swatch);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .color-field__input:focus-visible + .color-field__swatch {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .color-field__chip.ts__swatch {
+    width: 100%;
+    height: 100%;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  /* No colour and a custom colour not chosen yet: an empty chip, never a colour of its own. */
+  .color-field__none.ts__swatch,
+  .color-field__add.ts__swatch,
+  .colors-editor__auto.ts__swatch {
+    background: var(--bg-surface);
+  }
+
+  /* The chosen swatch: a check mark on a neutral backing, no coloured ring. */
+  .color-field__mark {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--text);
+  }
+
+  .color-field__mark .icon {
+    width: var(--space-4);
+    height: var(--space-4);
+    padding: var(--space-half);
+    border-radius: var(--radius-pill);
+    background: var(--bg-raised);
+  }
+
+  .color-field__free {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .color-field__free-row {
+    display: flex;
+    align-items: end;
+    gap: var(--space-2);
+  }
+
+  .color-field__picker {
+    flex: none;
+    width: var(--control-height);
+    height: var(--control-height);
+    padding: 0;
+    border: var(--border-width) solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    cursor: pointer;
+  }
+
+  .color-field__hex {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* The panel surface in each scheme, read for the contrast check; never shown. */
+  .color-field__probe {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    color: var(--bg-raised);
+  }
+
+  .color-field__probe--light {
+    color-scheme: light;
+  }
+
+  .color-field__probe--dark {
+    color-scheme: dark;
+  }
+
+  .colors-editor {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .colors-editor__preview {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .colors-editor__swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .colors-editor__chip.ts__swatch {
+    width: var(--size-color-swatch);
+    height: var(--size-color-swatch);
+  }
+
+  .colors-editor__series {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .colors-editor__head {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin: 0;
+  }
+
+  .colors-editor__list {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* The series' name on its own line, its colour, line style and opacity below it. */
+  .colors-editor__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .colors-editor__name {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .colors-editor__select.select {
+    min-width: 0;
+  }
+
+  .colors-editor__percent {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-muted);
+  }
+
+  .colors-editor__number.input {
+    width: var(--size-number-short);
+  }
+
+  .colors-editor__free {
+    grid-column: 1 / -1;
+  }
 }

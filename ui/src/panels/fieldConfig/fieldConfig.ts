@@ -40,6 +40,50 @@ export const TONES = [
 ] as const;
 export type Tone = (typeof TONES)[number];
 
+/** A free colour as stored: `#` and six hex digits, lower case. */
+export type HexColor = `#${string}`;
+
+/**
+ * A colour as the options store it: a theme tone, which follows light, dark and contrast themes,
+ * or a free colour the user picked (`#rrggbb`), which stays the same in every theme.
+ */
+export type ColorValue = Tone | HexColor;
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+export function isHexColor(value: unknown): value is HexColor {
+  return typeof value === "string" && HEX_COLOR.test(value);
+}
+
+/** A stored colour, or undefined when it is neither a tone nor a free colour. */
+export function colorValueOf(value: unknown): ColorValue | undefined {
+  if (isTone(value)) return value;
+  return isHexColor(value) ? (value.toLowerCase() as HexColor) : undefined;
+}
+
+/**
+ * How series without a colour of their own are coloured: the categorical palette, one colour for
+ * all, the threshold colours, or steps along a ramp (green to red, blues, grays).
+ */
+export const COLOR_SCHEMES = [
+  "palette",
+  "single",
+  "thresholds",
+  "greenYellowRed",
+  "blues",
+  "grays",
+] as const;
+export type ColorScheme = (typeof COLOR_SCHEMES)[number];
+
+/** The tone of a stored colour; a free colour has none (panels that only know tones). */
+export function toneOf(color: ColorValue | undefined): Tone | undefined {
+  return isHexColor(color) ? undefined : color;
+}
+
+/** Whether the time series draws its thresholds, and how. */
+export const THRESHOLD_DISPLAYS = ["off", "lines", "areas", "linesAndAreas"] as const;
+export type ThresholdDisplay = (typeof THRESHOLD_DISPLAYS)[number];
+
 export const CELL_DISPLAYS = ["auto", "color-text", "color-background", "gauge", "link"] as const;
 export type CellDisplay = (typeof CELL_DISPLAYS)[number];
 
@@ -47,6 +91,8 @@ export interface ThresholdStep {
   /** null for the base step, which holds from minus infinity. */
   value: number | null;
   tone: Tone;
+  /** A free colour for the step; panels that only know tones use the tone. */
+  color?: HexColor;
 }
 
 export interface Thresholds {
@@ -73,8 +119,14 @@ export interface FieldOptions extends GraphStyleOptions {
   noValue?: string;
   /** Replaces the field's name in legends, headers and readouts. */
   displayName?: string;
-  /** A fixed color for the field's series. */
-  color?: Tone;
+  /** A fixed colour for the field's series: a tone or a free colour. */
+  color?: ColorValue;
+  /** How series without a colour of their own are coloured; unset is the palette. */
+  colorScheme?: ColorScheme;
+  /** The series' own opacity in percent (line, points, bars); the fill has its own. */
+  opacity?: number;
+  /** Time series: draw the thresholds as lines, areas or both; unset is off. */
+  thresholdDisplay?: ThresholdDisplay;
   /** Tables: how cells of the field are drawn. */
   cellDisplay?: CellDisplay;
   /** Tables: a link for every cell; `${__value}` is the cell's value, URL-encoded. */
@@ -107,6 +159,9 @@ export const OPTION_KEYS = [
   "noValue",
   "displayName",
   "color",
+  "colorScheme",
+  "opacity",
+  "thresholdDisplay",
   "cellDisplay",
   "link",
   "width",
@@ -167,7 +222,9 @@ function parseThresholds(value: unknown): Thresholds | undefined {
     if (steps.length > 0 && v === null) {
       continue;
     }
-    steps.push({ value: v, tone: raw.tone });
+    const step: ThresholdStep = { value: v, tone: raw.tone };
+    if (isHexColor(raw.color)) step.color = raw.color.toLowerCase() as HexColor;
+    steps.push(step);
   }
   if (steps.length === 0) {
     return undefined;
@@ -233,9 +290,18 @@ export function parseFieldOptions(value: unknown): FieldOptions {
   if (noValue !== undefined) options.noValue = noValue;
   const displayName = text(value.displayName, LIMITS.textChars);
   if (displayName !== undefined && displayName !== "") options.displayName = displayName;
-  if (isTone(value.color)) options.color = value.color;
-  const display = CELL_DISPLAYS.find((d) => d === value.cellDisplay);
-  if (display !== undefined) options.cellDisplay = display;
+  const color = colorValueOf(value.color);
+  if (color !== undefined) options.color = color;
+  const scheme = COLOR_SCHEMES.find((s) => s === value.colorScheme);
+  if (scheme !== undefined) options.colorScheme = scheme;
+  const opacity = finite(value.opacity);
+  if (opacity !== undefined && Number.isInteger(opacity) && opacity >= 0 && opacity <= 100) {
+    options.opacity = opacity;
+  }
+  const display = THRESHOLD_DISPLAYS.find((d) => d === value.thresholdDisplay);
+  if (display !== undefined) options.thresholdDisplay = display;
+  const cellDisplay = CELL_DISPLAYS.find((d) => d === value.cellDisplay);
+  if (cellDisplay !== undefined) options.cellDisplay = cellDisplay;
   const link = text(value.link, LIMITS.linkChars);
   if (link !== undefined && link !== "") options.link = link;
   const width = finite(value.width);
@@ -327,17 +393,26 @@ export function thresholdTone(
   thresholds: Thresholds,
   range: { min: number; max: number } = { min: 0, max: 100 },
 ): Tone {
+  return thresholdStep(value, thresholds, range).tone;
+}
+
+/** The step a number falls in under the thresholds, with its tone and its free colour. */
+export function thresholdStep(
+  value: number,
+  thresholds: Thresholds,
+  range: { min: number; max: number } = { min: 0, max: 100 },
+): ThresholdStep {
   const position =
     thresholds.mode === "percentage"
       ? ((value - range.min) / (range.max - range.min || 1)) * 100
       : value;
-  let tone = thresholds.steps[0]?.tone ?? "neutral";
+  let found: ThresholdStep = thresholds.steps[0] ?? { value: null, tone: "neutral" };
   for (const step of thresholds.steps.slice(1)) {
     if (step.value !== null && position >= step.value) {
-      tone = step.tone;
+      found = step;
     }
   }
-  return tone;
+  return found;
 }
 
 function rawText(raw: unknown): string {
@@ -466,9 +541,13 @@ export function fieldExtent(field: Field): { min: number; max: number } | null {
   return Number.isFinite(min) ? { min, max } : null;
 }
 
-/** CSS class of a tone (viz.css), or of the palette entry for the series index. */
-export function toneClass(tone: Tone | undefined, index = 0): string {
-  return tone === undefined ? `series-${(index % 8) + 1}` : `tone--${tone}`;
+/**
+ * CSS class of a tone (viz.css), or of the palette entry for the series index. A free colour
+ * takes the palette entry here: only the time series draws free colours so far
+ * (`timeseries/styles.ts`), the other panels keep their palette.
+ */
+export function toneClass(tone: ColorValue | undefined, index = 0): string {
+  return tone === undefined || isHexColor(tone) ? `series-${(index % 8) + 1}` : `tone--${tone}`;
 }
 
 const SAFE_LINK = /^(https?:\/\/|mailto:|\/(?!\/)|\.\/|\?|#)/i;

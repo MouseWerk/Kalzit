@@ -2,7 +2,7 @@ import { useId } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { EMPTY_FIELD_CONFIG, type Tone, toneClass } from "../fieldConfig/fieldConfig";
+import { EMPTY_FIELD_CONFIG, type Tone, toneClass, toneOf } from "../fieldConfig/fieldConfig";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { timeField, toNumber } from "../frame";
 import { StatPreview } from "../picker/previews";
@@ -112,7 +112,7 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
   return (
     <ul className="stat">
       {items.map((item) => {
-        const tone: Tone | undefined = item.display.tone ?? item.options.color;
+        const tone: Tone | undefined = item.display.tone ?? toneOf(item.options.color);
         const colored = options.colorMode !== "none" && tone !== undefined;
         const classes = [
           "stat__item",
@@ -141,7 +141,7 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
                 frame={item.frame}
                 field={item.field}
                 colorClass={toneClass(
-                  item.options.color ?? (colored ? tone : undefined),
+                  toneOf(item.options.color) ?? (colored ? tone : undefined),
                   item.index,
                 )}
               />

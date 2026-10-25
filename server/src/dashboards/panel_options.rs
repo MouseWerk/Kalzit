@@ -97,12 +97,39 @@ enum ThresholdMode {
     Percentage,
 }
 
+/// A colour as the options store it: a theme tone (`chart-3`, `warn`), which follows light, dark
+/// and contrast themes, or a free colour `#rrggbb` the user picked. A free colour is checked for
+/// its form here; the editor checks its contrast against the panel.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ColorValue {
+    #[allow(dead_code)]
+    Tone(Tone),
+    Free(String),
+}
+
+/// Whether a text is a free colour: `#` and six hex digits, either case.
+fn is_hex_color(text: &str) -> bool {
+    text.len() == 7 && text.starts_with('#') && text[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn check_color(what: &str, color: Option<&ColorValue>) -> Result<(), String> {
+    match color {
+        Some(ColorValue::Free(text)) if !is_hex_color(text) => {
+            Err(format!("{what} must be a palette colour or a colour like #1a2b3c"))
+        }
+        _ => Ok(()),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ThresholdStep {
     value: Option<f64>,
     #[allow(dead_code)]
     tone: Tone,
+    /// A free colour for the step (`#rrggbb`); the tone stays for panels that only know tones.
+    color: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,8 +171,16 @@ struct FieldOptions {
     mappings: Option<Vec<Mapping>>,
     no_value: Option<String>,
     display_name: Option<String>,
+    /// The series colour: a tone or a free `#rrggbb` (stored tones stay valid).
+    color: Option<ColorValue>,
+    /// How series are coloured when they have no colour of their own (absent: the palette).
     #[allow(dead_code)]
-    color: Option<Tone>,
+    color_scheme: Option<ColorScheme>,
+    /// The series' own opacity in percent: its line, points and bars (the fill has its own).
+    opacity: Option<u32>,
+    /// Whether the time series draws its thresholds: as lines, as areas, or both (absent: off).
+    #[allow(dead_code)]
+    threshold_display: Option<ThresholdDisplay>,
     #[allow(dead_code)]
     cell_display: Option<CellDisplay>,
     link: Option<String>,
@@ -256,6 +291,15 @@ choice!(ShowPoints { Auto = "auto", Always = "always", Never = "never" });
 choice!(ConnectGaps { Never = "never", Always = "always", Threshold = "threshold" });
 choice!(Stacking { None = "none", Normal = "normal", Percent = "percent" });
 choice!(BarAlignment { Before = "before", Center = "center", After = "after" });
+choice!(ColorScheme {
+    Palette = "palette",
+    Single = "single",
+    Thresholds = "thresholds",
+    GreenYellowRed = "greenYellowRed",
+    Blues = "blues",
+    Grays = "grays",
+});
+choice!(ThresholdDisplay { Off = "off", Lines = "lines", Areas = "areas", LinesAndAreas = "linesAndAreas" });
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -522,6 +566,13 @@ fn check_options(at: &str, o: &FieldOptions) -> Result<(), String> {
         if let Some(i) = t.steps.iter().skip(1).position(|step| step.value.is_none()) {
             return Err(format!("{what}[{}].value is required", i + 1));
         }
+        for (i, step) in t.steps.iter().enumerate() {
+            if let Some(color) = &step.color
+                && !is_hex_color(color)
+            {
+                return Err(format!("{what}[{i}].color must be a colour like #1a2b3c"));
+            }
+        }
     }
     if let Some(mappings) = &o.mappings {
         if mappings.len() > MAX_MAPPINGS {
@@ -558,6 +609,8 @@ fn check_options(at: &str, o: &FieldOptions) -> Result<(), String> {
     if let Some(text) = &o.display_name {
         check_text(&format!("{at}.displayName"), text, MAX_TEXT_CHARS, false)?;
     }
+    check_color(&format!("{at}.color"), o.color.as_ref())?;
+    check_range(&format!("{at}.opacity"), o.opacity, 0, 100)?;
     if let Some(link) = &o.link {
         check_text(&format!("{at}.link"), link, MAX_LINK_CHARS, false)?;
         if !is_safe_link(link) {
@@ -956,7 +1009,10 @@ mod tests {
             ("/defaults/mappings/0/text", json!("x".repeat(MAX_TEXT_CHARS + 1)), "mappings[0].text"),
             ("/defaults/mappings/2/pattern", json!("a\u{7}b"), "control characters"),
             ("/defaults/noValue", json!("x".repeat(MAX_NO_VALUE_CHARS + 1)), "noValue"),
-            ("/defaults/color", json!("#ff0000"), "fieldConfig"),
+            ("/defaults/color", json!("#ff00"), "defaults.color must be a palette colour"),
+            ("/defaults/color", json!("red"), "defaults.color must be a palette colour"),
+            ("/defaults/color", json!(7), "fieldConfig"),
+            ("/defaults/thresholds/steps/1/color", json!("#12345g"), "steps[1].color"),
             ("/overrides/0/properties/link", json!("javascript:alert(1)"), "link must be"),
             ("/overrides/0/properties/link", json!("//evil.example/x"), "link must be"),
             ("/overrides/0/properties/width", json!(10), "width must be"),
@@ -1042,6 +1098,51 @@ mod tests {
         // Overrides are checked the same way.
         let config = json!({ "overrides": [{ "matcher": { "type": "name", "value": "a" }, "properties": { "pointSize": 99 } }] });
         assert!(check("timeseries", &json!({}), &config).unwrap_err().contains("overrides[0].properties.pointSize"));
+    }
+
+    #[test]
+    fn colours_schemes_and_series_overrides_pass() {
+        let config = json!({
+            "defaults": {
+                "colorScheme": "thresholds", "color": "#6AA3D8", "opacity": 85, "thresholdDisplay": "linesAndAreas",
+                "thresholds": { "mode": "absolute", "steps": [
+                    { "value": null, "tone": "neutral", "color": "#8a8a93" }, { "value": 80, "tone": "warn" },
+                    { "value": 95, "tone": "critical", "color": "#e0115f" }
+                ] }
+            },
+            "overrides": [
+                { "matcher": { "type": "name", "value": "Umsatz" },
+                  "properties": { "color": "chart-2", "lineStyle": "solid", "opacity": 100 } },
+                { "matcher": { "type": "name", "value": "Vortag" },
+                  "properties": { "color": "#4fb3a9", "lineStyle": "dashed", "opacity": 0 } }
+            ]
+        });
+        assert_eq!(check("timeseries", &json!({}), &config), Ok(()));
+        for scheme in ["palette", "single", "thresholds", "greenYellowRed", "blues", "grays"] {
+            let config = json!({ "defaults": { "colorScheme": scheme } });
+            assert_eq!(check("timeseries", &json!({}), &config), Ok(()), "{scheme}");
+        }
+        // Stored tones stay valid as they were.
+        assert_eq!(check("stat", &json!({}), &json!({ "defaults": { "color": "ok" } })), Ok(()));
+    }
+
+    #[test]
+    fn colour_options_out_of_bounds_are_refused_with_the_place() {
+        for (key, value, expect) in [
+            ("opacity", json!(101), "defaults.opacity"),
+            ("opacity", json!(-1), "fieldConfig"),
+            ("colorScheme", json!("rainbow"), "fieldConfig"),
+            ("thresholdDisplay", json!("dots"), "fieldConfig"),
+            ("color", json!("#GGGGGG"), "defaults.color"),
+            ("color", json!("#1234567"), "defaults.color"),
+            ("color", json!(" #123456"), "defaults.color"),
+        ] {
+            let config = json!({ "defaults": { key: value.clone() } });
+            let err = check("timeseries", &json!({}), &config).unwrap_err();
+            assert!(err.contains(expect), "{key} = {value}: {err}");
+        }
+        let config = json!({ "overrides": [{ "matcher": { "type": "name", "value": "a" }, "properties": { "color": "#abc" } }] });
+        assert!(check("timeseries", &json!({}), &config).unwrap_err().contains("overrides[0].properties.color"));
     }
 
     #[test]

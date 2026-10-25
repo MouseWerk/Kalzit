@@ -12,7 +12,7 @@ import { useEscapeLayer } from "../../lib/layers";
 import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
 import { useSharedCursor } from "../crosshair";
-import { Legend, type LegendItem, WithLegend } from "../fieldConfig/Legend";
+import { Legend, type LegendItem, Swatch, WithLegend } from "../fieldConfig/Legend";
 import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
 import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
@@ -204,7 +204,12 @@ export function ChartShell({
         values[key] = Number.isNaN(value) ? "" : format(index, value);
       }
     }
-    return { name: s.name, colorClass: styles[index]?.swatchClass ?? "", values };
+    return {
+      name: s.name,
+      colorClass: styles[index]?.swatchClass ?? "",
+      freeColor: styles[index]?.freeColor ?? null,
+      values,
+    };
   });
 
   return (
@@ -294,7 +299,10 @@ export function ChartShell({
               </div>
               {shown.map((row) => (
                 <div key={row.index} className="ts__tooltip-row">
-                  <span className={`ts__swatch ${styles[row.index]?.swatchClass ?? ""}`} />
+                  <Swatch
+                    className={styles[row.index]?.swatchClass ?? ""}
+                    freeColor={styles[row.index]?.freeColor}
+                  />
                   <span className="truncate">{row.name}</span>
                   <span className="ts__tooltip-value">
                     {Number.isNaN(row.value) ? "" : format(row.index, row.value)}

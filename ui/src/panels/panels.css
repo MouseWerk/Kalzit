@@ -41,6 +41,73 @@
     --series-color: var(--chart-mono-compare);
   }
 
+  /* A free colour the user picked: set as --free-color on the series' element. */
+  .series-free {
+    --series-color: var(--free-color, var(--chart-1));
+    --tone: var(--free-color, var(--chart-1));
+  }
+
+  /* The ramps of the colour schemes, five steps each. */
+  .ramp-gyr-1 {
+    --series-color: var(--ramp-gyr-1);
+  }
+
+  .ramp-gyr-2 {
+    --series-color: var(--ramp-gyr-2);
+  }
+
+  .ramp-gyr-3 {
+    --series-color: var(--ramp-gyr-3);
+  }
+
+  .ramp-gyr-4 {
+    --series-color: var(--ramp-gyr-4);
+  }
+
+  .ramp-gyr-5 {
+    --series-color: var(--ramp-gyr-5);
+  }
+
+  .ramp-blues-1 {
+    --series-color: var(--ramp-blues-1);
+  }
+
+  .ramp-blues-2 {
+    --series-color: var(--ramp-blues-2);
+  }
+
+  .ramp-blues-3 {
+    --series-color: var(--ramp-blues-3);
+  }
+
+  .ramp-blues-4 {
+    --series-color: var(--ramp-blues-4);
+  }
+
+  .ramp-blues-5 {
+    --series-color: var(--ramp-blues-5);
+  }
+
+  .ramp-grays-1 {
+    --series-color: var(--ramp-grays-1);
+  }
+
+  .ramp-grays-2 {
+    --series-color: var(--ramp-grays-2);
+  }
+
+  .ramp-grays-3 {
+    --series-color: var(--ramp-grays-3);
+  }
+
+  .ramp-grays-4 {
+    --series-color: var(--ramp-grays-4);
+  }
+
+  .ramp-grays-5 {
+    --series-color: var(--ramp-grays-5);
+  }
+
   /*
    * A panel's body wherever it is shown (dashboards, the panel editor, Explore): the
    * visualization takes the height that is left, per-query errors sit above it.
@@ -206,6 +273,18 @@
   .ts__bars,
   .ts__points {
     fill: var(--series-color);
+  }
+
+  /* Thresholds drawn in the chart: tinted bands behind the series, dashed lines over them. */
+  .ts__threshold-band {
+    fill: var(--series-color);
+    fill-opacity: var(--chart-threshold-alpha);
+  }
+
+  .ts__threshold-line {
+    stroke: var(--series-color);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
   }
 
   /* Swatches of dashed and dotted series show the line's pattern. */
