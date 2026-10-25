@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { readPreference, writePreference } from "../../lib/storage";
 import type { Folder } from "./api";
 import "./dashboards.css";
@@ -185,6 +186,9 @@ export function FolderTree({
   const unfold = (id: string) => store(folded.filter((f) => f !== id));
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (isComposingKey(event)) {
+      return;
+    }
     const index = shown.indexOf(tabStop);
     const id = tabStop;
     const hasChildren = id !== ALL && withChildren.some((f) => f.id === id);
