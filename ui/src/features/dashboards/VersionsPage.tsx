@@ -149,6 +149,7 @@ function VersionList({ orgId }: { orgId: string }) {
                         type="button"
                         className="button button--ghost button--small"
                         aria-expanded={compare === item.version}
+                        aria-label={t("dashboards.history.compareNamed", { version: item.version })}
                         onClick={() => setCompare(compare === item.version ? null : item.version)}
                       >
                         {t("dashboards.history.compare")}
@@ -157,6 +158,9 @@ function VersionList({ orgId }: { orgId: string }) {
                         <button
                           type="button"
                           className="button button--secondary button--small"
+                          aria-label={t("dashboards.history.restoreNamed", {
+                            version: item.version,
+                          })}
                           onClick={() => setConfirm(item)}
                         >
                           {t("dashboards.history.restore")}

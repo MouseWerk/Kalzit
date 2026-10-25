@@ -568,7 +568,7 @@ function DashboardCard({
           to="/dashboards/$dashboardId"
           params={{ dashboardId: entry.id }}
           className="button button--secondary button--small"
-          aria-describedby={titleId}
+          aria-label={t("shell.start.openNamed", { title: entry.title })}
         >
           {t("shell.start.open")}
         </Link>
@@ -578,7 +578,7 @@ function DashboardCard({
             params={{ dashboardId: entry.id }}
             search={{ edit: true }}
             className="button button--ghost button--small"
-            aria-describedby={titleId}
+            aria-label={t("shell.start.editNamed", { title: entry.title })}
           >
             {t("shell.start.edit")}
           </Link>
