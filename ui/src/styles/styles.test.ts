@@ -172,11 +172,7 @@ describe("tokens only", () => {
     for (const rule of allRules({ exceptTokens: true })) {
       for (const { property, value } of rule.declarations) {
         if (property === "outline") {
-          // The palette's field is the panel's own header and always holds focus: no ring there.
-          const bare = rule.selector === ".palette__input" && value === "0";
-          expect(bare ? "var(--focus-outline)" : value, where(rule, property)).toBe(
-            "var(--focus-outline)",
-          );
+          expect(value, where(rule, property)).toBe("var(--focus-outline)");
         }
         expect(
           ["outline-color", "outline-style", "outline-width"],

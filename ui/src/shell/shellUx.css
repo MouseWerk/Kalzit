@@ -389,8 +389,13 @@
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-4);
+    overflow: hidden;
     border-block-end: var(--border-width) solid var(--border);
     color: var(--text-muted);
+  }
+
+  .palette__field:focus-within {
+    border-block-end-color: var(--focus-ring);
   }
 
   .palette__input {
@@ -400,7 +405,12 @@
     padding: 0;
     border: 0;
     border-radius: 0;
-    outline: 0;
+    /*
+     * The ring of the focus token is pushed out of the header and clipped by it; the header's
+     * hairline turns to the focus color instead (see :focus-within).
+     */
+    outline: var(--focus-outline);
+    outline-offset: var(--space-16);
     background: transparent;
     box-shadow: none;
     color: var(--text);

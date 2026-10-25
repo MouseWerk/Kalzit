@@ -1,6 +1,14 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../components/Icon";
 import { ORG_SECTIONS, SERVER_SECTIONS } from "../features/admin/sections";
@@ -15,6 +23,20 @@ import { fuzzyScore } from "./fuzzy";
 import { recentsQuery, type SearchHit, search } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
 import "./shellUx.css";
+
+const NARROW = "(max-width: 48rem)";
+
+/** True on a phone-width window, where the placeholder has to be short. */
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const query = window.matchMedia?.(NARROW);
+      query?.addEventListener("change", notify);
+      return () => query?.removeEventListener("change", notify);
+    },
+    () => window.matchMedia?.(NARROW).matches ?? false,
+  );
+}
 
 const appRoute = getRouteApi("/_app");
 
@@ -90,6 +112,7 @@ export function CommandPalette({
   const permissions = useOrgPermissions();
   const navigate = useNavigate();
   const theme = useTheme();
+  const narrow = useNarrow();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -448,7 +471,7 @@ export function CommandPalette({
             aria-activedescendant={current >= 0 ? optionId(current) : undefined}
             autoComplete="off"
             spellCheck={false}
-            placeholder={t("shell.palette.placeholder")}
+            placeholder={t(narrow ? "shell.palette.placeholderShort" : "shell.palette.placeholder")}
             value={text}
             onChange={(event) => {
               setText(event.currentTarget.value);

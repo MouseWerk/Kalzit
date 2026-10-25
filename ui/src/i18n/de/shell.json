@@ -8,6 +8,7 @@
   "shell.palette.title": "Befehlspalette",
   "shell.palette.label": "Suchen oder Befehl ausführen",
   "shell.palette.placeholder": "Dashboards, Ordner, Datenquellen und Aktionen suchen…",
+  "shell.palette.placeholderShort": "Suchen…",
   "shell.palette.results": "Treffer",
   "shell.palette.hint": "↑ ↓ zum Wählen, Enter zum Öffnen, Esc zum Schließen",
   "shell.palette.searching": "Wird gesucht…",

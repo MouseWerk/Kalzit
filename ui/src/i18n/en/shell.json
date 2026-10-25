@@ -8,6 +8,7 @@
   "shell.palette.title": "Command palette",
   "shell.palette.label": "Search or run a command",
   "shell.palette.placeholder": "Search dashboards, folders, data sources and actions…",
+  "shell.palette.placeholderShort": "Search…",
   "shell.palette.results": "Results",
   "shell.palette.hint": "↑ ↓ to move, Enter to open, Esc to close",
   "shell.palette.searching": "Searching…",
