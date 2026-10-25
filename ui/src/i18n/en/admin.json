@@ -406,6 +406,7 @@
   "admin.auditAction.datasource.updated": "Data source changed",
   "admin.auditAction.datasource.deleted": "Data source moved to the trash",
   "admin.auditAction.datasource.restored": "Data source restored",
+  "admin.auditAction.datasource.purged": "Data source deleted for good",
   "admin.auditAction.annotation.created": "Annotation added",
   "admin.auditAction.annotation.updated": "Annotation changed",
   "admin.auditAction.annotation.deleted": "Annotation deleted",

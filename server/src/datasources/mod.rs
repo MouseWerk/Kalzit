@@ -1139,16 +1139,8 @@ impl DataSources {
         ds: &Datasource,
         policy: Arc<TargetPolicy>,
     ) -> Result<Arc<Connection>, SourceError> {
-        let secrets = crate::secrets::load_all(&state.db, &self.keyring, &ds.id).await.map_err(|e| match e {
-            crate::secrets::LoadError::Database(db) => {
-                tracing::error!("loading secrets of data source {}: {db}", ds.id);
-                SourceError::failed("secrets.unreadable", "the secrets of this data source cannot be read")
-            }
-            crate::secrets::LoadError::Secret { field, error } => {
-                let message = format!("the stored secret {field} {error}; enter it again");
-                SourceError::failed("secrets.undecryptable", message).with("field", field)
-            }
-        })?;
+        let secrets =
+            crate::secrets::load_all(&state.db, &self.keyring, &ds.id).await.map_err(|e| secrets_error(&ds.id, e))?;
         Ok(Arc::new(Connection::new(ds.id.clone(), plugin_settings(&ds.settings), secrets, policy, self.own.clone())))
     }
 
@@ -1160,6 +1152,41 @@ impl DataSources {
             .entry(user_id.to_string())
             .or_insert_with(|| Arc::new(Semaphore::new(MAX_PARALLEL_QUERIES_PER_USER)))
             .clone()
+    }
+}
+
+/// `user:password@` between `://` and the next `/` or space becomes `***@`, so a URL that was
+/// typed with a login never comes back in a refusal.
+pub fn hide_logins(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let end = tail.find(|c: char| c == '/' || c.is_whitespace()).unwrap_or(tail.len());
+        match tail[..end].rfind('@') {
+            Some(at) => {
+                out.push_str("***@");
+                rest = &tail[at + 1..];
+            }
+            None => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What a failure to read a data source's stored secrets says.
+fn secrets_error(datasource_id: &str, e: crate::secrets::LoadError) -> SourceError {
+    match e {
+        crate::secrets::LoadError::Database(db) => {
+            tracing::error!("loading secrets of data source {datasource_id}: {db}");
+            SourceError::failed("secrets.unreadable", "the secrets of this data source cannot be read")
+        }
+        crate::secrets::LoadError::Secret { field, error } => {
+            let message = format!("the stored secret {field} {error}; enter it again");
+            SourceError::failed("secrets.undecryptable", message).with("field", field)
+        }
     }
 }
 
@@ -1532,6 +1559,90 @@ pub async fn check_health(state: &AppState, user_id: &str, ds: &Datasource) -> A
         latency_ms: started.elapsed().as_millis() as u64,
         code: if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) },
     })
+}
+
+/// "Test connection" for settings that are not stored (the add and edit forms): the same checks
+/// and the same health probe as a stored source gets, on a connection that is used once and not
+/// cached. `settings` are the ones to test, `patch` the secrets typed in the form on top of the
+/// stored ones of `datasource_id` (an edit; a new source has none). Nothing is written, nothing
+/// of it is logged; messages are scrubbed of the secrets like everywhere else. The target rules
+/// (private networks, Kalzit's own database, file folders) are the ones saving applies.
+pub async fn check_unsaved(
+    state: &AppState,
+    user_id: &str,
+    kind: &Kind,
+    datasource_id: Option<&str>,
+    settings: &Value,
+    patch: &crate::secrets::SecretPatch,
+) -> ApiResult<HealthReport> {
+    let registry = &state.datasources;
+    let server_timeout = registry.setting_u64(state, "datasources.query_timeout_secs").await?.max(1);
+    let own = settings.get("queryTimeoutSecs").and_then(Value::as_u64);
+    let timeout =
+        Duration::from_secs(own.map_or(server_timeout, |t| t.clamp(1, server_timeout))).min(MAX_HEALTH_TIMEOUT);
+    let started = Instant::now();
+    let report = |ok: bool, detail: Detail, code: Option<&'static str>| HealthReport {
+        ok,
+        reason: detail.reason,
+        params: detail.params,
+        message: detail.message,
+        latency_ms: started.elapsed().as_millis() as u64,
+        code,
+    };
+    let policy = registry.policy(state).await?;
+    if let Err((blocked, _)) = precheck_targets(&policy, kind, settings) {
+        let e: SourceError = blocked.into();
+        let mut detail = e.detail();
+        detail.message = hide_logins(&detail.message);
+        return Ok(report(false, detail, Some(e.code())));
+    }
+    let mut secrets = match datasource_id {
+        Some(id) => match crate::secrets::load_all(&state.db, &registry.keyring, id).await {
+            Ok(secrets) => secrets,
+            Err(e) => {
+                let e = secrets_error(id, e);
+                return Ok(report(false, e.detail(), Some(e.code())));
+            }
+        },
+        None => BTreeMap::new(),
+    };
+    for (field, value) in patch {
+        match value {
+            Some(v) => secrets.insert(field.clone(), v.clone()),
+            None => secrets.remove(field),
+        };
+    }
+    let conn = Arc::new(Connection::new(
+        // Never the stored id (nothing cached under it may be touched) and never a shared one.
+        format!("unsaved-{}", uuid::Uuid::now_v7()),
+        plugin_settings(settings),
+        secrets,
+        policy,
+        registry.own.clone(),
+    ));
+    let run = async {
+        let _slots = registry.slots(state, user_id).await?;
+        if kind.plugin.checks_on_save()
+            && let Err((_, e)) = kind.plugin.check_on_save(&conn).await
+        {
+            return Err(e);
+        }
+        Ok::<_, SourceError>(kind.plugin.health(&conn).await)
+    };
+    let health = match tokio::time::timeout(timeout, run).await {
+        Ok(Ok(health)) => health,
+        Ok(Err(e)) => {
+            let detail = e.detail().scrubbed(|t| conn.scrub(t));
+            return Ok(report(false, detail, Some(e.code())));
+        }
+        Err(_) => {
+            let e = SourceError::Timeout(timeout.as_secs());
+            return Ok(report(false, e.detail(), Some(e.code())));
+        }
+    };
+    let detail = health.detail.scrubbed(|t| conn.scrub(t));
+    let code = if health.ok { None } else { Some(health.code.unwrap_or("datasource_error")) };
+    Ok(report(health.ok, detail, code))
 }
 
 /// The schema for query editors, counted against the caller's query slots.

@@ -439,12 +439,9 @@ export async function restoreDatasource(orgId: string, id: string): Promise<void
   await send("POST", orgPath(orgId, "datasources", id, "restore"));
 }
 
-export async function checkHealth(orgId: string, id: string): Promise<Health> {
-  const health = expectShape(
-    await send("POST", orgPath(orgId, "datasources", id, "health")),
-    isHealth,
-    "connection test",
-  );
+/** The answer of a connection test, with only what it documents. */
+function parseHealth(value: unknown): Health {
+  const health = expectShape(value, isHealth, "connection test");
   const result: Health = {
     ok: health.ok,
     message: typeof health.message === "string" ? health.message : "",
@@ -461,6 +458,31 @@ export async function checkHealth(orgId: string, id: string): Promise<Health> {
     result.params = params;
   }
   return result;
+}
+
+export async function checkHealth(orgId: string, id: string): Promise<Health> {
+  return parseHealth(await send("POST", orgPath(orgId, "datasources", id, "health")));
+}
+
+/** What a form holds, tested before anything is saved. */
+export interface DatasourceTestInput {
+  kind: string;
+  /** The stored source an edit form tests: unchanged secrets come from it. */
+  datasourceId?: string;
+  /** Left out to test the stored settings of `datasourceId`. */
+  settings?: Record<string, unknown> | undefined;
+  /** As in a patch: a key left out keeps the stored secret, null removes it, a string sets it. */
+  secrets: Record<string, string | null>;
+}
+
+/** "Test connection" for unsaved settings: nothing is stored. */
+export async function testDatasource(orgId: string, input: DatasourceTestInput): Promise<Health> {
+  return parseHealth(await send("POST", orgPath(orgId, "datasources", "test"), input));
+}
+
+/** Deletes a source in the trash for good. */
+export async function purgeDatasource(orgId: string, id: string): Promise<void> {
+  await send("DELETE", orgPath(orgId, "datasources", id, "purge"));
 }
 
 export async function fetchSchema(

@@ -39,8 +39,8 @@ A data source is a connection to a database or service. Only admins and owners a
 2. Pick the kind (for example PostgreSQL) from the cards, grouped as Tables (SQL), Metrics and
    search, Documents and graphs, Files and APIs. The search box finds a kind by name.
 3. Enter the connection, either as fields or as a connection string, and a name.
-4. Press **Save and test**. Kalzit stores the source and checks the connection with what you
-   entered.
+4. Press **Test connection** to check what you entered (nothing is saved yet), then **Add data
+   source**.
 
 Use a database login that can only read; see [Data sources](data-sources.md) for every kind and
 what the check does.

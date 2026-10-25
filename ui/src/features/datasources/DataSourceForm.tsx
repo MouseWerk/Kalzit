@@ -14,7 +14,6 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { Dialog } from "../dashboards/ui/Dialog";
 import { errorCodeMessage, errorMessage } from "../dashboards/ui/errors";
 import {
-  checkHealth,
   createDatasource,
   DATASOURCES_KEY,
   type Datasource,
@@ -23,6 +22,7 @@ import {
   type Health,
   kindsQuery,
   type SettingSpec,
+  testDatasource,
 } from "./api";
 import {
   connectionFields,
@@ -43,14 +43,9 @@ import {
   type SummaryPart,
   summarize,
 } from "./settingSections";
-import { healthQuery } from "./sourceStatus";
 import "./datasources.css";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
-
-/** A test that could not run right after adding a source, kept for the page it lands on. */
-export const testErrorKey = (orgId: string, id: string) =>
-  ["datasource-test-error", orgId, id] as const;
 
 /** Server-provided label keys are used when this UI knows them; otherwise the field name. */
 function settingLabel(t: Translate, spec: SettingSpec): string {
@@ -147,7 +142,6 @@ function NewDataSource({ orgId }: { orgId: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { kind: chosen, from } = newRoute.useSearch();
-  const permissions = useOrgPermissions();
   const pickerId = useId();
   const [search, setSearch] = useState("");
   const kinds = useQuery(kindsQuery(orgId));
@@ -162,22 +156,7 @@ function NewDataSource({ orgId }: { orgId: string }) {
           secrets: {},
         };
   const create = useMutation({
-    // A new source can only be tested once it is stored: "Save and test" stores it, tests it,
-    // and the edit page it lands on shows the result (shared through the test cache).
-    mutationFn: async ({ output, test }: { output: FormOutput; test: boolean }) => {
-      const created = await createSource(output);
-      // Testing needs query rights; a custom role may allow adding without them.
-      if (test && permissions.has("datasources:query")) {
-        try {
-          const health = await checkHealth(orgId, created.id);
-          queryClient.setQueryData(healthQuery(orgId, created.id).queryKey, health);
-        } catch (error) {
-          // The source is stored; its page says the test could not run, and why.
-          queryClient.setQueryData(testErrorKey(orgId, created.id), error);
-        }
-      }
-      return created;
-    },
+    mutationFn: (output: FormOutput) => createSource(output),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
       await navigate({
@@ -186,16 +165,28 @@ function NewDataSource({ orgId }: { orgId: string }) {
       });
     },
   });
+  // Tests what the form holds without saving it; saving needs no test first.
+  const test = useMutation({
+    mutationFn: (output: FormOutput) =>
+      testDatasource(orgId, {
+        kind: chosen ?? "",
+        settings: output.settings ?? {},
+        secrets: setSecrets(output),
+      }),
+  });
+  function setSecrets(input: FormOutput) {
+    return Object.fromEntries(
+      Object.entries(input.secrets).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  }
   function createSource(input: FormOutput) {
     return createDatasource(orgId, {
       name: input.name,
       kind: chosen ?? "",
       settings: input.settings ?? {},
-      secrets: Object.fromEntries(
-        Object.entries(input.secrets).filter(
-          (entry): entry is [string, string] => typeof entry[1] === "string",
-        ),
-      ),
+      secrets: setSecrets(input),
     });
   }
 
@@ -311,17 +302,25 @@ function NewDataSource({ orgId }: { orgId: string }) {
               ]
                 .filter(Boolean)
                 .join(" · ")}
-              onSubmit={(output) => create.mutate({ output, test: false })}
-              onSubmitAndTest={(output) => create.mutate({ output, test: true })}
-              testing={create.isPending && create.variables?.test === true}
+              onSubmit={(output) => create.mutate(output)}
+              // This page is for members who may add sources, which is what testing takes.
+              onTest={(output) => test.mutate(output)}
+              onEdited={test.reset}
+              testing={test.isPending}
               status={
-                <div className="ds-test-status" data-state="untested">
-                  <span className="ds-status__dot" aria-hidden="true" />
-                  <div>
-                    <strong>{t("datasources.new.untested")}</strong>
-                    <p className="field__hint">{t("datasources.new.untestedText")}</p>
-                  </div>
-                </div>
+                <HealthResult
+                  health={test.data ?? null}
+                  error={test.error}
+                  empty={
+                    <div className="ds-test-status" data-state="untested">
+                      <span className="ds-status__dot" aria-hidden="true" />
+                      <div>
+                        <strong>{t("datasources.new.untested")}</strong>
+                        <p className="field__hint">{t("datasources.new.untestedText")}</p>
+                      </div>
+                    </div>
+                  }
+                />
               }
               cancel={
                 <Link to="/data-sources" search={{}} className="button button--ghost">
@@ -371,17 +370,13 @@ export interface SaveRequest {
   output: FormOutput;
   /** The `updatedAt` the change is made on. */
   expected: number | undefined;
-  /** What follows a successful save ("Save and test" tests). */
-  afterSave?: (() => void) | undefined;
 }
 
 export interface Conflict {
   /** The data source as it is stored now. */
   stored: Datasource;
-  /** What was refused: a save of the form's output (and what follows it), or the delete. */
-  retry:
-    | { kind: "save"; output: FormOutput; afterSave?: (() => void) | undefined }
-    | { kind: "delete" };
+  /** What was refused: a save of the form's output, or the delete. */
+  retry: { kind: "save"; output: FormOutput } | { kind: "delete" };
 }
 
 /**
@@ -531,8 +526,8 @@ interface SettingsFormProps {
   error: Error | null;
   submitLabel: string;
   onSubmit: (output: FormOutput) => void;
-  onSubmitAndTest?: (output: FormOutput) => void;
-  onTest?: () => void;
+  /** Tests what the form holds, saved or not; without it the form offers no test. */
+  onTest?: (output: FormOutput) => void;
   testing?: boolean;
   saved?: boolean;
   /** The caller may use the source but not change it: fields show, nothing can be saved. */
@@ -551,8 +546,8 @@ interface SettingsFormProps {
   prefill?: Datasource | undefined;
   /** Told whenever the form gets or loses unsaved changes (the page's leave guard). */
   onDirtyChange?: (dirty: boolean) => void;
-  /** The page tests the stored settings itself: the form offers "Save and test" only for changes. */
-  testOnlyChanges?: boolean;
+  /** Told after every edit of a field, so a test result of what was entered before can go. */
+  onEdited?: () => void;
 }
 
 /**
@@ -582,7 +577,6 @@ export function SettingsForm({
   error,
   submitLabel,
   onSubmit,
-  onSubmitAndTest,
   onTest,
   testing = false,
   saved = false,
@@ -594,7 +588,7 @@ export function SettingsForm({
   cancel,
   prefill,
   onDirtyChange,
-  testOnlyChanges = false,
+  onEdited,
 }: SettingsFormProps) {
   const { t } = useI18n();
   const plain = kind.settings.filter((spec) => !spec.secret);
@@ -618,6 +612,17 @@ export function SettingsForm({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  // Whatever was typed after a test makes its result stale; the first run is no edit.
+  const edited = useRef(false);
+  const onEditedNow = useRef(onEdited);
+  onEditedNow.current = onEdited;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the fields are the trigger
+  useEffect(() => {
+    if (edited.current) {
+      onEditedNow.current?.();
+    }
+    edited.current = true;
+  }, [name, values, secrets]);
   // A form that goes away (saved and started again, or left) holds nothing unsaved any more.
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [focusInvalid, setFocusInvalid] = useState(0);
@@ -761,16 +766,20 @@ export function SettingsForm({
     }
   }, [focusInvalid]);
 
-  function submit(andTest: boolean) {
+  function submit() {
     const output = validate();
     if (output === null) {
       return;
     }
     setDirty(false);
-    if (andTest && onSubmitAndTest !== undefined) {
-      onSubmitAndTest(output);
-    } else {
-      onSubmit(output);
+    onSubmit(output);
+  }
+
+  /** Tests what is entered now; the form stays as it is, nothing is saved. */
+  function testNow() {
+    const output = validate();
+    if (output !== null) {
+      onTest?.(output);
     }
   }
 
@@ -786,7 +795,7 @@ export function SettingsForm({
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
-        submit(false);
+        submit();
       }}
     >
       <div className="ds-card__head">
@@ -918,27 +927,15 @@ export function SettingsForm({
           <span className="ds-form__saved" role="status">
             {saved && !dirty ? t("datasources.form.saved") : ""}
           </span>
-          {(onTest === undefined && onSubmitAndTest === undefined) ||
-          (testOnlyChanges && !dirty) ? null : (
+          {onTest === undefined ? null : (
             <button
               type="button"
               className="button button--secondary"
               disabled={busy || testing}
-              onClick={() => {
-                if (dirty || onTest === undefined) {
-                  // Tests run against what is stored, so unsaved changes are saved first.
-                  submit(true);
-                } else {
-                  onTest();
-                }
-              }}
+              onClick={testNow}
             >
               <Icon name="refresh" />
-              {testing
-                ? t("datasources.health.testing")
-                : dirty || onTest === undefined
-                  ? t("datasources.health.saveAndTest")
-                  : t("datasources.health.test")}
+              {testing ? t("datasources.health.testing") : t("datasources.health.test")}
             </button>
           )}
           <button

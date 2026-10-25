@@ -36,8 +36,9 @@ the list or the **New** menu.
    Mongo, CSV".
 2. **Connection**: a name and the settings, in sections (Connection, Authentication, TLS, Limits,
    Behavior).
-3. **Test and save**: **Save and test** stores the source and checks the connection with what you
-   entered. If the test cannot run, the source is still added.
+3. **Test and save**: **Test connection** checks what you entered without saving anything; **Add
+   data source** stores it. You can test as often as you like (20 times a minute) and save when the
+   result is right, or save first and test later.
 
 ![Add a data source](../screenshots/data-source-kinds-light.png)
 
@@ -112,8 +113,12 @@ connections to this address". Only a data source admin can change where a source
 
 ## Testing a connection
 
-**Test connection** (and **Save and test**) checks the stored settings: the source is reachable,
-the login works and the login is read-only. It shows the engine and version and the response time
+**Test connection** in the form checks the settings you entered, saved or not, so you can try a
+change before keeping it; on an edited source, a password you leave empty is taken from the saved
+source. **Test** in the header and in the list checks the saved source. Either way the source is
+reachable, the login works and the login is read-only. A test of unsaved settings follows the same
+rules as saving (private networks, Kalzit's own database, folders), and needs the right to change
+data sources. It shows the engine and version and the response time
 ("Connected in N ms"), or the reason for failure. A login with administrator rights (a PostgreSQL
 superuser, a SQL Server sysadmin) is reported with advice to use a read-only login.
 
@@ -130,5 +135,12 @@ source gets "not found". See [Administration](administration.md#roles-and-permis
 **Delete...** moves a data source to the **Trash** (**Data sources** > **Trash**). Dashboards that
 use it show an error until you **Restore** it. Only members who may change data sources see the
 trash.
+
+**Delete for good...** in the trash removes a data source and its stored passwords and keys for
+good, after you confirm. It does not work while a dashboard (also one in the trash) or a library
+panel still uses the source; the message says how many, so take the source out of them first. The
+deletion is written to the audit log. It needs the right to change where a source connects (a data
+source admin). Older versions of a dashboard that used the source still name it: restoring such a
+version shows "data source not found" for its panels until you pick another source.
 
 ![Form for a PostgreSQL data source](../screenshots/data-source.png)
