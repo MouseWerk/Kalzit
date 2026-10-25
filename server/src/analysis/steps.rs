@@ -27,13 +27,15 @@ pub const MAX_RUN_TEXT_UNITS: usize = 64 * 1024 * 1024;
 /// Rows between two looks at the cancel flag and the deadline.
 const CHECK_EVERY: usize = 4096;
 
-/// The bounds and stop signals of one run. The UI's engine has the same budget; the server adds a
-/// cancel flag (the client went away) and a deadline (the query timeout).
+/// The bounds and stop signals of one run, and the calendar its calculated fields read times in.
+/// The UI's engine has the same budget; the server adds a cancel flag (the client went away) and
+/// a deadline (the query timeout).
 pub struct Control {
     cancelled: Option<Arc<AtomicBool>>,
     deadline: Option<(Instant, u64)>,
     text_left: Cell<usize>,
     max_cells: usize,
+    calendar: expr::Calendar,
 }
 
 impl Default for Control {
@@ -45,7 +47,18 @@ impl Default for Control {
 impl Control {
     /// No cancel flag and no deadline, only the budget.
     pub fn unbounded() -> Self {
-        Self { cancelled: None, deadline: None, text_left: Cell::new(MAX_RUN_TEXT_UNITS), max_cells: MAX_CELLS }
+        Self {
+            cancelled: None,
+            deadline: None,
+            text_left: Cell::new(MAX_RUN_TEXT_UNITS),
+            max_cells: MAX_CELLS,
+            calendar: expr::Calendar::default(),
+        }
+    }
+
+    /// The same bounds, with calculated fields reading times in `calendar`.
+    pub fn with_calendar(self, calendar: expr::Calendar) -> Self {
+        Self { calendar, ..self }
     }
 
     /// Stops when `cancelled` is set or `timeout_secs` have passed.
@@ -56,6 +69,7 @@ impl Control {
             deadline: Some((deadline, timeout_secs)),
             text_left: Cell::new(MAX_RUN_TEXT_UNITS),
             max_cells: MAX_CELLS,
+            calendar: expr::Calendar::default(),
         }
     }
 
@@ -194,6 +208,8 @@ fn type_name(t: FieldType) -> &'static str {
         FieldType::String => "string",
         FieldType::Bool => "bool",
         FieldType::Json => "json",
+        FieldType::Decimal => "decimal",
+        FieldType::Date => "date",
     }
 }
 
@@ -218,16 +234,42 @@ fn field_index(frame: &Frame, name: &str) -> Result<usize, Detail> {
     }
 }
 
+/// Times and days: both are Unix ms on a time line.
+fn is_time(t: FieldType) -> bool {
+    matches!(t, FieldType::Time | FieldType::Date)
+}
+
+/// A decimal's text in one form, so equal decimals group and join together: no leading zeros,
+/// no trailing zeros after the point, no point without a fraction, no negative zero ("-012.50"
+/// is "-12.5"). Text that is no plain decimal stays as it is.
+pub fn canonical_decimal(s: &str) -> String {
+    let t = s.trim();
+    let (negative, digits) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let plain = |p: &str| p.bytes().all(|b| b.is_ascii_digit());
+    if !plain(whole) || !plain(fraction) || (whole.is_empty() && fraction.is_empty()) {
+        return s.to_string();
+    }
+    let whole = whole.trim_start_matches('0');
+    let fraction = fraction.trim_end_matches('0');
+    let whole = if whole.is_empty() { "0" } else { whole };
+    let body = if fraction.is_empty() { whole.to_string() } else { format!("{whole}.{fraction}") };
+    if negative && body != "0" { format!("-{body}") } else { body }
+}
+
 fn numeric_field<'a>(frame: &'a Frame, name: &str) -> Result<&'a Field, Detail> {
     let f = &frame.fields()[field_index(frame, name)?];
     match f.field_type {
-        FieldType::Number | FieldType::Int64 => Ok(f),
+        FieldType::Number | FieldType::Int64 | FieldType::Decimal => Ok(f),
         _ => Err(wrong_type(f)),
     }
 }
 
 fn first_time_field(nf: &NamedFrame) -> Result<usize, Detail> {
-    nf.frame.fields().iter().position(|f| f.field_type == FieldType::Time).ok_or_else(|| {
+    nf.frame.fields().iter().position(|f| is_time(f.field_type)).ok_or_else(|| {
         detail("steps.no_time_field", format!("table {} has no time field", nf.name)).with("frame", &nf.name)
     })
 }
@@ -238,7 +280,7 @@ fn time_field(nf: &NamedFrame, name: Option<&str>) -> Result<usize, Detail> {
         Some(n) => {
             let i = field_index(&nf.frame, n)?;
             let f = &nf.frame.fields()[i];
-            if f.field_type == FieldType::Time { Ok(i) } else { Err(wrong_type(f)) }
+            if is_time(f.field_type) { Ok(i) } else { Err(wrong_type(f)) }
         }
     }
 }
@@ -310,6 +352,7 @@ fn key_of(value: &Value, t: FieldType) -> Option<String> {
     match (t, value) {
         (_, Value::Null) => None,
         (FieldType::Int64, Value::String(s)) => Some(int_of(value).map_or_else(|| s.clone(), |n| n.to_string())),
+        (FieldType::Decimal, Value::String(s)) => Some(canonical_decimal(s)),
         (_, Value::Number(n)) => n.as_f64().map(number_text),
         (_, Value::String(s)) => Some(s.clone()),
         (_, Value::Bool(b)) => Some(b.to_string()),
@@ -332,7 +375,7 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         StepKind::Calculate { name, expression, .. } => {
             check_free(frame, name)?;
             let parsed = expr::parse(expression)?;
-            let compiled = expr::compile(&parsed, frame.fields())?;
+            let compiled = expr::compile_in(&parsed, frame.fields(), control.calendar)?;
             control.cells(frame.rows(), frame.fields().len() + 1)?;
             let mut values = Vec::with_capacity(frame.rows());
             for row in 0..frame.rows() {
@@ -450,11 +493,13 @@ fn trend(
         Some(x) => {
             let f = &frame.fields()[field_index(frame, x)?];
             match f.field_type {
-                FieldType::Number | FieldType::Int64 | FieldType::Time => (numbers(f), f.field_type == FieldType::Time),
+                FieldType::Number | FieldType::Int64 | FieldType::Decimal | FieldType::Time | FieldType::Date => {
+                    (numbers(f), is_time(f.field_type))
+                }
                 _ => return Err(wrong_type(f)),
             }
         }
-        None => match frame.fields().iter().find(|f| f.field_type == FieldType::Time) {
+        None => match frame.fields().iter().find(|f| is_time(f.field_type)) {
             Some(f) => (numbers(f), true),
             None => ((0..frame.rows()).map(|i| Some(i as f64)).collect(), false),
         },
@@ -547,8 +592,8 @@ fn agg_type(field: &Field, op: Agg) -> Result<FieldType, Detail> {
     match (op, field.field_type) {
         (Agg::Count, _) => Ok(Number),
         (Agg::First | Agg::Last, t) => Ok(t),
-        (Agg::Min | Agg::Max, t @ (Number | Int64 | Time | String)) => Ok(t),
-        (Agg::Sum | Agg::Mean | Agg::Median | Agg::Stddev, Number | Int64) => Ok(Number),
+        (Agg::Min | Agg::Max, t @ (Number | Int64 | Decimal | Time | Date | String)) => Ok(t),
+        (Agg::Sum | Agg::Mean | Agg::Median | Agg::Stddev, Number | Int64 | Decimal) => Ok(Number),
         _ => Err(wrong_type(field)),
     }
 }
@@ -679,6 +724,7 @@ fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg, control: 
         let first = &cf.values[g[0]];
         let name = match (cf.field_type, number_at(first)) {
             (FieldType::Time, Some(ms)) => expr::iso_time(ms as i64),
+            (FieldType::Date, Some(ms)) => expr::iso_time(ms as i64)[..10].to_string(),
             _ => key_of(first, cf.field_type).unwrap_or_else(|| "null".into()),
         };
         if fields.iter().any(|f| f.name == name) {
@@ -696,10 +742,13 @@ fn pivot(frame: &Frame, row: &str, column: &str, value: &str, op: Agg, control: 
     frame_of(fields, frame.meta())
 }
 
-/// Whether two key fields can be compared: numbers with int64, or the same type.
+/// Whether two key fields can be compared: numbers, int64 and decimals with each other, times
+/// with days (both Unix ms), or the same type.
 fn same_family(a: FieldType, b: FieldType) -> bool {
     use FieldType::*;
-    matches!((a, b), (Number | Int64, Number | Int64)) || (a == b && a != Json)
+    matches!((a, b), (Number | Int64 | Decimal, Number | Int64 | Decimal))
+        || (is_time(a) && is_time(b))
+        || (a == b && a != Json)
 }
 
 fn join(
@@ -851,11 +900,13 @@ fn join(
     Ok(())
 }
 
-/// A key cell of the right frame in the type of the left key field (int64 and number mix).
+/// A key cell of the right frame in the type of the left key field: numbers, int64 and decimals
+/// mix (int64 and decimals as their decimal text); times and days are both Unix ms.
 fn convert_key(value: &Value, from: FieldType, to: FieldType) -> Value {
+    use FieldType::*;
     match (from, to) {
-        (FieldType::Int64, FieldType::Number) => num_value(number_at(value)),
-        (FieldType::Number, FieldType::Int64) => key_of(value, from).map_or(Value::Null, Value::String),
+        (Int64 | Decimal, Number) => num_value(number_at(value)),
+        (Number | Decimal, Int64) | (Number | Int64, Decimal) => key_of(value, from).map_or(Value::Null, Value::String),
         _ => value.clone(),
     }
 }

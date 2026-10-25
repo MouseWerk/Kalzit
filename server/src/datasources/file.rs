@@ -689,6 +689,8 @@ fn field_type_name(t: FieldType) -> &'static str {
         FieldType::String => "string",
         FieldType::Bool => "bool",
         FieldType::Json => "json",
+        FieldType::Decimal => "decimal",
+        FieldType::Date => "date",
     }
 }
 

@@ -216,6 +216,44 @@ async fn free_queries_export_as_german_csv_with_their_steps() {
     assert!(r.text().contains("tag;land;betrag\r\n"), "{}", r.text());
 }
 
+/// Calculated fields read times in the calendar the request names, so the file shows what the
+/// panel shows; without one they read UTC with weeks from Monday.
+#[tokio::test]
+async fn calculated_fields_read_times_in_the_requested_calendar() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let steps = json!([
+        { "id": "d", "type": "calculate", "frame": "A", "name": "tagNr", "expression": "day(tag) * 100 + hour(tag)" },
+        { "id": "w", "type": "calculate", "frame": "A", "name": "woche", "expression": "day(startOf(tag, 'week'))" }
+    ]);
+    let file = |calendar: Value| {
+        let mut body = free(&ds, "json", "en", steps.clone());
+        for (key, value) in calendar.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        body
+    };
+    let fields = |r: &Reply| {
+        (r.json()["frame"]["fields"][3]["values"].clone(), r.json()["frame"]["fields"][4]["values"].clone())
+    };
+    // 2026-01-01 (a Thursday) to 2026-01-03 at midnight UTC.
+    let r = t.post("/export", file(json!({})), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(fields(&r), (json!([100.0, 200.0, 300.0]), json!([29.0, 29.0, 29.0])));
+    // In New York these are the evenings before; a week from Sunday starts on 2025-12-28.
+    let r = t.post("/export", file(json!({ "timeZone": "America/New_York", "weekStart": "sunday" })), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(fields(&r), (json!([3119.0, 119.0, 219.0]), json!([28.0, 28.0, 28.0])));
+
+    for (calendar, field) in
+        [(json!({ "timeZone": "Europe/Atlantis" }), "timeZone"), (json!({ "weekStart": "friday" }), "weekStart")]
+    {
+        let r = t.post("/export", file(calendar), &t.owner).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text());
+        assert_eq!(r.json()["error"]["field"], field, "{}", r.text());
+    }
+}
+
 #[tokio::test]
 async fn json_and_excel_files() {
     let t = T::new().await;

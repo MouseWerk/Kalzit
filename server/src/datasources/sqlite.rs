@@ -198,6 +198,8 @@ impl DataSourcePlugin for Sqlite {
             .iter()
             .map(|col| Column::new(col.name(), declared_type(col.type_info().name())))
             .collect();
+        // Columns typed by their values (expressions, NUMERIC, DECIMAL) may widen later.
+        let inferred: Vec<bool> = columns.iter().map(|c| c.field_type.is_none()).collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
         frame.executed_query(prepared.sql.clone());
         let mut query = statement.query();
@@ -213,15 +215,20 @@ impl DataSourcePlugin for Sqlite {
             };
         }
         let mut mismatches = vec![0_u64; frame.columns_mut().len()];
+        // Whole numbers beyond 2^53 a widened column holds only as the nearest double.
+        let mut rounded = vec![0_u64; frame.columns_mut().len()];
         let mut rows = query.fetch(&mut *c);
         while let Some(row) = rows.try_next().await.map_err(&stopped)? {
-            let (values, mismatched) = row_values(&row, &mut frame);
+            let (values, cells) = row_values(&row, &mut frame, &inferred, &mut rounded);
             if !frame.push_row(values) {
                 break;
             }
             // Only rows that are shown count; a row the limit cut is not in the answer.
-            for i in mismatched {
+            for i in cells.mismatched {
                 mismatches[i] += 1;
+            }
+            for i in cells.rounded {
+                rounded[i] += 1;
             }
         }
         drop(rows);
@@ -229,6 +236,13 @@ impl DataSourcePlugin for Sqlite {
         for (name, count) in names.iter().zip(mismatches).filter(|(_, n)| *n > 0) {
             let message = format!("{name} holds {count} values that do not fit its type; they are shown empty");
             let detail = Detail::new("frame.value_mismatch", message).with("column", name).with("count", count);
+            frame.notice(NoticeSeverity::Warning, detail);
+        }
+        for (name, count) in names.iter().zip(rounded).filter(|(_, n)| *n > 0) {
+            let message = format!(
+                "{name} holds decimals, so {count} whole numbers beyond 2^53 in it are shown rounded to the nearest number"
+            );
+            let detail = Detail::new("frame.value_rounded", message).with("column", name).with("count", count);
             frame.notice(NoticeSeverity::Warning, detail);
         }
         Ok(QueryResult::Frame { frame: frame.finish() })
@@ -273,10 +287,20 @@ pub fn parse_time_text(s: &str) -> Option<i64> {
 
 /// SQLite types each value, not each column: a column without a declared type takes the type of
 /// its first value, and later values are converted to the column's type where that is lossless.
-/// Values that do not fit are `null`; the second part names their columns.
-fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usize>) {
+/// Values that do not fit are `null`; the second part names their columns. A column typed by its
+/// values (`inferred`) that started with whole numbers becomes `number` at its first fraction, as
+/// NUMERIC and DECIMAL columns need, instead of losing every later decimal.
+/// Whole numbers in a widened column beyond 2^53 lose digits; `rounded` counts those of the rows
+/// already read when a column widens, and the row's own are named in its `Cells`.
+fn row_values(
+    row: &SqliteRow,
+    frame: &mut FrameBuilder,
+    inferred: &[bool],
+    rounded: &mut [u64],
+) -> (Vec<Value>, Cells) {
     let mut out = Vec::with_capacity(row.len());
     let mut mismatched = Vec::new();
+    let mut rounded_here = Vec::new();
     let mut notices = Vec::new();
     for (i, column) in frame.columns_mut().iter_mut().enumerate() {
         let Ok(raw) = row.try_get_raw(i) else {
@@ -302,6 +326,29 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usi
             out.push(Value::Null);
             continue;
         };
+        if let Natural::Real(f) = natural
+            && column.field_type == Some(FieldType::Int64)
+            && inferred.get(i).copied().unwrap_or(false)
+            && f.fract() != 0.0
+        {
+            let lost = std::cell::Cell::new(0_u64);
+            column.retype(FieldType::Number, |v| {
+                if v.as_str().is_some_and(|s| !exact_as_double(s)) {
+                    lost.set(lost.get() + 1);
+                }
+                widen_to_number(v)
+            });
+            if let Some(count) = rounded.get_mut(i) {
+                *count += lost.get();
+            }
+        }
+        if let Natural::Int(n) = natural
+            && column.field_type == Some(FieldType::Number)
+            && inferred.get(i).copied().unwrap_or(false)
+            && n.unsigned_abs() > 1 << 53
+        {
+            rounded_here.push(i);
+        }
         let field_type = *column.field_type.get_or_insert(match natural {
             Natural::Int(_) => FieldType::Int64,
             Natural::Real(_) => FieldType::Number,
@@ -316,7 +363,24 @@ fn row_values(row: &SqliteRow, frame: &mut FrameBuilder) -> (Vec<Value>, Vec<usi
     for n in notices {
         frame.notice(NoticeSeverity::Warning, n);
     }
-    (out, mismatched)
+    (out, Cells { mismatched, rounded: rounded_here })
+}
+
+/// What one row's values did not keep: columns whose value did not fit (empty) and columns whose
+/// whole number was rounded to a double.
+struct Cells {
+    mismatched: Vec<usize>,
+    rounded: Vec<usize>,
+}
+
+/// Whether an int64 text survives the trip through a double: up to 2^53 every integer does.
+fn exact_as_double(s: &str) -> bool {
+    s.parse::<i64>().is_ok_and(|n| n.unsigned_abs() <= 1 << 53)
+}
+
+/// An int64 value (a decimal string) as a number, for a column that turned out to hold decimals.
+fn widen_to_number(value: &Value) -> Value {
+    value.as_str().and_then(|s| s.parse::<f64>().ok()).map_or(Value::Null, |f| json!(f))
 }
 
 enum Natural {
@@ -328,7 +392,7 @@ enum Natural {
 /// Above this, a number in a time column is Unix milliseconds, below it Unix seconds (what
 /// SQLite's `unixepoch()` returns). 10^11 seconds lie in the year 5138, 10^11 milliseconds in
 /// 1973, so both readings cover the dates people store.
-const EPOCH_MS_ABOVE: f64 = 1e11;
+const EPOCH_MS_ABOVE: f64 = sql::SQLITE_EPOCH_MS_ABOVE as f64;
 
 /// Unix milliseconds of a number in a time column, or `None` outside the years 1 to 9999 (the
 /// range every time in an answer keeps to).
@@ -403,6 +467,37 @@ mod tests {
         assert_eq!(convert(Natural::Real(1e30), FieldType::Time), Value::Null);
         assert_eq!(convert(Natural::Real(-1e30), FieldType::Time), Value::Null);
         assert_eq!(convert(Natural::Text("+12026-01-01".into()), FieldType::Time), Value::Null);
+    }
+
+    /// The time filter's plain ranges let SQLite search an index on the column instead of
+    /// reading every row.
+    #[tokio::test]
+    async fn the_time_filter_can_use_an_index() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::raw_sql("CREATE TABLE e (am); CREATE INDEX e_am ON e (am);").execute(&pool).await.unwrap();
+        let variables = std::collections::BTreeMap::new();
+        let ctx = sql::Context {
+            range: crate::shapes::TimeRange { from: 1_767_261_600_000, to: 1_767_268_800_000 },
+            interval_ms: 1000,
+            variables: &variables,
+            identifiers: None,
+            identifier_variables: None,
+        };
+        let prepared = sql::prepare("SELECT am FROM e WHERE $__timeFilter(am)", Engine::Sqlite, &ctx).unwrap();
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {}", prepared.sql)));
+        for bind in prepared.binds {
+            query = match bind {
+                Bind::Int(i) => query.bind(i),
+                Bind::Float(f) => query.bind(f),
+                Bind::Text(t) => query.bind(t),
+                Bind::Time(ms) => query.bind(sqlite_time_text(ms).unwrap()),
+                other => panic!("unexpected {other:?}"),
+            };
+        }
+        let plan: Vec<String> =
+            query.fetch_all(&pool).await.unwrap().iter().map(|r| r.get::<String, _>("detail")).collect();
+        assert!(plan.iter().any(|d| d.contains("INDEX e_am")), "{plan:?}");
+        assert!(!plan.iter().any(|d| d.starts_with("SCAN e")), "{plan:?}");
     }
 
     #[test]

@@ -10,6 +10,8 @@ export interface DataSourcesSearch {
 
 export interface NewDataSourceSearch {
   kind?: string | undefined;
+  /** Duplicate: the source whose name and settings the new one starts from. */
+  from?: string | undefined;
 }
 
 // The datasources area's pages. Nested routes of this area go here too.
@@ -28,6 +30,7 @@ const newDatasourceRoute = createRoute({
   path: "/data-sources/new",
   validateSearch: (search: Record<string, unknown>): NewDataSourceSearch => ({
     kind: typeof search.kind === "string" ? search.kind : undefined,
+    from: typeof search.from === "string" ? search.from : undefined,
   }),
   component: lazyRouteComponent(() => import("./DataSourceForm"), "NewDataSourcePage"),
 });
@@ -35,7 +38,7 @@ const newDatasourceRoute = createRoute({
 const editDatasourceRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/data-sources/$datasourceId",
-  component: lazyRouteComponent(() => import("./DataSourceForm"), "EditDataSourcePage"),
+  component: lazyRouteComponent(() => import("./DataSourceEdit"), "EditDataSourcePage"),
 });
 
 export const datasourcesRoutes = [

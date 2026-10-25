@@ -228,12 +228,32 @@ async fn postgres_reads_in_a_read_only_transaction() {
                     gen_random_uuid() AS id WHERE now() > $__timeFrom" }),
         )
         .await;
-    assert_eq!(types(&r), ["int64", "number", "string", "time", "bool", "json", "number", "string"], "{r}");
+    assert_eq!(types(&r), ["int64", "decimal", "string", "time", "bool", "json", "number", "string"], "{r}");
     let fields = &r["result"]["frame"]["fields"];
     assert_eq!(fields[0]["values"][0], "9007199254740993");
-    assert_eq!(fields[1]["values"][0], 1.5);
+    assert_eq!(fields[1]["values"][0], "1.5");
     assert_eq!(fields[2]["values"][0], "Österreich");
     assert_eq!(fields[5]["values"][0], json!({ "a": 1 }));
+    // Decimals keep every digit and their scale, MONEY is a decimal too, and a DATE is a day.
+    let exact = t
+        .query(
+            &id,
+            json!({ "sql": "SELECT n, m, d FROM (VALUES \
+                    (12345678901234567.8901::numeric(30,4), 1234.56::money, DATE '2026-10-25'), \
+                    ((0.1::numeric + 0.2::numeric)::numeric(30,4), (-0.05)::money, DATE '0001-01-01'), \
+                    ((-12.5)::numeric(30,4), 0::money, NULL::date), \
+                    ('NaN'::numeric(30,4), NULL::money, DATE '9999-12-31')) AS v(n, m, d)" }),
+        )
+        .await;
+    assert_eq!(types(&exact), ["decimal", "decimal", "date"], "{exact}");
+    let fields = &exact["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"], json!(["12345678901234567.8901", "0.3000", "-12.5000", null]), "{exact}");
+    assert_eq!(fields[1]["values"], json!(["1234.56", "-0.05", "0.00", null]), "{exact}");
+    assert_eq!(
+        fields[2]["values"],
+        json!([1_792_886_400_000_i64, -62_135_596_800_000_i64, null, 253_402_214_400_000_i64]),
+        "{exact}"
+    );
     let scs = t.query(&id, json!({ "sql": "SELECT current_setting('standard_conforming_strings') AS s" })).await;
     assert_eq!(scs["result"]["frame"]["fields"][0]["values"][0], "on", "{scs}");
     assert!(fields[6]["values"][0].is_null());
@@ -403,8 +423,22 @@ async fn mysql_like(url: &str) {
                                     $land AS land, NOW() AS jetzt FROM DUAL WHERE NOW() > $__timeFrom" }),
         )
         .await;
-    assert_eq!(types(&r), ["int64", "number", "string", "time"], "{r}");
+    assert_eq!(types(&r), ["int64", "decimal", "string", "time"], "{r}");
+    assert_eq!(r["result"]["frame"]["fields"][1]["values"][0], "1.50", "{r}");
     assert_eq!(r["result"]["frame"]["fields"][2]["values"][0], "Österreich");
+    // Decimals keep every digit and their scale; a DATE is a day.
+    let exact = t
+        .query(
+            &id,
+            json!({ "sql": "SELECT CAST('12345678901234567.8901' AS DECIMAL(30,4)) AS n, \
+                    CAST(-0.05 AS DECIMAL(5,3)) AS k, CAST('2026-10-25' AS DATE) AS d FROM DUAL" }),
+        )
+        .await;
+    assert_eq!(types(&exact), ["decimal", "decimal", "date"], "{exact}");
+    let fields = &exact["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"][0], "12345678901234567.8901", "{exact}");
+    assert_eq!(fields[1]["values"][0], "-0.050", "{exact}");
+    assert_eq!(fields[2]["values"][0], 1_792_886_400_000_i64, "{exact}");
     // Every session runs with exactly the sql_mode the statement checker assumes.
     let mode = t.query(&id, json!({ "sql": "SELECT CAST(@@SESSION.sql_mode AS CHAR) AS m" })).await;
     assert_eq!(mode["result"]["frame"]["fields"][0]["values"][0], "NO_ENGINE_SUBSTITUTION", "{mode}");
@@ -445,8 +479,22 @@ async fn mssql_reads_and_rolls_back() {
                                     WHERE SYSUTCDATETIME() > $__timeFrom" }),
         )
         .await;
-    assert_eq!(types(&r), ["int64", "number", "string", "time", "bool"], "{r}");
+    assert_eq!(types(&r), ["int64", "decimal", "string", "time", "bool"], "{r}");
+    assert_eq!(r["result"]["frame"]["fields"][1]["values"][0], "1.50", "{r}");
     assert_eq!(r["result"]["frame"]["fields"][2]["values"][0], "Österreich");
+    // Decimals keep every digit and their scale; a DATE is a day.
+    let exact = t
+        .query(
+            &id,
+            json!({ "sql": "SELECT CAST('12345678901234567.8901' AS DECIMAL(30,4)) AS n, \
+                    CAST(-0.05 AS NUMERIC(5,3)) AS k, CAST('2026-10-25' AS DATE) AS d" }),
+        )
+        .await;
+    assert_eq!(types(&exact), ["decimal", "decimal", "date"], "{exact}");
+    let fields = &exact["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"][0], "12345678901234567.8901", "{exact}");
+    assert_eq!(fields[1]["values"][0], "-0.050", "{exact}");
+    assert_eq!(fields[2]["values"][0], 1_792_886_400_000_i64, "{exact}");
     for sql in [
         "SELECT * INTO neu FROM sys.objects",
         "SELECT * FROM OPENROWSET('SQLNCLI', 'x', 'SELECT 1') AS r",

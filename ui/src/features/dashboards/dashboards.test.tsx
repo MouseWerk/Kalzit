@@ -23,6 +23,14 @@ async function moreAction(user: ReturnType<typeof renderApp>["user"], name: stri
   await user.click(await screen.findByRole("menuitem", { name }));
 }
 
+/** Opens the dashboard's settings page from edit mode at a section and returns that section. */
+async function openSettings(user: ReturnType<typeof renderApp>["user"], section: string) {
+  await user.click(screen.getByRole("button", { name: "Settings…" }));
+  const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+  await user.click(within(nav).getByRole("link", { name: section }));
+  return screen.findByRole("region", { name: section });
+}
+
 /** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
 async function fill(user: ReturnType<typeof renderApp>["user"], field: HTMLElement, text: string) {
   await user.click(field);
@@ -102,13 +110,13 @@ describe("dashboard browser", () => {
     addFolder(server.areas.dashboards, "f-pay", "Payroll", { parentId: "f-hr" });
     const { user } = renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("button", { name: "People, Restricted" })).toBeTruthy();
-    expect(within(tree).getByRole("button", { name: "Operations" })).toBeTruthy();
+    expect(await within(tree).findByRole("treeitem", { name: "People, Restricted" })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: "Operations" })).toBeTruthy();
     // The subfolder inherits the restriction and shows it.
-    expect(within(tree).getByRole("button", { name: "Payroll, Restricted" })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: "Payroll, Restricted" })).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
 
-    await user.click(within(tree).getByRole("button", { name: "People, Restricted" }));
+    await user.click(within(tree).getByRole("treeitem", { name: "People, Restricted" }));
     expect(await screen.findByRole("link", { name: "Headcount" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("link", { name: "Sales" })).toBeNull());
   });
@@ -117,7 +125,7 @@ describe("dashboard browser", () => {
     setup("editor");
     renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("button", { name: "Operations" })).toBeTruthy();
+    expect(await within(tree).findByRole("treeitem", { name: "Operations" })).toBeTruthy();
     expect(within(tree).queryByText("People")).toBeNull();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Headcount" })).toBeNull();
@@ -157,7 +165,7 @@ describe("dashboard browser", () => {
     await screen.findByRole("heading", { name: "All dashboards" });
     // At the top level the viewer role decides: nothing to create.
     expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
-    await user.click(await screen.findByRole("button", { name: "Operations" }));
+    await user.click(await screen.findByRole("treeitem", { name: "Operations" }));
     await user.click(await screen.findByRole("button", { name: "New dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "New dashboard" });
     await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "Capacity");
@@ -357,12 +365,12 @@ describe("dashboard view", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await screen.findByRole("option", { name: "Graz" });
     await user.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const dialog = await openSettings(user, "Variables");
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Query" }), {
       target: { value: "SELECT name, score FROM customers" },
     });
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    // In edit mode Apply takes the change into the unsaved dashboard and goes back to it.
+    await user.click(screen.getByRole("button", { name: "Apply" }));
     // The fake answers that SQL with a table whose first field is ids and second names.
     expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();
     expect(server.areas.dashboards.variableRequests).toHaveLength(1);
@@ -565,7 +573,13 @@ describe("dashboard view", () => {
     expect(server.areas.dashboards.panelExports).toHaveLength(1);
     expect(server.areas.dashboards.panelExports[0]).toMatchObject({
       panelId: "p-orders",
-      body: { format: "csv", language: "de" },
+      // Calculated fields in the file read times in the calendar the screen shows.
+      body: {
+        format: "csv",
+        language: "de",
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        weekStart: "monday",
+      },
     });
     expect(created).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog", { name: "Export data" })).toBeNull();
@@ -737,14 +751,12 @@ describe("editing a dashboard", () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const dialog = await openSettings(user, "Variables");
     await user.click(within(dialog).getByRole("button", { name: "Add variable" }));
     const name = within(dialog).getByRole("textbox", { name: "Name" });
     await user.clear(name);
     await fill(user, name, "region");
     await fill(user, within(dialog).getByRole("textbox", { name: "Values" }), "eu, us");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
@@ -834,12 +846,10 @@ describe("rights and refusals", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
     expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const dialog = await openSettings(user, "General");
     const title = within(dialog).getByRole("textbox", { name: "Title" });
     await user.clear(title);
     await fill(user, title, "Sales (granted)");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
@@ -913,10 +923,8 @@ describe("rights and refusals", () => {
     server.areas.dashboards.unqueryable.push(PG_ID);
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const settings = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const settings = await openSettings(user, "Variables");
     await user.click(within(settings).getByRole("button", { name: "Add variable" }));
-    await user.click(within(settings).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -969,6 +977,8 @@ describe("rights and refusals", () => {
     const { user } = renderApp(path);
     if (path.startsWith("/dashboards/")) {
       await moreAction(user, "Access…");
+    } else if (path.startsWith("/data-sources/")) {
+      await user.click(await screen.findByRole("button", { name: "Manage access…" }));
     } else {
       await user.click(await screen.findByRole("button", { name: "Access…" }));
     }

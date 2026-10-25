@@ -423,7 +423,14 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 if let Some(n) = &c.name {
                     check_text(&format!("{at}.name"), n, MAX_NAME_CHARS)?;
                 }
-                if c.field_type == Some(crate::shapes::FieldType::Json) {
+                if matches!(
+                    c.field_type,
+                    Some(
+                        crate::shapes::FieldType::Json
+                            | crate::shapes::FieldType::Decimal
+                            | crate::shapes::FieldType::Date
+                    )
+                ) {
                     return Err(format!("{at}.type must be string, number, int64, bool or time"));
                 }
                 if !names.insert(c.output_name()) {
@@ -478,7 +485,14 @@ mod tests {
             let text = case["expression"].as_str().unwrap();
             let f = frame(case["frame"].as_str().unwrap());
             let ulp = case.get("ulp").and_then(Value::as_bool).unwrap_or(false);
-            let outcome = expr::parse(text).and_then(|e| expr::compile(&e, f.fields())).and_then(|c| {
+            let calendar = case.get("calendar").map_or_else(expr::Calendar::default, |c| {
+                let zone = c.get("timeZone").map(|z| z.as_str().unwrap().parse::<chrono_tz::Tz>().unwrap());
+                let week_start = c.get("weekStart").map_or(crate::dashboards::model::WeekStart::Monday, |w| {
+                    serde_json::from_value(w.clone()).unwrap()
+                });
+                expr::Calendar::new(zone, week_start)
+            });
+            let outcome = expr::parse(text).and_then(|e| expr::compile_in(&e, f.fields(), calendar)).and_then(|c| {
                 let cells: Result<Vec<Value>, _> = (0..f.rows()).map(|row| c.cell(f.fields(), row)).collect();
                 Ok((c.result, cells?))
             });
@@ -574,7 +588,9 @@ mod tests {
             (one(json!([{ "path": "" }])), "columns[0].path needs 1 to 500"),
             (one(json!([{ "path": "x".repeat(501) }])), "columns[0].path needs 1 to 500"),
             (one(json!([{ "path": "a", "colour": 1 }])), "unknown field"),
-            (one(json!([{ "path": "a", "type": "decimal" }])), "unknown variant"),
+            (one(json!([{ "path": "a", "type": "decimal" }])), "columns[0].type must be"),
+            (one(json!([{ "path": "a", "type": "date" }])), "columns[0].type must be"),
+            (one(json!([{ "path": "a", "type": "money" }])), "unknown variant"),
             (one(json!([{ "path": "a", "type": "json" }])), "columns[0].type must be"),
             (one(json!([{ "path": "a", "name": "" }])), "columns[0].name"),
             (one(json!([{ "path": "a", "name": "a\nb" }])), "columns[0].name"),

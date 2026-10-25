@@ -21,6 +21,8 @@ export interface DashboardSearch {
   kiosk?: "kiosk" | "tv" | undefined;
   /** A panel shown alone, full screen. */
   viewPanel?: string | undefined;
+  /** The section of the settings page (`/dashboards/{id}/settings`); General when left out. */
+  section?: string | undefined;
 }
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
@@ -61,6 +63,7 @@ const dashboardRoute = createRoute({
           ? "kiosk"
           : undefined,
     viewPanel: text(search.viewPanel),
+    section: text(search.section),
   }),
   component: lazyRouteComponent(() => import("./DashboardPage"), "DashboardPage"),
 });
@@ -77,6 +80,14 @@ const panelEditRoute = createRoute({
 const panelNewRoute = createRoute({
   getParentRoute: () => dashboardRoute,
   path: "panels/new",
+  component: () => null,
+});
+
+// The dashboard's settings as a page; like the panel editor a child of the dashboard, so its
+// unsaved draft stays mounted, and the dashboard page draws the settings in place of the grid.
+const settingsRoute = createRoute({
+  getParentRoute: () => dashboardRoute,
+  path: "settings",
   component: () => null,
 });
 
@@ -107,7 +118,7 @@ const versionsRoute = createRoute({
 export const dashboardsRoutes = [
   dashboardsRoute,
   trashRoute,
-  dashboardRoute.addChildren([panelEditRoute, panelNewRoute]),
+  dashboardRoute.addChildren([panelEditRoute, panelNewRoute, settingsRoute]),
   versionsRoute,
   playlistsRoute,
   playlistPlayRoute,
