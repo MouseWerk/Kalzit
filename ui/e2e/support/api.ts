@@ -19,6 +19,16 @@ export const OWNER_DE = {
   password: "owner-de-password-e2e",
 } as const;
 
+/**
+ * The owner's high-contrast twin: the same name and role, with the contrast theme as the account's
+ * theme, for the accessibility run in that theme (the theme is an account preference too).
+ */
+export const OWNER_CONTRAST = {
+  name: OWNER.name,
+  email: "owner.contrast@kalzit.test",
+  password: "owner-contrast-password-e2e",
+} as const;
+
 export function baseUrl(): string {
   const url = process.env.KALZIT_E2E_URL;
   if (url === undefined || url === "") {
@@ -108,35 +118,48 @@ export class Api {
    * language.
    */
   async createGermanOwner(): Promise<void> {
+    await this.createTwin(OWNER_DE, { language: "de" }, "German");
+  }
+
+  /** Creates `OWNER_CONTRAST` like the German owner, with the contrast theme as its theme. */
+  async createContrastOwner(): Promise<void> {
+    await this.createTwin(OWNER_CONTRAST, { theme: "contrast" }, "contrast");
+  }
+
+  /** A second owner of the organization and server admin, with these preferences of its own. */
+  private async createTwin(
+    account: { name: string; email: string; password: string },
+    preferences: Record<string, string>,
+    what: string,
+  ): Promise<void> {
     await json(
       await this.context.post("/api/admin/users", {
         data: {
-          name: OWNER_DE.name,
-          email: OWNER_DE.email,
-          password: OWNER_DE.password,
-          // Like the owner, so the German runs reach the server administration too.
+          name: account.name,
+          email: account.email,
+          password: account.password,
+          // Like the owner, so these runs reach the server administration too.
           isServerAdmin: true,
         },
       }),
-      "create the German owner",
+      `create the ${what} owner`,
     );
     await json(
       await this.context.post(this.org("/members"), {
-        data: { email: OWNER_DE.email, role: "owner" },
+        data: { email: account.email, role: "owner" },
       }),
-      "add the German owner",
+      `add the ${what} owner`,
     );
-    const german = await Api.signIn(OWNER_DE.email, OWNER_DE.password);
+    const twin = await Api.signIn(account.email, account.password);
     try {
       await json(
-        await german.context.patch("/api/me/preferences", { data: { language: "de" } }),
-        "German as the language",
+        await twin.context.patch("/api/me/preferences", { data: preferences }),
+        `the ${what} owner's preferences`,
       );
     } finally {
-      await german.dispose();
+      await twin.dispose();
     }
   }
-
   async createSqliteSource(name: string, path: string): Promise<string> {
     const source = await json<{ id: string }>(
       await this.context.post(this.org("/datasources"), {

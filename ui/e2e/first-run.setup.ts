@@ -55,10 +55,12 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
     page.getByRole("heading", { name: t("home.welcome", { name: OWNER.name }) }),
   ).toBeVisible();
 
-  // The German runs sign in as a second owner whose language is German.
+  // The German runs sign in as a second owner whose language is German, the contrast run as a
+  // third one whose theme is the contrast theme.
   const owner = await Api.owner();
   try {
     await owner.createGermanOwner();
+    await owner.createContrastOwner();
   } finally {
     await owner.dispose();
   }
