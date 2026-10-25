@@ -130,6 +130,8 @@ const MAX_PER_ROW: u32 = 24;
 const ANNOTATION_COLORS: u32 = 8;
 const MAX_ID_CHARS: usize = 64;
 pub const MAX_TITLE_CHARS: usize = 200;
+/// A panel's description: a few sentences, line breaks allowed.
+pub const MAX_DESCRIPTION_CHARS: usize = 1000;
 /// Refreshing faster than this only loads the data sources.
 const MIN_REFRESH_SECONDS: u32 = 5;
 const MAX_REFRESH_SECONDS: u32 = 24 * 3600;
@@ -361,6 +363,12 @@ pub struct Panel {
     /// The panel shows this library panel: queries, type and options come from there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_panel_id: Option<String>,
+    /// What the panel shows, in a sentence or two; the header offers it as a hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Drawn without the card's surface and border, straight on the dashboard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub transparent: bool,
 }
 
 fn empty_object() -> Value {
@@ -491,6 +499,17 @@ fn check_text(what: &str, value: &str, min: usize, max: usize) -> Result<(), Str
         return Err(format!("{what} needs {min} to {max} characters"));
     }
     if value.chars().any(char::is_control) {
+        return Err(format!("{what} contains control characters"));
+    }
+    Ok(())
+}
+
+/// Like `check_text` from 0 characters, but line breaks and tabs are allowed.
+fn check_multiline(what: &str, value: &str, max: usize) -> Result<(), String> {
+    if value.chars().count() > max {
+        return Err(format!("{what} needs 0 to {max} characters"));
+    }
+    if value.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
         return Err(format!("{what} contains control characters"));
     }
     Ok(())
@@ -663,6 +682,9 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         check_panel_links(&at, &p.links)?;
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
+        if let Some(description) = &p.description {
+            check_multiline(&format!("{at}.description"), description, MAX_DESCRIPTION_CHARS)?;
+        }
         check_grid(&p.grid).map_err(|e| format!("{at}.grid: {e}"))?;
         if p.targets.len() > MAX_TARGETS {
             return Err(format!("{at}.targets takes at most {MAX_TARGETS} entries"));
@@ -1300,6 +1322,9 @@ mod tests {
             (vec!["panels", "0", "links", "0", "url"], json!("//evil.example"), "links[0].url"),
             (vec!["panels", "0", "links", "0", "url"], json!("https:evil"), "links[0].url"),
             (vec!["panels", "0", "links", "0", "title"], json!(""), "links[0].title"),
+            (vec!["panels", "0", "description"], json!("x".repeat(MAX_DESCRIPTION_CHARS + 1)), "description"),
+            (vec!["panels", "0", "description"], json!("a\u{7}b"), "description contains control"),
+            (vec!["panels", "0", "transparent"], json!("yes"), "expected a boolean"),
             (vec!["links", "1", "url"], json!("vbscript:x"), "links[1].url"),
             (vec!["links", "0", "tag"], json!(""), "links[0].tag"),
             (vec!["links", "1", "kind"], json!("x"), "unknown field"),
@@ -1331,6 +1356,21 @@ mod tests {
         assert!(parse(nested).unwrap_err().contains("repeats with its row"));
         let too_many: Vec<Value> = (0..=MAX_TAGS).map(|i| json!(format!("t{i}"))).collect();
         assert!(parse(with(sample_v2(), &["tags"], json!(too_many))).unwrap_err().contains("tags takes at most"));
+    }
+
+    #[test]
+    fn panel_descriptions_and_transparency_round_trip() {
+        let mut m = sample_v2();
+        m["panels"][0]["description"] = json!("Umsatz je Tag.\nMit Vorjahr.");
+        m["panels"][0]["transparent"] = json!(true);
+        let model = parse(m).unwrap();
+        assert_eq!(validate(&model), Ok(()));
+        let back = serde_json::to_value(&model).unwrap();
+        assert_eq!(back["panels"][0]["description"], "Umsatz je Tag.\nMit Vorjahr.");
+        assert_eq!(back["panels"][0]["transparent"], true);
+        // Absent and false stay out of the stored model.
+        assert!(back["panels"][1].get("transparent").is_none());
+        assert!(back["panels"][1].get("description").is_none());
     }
 
     #[test]

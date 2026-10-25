@@ -33,6 +33,8 @@ interface Panel {                                // in addition to version 1
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
+  description?: string;                          // up to 1000 characters, line breaks allowed
+  transparent?: boolean;                         // drawn without the card's surface and border; true or absent
 }
 interface Target {                               // in addition to version 1
   hide?: boolean;                                // kept with the panel but not run; true or absent
