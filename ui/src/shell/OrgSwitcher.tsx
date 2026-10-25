@@ -1,4 +1,4 @@
-import { Link, type LinkProps } from "@tanstack/react-router";
+import { Link, type LinkProps, useRouter } from "@tanstack/react-router";
 import type { Me } from "../api/auth";
 import { BrandMark } from "../appearance/BrandMark";
 import { useBrand } from "../appearance/brand";
@@ -26,6 +26,15 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
   const permissions = useOrgPermissions();
   const menu = useMenuButton();
   const brand = useBrand();
+  const router = useRouter();
+  // Leaves the page first, so a dashboard with unsaved changes asks (its own dialog); only when
+  // the start page was reached does the app switch and start over in the other organization.
+  async function switchTo(orgId: string) {
+    await router.navigate({ to: "/" });
+    if (router.state.location.pathname === "/") {
+      switchOrg(me, orgId);
+    }
+  }
   const name = org?.name ?? brand.productName;
 
   const links: OrgLink[] = [];
@@ -124,7 +133,7 @@ export function OrgSwitcher({ me, rail }: { me: Me; rail: boolean }) {
                   className="menu__item"
                   onClick={() => {
                     menu.closeMenu(true);
-                    if (option.id !== org?.id) switchOrg(me, option.id);
+                    if (option.id !== org?.id) void switchTo(option.id);
                   }}
                 >
                   <Icon name="check" className="menu__check" />

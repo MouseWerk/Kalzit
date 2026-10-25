@@ -575,6 +575,44 @@ async fn pins_keep_their_order_limit_and_access(t: TestApp) {
     assert_eq!(ids(&t.get("~/pins", &viewer).await)[0], trashed);
     // Unpinning is quiet, also for a dashboard that was never pinned.
     assert_eq!(t.delete(&pin(&boards[10]), &viewer).await.status, StatusCode::NO_CONTENT);
+
+    // Access that came back can leave more than ten readable pins (here 12, the grant returns and
+    // one more is stored as returning access would leave it): the list shows the first ten, and a
+    // reorder names those ten; the others keep their place after them.
+    t.grant("Vera", "dashboard", &hidden, "view").await;
+    let (vera,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = $1").bind("Vera").fetch_one(&t.state.db).await.unwrap();
+    for (position, id) in [(100, &boards[9]), (101, &boards[10])] {
+        sqlx::query(
+            "INSERT INTO dashboard_pins (user_id, org_id, dashboard_id, position, created_at) VALUES ($1, $2, $3, $4, 0) \
+             ON CONFLICT (user_id, dashboard_id) DO NOTHING",
+        )
+        .bind(&vera)
+        .bind(&t.org)
+        .bind(id)
+        .bind(position)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    }
+    let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dashboard_pins WHERE user_id = $1")
+        .bind(&vera)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 12);
+    let shown = ids(&t.get("~/pins", &viewer).await);
+    assert_eq!(shown.len(), 10);
+    let mut turned = shown.clone();
+    turned.reverse();
+    let ordered = t.put("~/pins", json!({ "dashboardIds": turned.clone() }), &viewer).await;
+    assert_eq!(ordered.status, StatusCode::OK, "{}", ordered.body);
+    assert_eq!(ids(&ordered)[..10], turned[..]);
+    assert_eq!(ids(&t.get("~/pins", &viewer).await), turned);
+    // Pinning one that is already pinned stays a no-op beyond the limit; a new one is refused.
+    assert_eq!(t.put(&pin(&boards[10]), json!({}), &viewer).await.status, StatusCode::NO_CONTENT);
+    let extra = t.dashboard(None, plain("Noch eine"), &t.owner).await;
+    assert_eq!(t.put(&pin(&extra), json!({}), &viewer).await.code(), "validation");
 }
 
 async fn annotations_follow_the_dashboard_access(t: TestApp) {

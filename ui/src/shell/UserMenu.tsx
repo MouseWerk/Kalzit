@@ -20,10 +20,12 @@ export function initialsOf(name: string): string {
     .trim()
     .split(/\s+/u)
     .map((word) => /^\p{L}/u.exec(word)?.[0])
-    .filter((letter): letter is string => letter !== undefined);
+    .filter((letter): letter is string => letter !== undefined)
+    // One code point per initial: "ß" upper-cases to "SS", which would read as two.
+    .map((letter) => Array.from(letter.toLocaleUpperCase())[0] ?? letter);
   const first = letters[0];
   const last = letters.length > 1 ? letters.at(-1) : undefined;
-  return first === undefined ? "?" : `${first}${last ?? ""}`.toLocaleUpperCase();
+  return first === undefined ? "?" : `${first}${last ?? ""}`;
 }
 
 /**

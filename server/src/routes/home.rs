@@ -533,6 +533,15 @@ async fn visible_pins(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult
     Ok(entries(rows, &index, &folders))
 }
 
+/// Serializes the caller's pin changes for the rest of the transaction, so two at once can not
+/// both pass the limit or take the same position. A no-op update of the caller's own user row
+/// (the lock order of `authz`: a user row before anything else) takes the row lock on PostgreSQL
+/// and the write lock on SQLite.
+async fn lock_pins(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<()> {
+    sqlx::query("UPDATE users SET name = name WHERE id = $1").bind(&ctx.user.id).execute(&mut *conn).await?;
+    Ok(())
+}
+
 /// The caller's pinned dashboards, in their order: at most `MAX_PINS`, so one page.
 async fn list_pins(
     State(state): State<AppState>,
@@ -556,6 +565,7 @@ async fn pin(
         return Err(conflict("the dashboard is in the trash; restore it first"));
     }
     let mut tx = crate::db::begin(&state.db).await?;
+    lock_pins(&mut tx, &ctx).await?;
     let visible = visible_pins(&mut tx, &ctx).await?;
     if visible.iter().any(|entry| entry.id == id) {
         crate::db::commit(tx).await?;
@@ -618,7 +628,10 @@ async fn order_pins(
     JsonBody(body): JsonBody<PinOrder>,
 ) -> ApiResult<Json<Page<DashboardEntry>>> {
     let mut tx = crate::db::begin(&state.db).await?;
-    let visible = visible_pins(&mut tx, &ctx).await?;
+    lock_pins(&mut tx, &ctx).await?;
+    // The pins the list shows: a reorder names those, as many as `list_pins` answers.
+    let mut visible = visible_pins(&mut tx, &ctx).await?;
+    visible.truncate(MAX_PINS);
     let mut wanted: Vec<&str> = body.dashboard_ids.iter().map(String::as_str).collect();
     let mut have: Vec<&str> = visible.iter().map(|e| e.id.as_str()).collect();
     wanted.sort_unstable();

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Dialog } from "../features/dashboards/ui/Dialog";
 import { useI18n } from "../i18n/i18n";
@@ -21,6 +21,7 @@ export function PinnedSection({ orgId }: { orgId: string }) {
   const queryClient = useQueryClient();
   const pins = useQuery(pinsQuery(orgId));
   const [picking, setPicking] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
   const items = pins.data?.items ?? [];
   const refresh = () => queryClient.invalidateQueries({ queryKey: pinsQuery(orgId).queryKey });
   const unpin = useMutation({
@@ -30,6 +31,12 @@ export function PinnedSection({ orgId }: { orgId: string }) {
   });
   const reorder = useMutation({
     mutationFn: (ids: string[]) => orderPins(orgId, ids),
+    // Shown in the new order at once; the menus wait until the server has it.
+    onMutate: (ids) => {
+      const byId = new Map(items.map((entry) => [entry.id, entry]));
+      const reordered = ids.map((id) => byId.get(id)).filter((e) => e !== undefined);
+      queryClient.setQueryData(pinsQuery(orgId).queryKey, { items: reordered, nextCursor: null });
+    },
     onSuccess: (page) => queryClient.setQueryData(pinsQuery(orgId).queryKey, page),
     onError: (error) => {
       showErrorToast(apiErrorText(t, error));
@@ -43,11 +50,28 @@ export function PinnedSection({ orgId }: { orgId: string }) {
     ids.splice(index + by, 0, moved);
     reorder.mutate(ids);
   }
+  /** After an unpin the menu button is gone: focus goes to the pin now in its place. */
+  function unpinAt(index: number, id: string) {
+    unpin.mutate(id, {
+      onSettled: () =>
+        requestAnimationFrame(() => {
+          const section = sectionRef.current;
+          if (section === null) return;
+          const links = section.querySelectorAll<HTMLElement>(".shell__pin > .nav-link");
+          const target =
+            links[index] ??
+            links[index - 1] ??
+            section.querySelector<HTMLElement>(".shell__pin-add") ??
+            null;
+          target?.focus();
+        }),
+    });
+  }
   if (pins.data === undefined) {
     return null;
   }
   return (
-    <section className="shell__pins" aria-labelledby={headingId}>
+    <section ref={sectionRef} className="shell__pins" aria-labelledby={headingId}>
       <h2 id={headingId} className="shell__group-heading">
         {t("shell.pins.title")}
       </h2>
@@ -61,7 +85,8 @@ export function PinnedSection({ orgId }: { orgId: string }) {
               last={index === items.length - 1}
               onUp={() => move(index, -1)}
               onDown={() => move(index, 1)}
-              onUnpin={() => unpin.mutate(entry.id)}
+              onUnpin={() => unpinAt(index, entry.id)}
+              busy={reorder.isPending || unpin.isPending}
             />
           ))}
         </ul>
@@ -96,6 +121,7 @@ function PinnedEntry({
   onUp,
   onDown,
   onUnpin,
+  busy,
 }: {
   entry: DashboardEntry;
   first: boolean;
@@ -103,12 +129,14 @@ function PinnedEntry({
   onUp: () => void;
   onDown: () => void;
   onUnpin: () => void;
+  /** A move or an unpin is on its way: the menu waits, so changes never overlap. */
+  busy: boolean;
 }) {
   const { t } = useI18n();
   const menu = useMenuButton();
-  const choose = (action: () => void) => {
+  const choose = (action: () => void, returnFocus = true) => {
     action();
-    menu.closeMenu(true);
+    menu.closeMenu(returnFocus);
   };
   return (
     <li className="shell__pin">
@@ -151,6 +179,7 @@ function PinnedEntry({
                 role="menuitem"
                 tabIndex={-1}
                 className="menu__item"
+                disabled={busy}
                 onClick={() => choose(onUp)}
               >
                 <Icon name="arrowUp" />
@@ -163,6 +192,7 @@ function PinnedEntry({
                 role="menuitem"
                 tabIndex={-1}
                 className="menu__item"
+                disabled={busy}
                 onClick={() => choose(onDown)}
               >
                 <Icon name="arrowDown" />
@@ -174,7 +204,8 @@ function PinnedEntry({
               role="menuitem"
               tabIndex={-1}
               className="menu__item"
-              onClick={() => choose(onUnpin)}
+              disabled={busy}
+              onClick={() => choose(onUnpin, false)}
             >
               <Icon name="close" />
               {t("shell.pins.unpin")}

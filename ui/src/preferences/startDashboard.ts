@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { redirect } from "@tanstack/react-router";
 import type { Me } from "../api/auth";
 import { orgAppearanceQuery } from "../appearance/api";
+import { currentOrgOf } from "../org/useOrg";
 import { type Preferences, preferencesQuery } from "./preferences";
 
 /**
@@ -32,8 +33,10 @@ export async function redirectToStartDashboard(
     // Without preferences the start page is shown, as without a start dashboard.
     return;
   }
-  // The UI works in the first organization (org/useOrg.ts); another one's dashboard waits.
-  if (start !== null && start.orgId === me.orgs[0]?.id) {
+  // The UI works in the current organization (the one last switched to, org/useOrg.ts); a start
+  // dashboard of another organization waits until the user works there.
+  const orgId = currentOrgOf(me)?.id;
+  if (start !== null && start.orgId === orgId) {
     throw redirect({
       to: "/dashboards/$dashboardId",
       params: { dashboardId: start.dashboardId },
@@ -42,7 +45,6 @@ export async function redirectToStartDashboard(
   }
   // Without a start dashboard of their own, members land where their organization says
   // (setting `appearance.start_page`).
-  const orgId = me.orgs[0]?.id;
   if (orgId === undefined) {
     return;
   }

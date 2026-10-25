@@ -4,6 +4,7 @@ import type { Me } from "../api/auth";
 import { emptyModel } from "../features/dashboards/model";
 import { addDashboard, addFolder } from "../features/dashboards/test/fakeDashboards";
 import { currentOrgOf } from "../org/useOrg";
+import { markEntered } from "../preferences/startDashboard";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { initialsOf } from "./UserMenu";
@@ -82,6 +83,22 @@ describe("pinned dashboards in the sidebar", () => {
     await user.click(within(region).getByRole("button", { name: "Pin options for Stock" }));
     await user.click(screen.getByRole("menuitem", { name: "Unpin" }));
     await waitFor(() => expect(titles()).toEqual(["Sales overview"]));
+    // Focus moves to the pin before it, since the menu button is gone.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(region).getByRole("link", { name: "Sales overview" }),
+      ),
+    );
+    // The last pin gone, focus lands on "Pin dashboard".
+    await user.click(
+      within(region).getByRole("button", { name: "Pin options for Sales overview" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Unpin" }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(region).getByRole("button", { name: "Pin dashboard" }),
+      ),
+    );
   });
 
   it("offers no more pins at the limit", async () => {
@@ -139,6 +156,25 @@ describe("organization group and cards", () => {
     ).toBe("false");
   });
 
+  it("opens the start dashboard of the organization switched to, not of the first one", async () => {
+    const orgs = [
+      { id: "o1", name: "Org", role: "owner" },
+      { id: "o2", name: "Second", role: "owner" },
+    ];
+    const server = setup("owner", orgs);
+    window.localStorage.setItem(`kalzit.org.${TEST_USER.id}`, "o2");
+    // A start dashboard in the first organization waits: the user works in the second one.
+    server.state.preferences.startDashboard = { orgId: "o1", dashboardId: "d-stock" };
+    const first = renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    expect(first.location().pathname).toBe("/");
+    first.view.unmount();
+    markEntered(false);
+    server.state.preferences.startDashboard = { orgId: "o2", dashboardId: "d-stock" };
+    const second = renderApp("/");
+    await waitFor(() => expect(second.location().pathname).toBe("/dashboards/d-stock"));
+  });
+
   it("works in the organization last switched to while the user is a member", () => {
     const me: Me = {
       ...TEST_USER,
@@ -159,6 +195,7 @@ describe("organization group and cards", () => {
     expect(initialsOf("Ada Augusta King")).toBe("AK");
     expect(initialsOf("maria")).toBe("M");
     expect(initialsOf("Maria Keller (de)")).toBe("MK");
+    expect(initialsOf("ßenja Weiß")).toBe("SW");
     expect(initialsOf("  ")).toBe("?");
   });
 });
