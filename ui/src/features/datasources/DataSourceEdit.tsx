@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -26,6 +26,7 @@ import {
   kindsQuery,
   restoreDatasource,
   sourceAccess,
+  testDatasource,
   updateDatasource,
 } from "./api";
 import { AccessSection, SHAPE_TEXT, yourAccess } from "./DataSourceDrawer";
@@ -36,7 +37,6 @@ import {
   HealthResult,
   type SaveRequest,
   SettingsForm,
-  testErrorKey,
   UntestedNote,
 } from "./DataSourceForm";
 import { KindMark, kindSummary } from "./kindMarks";
@@ -89,7 +89,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const ids = useId();
   const source = useQuery(datasourceQuery(orgId, datasourceId));
   const kinds = useQuery(kindsQuery(orgId));
-  // A test run just before (Save and test on the add page, or the list) shows at once.
+  // A test run just before (on the list) shows at once.
   const [health, setHealth] = useState<Health | null>(
     () => queryClient.getQueryData(healthQuery(orgId, datasourceId).queryKey) ?? null,
   );
@@ -98,13 +98,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
       ? 0
       : (queryClient.getQueryState(healthQuery(orgId, datasourceId).queryKey)?.dataUpdatedAt ?? 0),
   );
-  // Read once: a later test replaces it.
-  const [addTestError] = useState<Error | null>(
-    () => queryClient.getQueryData<Error>(testErrorKey(orgId, datasourceId)) ?? null,
-  );
-  useEffect(() => {
-    queryClient.removeQueries({ queryKey: testErrorKey(orgId, datasourceId), exact: true });
-  }, [queryClient, orgId, datasourceId]);
+  // The last test of what the form holds, saved or not (the header shows the saved source's).
+  const [draft, setDraft] = useState<Health | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Bumped after a save so the form starts again from what the server stored.
   const [formKey, setFormKey] = useState(0);
@@ -135,34 +130,63 @@ function EditDataSource({ orgId }: { orgId: string }) {
         ...(output.settings === undefined ? {} : { settings: output.settings }),
         ...(expected === undefined ? {} : { expectedUpdatedAt: expected }),
       }),
-    onSuccess: (saved, { afterSave }) => {
+    onSuccess: (saved) => {
       // The last test was of the old settings.
       forgetHealth(queryClient, orgId, datasourceId);
       setHealth(null);
+      setDraft(null);
       setTestedAt(0);
       void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId], exact: true });
       startFrom(saved);
-      afterSave?.();
     },
-    onError: (error, { output, afterSave }) => {
+    onError: (error, { output }) => {
       const stored = conflictingDatasource(error);
       if (stored !== null) {
-        setConflict({ stored, retry: { kind: "save", output, afterSave } });
+        setConflict({ stored, retry: { kind: "save", output } });
       }
     },
   });
-  const submit = (output: FormOutput, then?: () => void) =>
-    save.mutate({ output, expected: base, afterSave: then });
+  const submit = (output: FormOutput) => save.mutate({ output, expected: base });
+  // The header's test checks the saved source.
   const test = useMutation({
     mutationFn: () => checkHealth(orgId, datasourceId),
-    onMutate: () => setHealth(null),
+    onMutate: () => {
+      setHealth(null);
+      setDraft(null);
+      testForm.reset();
+    },
     onSuccess: (result) => {
       setHealth(result);
+      setDraft(null);
       setTestedAt(Date.now());
       // The list shows the same result.
       queryClient.setQueryData(healthQuery(orgId, datasourceId).queryKey, result);
     },
     onError: () => setTestedAt(Date.now()),
+  });
+  // The form's test checks what is entered; without changes that is the saved source. Nothing
+  // is saved either way, and a result for unsaved changes stays out of the header and the list.
+  const testForm = useMutation({
+    mutationFn: (output: FormOutput) =>
+      testDatasource(orgId, {
+        kind: source.data?.kind ?? "",
+        datasourceId,
+        settings: output.settings,
+        secrets: output.secrets,
+      }),
+    onMutate: () => {
+      setDraft(null);
+      test.reset();
+    },
+    onSuccess: (result, output) => {
+      if (output.settings === undefined && Object.keys(output.secrets).length === 0) {
+        setHealth(result);
+        setTestedAt(Date.now());
+        queryClient.setQueryData(healthQuery(orgId, datasourceId).queryKey, result);
+      } else {
+        setDraft(result);
+      }
+    },
   });
   const remove = useMutation({
     mutationFn: (expected: number | undefined) => deleteDatasource(orgId, datasourceId, expected),
@@ -323,23 +347,22 @@ function EditDataSource({ orgId }: { orgId: string }) {
             onDirtyChange={setDirty}
             readOnly={!access.write}
             targetLocked={targetLocked}
-            {...(canTest && access.write
-              ? {
-                  onSubmitAndTest: (output: FormOutput) => submit(output, () => test.mutate()),
-                  onTest: () => test.mutate(),
-                  testOnlyChanges: true,
-                }
-              : {})}
-            testing={test.isPending}
+            // Exactly when the server allows it: the right to change this source.
+            {...(access.write ? { onTest: (output: FormOutput) => testForm.mutate(output) } : {})}
+            onEdited={() => {
+              setDraft(null);
+              testForm.reset();
+            }}
+            testing={test.isPending || testForm.isPending}
             saved={save.isSuccess}
             status={
               <>
-                {addTestError !== null && test.isIdle ? (
-                  <p className="field__hint">{t("datasources.new.testFailed")}</p>
-                ) : null}
+                {draft === null ? null : (
+                  <p className="field__hint">{t("datasources.health.testingChanges")}</p>
+                )}
                 <HealthResult
-                  health={health}
-                  error={test.error ?? (test.isIdle ? addTestError : null)}
+                  health={draft ?? health}
+                  error={testForm.error ?? test.error}
                   empty={canTest ? <UntestedNote /> : null}
                 />
               </>
@@ -434,12 +457,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
             if (retry.kind === "save") {
               // Sent again over the stored source: the server checks the change against it, so
               // a target someone else moved still asks for its secrets again.
-              // "Save and test" still tests once the save went through.
-              save.mutate({
-                output: retry.output,
-                expected: stored.updatedAt,
-                afterSave: retry.afterSave,
-              });
+              save.mutate({ output: retry.output, expected: stored.updatedAt });
             } else {
               remove.mutate(stored.updatedAt);
             }

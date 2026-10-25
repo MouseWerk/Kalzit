@@ -92,6 +92,7 @@ mod tests {
         "dashboards.version_retention",
         "datasource.created",
         "datasource.deleted",
+        "datasource.purged",
         "datasource.restored",
         "datasource.updated",
         "secrets.key",
