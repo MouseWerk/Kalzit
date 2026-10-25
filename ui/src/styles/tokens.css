@@ -442,6 +442,10 @@
     --size-row: 2.25rem;
     /* The data source list: status dots, the side panel of the selected source, its avatars. */
     --size-status-dot: 0.5rem;
+    /* A colour swatch in the panel editor: a 24 px target (WCAG 2.5.8). */
+    --size-color-swatch: 1.5rem;
+    /* A short number field, such as an opacity in percent. */
+    --size-number-short: 4.5rem;
     --size-drawer: 22rem;
     --size-avatar: 1.75rem;
   }
@@ -737,6 +741,28 @@
     --chart-hatch-spacing: 6;
     --chart-fade-to: 0.15;
     --chart-mask: oklch(100% 0 0);
+    /* Strength of the threshold bands the time series can draw behind its series. */
+    --chart-threshold-alpha: 0.12;
+
+    /*
+     * The ramps of the colour schemes (green to red, blues, grays), five steps each, every step
+     * at least 3:1 against the panel surface in its scheme, as lines need (WCAG 1.4.11).
+     */
+    --ramp-gyr-1: light-dark(oklch(52% 0.13 150), oklch(74% 0.15 150));
+    --ramp-gyr-2: light-dark(oklch(54% 0.13 125), oklch(80% 0.15 125));
+    --ramp-gyr-3: light-dark(oklch(56% 0.12 85), oklch(83% 0.14 90));
+    --ramp-gyr-4: light-dark(oklch(55% 0.15 55), oklch(75% 0.15 55));
+    --ramp-gyr-5: light-dark(oklch(50% 0.17 27), oklch(69% 0.17 25));
+    --ramp-blues-1: light-dark(oklch(62% 0.08 240), oklch(90% 0.05 235));
+    --ramp-blues-2: light-dark(oklch(55% 0.1 245), oklch(82% 0.08 240));
+    --ramp-blues-3: light-dark(oklch(48% 0.12 250), oklch(74% 0.11 245));
+    --ramp-blues-4: light-dark(oklch(41% 0.12 255), oklch(66% 0.13 250));
+    --ramp-blues-5: light-dark(oklch(34% 0.11 260), oklch(58% 0.14 255));
+    --ramp-grays-1: light-dark(oklch(62% 0.005 286), oklch(92% 0.004 286));
+    --ramp-grays-2: light-dark(oklch(52% 0.006 286), oklch(83% 0.005 286));
+    --ramp-grays-3: light-dark(oklch(42% 0.006 286), oklch(74% 0.006 286));
+    --ramp-grays-4: light-dark(oklch(33% 0.006 286), oklch(66% 0.006 286));
+    --ramp-grays-5: light-dark(oklch(24% 0.006 286), oklch(58% 0.006 286));
   }
 
   :root[data-theme="contrast"] {
@@ -744,6 +770,7 @@
     --chart-mono-compare: light-dark(oklch(38% 0.006 286), oklch(80% 0.004 286));
     --chart-hatch-alpha: 0.85;
     --chart-hatch-width: 1.5;
+    --chart-threshold-alpha: 0.2;
   }
 }
 

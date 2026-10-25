@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { useStyleVars } from "../styleVars";
 import type { LegendOptions, LegendValue } from "./legendOptions";
 import "../panels.css";
 import "../viz.css";
@@ -8,8 +9,29 @@ export interface LegendItem {
   name: string;
   /** A palette or tone class (`series-3`, `tone--warn`) for the swatch. */
   colorClass: string;
+  /** A free colour (`#rrggbb`) the `series-free` class reads; null or absent for the others. */
+  freeColor?: string | null | undefined;
   /** Formatted values per column key; missing ones show empty. */
   values?: Partial<Record<string, string>>;
+}
+
+/**
+ * A series' colour swatch: its class, and a free colour set as `--free-color` through the CSSOM
+ * (the content security policy allows no style attribute).
+ */
+export function Swatch({
+  className,
+  freeColor,
+}: {
+  className: string;
+  freeColor?: string | null | undefined;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useStyleVars(
+    ref,
+    freeColor === null || freeColor === undefined ? {} : { "--free-color": freeColor },
+  );
+  return <span ref={ref} className={`ts__swatch ${className}`} />;
 }
 
 const VALUE_KEYS = {
@@ -58,7 +80,7 @@ export function Legend({
               // biome-ignore lint/suspicious/noArrayIndexKey: series keep their order; names can repeat
               <tr key={index}>
                 <th scope="row" className="viz-legend__name">
-                  <span className={`ts__swatch ${item.colorClass}`} />
+                  <Swatch className={item.colorClass} freeColor={item.freeColor} />
                   <span className="truncate" title={item.name}>
                     {item.name}
                   </span>
@@ -80,7 +102,7 @@ export function Legend({
       {items.map((item, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: series keep their order; names can repeat
         <li key={index} className="ts__legend-item">
-          <span className={`ts__swatch ${item.colorClass}`} />
+          <Swatch className={item.colorClass} freeColor={item.freeColor} />
           <span className="truncate" title={item.name}>
             {item.name}
           </span>

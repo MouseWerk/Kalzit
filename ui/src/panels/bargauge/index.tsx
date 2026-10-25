@@ -10,6 +10,7 @@ import {
   type Tone,
   thresholdTone,
   toneClass,
+  toneOf,
 } from "../fieldConfig/fieldConfig";
 import { formatValue, rowCount, valueFields } from "../frame";
 import { readoutItems } from "../gauge";
@@ -180,7 +181,7 @@ export function lcdCells(item: ReducedItem): { lit: boolean; tone: Tone | undefi
     const value = item.range.min + middle * (item.range.max - item.range.min);
     return {
       lit: middle <= share || (i === 0 && share > 0),
-      tone: thresholds === undefined ? color : thresholdTone(value, thresholds, item.range),
+      tone: thresholds === undefined ? toneOf(color) : thresholdTone(value, thresholds, item.range),
     };
   });
 }
@@ -261,7 +262,7 @@ function Bar({ item, options }: { item: ReducedItem; options: BarGaugeOptions })
       </svg>
     );
   }
-  const tone = item.display.tone ?? item.options.color;
+  const tone = item.display.tone ?? toneOf(item.options.color);
   return (
     <svg className="bargauge__svg" preserveAspectRatio="none" aria-hidden="true">
       <rect className="bargauge__track" x="0" y="0" width="100%" height="100%" />
@@ -408,7 +409,7 @@ function GaugeBody({
         <div className="bargauge__box" data-value-size={nextSize}>
           <ul className="bargauge__list" ref={listRef}>
             {items.map((item, index) => {
-              const tone = item.display.tone ?? item.options.color;
+              const tone = item.display.tone ?? toneOf(item.options.color);
               const share =
                 item.display.numeric === null ? 0 : fraction(item.display.numeric, item.range);
               const value =

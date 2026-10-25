@@ -866,6 +866,17 @@ describe("contrast in every theme", () => {
     ...["--chart-mono", "--chart-mono-compare"].map(
       (name) => [name, ["--bg", "--bg-surface", "--bg-raised"], UI] as [string, string[], number],
     ),
+    // The ramps of the colour schemes are series colours as well.
+    ...["gyr", "blues", "grays"].flatMap((ramp) =>
+      [1, 2, 3, 4, 5].map(
+        (n) =>
+          [`--ramp-${ramp}-${n}`, ["--bg", "--bg-surface", "--bg-raised"], UI] as [
+            string,
+            string[],
+            number,
+          ],
+      ),
+    ),
     // Labels on pie slices: the label color of each series and tone on its own fill.
     ...[
       ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`--chart-${n}-on`, `--chart-${n}`]),

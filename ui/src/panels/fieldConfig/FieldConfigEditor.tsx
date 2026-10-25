@@ -1,17 +1,22 @@
 import { type ReactNode, useId } from "react";
-import { type MessageKey, type MessageParams, useI18n } from "../../i18n/i18n";
+import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { NumberField, SelectField, TextField } from "../shared";
 import type { FieldOptionGroup } from "../types";
+import { ColorField } from "./ColorField";
+import { ColorsEditor } from "./ColorsEditor";
 import {
   CELL_DISPLAYS,
   DEFAULT_THRESHOLDS,
   type FieldConfig,
   type FieldOptions,
   type FieldOverride,
+  isHexColor,
   LIMITS,
   OPTION_KEYS,
   type OverrideProperties,
   parseFieldConfig,
+  THRESHOLD_DISPLAYS,
+  type ThresholdDisplay,
   type Thresholds,
   TONES,
   type Tone,
@@ -19,17 +24,9 @@ import {
 } from "./fieldConfig";
 import { GraphStyleEditor } from "./GraphStyleEditor";
 import { patternStatus, usePatternEngine } from "./pattern";
+import { toneLabel } from "./toneLabel";
 import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
-
-type Translate = (key: MessageKey, params?: MessageParams) => string;
-
-export function toneLabel(t: Translate, tone: Tone): string {
-  if (tone.startsWith("chart-")) {
-    return t("panels.tone.chart", { number: tone.slice("chart-".length) });
-  }
-  return t(`panels.tone.${tone as "ok" | "warn" | "critical" | "neutral"}`);
-}
 
 /*
  * What the editor adds when asked for a new entry. The contract test sends these, with every
@@ -168,9 +165,15 @@ export function UnitPicker({
 function ThresholdsEditor({
   value,
   onChange,
+  allowFree = false,
+  display,
 }: {
   value: Thresholds | undefined;
   onChange: (thresholds: Thresholds | undefined) => void;
+  /** Steps may take free colours (the time series draws them). */
+  allowFree?: boolean;
+  /** Whether and how the chart draws the steps; only the time series offers it. */
+  display?: { value: ThresholdDisplay; onChange: (display: ThresholdDisplay) => void } | undefined;
 }) {
   const { t } = useI18n();
   if (value === undefined) {
@@ -216,10 +219,23 @@ function ThresholdsEditor({
                 onChange={(v) => (v === undefined ? undefined : update(index, { value: v }))}
               />
             )}
-            <ToneSelect
-              label={t("panels.color")}
-              value={step.tone}
-              onChange={(tone) => update(index, { tone: tone ?? "neutral" })}
+            <ColorField
+              label={index === 0 ? t("panels.thresholds.baseColor") : t("panels.color")}
+              value={step.color ?? step.tone}
+              compact
+              allowFree={allowFree}
+              onChange={(color) => {
+                if (color === undefined) return;
+                if (isHexColor(color)) {
+                  update(index, { color });
+                } else {
+                  const { color: _free, ...rest } = step;
+                  onChange({
+                    ...value,
+                    steps: steps.map((s, i) => (i === index ? { ...rest, tone: color } : s)),
+                  });
+                }
+              }}
             />
             {index === 0 ? null : (
               <button
@@ -253,6 +269,14 @@ function ThresholdsEditor({
           {t("panels.thresholds.clear")}
         </button>
       </div>
+      {display === undefined ? null : (
+        <SelectField
+          label={t("panels.thresholds.display")}
+          value={display.value}
+          choices={THRESHOLD_DISPLAYS.map((d) => [d, t(`panels.thresholds.display.${d}`)] as const)}
+          onChange={display.onChange}
+        />
+      )}
     </>
   );
 }
@@ -359,10 +383,13 @@ function OptionsFields({
   options,
   groups,
   onChange,
+  colorsAbove = false,
 }: {
   options: FieldOptions;
   groups: readonly FieldOptionGroup[];
   onChange: (options: FieldOptions) => void;
+  /** The colours editor stands above (the defaults of a time series): no colour section here. */
+  colorsAbove?: boolean;
 }) {
   const { t } = useI18n();
   const mappings = options.mappings ?? [];
@@ -432,6 +459,16 @@ function OptionsFields({
           <ThresholdsEditor
             value={options.thresholds}
             onChange={(thresholds) => onChange(set(options, "thresholds", thresholds))}
+            allowFree={groups.includes("colors")}
+            display={
+              groups.includes("colors")
+                ? {
+                    value: options.thresholdDisplay ?? "off",
+                    onChange: (d) =>
+                      onChange(set(options, "thresholdDisplay", d === "off" ? undefined : d)),
+                  }
+                : undefined
+            }
           />
         </Section>
       ) : null}
@@ -472,14 +509,31 @@ function OptionsFields({
           </button>
         </Section>
       ) : null}
-      {groups.includes("color") ? (
+      {groups.includes("color") || (groups.includes("colors") && !colorsAbove) ? (
         <Section title={t("panels.section.color")}>
-          <ToneSelect
+          <ColorField
             label={t("panels.fixedColor")}
             value={options.color}
             optional
+            allowFree={groups.includes("colors")}
             onChange={(color) => onChange(set(options, "color", color))}
           />
+          {groups.includes("colors") ? (
+            <NumberField
+              label={t("panels.option.opacity")}
+              hint={t("panels.colors.opacityHint")}
+              value={options.opacity}
+              min={0}
+              max={100}
+              step={1}
+              onChange={(opacity) =>
+                opacity === undefined ||
+                (Number.isInteger(opacity) && opacity >= 0 && opacity <= 100)
+                  ? onChange(set(options, "opacity", opacity))
+                  : undefined
+              }
+            />
+          ) : null}
         </Section>
       ) : null}
       {groups.includes("table") ? (
@@ -636,10 +690,13 @@ export function FieldConfigEditor({
   value,
   groups,
   onChange,
+  seriesNames = [],
 }: {
   value: unknown;
   groups: readonly FieldOptionGroup[];
   onChange: (config: FieldConfig) => void;
+  /** The series the panel shows now, for the colours editor's rows. */
+  seriesNames?: readonly string[];
 }) {
   const { t } = useI18n();
   // The editor checks patterns as they are typed, so it loads re2js right away, and draws its
@@ -649,9 +706,15 @@ export function FieldConfigEditor({
   const overrides = config.overrides;
   return (
     <div className="viz-editor" key={ready ? "checked" : "checking"}>
+      {groups.includes("colors") ? (
+        <Section title={t("panels.section.colors")}>
+          <ColorsEditor config={config} seriesNames={seriesNames} onChange={onChange} />
+        </Section>
+      ) : null}
       <OptionsFields
         options={config.defaults}
         groups={groups}
+        colorsAbove
         onChange={(defaults) => onChange({ ...config, defaults })}
       />
       {groups.includes("overrides") ? (

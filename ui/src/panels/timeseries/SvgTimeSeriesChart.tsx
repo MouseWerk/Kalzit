@@ -1,12 +1,16 @@
 import { type ReactNode, useId, useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { zoneOption } from "../../lib/timeSettings";
+import type { ThresholdStep } from "../fieldConfig/fieldConfig";
+import { toneClass } from "../fieldConfig/fieldConfig";
+import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { chartData } from "./align";
 import { ChartShell, type TimeSeriesChartProps } from "./ChartShell";
 import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
 import { linePath, niceTicks, type Scale, timeTicks, valueExtent } from "./series";
-import type { SeriesStyle } from "./styles";
+import { FREE_CLASS, type SeriesStyle } from "./styles";
+import { shownThresholds, thresholdBands, thresholdLines } from "./thresholdBands";
 import "../panels.css";
 
 const AXIS_LEFT = 56;
@@ -77,8 +81,91 @@ export function areaPath(
   return shapes.join("");
 }
 
+/**
+ * A group that carries a free colour as `--free-color` (set through the CSSOM), which the
+ * `series-free` class reads; other colours come from their class alone.
+ */
+function ColorGroup({ freeColor, children }: { freeColor: string | null; children: ReactNode }) {
+  const ref = useRef<SVGGElement>(null);
+  useStyleVars(ref, freeColor === null ? {} : { "--free-color": freeColor });
+  return <g ref={ref}>{children}</g>;
+}
+
+/** The colour class and free colour of a threshold step. */
+function stepLook(step: ThresholdStep): { colorClass: string; freeColor: string | null } {
+  return step.color === undefined
+    ? { colorClass: toneClass(step.tone), freeColor: null }
+    : { colorClass: FREE_CLASS, freeColor: step.color };
+}
+
+/** The thresholds a series asks for: tinted bands behind the series, dashed lines over them. */
+function ThresholdMarks({
+  styles,
+  scale,
+  min,
+  max,
+  left,
+  width,
+  layer,
+}: {
+  styles: readonly SeriesStyle[];
+  scale: Scale;
+  min: number;
+  max: number;
+  left: number;
+  width: number;
+  layer: "bands" | "lines";
+}): ReactNode {
+  const shown = shownThresholds(styles);
+  if (shown === null) {
+    return null;
+  }
+  const { thresholds, display } = shown;
+  if (layer === "bands") {
+    if (display !== "areas" && display !== "linesAndAreas") return null;
+    return thresholdBands(thresholds, min, max).map((band) => {
+      const look = stepLook(band.step);
+      return (
+        <ColorGroup key={`b${band.from}`} freeColor={look.freeColor}>
+          <rect
+            className={`ts__threshold-band ${look.colorClass}`}
+            x={left}
+            y={scale.y(band.to)}
+            width={width}
+            height={Math.max(0, scale.y(band.from) - scale.y(band.to))}
+          />
+        </ColorGroup>
+      );
+    });
+  }
+  if (display !== "lines" && display !== "linesAndAreas") return null;
+  return thresholdLines(thresholds, min, max).map((line) => {
+    const look = stepLook(line.step);
+    return (
+      <ColorGroup key={`l${line.value}`} freeColor={look.freeColor}>
+        <line
+          className={`ts__threshold-line ${look.colorClass}`}
+          x1={left}
+          x2={left + width}
+          y1={scale.y(line.value)}
+          y2={scale.y(line.value)}
+        />
+      </ColorGroup>
+    );
+  });
+}
+
+/** The marks of one series: bars, points or a line with its fill, in the series' colour. */
+function SeriesMarks(props: Parameters<typeof Marks>[0]): ReactNode {
+  return (
+    <ColorGroup freeColor={props.look.freeColor}>
+      <Marks {...props} />
+    </ColorGroup>
+  );
+}
+
 /** The marks of one series: bars, points or a line with its fill. */
-function SeriesMarks({
+function Marks({
   look: style,
   xs,
   ys,
@@ -102,7 +189,7 @@ function SeriesMarks({
     const width = Math.max(1, step * style.barWidth);
     const shift = style.barAlignment === -1 ? width : style.barAlignment === 1 ? 0 : width / 2;
     return (
-      <g className={`ts__bars ${style.colorClass}`} fillOpacity={style.fillOpacity}>
+      <g className={`ts__bars ${style.colorClass}`} fillOpacity={style.fillOpacity * style.opacity}>
         {xs.map((x, i) => {
           const y = ys[i];
           if (y === null || y === undefined) return null;
@@ -124,7 +211,7 @@ function SeriesMarks({
   }
   if (style.drawStyle === "points" && present <= MAX_MARKS) {
     return (
-      <g className={`ts__points ${style.colorClass}`}>
+      <g className={`ts__points ${style.colorClass}`} opacity={style.opacity}>
         {xs.map((x, i) => {
           const y = ys[i];
           return y === null || y === undefined ? null : (
@@ -156,6 +243,7 @@ function SeriesMarks({
           className={`ts__line ${style.colorClass}`}
           d={d}
           strokeWidth={style.lineWidth}
+          strokeOpacity={style.opacity}
           strokeDasharray={style.dash.length === 0 ? undefined : style.dash.join(" ")}
           strokeLinecap={style.lineStyle === "dotted" ? "round" : undefined}
         />
@@ -240,16 +328,18 @@ export function SvgTimeSeriesChart({
         <svg className="ts__svg" width={width} height={height} aria-hidden="true">
           <defs>
             {hatched === undefined ? null : (
-              <pattern
-                id={ids.hatch}
-                className={hatched.colorClass}
-                width={hatchSpacing}
-                height={hatchSpacing}
-                patternUnits="userSpaceOnUse"
-                patternTransform="rotate(45)"
-              >
-                <line className="ts__hatch" x1={0} y1={0} x2={0} y2={hatchSpacing} />
-              </pattern>
+              <ColorGroup freeColor={hatched.freeColor}>
+                <pattern
+                  id={ids.hatch}
+                  className={hatched.colorClass}
+                  width={hatchSpacing}
+                  height={hatchSpacing}
+                  patternUnits="userSpaceOnUse"
+                  patternTransform="rotate(45)"
+                >
+                  <line className="ts__hatch" x1={0} y1={0} x2={0} y2={hatchSpacing} />
+                </pattern>
+              </ColorGroup>
             )}
             <linearGradient id={`${ids.fade}-ramp`} x1={0} y1={0} x2={0} y2={1}>
               <stop className="ts__fade-from" offset={0} />
@@ -292,6 +382,15 @@ export function SvgTimeSeriesChart({
               {timeLabel.format(tick)}
             </text>
           ))}
+          <ThresholdMarks
+            styles={styles}
+            scale={scale}
+            min={yMin}
+            max={yMax}
+            left={AXIS_LEFT}
+            width={plotWidth}
+            layer="bands"
+          />
           {styles.map((style, index) => (
             <SeriesMarks
               // biome-ignore lint/suspicious/noArrayIndexKey: series keep their order; names can repeat
@@ -305,6 +404,15 @@ export function SvgTimeSeriesChart({
               ids={ids}
             />
           ))}
+          <ThresholdMarks
+            styles={styles}
+            scale={scale}
+            min={yMin}
+            max={yMax}
+            left={AXIS_LEFT}
+            width={plotWidth}
+            layer="lines"
+          />
           {cursorX === null ? null : (
             <line
               className="ts__cursor"

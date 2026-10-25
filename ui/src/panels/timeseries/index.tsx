@@ -155,6 +155,14 @@ export const timeseriesPanel: PanelPlugin<TimeSeriesOptions> = {
   options: parseOptions,
   Panel: TimeSeriesPanel,
   Editor: TimeSeriesEditor,
-  fieldOptions: ["graphStyle", "standard", "range", "thresholds", "mappings", "color", "overrides"],
+  fieldOptions: [
+    "colors",
+    "graphStyle",
+    "standard",
+    "range",
+    "thresholds",
+    "mappings",
+    "overrides",
+  ],
   Preview: TimeSeriesPreview,
 };
