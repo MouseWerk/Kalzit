@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { isApiError } from "../../api/client";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { showErrorToast, showToast } from "../../lib/toasts";
 import { wallOf } from "../../lib/zonedTime";
 import type { DashboardMark } from "./annotations";
 import {
@@ -132,7 +133,30 @@ export function AnnotationDialog(props: Props) {
   });
   const remove = useMutation({
     mutationFn: () => deleteAnnotation(props.orgId, props.dashboardId, existing?.id ?? ""),
-    onSuccess: done,
+    onSuccess: async () => {
+      // Undo writes the annotation again (with a new id; nothing refers to an annotation's id).
+      const gone = existing;
+      if (gone !== undefined) {
+        const { orgId, dashboardId } = props;
+        showToast({
+          message: t("annotations.deleted"),
+          undo: () => {
+            createAnnotation(orgId, dashboardId, {
+              text: gone.text,
+              tags: gone.tags,
+              time: gone.time,
+              timeEnd: gone.timeEnd,
+              panelId: gone.panelId,
+            })
+              .then(() =>
+                queryClient.invalidateQueries({ queryKey: [ANNOTATIONS_KEY, orgId, dashboardId] }),
+              )
+              .catch((error: unknown) => showErrorToast(errorMessage(t, error)));
+          },
+        });
+      }
+      await done();
+    },
     onError: (error) => setProblem(errorMessage(t, error)),
   });
 

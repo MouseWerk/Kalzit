@@ -599,6 +599,10 @@ pub struct ErrorBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub params: Option<BTreeMap<String, String>>,
+    /// For `internal`: the request id that the server log names next to the cause.
+    #[serde(default, rename = "requestId", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub request_id: Option<String>,
 }
 
 /// Every list answer. `nextCursor` is opaque; order is stable (newest first unless a route says

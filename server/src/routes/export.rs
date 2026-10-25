@@ -210,9 +210,11 @@ async fn make_panel(
     check_interval(req.interval_ms)?;
     check_variables(&req.variables)?;
     let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
-    // Hidden targets stay with the panel but are not run: a panel with only hidden ones has
-    // nothing to export.
-    if panel.targets.iter().all(|t| t.hide) {
+    // Hidden targets stay with the panel but are not run, unless a step reads them: a panel with
+    // only hidden ones nobody reads has nothing to export.
+    let read = super::query::frames_read(&panel.transformations);
+    let runs = |t: &crate::dashboards::model::Target| !t.hide || read.contains(&t.ref_id);
+    if !panel.targets.iter().any(runs) {
         return Err(ApiError::validation("the panel has no query to export").because("export.no_queries"));
     }
     let refs: BTreeSet<&str> = panel.targets.iter().map(|t| t.ref_id.as_str()).collect();
@@ -222,7 +224,7 @@ async fn make_panel(
     let items: Vec<QueryItem> = panel
         .targets
         .iter()
-        .filter(|t| !t.hide)
+        .filter(|t| runs(t))
         .map(|t| QueryItem {
             ref_id: t.ref_id.clone(),
             datasource_id: t.datasource_id.clone(),

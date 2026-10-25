@@ -8,14 +8,17 @@ function menuItems(menu: HTMLElement | null): HTMLElement[] {
     return [];
   }
   return Array.from(
-    menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+    menu.querySelectorAll<HTMLElement>(
+      '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]',
+    ),
   );
 }
 
 /**
- * A menu button after the WAI-ARIA pattern, shared by the account menu and the workspace menu:
- * arrow keys move between items, Home and End jump, Escape and Tab close, a click elsewhere
- * closes without pulling focus back, and focus returns to the button after a choice or Escape.
+ * A menu button after the WAI-ARIA pattern, shared by the account menu, the workspace menu and
+ * the dashboard's variable and links menus: arrow keys move between items (menu items, radio and
+ * checkbox items), Home and End jump, Escape and Tab close, a click elsewhere closes without
+ * pulling focus back, and focus returns to the button after a choice, Escape or Tab.
  */
 export function useMenuButton(options: { onOpen?: () => void } = {}) {
   const [open, setOpen] = useState(false);

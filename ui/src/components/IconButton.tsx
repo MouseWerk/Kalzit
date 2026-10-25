@@ -5,6 +5,7 @@ import {
   type Ref,
   useState,
 } from "react";
+import { isComposingKey } from "../lib/ime";
 import { Icon, type IconName } from "./Icon";
 import "./iconButton.css";
 import "../shell/shellUx.css";
@@ -28,7 +29,7 @@ interface TooltipProps {
 export function WithTooltip({ label, shortcut, children, className }: TooltipProps) {
   const [dismissed, setDismissed] = useState(false);
   function onKeyDown(event: KeyboardEvent<HTMLSpanElement>) {
-    if (event.key === "Escape" && !dismissed) {
+    if (event.key === "Escape" && !dismissed && !isComposingKey(event)) {
       setDismissed(true);
     }
   }

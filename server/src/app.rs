@@ -103,6 +103,7 @@ pub fn router(state: AppState) -> Router {
         .fallback(web::static_files)
         // Each request gets its own "committed" flag, so errors after a commit are not "busy".
         .layer(axum::middleware::from_fn(db::scope_requests))
+        .layer(axum::middleware::from_fn(crate::error::assign_request_id))
         .layer(from_fn_with_state(state.clone(), net::origin_check))
         .layer(from_fn_with_state(state.clone(), net::security_headers))
         .layer(from_fn_with_state(state.clone(), net::request_info))

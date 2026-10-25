@@ -16,6 +16,7 @@ import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
@@ -196,7 +197,7 @@ export function PanelCard({
       ArrowDown: [0, 1],
     };
     // Enter or Space on the arrange handle selects the panel, the keyboard's click on it.
-    if (event.key === "Enter" || event.key === " ") {
+    if ((event.key === "Enter" || event.key === " ") && !isComposingKey(event)) {
       event.preventDefault();
       edit.onSelect?.();
       return;
@@ -806,7 +807,7 @@ function PanelDescription({ title, description }: { title: string; description: 
         onClick={() => setOpen((value) => !value)}
         onBlur={() => setOpen(false)}
         onKeyDown={(event) => {
-          if (event.key === "Escape" && open) {
+          if (event.key === "Escape" && open && !isComposingKey(event)) {
             event.stopPropagation();
             setOpen(false);
           }
