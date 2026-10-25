@@ -504,15 +504,28 @@ fn check_text(what: &str, value: &str, min: usize, max: usize) -> Result<(), Str
     Ok(())
 }
 
-/// Like `check_text` from 0 characters, but line breaks and tabs are allowed.
+/// No invisible direction or format characters and no line or paragraph separators: text that
+/// reads one way and is stored another (a title shown backwards) is refused.
+fn check_visible(what: &str, value: &str) -> Result<(), String> {
+    if value.chars().any(|c| crate::text::is_invisible_format(c) || crate::text::is_line_separator(c)) {
+        return Err(format!("{what} contains invisible direction, format or separator characters"));
+    }
+    Ok(())
+}
+
+/// Text of several lines, such as a description: 1 to `max` characters, not only white space,
+/// line breaks and tabs allowed, and the rules of `check_visible`.
 fn check_multiline(what: &str, value: &str, max: usize) -> Result<(), String> {
     if value.chars().count() > max {
-        return Err(format!("{what} needs 0 to {max} characters"));
+        return Err(format!("{what} needs 1 to {max} characters"));
+    }
+    if value.trim().is_empty() {
+        return Err(format!("{what} must not be only white space; leave it out instead"));
     }
     if value.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
         return Err(format!("{what} contains control characters"));
     }
-    Ok(())
+    check_visible(what, value)
 }
 
 fn check_id(what: &str, value: &str) -> Result<(), String> {
@@ -682,6 +695,7 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
         check_panel_links(&at, &p.links)?;
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
+        check_visible(&format!("{at}.title"), &p.title)?;
         if let Some(description) = &p.description {
             check_multiline(&format!("{at}.description"), description, MAX_DESCRIPTION_CHARS)?;
         }
@@ -1356,6 +1370,28 @@ mod tests {
         assert!(parse(nested).unwrap_err().contains("repeats with its row"));
         let too_many: Vec<Value> = (0..=MAX_TAGS).map(|i| json!(format!("t{i}"))).collect();
         assert!(parse(with(sample_v2(), &["tags"], json!(too_many))).unwrap_err().contains("tags takes at most"));
+    }
+
+    #[test]
+    fn descriptions_and_titles_refuse_invisible_characters_and_blank_text() {
+        let check = |key: &str, value: Value| {
+            let mut m = sample_v2();
+            m["panels"][0][key] = value;
+            parse(m).map(|_| ())
+        };
+        for sneaky in crate::text::SNEAKY {
+            for key in ["description", "title"] {
+                let err = check(key, json!(sneaky)).unwrap_err();
+                assert!(err.contains("invisible"), "{key} {sneaky:?}: {err}");
+            }
+        }
+        for separator in ["a\u{2028}b", "a\u{2029}b"] {
+            assert!(check("description", json!(separator)).unwrap_err().contains("separator"));
+        }
+        assert!(check("description", json!(" \n\t ")).unwrap_err().contains("white space"));
+        // Exactly the most is fine; joiners that scripts and emoji need stay allowed.
+        assert_eq!(check("description", json!("x".repeat(MAX_DESCRIPTION_CHARS))), Ok(()));
+        assert_eq!(check("description", json!("می\u{200C}خواهم 👩\u{200D}💻")), Ok(()));
     }
 
     #[test]

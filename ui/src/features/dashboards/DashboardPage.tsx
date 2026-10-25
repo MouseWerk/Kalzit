@@ -1042,8 +1042,24 @@ function DashboardView({
           onDuplicate: () => editActions.onDuplicate(selectedPanel.id),
           onCopy: () => editActions.onCopy(selectedPanel.id),
           onRemove: () => {
+            // Focus moves on to the next outline entry (or the one before), not to the page.
+            const entries = [
+              ...document.querySelectorAll<HTMLElement>(".dash-pane [data-outline-id]"),
+            ];
+            const at = entries.findIndex((e) => e.dataset.outlineId === selectedPanel.id);
+            const next = entries[at + 1] ?? entries[at - 1];
             setSelectedId(null);
             editActions.onRemove(selectedPanel.id);
+            const nextId = next?.dataset.outlineId;
+            if (nextId !== undefined) {
+              window.requestAnimationFrame(() =>
+                document
+                  .querySelector<HTMLElement>(
+                    `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
+                  )
+                  ?.focus(),
+              );
+            }
           },
           onMakeLibrary: () => setDialog({ kind: "makeLibrary", panel: selectedPanel }),
         }}
@@ -1311,8 +1327,11 @@ function DashboardView({
 
   const showRail = wideLayout && mode === "normal";
 
-  /** Shows a panel from the outline: its row opens when it is folded, then it scrolls in. */
-  function goToPanel(panel: PanelModel) {
+  /**
+   * Shows a panel from the outline: its row opens when it is folded, then it scrolls in. Focus
+   * moves to the panel unless it should stay where the choice was made (selecting while editing).
+   */
+  function goToPanel(panel: PanelModel, focus = true) {
     const row = rows.find((r) => r.id === panel.rowId);
     if (row !== undefined && (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id])) {
       setOpenRows((current) => ({ ...current, [row.id]: true }));
@@ -1321,7 +1340,7 @@ function DashboardView({
       const card = document.querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(panel.id)}"]`);
       // jsdom has no scrollIntoView; every browser has.
       card?.scrollIntoView?.({ block: "nearest" });
-      card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
+      if (focus) card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
     });
   }
 
@@ -1503,7 +1522,7 @@ function DashboardView({
                     inspector={inspector}
                     onSelect={(panel) => {
                       setSelectedId(panel.id);
-                      goToPanel(panel);
+                      goToPanel(panel, false);
                     }}
                     rowActions={
                       editActions === undefined
@@ -1516,7 +1535,7 @@ function DashboardView({
                     rows={rows}
                     untitled={t("dashboards.panel.untitled")}
                     canEdit={canEdit}
-                    onGoTo={goToPanel}
+                    onGoTo={(panel) => goToPanel(panel)}
                     filtersShown={filtersShown}
                     onFilters={() => setFiltersShown((shown) => !shown)}
                     annotationsShown={annotationsShown}

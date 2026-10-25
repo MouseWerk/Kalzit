@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
@@ -78,9 +78,19 @@ export function PanelInspector({
       return next;
     });
   const grid = (patch: Partial<GridPos>) => actions.onGrid(clampGrid({ ...panel.grid, ...patch }));
+  // Options per visualization, as in the panel editor: switching back brings them back, so a
+  // look tried out is never lost while the panel stays selected.
+  const optionsByType = useRef<Record<string, unknown>>({});
+  function switchTo(type: string) {
+    if (panel.type === type) return;
+    actions.onChange((p) => {
+      optionsByType.current = { ...optionsByType.current, [p.type]: p.options };
+      return { ...p, type, options: optionsByType.current[type] ?? {} };
+    });
+  }
 
   return (
-    <section className="inspector" aria-labelledby={`${id}-title`}>
+    <aside className="inspector" aria-labelledby={`${id}-title`}>
       <p className="inspector__caps">{t("dashboardTools.inspector.selected")}</p>
       <div className="inspector__head">
         <span className="inspector__type" aria-hidden="true">
@@ -121,7 +131,11 @@ export function PanelInspector({
             rows={3}
             maxLength={MAX_DESCRIPTION_CHARS}
             value={panel.description ?? ""}
-            onChange={(event) => set("description", event.currentTarget.value)}
+            // White space alone is no description: the server refuses it, so it is left out.
+            onChange={(event) => {
+              const text = event.currentTarget.value;
+              set("description", text.trim() === "" ? undefined : text);
+            }}
           />
         </div>
         {linked ? null : (
@@ -232,11 +246,7 @@ export function PanelInspector({
                     aria-pressed={panel.type === type}
                     aria-label={label}
                     title={label}
-                    onClick={() =>
-                      panel.type === type
-                        ? undefined
-                        : actions.onChange((p) => ({ ...p, type, options: {} }))
-                    }
+                    onClick={() => switchTo(type)}
                   >
                     <Icon name={panelIcon(type)} />
                   </button>
@@ -303,7 +313,7 @@ export function PanelInspector({
           {t("dashboards.panel.remove")}
         </button>
       </div>
-    </section>
+    </aside>
   );
 }
 
@@ -350,7 +360,11 @@ function InspectorSection({
   );
 }
 
-/** A whole number with its label, optionally with − and + buttons. */
+/**
+ * A whole number with its label, optionally with − and + buttons. Typing changes nothing until
+ * Enter or leaving the field, so a number typed digit by digit does not move panels around on
+ * the way; an empty or wrong entry goes back to the value.
+ */
 function NumberRow({
   label,
   hint,
@@ -370,7 +384,23 @@ function NumberRow({
 }) {
   const { t } = useI18n();
   const id = useId();
+  const [text, setText] = useState(String(value));
+  const [shown, setShown] = useState(value);
+  if (value !== shown) {
+    setShown(value);
+    setText(String(value));
+  }
   const within = (n: number) => Math.min(Math.max(n, min), max ?? Number.POSITIVE_INFINITY);
+  function commit() {
+    const next = Number(text);
+    if (text.trim() === "" || !Number.isInteger(next)) {
+      setText(String(value));
+      return;
+    }
+    const clamped = within(next);
+    setText(String(clamped));
+    if (clamped !== value) onChange(clamped);
+  }
   return (
     <div className="inspector__row">
       <label className="inspector__label" htmlFor={id}>
@@ -396,11 +426,15 @@ function NumberRow({
           min={min}
           max={max}
           step={1}
-          value={value}
+          value={text}
           aria-describedby={hint === undefined ? undefined : `${id}-hint`}
-          onChange={(event) => {
-            const next = Number(event.currentTarget.value);
-            if (event.currentTarget.value !== "" && Number.isInteger(next)) onChange(within(next));
+          onChange={(event) => setText(event.currentTarget.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
           }}
         />
         {stepper ? (
@@ -423,7 +457,6 @@ function NumberRow({
     </div>
   );
 }
-
 /** How many queries the panel runs and on which sources, with a way into the editor. */
 function QuerySummary({
   orgId,

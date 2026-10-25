@@ -33,7 +33,7 @@ interface Panel {                                // in addition to version 1
   timeShift?: string;                            // 1 to 5 digits and a unit (s m h d w M y): "1d"
   links?: { title: string; url: string; newTab?: boolean }[];  // up to 20; data links
   libraryPanelId?: string;                       // shows that library panel; targets must be empty
-  description?: string;                          // up to 1000 characters, line breaks allowed
+  description?: string;                          // 1 to 1000 characters, line breaks allowed, not only white space
   transparent?: boolean;                         // drawn without the card's surface and border; true or absent
 }
 interface Target {                               // in addition to version 1
@@ -54,6 +54,15 @@ type DashboardLink =
   | { type: "dashboards"; tag: string; title?: string; newTab?: boolean }   // dashboards with that tag
   | { type: "url"; title: string; url: string; newTab?: boolean };
 ```
+
+Panel titles and descriptions refuse invisible direction and format characters (bidi
+embeddings, overrides and isolates, direction marks, the zero-width space, word joiners, the byte
+order mark) and the line and paragraph separators U+2028 and U+2029, as appearance texts do.
+
+`description` and `transparent` came with version 0.1.0's edit mode. Models are read with unknown
+fields refused, so a server from before them refuses a dashboard that uses them: returning to such
+a version needs the database backup taken with the update, or those panels saved without them
+first.
 
 Rules:
 

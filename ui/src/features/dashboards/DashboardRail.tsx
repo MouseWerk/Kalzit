@@ -291,6 +291,7 @@ function Outline({
           type="button"
           className="dash-pane__item dash-pane__item--panel"
           aria-current={panel.id === selectedId ? "true" : undefined}
+          data-outline-id={panel.id}
           onClick={() => (onSelect === undefined ? onGoTo(panel) : onSelect(panel))}
         >
           <Icon name={panelIcon(panel.type)} />
@@ -307,84 +308,93 @@ function Outline({
     );
   };
   return (
-    <nav className="dash-pane" id={id} aria-label={t("toolbar.rail.outline")}>
-      <p className="dash-pane__heading dash-pane__heading--count" aria-hidden="true">
-        <span>{t("toolbar.rail.outline")}</span>
-        <span className="dash-pane__count">
-          {t("toolbar.rail.outlineCount", { rows: rows.length, panels: panels.length })}
-        </span>
-      </p>
-      {panels.length === 0 && rows.length === 0 ? (
-        <p className="dash-pane__empty">{t("toolbar.rail.outlineEmpty")}</p>
-      ) : (
-        <>
-          <div className="dash-pane__search">
-            <Icon name="search" />
-            <label className="visually-hidden" htmlFor={filterId}>
-              {t("toolbar.rail.filterPanels")}
-            </label>
-            <input
-              id={filterId}
-              type="search"
-              className="input dash-pane__search-input"
-              placeholder={t("toolbar.rail.filterPanels")}
-              value={filter}
-              onChange={(event) => setFilter(event.currentTarget.value)}
-            />
-          </div>
-          <ul className="dash-pane__list">
-            {outside.map(panelButton)}
-            {groups.map(({ row, all, panels: inRow }) => {
-              const rowTitle = row.title === "" ? t("dashboardTools.rows.untitled") : row.title;
-              return (
-                <li key={row.id}>
-                  <div className="dash-pane__row">
-                    <span className="dash-pane__row-title truncate">{rowTitle}</span>
-                    <span className="dash-pane__count">{all}</span>
-                    {row.collapsed ? (
-                      <span className="dash-pane__note">{t("toolbar.rail.collapsedRow")}</span>
-                    ) : null}
-                    {rowActions === undefined ? null : (
-                      <span className="dash-pane__row-actions">
-                        <button
-                          type="button"
-                          className="dash-pane__row-action"
-                          aria-label={t(
-                            row.collapsed ? "toolbar.rail.expandRow" : "toolbar.rail.collapseRow",
-                            { title: rowTitle },
-                          )}
-                          onClick={() => rowActions.onToggle(row.id)}
-                        >
-                          <Icon name={row.collapsed ? "chevron" : "chevronDown"} />
-                        </button>
-                        <button
-                          type="button"
-                          className="dash-pane__row-action"
-                          aria-label={t("dashboardTools.rows.editNamed", { title: rowTitle })}
-                          title={t("dashboardTools.rows.edit")}
-                          onClick={() => rowActions.onEdit(row.id)}
-                        >
-                          <Icon name="edit" />
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                  {row.collapsed && needle === "" ? null : (
-                    <ul className="dash-pane__list dash-pane__list--nested">
-                      {inRow.map(panelButton)}
-                    </ul>
-                  )}
-                </li>
-              );
+    // The inspector is its own landmark next to the outline, not part of the navigation.
+    <div className="dash-pane" id={id}>
+      <nav className="dash-pane__outline" aria-label={t("toolbar.rail.outline")}>
+        <p className="dash-pane__heading dash-pane__heading--count" aria-hidden="true">
+          <span>{t("toolbar.rail.outline")}</span>
+          <span className="dash-pane__count">
+            {t(rows.length === 1 ? "toolbar.rail.rowOne" : "toolbar.rail.rowMany", {
+              count: rows.length,
             })}
-          </ul>
-          {needle !== "" && outside.length === 0 && groups.length === 0 ? (
-            <p className="dash-pane__empty">{t("toolbar.rail.noPanelMatches")}</p>
-          ) : null}
-        </>
-      )}
+            {", "}
+            {t(panels.length === 1 ? "toolbar.rail.panelOne" : "toolbar.rail.panelMany", {
+              count: panels.length,
+            })}
+          </span>
+        </p>
+        {panels.length === 0 && rows.length === 0 ? (
+          <p className="dash-pane__empty">{t("toolbar.rail.outlineEmpty")}</p>
+        ) : (
+          <>
+            <div className="dash-pane__search">
+              <Icon name="search" />
+              <label className="visually-hidden" htmlFor={filterId}>
+                {t("toolbar.rail.filterPanels")}
+              </label>
+              <input
+                id={filterId}
+                type="search"
+                className="input dash-pane__search-input"
+                placeholder={t("toolbar.rail.filterPanels")}
+                value={filter}
+                onChange={(event) => setFilter(event.currentTarget.value)}
+              />
+            </div>
+            <ul className="dash-pane__list">
+              {outside.map(panelButton)}
+              {groups.map(({ row, all, panels: inRow }) => {
+                const rowTitle = row.title === "" ? t("dashboardTools.rows.untitled") : row.title;
+                return (
+                  <li key={row.id}>
+                    <div className="dash-pane__row">
+                      <span className="dash-pane__row-title truncate">{rowTitle}</span>
+                      <span className="dash-pane__count">{all}</span>
+                      {row.collapsed ? (
+                        <span className="dash-pane__note">{t("toolbar.rail.collapsedRow")}</span>
+                      ) : null}
+                      {rowActions === undefined ? null : (
+                        <span className="dash-pane__row-actions">
+                          <button
+                            type="button"
+                            className="dash-pane__row-action"
+                            aria-label={t(
+                              row.collapsed ? "toolbar.rail.expandRow" : "toolbar.rail.collapseRow",
+                              { title: rowTitle },
+                            )}
+                            onClick={() => rowActions.onToggle(row.id)}
+                          >
+                            <Icon name={row.collapsed ? "chevron" : "chevronDown"} />
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-pane__row-action"
+                            aria-label={t("dashboardTools.rows.editNamed", { title: rowTitle })}
+                            title={t("dashboardTools.rows.edit")}
+                            onClick={() => rowActions.onEdit(row.id)}
+                          >
+                            <Icon name="edit" />
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                    {row.collapsed && needle === "" ? null : (
+                      <ul className="dash-pane__list dash-pane__list--nested">
+                        {inRow.map(panelButton)}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {needle !== "" && outside.length === 0 && groups.length === 0 ? (
+              <p className="dash-pane__empty">{t("toolbar.rail.noPanelMatches")}</p>
+            ) : null}
+          </>
+        )}
+      </nav>
       {inspector}
-    </nav>
+    </div>
   );
 }
 

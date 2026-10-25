@@ -18,7 +18,7 @@ const panel = (id: string, title: string, extra: Partial<PanelModel> = {}): Pane
   ...extra,
 });
 
-function setup() {
+function setup(extra: PanelModel[] = []) {
   const server = installFakeServer({
     signedIn: true,
     user: { ...TEST_USER, isServerAdmin: false, orgs: [{ id: "o1", name: "Org", role: "editor" }] },
@@ -28,10 +28,27 @@ function setup() {
     rows: [{ id: "r1", title: "Details", collapsed: false }],
     panels: [
       panel("p1", "Orders"),
+      ...extra,
       panel("p2", "Stock", { rowId: "r1", grid: { x: 0, y: 0, w: 6, h: 5 } }),
     ],
   });
   return server;
+}
+
+/** The inspector of the selected panel: its own landmark beside the outline. */
+function inspectorOf(title: string): Promise<HTMLElement> {
+  return screen.findByRole("complementary", { name: title });
+}
+
+/** Selects a panel from the outline and returns its inspector. */
+async function selectFromOutline(user: ReturnType<typeof renderApp>["user"], title: string) {
+  // Selecting any panel opens the outline.
+  if (screen.queryByRole("navigation", { name: "Outline" }) === null) {
+    await user.click(bodyOf(await screen.findByRole("article", { name: "Orders" })));
+  }
+  const outline = await screen.findByRole("navigation", { name: "Outline" });
+  await user.click(within(outline).getByRole("button", { name: new RegExp(`^${title}`) }));
+  return inspectorOf(title);
 }
 
 async function openEditing() {
@@ -55,7 +72,8 @@ describe("selecting a panel while editing", () => {
     const toolbar = within(card).getByRole("toolbar", { name: "Actions for Orders" });
     expect(within(toolbar).getByRole("button", { name: "Edit “Orders”" })).toBeTruthy();
     const outline = await screen.findByRole("navigation", { name: "Outline" });
-    const inspector = within(outline).getByRole("region", { name: "Orders" });
+    const inspector = await inspectorOf("Orders");
+    expect(outline.contains(inspector)).toBe(false);
     expect(within(inspector).getByText("Table in no row")).toBeTruthy();
     const entry = within(outline).getByRole("button", { name: /^Orders/ });
     expect(entry.getAttribute("aria-current")).toBe("true");
@@ -65,8 +83,7 @@ describe("selecting a panel while editing", () => {
     setup();
     const { user, card } = await openEditing();
     await user.click(bodyOf(card));
-    const outline = await screen.findByRole("navigation", { name: "Outline" });
-    const inspector = within(outline).getByRole("region", { name: "Orders" });
+    const inspector = await inspectorOf("Orders");
 
     const title = within(inspector).getByRole("textbox", { name: "Panel title" });
     await user.clear(title);
@@ -103,7 +120,7 @@ describe("selecting a panel while editing", () => {
     const { user, card } = await openEditing();
     await user.click(bodyOf(card));
     const outline = await screen.findByRole("navigation", { name: "Outline" });
-    expect(within(outline).getByText("1 rows, 2 panels")).toBeTruthy();
+    expect(within(outline).getByText("1 row, 2 panels")).toBeTruthy();
     expect(within(outline).getByText("6×5")).toBeTruthy();
     const filter = within(outline).getByRole("searchbox", { name: "Filter panels" });
     await user.type(filter, "zzz");
@@ -126,8 +143,126 @@ describe("selecting a panel while editing", () => {
     const { user, card } = await openEditing();
     await user.click(bodyOf(card));
     const outline = await screen.findByRole("navigation", { name: "Outline" });
-    await user.click(within(outline).getByRole("button", { name: /^Stock/ }));
-    expect(await within(outline).findByRole("region", { name: "Stock" })).toBeTruthy();
-    expect(within(outline).getByText("Table in Details")).toBeTruthy();
+    const entry = within(outline).getByRole("button", { name: /^Stock/ });
+    await user.click(entry);
+    const inspector = await inspectorOf("Stock");
+    expect(within(inspector).getByText("Table in Details")).toBeTruthy();
+    // Focus stays where the choice was made.
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    expect(document.activeElement).toBe(entry);
+  });
+
+  it("selects with Enter on the arrange handle, not on every tab stop", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    const handle = within(card).getByRole("button", { name: "Arrange “Orders”" });
+    handle.focus();
+    expect(card.getAttribute("aria-current")).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(card.getAttribute("aria-current")).toBe("true");
+    // The actions follow the handle in the tab order.
+    await user.tab();
+    expect(document.activeElement).toBe(
+      within(card).getByRole("button", { name: "Edit “Orders”" }),
+    );
+  });
+
+  it("does not select the panel when a control inside it is used", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    await user.click(within(card).getByRole("button", { name: "Panel menu of “Orders”" }));
+    expect(card.getAttribute("aria-current")).toBeNull();
+    await user.keyboard("{Escape}");
+  });
+
+  it("clamps X to the grid and pushes an overlapped panel down when Y changes", async () => {
+    setup([panel("p3", "Returns", { grid: { x: 0, y: 8, w: 12, h: 4 } })]);
+    const { user } = await openEditing();
+    let inspector = await selectFromOutline(user, "Returns");
+    const y = within(inspector).getByRole("spinbutton", { name: "Row (Y)" });
+    await user.clear(y);
+    // Nothing moves while typing, and an empty field is fine on the way.
+    expect((y as HTMLInputElement).value).toBe("");
+    await user.type(y, "0");
+    await user.tab();
+    await waitFor(() => expect((y as HTMLInputElement).value).toBe("0"));
+
+    const x = within(inspector).getByRole("spinbutton", { name: "Column (X)" });
+    await user.clear(x);
+    await user.type(x, "30{Enter}");
+    await waitFor(() => expect((x as HTMLInputElement).value).toBe("12"));
+    inspector = await selectFromOutline(user, "Orders");
+    const ordersY = within(inspector).getByRole("spinbutton", { name: "Row (Y)" });
+    expect((ordersY as HTMLInputElement).value).toBe("4");
+  });
+
+  it("shows a description as text, never as markup", async () => {
+    const markup = '<img src="x" onerror="window.__hit = 1">';
+    setup([panel("p3", "Returns", { grid: { x: 12, y: 0, w: 12, h: 4 }, description: markup })]);
+    await openEditing();
+    const returns = await screen.findByRole("article", { name: "Returns" });
+    expect(returns.querySelector("img")).toBeNull();
+    expect(returns.querySelector(".panel-card__about-text")?.textContent).toBe(markup);
+  });
+
+  it("keeps each visualization's options when switching back and forth", async () => {
+    setup([
+      panel("p3", "Returns", {
+        type: "stat",
+        grid: { x: 12, y: 0, w: 12, h: 4 },
+        options: { graphMode: "none" },
+      }),
+    ]);
+    const { user } = await openEditing();
+    const inspector = await selectFromOutline(user, "Returns");
+    await user.click(within(inspector).getByRole("button", { name: "Table" }));
+    expect(within(inspector).getByText("Table in no row")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save…" })).toHaveProperty("disabled", false);
+    await user.click(within(inspector).getByRole("button", { name: "Stat" }));
+    expect(within(inspector).getByText("Stat in no row")).toBeTruthy();
+    // Back to where it started, options included: nothing is left to save.
+    expect(screen.getByRole("button", { name: "Save…" })).toHaveProperty("disabled", true);
+  });
+
+  it("removes a panel and moves focus to the next outline entry", async () => {
+    setup([panel("p3", "Returns", { grid: { x: 0, y: 8, w: 12, h: 4 } })]);
+    const { user } = await openEditing();
+    const inspector = await selectFromOutline(user, "Orders");
+    await user.click(within(inspector).getByRole("button", { name: "Remove" }));
+    const outline = screen.getByRole("navigation", { name: "Outline" });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(outline).getByRole("button", { name: /^Returns/ }),
+      ),
+    );
+  });
+
+  it("makes a library panel and unlinks one from the inspector", async () => {
+    const server = setup([
+      panel("p3", "Returns", { grid: { x: 12, y: 0, w: 12, h: 4 }, libraryPanelId: "lib1" }),
+    ]);
+    server.areas.dashboardFeatures.libraryPanels.push({
+      id: "lib1",
+      folderId: null,
+      name: "Shared returns",
+      model: { ...panel("p3", "Returns") },
+      version: 1,
+    });
+    const { user } = await openEditing();
+    let inspector = await selectFromOutline(user, "Orders");
+    await user.click(within(inspector).getByRole("button", { name: /^Library/ }));
+    await user.click(within(inspector).getByRole("button", { name: "Make library panel…" }));
+    expect(await screen.findByRole("dialog", { name: "Make library panel" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+
+    inspector = await selectFromOutline(user, "Returns");
+    await user.click(within(inspector).getByRole("button", { name: /^Library/ }));
+    expect(within(inspector).getByText(/“Shared returns”/)).toBeTruthy();
+    await user.click(
+      within(inspector).getByRole("button", { name: "Keep as a panel of this dashboard only" }),
+    );
+    expect(
+      await within(inspector).findByRole("button", { name: "Make library panel…" }),
+    ).toBeTruthy();
   });
 });

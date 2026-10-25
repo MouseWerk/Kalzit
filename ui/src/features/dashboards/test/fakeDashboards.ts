@@ -211,6 +211,8 @@ const PANEL_FIELDS = [
   "timeShift",
   "links",
   "libraryPanelId",
+  "description",
+  "transparent",
 ];
 const VARIABLE_FIELDS = [
   "name",

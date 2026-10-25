@@ -344,41 +344,6 @@
     border-style: solid;
   }
 
-  .panel-card__corners {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-  }
-
-  .panel-card__corner {
-    position: absolute;
-    width: var(--space-2);
-    height: var(--space-2);
-    border: var(--border-width) solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    background: var(--bg-raised);
-  }
-
-  .panel-card__corner--nw {
-    inset-block-start: var(--space-half);
-    inset-inline-start: var(--space-half);
-  }
-
-  .panel-card__corner--ne {
-    inset-block-start: var(--space-half);
-    inset-inline-end: var(--space-half);
-  }
-
-  .panel-card__corner--sw {
-    inset-block-end: var(--space-half);
-    inset-inline-start: var(--space-half);
-  }
-
-  .panel-card__corner--se {
-    inset-block-end: var(--space-half);
-    inset-inline-end: var(--space-half);
-  }
-
   /* The selected panel's size in grid units, quiet in the bottom corner. */
   .panel-card__size {
     position: absolute;
@@ -420,6 +385,48 @@
   .panel-card__about:focus-visible {
     outline: var(--focus-outline);
     outline-offset: var(--focus-ring-offset);
+  }
+
+  /* Static, so the description lays over the card itself (the card clips what sticks out). */
+  .panel-card__about-anchor {
+    position: static;
+    display: inline-flex;
+  }
+
+  /*
+   * The description: its own lines kept, long words broken, at most a few lines high with its own
+   * scroll. Shown on hover, on keyboard focus and when tapped open.
+   */
+  .panel-card__about-text {
+    position: absolute;
+    inset-block-start: var(--size-panel-header);
+    inset-inline: var(--space-2);
+    z-index: var(--z-menu);
+    display: none;
+    max-height: calc(100% - var(--size-panel-header) - var(--space-2));
+    overflow-y: auto;
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-tight);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+
+  @media (hover: hover) {
+    .panel-card__about-anchor:hover > .panel-card__about-text {
+      display: block;
+    }
+  }
+
+  .panel-card__about-anchor[data-open] > .panel-card__about-text,
+  .panel-card__about-anchor:has(> :focus-visible) > .panel-card__about-text {
+    display: block;
   }
 
   /* Option groups of the panel editor and the dashboard settings */

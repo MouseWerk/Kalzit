@@ -15,7 +15,6 @@ import { runPanelSteps } from "../../analysis/panel";
 import { asSteps, isProjection, type StepsRun, stepFrames } from "../../analysis/steps";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
-import { WithTooltip } from "../../components/IconButton";
 import { useI18n } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
@@ -195,6 +194,12 @@ export function PanelCard({
       ArrowUp: [0, -1],
       ArrowDown: [0, 1],
     };
+    // Enter or Space on the arrange handle selects the panel, the keyboard's click on it.
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      edit.onSelect?.();
+      return;
+    }
     const step = delta[event.key];
     if (step === undefined) {
       return;
@@ -375,8 +380,7 @@ export function PanelCard({
       {dragging === null ? null : (
         <div className="dash-placeholder" ref={placeholderRef} aria-hidden="true" />
       )}
-      {/* The click is a pointer shortcut; from the keyboard the arrange handle selects on focus. */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the arrange handle selects the panel from the keyboard */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: Enter or Space on the arrange handle selects the panel from the keyboard */}
       <article
         ref={ref}
         className={className}
@@ -389,16 +393,15 @@ export function PanelCard({
             ? undefined
             : (event) => {
                 // Controls inside the card do their own thing; anywhere else selects it.
-                if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) {
+                const control = (event.target as HTMLElement).closest(OWN_CONTROLS);
+                if (control !== null && event.currentTarget.contains(control)) {
                   return;
                 }
                 edit.onSelect?.();
               }
         }
       >
-        {selected && edit !== undefined ? (
-          <SelectionFrame w={panel.grid.w} h={panel.grid.h} />
-        ) : null}
+        {selected && edit !== undefined ? <SizeBadge w={panel.grid.w} h={panel.grid.h} /> : null}
         <header
           className="panel-card__header"
           onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
@@ -418,9 +421,6 @@ export function PanelCard({
             <PanelDescription title={title} description={panel.description} />
           )}
           <div className="panel-card__actions">
-            {selected && edit !== undefined ? (
-              <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
-            ) : null}
             {edit === undefined ? null : (
               <>
                 <button
@@ -431,7 +431,6 @@ export function PanelCard({
                   aria-label={t("dashboards.panel.arrange", { title })}
                   title={t("dashboards.panel.arrangeHint")}
                   onKeyDown={onHandleKey}
-                  onFocus={edit.onSelect}
                 >
                   <span aria-hidden="true">⠿</span>
                 </button>
@@ -440,6 +439,10 @@ export function PanelCard({
                 </span>
               </>
             )}
+            {/* After the handle, so selecting with Enter there leads on to these with Tab. */}
+            {selected && edit !== undefined ? (
+              <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+            ) : null}
             <PanelMenu title={title} items={menuItems} />
           </div>
         </header>
@@ -779,44 +782,47 @@ export function PanelBody({
   );
 }
 
-/** The panel's description behind a quiet info button, as a tooltip and for screen readers. */
+/**
+ * The panel's description behind a quiet info button: shown on hover and keyboard focus, and
+ * toggled by a tap or click (touch screens have no hover). Screen readers get it once, through
+ * `aria-describedby`; the text is plain, never markup.
+ */
 function PanelDescription({ title, description }: { title: string; description: string }) {
   const { t } = useI18n();
   const id = useId();
+  const [open, setOpen] = useState(false);
   return (
-    <WithTooltip label={description} className="panel-card__about-anchor">
+    <span className="panel-card__about-anchor" data-open={open ? "" : undefined}>
       <button
         type="button"
         className="panel-card__about"
         aria-label={t("dashboards.panel.aboutFor", { title })}
         aria-describedby={id}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.stopPropagation();
+            setOpen(false);
+          }
+        }}
       >
         <Icon name="help" />
       </button>
-      <span className="visually-hidden" id={id}>
+      <span className="panel-card__about-text" id={id} role="tooltip">
         {description}
       </span>
-    </WithTooltip>
+    </span>
   );
 }
 
-/**
- * The selected panel on the canvas: neutral corner handles and its size in grid units. The
- * handles mark the selection; resizing stays with the corner grip and the arrange handle's keys.
- */
-function SelectionFrame({ w, h }: { w: number; h: number }) {
+/** The selected panel's size in grid units, quiet in the bottom corner. */
+function SizeBadge({ w, h }: { w: number; h: number }) {
   return (
-    <>
-      <span className="panel-card__corners" aria-hidden="true">
-        <span className="panel-card__corner panel-card__corner--nw" />
-        <span className="panel-card__corner panel-card__corner--ne" />
-        <span className="panel-card__corner panel-card__corner--sw" />
-        <span className="panel-card__corner panel-card__corner--se" />
-      </span>
-      <span className="panel-card__size" aria-hidden="true">
-        {w} × {h}
-      </span>
-    </>
+    <span className="panel-card__size" aria-hidden="true">
+      {w} × {h}
+    </span>
   );
 }
 
@@ -858,3 +864,9 @@ function MiniToolbar({
     </div>
   );
 }
+
+/** What a click must not select the panel through: its own controls and labels. */
+const OWN_CONTROLS =
+  "button, a, input, select, textarea, label, summary, [contenteditable], " +
+  '[role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], ' +
+  '[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])';
