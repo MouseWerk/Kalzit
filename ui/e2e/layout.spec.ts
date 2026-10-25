@@ -52,9 +52,7 @@ test.describe("the overflow check itself", () => {
   } as const;
 
   for (const [name, inject] of Object.entries(PROBES)) {
-    for (const main of MAIN_PAGES.filter(
-      (m) => m.name === "dashboard settings" || m.name === "add member",
-    )) {
+    for (const main of MAIN_PAGES.filter((m) => m.name === "add member")) {
       test(`${name} in the ${main.name} dialog is caught`, async ({ page, world }) => {
         test.fail(true, "the probe makes the dialog too wide on purpose");
         await signInOwner(page);

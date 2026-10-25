@@ -363,7 +363,7 @@ describe("adding a data source", () => {
     await fill(user, screen.getByLabelText("Password (optional)"), "pw");
     await user.click(screen.getByRole("button", { name: "Add data source" }));
 
-    await screen.findByRole("heading", { level: 1, name: "Data source" });
+    await screen.findByRole("heading", { level: 1, name: "Warehouse" });
     expect(location().pathname).toBe("/data-sources/ds-new-1");
     expect(lastCall(server, "POST", "/datasources")?.body).toEqual({
       name: "Warehouse",
@@ -719,8 +719,8 @@ describe("editing a data source", () => {
       "Metrics 2",
     );
     // Write includes moving it to the trash; managing access needs admin rights on it.
-    expect(screen.getByRole("button", { name: "Delete…" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Move to trash" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Manage access…" })).toBeNull();
   });
 
   it("unlocks the target with changeTarget, independent of managing access", async () => {
@@ -734,7 +734,7 @@ describe("editing a data source", () => {
     const url = await screen.findByRole("textbox", { name: "URL" });
     expect(url).toHaveProperty("disabled", false);
     expect(screen.queryByText(/only a data source admin can change/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Access…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage access…" })).toBeNull();
   });
 
   it("says what a refused SQLite path needs", async () => {
@@ -828,7 +828,7 @@ describe("editing a data source", () => {
 
   it("does not delete a source someone else changed since the page loaded", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
-    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await user.click(await screen.findByRole("button", { name: "Move to trash" }));
     const stored = server.areas.datasources.datasources.find((d) => d.id === PG_ID);
     if (stored === undefined) throw new Error("no source");
     stored.updatedAt += 1;
@@ -857,7 +857,7 @@ describe("editing a data source", () => {
 
   it("tests the connection, saving unsaved changes first", async () => {
     const { server, user } = open(`/data-sources/${PG_ID}`);
-    await user.click(await screen.findByRole("button", { name: "Test connection" }));
+    await user.click(await screen.findByRole("button", { name: "Test" }));
     expect(await screen.findByText("Connected in 12 ms")).toBeTruthy();
     // The health reason with its params, in the UI's language.
     expect(screen.getByText("Connected to PostgreSQL 17.2.")).toBeTruthy();
@@ -899,7 +899,7 @@ describe("editing a data source", () => {
 
   it("moves a data source to the trash, lists it there and restores it", async () => {
     const { server, user, location } = open(`/data-sources/${PG_ID}`);
-    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await user.click(await screen.findByRole("button", { name: "Move to trash" }));
     const dialog = screen.getByRole("dialog", { name: "Delete data source?" });
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
     const before = server.calls.length;
@@ -921,5 +921,62 @@ describe("editing a data source", () => {
     await user.click(await screen.findByRole("button", { name: "Restore “Sales DB”" }));
     await waitFor(() => expect(server.areas.datasources.datasources[0]?.deletedAt).toBeUndefined());
     expect(await screen.findByText("The trash is empty")).toBeTruthy();
+  });
+});
+
+describe("the data source page", () => {
+  it("shows the source in its header with status, last test and actions", async () => {
+    const { user } = open(`/data-sources/${PG_ID}`);
+    expect(await screen.findByRole("heading", { level: 1, name: "Sales DB" })).toBeTruthy();
+    expect(screen.getByText("Not tested")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open in Explore" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    expect(await screen.findByText(/^Tested at /)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    const menu = screen.getByRole("menu", { name: "More actions" });
+    expect(within(menu).getByRole("menuitem", { name: "Duplicate" })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: "Move to trash" })).toBeTruthy();
+    const overview = screen.getByRole("complementary", { name: "Overview" });
+    expect(within(overview).getByText("PostgreSQL")).toBeTruthy();
+    expect(within(overview).getByRole("button", { name: "Manage access…" })).toBeTruthy();
+  });
+
+  it("duplicates a source into the add page with its settings but not its secrets", async () => {
+    const { user, location } = open(`/data-sources/${PG_ID}`);
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    expect(location().pathname).toBe("/data-sources/new");
+    expect(name).toHaveProperty("value", "Sales DB (copy)");
+    expect(screen.getByRole("textbox", { name: "Host" })).toHaveProperty("value", "db.internal");
+    expect(screen.getByLabelText("Password (optional)")).toHaveProperty("value", "");
+  });
+
+  it("asks before leaving with unsaved changes and stays when asked to", async () => {
+    const { user, location } = open(`/data-sources/${PG_ID}`);
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    await user.type(name, " 2");
+    // Testing checks what is stored, so it waits for the change to be saved.
+    expect(screen.getByRole("button", { name: "Test" })).toHaveProperty("disabled", true);
+    await user.click(screen.getByRole("link", { name: "Cancel" }));
+    const dialog = await screen.findByRole("dialog", { name: "Leave without saving?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(location().pathname).toBe(`/data-sources/${PG_ID}`);
+    await user.click(screen.getByRole("link", { name: "Cancel" }));
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "Leave without saving?" })).getByRole(
+        "button",
+        { name: "Leave" },
+      ),
+    );
+    await waitFor(() => expect(location().pathname).toBe("/data-sources"));
+  });
+
+  it("marks the locked sections for an edit grant", async () => {
+    const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
+    server.areas.datasources.grants[PROM_ID] = "edit";
+    renderApp(`/data-sources/${PROM_ID}`);
+    const connection = await screen.findByRole("button", { name: /^Connection/ });
+    expect(within(connection).getByText("Locked")).toBeTruthy();
   });
 });

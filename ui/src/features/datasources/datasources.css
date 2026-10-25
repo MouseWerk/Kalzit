@@ -6,14 +6,150 @@
     gap: var(--space-4);
   }
 
+  /*
+   * One source after the blueprint: a header with its mark, name, status and actions; the form
+   * in the add page's sections with the danger zone below; what the source is and who has access
+   * in a column beside it (below it on narrow screens).
+   */
   .ds-edit {
-    max-width: var(--content-max-width);
+    gap: var(--space-5);
   }
 
-  /* The edit form keeps the reading width. */
-  .ds-edit .ds-form,
-  .ds-edit > .ds-health-region {
-    max-width: var(--size-form);
+  .ds-edit__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
+  }
+
+  .ds-edit__identity {
+    display: grid;
+    flex: 1 1 var(--size-field);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .ds-edit__name {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    overflow-wrap: anywhere;
+  }
+
+  .ds-edit__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-edit__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ds-edit__layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  @media (min-width: 72rem) {
+    .ds-edit__layout {
+      grid-template-columns: minmax(0, var(--size-form)) minmax(0, var(--size-drawer));
+    }
+
+    .ds-edit__side {
+      position: sticky;
+      top: calc(var(--top-bar-height, 0px) + var(--space-4));
+    }
+  }
+
+  .ds-edit__main,
+  .ds-edit__side {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .ds-side {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .ds-side__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* The trash at the bottom: quiet until used, the action in the danger text colour. */
+  .ds-danger {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .ds-danger__text {
+    display: grid;
+    flex: 1 1 var(--size-field);
+    gap: var(--space-1);
+  }
+
+  .ds-danger__text h2 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ds-danger__text p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-danger__button {
+    color: var(--danger-text);
+  }
+
+  /* Settings the caller cannot change: a lock and the reason, in a quiet well. */
+  .ds-locked {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .ds-locked .icon {
+    flex: none;
+    margin-block-start: var(--space-half);
+  }
+
+  .ds-chip--locked {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
   }
 
   .ds-form__saved {
@@ -627,14 +763,6 @@
   .ds-health__message {
     color: var(--text-muted);
     overflow-wrap: anywhere;
-  }
-
-  .ds-edit__footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    padding-block-start: var(--space-4);
-    border-top: var(--border-width) solid var(--border);
   }
 
   .ds-textarea {

@@ -400,4 +400,149 @@
     max-width: var(--size-menu-max);
     margin-block-start: var(--space-1);
   }
+
+  /*
+   * Dashboard settings as a page, after the settings page: the sections in a column on the left
+   * that stays below the top bar, the section as a card on the right; a select on phones.
+   */
+  .dash-settings__layout {
+    display: grid;
+    grid-template-columns: var(--size-settings-nav) minmax(0, var(--content-max-width));
+    gap: var(--space-6);
+    align-items: start;
+  }
+
+  .dash-settings__nav {
+    position: sticky;
+    top: calc(var(--top-bar-height, 0px) + var(--space-4));
+    display: grid;
+    gap: var(--space-half);
+    max-height: calc(
+      100dvh -
+      var(--top-bar-height, 0px) -
+      var(--space-4) -
+      var(--space-page-bottom)
+    );
+    overflow-y: auto;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .dash-settings__select {
+    display: none;
+  }
+
+  .dash-settings__list {
+    display: grid;
+    gap: var(--space-half);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .dash-settings__link {
+    display: flex;
+    align-items: center;
+    min-height: var(--nav-row-height);
+    padding: 0 var(--space-3);
+    border: var(--border-width) solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    text-decoration: none;
+    transition:
+      background-color var(--duration-fast) var(--easing),
+      color var(--duration-fast) var(--easing);
+  }
+
+  .dash-settings__link:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .dash-settings__link:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  /* Current section: a quiet raised fill and weight, as on the settings page. */
+  .dash-settings__link[aria-current="page"] {
+    border-color: var(--border);
+    background: var(--bg-raised);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  :root[data-theme="contrast"] .dash-settings__link[aria-current="page"] {
+    border-color: transparent;
+    background: var(--bg-active);
+  }
+
+  .dash-settings__section {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+    padding: var(--space-card);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .dash-settings__title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .dash-settings__body {
+    display: grid;
+    gap: var(--space-4);
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .dash-settings__plain {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-3);
+  }
+
+  .dash-settings__plain p {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .dash-settings__add {
+    justify-self: start;
+    gap: var(--space-1);
+  }
+
+  .dash-settings__unsaved {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  @media (max-width: 48rem) {
+    .dash-settings__layout {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-4);
+    }
+
+    .dash-settings__nav {
+      position: static;
+      max-height: none;
+      padding: var(--space-3);
+    }
+
+    .dash-settings__list {
+      display: none;
+    }
+
+    .dash-settings__select {
+      display: grid;
+    }
+  }
 }

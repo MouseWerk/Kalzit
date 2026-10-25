@@ -10,10 +10,13 @@ async function retitle(page: Page, title: string): Promise<void> {
     .first()
     .click();
   await page.getByRole("button", { name: t("dashboards.settings") }).click();
-  const settings = page.getByRole("dialog", { name: t("dashboards.settings.title") });
-  await settings.getByLabel(t("dashboards.settings.dashboardTitle")).fill(title);
-  await settings.getByRole("button", { name: t("dashboards.editor.apply") }).click();
-  await expect(settings).toBeHidden();
+  // The settings page; Apply takes the title into the unsaved dashboard and goes back to it.
+  await expect(
+    page.getByRole("heading", { level: 1, name: t("dashboards.settings.title") }),
+  ).toBeVisible();
+  await page.getByLabel(t("dashboards.settings.dashboardTitle")).fill(title);
+  await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
+  await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
 }
 
 async function save(page: Page): Promise<void> {

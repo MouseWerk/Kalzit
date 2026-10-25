@@ -61,6 +61,14 @@ function setup(role: string, model: DashboardModel) {
 
 const article = (name: string | RegExp) => screen.getByRole("article", { name });
 
+/** Opens the JSON model from the JSON section of the settings page. */
+async function openJson(user: ReturnType<typeof renderApp>["user"]) {
+  await user.click(screen.getByRole("button", { name: "Settings…" }));
+  const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+  await user.click(within(nav).getByRole("link", { name: "JSON" }));
+  await user.click(await screen.findByRole("button", { name: "JSON model…" }));
+}
+
 async function saveDashboard(user: ReturnType<typeof renderApp>["user"]) {
   await user.click(screen.getByRole("button", { name: "Save…" }));
   await user.click(
@@ -544,25 +552,30 @@ describe("links", () => {
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
-    await user.click(within(dialog).getByRole("button", { name: "Add link" }));
-    await fill(user, within(dialog).getByRole("textbox", { name: "Label" }), "Böse");
+    const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+    await user.click(within(nav).getByRole("link", { name: "Links" }));
+    const links = await screen.findByRole("region", { name: "Links" });
+    await user.click(within(links).getByRole("button", { name: "Add link" }));
+    await fill(user, within(links).getByRole("textbox", { name: "Label" }), "Böse");
     await replace(
       user,
-      within(dialog).getByRole("textbox", { name: /^Address/ }),
+      within(links).getByRole("textbox", { name: /^Address/ }),
       "javascript:alert(1)",
     );
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    // Saving stops at the problem and shows it in its section.
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    expect(screen.queryByRole("dialog", { name: "Save dashboard" })).toBeNull();
     expect(
-      within(dialog).getByText("The address must start with https://, http://, mailto: or /."),
+      within(links).getByText("The address must start with https://, http://, mailto: or /."),
     ).toBeTruthy();
     await replace(
       user,
-      within(dialog).getByRole("textbox", { name: /^Address/ }),
+      within(links).getByRole("textbox", { name: /^Address/ }),
       "https://kalzit.example/",
     );
-    await fill(user, within(dialog).getByRole("textbox", { name: /^Tags/ }), "sales, eu");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await user.click(within(nav).getByRole("link", { name: "General" }));
+    const general = await screen.findByRole("region", { name: "General" });
+    await fill(user, within(general).getByRole("textbox", { name: /^Tags/ }), "sales, eu");
     await saveDashboard(user);
     await waitFor(() => expect(stored.versions).toHaveLength(2));
     expect(latest(stored).model.links).toEqual([
@@ -913,13 +926,11 @@ describe("JSON, import and export", () => {
     setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    await user.click(screen.getByRole("button", { name: "JSON model…" }));
+    await openJson(user);
     const dialog = screen.getByRole("dialog", { name: "JSON model" });
     // Unchanged, Escape just closes it.
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "JSON model" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
     await user.click(screen.getByRole("button", { name: "JSON model…" }));
     const again = screen.getByRole("dialog", { name: "JSON model" });
     await user.type(within(again).getByRole("textbox", { name: "Dashboard model" }), " ");
@@ -941,8 +952,7 @@ describe("JSON, import and export", () => {
     const { stored } = setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    await user.click(screen.getByRole("button", { name: "JSON model…" }));
+    await openJson(user);
     const dialog = screen.getByRole("dialog", { name: "JSON model" });
     const text = within(dialog).getByRole("textbox", { name: "Dashboard model" });
     await replace(user, text, "{ not json");
@@ -954,6 +964,7 @@ describe("JSON, import and export", () => {
     expect(await within(dialog).findByText(/model.bogus: unknown field/)).toBeTruthy();
     await replace(user, text, JSON.stringify(next));
     await user.click(within(dialog).getByRole("button", { name: "Check and apply" }));
+    await user.click(await screen.findByRole("button", { name: "Back to the dashboard" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Main renamed" })).toBeTruthy();
     await saveDashboard(user);
     await waitFor(() => expect(latest(stored).model.title).toBe("Main renamed"));

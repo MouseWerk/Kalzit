@@ -6,6 +6,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useSearch,
 } from "@tanstack/react-router";
 import {
   type ReactNode,
@@ -66,6 +67,11 @@ import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardInfo } from "./DashboardInfo";
 import { DashboardLinks } from "./DashboardLinks";
 import { DashboardRail } from "./DashboardRail";
+import {
+  DashboardSettingsPage,
+  SETTINGS_SECTIONS,
+  type SettingsSection,
+} from "./DashboardSettingsPage";
 import { DashboardToolbar } from "./DashboardToolbar";
 import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson } from "./exportImport";
@@ -87,7 +93,6 @@ import { panelRange } from "./panelTime";
 import { RefreshControl } from "./RefreshControl";
 import type { DashboardSearch } from "./routes";
 import { ConflictDialog, SaveDialog } from "./SaveDialogs";
-import { SettingsDialog } from "./SettingsDialog";
 import { TimeControls } from "./TimeRangePicker";
 import {
   CopyPanelDialog,
@@ -304,7 +309,6 @@ export function DashboardScreen({ orgId, dashboardId, display, onDisplay, contro
 }
 
 type DialogState =
-  | { kind: "settings" }
   | { kind: "save" }
   | { kind: "conflict"; current: Dashboard; message: string }
   | { kind: "discard" }
@@ -408,6 +412,18 @@ function DashboardView({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const headingId = useId();
+  // The settings page is a child route of the dashboard; its section comes from the address.
+  const onSettings = useLocation({
+    select: (location) => location.pathname === `/dashboards/${dashboard.id}/settings`,
+  });
+  const sectionParam = useSearch({ strict: false, select: (search) => search.section });
+  const settingsSection: SettingsSection = SETTINGS_SECTIONS.includes(
+    sectionParam as SettingsSection,
+  )
+    ? (sectionParam as SettingsSection)
+    : "general";
+  // Bumped when the JSON model is applied from the settings page, so it starts from the result.
+  const [settingsKey, setSettingsKey] = useState(0);
   // Dashboards in restricted folders are hidden altogether, so whoever sees one may edit it when
   // their role allows; the server checks the folder grant on save. A trashed one is read-only.
   const inTrash = dashboard.deletedAt !== null;
@@ -708,6 +724,14 @@ function DashboardView({
       setDialog(null);
       setDraft(null);
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+      // Saved from the settings page: back to the dashboard with the new settings.
+      if (onSettings) {
+        await navigate({
+          to: "/dashboards/$dashboardId",
+          params: { dashboardId: dashboard.id },
+          search: (prev) => ({ ...prev, section: undefined }),
+        });
+      }
     },
     onError: async (error, { message }) => {
       if (isApiError(error, "version_conflict")) {
@@ -948,7 +972,7 @@ function DashboardView({
   const unsaved = () => dirtyRef.current || editorChanged();
   const here = `/dashboards/${dashboard.id}`;
   const staysHere = (pathname: string) =>
-    pathname === here || pathname.startsWith(`${here}/panels/`);
+    pathname === here || pathname === `${here}/settings` || pathname.startsWith(`${here}/panels/`);
   const blocker = useBlocker({
     shouldBlockFn: ({ current, next }) => {
       if (staysHere(next.pathname)) {
@@ -1277,11 +1301,13 @@ function DashboardView({
     addPanel: () => addPanel(),
     addRow,
     addLibraryPanel: () => setDialog({ kind: "libraryPick" }),
-    // From view mode the settings start edit mode: they change the draft.
-    settings: () => {
-      setDraft((current) => current ?? dashboard.model);
-      setDialog({ kind: "settings" });
-    },
+    // The settings are a page of their own; saving there saves the dashboard.
+    settings: () =>
+      void navigate({
+        to: "/dashboards/$dashboardId/settings",
+        params: { dashboardId: dashboard.id },
+        search: (prev) => ({ ...prev, section: undefined }),
+      }),
     json: () => setDialog({ kind: "json", readOnly: draft === null }),
     exportJson: () => void exportJson(),
     copyLink: () => void copyLink(),
@@ -1357,9 +1383,59 @@ function DashboardView({
     }
   }
 
+  const settingsView =
+    editorView !== null || !onSettings ? null : (
+      <DashboardSettingsPage
+        key={settingsKey}
+        orgId={orgId}
+        dashboardId={dashboard.id}
+        model={model}
+        version={dashboard.version}
+        section={settingsSection}
+        trail={editorTrail}
+        canEdit={canEdit}
+        unsaved={dirty}
+        access={
+          canAccess ? (
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => setDialog({ kind: "access" })}
+            >
+              {t("dashboards.access")}
+            </button>
+          ) : null
+        }
+        onSave={(next) => {
+          setDraft(next);
+          setValues((v) => ({ ...initialVariables(next.variables), ...v }));
+          setDialog({ kind: "save" });
+        }}
+        onApply={
+          draft === null
+            ? undefined
+            : (next) => {
+                changeDraft(() => next);
+                setValues((v) => ({ ...initialVariables(next.variables), ...v }));
+                void navigate({
+                  to: "/dashboards/$dashboardId",
+                  params: { dashboardId: dashboard.id },
+                  search: (prev) => ({ ...prev, section: undefined }),
+                });
+              }
+        }
+        onJson={() => {
+          if (canEdit) {
+            setDraft((current) => current ?? dashboard.model);
+          }
+          setDialog({ kind: "json", readOnly: !canEdit });
+        }}
+      />
+    );
+
   return (
     <div className={className}>
-      {editorView ?? (
+      {editorView ?? settingsView ?? (
         <>
           {mode === "kiosk" ? (
             // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
@@ -1594,19 +1670,6 @@ function DashboardView({
           {t("dashboards.discard.text")}
         </ConfirmDialog>
       ) : null}
-      {dialog?.kind === "settings" ? (
-        <SettingsDialog
-          orgId={orgId}
-          model={model}
-          onApply={(next) => {
-            changeDraft(() => next);
-            setValues((v) => ({ ...initialVariables(next.variables), ...v }));
-            setDialog(null);
-          }}
-          onJson={() => setDialog({ kind: "json", readOnly: false })}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
       {dialog?.kind === "json" ? (
         <JsonModelDialog
           orgId={orgId}
@@ -1616,6 +1679,7 @@ function DashboardView({
             changeDraft(() => next);
             setValues((v) => ({ ...initialVariables(next.variables), ...v }));
             setDialog(null);
+            setSettingsKey((key) => key + 1);
           }}
           onClose={() => setDialog(null)}
         />
@@ -1793,6 +1857,14 @@ function DashboardView({
             setDialog(null);
             setDraft(null);
             queryClient.setQueryData(dashboardQuery(orgId, dashboard.id).queryKey, dialog.current);
+            // From the settings page: back to the dashboard, which now shows their version.
+            if (onSettings) {
+              void navigate({
+                to: "/dashboards/$dashboardId",
+                params: { dashboardId: dashboard.id },
+                search: (prev) => ({ ...prev, section: undefined }),
+              });
+            }
           }}
           onClose={() => setDialog(null)}
         />

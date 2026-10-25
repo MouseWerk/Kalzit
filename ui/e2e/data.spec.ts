@@ -18,11 +18,9 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await page.getByLabel(t("datasources.form.name")).fill(source);
   await page.getByLabel(t("datasources.settings.path")).fill(join(fixturesDir(), "sales.db"));
   await page.getByRole("button", { name: t("datasources.form.create") }).click();
-  // Exactly: the add page's heading contains this one.
-  await expect(
-    page.getByRole("heading", { name: t("datasources.edit.title"), exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: t("datasources.health.test"), exact: true }).click();
+  // The source's own page, headed by its name.
+  await expect(page.getByRole("heading", { level: 1, name: source, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: t("datasources.drawer.test"), exact: true }).click();
   const health = page.locator(".ds-health-region");
   await expect(health).toContainText(pattern("datasources.health.ok"));
   await expect(health).toContainText(pattern("datasources.reason.health.connected_read_only"));
@@ -58,7 +56,13 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   // A query variable for the region, and the panel's query uses it.
   await page.getByRole("button", { name: t("dashboards.edit") }).click();
   await page.getByRole("button", { name: t("dashboards.settings") }).click();
-  const settings = page.getByRole("dialog", { name: t("dashboards.settings.title") });
+  await page
+    .getByRole("navigation", { name: t("dashboards.settingsPage.nav") })
+    .getByRole("link", { name: t("dashboards.settingsPage.section.variables") })
+    .click();
+  const settings = page.getByRole("region", {
+    name: t("dashboards.settingsPage.section.variables"),
+  });
   await settings.getByRole("button", { name: t("dashboards.variables.add") }).click();
   const variable = settings.getByRole("region", { name: "var1" });
   await variable.getByLabel(t("dashboards.variables.name")).fill("region");
@@ -71,8 +75,11 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
     .getByLabel(t("dashboards.editor.datasource"))
     .selectOption({ label: source });
   await fillQuery(editorOfRegion, SQL.regions);
-  await settings.getByRole("button", { name: t("dashboards.editor.apply") }).click();
-  await expect(settings).toBeHidden();
+  await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
+  // Back on the dashboard, whose filter bar is a region named like the section.
+  await expect(
+    page.getByRole("heading", { level: 1, name: t("dashboards.settings.title") }),
+  ).toBeHidden();
 
   // A panel from Explore is named after its data source.
   const panelTitle = source;

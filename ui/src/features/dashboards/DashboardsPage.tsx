@@ -40,6 +40,7 @@ import { ConfirmDialog, Dialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 
 const listRoute = getRouteApi("/_app/dashboards");
+const appRoute = getRouteApi("/_app");
 
 /** Pause in typing after which the dashboard search runs. */
 const SEARCH_DELAY_MS = 250;
@@ -64,6 +65,7 @@ export function DashboardsPage() {
 function DashboardBrowser({ orgId }: { orgId: string }) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
+  const userId = appRoute.useRouteContext().me.id;
   const search = listRoute.useSearch();
   const navigate = listRoute.useNavigate();
   const searchId = useId();
@@ -112,14 +114,20 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
         {folders.isError ? (
           <FormAlert>{errorMessage(t, folders.error)}</FormAlert>
         ) : (
-          <FolderTree folders={folders.data ?? []} selected={search.folder} onSelect={select} />
+          <FolderTree
+            folders={folders.data ?? []}
+            selected={search.folder}
+            onSelect={select}
+            storageKey={`kalzit.folderTree.${userId}`}
+          />
         )}
         {permissions.has("folders:write") ? (
           <button
             type="button"
-            className="button button--secondary"
+            className="button button--secondary button--small browser__new-folder"
             onClick={() => setCreating("folder")}
           >
+            <Icon name="plus" />
             {t("dashboards.folders.new")}
           </button>
         ) : null}

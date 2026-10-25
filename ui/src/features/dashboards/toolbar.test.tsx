@@ -257,7 +257,9 @@ describe("the dashboard's time options", () => {
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+    await user.click(within(nav).getByRole("link", { name: "Time options" }));
+    const dialog = await screen.findByRole("region", { name: "Time options" });
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Time zone" }), "UTC");
     await user.selectOptions(
       within(dialog).getByRole("combobox", { name: "First day of the week" }),
@@ -274,12 +276,11 @@ describe("the dashboard's time options", () => {
       within(dialog).getByRole("combobox", { name: "Shared cursor" }),
       "tooltip",
     );
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await user.click(screen.getByRole("button", { name: "Save…" }));
     expect(within(dialog).getByText("2s is not an interval from 5s to 1d.")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Save dashboard" })).toBeNull();
     await user.clear(intervals);
     await user.type(intervals, "5m, 30s, 5m");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
-    expect(screen.queryByRole("dialog", { name: "Dashboard settings" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const save = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(save).getByRole("button", { name: "Save" }));

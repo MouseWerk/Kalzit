@@ -23,6 +23,14 @@ async function moreAction(user: ReturnType<typeof renderApp>["user"], name: stri
   await user.click(await screen.findByRole("menuitem", { name }));
 }
 
+/** Opens the dashboard's settings page from edit mode at a section and returns that section. */
+async function openSettings(user: ReturnType<typeof renderApp>["user"], section: string) {
+  await user.click(screen.getByRole("button", { name: "Settings…" }));
+  const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+  await user.click(within(nav).getByRole("link", { name: section }));
+  return screen.findByRole("region", { name: section });
+}
+
 /** Fills a field at once: typing key by key is slow, and these tests check what is sent. */
 async function fill(user: ReturnType<typeof renderApp>["user"], field: HTMLElement, text: string) {
   await user.click(field);
@@ -357,12 +365,12 @@ describe("dashboard view", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await screen.findByRole("option", { name: "Graz" });
     await user.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const dialog = await openSettings(user, "Variables");
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Query" }), {
       target: { value: "SELECT name, score FROM customers" },
     });
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    // In edit mode Apply takes the change into the unsaved dashboard and goes back to it.
+    await user.click(screen.getByRole("button", { name: "Apply" }));
     // The fake answers that SQL with a table whose first field is ids and second names.
     expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();
     expect(server.areas.dashboards.variableRequests).toHaveLength(1);
@@ -708,14 +716,12 @@ describe("editing a dashboard", () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const dialog = await openSettings(user, "Variables");
     await user.click(within(dialog).getByRole("button", { name: "Add variable" }));
     const name = within(dialog).getByRole("textbox", { name: "Name" });
     await user.clear(name);
     await fill(user, name, "region");
     await fill(user, within(dialog).getByRole("textbox", { name: "Values" }), "eu, us");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
@@ -805,12 +811,10 @@ describe("rights and refusals", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click((await screen.findAllByRole("button", { name: "Edit" }))[0] as HTMLElement);
     expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const dialog = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const dialog = await openSettings(user, "General");
     const title = within(dialog).getByRole("textbox", { name: "Title" });
     await user.clear(title);
     await fill(user, title, "Sales (granted)");
-    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
@@ -884,10 +888,8 @@ describe("rights and refusals", () => {
     server.areas.dashboards.unqueryable.push(PG_ID);
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
-    const settings = screen.getByRole("dialog", { name: "Dashboard settings" });
+    const settings = await openSettings(user, "Variables");
     await user.click(within(settings).getByRole("button", { name: "Add variable" }));
-    await user.click(within(settings).getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Save…" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -940,6 +942,8 @@ describe("rights and refusals", () => {
     const { user } = renderApp(path);
     if (path.startsWith("/dashboards/")) {
       await moreAction(user, "Access…");
+    } else if (path.startsWith("/data-sources/")) {
+      await user.click(await screen.findByRole("button", { name: "Manage access…" }));
     } else {
       await user.click(await screen.findByRole("button", { name: "Access…" }));
     }
