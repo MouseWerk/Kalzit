@@ -1439,7 +1439,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `secrets.undecryptable` | `field` | a stored secret cannot be decrypted (key changed) |
 | `settings.stored_invalid` | | the stored settings no longer fit the kind |
 | `server.shutting_down` | | the server is shutting down |
-| `internal` | | an unexpected failure; see the server log |
+| `internal` | | an unexpected failure; see the server log (the error carries `requestId`, which the log line names too) |
 
 ### Health and notices
 

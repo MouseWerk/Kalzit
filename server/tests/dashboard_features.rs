@@ -385,7 +385,7 @@ async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
         { "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } },
         { "refId": "B", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" }, "hide": true }
     ]);
-    let id = t.dashboard(None, m, &t.owner).await;
+    let id = t.dashboard(None, m.clone(), &t.owner).await;
     // Stored as sent; a target that runs carries no `hide`.
     let read = t.get(&format!("~/dashboards/{id}"), &t.owner).await;
     let targets = &read.body["model"]["panels"][0]["targets"];
@@ -394,6 +394,22 @@ async fn hidden_targets_are_kept_but_not_run(t: TestApp) {
     let ran = t.post(&format!("~/dashboards/{id}/panels/p1/query"), q, &t.owner).await;
     assert_eq!(ran.status, StatusCode::OK, "{}", ran.body);
     assert!(ran.body["results"].get("A").is_some(), "{}", ran.body);
+    assert!(ran.body["results"].get("B").is_none(), "{}", ran.body);
+
+    // A hidden target that an enabled step reads is run, since the step needs its frame; a
+    // disabled step does not count.
+    let mut read_by_step = model("Versteckt, gelesen");
+    read_by_step["panels"][0]["targets"] = m["panels"][0]["targets"].clone();
+    read_by_step["panels"][0]["transformations"] =
+        json!([{ "id": "s", "type": "calculate", "frame": "B", "name": "n", "expression": "1" }]);
+    let read_id = t.dashboard(None, read_by_step.clone(), &t.owner).await;
+    let q = json!({ "timeRange": range(), "variables": {} });
+    let ran = t.post(&format!("~/dashboards/{read_id}/panels/p1/query"), q.clone(), &t.owner).await;
+    assert!(ran.body["results"].get("B").is_some(), "{}", ran.body);
+    read_by_step["title"] = json!("Versteckt, Schritt aus");
+    read_by_step["panels"][0]["transformations"][0]["disabled"] = json!(true);
+    let off_id = t.dashboard(None, read_by_step, &t.owner).await;
+    let ran = t.post(&format!("~/dashboards/{off_id}/panels/p1/query"), q, &t.owner).await;
     assert!(ran.body["results"].get("B").is_none(), "{}", ran.body);
 
     // The export runs the shown query only; a panel whose queries are all hidden has nothing

@@ -135,5 +135,6 @@
   "dashboardTools.import.mappingHint": "Each data source of the file is matched by kind and name. Check the choice or pick another.",
   "dashboardTools.import.sourceLabel": "{name} ({kind})",
   "dashboardTools.import.pick": "Pick a data source",
-  "dashboardTools.import.confirm": "Import"
+  "dashboardTools.import.confirm": "Import",
+  "dashboardTools.links.menu": "Links"
 }

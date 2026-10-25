@@ -1109,6 +1109,7 @@ pub fn error_body(code: &str, detail: Detail) -> ErrorBody {
         field: None,
         reason: Some(detail.reason.to_string()),
         params: (!detail.params.is_empty()).then_some(detail.params),
+        request_id: None,
     }
 }
 
@@ -1119,7 +1120,14 @@ pub fn api_error_body(e: ApiError) -> ErrorBody {
         Some(r) => (Some(r.code), (!r.params.is_empty()).then_some(r.params)),
         None => (None, None),
     };
-    ErrorBody { code: e.code.to_string(), message: e.message, field: e.field.map(str::to_string), reason, params }
+    ErrorBody {
+        code: e.code.to_string(),
+        message: e.message,
+        field: e.field.map(str::to_string),
+        reason,
+        params,
+        request_id: e.request_id.map(String::from),
+    }
 }
 
 /// The longest interval a request may ask for: a year.

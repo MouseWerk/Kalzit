@@ -176,7 +176,11 @@ reason?: string,
 /**
  * Values the reason's text needs (`{name}`).
  */
-params?: { [key in string]: string }, };
+params?: { [key in string]: string }, 
+/**
+ * For `internal`: the request id that the server log names next to the cause.
+ */
+requestId?: string, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
