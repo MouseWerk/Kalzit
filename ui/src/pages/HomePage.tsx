@@ -488,7 +488,8 @@ function useRelativeTime(): (at: number) => string {
   const { language } = useI18n();
   const format = new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" });
   return (at) => {
-    const seconds = Math.round((at - Date.now()) / 1000);
+    // Never in the future: a server clock a little ahead reads as "now".
+    const seconds = Math.min(0, Math.round((at - Date.now()) / 1000));
     const steps: [Intl.RelativeTimeFormatUnit, number][] = [
       ["day", 86_400],
       ["hour", 3_600],
