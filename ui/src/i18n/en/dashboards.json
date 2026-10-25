@@ -86,6 +86,7 @@
   "dashboards.settingsPage.back": "Back to the dashboard",
   "dashboards.settingsPage.unsaved": "Unsaved changes",
   "dashboards.settingsPage.leaveText": "Your changes to these settings will be lost.",
+  "dashboards.settingsPage.changedElsewhere": "Someone saved this dashboard while you were changing its settings. Saving asks how to go on, so their version is not overwritten unasked.",
   "dashboards.settingsPage.readOnly": "You may look at these settings, but not change them.",
   "dashboards.settingsPage.accessText": "Who may see, edit and share this dashboard beyond their role.",
   "dashboards.settingsPage.noAccess": "Only people who may manage access to this dashboard see who has it.",

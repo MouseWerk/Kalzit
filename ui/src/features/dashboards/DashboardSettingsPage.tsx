@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
@@ -29,7 +29,6 @@ import {
   timeOptionsDraft,
   timeOptionsProblems,
 } from "./TimeOptionsEditor";
-import { useLeaveGuard } from "./ui/useLeaveGuard";
 import "./dashboards.css";
 import "./dashboardTools.css";
 
@@ -74,15 +73,20 @@ interface DashboardSettingsPageProps {
   unsaved: boolean;
   /** The dashboard's access button, or null when the caller may not manage access. */
   access: ReactNode;
-  /** Saves the changed dashboard (the page then asks for a message, as Save does). */
-  onSave: (next: DashboardModel) => void;
+  /**
+   * Saves the changed dashboard (the page then asks for a message, as Save does), on the version
+   * the page started from, so a version saved elsewhere meanwhile is not overwritten unasked.
+   */
+  onSave: (next: DashboardModel, base: number) => void;
+  /** Told whenever the page gets or loses changes; the dashboard's leave guard asks for them. */
+  onDirtyChange: (dirty: boolean) => void;
   /**
    * In edit mode: takes the settings into the unsaved dashboard and goes back to it, as the panel
    * editor's Apply does; left out outside edit mode.
    */
   onApply?: ((next: DashboardModel) => void) | undefined;
-  /** Opens the JSON model of the dashboard. */
-  onJson: () => void;
+  /** Opens the JSON model, starting from the dashboard with this page's changes. */
+  onJson: (pending: DashboardModel) => void;
 }
 
 /**
@@ -101,6 +105,7 @@ export function DashboardSettingsPage({
   unsaved,
   access,
   onSave,
+  onDirtyChange,
   onApply,
   onJson,
 }: DashboardSettingsPageProps) {
@@ -118,10 +123,16 @@ export function DashboardSettingsPage({
   const [links, setLinks] = useState<DashboardLinkModel[]>(model.links ?? []);
   const [annotations, setAnnotations] = useState<AnnotationQueryModel[]>(model.annotations ?? []);
   const [checked, setChecked] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
   const [time, setTime] = useState(() => timeOptionsDraft(model));
   const [dirty, setDirty] = useState(false);
-  const leave = useLeaveGuard(dirty, t("dashboards.settingsPage.leaveText"));
+  // The version this page started from; one saved elsewhere since is said, and Save asks.
+  const [base] = useState(version);
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
+  // Gone from the page (to the dashboard or elsewhere): nothing of it is pending any more.
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+  const annotationsBad = annotations.some((a) => a.datasourceId === "" || a.name.trim() === "");
   const listRef = useRef<HTMLUListElement>(null);
   const timeProblems = checked ? timeOptionsProblems(t, time) : {};
   // The default refresh offers the intervals typed here, as the toolbar will.
@@ -150,7 +161,7 @@ export function DashboardSettingsPage({
     });
   // Back, or Discard with changes: leaving on purpose drops them without asking again.
   const back = () => {
-    leave.release();
+    onDirtyChange(false);
     void navigate({
       to: "/dashboards/$dashboardId",
       params: { dashboardId },
@@ -173,8 +184,6 @@ export function DashboardSettingsPage({
     setErrors(found);
     setChecked(true);
     const linksBad = links.some((link) => linkProblem(link) !== null);
-    const annotationsBad = annotations.some((a) => a.datasourceId === "" || a.name.trim() === "");
-    setProblem(annotationsBad ? t("annotations.queries.incomplete") : null);
     const timeBad = Object.keys(timeOptionsProblems(t, time)).length > 0;
     // The first section with a problem opens, so the problem is in view.
     const bad: SettingsSection | undefined =
@@ -217,14 +226,31 @@ export function DashboardSettingsPage({
     return next;
   }
 
-  function finish(then: (next: DashboardModel) => void) {
+  // Apply leaves for the dashboard with the change in it: nothing is pending here any more.
+  function apply(then: (next: DashboardModel) => void) {
     const next = build();
     if (next === null) {
       return;
     }
     setDirty(false);
-    leave.release();
+    onDirtyChange(false);
     then(next);
+  }
+
+  // Save keeps the changes marked until the save went through: a cancelled save dialog leaves
+  // them unsaved.
+  function save() {
+    const next = build();
+    if (next !== null) {
+      onSave(next, base);
+    }
+  }
+
+  function openJson() {
+    const next = build();
+    if (next !== null) {
+      onJson(next);
+    }
   }
 
   function onListKey(event: KeyboardEvent<HTMLUListElement>) {
@@ -323,11 +349,11 @@ export function DashboardSettingsPage({
             queries={annotations}
             onChange={changed(setAnnotations)}
           />
-          {problem === null ? null : (
+          {checked && annotationsBad ? (
             <p className="notice notice--danger" role="alert">
-              {problem}
+              {t("annotations.queries.incomplete")}
             </p>
-          )}
+          ) : null}
         </>
       );
       break;
@@ -373,7 +399,7 @@ export function DashboardSettingsPage({
       body = (
         <div className="dash-settings__plain">
           <p>{t("dashboards.settingsPage.jsonText")}</p>
-          <button type="button" className="button button--secondary" onClick={onJson}>
+          <button type="button" className="button button--secondary" onClick={openJson}>
             <Icon name="code" />
             {t("dashboardTools.json.open")}
           </button>
@@ -394,7 +420,7 @@ export function DashboardSettingsPage({
             <p className="page__lead">{model.title}</p>
           </div>
           <div className="page__actions">
-            {dirty ? (
+            {dirty || unsaved ? (
               <span className="dash-settings__unsaved" role="status">
                 {t("dashboards.settingsPage.unsaved")}
               </span>
@@ -407,7 +433,7 @@ export function DashboardSettingsPage({
                 type="button"
                 className="button button--secondary"
                 disabled={!dirty}
-                onClick={() => finish(onApply)}
+                onClick={() => apply(onApply)}
               >
                 {t("dashboards.editor.apply")}
               </button>
@@ -417,7 +443,7 @@ export function DashboardSettingsPage({
                 type="button"
                 className="button button--primary"
                 disabled={!dirty && !unsaved}
-                onClick={() => finish(onSave)}
+                onClick={save}
               >
                 {t("dashboards.settingsPage.save")}
               </button>
@@ -463,13 +489,23 @@ export function DashboardSettingsPage({
             {canEdit || !editable ? null : (
               <p className="field__hint">{t("dashboards.settingsPage.readOnly")}</p>
             )}
-            <fieldset className="dash-settings__body" disabled={!canEdit && editable}>
+            {version === base || !dirty ? null : (
+              <p className="notice" role="status">
+                <Icon name="alert" />
+                <span>{t("dashboards.settingsPage.changedElsewhere")}</span>
+              </p>
+            )}
+            {/* Inert as well: a query editor is no form field a fieldset could disable. */}
+            <fieldset
+              className="dash-settings__body"
+              disabled={!canEdit && editable}
+              inert={!canEdit && editable}
+            >
               {body}
             </fieldset>
           </section>
         </div>
       </div>
-      {leave.dialog}
     </>
   );
 }

@@ -310,7 +310,8 @@ export function DashboardScreen({ orgId, dashboardId, display, onDisplay, contro
 }
 
 type DialogState =
-  | { kind: "save" }
+  /** `base`: the version the change was made on (the settings page), else the newest. */
+  | { kind: "save"; base?: number | undefined }
   | { kind: "conflict"; current: Dashboard; message: string }
   | { kind: "discard" }
   | { kind: "delete" }
@@ -318,7 +319,8 @@ type DialogState =
   | { kind: "removeRow"; row: RowModel }
   | { kind: "copy"; panel: PanelModel }
   | { kind: "saveAs" }
-  | { kind: "json"; readOnly: boolean }
+  /** `model`: what the JSON starts from when it is not the dashboard as it is (the settings page). */
+  | { kind: "json"; readOnly: boolean; model?: DashboardModel | undefined }
   | { kind: "libraryPick" }
   | { kind: "makeLibrary"; panel: PanelModel }
   | { kind: "librarySave"; panel: PanelModel; isNew: boolean }
@@ -425,6 +427,16 @@ function DashboardView({
     : "general";
   // Bumped when the JSON model is applied from the settings page, so it starts from the result.
   const [settingsKey, setSettingsKey] = useState(0);
+  // Changes made on the settings page and not yet taken into the dashboard; the dashboard's leave
+  // guard asks for them too.
+  const settingsDirty = useRef(false);
+  const [settingsChanged, setSettingsChanged] = useState(false);
+  // The saved version the settings page started from: a newer one saved elsewhere restarts an
+  // untouched page, while a page with changes keeps them and says so.
+  const [settingsVersion, setSettingsVersion] = useState(dashboard.version);
+  if (settingsVersion !== dashboard.version && !settingsChanged) {
+    setSettingsVersion(dashboard.version);
+  }
   // Dashboards in restricted folders are hidden altogether, so whoever sees one may edit it when
   // their role allows; the server checks the folder grant on save. A trashed one is read-only.
   const inTrash = dashboard.deletedAt !== null;
@@ -732,6 +744,7 @@ function DashboardView({
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       // Saved from the settings page: back to the dashboard with the new settings.
       if (onSettings) {
+        settingsDirty.current = false;
         await navigate({
           to: "/dashboards/$dashboardId",
           params: { dashboardId: dashboard.id },
@@ -975,8 +988,9 @@ function DashboardView({
   // Leaving the dashboard with unsaved changes asks first; so does leaving the editor without
   // its buttons (the browser's back button) when that would drop a change to the panel.
   const editorChanged = () => snapshot.current?.changed() ?? false;
-  const unsaved = () => dirtyRef.current || editorChanged();
+  const unsaved = () => dirtyRef.current || editorChanged() || settingsDirty.current;
   const here = `/dashboards/${dashboard.id}`;
+  const settingsPath = `${here}/settings`;
   const staysHere = (pathname: string) =>
     pathname === here || pathname === `${here}/settings` || pathname.startsWith(`${here}/panels/`);
   const blocker = useBlocker({
@@ -986,6 +1000,15 @@ function DashboardView({
       if ((action === "BACK" || action === "FORWARD") && hasBackGuard()) {
         return false;
       }
+      // Leaving the settings page with changes made there asks, wherever it goes. Moving between
+      // its sections stays on the page.
+      if (
+        current.pathname === settingsPath &&
+        next.pathname !== settingsPath &&
+        settingsDirty.current
+      ) {
+        return true;
+      }
       if (staysHere(next.pathname)) {
         const fromEditor = current.pathname.startsWith(`${here}/panels/`);
         return fromEditor && leaveMode.current === null && editorChanged();
@@ -994,9 +1017,15 @@ function DashboardView({
     },
     enableBeforeUnload: unsaved,
     withResolver: true,
-    disabled: draft === null,
+    // One guard for the dashboard and its settings page, so leaving asks once.
+    disabled: draft === null && !onSettings,
   });
-  const droppingPanel = blocker.status === "blocked" && staysHere(blocker.next.pathname);
+  const leavingSettings =
+    blocker.status === "blocked" &&
+    blocker.current.pathname === settingsPath &&
+    staysHere(blocker.next.pathname);
+  const droppingPanel =
+    blocker.status === "blocked" && !leavingSettings && staysHere(blocker.next.pathname);
   const inEditMode = draft !== null;
   // The panel the inspector shows while editing; gone with edit mode or with the panel.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1397,7 +1426,7 @@ function DashboardView({
   const settingsView =
     editorView !== null || !onSettings ? null : (
       <DashboardSettingsPage
-        key={settingsKey}
+        key={`${settingsKey}:${settingsVersion}:${draft === null ? "saved" : "draft"}`}
         orgId={orgId}
         dashboardId={dashboard.id}
         model={model}
@@ -1417,10 +1446,14 @@ function DashboardView({
             </button>
           ) : null
         }
-        onSave={(next) => {
+        onDirtyChange={(changed) => {
+          settingsDirty.current = changed;
+          setSettingsChanged(changed);
+        }}
+        onSave={(next, base) => {
           setDraft(next);
           setValues((v) => ({ ...initialVariables(next.variables), ...v }));
-          setDialog({ kind: "save" });
+          setDialog({ kind: "save", base });
         }}
         onApply={
           draft === null
@@ -1435,12 +1468,9 @@ function DashboardView({
                 });
               }
         }
-        onJson={() => {
-          if (canEdit) {
-            setDraft((current) => current ?? dashboard.model);
-          }
-          setDialog({ kind: "json", readOnly: !canEdit });
-        }}
+        onJson={(pending) =>
+          setDialog({ kind: "json", readOnly: !canEdit, model: canEdit ? pending : undefined })
+        }
       />
     );
 
@@ -1669,7 +1699,22 @@ function DashboardView({
           {isNewPanel ? t("dashboards.editor.discardNewText") : t("dashboards.editor.discardText")}
         </ConfirmDialog>
       ) : null}
-      {blocker.status === "blocked" && !droppingPanel ? (
+      {leavingSettings ? (
+        <ConfirmDialog
+          title={t("dashboards.leave.title")}
+          confirmLabel={t("dashboards.leave.confirm")}
+          onCancel={() => blocker.reset()}
+          backGuard={false}
+          onConfirm={() => {
+            // Back on the dashboard: its own unsaved changes stay.
+            settingsDirty.current = false;
+            blocker.proceed();
+          }}
+        >
+          {t("dashboards.settingsPage.leaveText")}
+        </ConfirmDialog>
+      ) : null}
+      {blocker.status === "blocked" && !droppingPanel && !leavingSettings ? (
         <ConfirmDialog
           title={t("dashboards.leave.title")}
           confirmLabel={t("dashboards.leave.confirm")}
@@ -1678,19 +1723,21 @@ function DashboardView({
           onConfirm={() => {
             // Left on purpose: a reload of this dashboard later starts clean.
             writeDraft(owner, dashboard.id, null);
+            settingsDirty.current = false;
             blocker.proceed();
           }}
         >
-          {t("dashboards.discard.text")}
+          {draft === null ? t("dashboards.settingsPage.leaveText") : t("dashboards.discard.text")}
         </ConfirmDialog>
       ) : null}
       {dialog?.kind === "json" ? (
         <JsonModelDialog
           orgId={orgId}
-          model={model}
-          readOnly={dialog.readOnly || draft === null}
+          model={dialog.model ?? model}
+          readOnly={dialog.readOnly || (draft === null && dialog.model === undefined)}
           onApply={(next) => {
-            changeDraft(() => next);
+            // From the settings page in view mode, applying the JSON starts edit mode.
+            setDraft(next);
             setValues((v) => ({ ...initialVariables(next.variables), ...v }));
             setDialog(null);
             setSettingsKey((key) => key + 1);
@@ -1846,7 +1893,9 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
-          onSave={(message) => save.mutate({ next: draft, version: dashboard.version, message })}
+          onSave={(message) =>
+            save.mutate({ next: draft, version: dialog.base ?? dashboard.version, message })
+          }
           onClose={() => {
             save.reset();
             setDialog(null);

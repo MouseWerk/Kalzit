@@ -618,6 +618,8 @@ export function SettingsForm({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  // A form that goes away (saved and started again, or left) holds nothing unsaved any more.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [focusInvalid, setFocusInvalid] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const groups = groupSettings(kind.settings);

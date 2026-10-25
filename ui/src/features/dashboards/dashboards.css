@@ -90,43 +90,32 @@
   .folder-tree__list {
     display: grid;
     gap: var(--space-px);
-    list-style: none;
   }
 
-  /* A row: the chevron column (empty for folders without subfolders), then the entry. */
+  /* A tree item: its row, then its subfolders one indent step in. */
   .folder-tree__node {
     display: grid;
-    grid-template-columns: var(--space-5) minmax(0, 1fr);
-    align-items: center;
+    gap: var(--space-px);
   }
 
   .folder-tree__node > .folder-tree__list {
-    grid-column: 1 / -1;
     padding-inline-start: var(--space-4);
   }
 
   .folder-tree__toggle {
     display: inline-grid;
+    flex: none;
     width: var(--space-5);
     height: var(--space-5);
     place-items: center;
-    padding: 0;
-    border: 0;
     border-radius: var(--radius-sm);
-    background: transparent;
     color: var(--text-muted);
-    cursor: pointer;
   }
 
-  .folder-tree__toggle:hover:not(:disabled) {
+  .folder-tree__toggle:not(:empty):not([data-disabled]):hover {
     background: var(--bg-hover);
     color: var(--text);
   }
-
-  .folder-tree__toggle:disabled {
-    cursor: default;
-  }
-
   .browser__new-folder {
     justify-self: start;
     gap: var(--space-1);
@@ -162,6 +151,7 @@
 
   .folder-tree__name {
     display: flex;
+    flex: 1;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
@@ -173,20 +163,13 @@
   }
 
   .folder-tree__item {
-    grid-column: 2;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    width: 100%;
+    gap: var(--space-1);
     min-height: var(--control-height);
-    padding: var(--space-1) var(--space-2);
-    border: 0;
+    padding: var(--space-1) var(--space-2) var(--space-1) 0;
     border-radius: var(--radius-sm);
-    background: transparent;
     color: var(--text);
-    font: inherit;
-    text-align: start;
     cursor: pointer;
   }
 
@@ -194,16 +177,11 @@
     background: var(--bg-hover);
   }
 
-  .folder-tree__item:focus-visible {
-    outline-offset: calc(var(--focus-ring-width) * -1);
-  }
-
   /* Current folder: neutral tint and weight, no frame or bar. */
-  .folder-tree__item[aria-current="true"] {
+  .folder-tree__item[data-current="true"] {
     background: var(--bg-active);
     font-weight: var(--font-weight-semibold);
   }
-
   .folder-tree__restricted {
     display: inline-flex;
     color: var(--text-muted);

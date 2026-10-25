@@ -76,7 +76,8 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
     .selectOption({ label: source });
   await fillQuery(editorOfRegion, SQL.regions);
   await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
-  // Back on the dashboard, whose filter bar is a region named like the section.
+  // Apply in edit mode takes the variable into the unsaved dashboard and goes back to it.
+  await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
   await expect(
     page.getByRole("heading", { level: 1, name: t("dashboards.settings.title") }),
   ).toBeHidden();

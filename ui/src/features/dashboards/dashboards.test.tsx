@@ -110,13 +110,13 @@ describe("dashboard browser", () => {
     addFolder(server.areas.dashboards, "f-pay", "Payroll", { parentId: "f-hr" });
     const { user } = renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("button", { name: "People, Restricted" })).toBeTruthy();
-    expect(within(tree).getByRole("button", { name: "Operations" })).toBeTruthy();
+    expect(await within(tree).findByRole("treeitem", { name: "People, Restricted" })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: "Operations" })).toBeTruthy();
     // The subfolder inherits the restriction and shows it.
-    expect(within(tree).getByRole("button", { name: "Payroll, Restricted" })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: "Payroll, Restricted" })).toBeTruthy();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
 
-    await user.click(within(tree).getByRole("button", { name: "People, Restricted" }));
+    await user.click(within(tree).getByRole("treeitem", { name: "People, Restricted" }));
     expect(await screen.findByRole("link", { name: "Headcount" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("link", { name: "Sales" })).toBeNull());
   });
@@ -125,7 +125,7 @@ describe("dashboard browser", () => {
     setup("editor");
     renderApp("/dashboards");
     const tree = await screen.findByRole("navigation", { name: "Folders" });
-    expect(await within(tree).findByRole("button", { name: "Operations" })).toBeTruthy();
+    expect(await within(tree).findByRole("treeitem", { name: "Operations" })).toBeTruthy();
     expect(within(tree).queryByText("People")).toBeNull();
     expect(await screen.findByRole("link", { name: "Sales" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Headcount" })).toBeNull();
@@ -165,7 +165,7 @@ describe("dashboard browser", () => {
     await screen.findByRole("heading", { name: "All dashboards" });
     // At the top level the viewer role decides: nothing to create.
     expect(screen.queryByRole("button", { name: "New dashboard" })).toBeNull();
-    await user.click(await screen.findByRole("button", { name: "Operations" }));
+    await user.click(await screen.findByRole("treeitem", { name: "Operations" }));
     await user.click(await screen.findByRole("button", { name: "New dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "New dashboard" });
     await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "Capacity");
