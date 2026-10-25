@@ -36,9 +36,10 @@ export const SERVER_ERROR_CODES = Object.keys(SERVER_ERROR_CODE_SET) as ServerEr
 
 /**
  * Codes the client adds itself: `network` when the server could not be reached at all,
- * `invalid_response` when it answered with something outside the contract (a proxy error page).
+ * `invalid_response` when it answered with something outside the contract (a proxy error page),
+ * `download_interrupted` when a file download began (200) and broke off before its end.
  */
-export type ErrorCode = ServerErrorCode | "network" | "invalid_response";
+export type ErrorCode = ServerErrorCode | "network" | "invalid_response" | "download_interrupted";
 
 export class ApiError extends Error {
   readonly code: ErrorCode;
@@ -297,7 +298,13 @@ export async function requestFile(
     if (cancelled(cause)) {
       throw cause;
     }
-    throw new ApiError("network", response.status, cause instanceof Error ? cause.message : "");
+    // The answer was 200: the file broke off on the way (the server gave it up, the connection
+    // dropped). Nothing was saved.
+    throw new ApiError(
+      "download_interrupted",
+      response.status,
+      cause instanceof Error ? cause.message : "",
+    );
   }
 }
 

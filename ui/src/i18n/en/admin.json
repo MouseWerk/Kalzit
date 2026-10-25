@@ -418,6 +418,7 @@
   "admin.auditAction.playlist.deleted": "Playlist deleted",
   "admin.auditAction.data.exported": "Data exported",
   "admin.auditAction.data.export_refused": "Export refused",
+  "admin.auditAction.data.export_aborted": "Export stopped",
   "admin.users.cannotLock": "This account cannot be locked: it is the last server admin, or the last owner of an organization who can sign in. Give that role to someone else first.",
   "admin.settings.datasources.sqlite_dirs.label": "SQLite folders",
   "admin.settings.datasources.sqlite_dirs.description": "Folders on the server from which SQLite data sources may open database files. The data folder is always refused. If the list is empty, no SQLite files are allowed.",

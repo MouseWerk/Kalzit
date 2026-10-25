@@ -94,6 +94,7 @@
   "errors.query_timeout": "Die Abfrage hat zu lange gedauert und wurde abgebrochen. Grenz sie ein, zum Beispiel mit einem kürzeren Zeitraum, und versuch es noch einmal.",
   "errors.query_rejected": "Die Abfrage wurde abgelehnt, weil sie Daten ändern könnte. Datenquellen sind nur lesbar; verwende eine Abfrage, die nur liest.",
   "errors.network": "Der Server ist nicht erreichbar. Prüf, ob er läuft, und versuch es dann noch einmal.",
+  "errors.download_interrupted": "Der Download wurde abgebrochen, bevor die Datei zu Ende war; es wurde nichts gespeichert. Versuche es noch einmal; bei sehr großen Exporten filtere oder gruppiere vorher in der Abfrage.",
   "errors.invalid_response": "Der Server hat unerwartet geantwortet. Prüf, ob die Versionen von Oberfläche und Server zusammenpassen.",
   "errorPage.title": "Kalzit konnte nicht geladen werden",
   "notFound.title": "Seite nicht gefunden",
