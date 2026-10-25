@@ -861,6 +861,16 @@
   }
 
   @media (max-width: 75rem) {
+    .about-hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .about-hero__art {
+      width: 100%;
+      max-width: var(--size-dialog-sm);
+      margin-inline: auto;
+    }
+
     .settings-appearance {
       grid-template-columns: minmax(0, 1fr);
     }
