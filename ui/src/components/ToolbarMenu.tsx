@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useMenuButton } from "../shell/useMenuButton";
 import { Icon, type IconName } from "./Icon";
 import { type ShortcutKeys, WithTooltip } from "./IconButton";
+import { placeMenu } from "./menuPlacement";
 import "../shell/shellUx.css";
 import "./iconButton.css";
 
@@ -38,7 +39,8 @@ interface ToolbarMenuProps {
 /**
  * A quiet icon button that opens a menu, after the menu button pattern: arrow keys, Home and End
  * move, Escape and Tab close, focus returns to the button after a choice. The menu is drawn in
- * the window under the button, so a toolbar that wraps or scrolls never clips it.
+ * the window under the button (above it near the bottom edge), so a toolbar that wraps or
+ * scrolls never clips it.
  */
 export function ToolbarMenu({ label, icon, text, entries, shortcut, className }: ToolbarMenuProps) {
   const menu = useMenuButton();
@@ -50,9 +52,7 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
     if (!open || button === null || list === null) {
       return;
     }
-    const box = button.getBoundingClientRect();
-    list.style.setProperty("--menu-top", `${box.bottom}px`);
-    list.style.setProperty("--menu-right", `${Math.max(window.innerWidth - box.right, 0)}px`);
+    placeMenu(button, list);
   }, [open, buttonRef, menuRef]);
 
   useEffect(() => {

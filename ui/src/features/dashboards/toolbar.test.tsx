@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { getTimeSettings } from "../../lib/timeSettings";
 import { SHORTCUT_AREAS } from "../../shell/ShortcutsHelp";
@@ -306,8 +306,9 @@ describe("the dashboard's time options", () => {
 });
 
 describe("the rail", () => {
-  it("offers export and the outline, and folds away for this account until shown again", async () => {
+  it("offers export and the outline, and is always shown", async () => {
     setup("viewer");
+    window.localStorage.setItem("kalzit.dashboardRail.u1", "collapsed");
     const { user } = renderApp("/dashboards/d-main");
     const rail = await screen.findByRole("complementary", { name: "Dashboard tools" });
     expect(within(rail).getByRole("button", { name: "Export as JSON" })).toBeTruthy();
@@ -323,12 +324,8 @@ describe("the rail", () => {
     await user.keyboard("{Escape}");
     await user.click(within(rail).getByRole("button", { name: "Filters" }));
     expect(screen.queryByRole("region", { name: "Variables" })).toBeNull();
-    await user.click(within(rail).getByRole("button", { name: "Fold the tools away" }));
-    expect(within(rail).queryByRole("button", { name: "Export as JSON" })).toBeNull();
-    cleanup();
-    renderApp("/dashboards/d-main");
-    const again = await screen.findByRole("complementary", { name: "Dashboard tools" });
-    expect(within(again).getByRole("button", { name: "Show the tools" })).toBeTruthy();
-    expect(within(again).queryByRole("button", { name: "Export as JSON" })).toBeNull();
+    // Nothing folds it away, and the state an earlier version stored is cleaned up.
+    expect(within(rail).queryByRole("button", { name: /tools/i })).toBeNull();
+    expect(window.localStorage.getItem("kalzit.dashboardRail.u1")).toBeNull();
   });
 });

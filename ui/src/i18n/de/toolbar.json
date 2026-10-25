@@ -43,8 +43,6 @@
   "toolbar.rail.fullscreen": "Vollbild",
   "toolbar.rail.outline": "Gliederung",
   "toolbar.rail.outlineEmpty": "Noch keine Panels.",
-  "toolbar.rail.collapse": "Werkzeuge einklappen",
-  "toolbar.rail.expand": "Werkzeuge zeigen",
   "toolbar.share.copyLink": "Link mit Zeitraum kopieren",
   "toolbar.share.linkCopied": "Link kopiert.",
   "toolbar.share.linkFailed": "Der Link ließ sich nicht kopieren. Dein Browser hat den Zugriff auf die Zwischenablage nicht erlaubt.",

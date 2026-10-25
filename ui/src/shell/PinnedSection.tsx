@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useId, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../components/Icon";
+import { placeMenu } from "../components/menuPlacement";
 import { Dialog } from "../features/dashboards/ui/Dialog";
 import { useI18n } from "../i18n/i18n";
 import { showErrorToast } from "../lib/toasts";
 import { type DashboardEntry, MAX_PINS, orderPins, pinsQuery, search, setPinned } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
 import { useMenuButton } from "./useMenuButton";
+import "../components/iconButton.css";
 import "./shellUx.css";
 
 /**
@@ -134,10 +137,34 @@ function PinnedEntry({
 }) {
   const { t } = useI18n();
   const menu = useMenuButton();
+  const { open, buttonRef, menuRef, closeMenu } = menu;
   const choose = (action: () => void, returnFocus = true) => {
     action();
-    menu.closeMenu(returnFocus);
+    closeMenu(returnFocus);
   };
+  // Drawn in the window beside its button: the sidebar's overflow never clips it.
+  useLayoutEffect(() => {
+    const button = buttonRef.current;
+    const list = menuRef.current;
+    if (open && button !== null && list !== null) {
+      placeMenu(button, list, "beside");
+    }
+  }, [open, buttonRef, menuRef]);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => closeMenu(false);
+    window.addEventListener("resize", close);
+    return () => window.removeEventListener("resize", close);
+  }, [open, closeMenu]);
+  // Tab leaves the menu back at its button (the menu is drawn at the end of the page).
+  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      closeMenu(true);
+      return;
+    }
+    menu.onMenuKeyDown(event);
+  }
   return (
     <li className="shell__pin">
       <Link
@@ -164,54 +191,59 @@ function PinnedEntry({
         >
           <Icon name="more" />
         </button>
-        {menu.open ? (
-          <div
-            ref={menu.menuRef}
-            id={menu.menuId}
-            role="menu"
-            aria-label={t("shell.pins.actionsNamed", { name: entry.title })}
-            className="menu menu--down"
-            onKeyDown={menu.onMenuKeyDown}
-          >
-            {first ? null : (
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={-1}
-                className="menu__item"
-                disabled={busy}
-                onClick={() => choose(onUp)}
+        {open
+          ? createPortal(
+              <div
+                ref={menu.menuRef}
+                id={menu.menuId}
+                role="menu"
+                aria-label={t("shell.pins.actionsNamed", { name: entry.title })}
+                className="menu toolbar-menu__list"
+                onKeyDown={onMenuKeyDown}
+                // A click in the menu is the menu's, not a click outside that closes it.
+                onPointerDown={(event) => event.stopPropagation()}
               >
-                <Icon name="arrowUp" />
-                {t("shell.pins.up")}
-              </button>
-            )}
-            {last ? null : (
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={-1}
-                className="menu__item"
-                disabled={busy}
-                onClick={() => choose(onDown)}
-              >
-                <Icon name="arrowDown" />
-                {t("shell.pins.down")}
-              </button>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              tabIndex={-1}
-              className="menu__item"
-              disabled={busy}
-              onClick={() => choose(onUnpin, false)}
-            >
-              <Icon name="close" />
-              {t("shell.pins.unpin")}
-            </button>
-          </div>
-        ) : null}
+                {first ? null : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    className="menu__item"
+                    disabled={busy}
+                    onClick={() => choose(onUp)}
+                  >
+                    <Icon name="arrowUp" />
+                    {t("shell.pins.up")}
+                  </button>
+                )}
+                {last ? null : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    className="menu__item"
+                    disabled={busy}
+                    onClick={() => choose(onDown)}
+                  >
+                    <Icon name="arrowDown" />
+                    {t("shell.pins.down")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  className="menu__item"
+                  disabled={busy}
+                  onClick={() => choose(onUnpin, false)}
+                >
+                  <Icon name="close" />
+                  {t("shell.pins.unpin")}
+                </button>
+              </div>,
+              document.body,
+            )
+          : null}
       </div>
     </li>
   );

@@ -1,21 +1,16 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
-import { readPreference, writePreference } from "../../lib/storage";
 import { getPanel } from "../../panels/registry";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import "./toolbar.css";
 
-/** Kept in this browser per account: whether the rail is folded to its toggle. */
-function railKey(userId: string): string {
+/** Where an earlier version kept whether the rail was folded away; the rail no longer folds. */
+function oldRailKey(userId: string): string {
   return `kalzit.dashboardRail.${userId}`;
-}
-
-export function readRailCollapsed(userId: string): boolean {
-  return readPreference(railKey(userId)) === "collapsed";
 }
 
 /** The visualizations the Add pane offers as tiles, each with its icon. */
@@ -64,10 +59,9 @@ type Pane = "outline" | "add" | null;
 /**
  * The column at the canvas' right edge, in groups: the outline, the filter bar and the
  * annotations; share and export; kiosk, TV and full screen; the history and the info; at the bottom the
- * settings and the fold toggle. While editing it starts with Add, which opens a pane of
- * visualizations, structure and what else the dashboard can hold. It folds to its toggle; each
- * account's choice is remembered in this browser. Phones have no rail: the toolbar's overflow
- * menu holds its actions.
+ * settings. While editing it starts with Add, which opens a pane of visualizations, structure and
+ * what else the dashboard can hold. On wide screens it is always shown. Phones have no rail: the
+ * toolbar's overflow menu holds its actions.
  */
 export function DashboardRail({
   userId,
@@ -86,17 +80,16 @@ export function DashboardRail({
 }: DashboardRailProps) {
   const { t } = useI18n();
   const paneId = useId();
-  const [collapsed, setCollapsed] = useState(() => readRailCollapsed(userId));
   const [pane, setPane] = useState<Pane>(null);
 
-  function toggle() {
-    const next = !collapsed;
-    setCollapsed(next);
-    if (next) {
-      setPane(null);
+  // A one-time cleanup of the folded state an earlier version stored.
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem(oldRailKey(userId));
+    } catch {
+      // Blocked storage holds nothing to clean up that matters.
     }
-    writePreference(railKey(userId), next ? "collapsed" : "open");
-  }
+  }, [userId]);
 
   const paneButton = (which: Exclude<Pane, null>) => ({
     "aria-expanded": pane === which,
@@ -105,115 +98,95 @@ export function DashboardRail({
   });
 
   return (
-    <aside
-      className={collapsed ? "dash-rail dash-rail--collapsed" : "dash-rail"}
-      aria-label={t("toolbar.rail")}
-    >
-      {pane === "outline" && !collapsed ? (
+    <aside className="dash-rail" aria-label={t("toolbar.rail")}>
+      {pane === "outline" ? (
         <Outline id={paneId} panels={panels} rows={rows} untitled={untitled} onGoTo={onGoTo} />
       ) : null}
-      {pane === "add" && !collapsed && editing ? (
+      {pane === "add" && editing ? (
         <AddPane id={paneId} actions={actions} onDone={() => setPane(null)} />
       ) : null}
       <div className="dash-rail__column">
-        {collapsed ? null : (
+        {editing ? (
+          <div className="dash-rail__group">
+            <IconButton icon="plus" label={t("toolbar.add")} {...paneButton("add")} />
+          </div>
+        ) : null}
+        <div className="dash-rail__group">
+          <IconButton icon="outline" label={t("toolbar.rail.outline")} {...paneButton("outline")} />
+          {editing ? null : (
+            <>
+              <IconButton
+                icon="filter"
+                label={t("toolbar.rail.filters")}
+                aria-pressed={filtersShown}
+                onClick={onFilters}
+              />
+              <IconButton
+                icon="flag"
+                label={t("toolbar.rail.annotations")}
+                aria-pressed={annotationsShown}
+                onClick={onAnnotations}
+              />
+            </>
+          )}
+        </div>
+        <div className="dash-rail__group">
+          {editing ? null : (
+            <IconButton icon="link" label={t("toolbar.rail.share")} onClick={actions.copyLink} />
+          )}
+          <IconButton
+            icon="download"
+            label={t("dashboardTools.export")}
+            onClick={actions.exportJson}
+          />
+        </div>
+        {editing ? null : (
           <>
-            {editing ? (
-              <div className="dash-rail__group">
-                <IconButton icon="plus" label={t("toolbar.add")} {...paneButton("add")} />
-              </div>
-            ) : null}
             <div className="dash-rail__group">
-              <IconButton
-                icon="outline"
-                label={t("toolbar.rail.outline")}
-                {...paneButton("outline")}
+              <ToolbarMenu
+                label={t("toolbar.rail.kiosk")}
+                icon="screen"
+                entries={[
+                  {
+                    key: "kiosk",
+                    label: t("dashboardTools.view.kiosk"),
+                    icon: "expand",
+                    onSelect: actions.kiosk,
+                  },
+                  {
+                    key: "tv",
+                    label: t("dashboardTools.view.tv"),
+                    icon: "screen",
+                    onSelect: actions.tv,
+                  },
+                ]}
               />
-              {editing ? null : (
-                <>
-                  <IconButton
-                    icon="filter"
-                    label={t("toolbar.rail.filters")}
-                    aria-pressed={filtersShown}
-                    onClick={onFilters}
-                  />
-                  <IconButton
-                    icon="flag"
-                    label={t("toolbar.rail.annotations")}
-                    aria-pressed={annotationsShown}
-                    onClick={onAnnotations}
-                  />
-                </>
-              )}
-            </div>
-            <div className="dash-rail__group">
-              {editing ? null : (
-                <IconButton
-                  icon="link"
-                  label={t("toolbar.rail.share")}
-                  onClick={actions.copyLink}
-                />
-              )}
               <IconButton
-                icon="download"
-                label={t("dashboardTools.export")}
-                onClick={actions.exportJson}
+                icon="expand"
+                label={t("toolbar.rail.fullscreen")}
+                onClick={actions.fullscreen}
               />
             </div>
-            {editing ? null : (
-              <>
-                <div className="dash-rail__group">
-                  <ToolbarMenu
-                    label={t("toolbar.rail.kiosk")}
-                    icon="screen"
-                    entries={[
-                      {
-                        key: "kiosk",
-                        label: t("dashboardTools.view.kiosk"),
-                        icon: "expand",
-                        onSelect: actions.kiosk,
-                      },
-                      {
-                        key: "tv",
-                        label: t("dashboardTools.view.tv"),
-                        icon: "screen",
-                        onSelect: actions.tv,
-                      },
-                    ]}
-                  />
-                  <IconButton
-                    icon="expand"
-                    label={t("toolbar.rail.fullscreen")}
-                    onClick={actions.fullscreen}
-                  />
-                </div>
-                <div className="dash-rail__group">
-                  {pin}
-                  <IconButton
-                    icon="history"
-                    label={t("dashboards.versions")}
-                    onClick={actions.history}
-                  />
-                  <IconButton icon="help" label={t("toolbar.rail.info")} onClick={actions.info} />
-                </div>
-              </>
-            )}
+            <div className="dash-rail__group">
+              {pin}
+              <IconButton
+                icon="history"
+                label={t("dashboards.versions")}
+                onClick={actions.history}
+              />
+              <IconButton icon="help" label={t("toolbar.rail.info")} onClick={actions.info} />
+            </div>
           </>
         )}
-        <div className="dash-rail__group dash-rail__group--end">
-          {collapsed || !canEdit ? null : (
+        {canEdit ? (
+          <div className="dash-rail__group dash-rail__group--end">
             <IconButton
               icon="settings"
               label={t("dashboards.settings")}
               onClick={actions.settings}
             />
-          )}
-          <IconButton
-            icon={collapsed ? "chevronLeft" : "chevron"}
-            label={collapsed ? t("toolbar.rail.expand") : t("toolbar.rail.collapse")}
-            onClick={toggle}
-          />
-        </div>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

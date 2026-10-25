@@ -694,11 +694,20 @@
    * New and Help as icon buttons. On a phone the search is an icon button too.
    */
 
-  /* The bar spans the content's width, set off from the page by a hairline. */
+  /*
+   * The bar spans the content's width, set off from the page by a hairline, and stays at the top
+   * while the page scrolls: it takes over the page's top padding so it reads the same stuck.
+   * Below menus, dialogs and toasts.
+   */
   .top-bar {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: var(--z-sticky);
+    margin-block-start: calc(var(--space-5) * -1);
     margin-inline: calc(var(--space-gutter) * -1);
-    padding: 0 var(--space-gutter) var(--space-3);
+    padding: var(--space-5) var(--space-gutter) var(--space-3);
     border-block-end: var(--border-width) solid var(--border);
+    background: var(--bg);
   }
 
   /* A control after the trail (the dashboard's star) sits on its line, outside the landmark. */
