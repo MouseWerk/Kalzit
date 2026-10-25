@@ -51,6 +51,34 @@ function textFiles(dir: string): { path: string; bytes: Uint8Array; text: string
 
 const sourceFiles = textFiles(SRC);
 
+/**
+ * The opening JSX tags whose class list holds `truncate`, with their line. The tag ends at the
+ * first `>` outside braces, so `onClick={() => ...}` does not end it early.
+ */
+function truncatedTags(text: string): { line: number; text: string }[] {
+  const tags: { line: number; text: string }[] = [];
+  for (const match of text.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{"([^"]*)"\})/g)) {
+    const classes = match[1] ?? match[2] ?? match[3] ?? "";
+    if (!/(^|\s)truncate(\s|$)/.test(classes)) {
+      continue;
+    }
+    const start = text.lastIndexOf("<", match.index);
+    let depth = 0;
+    let end = start;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (c === ">" && depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    tags.push({ line: text.slice(0, start).split("\n").length, text: text.slice(start, end + 1) });
+  }
+  return tags;
+}
+
 const isTestCode = (path: string) => /\.test\.tsx?$/.test(path) || path.startsWith("src/test/");
 const appCode = sourceFiles.filter(({ path }) => /\.(ts|tsx)$/.test(path) && !isTestCode(path));
 
@@ -153,6 +181,28 @@ describe("source hygiene", () => {
       expect(/\bstyle=\{/.test(text), `${path} uses a style prop`).toBe(false);
       expect(text.includes("dangerouslySetInnerHTML"), path).toBe(false);
     }
+  });
+
+  it("gives every element cut off with an ellipsis a title, so its full text can be read", () => {
+    const offenders: string[] = [];
+    for (const { path, text } of appCode.filter(({ path }) => path.endsWith(".tsx"))) {
+      for (const tag of truncatedTags(text)) {
+        if (!/\stitle=/.test(tag.text)) {
+          offenders.push(`${path}:${tag.line}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("finds truncated tags over several lines and with arrow functions in attributes", () => {
+    const tags = truncatedTags(
+      '<a\n  className="x truncate"\n  onClick={() => go()}\n  title={name}\n>{name}</a>\n<span className={`truncate`}>{y}</span>',
+    );
+    expect(tags.map((tag) => [tag.line, /\stitle=/.test(tag.text)])).toEqual([
+      [1, true],
+      [6, false],
+    ]);
   });
 
   it("keeps the theme boot script in step with the theme module", () => {

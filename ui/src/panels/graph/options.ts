@@ -1,4 +1,5 @@
 import { isRecord } from "../../api/client";
+import { clipChars } from "../../lib/chars";
 import { MAX_EXPAND_LIMIT } from "./adapter";
 
 /** The hard cap on drawn nodes per panel; the panel's own limit may only be lower. */
@@ -49,10 +50,7 @@ export const MAX_OPTION_TEXT = 100;
 export function optionText(value: unknown, fallback = ""): string {
   if (typeof value !== "string") return fallback;
   // \p{Cc}: the characters Rust's `char::is_control` names, which the server refuses.
-  return value
-    .replace(/\p{Cc}/gu, "")
-    .trim()
-    .slice(0, MAX_OPTION_TEXT);
+  return clipChars(value.replace(/\p{Cc}/gu, "").trim(), MAX_OPTION_TEXT);
 }
 
 const text = optionText;

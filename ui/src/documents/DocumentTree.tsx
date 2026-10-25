@@ -486,7 +486,9 @@ function TreeRow({
       </span>
       <span className="doc-tree__key">{row.name}</span>
       <span className="doc-tree__type">{type}</span>
-      <span className="doc-tree__value truncate">{summary}</span>
+      <span className="doc-tree__value truncate" title={summary}>
+        {summary}
+      </span>
     </div>
   );
 }

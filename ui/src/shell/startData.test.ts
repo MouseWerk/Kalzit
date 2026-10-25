@@ -49,6 +49,14 @@ describe("activity on the start page", () => {
     expect(server.calls.some((call) => /audit\?.*limit=200/.test(call.path))).toBe(true);
   });
 
+  it("counts in the total only what the bars show, not events dated after today", async () => {
+    // A server clock that was set back left an event dated tomorrow.
+    serverWith([event("e0", "dashboard.saved", -1), event("e1", "dashboard.saved", 0)]);
+    const activity = await fetchActivity("o1", NOW);
+    expect(activity.total).toEqual({ value: 1, more: false });
+    expect(activity.perDay.reduce((sum: number, n) => sum + (n ?? 0), 0)).toBe(1);
+  });
+
   it("marks the days a capped reading did not reach as unknown, not quiet", async () => {
     const { admin } = serverWith(
       Array.from({ length: 7 }, (_, index) => event(`e${index}`, "dashboard.saved", index)),

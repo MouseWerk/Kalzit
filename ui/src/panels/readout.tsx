@@ -174,7 +174,9 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
               ) : (
                 <Swatch className={r.colorClass} freeColor={r.freeColor} />
               )}
-              <span className="truncate">{r.name}</span>
+              <span className="truncate" title={r.name}>
+                {r.name}
+              </span>
               <span className="ts__tooltip-value">{r.value}</span>
             </div>
           ))}

@@ -160,14 +160,17 @@ export async function fetchActivity(
   const read = await readPages(
     (cursor) => listAudit(orgId, { from: first }, cursor, { limit: MAX_PAGE_SIZE, signal }),
     (items) => {
-      const changes = items.filter((event) => isChange(event.action));
-      for (const event of changes) {
+      // Only the days the bars show count towards the total, so both always agree: an event
+      // dated after today (a server clock that was set back) is in neither.
+      let counted = 0;
+      for (const event of items.filter((item) => isChange(item.action))) {
         const index = daysBetween(first, startOfDay(event.createdAt));
         if (index >= 0 && index < ACTIVITY_DAYS) {
           perDay[index] = (perDay[index] ?? 0) + 1;
+          counted += 1;
         }
       }
-      return changes.length;
+      return counted;
     },
   );
   if (read.more && read.last !== undefined) {

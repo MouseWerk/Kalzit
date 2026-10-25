@@ -1,7 +1,7 @@
 import type { TimeRange } from "../../api/generated/shapes";
 import type { MessageKey } from "../../i18n/i18n";
 import { getTimeSettings, type TimeSettings } from "../../lib/timeSettings";
-import { fromWall, normalizeWall, wallInput, wallOf, weekdayOf } from "../../lib/zonedTime";
+import { fromWall, normalizeWall, utcOf, wallInput, wallOf, weekdayOf } from "../../lib/zonedTime";
 
 /**
  * Time ranges as dashboards store them: text such as "now-6h", "now-1d/d" or an ISO time, so a
@@ -99,10 +99,15 @@ function startOf(ms: number, unit: Unit, settings: TimeSettings): number {
       );
     case "d":
       return fromWall({ ...w, ...midnight }, zone);
+    // Hours and minutes have a fixed length: rounded on the time line with the offset in force
+    // at `ms`, so in the hour repeated when the clocks go back "now/h" stays in its own pass
+    // (fromWall would pick the first one) and a :30 or :45 zone still starts its hours there.
     case "h":
-      return fromWall({ ...w, minute: 0, second: 0, millisecond: 0 }, zone);
-    case "m":
-      return fromWall({ ...w, second: 0, millisecond: 0 }, zone);
+    case "m": {
+      const offset = utcOf(w) - ms;
+      const step = unit === "h" ? 3_600_000 : 60_000;
+      return ms - ((((ms + offset) % step) + step) % step);
+    }
     default:
       return ms - (((ms % 1000) + 1000) % 1000);
   }

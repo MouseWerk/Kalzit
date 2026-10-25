@@ -23,6 +23,9 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+use std::collections::HashSet;
+use std::sync::Mutex;
+
 use crate::app::{AppState, router};
 use crate::clock::ManualClock;
 use crate::config::Config;
@@ -74,6 +77,8 @@ impl T {
         let pool = crate::db::connect(&config.database_url(), 4).await.unwrap();
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let state = AppState::new(config, pool, clock, Some(SETUP_CODE.into())).await.unwrap();
+        // Tests run on disks of any size.
+        state.export_limits.write().unwrap().keep_free = 0;
         let allowed = dir.path().join("erlaubt");
         std::fs::create_dir_all(&allowed).unwrap();
         state
@@ -391,6 +396,36 @@ async fn export_needs_the_permission_and_the_same_rights_as_running() {
     assert_eq!(refused[1].0, None, "a panel that does not exist names no dashboard");
 }
 
+/// A panel that shows a library panel exports the library panel's queries and steps.
+#[tokio::test]
+async fn a_linked_library_panel_exports_its_own_queries() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let library = t
+        .post(
+            "/library-panels",
+            json!({ "name": "Länder", "model": {
+                "schemaVersion": 2, "type": "table", "title": "Länder",
+                "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT land FROM verkauf ORDER BY tag" } }]
+            } }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(library.status, StatusCode::CREATED, "{}", library.text());
+    let model = json!({
+        "schemaVersion": 2, "title": "Übersicht", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "lp", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                     "libraryPanelId": library.json()["id"] }]
+    });
+    let created = t.post("/dashboards", json!({ "model": model }), &t.owner).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    let id = created.json()["id"].as_str().unwrap().to_string();
+    let body = json!({ "timeRange": range(), "format": "csv", "language": "en" });
+    let r = t.post(&format!("/dashboards/{id}/panels/lp/export"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.text(), "\u{FEFF}land\r\nÖsterreich\r\nSchweiz\r\n'=Formel\r\n");
+}
+
 /// A restricted folder hides its dashboards: their panels cannot be exported either.
 #[tokio::test]
 async fn panels_in_hidden_folders_are_not_found() {
@@ -590,4 +625,327 @@ async fn an_aborted_export_holds_its_slot_until_the_work_stops() {
     tokio::time::timeout(std::time::Duration::from_secs(10), freed)
         .await
         .expect("the slot comes back once the work stops");
+}
+
+const BIG: &str = "CREATE TABLE gross (n INTEGER, s TEXT);
+WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 20000)
+INSERT INTO gross SELECT x, printf('%0600d', x) FROM c;";
+
+impl T {
+    /// The response before its body is read: what a client has when the headers arrive.
+    async fn raw(&self, rest: &str, body: Value, cookie: &str) -> axum::response::Response {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/orgs/{}{rest}", self.org))
+            .header(header::HOST, "kalzit.test")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        self.app.clone().oneshot(req).await.unwrap()
+    }
+
+    async fn audit_count(&self, action: &str) -> i64 {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = $1")
+            .bind(action)
+            .fetch_one(&self.state.db)
+            .await
+            .unwrap();
+        n
+    }
+
+    async fn slots_free(&self) {
+        let freed = async {
+            while self.state.exports.available_permits() != super::MAX_EXPORTS {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(20), freed).await.expect("the slot comes back");
+    }
+}
+
+fn big(ds: &str, format: &str) -> Value {
+    json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n, s FROM gross ORDER BY n" } }],
+        "timeRange": range(), "format": format, "language": "en", "title": "gross"
+    })
+}
+
+fn tiny(ds: &str) -> Value {
+    let mut body = big(ds, "csv");
+    body["queries"][0]["query"]["sql"] = json!("SELECT n, s FROM gross LIMIT 3");
+    body
+}
+
+/// Organizations whose `data.exported` audit entry fails, set by the test of that failure.
+static FAILING_AUDIT: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+pub(super) fn audit_fails(org_id: &str) -> bool {
+    FAILING_AUDIT.lock().unwrap().as_ref().is_some_and(|s| s.contains(org_id))
+}
+
+impl T {
+    fn spool_files(&self) -> usize {
+        std::fs::read_dir(self.state.config.paths.data_dir.join(super::SPOOL_DIR)).map(|d| d.count()).unwrap_or(0)
+    }
+
+    async fn spool_empty(&self) {
+        for _ in 0..400 {
+            if self.spool_files() == 0 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("the spool folder is not empty");
+    }
+
+    async fn aborted(&self) -> Value {
+        for _ in 0..400 {
+            if self.audit_count("data.export_aborted").await == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let (summary,): (String,) =
+            sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'data.export_aborted'")
+                .fetch_one(&self.state.db)
+                .await
+                .unwrap();
+        serde_json::from_str(&summary).unwrap()
+    }
+}
+
+/// The file is made before it is sent: while a client reads nothing, no server slot is held (only
+/// its user's own), a second export of that user is refused and another user's is not, and a
+/// client that goes away ends the sending, frees its user slot and its spool file, and is
+/// recorded as an aborted export.
+#[tokio::test]
+async fn a_slow_reader_holds_no_server_slot_and_a_vanished_client_stops_it() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("gross", BIG).await;
+    let r = t.raw("/export", big(&ds, "csv"), &t.owner).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let mut body = r.into_body();
+    let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
+    assert_eq!(first.len(), 1024 * 1024, "the first chunk comes before the file is sent whole");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(t.state.exports.available_permits(), super::MAX_EXPORTS, "the server's slots are free");
+    assert_eq!(t.spool_files(), 1, "the file waits on disk");
+    assert_eq!(t.audit_count("data.exported").await, 0, "not recorded before the end");
+    // One export per user at a time.
+    let again = t.post("/export", big(&ds, "csv"), &t.owner).await;
+    assert_eq!((again.status, again.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.user_busy".into()));
+    let (_, other) = (0, t.member("anna", "editor").await);
+    let r = t.post("/export", tiny(&ds), &other).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    drop(body);
+    t.slots_free().await;
+    let summary = t.aborted().await;
+    assert_eq!(summary["reason"], "export.client_gone");
+    assert!(summary["bytes"].as_u64().unwrap() >= 1024 * 1024, "{summary}");
+    assert!(summary["of"].as_u64().unwrap() > summary["bytes"].as_u64().unwrap());
+    assert_eq!(t.audit_count("data.exported").await, 1, "only the other user's");
+    t.spool_empty().await;
+    // The user can export again.
+    assert_eq!(t.post("/export", tiny(&ds), &t.owner).await.status, StatusCode::OK);
+}
+
+/// A client that takes nothing for the stall time, or whose download passes the total time, loses
+/// its export with the reason named.
+#[tokio::test]
+async fn a_stalled_or_endless_download_is_broken_off() {
+    for (stall_ms, download_ms, reason) in [(300, 60_000, "export.stalled"), (60_000, 300, "export.download_too_long")]
+    {
+        let t = T::new().await;
+        {
+            let mut limits = t.state.export_limits.write().unwrap();
+            limits.stall = std::time::Duration::from_millis(stall_ms);
+            limits.download = std::time::Duration::from_millis(download_ms);
+        }
+        let ds = t.sqlite_source("gross", BIG).await;
+        let r = t.raw("/export", big(&ds, "csv"), &t.owner).await;
+        let mut body = r.into_body();
+        let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        assert_eq!(first.len(), 1024 * 1024);
+        // Read nothing: the sending task gives up by itself.
+        let summary = t.aborted().await;
+        assert_eq!(summary["reason"], reason, "{summary}");
+        t.slots_free().await;
+        t.spool_empty().await;
+        // What the client still gets ends in an error, not in a file that looks whole.
+        let mut ended_badly = false;
+        while let Some(frame) = body.frame().await {
+            if frame.is_err() {
+                ended_badly = true;
+                break;
+            }
+        }
+        assert!(ended_badly, "{reason}");
+        assert_eq!(t.audit_count("data.exported").await, 0);
+    }
+}
+
+/// The size limit is an ordinary error answer, before anything is sent, with nothing left behind.
+#[tokio::test]
+async fn a_file_over_the_size_limit_is_refused_before_it_is_sent() {
+    let t = T::new().await;
+    t.state.export_limits.write().unwrap().file_bytes = 2 * 1024 * 1024;
+    let ds = t.sqlite_source("gross", BIG).await;
+    let r = t.post("/export", big(&ds, "csv"), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.too_large".into()), "{}", r.text());
+    assert_eq!(t.audit_count("data.export_refused").await, 1);
+    assert_eq!(t.audit_count("data.export_aborted").await, 0);
+    t.slots_free().await;
+    t.spool_empty().await;
+    // The user's slot is free again.
+    t.state.export_limits.write().unwrap().file_bytes = 256 * 1024 * 1024;
+    assert_eq!(t.post("/export", tiny(&ds), &t.owner).await.status, StatusCode::OK);
+}
+
+/// Too little disk space is refused up front.
+#[tokio::test]
+async fn too_little_disk_space_refuses_the_export() {
+    let t = T::new().await;
+    t.state.export_limits.write().unwrap().keep_free = u64::MAX / 2;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let r = t.post("/export", free(&ds, "csv", "en", json!([])), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.disk_space".into()), "{}", r.text());
+    t.slots_free().await;
+}
+
+/// When the audit entry cannot be written the download is broken off instead of completing.
+#[tokio::test]
+async fn a_failing_audit_entry_breaks_the_download_off() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    FAILING_AUDIT.lock().unwrap().get_or_insert_with(HashSet::new).insert(t.org.clone());
+    let r = t.raw("/export", free(&ds, "csv", "en", json!([])), &t.owner).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let collected = r.into_body().collect().await;
+    assert!(collected.is_err(), "the client must not get a complete file that was not recorded");
+    assert_eq!(t.audit_count("data.exported").await, 0);
+    FAILING_AUDIT.lock().unwrap().as_mut().unwrap().remove(&t.org);
+    t.slots_free().await;
+    t.spool_empty().await;
+}
+
+/// Files left by a run that was cut short are removed when the server starts.
+#[test]
+fn leftover_spool_files_are_removed_at_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let spool = dir.path().join(super::SPOOL_DIR);
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(spool.join("export-old.part"), b"x").unwrap();
+    super::clear_spool(dir.path());
+    assert_eq!(std::fs::read_dir(&spool).unwrap().count(), 0);
+}
+
+/// Read to the end, the streamed file is whole and its audit entry exists by then.
+#[tokio::test]
+async fn a_large_export_arrives_whole_with_its_audit_entry() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("gross", BIG).await;
+    let r = t.post("/export", big(&ds, "csv"), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.bytes.len() > 10 * 1024 * 1024, "{}", r.bytes.len());
+    let text = r.text();
+    assert_eq!(text.matches("\r\n").count(), 20_001);
+    assert!(text.trim_end().ends_with(&format!("20000,{:0>600}", 20000)));
+    assert_eq!(t.audit_count("data.exported").await, 1);
+    assert_eq!(t.audit_count("data.export_aborted").await, 0);
+    let (summary,): (String,) = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'data.exported'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&summary).unwrap()["rows"], 20_000);
+
+    let r = t.post("/export", big(&ds, "json"), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["frame"]["fields"][0]["values"].as_array().unwrap().len(), 20_000);
+}
+
+/// Excel files are written in constant memory mode: more cells than the former limit of a million,
+/// sent from a spool file that is gone afterwards.
+#[tokio::test]
+async fn excel_exports_have_no_cell_limit_and_leave_no_spool_files() {
+    let t = T::new().await;
+    let sql = "CREATE TABLE w (a INTEGER); WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 90000) \
+               INSERT INTO w SELECT x FROM c;";
+    let ds = t.sqlite_source("breit", sql).await;
+    let cols: Vec<String> = (0..12).map(|i| format!("a + {i} AS c{i}")).collect();
+    let body = json!({
+        "queries": [{ "refId": "A", "datasourceId": ds, "query": { "sql": format!("SELECT {} FROM w", cols.join(", ")) } }],
+        "timeRange": range(), "format": "xlsx", "language": "en"
+    });
+    let r = t.post("/export", body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", String::from_utf8_lossy(&r.bytes[..r.bytes.len().min(300)]));
+    assert_eq!(&r.bytes[..2], b"PK");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&r.bytes[..])).unwrap();
+    let mut sheet = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut sheet).unwrap();
+    assert!(sheet.contains(r#"<dimension ref="A1:L90001"/>"#), "{}", &sheet[..300.min(sheet.len())]);
+    t.slots_free().await;
+    let spool = t.state.config.paths.data_dir.join(super::SPOOL_DIR);
+    let left = std::fs::read_dir(&spool).map(|d| d.count()).unwrap_or(0);
+    assert_eq!(left, 0, "the spool files are removed");
+}
+
+/// A failure before the first chunk is an ordinary error answer: refused in the audit log, never
+/// an aborted export.
+#[tokio::test]
+async fn an_export_that_fails_before_its_first_chunk_is_a_plain_error_without_an_aborted_entry() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("umsatz", SALES).await;
+    let mut body = free(&ds, "csv", "en", json!([]));
+    body["frame"] = json!("B");
+    let r = t.post("/export", body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(t.audit_count("data.export_refused").await, 1);
+    assert_eq!(t.audit_count("data.export_aborted").await, 0);
+    t.slots_free().await;
+}
+
+/// A client that leaves at the last chunk does not turn a recorded export into an aborted one.
+#[tokio::test]
+async fn a_client_leaving_after_the_entry_was_written_adds_no_aborted_entry() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("gross", BIG).await;
+    // One chunk: the entry is written before it is sent, then the client drops the body unread.
+    let r = t.raw("/export", tiny(&ds), &t.owner).await;
+    drop(r);
+    t.slots_free().await;
+    for _ in 0..200 {
+        if t.audit_count("data.exported").await == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(t.audit_count("data.exported").await, 1);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(t.audit_count("data.export_aborted").await, 0);
+    t.spool_empty().await;
+}
+
+/// The panel route holds the user's slot too.
+#[tokio::test]
+async fn a_second_panel_export_of_a_user_is_busy() {
+    let t = T::new().await;
+    let ds = t.sqlite_source("gross", BIG).await;
+    let model = json!({ "model": {
+        "schemaVersion": 2, "title": "Gross", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [{ "id": "p1", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT n, s FROM gross ORDER BY n" } }] }]
+    } });
+    let id = t.post("/dashboards", model, &t.owner).await.json()["id"].as_str().unwrap().to_string();
+    let panel = format!("/dashboards/{id}/panels/p1/export");
+    let body = json!({ "timeRange": range(), "format": "csv", "language": "en" });
+    let first = t.raw(&panel, body.clone(), &t.owner).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let mut held = first.into_body();
+    let _ = held.frame().await;
+    let second = t.post(&panel, body.clone(), &t.owner).await;
+    assert_eq!((second.status, second.reason()), (StatusCode::SERVICE_UNAVAILABLE, "export.user_busy".into()));
+    drop(held);
+    t.slots_free().await;
+    t.spool_empty().await;
 }

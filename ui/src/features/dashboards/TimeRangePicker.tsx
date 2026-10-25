@@ -191,7 +191,9 @@ export function TimeRangePicker({
           onClick={() => setOpen((o) => !o)}
         >
           <Icon name="clock" />
-          <span className="time-picker__label truncate">{label}</span>
+          <span className="time-picker__label truncate" title={label}>
+            {label}
+          </span>
           {/* A space, so the text reads as the name does: "Last 6 hours GMT+2". */}
           {zone === "" ? null : " "}
           {zone === "" ? null : <span className="time-picker__zone-tag">{zone}</span>}
@@ -427,11 +429,12 @@ function RangePopover({
               spellCheck={false}
             />
           </div>
-          {presets.length === 0 ? (
-            <p className="time-picker__empty" role="status">
-              {t("toolbar.time.noMatch")}
-            </p>
-          ) : (
+          <div className="live-region" role="status">
+            {presets.length === 0 ? (
+              <p className="time-picker__empty">{t("toolbar.time.noMatch")}</p>
+            ) : null}
+          </div>
+          {presets.length === 0 ? null : (
             <ul className="time-picker__presets">
               {presets.map((preset) => (
                 <li key={`${preset.from}|${preset.to}`}>

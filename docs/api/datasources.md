@@ -1141,18 +1141,38 @@ browser-side export would need the data in the browser first and could not be re
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
 the format, the time range, the frame, the number of rows and the panel or the data sources,
-never the data; an export refused inside the route writes `data.export_refused` with the code and
-reason as well.
+never the data, once the whole file has been made and before its last chunk is sent (when the
+entry cannot be written the download is broken off); an export refused inside the route writes
+`data.export_refused` with the code and reason as well, and one whose download does not complete
+(the client went away, took nothing for 60 s, or needed more than 15 minutes) writes
+`data.export_aborted` with a `reason` (`export.client_gone`, `export.stalled`,
+`export.download_too_long`, `export.audit_failed`), the `bytes` sent and the size `of` the file.
+Once `data.exported` is written the file counts as made: a client that leaves at the last chunk
+adds no `data.export_aborted` for the same export. A failing audit write is logged as an error.
+An Excel export needs three times its estimate free (sheet, workbook and spool file).
 
 Resources: a server makes at most 3 export files at once (`503 busy`, reason `export.busy`, for
-more). The steps and the encoder stop when the client goes away and when the query time limit
-(`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason `steps.timeout`). The
-steps' bounds hold here as in the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16
-units of made text per run), and a file is at most 256 MiB (`export.too_large`): CSV and JSON
-are written in chunks that the answer sends as they are, and stop at the first byte past the
-limit; an Excel file holds every cell until it is done, so it takes at most 1,000,000 cells
-(`export.too_many_cells`, checked before it is built). An export's slot is given back only when
-its work has stopped, also when the client went away. The statement as sent to the database
+more), and a user has one export at a time, from making the file to the last byte sent (`503 busy`,
+reason `export.user_busy`). The steps and the encoder stop when the client goes away and when the
+query time limit (`datasources.query_timeout_secs`) has passed (`504 query_timeout`, reason
+`steps.timeout`); the time limit covers the queries, the steps and the encoder, not the download.
+An export needs free disk space: the file's estimate plus 1 GiB must be free in the data
+directory's disk (`503 busy`, reason `export.disk_space`). The steps' bounds hold here as in
+the browser (at most 5,000,000 cells per step and 67,108,864 UTF-16 units of made text per run),
+and a file is at most 256 MiB (`export.too_large`).
+
+The file is made first and sent afterwards, so memory holds the result frame and one chunk,
+however large the file is. The encoder writes the file to a spool file in `export-tmp` inside the
+data directory (CSV and JSON row by row, Excel in constant memory mode, so it has no cell limit)
+and stops at the first byte past the size limit. Everything that goes wrong while the file is made
+(queries, steps, the size limit, disk space) is an ordinary error answer, before anything is sent.
+When the file is complete the server-wide slot is given back and a task of its own sends the file
+from disk, 1 MiB at a time, ending with an error on the connection if it has to give up: when the
+client goes away, takes no chunk for 60 s (`export.stalled`) or needs more than 15 minutes
+(`export.download_too_long`). A client that reads slowly holds no server slot, only its own
+user's. The spool file is removed when the sending ends; the spool folder is emptied when the
+server starts. An export's slot is given back when its work has stopped, also when the client
+went away. The statement as sent to the database
 (`meta.executedQuery`) is not in the file.
 
 - `csv`: RFC 4180, UTF-8 with a byte order mark (so Excel reads it as UTF-8), CRLF line ends.
@@ -1468,8 +1488,13 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.failed` | `detail` | the file could not be written |
 | `export.too_large` | `max` | the file would be larger than `max` bytes |
-| `export.too_many_cells` | `max` | an Excel file takes at most `max` cells (rows times fields); refused before it is built |
 | `export.busy` | | `503 busy`: as many exports as the server makes at once are running; try again shortly |
+| `export.user_busy` | | `503 busy`: the user has an export running (making or sending its file) |
+| `export.disk_space` | `free`, `needed` | `503 busy`: too little free disk space to make the file |
+| `export.stalled` | | audit only (`data.export_aborted`): the client took no chunk for 60 s |
+| `export.download_too_long` | | audit only: the download needed more than 15 minutes |
+| `export.client_gone` | | audit only: the client went away during the download |
+| `export.audit_failed` | | audit only: the entry of the export could not be written, so the download was broken off |
 | `export.time_zone_unknown` | | `timeZone` is not a known time zone (`field: timeZone`) |
 | `export.week_start_unknown` | | `weekStart` is not `monday`, `sunday` or `saturday` (`field: weekStart`) |
 
@@ -1552,6 +1577,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
+| `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |
 | `elasticsearch.shard_failures` | `count` | notice: `count` shards failed; the result may be incomplete |

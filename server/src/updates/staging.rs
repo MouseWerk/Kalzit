@@ -244,9 +244,35 @@ fn finish(
         notes_url: manifest.notes_url.clone(),
     };
     write_json(&dir.join(INFO_FILE), &info).map_err(io_failed)?;
+    // Every part on the disk before the folder becomes the staged release, so a power cut cannot
+    // leave a staged release with half-written files (a torn file would only be refused when it
+    // is loaded, but the release would look staged until then).
+    for name in [MANIFEST_FILE, SIGNATURE_FILE, PACKAGE_FILE] {
+        sync_file(&dir.join(name)).map_err(io_failed)?;
+    }
+    sync_dir(dir).map_err(io_failed)?;
     discard(layout).map_err(io_failed)?;
     fs::rename(dir, layout.staging()).map_err(io_failed)?;
+    if let Some(parent) = layout.staging().parent() {
+        sync_dir(parent).map_err(io_failed)?;
+    }
     Ok(info)
+}
+
+/// Flushes a written file to the disk. Opened for writing (not truncated): Windows flushes
+/// only through a handle with write access.
+fn sync_file(path: &Path) -> io::Result<()> {
+    fs::OpenOptions::new().write(true).open(path)?.sync_all()
+}
+
+/// Flushes a directory's entries (new names, renames) to the disk. Windows has no such call;
+/// NTFS journals the rename itself.
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
 }
 
 /// The staged release as recorded; `load` verifies it.

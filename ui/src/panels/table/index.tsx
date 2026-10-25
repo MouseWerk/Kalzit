@@ -384,7 +384,9 @@ function FrameTable({
                       onClick={() => setSort(nextSort(sort, index))}
                       title={t("dashboards.panels.sortBy", { column: column.name })}
                     >
-                      <span className="truncate">{column.name}</span>
+                      <span className="truncate" title={column.name}>
+                        {column.name}
+                      </span>
                       <span className="vt__sort-mark" aria-hidden="true">
                         {direction === "ascending" ? "▲" : direction === "descending" ? "▼" : ""}
                       </span>
@@ -435,11 +437,11 @@ function FrameTable({
           </tbody>
         </table>
       </section>
-      {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
-        <p className="panel-note" role="status">
-          {t("panels.table.noMatch")}
-        </p>
-      ) : null}
+      <div className="live-region" role="status">
+        {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
+          <p className="panel-note">{t("panels.table.noMatch")}</p>
+        ) : null}
+      </div>
       {options.pagination && total > 0 ? (
         <nav className="vt__pages" aria-label={t("panels.table.pages")}>
           <button

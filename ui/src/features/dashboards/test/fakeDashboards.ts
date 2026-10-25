@@ -768,6 +768,13 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (dashboard.deletedAt !== null) return error(409, "conflict");
       const version = dashboard.versions.find((v) => v.version === Number(parts[3]));
       if (version === undefined) return error(404, "not_found");
+      const expected = search.get("expectedVersion");
+      if (expected !== null && Number(expected) !== latest(dashboard).version) {
+        return json(409, {
+          error: { code: "version_conflict", message: "changed" },
+          current: dashboardAnswer(dashboard),
+        });
+      }
       dashboard.versions.push({
         version: latest(dashboard).version + 1,
         message: "",

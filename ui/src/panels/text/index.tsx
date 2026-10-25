@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
+import { clipChars } from "../../lib/chars";
 import { TextPreview } from "../picker/previews";
 import { SelectField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
@@ -20,7 +21,7 @@ function parseOptions(stored: unknown): TextOptions {
   const value = isRecord(stored) ? stored : {};
   return {
     mode: TEXT_MODES.find((m) => m === value.mode) ?? "markdown",
-    content: typeof value.content === "string" ? value.content.slice(0, MAX_TEXT_CHARS) : "",
+    content: typeof value.content === "string" ? clipChars(value.content, MAX_TEXT_CHARS) : "",
   };
 }
 

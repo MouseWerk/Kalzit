@@ -17,6 +17,7 @@ catalog.
 | Team | Team | Gruppe von Benutzern in einer Organisation; erhält Rechte gemeinsam. | Gruppe (für Teams), Group (for teams) |
 | Benutzer | User | Ein Konto, das sich anmelden kann. | Nutzer, Anwender |
 | Konto | Account | Die Anmeldedaten und das Profil eines Benutzers. | Account (im Deutschen) |
+| Login (Datenbank-Login) | Login (database login) | Benutzername und Passwort, mit denen Kalzit sich bei einer Datenquelle anmeldet; nie das Kalzit-Konto. „Login“ allein nur bei Datenquellen, sonst „Datenbank-Login“. | Konto (für die Datenbank), Account (für die Datenbank) |
 | Rolle | Role | Satz von Rechten: Betrachter, Bearbeiter, Admin, Eigentümer oder eine eigene Rolle. | |
 | Betrachter | Viewer | Feste Rolle: darf lesen. | Leser |
 | Bearbeiter | Editor | Feste Rolle: darf Dashboards und Auswertungen ändern. | Redakteur |
@@ -57,7 +58,8 @@ catalog.
 
 ## Schreibweise / Style
 
-- Deutsch: „…“ als Anführungszeichen, Auslassungspunkte direkt am Wort bei Aktionen, die einen
-  Dialog öffnen („Exportieren…“), Tastennamen wie auf der deutschen Tastatur (Strg, Umschalt,
-  Eingabe, Entf).
-- English: sentence case for labels and buttons, curly quotes “…”, keys Ctrl, Shift, Enter, Del.
+- Deutsch: „…“ als Anführungszeichen, ’ als Apostroph, Auslassungspunkte direkt am Wort bei
+  Aktionen, die einen Dialog öffnen („Exportieren…“), Tastennamen wie auf der deutschen Tastatur
+  (Strg, Umschalt, Eingabe, Entf, Pos1, Ende, Bild auf, Bild ab, Esc).
+- English: sentence case for labels and buttons, curly quotes “…” and the apostrophe ’ (data
+  source’s), keys Ctrl, Shift, Enter, Del, Home, End, PgUp, PgDn, Esc.

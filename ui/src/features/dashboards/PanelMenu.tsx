@@ -109,8 +109,13 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
                     role="menuitem"
                     className="menu__item"
                     aria-label={item.name}
-                    disabled={item.disabled}
+                    // Not `disabled`: the item stays in the arrow-key order and is announced as
+                    // unavailable.
+                    aria-disabled={item.disabled === true ? true : undefined}
                     onClick={() => {
+                      if (item.disabled === true) {
+                        return;
+                      }
                       closeMenu(true);
                       item.onSelect?.();
                     }}

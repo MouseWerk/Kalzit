@@ -110,6 +110,21 @@ describe("daylight saving time", () => {
     expect(now - (resolveTime("now-24h", now) ?? 0)).toBe(24 * HOUR);
   });
 
+  it("rounds to the hour and minute within the repeated hour's own pass", () => {
+    // 02:30 on 2026-10-25 happens twice: first at 00:30 UTC (summer time), then at 01:30 UTC.
+    const firstPass = Date.UTC(2026, 9, 25, 0, 30, 15);
+    const secondPass = Date.UTC(2026, 9, 25, 1, 30, 15);
+    expect(resolveTime("now/h", firstPass)).toBe(Date.UTC(2026, 9, 25, 0));
+    expect(resolveTime("now/h", secondPass)).toBe(Date.UTC(2026, 9, 25, 1));
+    expect(resolveTime("now/m", secondPass)).toBe(Date.UTC(2026, 9, 25, 1, 30));
+    expect(resolveTime("now/h", secondPass, true)).toBe(Date.UTC(2026, 9, 25, 2) - 1);
+    // A zone half an hour off UTC starts its hours at :30 UTC.
+    const kolkata = { timeZone: "Asia/Kolkata", weekStart: null };
+    expect(resolveTime("now/h", Date.UTC(2026, 9, 25, 7, 10), false, kolkata)).toBe(
+      Date.UTC(2026, 9, 25, 6, 30),
+    );
+  });
+
   it("goes back one calendar day across the autumn change: 25 hours", () => {
     const now = local(2026, 10, 25, 12);
     expect(now - (resolveTime("now-1d", now) ?? 0)).toBe(25 * HOUR);

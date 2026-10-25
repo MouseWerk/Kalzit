@@ -58,6 +58,40 @@ describe("dialogs", () => {
     }
   });
 
+  it("keep Tab inside, also from the dialog itself, and skip hidden controls", () => {
+    for (const which of ["dashboards", "admin"] as const) {
+      const body = (
+        <>
+          <button type="button">Last</button>
+          <div hidden>
+            <button type="button">Hidden</button>
+          </div>
+        </>
+      );
+      const { unmount } = renderIn(
+        which === "dashboards" ? (
+          <Dialog title="Trap" onClose={vi.fn()}>
+            {body}
+          </Dialog>
+        ) : (
+          <AdminDialog open title="Trap" onClose={vi.fn()}>
+            {body}
+          </AdminDialog>
+        ),
+      );
+      const dialog = screen.getByRole("dialog", { name: "Trap" });
+      const last = screen.getByRole("button", { name: "Last" });
+      // A click on the dialog's background puts the focus on the dialog: Shift+Tab stays in,
+      // on the last control Tab can reach (the hidden one comes later but is no stop).
+      act(() => dialog.focus());
+      fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+      expect(document.activeElement, which).toBe(last);
+      fireEvent.keyDown(last, { key: "Tab" });
+      expect(dialog.querySelector("button"), which).toBe(document.activeElement);
+      unmount();
+    }
+  });
+
   it("close when the Back button is pressed, without leaving input behind", () => {
     const onClose = vi.fn();
     const onAdminClose = vi.fn();

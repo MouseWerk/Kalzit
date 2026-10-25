@@ -366,9 +366,13 @@ type QueryResult =
   `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/export`, both
   `Access::Org(Permission::DataExport)` plus the rights of running the queries (free:
   `datasources:query` per source; panel: `dashboards:read`). CSV, Excel (`rust_xlsxwriter`) and
-  JSON; written to the audit log as `data.exported` (refused ones as `data.export_refused`). At
-  most 3 exports make files at once per server; their steps and encoder run in `spawn_blocking`
-  and stop on a cancel flag (a drop guard in the handler) and the query timeout. Both engines
+  JSON; written to the audit log as `data.exported` (refused ones as `data.export_refused`, ones
+  whose download does not complete as `data.export_aborted`). The file is made into a spool file
+  (`<data dir>/export-tmp`, Excel in constant memory mode) and then sent from disk by a task of its
+  own through a bounded channel of 1 MiB chunks, with a stall time of 60 s and a total of 15
+  minutes. At most 3 exports make files at once per server and a user has one at a time; their
+  steps and encoder run in `spawn_blocking` and stop on a cancel flag (a drop guard in the
+  handler) and the query timeout. Both engines
   share the bounds: expression trees at most 128 high, text at most 32,767 UTF-16 units per cell
   and 64 Mi units per run, at most 5,000,000 cells per step.
 
@@ -404,7 +408,12 @@ type QueryResult =
   `auth.sign_in_failed`, `team.created`). Summaries hold ids and changed field names, never
   secrets and never what a user typed (a failed sign-in records the account id if it exists, not
   the email). Events older than `audit.retention_days` (default 365) are deleted (stream B),
-  since they hold client addresses.
+  since they hold client addresses: 5,000 per transaction, so a large backlog never holds the
+  write lock for long.
+- A settings reset keeps the row as a marker (value `null`) with the next version, so versions
+  only ever count up and a write from before the reset is a `version_conflict`.
+- A database that a newer Kalzit migrated is refused at start with a message that says so and
+  names the backups in `updates/backups`, before the migrator runs.
 - The audit list query carries only the filters that are set, and pages by the row value
   `(created_at, id)`, so it runs on the indexes `audit_events_org_time_id` and
   `audit_events_org_resource` (migration 0015) without a sort; a test checks the plan with

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { generatedUnion } from "../test/generated";
 import { fetchMe, isMe, login } from "./auth";
-import { ApiError, errorFromResponse, request, SERVER_ERROR_CODES } from "./client";
+import { ApiError, errorFromResponse, request, requestFile, SERVER_ERROR_CODES } from "./client";
 
 function respond(status: number, body: string | null, contentType = "application/json") {
   const fetchMock = vi.fn(
@@ -181,6 +181,21 @@ describe("request", () => {
     const error = await failure(request("GET", "/api/me"));
     expect(error.code).toBe("network");
     expect(error.status).toBe(0);
+  });
+
+  it("reports a file that breaks off after the 200 as an interrupted download", async () => {
+    const response = new Response("x", {
+      status: 200,
+      headers: { "Content-Disposition": 'attachment; filename="a.csv"' },
+    });
+    vi.spyOn(response, "blob").mockRejectedValue(new TypeError("network error"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response),
+    );
+    const error = await failure(requestFile("/api/export", {}));
+    expect(error.code).toBe("download_interrupted");
+    expect(error.status).toBe(200);
   });
 
   it("rejects a successful response that is not JSON", async () => {

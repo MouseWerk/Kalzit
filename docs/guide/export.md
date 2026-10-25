@@ -28,8 +28,10 @@ range, number of rows and the panel or data sources, never the data.
 ## Limits
 
 - A server makes at most three export files at once; more answers "busy" and can be tried again.
-- A file is at most 256 MiB. Excel files hold at most 1,000,000 cells (and at most 1,048,575 rows
-  and 16,384 columns).
+- A file is at most 256 MiB; Excel files have at most 1,048,575 rows and 16,384 columns. Files
+  are made on the server's disk first and then sent, so large exports do not fill its memory. You
+  can have one export at a time. A download that breaks off midway (for example when the
+  connection drops, or your browser stops reading for a minute) is not saved: export again.
 - Export is also bounded by the query time limit and the steps' limits (see
   [Calculated fields and statistics](calculated-fields.md#limits)).
 - A table result exports directly. For documents, add the projection step first ("Documents as a

@@ -1551,11 +1551,9 @@ function DashboardView({
               {dirty ? t("dashboards.editingUnsaved") : t("dashboards.editing")}
             </p>
           )}
-          {notice === null ? null : (
-            <p className="dashboard__mode" role="status">
-              {notice}
-            </p>
-          )}
+          <div className="live-region" role="status">
+            {notice === null ? null : <p className="dashboard__mode">{notice}</p>}
+          </div>
           {resolved.ok ? (
             alone !== undefined ? (
               <div className="dashboard__alone">

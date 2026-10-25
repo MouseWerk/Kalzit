@@ -69,7 +69,7 @@ describe("selecting a panel while editing", () => {
     await user.click(bodyOf(card));
     expect(card.getAttribute("aria-current")).toBe("true");
     expect(card.querySelector(".panel-card__size")?.textContent).toBe("12 × 8");
-    const toolbar = within(card).getByRole("toolbar", { name: "Actions for Orders" });
+    const toolbar = within(card).getByRole("group", { name: "Actions for Orders" });
     expect(within(toolbar).getByRole("button", { name: "Edit “Orders”" })).toBeTruthy();
     const outline = await screen.findByRole("navigation", { name: "Outline" });
     const inspector = await inspectorOf("Orders");

@@ -72,6 +72,10 @@ const GERMAN_KEYS: Record<string, string> = {
   Shift: "Umschalt",
   Enter: "Eingabe",
   Del: "Entf",
+  Home: "Pos1",
+  End: "Ende",
+  PgUp: "Bild auf",
+  PgDn: "Bild ab",
 };
 
 /** A key's name in the current language: Strg, Umschalt and Eingabe on German keyboards. */

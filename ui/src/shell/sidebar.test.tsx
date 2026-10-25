@@ -406,6 +406,12 @@ describe("flyout in the rail", () => {
     expect(document.querySelector(".rail-tooltip")).toBeNull();
     await user.tab({ shift: true });
     expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
+    // It is placed once, so scrolling the rail hides it instead of leaving it behind.
+    fireEvent.scroll(nav);
+    expect(document.querySelector(".rail-tooltip")).toBeNull();
+    await user.tab();
+    await user.tab({ shift: true });
+    expect(document.querySelector(".rail-tooltip")?.textContent).toBe("Dashboards");
     // A pointer gets the native title instead, never both.
     await user.hover(within(nav).getByRole("link", { name: "Dashboards" }));
     expect(document.querySelector(".rail-tooltip")).toBeNull();
