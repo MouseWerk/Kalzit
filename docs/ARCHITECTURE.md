@@ -53,8 +53,8 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
 - Deleting moves to the trash (`deletedAt`), `POST .../restore` brings it back, purging is a
   separate confirmed call.
 - Sessions: the cookie is `kalzit_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`). When the
-  request is HTTPS (directly or at a trusted proxy) or `server.public_url` is `https://`, it is
-  `__Host-kalzit_session` with `Secure`, and only that name is read, so a cookie planted over HTTP
+  request is HTTPS (directly or at a trusted proxy), it is `__Host-kalzit_session` with `Secure`,
+  and only that name is read, so a cookie planted over HTTP
   or by a sibling subdomain is ignored. Sign-in, failed sign-in and sign-out are audited.
 - Sign-in rate limit: per email and per client address, IPv4 per address and IPv6 per /64. When
   the table is full, address entries are dropped before account entries.

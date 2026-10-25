@@ -255,7 +255,7 @@ pub async fn complete(
     tracing::info!(user = %user_id, org = %org_id, "setup complete");
 
     let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.secure_cookies));
+    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
     Ok((headers, Json(answer)))
 }
 

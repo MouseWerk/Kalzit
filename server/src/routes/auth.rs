@@ -127,7 +127,7 @@ pub async fn login(
         return Err(invalid_credentials());
     }
     // Signing in again replaces the session this browser had, instead of leaving it behind.
-    if let Some(old) = session::read_cookie(&headers, info.secure_cookies) {
+    if let Some(old) = session::read_cookie(&headers, info.https) {
         session::delete(&mut *tx, &old).await?;
     }
     let token = session::create(&mut *tx, &state.config.sessions, now, &row.id).await?;
@@ -140,7 +140,7 @@ pub async fn login(
     let answer = me(&mut *tx, user).await?;
     crate::db::commit(tx).await?;
     let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.secure_cookies));
+    headers.insert(header::SET_COOKIE, session::set_cookie(&token, &state.config.sessions, info.https));
     Ok((headers, Json(answer)))
 }
 
@@ -149,7 +149,7 @@ pub async fn logout(
     Extension(info): Extension<RequestInfo>,
     headers: HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
-    if let Some(token) = session::read_cookie(&headers, info.secure_cookies) {
+    if let Some(token) = session::read_cookie(&headers, info.https) {
         let mut tx = crate::db::begin(&state.db).await?;
         let user: Option<(String,)> = sqlx::query_as("SELECT user_id FROM sessions WHERE token_hash = $1")
             .bind(session::hash_token(&token))
@@ -173,7 +173,7 @@ pub async fn logout(
         crate::db::commit(tx).await?;
     }
     let mut out = HeaderMap::new();
-    out.insert(header::SET_COOKIE, session::clear_cookie(info.secure_cookies));
+    out.insert(header::SET_COOKIE, session::clear_cookie(info.https));
     Ok((StatusCode::NO_CONTENT, out))
 }
 

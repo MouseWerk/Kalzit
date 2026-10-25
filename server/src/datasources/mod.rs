@@ -1640,6 +1640,35 @@ pub fn naive_to_ms(t: chrono::NaiveDateTime) -> i64 {
 mod tests {
     use super::*;
 
+    /// TLS paths written relative in `kalzit.toml` are resolved against the file's folder before
+    /// they are compared, so the files the server serves are the ones refused.
+    #[test]
+    fn relative_tls_paths_from_the_configuration_are_protected() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("etc");
+        std::fs::create_dir_all(folder.join("certs")).unwrap();
+        for f in ["certs/cert.pem", "certs/key.pem"] {
+            std::fs::write(folder.join(f), b"").unwrap();
+        }
+        let file = folder.join("kalzit.toml");
+        std::fs::write(&file, "[tls]\ncert_file = \"certs/cert.pem\"\nkey_file = \"certs/key.pem\"\n").unwrap();
+        let config = Config::from_file(Some(&file), Vec::<(String, String)>::new()).unwrap();
+        let (files, _) = own_files(&config);
+        assert!(files.contains(&std::path::absolute(&file).unwrap()), "{files:?}");
+        assert!(files.contains(&folder.join("certs/key.pem")), "{files:?}");
+        assert!(files.contains(&folder.join("certs/cert.pem")), "{files:?}");
+        let allowed = folder.to_string_lossy().to_string();
+        let policy =
+            TargetPolicy::new(&dir.path().join("data"), "sqlite::memory:", std::slice::from_ref(&allowed), &[])
+                .with_file_dirs(&[allowed])
+                .with_protected(&files, &[]);
+        for f in ["kalzit.toml", "certs/key.pem", "certs/cert.pem"] {
+            let path = folder.join(f).to_string_lossy().to_string();
+            assert!(policy.check_sqlite_path(&path).is_err(), "{f}");
+            assert!(policy.check_file_path(&path).is_err(), "{f}");
+        }
+    }
+
     #[test]
     fn scrub_removes_secrets_in_every_form() {
         let secret = "s3cr3t+Grün/1";

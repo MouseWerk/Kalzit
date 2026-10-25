@@ -366,9 +366,10 @@ impl TargetPolicy {
     }
 }
 
-const SQLITE_REFUSED: &str =
-    "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, or cannot be opened";
-const FILE_REFUSED: &str = "the file is not in a directory allowed in datasources.file_dirs, or cannot be opened";
+const SQLITE_REFUSED: &str = "the SQLite file is not in a directory allowed in datasources.sqlite_dirs, is one of \
+     Kalzit's own files (data, configuration, TLS key or certificate, credentials) or a hard link, or cannot be opened";
+const FILE_REFUSED: &str = "the file is not in a directory allowed in datasources.file_dirs, is one of Kalzit's own \
+     files (data, configuration, TLS key or certificate, credentials) or a hard link, or cannot be opened";
 
 /// `\\server\share`, `\\?\...`, `\\.\device` (and the same with forward slashes): paths
 /// that leave the local disks. Only Windows reads them that way.

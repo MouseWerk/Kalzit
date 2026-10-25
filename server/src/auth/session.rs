@@ -190,7 +190,7 @@ fn cookie_name(secure: bool) -> &'static str {
     if secure { SECURE_COOKIE_NAME } else { COOKIE_NAME }
 }
 
-/// The session token of the request. With `secure` (`RequestInfo::secure_cookies`) only the
+/// The session token of the request. With `secure` (`RequestInfo::https`) only the
 /// `__Host-` cookie counts, so a plain cookie planted over HTTP or by a subdomain is ignored.
 pub fn read_cookie(headers: &HeaderMap, secure: bool) -> Option<String> {
     let wanted = cookie_name(secure);

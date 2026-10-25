@@ -259,6 +259,7 @@ on_both_databases! {
     library_panels_check_panel_options,
     library_panel_queries_count_as_stored_queries,
     unhiding_or_moving_a_stored_query_counts_as_a_change,
+    library_panel_queries_are_keyed_by_their_slot,
     hidden_targets_are_kept_but_not_run,
     time_options_are_stored_and_checked,
     colour_options_are_stored_and_checked,
@@ -427,6 +428,42 @@ async fn unhiding_or_moving_a_stored_query_counts_as_a_change(t: TestApp) {
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
     // The owner may un-hide it.
     let saved = t.put(&path, json!({ "model": unhidden, "version": 2 }), &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+}
+
+/// A linked library panel's queries are keyed by the dashboard panel that shows them: showing it
+/// in a second slot adds queries and needs `datasources:query`; moving the slot does not.
+async fn library_panel_queries_are_keyed_by_their_slot(t: TestApp) {
+    let source = t.working_source().await;
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Gestalter", "permissions": ["dashboards:read", "dashboards:write", "folders:read", "datasources:read"] }),
+            &t.owner,
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let designer = t.member("Gerd", role.body["id"].as_str().unwrap()).await;
+    let mut content = library_model("Releases");
+    content["targets"] =
+        json!([{ "refId": "A", "datasourceId": source, "query": { "sql": "SELECT text FROM releases" } }]);
+    let lib = t.post("~/library-panels", json!({ "name": "Releases", "model": content }), &t.owner).await.id();
+    let model = showing("Übersicht", &lib);
+    let id = t.dashboard(None, model.clone(), &t.owner).await;
+    let path = format!("~/dashboards/{id}");
+
+    let mut twice = model.clone();
+    twice["panels"].as_array_mut().unwrap().push(
+        json!({ "id": "lp2", "type": "timeseries", "grid": { "x": 12, "y": 0, "w": 12, "h": 8 }, "libraryPanelId": lib }),
+    );
+    let refused = t.put(&path, json!({ "model": twice, "version": 1 }), &designer).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+
+    let mut moved = model.clone();
+    moved["panels"][0]["grid"] = json!({ "x": 0, "y": 8, "w": 24, "h": 6 });
+    let saved = t.put(&path, json!({ "model": moved, "version": 1 }), &designer).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let saved = t.put(&path, json!({ "model": twice, "version": 2 }), &t.owner).await;
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
 }
 

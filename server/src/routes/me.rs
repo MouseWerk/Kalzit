@@ -109,8 +109,7 @@ async fn change_password(
         return Err(wrong_current());
     }
     let ended =
-        session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers, info.secure_cookies).as_deref())
-            .await?;
+        session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers, info.https).as_deref()).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: now };
     let summary = json!({ "userId": user.id, "sessionsEnded": ended });
     audit(&mut tx, &actor, None, "user.password_changed", ("user", &user.id), summary).await?;
@@ -156,7 +155,7 @@ async fn list_sessions(
     .bind(session::idle_cutoff(&state.config.sessions, now))
     .fetch_all(&state.db)
     .await?;
-    let own = session::read_cookie(&headers, info.secure_cookies).map(|t| session::hash_token(&t));
+    let own = session::read_cookie(&headers, info.https).map(|t| session::hash_token(&t));
     for row in &mut rows {
         row.current = own.as_deref() == Some(row.token_hash.as_str());
     }
@@ -199,8 +198,7 @@ async fn end_other_sessions(
 ) -> ApiResult<Json<Revoked>> {
     let mut tx = crate::db::begin(&state.db).await?;
     let revoked =
-        session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers, info.secure_cookies).as_deref())
-            .await?;
+        session::delete_for_user(&mut *tx, &user.id, session::read_cookie(&headers, info.https).as_deref()).await?;
     let actor = Actor { user_id: &user.id, info: &info, at_ms: state.clock.now_ms() };
     audit(&mut tx, &actor, None, "auth.sessions_revoked", ("user", &user.id), json!({ "revoked": revoked })).await?;
     crate::db::commit(tx).await?;
