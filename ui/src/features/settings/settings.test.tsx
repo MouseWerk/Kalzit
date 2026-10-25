@@ -171,6 +171,33 @@ describe("server settings rows", () => {
     await waitFor(() => expect(stored).toMatchObject({ value: "system", version: 2 }));
   });
 
+  it("applies a changed default theme to the open app, and takes it back with undo", async () => {
+    const { user } = await openAdmin("/settings/appearance", { isServerAdmin: true });
+    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    await user.click(within(theme).getByRole("radio", { name: "Dark" }));
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("system"));
+  });
+
+  it("says a personal theme wins over the default, and keeps it", async () => {
+    const { user, server } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+      setupServer: (fake) => {
+        fake.state.preferences.theme = "light";
+      },
+    });
+    const theme = await screen.findByRole("radiogroup", { name: "Default theme" });
+    const note = await screen.findByText(/You use your own theme/);
+    expect(within(note).getByRole("link", { name: "Profile" }).getAttribute("href")).toBe(
+      "/settings/profile",
+    );
+    await user.click(within(theme).getByRole("radio", { name: "Dark" }));
+    await screen.findByText("“Default theme” was saved.");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(server.state.preferences.theme).toBe("light");
+  });
+
   it("saves a number on Enter once, and shows a rejected value at the field", async () => {
     const { user, admin, server } = await openAdmin("/settings/datasources", {
       isServerAdmin: true,

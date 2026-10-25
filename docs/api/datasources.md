@@ -379,6 +379,9 @@ Body `QueryRequest`, answer `QueryResponse` (types generated in `ui/src/api/gene
 }
 ```
 
+Explore also sends `"explore": true` (optional, default false): the successful queries of the run are
+then kept in the caller's private Explore history (`docs/api/explore-history.md`).
+
 - 1 to 50 queries, each with its own `refId` (1 to 64 characters); `timeRange.from` not after
   `timeRange.to`, both within the years 1 to 9999. Otherwise `422 validation` (`field`: `queries`
   or `timeRange`).
