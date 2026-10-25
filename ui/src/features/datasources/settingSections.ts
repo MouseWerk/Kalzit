@@ -78,6 +78,8 @@ export function summarize(
   specs: readonly SettingSpec[],
   values: Readonly<Record<string, string | boolean>>,
   secretSet: (name: string) => boolean,
+  /** Leave out values equal to the kind's default (Behavior: only what was changed). */
+  skipDefaults = false,
 ): SummaryPart[] {
   const parts: SummaryPart[] = [];
   for (const spec of specs) {
@@ -88,6 +90,15 @@ export function summarize(
       continue;
     }
     const value = values[spec.name];
+    if (skipDefaults && spec.default !== undefined) {
+      const isDefault =
+        spec.type === "bool"
+          ? value === (spec.default === true)
+          : String(value) === String(spec.default);
+      if (isDefault) {
+        continue;
+      }
+    }
     if (spec.type === "bool") {
       if (value === true) {
         parts.push({ type: "on", name: spec.name });

@@ -82,12 +82,74 @@ describe("connection strings", () => {
     });
   });
 
-  it("go back to the defaults for parts left out", () => {
+  it("leave a parameter the string omits as it is, so TLS is never weakened unasked", () => {
     const result = parseConnectionString("postgres", "postgres://db.intern/shop", POSTGRES);
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       ok: true,
-      values: { port: "5432", sslMode: "prefer", user: "" },
+      values: { user: "", database: "shop", host: "db.intern", port: "5432" },
       password: undefined,
+    });
+  });
+
+  it("end the login at the last @, so an unescaped @ in a password is read right", () => {
+    expect(parseConnectionString("postgres", "postgres://u:p@ss@db.intern/shop", POSTGRES)).toEqual(
+      {
+        ok: true,
+        values: { user: "u", database: "shop", host: "db.intern", port: "5432" },
+        password: "p@ss",
+      },
+    );
+    expect(
+      parseConnectionString("mongodb", "mongodb://u:p@ss@a.intern,b.intern:27018/o", MONGO),
+    ).toMatchObject({ ok: true, values: { hosts: "a.intern,b.intern:27018" }, password: "p@ss" });
+  });
+
+  it("check hosts, ports and the path", () => {
+    expect(parseConnectionString("postgres", "postgres://u@a,b/d", POSTGRES)).toEqual({
+      ok: false,
+      error: "hostList",
+      detail: "a,b",
+    });
+    expect(parseConnectionString("postgres", "postgres://h:70000/d", POSTGRES)).toEqual({
+      ok: false,
+      error: "port",
+      detail: "70000",
+    });
+    expect(parseConnectionString("postgres", "postgres://h/d/extra", POSTGRES)).toEqual({
+      ok: false,
+      error: "path",
+      detail: "/d/extra",
+    });
+    expect(parseConnectionString("postgres", "postgres://u:p@/d", POSTGRES)).toEqual({
+      ok: false,
+      error: "host",
+    });
+    expect(parseConnectionString("mongodb", "mongodb://a.intern,b x/o", MONGO)).toEqual({
+      ok: false,
+      error: "host",
+      detail: "b x",
+    });
+    expect(parseConnectionString("mongodb", "mongodb://a:0/o", MONGO)).toEqual({
+      ok: false,
+      error: "port",
+      detail: "0",
+    });
+  });
+
+  it("split each parameter at its first = and name broken escapes", () => {
+    expect(parseConnectionString("mongodb", "mongodb://h/o?replicaSet=a=b", MONGO)).toMatchObject({
+      ok: true,
+      values: { replicaSet: "a=b" },
+    });
+    expect(parseConnectionString("mongodb", "mongodb://h/o?replicaSet=%zz", MONGO)).toEqual({
+      ok: false,
+      error: "decode",
+      detail: "replicaset",
+    });
+    expect(parseConnectionString("postgres", "postgres://u:%zz@h/d", POSTGRES)).toEqual({
+      ok: false,
+      error: "decode",
+      detail: "password",
     });
   });
 

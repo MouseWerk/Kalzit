@@ -36,12 +36,40 @@ export function supportsConnectionString(kind: string): boolean {
   return Object.hasOwn(SCHEMES, kind);
 }
 
-export type ParseResult =
-  | { ok: true; values: Record<string, string | boolean>; password: string | undefined }
-  | { ok: false; error: "format" | "scheme" | "param" | "value"; detail?: string };
+export type ParseError =
+  | "format"
+  | "scheme"
+  | "host"
+  | "hostList"
+  | "port"
+  | "path"
+  | "decode"
+  | "param"
+  | "value";
 
-const PATTERN =
-  /^([a-z+]+):\/\/(?:([^:@/]*)(?::([^@/]*))?@)?([^/?#]+)(?:\/([^?#]*))?(?:\?([^#]*))?$/iu;
+export type ParseResult =
+  | {
+      ok: true;
+      /** Only what the string says; a parameter it leaves out leaves its field as it is. */
+      values: Record<string, string | boolean>;
+      /** The password in the string, or undefined when it has none. */
+      password: string | undefined;
+    }
+  | { ok: false; error: ParseError; detail?: string };
+
+/** scheme://authority/path?query, the authority taken apart below. */
+const PATTERN = /^([a-z+]+):\/\/([^/?#]*)(?:\/([^?#]*))?(?:\?([^#]*))?$/iu;
+
+/** One host with an optional port: a name, an IPv4 address or a bracketed IPv6 address. */
+const HOST_PORT = /^(\[[0-9a-f:.]+\]|[^\s:[\],@]+)(?::(\d+))?$/iu;
+
+function validPort(port: string | undefined): boolean {
+  if (port === undefined) {
+    return true;
+  }
+  const value = Number(port);
+  return Number.isInteger(value) && value >= 1 && value <= 65535;
+}
 
 function decode(text: string): string | null {
   try {
@@ -65,45 +93,81 @@ export function parseConnectionString(
   if (match === null) {
     return { ok: false, error: "format" };
   }
-  const [, rawScheme = "", rawUser, rawPassword, authority = "", rawPath, rawQuery] = match;
+  const [, rawScheme = "", authority = "", rawPath, rawQuery] = match;
   const lowerScheme = rawScheme.toLowerCase();
   if (!scheme.schemes.includes(lowerScheme)) {
     return { ok: false, error: "scheme", detail: rawScheme };
   }
-  const values: Record<string, string | boolean> = {};
-  const user = rawUser === undefined ? "" : decode(rawUser);
-  const password = rawPassword === undefined ? undefined : decode(rawPassword);
-  const database = rawPath === undefined ? "" : decode(rawPath);
-  if (user === null || password === null || database === null) {
-    return { ok: false, error: "format" };
+  // The login ends at the last "@": a password may hold an unescaped "@", a host never does.
+  const at = authority.lastIndexOf("@");
+  const userInfo = at === -1 ? undefined : authority.slice(0, at);
+  const hostPart = at === -1 ? authority : authority.slice(at + 1);
+  const colon = userInfo?.indexOf(":") ?? -1;
+  const rawUser = userInfo === undefined ? "" : colon === -1 ? userInfo : userInfo.slice(0, colon);
+  const rawPassword =
+    userInfo === undefined || colon === -1 ? undefined : userInfo.slice(colon + 1);
+  const user = decode(rawUser);
+  if (user === null) {
+    return { ok: false, error: "decode", detail: rawUser };
   }
-  values.user = user;
-  values.database = database;
+  const password = rawPassword === undefined ? undefined : decode(rawPassword);
+  if (password === null) {
+    // The password itself is never echoed back.
+    return { ok: false, error: "decode", detail: "password" };
+  }
+  const path = rawPath ?? "";
+  if (path.includes("/")) {
+    return { ok: false, error: "path", detail: `/${path}` };
+  }
+  const database = decode(path);
+  if (database === null) {
+    return { ok: false, error: "decode", detail: path };
+  }
+  if (hostPart === "") {
+    return { ok: false, error: "host" };
+  }
+  const values: Record<string, string | boolean> = { user, database };
   if (kind === "mongodb") {
-    values.hosts = authority;
+    for (const entry of hostPart.split(",")) {
+      const hostPort = HOST_PORT.exec(entry);
+      if (hostPort === null) {
+        return { ok: false, error: "host", detail: entry };
+      }
+      if (!validPort(hostPort[2])) {
+        return { ok: false, error: "port", detail: hostPort[2] ?? "" };
+      }
+    }
+    values.hosts = hostPart;
     values.srv = lowerScheme === "mongodb+srv";
   } else {
-    const hostPort = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/u.exec(authority);
+    if (hostPart.includes(",")) {
+      return { ok: false, error: "hostList", detail: hostPart };
+    }
+    const hostPort = HOST_PORT.exec(hostPart);
     if (hostPort === null) {
-      return { ok: false, error: "format" };
+      return { ok: false, error: "host", detail: hostPart };
+    }
+    if (!validPort(hostPort[2])) {
+      return { ok: false, error: "port", detail: hostPort[2] ?? "" };
     }
     values.host = (hostPort[1] ?? "").replace(/^\[|\]$/gu, "");
     const port = specs.find((spec) => spec.name === "port");
     values.port = hostPort[2] ?? (port?.default === undefined ? "" : String(port.default));
   }
-  // Fields the string can set but leaves out go back to the kind's default.
-  for (const field of Object.values(scheme.params)) {
-    const spec = specs.find((candidate) => candidate.name === field);
-    if (spec?.type === "bool") {
-      values[field] = spec.default === true;
-    } else {
-      values[field] = spec?.default === undefined ? "" : String(spec.default);
-    }
-  }
   for (const pair of (rawQuery ?? "").split("&").filter(Boolean)) {
-    const [rawKey = "", rawValue = ""] = pair.split("=");
-    const key = decode(rawKey)?.toLowerCase() ?? "";
-    const value = decode(rawValue) ?? "";
+    // Only the first "=" separates; a value may hold more.
+    const split = pair.indexOf("=");
+    const rawKey = split === -1 ? pair : pair.slice(0, split);
+    const rawValue = split === -1 ? "" : pair.slice(split + 1);
+    const decodedKey = decode(rawKey);
+    if (decodedKey === null) {
+      return { ok: false, error: "decode", detail: rawKey };
+    }
+    const key = decodedKey.toLowerCase();
+    const value = decode(rawValue);
+    if (value === null) {
+      return { ok: false, error: "decode", detail: key };
+    }
     const field = scheme.params[key];
     if (field === undefined) {
       return { ok: false, error: "param", detail: key };
@@ -191,6 +255,11 @@ export function toConnectionString(
   }
   const path = database === "" ? "" : `/${encodeURIComponent(database)}`;
   return `${prefix}://${login}${authority}${path}${params.length > 0 ? `?${params.join("&")}` : ""}`;
+}
+
+/** Whether the fields name a host yet; without one a string would only mislead. */
+export function hasHost(kind: string, values: Readonly<Record<string, string | boolean>>): boolean {
+  return String(values[kind === "mongodb" ? "hosts" : "host"] ?? "").trim() !== "";
 }
 
 /** The fields the string covers for a kind; only these are replaced when it is read. */
