@@ -6,7 +6,8 @@ import { defineConfig } from "vitest/config";
 // production, so the dev server proxies every server route instead of using CORS.
 const SERVER = "http://127.0.0.1:3000";
 const proxy = {
-  "/api": SERVER,
+  // Live updates (docs/api/live.md) are a WebSocket under /api.
+  "/api": { target: SERVER, ws: true },
   "/healthz": SERVER,
   "/readyz": SERVER,
 };

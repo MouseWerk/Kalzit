@@ -222,6 +222,7 @@ describe("refresh", () => {
       "Auto refresh off",
       "Every 15 seconds",
       "Every 2 minutes",
+      "Live",
     ]);
     expect(items[0]?.getAttribute("aria-checked")).toBe("true");
     await user.click(items[1] as HTMLElement);

@@ -5,7 +5,7 @@ import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu
 import { useI18n } from "../../i18n/i18n";
 import { useWideLayout } from "../../shell/sidebarState";
 import { useHeightVar } from "../../shell/useHeightVar";
-import { RefreshControl } from "./RefreshControl";
+import { type LiveChoice, RefreshControl } from "./RefreshControl";
 import { TimeControls } from "./TimeRangePicker";
 import type { TextRange } from "./timeRange";
 import "./toolbar.css";
@@ -60,6 +60,9 @@ interface DashboardToolbarProps {
   shortcuts: boolean;
   refreshSeconds: number;
   onRefreshSeconds: (seconds: number) => void;
+  /** Live updates: off, on, or paused by the person. */
+  live: LiveChoice;
+  onLive: (live: LiveChoice) => void;
   refreshIntervals: readonly number[] | undefined;
   onRefresh: () => void;
   actions: ToolbarActions;
@@ -90,6 +93,8 @@ export function DashboardToolbar({
   shortcuts,
   refreshSeconds,
   onRefreshSeconds,
+  live,
+  onLive,
   refreshIntervals,
   onRefresh,
   actions,
@@ -216,6 +221,8 @@ export function DashboardToolbar({
           onRefresh={onRefresh}
           seconds={refreshSeconds}
           onSeconds={onRefreshSeconds}
+          live={live}
+          onLive={onLive}
           intervals={refreshIntervals}
         />
         {tv ? (
