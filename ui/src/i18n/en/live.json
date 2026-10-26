@@ -1,0 +1,19 @@
+{
+  "live.on": "Live",
+  "live.every": "Live, every {interval}",
+  "live.paused": "Live paused",
+  "live.stopped": "Live stopped",
+  "live.detail.connecting": "Connecting…",
+  "live.detail.reconnecting": "The connection dropped. Trying again shortly…",
+  "live.detail.changes": "Updates as soon as the data changes.",
+  "live.detail.poll": "The queries run again every {interval}.",
+  "live.detail.hidden": "Paused while this tab is in the background. Resumes when you come back.",
+  "live.detail.paused": "Paused. Resume it in the refresh menu.",
+  "live.menu.live": "Live",
+  "live.menu.pause": "Pause live updates",
+  "live.menu.resume": "Resume live updates",
+  "live.menu.label": "Refresh automatically: live",
+  "live.menu.labelPaused": "Refresh automatically: live, paused",
+  "live.explore.toggle": "Live",
+  "live.explore.hint": "Run this query again whenever its data changes"
+}

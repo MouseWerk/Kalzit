@@ -315,3 +315,13 @@ export function expectShape<T>(value: unknown, guard: (v: unknown) => v is T, wh
   }
   return value;
 }
+
+/**
+ * Opens a WebSocket to a server path on this origin (`ws:` or `wss:` as the page was loaded).
+ * The session cookie signs it in; the browser sends the page's Origin, which the server checks.
+ */
+export function openSocket(path: string): WebSocket {
+  const url = new URL(path, window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return new WebSocket(url);
+}

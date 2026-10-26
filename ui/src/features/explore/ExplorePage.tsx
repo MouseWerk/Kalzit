@@ -27,6 +27,9 @@ import { useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
+import { type LiveSpec, liveClient } from "../../live/client";
+import { liveNote } from "../../live/text";
+import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { panelsForShapes, suggestPanel } from "../../panels/registry";
@@ -124,6 +127,8 @@ function Explore({ orgId }: { orgId: string }) {
   }>({ of: null, pages: [], loading: false, error: null });
   const [range, setRange] = useState<TextRange>({ from: "now-1h", to: "now" });
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
+  // Live: the submitted query runs again whenever its data changes, pushed by the server.
+  const [liveOn, setLiveOn] = useState(false);
   // The "load more" request on its way; a new run or leaving the page stops it on the server.
   const moreAbort = useRef<AbortController | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup is what runs when a new run starts
@@ -184,6 +189,29 @@ function Explore({ orgId }: { orgId: string }) {
       return outcomesOf(response, [REF_ID]);
     },
   });
+  // A range that ends now moves with each live run; any other stays as it was resolved.
+  const moving = submitted !== null && submitted.range.to.trim() === "now";
+  const length = submitted === null ? 0 : submitted.to - submitted.from;
+  const liveSpec: LiveSpec | null =
+    !liveOn || submitted === null
+      ? null
+      : {
+          queries: [
+            { refId: REF_ID, datasourceId: submitted.datasourceId, query: submitted.query },
+          ],
+          ...(moving
+            ? { lastMs: length }
+            : { timeRange: { from: submitted.from, to: submitted.to } }),
+          maxDataPoints: MAX_DATA_POINTS,
+          intervalMs: intervalFor({ from: submitted.from, to: submitted.to }),
+          variables: {},
+        };
+  const live = useLiveSubscription(orgId, liveSpec, (results) => {
+    // The pushed result replaces the run's answer; pages loaded after it belonged to the old one.
+    client.setQueryData([EXPLORE_KEY, orgId, submitted], outcomesOf({ results }, [REF_ID]));
+    setMore({ of: null, pages: [], loading: false, error: null });
+  });
+  const liveText = liveNote(t, live);
 
   function run(
     nextRange = range,
@@ -387,6 +415,20 @@ function Explore({ orgId }: { orgId: string }) {
           />
           <button
             type="button"
+            className="button button--secondary"
+            aria-pressed={liveOn}
+            title={t("live.explore.hint")}
+            onClick={() => {
+              if (!liveOn) {
+                liveClient(orgId).restart();
+              }
+              setLiveOn(!liveOn);
+            }}
+          >
+            {t("live.explore.toggle")}
+          </button>
+          <button
+            type="button"
             className="button button--primary"
             onClick={() => run()}
             disabled={!hasQuery(query, datasource.kind) || queryBlocked}
@@ -458,6 +500,11 @@ function Explore({ orgId }: { orgId: string }) {
                     ))}
                   </select>
                 </div>
+                {liveText === null ? null : (
+                  <p className="explore__live" role="status">
+                    {liveText.label}: {liveText.detail}
+                  </p>
+                )}
                 {blocked ? (
                   <p className="field__error" id={`${tabsId}-blocked`}>
                     {t("documents.projection.blockedExplore")}
@@ -477,11 +524,15 @@ function Explore({ orgId }: { orgId: string }) {
                     <PanelBody
                       panel={panel}
                       title={t("explore.result")}
-                      range={{ from: submitted.from, to: submitted.to }}
+                      range={
+                        moving && live.at !== undefined && live.at > submitted.to
+                          ? { from: live.at - length, to: live.at }
+                          : { from: submitted.from, to: submitted.to }
+                      }
                       pending={result.isPending}
                       error={result.error}
                       outcomes={outcomes}
-                      revision={`${submitted.run}:${current.pages.length}`}
+                      revision={`${submitted.run}:${current.pages.length}:${result.dataUpdatedAt}`}
                       onFilter={
                         isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
                           ? (_refId, path, value) => {
