@@ -45,6 +45,8 @@ pub struct AppState {
     pub export_limits: Arc<std::sync::RwLock<crate::routes::export::Limits>>,
     /// Checks, downloads and installations of new versions (`updates`).
     pub updates: Arc<crate::updates::Updates>,
+    /// Live update connections and their feeds (`live`).
+    pub live: Arc<crate::live::Live>,
 }
 
 impl AppState {
@@ -83,6 +85,7 @@ impl AppState {
             export_users: Arc::default(),
             export_limits: Arc::default(),
             updates,
+            live: Arc::default(),
         })
     }
 
@@ -91,6 +94,8 @@ impl AppState {
     /// files in the data directory stay open, and Windows cannot delete them (tests delete their
     /// temporary data directory right after).
     pub async fn close(&self) {
+        // Live connections are not requests the listeners wait for; they are told to close.
+        self.live.shutdown(crate::live::SHUTDOWN_WAIT).await;
         self.background.stop().await;
         self.datasources.close().await;
         self.read_db.close().await;

@@ -34,7 +34,7 @@ test("t and the arrow keys move the range; the shortcuts are listed in the help"
   await page.goto(`/dashboards/${world.dashboardId}`);
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
   const range = page.locator(".time-picker__button");
-  const before = await range.innerText();
+  const before = (await range.textContent()) ?? "";
   await page.keyboard.press("t");
   await page.keyboard.press("ArrowLeft");
   await expect(page).toHaveURL(/from=now-12h&to=now-6h|to=now-6h.*from=now-12h/);

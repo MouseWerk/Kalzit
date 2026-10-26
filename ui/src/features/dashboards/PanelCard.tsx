@@ -2,6 +2,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   startTransition,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -17,6 +18,8 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
+import { liveNote } from "../../live/text";
+import { useInView } from "../../live/useInView";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
@@ -58,7 +61,14 @@ import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
 import { errorBodyMessage, errorMessage } from "./ui/errors";
 import { Inspect } from "./ui/Inspect";
-import { firstLoad, type PanelQueryInput, usePanelResults } from "./usePanelResults";
+import { usePanelLive } from "./usePanelLive";
+import {
+  firstLoad,
+  type PanelQueryInput,
+  panelDistribution,
+  type TargetDistribution,
+  usePanelResults,
+} from "./usePanelResults";
 
 /** The width at which dashboards.css switches to one column. */
 const SINGLE_COLUMN = "(max-width: 48rem)";
@@ -139,6 +149,24 @@ export function PanelCard({
     keepHandleFocus.current = false;
   });
   const results = usePanelResults({ ...query, panel });
+  // While the dashboard is live, the panels on screen follow their results.
+  const [inView, observe] = useInView(query.live !== undefined);
+  const cardRef = useCallback(
+    (element: HTMLElement | null) => {
+      ref.current = element;
+      observe(element);
+    },
+    [observe],
+  );
+  const live = usePanelLive({ ...query, panel }, inView);
+  // Paused by the person: the panel keeps its last result and says so.
+  const liveText =
+    query.live?.paused === true
+      ? { label: t("live.paused"), detail: t("live.detail.paused") }
+      : liveNote(t, live);
+  // A moving range ends at the last live run, unless a refresh since then ran later.
+  const range =
+    live.range !== undefined && live.range.to > query.range.to ? live.range : query.range;
   const kindOf = useSourceKinds(query.orgId);
   const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
   const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
@@ -384,7 +412,7 @@ export function PanelCard({
       )}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Enter or Space on the arrange handle selects the panel from the keyboard */}
       <article
-        ref={ref}
+        ref={cardRef}
         className={className}
         data-panel-id={panel.id}
         aria-labelledby={titleId}
@@ -422,6 +450,12 @@ export function PanelCard({
               {noteText}
             </span>
           )}
+          {liveText === null ? null : (
+            <span className="panel-card__live" title={liveText.detail}>
+              {liveText.label}
+              <span className="visually-hidden">: {liveText.detail}</span>
+            </span>
+          )}
           {panel.description === undefined ? null : (
             <PanelDescription title={title} description={panel.description} />
           )}
@@ -456,13 +490,17 @@ export function PanelCard({
             <PanelBody
               panel={panel}
               title={title}
-              range={query.range}
+              range={range}
               pending={firstLoad(results)}
               error={results.error}
               outcomes={outcomes}
               revision={results.dataUpdatedAt}
               variables={variableTexts(query.variables)}
               kindOf={kindOf}
+              distribution={panelDistribution(
+                { ...query, panel, manual: query.manual ?? query.run },
+                kindOf,
+              )}
             />
           </PanelAnnotationsContext.Provider>
         </div>
@@ -583,6 +621,11 @@ interface PanelBodyProps {
    * turn it into a `$match` stage; dashboards leave it out, so viewers only read.
    */
   onFilter?: ((refId: string, path: string, value: unknown) => void) | undefined;
+  /**
+   * The field distribution of the target `refId` over its whole result, from the server: the
+   * panel route for a stored panel, the free route for a draft or Explore.
+   */
+  distribution?: TargetDistribution | undefined;
   /** Changes with every new result: a run, or a page loaded after it. */
   revision?: string | number | undefined;
   /** The steps' run when the caller already has it (the panel editor shares it with its steps). */
@@ -608,6 +651,7 @@ export function PanelBody({
   error,
   outcomes,
   onFilter,
+  distribution,
   revision,
   stepsRun: given,
   variables,
@@ -767,6 +811,24 @@ export function PanelBody({
                       if (refId !== undefined) {
                         onFilter(refId, filter.path, filter.value);
                       }
+                    }
+              }
+              distribution={
+                distribution === undefined
+                  ? undefined
+                  : {
+                      // The set's target belongs to the question: sets keep their order.
+                      identity: JSON.stringify([
+                        distribution.identity,
+                        documents.map((d) => d.refId),
+                      ]),
+                      manual: distribution.manual,
+                      run: (index, ask, signal) => {
+                        const refId = documents[index]?.refId;
+                        return refId === undefined
+                          ? Promise.reject(new Error(`no document set ${index}`))
+                          : distribution.run(refId, ask, signal);
+                      },
                     }
               }
               options={options}

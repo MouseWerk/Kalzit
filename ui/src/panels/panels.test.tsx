@@ -379,7 +379,7 @@ describe("performance budget", () => {
       max = reduceField(field, "max").value;
     });
     process.stdout.write(`stat: 100k values reduced in ${ms.toFixed(1)} ms\n`);
-    expect(max).toBe(values.reduce((a, b) => (b > a ? b : a), 0));
+    expect(max).toBe(values.reduce((a, b) => Math.max(a, b), 0));
     expect(ms).toBeLessThan(CI ? 60 : 25);
   });
 

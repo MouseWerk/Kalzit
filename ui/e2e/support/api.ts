@@ -170,6 +170,17 @@ export class Api {
     return source.id;
   }
 
+  /** A CSV or JSON file source; the file must lie in the folder the e2e server allows. */
+  async createFileSource(name: string, path: string): Promise<string> {
+    const source = await json<{ id: string }>(
+      await this.context.post(this.org("/datasources"), {
+        data: { name, kind: "file", settings: { path }, secrets: {} },
+      }),
+      "create file source",
+    );
+    return source.id;
+  }
+
   async grantQuery(userId: string, datasourceId: string): Promise<void> {
     await json(
       await this.context.post(this.org("/grants"), {

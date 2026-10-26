@@ -90,6 +90,7 @@ export function installWebGLStub(): () => void {
   const scope = globalThis as unknown as Record<string, unknown>;
   const hadWebGL = "WebGL2RenderingContext" in scope;
   const constants = () =>
+    // biome-ignore lint/correctness/noComponentHookFactories: a stand-in constructor for a stubbed global, not a component
     new Proxy(function WebGLContext() {}, {
       get(target, key) {
         return isConstant(key) ? constant(key as string) : Reflect.get(target, key);

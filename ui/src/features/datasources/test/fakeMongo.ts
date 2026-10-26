@@ -1,9 +1,14 @@
 import type {
   DocumentSet,
+  ErrorBody,
+  FieldDistribution,
   FieldSchema,
   QueryItem,
   QueryOutcome,
 } from "../../../api/generated/shapes";
+import { distribution } from "../../../documents/distribution";
+import { type PathStep, valuesAlong } from "../../../documents/paths";
+import { typeOf } from "../../../documents/values";
 
 /**
  * The MongoDB part of the data source fake, written from docs/api/datasources.md ("MongoDB: a
@@ -379,6 +384,82 @@ export function mongoOutcome(
   if (!Number.isInteger(offset) || offset < 0) {
     return rejected("the cursor does not belong to this query", "mongodb.cursor_invalid");
   }
+  const documents = evaluate(parsed, collections);
+  const limit = item.limit ?? FAKE_PAGE;
+  const rest = documents.slice(offset);
+  const page = rest.slice(0, limit);
+  const cut = rest.length > page.length;
+  // As the server answers: notices and the executed query beside the documents; a cut set says
+  // how many it holds and continues from `nextCursor`.
+  const set: DocumentSet = {
+    documents: page,
+    schema: serverSchema(page),
+    notices: cut
+      ? [
+          {
+            severity: "warning",
+            code: "documents.limit",
+            params: { limit: String(page.length) },
+            text: `cut off at ${page.length} documents`,
+          },
+        ]
+      : [],
+    executedQuery: `${parsed.collection}.${parsed.pipeline === undefined ? "find" : "aggregate"}(...)`,
+    distributable: true,
+    ...(cut ? { truncated: { limit: page.length }, nextCursor: String(offset + page.length) } : {}),
+  };
+  return { result: { shape: "documents", documents: set } };
+}
+
+/**
+ * `POST /query/distribution` for a MongoDB query: the distribution over every document of the
+ * result, not only a page, as the server computes it in the database.
+ */
+export function mongoDistribution(
+  query: unknown,
+  path: readonly PathStep[],
+  collections: Record<string, Record<string, unknown>[]>,
+): { distribution: FieldDistribution } | { error: ErrorBody } {
+  const parsed = parseMongo(query);
+  if ("error" in parsed) {
+    return parsed;
+  }
+  if ("result" in parsed) {
+    return { error: { code: "internal", message: "unexpected result" } };
+  }
+  const documents = evaluate(parsed, collections);
+  const d = distribution(documents, path);
+  const types = new Map<string, number>();
+  for (const document of documents) {
+    for (const value of valuesAlong(document, path)) {
+      const name = typeOf(value);
+      types.set(name, (types.get(name) ?? 0) + 1);
+    }
+  }
+  return {
+    distribution: {
+      total: d.total,
+      documents: d.documents,
+      missing: d.missing,
+      values: d.values,
+      nulls: d.nulls,
+      distinct: d.distinct,
+      distinctCapped: false,
+      types: [...types].map(([name, count]) => ({ name, count })),
+      top: d.top.map((entry) => ({ value: entry.value, count: entry.count })),
+      ...(d.scale === null ? {} : { scale: d.scale }),
+      ...(d.min === undefined ? {} : { min: d.min }),
+      ...(d.max === undefined ? {} : { max: d.max }),
+      bins: d.bins,
+    },
+  };
+}
+
+/** Every document of the query's result, without paging. */
+function evaluate(
+  parsed: Parsed,
+  collections: Record<string, Record<string, unknown>[]>,
+): unknown[] {
   let documents: unknown[] = structuredClone(collections[parsed.collection] ?? []);
   if (parsed.pipeline === undefined) {
     documents = documents.filter((d) => matches(d, parsed.filter));
@@ -402,27 +483,5 @@ export function mongoOutcome(
       }
     }
   }
-  const limit = item.limit ?? FAKE_PAGE;
-  const rest = documents.slice(offset);
-  const page = rest.slice(0, limit);
-  const cut = rest.length > page.length;
-  // As the server answers: notices and the executed query beside the documents; a cut set says
-  // how many it holds and continues from `nextCursor`.
-  const set: DocumentSet = {
-    documents: page,
-    schema: serverSchema(page),
-    notices: cut
-      ? [
-          {
-            severity: "warning",
-            code: "documents.limit",
-            params: { limit: String(page.length) },
-            text: `cut off at ${page.length} documents`,
-          },
-        ]
-      : [],
-    executedQuery: `${parsed.collection}.${parsed.pipeline === undefined ? "find" : "aggregate"}(...)`,
-    ...(cut ? { truncated: { limit: page.length }, nextCursor: String(offset + page.length) } : {}),
-  };
-  return { result: { shape: "documents", documents: set } };
+  return documents;
 }

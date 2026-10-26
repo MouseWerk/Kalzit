@@ -25,6 +25,11 @@ enum Command {
     Serve,
     /// Read and validate the configuration, then exit.
     CheckConfig,
+    /// Ask the running server on this machine whether it is ready (exit code 0), for container
+    /// health checks. Uses the plain HTTP listener.
+    Healthcheck,
+    /// Print the one-time setup code of the first start from the data directory.
+    SetupCode,
     /// Manage the key that encrypts data source secrets.
     Secrets {
         #[command(subcommand)]
@@ -99,6 +104,37 @@ fn main() -> ExitCode {
             println!("configuration is valid; data directory {}", config.paths.data_dir.display());
             ExitCode::SUCCESS
         }
+        Command::Healthcheck => {
+            let Some(addr) = config.http_addr() else {
+                eprintln!("kalzit: no plain HTTP listener (server.http_addr) to check");
+                return ExitCode::FAILURE;
+            };
+            match kalzit::routes::health::probe(addr, Duration::from_secs(5)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("kalzit: not ready: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Command::SetupCode => match kalzit::routes::setup::read_code(&config.paths.data_dir) {
+            Ok(Some(code)) => {
+                println!("{code}");
+                ExitCode::SUCCESS
+            }
+            Ok(None) => {
+                eprintln!(
+                    "kalzit: no setup code in {}: setup is complete, the server has not started yet, or \
+                     KALZIT_SETUP_TOKEN sets the code",
+                    config.paths.data_dir.display()
+                );
+                ExitCode::FAILURE
+            }
+            Err(e) => {
+                eprintln!("kalzit: reading the setup code: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Secrets { action: SecretsCommand::Rotate } => {
             init_logging(&config.log);
             let Some(runtime) = runtime() else { return ExitCode::FAILURE };

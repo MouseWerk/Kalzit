@@ -173,7 +173,10 @@ For `documents` results (see [Explore](explore.md#documents)):
 - **Schema**: every field path with its types and **Coverage**, marking fields missing in some
   documents or with mixed types; **Only outliers** narrows the list.
 - **Field distribution**: how the values of one field (a path such as `items[].price`) are spread,
-  with the most common values.
+  with the most common values. For MongoDB the database counts the whole result, so the numbers
+  say **Across all N documents of the result** even when only a page of it is loaded; for other
+  sources they count the loaded documents and say **Across the N loaded documents**. A field with
+  a dot in its name (`preis.netto`) is counted as that field.
 - **Document card**: one document readably, field by field, paging through the rest; **Title
   field** names the card.
 

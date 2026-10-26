@@ -23,7 +23,7 @@ export function findOverflow(page: Page): Promise<Overflow> {
   return page.evaluate((bodies) => {
     const width = document.documentElement.clientWidth;
     const dialogs = [...document.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"]')];
-    const describe = (element: Element) =>
+    const describeElement = (element: Element) =>
       `${element.tagName.toLowerCase()}${[...element.classList].map((c) => `.${c}`).join("")}`;
     const found: { element: Element; text: string; by: number }[] = [];
 
@@ -59,7 +59,7 @@ export function findOverflow(page: Page): Promise<Overflow> {
       if (!exempt && rect.right > limit + 0.5) {
         found.push({
           element,
-          text: `${describe(element)} reaches ${Math.round(rect.right)} px, allowed ${Math.round(limit)} px`,
+          text: `${describeElement(element)} reaches ${Math.round(rect.right)} px, allowed ${Math.round(limit)} px`,
           by: rect.right - limit,
         });
       }
@@ -70,7 +70,7 @@ export function findOverflow(page: Page): Promise<Overflow> {
         if (body.scrollWidth > body.clientWidth + 1) {
           found.push({
             element: body,
-            text: `${describe(body)} scrolls sideways: ${body.scrollWidth} px of content in ${body.clientWidth} px`,
+            text: `${describeElement(body)} scrolls sideways: ${body.scrollWidth} px of content in ${body.clientWidth} px`,
             by: body.scrollWidth - body.clientWidth,
           });
         }

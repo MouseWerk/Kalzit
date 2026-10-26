@@ -75,6 +75,17 @@ impl SetupGate {
     }
 }
 
+/// The generated setup code from the data directory, for `kalzit setup-code` (a container image
+/// without a shell has no `cat`). `None` when there is none: setup is done, the server has not
+/// started yet, or the code comes from `KALZIT_SETUP_TOKEN`.
+pub fn read_code(data_dir: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(data_dir.join(TOKEN_FILE)) {
+        Ok(text) => Ok(Some(text.trim().to_string()).filter(|c| !c.is_empty())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 fn generate_code() -> String {
     let hex = hex::encode(rand::random::<[u8; 12]>());
     hex.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap_or_default()).collect::<Vec<_>>().join("-")
@@ -295,5 +306,13 @@ mod tests {
             assert_eq!(trustees, ["BA", "OW", "SY"], "{sddl}");
             assert!(aces.iter().all(|(flags, _, _)| flags.is_empty()), "explicit entries only: {sddl}");
         }
+    }
+
+    #[test]
+    fn the_setup_code_is_read_back_without_its_line_end() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_code(dir.path()).unwrap(), None);
+        write_private(&dir.path().join(TOKEN_FILE), "1a2b-3c4d\n").unwrap();
+        assert_eq!(read_code(dir.path()).unwrap().as_deref(), Some("1a2b-3c4d"));
     }
 }

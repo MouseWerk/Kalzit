@@ -184,6 +184,7 @@ describe("catalogs", () => {
       "Logo",
       "Navigation",
       "Panels",
+      "Live",
       "(optional)",
     ]);
     for (const [key, message] of entries("de")) {

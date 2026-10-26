@@ -36,6 +36,7 @@ import {
 } from "../../lib/timeSettings";
 import { showErrorToast, showToast } from "../../lib/toasts";
 import { hasBackGuard } from "../../lib/useBackGuard";
+import { liveClient } from "../../live/client";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
@@ -93,7 +94,8 @@ import {
 import { PanelCard } from "./PanelCard";
 import { type EditorSnapshot, PanelEditor } from "./PanelEditor";
 import { panelRange } from "./panelTime";
-import { RefreshControl } from "./RefreshControl";
+import { type LiveChoice, RefreshControl } from "./RefreshControl";
+import { MIN_REFRESH_SECONDS } from "./refresh";
 import type { DashboardSearch } from "./routes";
 import { ConflictDialog, SaveDialog } from "./SaveDialogs";
 import { TimeControls } from "./TimeRangePicker";
@@ -109,6 +111,7 @@ import {
 import { delayedNow, resolveRange, type TextRange } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
+import type { PanelLiveOptions } from "./usePanelResults";
 import { initialVariables, VariablesBar } from "./Variables";
 
 /**
@@ -509,6 +512,8 @@ function DashboardView({
   // Rows opened or closed while viewing; not saved.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
+  // Live: the panels on screen follow pushed results instead of the automatic refresh.
+  const [live, setLive] = useState<LiveChoice>("off");
   // `run` re-runs the panels (refresh, auto refresh); `manual` counts only the Refresh button,
   // which also reads variable options again.
   const [clock, setClock] = useState(() => ({ now: Date.now(), run: 0, manual: 0 }));
@@ -651,9 +656,22 @@ function DashboardView({
     [textRange, now, timeSettings],
   );
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
+  // A range that ends now moves with each live run; polled sources run at the refresh interval
+  // chosen (the server's default without one). Paused, the panels say so and follow nothing.
+  const liveOptions: PanelLiveOptions | undefined = useMemo(
+    () =>
+      live === "off"
+        ? undefined
+        : {
+            moving: textRange.to.trim() === "now",
+            refreshMs: refresh > 0 ? Math.max(refresh, MIN_REFRESH_SECONDS) * 1000 : undefined,
+            paused: live === "paused",
+          },
+    [live, textRange.to, refresh],
+  );
 
   useEffect(() => {
-    if (refresh <= 0) {
+    if (refresh <= 0 || live !== "off") {
       return;
     }
     // A tab in the background does not refresh; it catches up when it is shown again.
@@ -677,7 +695,7 @@ function DashboardView({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [refresh]);
+  }, [refresh, live]);
 
   // TV mode: the controls hide after a while without input and come back with any.
   const [idle, setIdle] = useState(false);
@@ -1163,8 +1181,19 @@ function DashboardView({
       saved: dashboard.model.variables,
       source: "stored" as const,
       run: clock.run,
+      manual: clock.manual,
+      live: liveOptions,
     }),
-    [orgId, dashboard.id, resolved, values, dashboard.model.variables, clock.run],
+    [
+      orgId,
+      dashboard.id,
+      resolved,
+      values,
+      dashboard.model.variables,
+      clock.run,
+      clock.manual,
+      liveOptions,
+    ],
   );
   // The rail hides the annotations and the filter bar for this view of the dashboard.
   const [annotationsShown, setAnnotationsShown] = useState(true);
@@ -1541,6 +1570,14 @@ function DashboardView({
               shortcuts={dialog === null}
               refreshSeconds={refresh}
               onRefreshSeconds={setRefresh}
+              live={live}
+              onLive={(next) => {
+                // Turning live on again starts over after a stop (the session came back).
+                if (next === "on") {
+                  liveClient(orgId).restart();
+                }
+                setLive(next);
+              }}
               refreshIntervals={model.refreshIntervals}
               onRefresh={tick}
               actions={toolbarActions}
@@ -1595,6 +1632,8 @@ function DashboardView({
                       saved: dashboard.model.variables,
                       source: "stored",
                       run: clock.run,
+                      manual: clock.manual,
+                      live: liveOptions,
                     }}
                     view={{ ...viewActions, values: editorValues(alone, rows, values) }}
                   />

@@ -14,6 +14,7 @@ import deDocuments from "./de/documents.json";
 import deExplore from "./de/explore.json";
 import deGraph from "./de/graph.json";
 import deLibraryPanels from "./de/libraryPanels.json";
+import deLive from "./de/live.json";
 import dePanels from "./de/panels.json";
 import dePlaylists from "./de/playlists.json";
 import deSettings from "./de/settings.json";
@@ -31,6 +32,7 @@ import enDocuments from "./en/documents.json";
 import enExplore from "./en/explore.json";
 import enGraph from "./en/graph.json";
 import enLibraryPanels from "./en/libraryPanels.json";
+import enLive from "./en/live.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
 import enSettings from "./en/settings.json";
@@ -65,6 +67,7 @@ export const en = {
   ...enSettings,
   ...enDashboardFeatures,
   ...enToolbar,
+  ...enLive,
 };
 export const de = {
   ...deCore,
@@ -81,4 +84,5 @@ export const de = {
   ...deSettings,
   ...deDashboardFeatures,
   ...deToolbar,
+  ...deLive,
 };

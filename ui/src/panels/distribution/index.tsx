@@ -1,13 +1,16 @@
 import { useId, useRef, useState } from "react";
 import { isRecord } from "../../api/client";
 import type { FieldSchema } from "../../api/generated/shapes";
-import { type Bin, distribution } from "../../documents/distribution";
+import { type Bin, distribution, fromServer, type TopValue } from "../../documents/distribution";
+import { useWholeDistribution } from "../../documents/distributionCache";
 import { filterable, filterablePath } from "../../documents/filter";
 import { typeLabel, valueSummary } from "../../documents/labels";
+import { stepsOf } from "../../documents/paths";
 import { MAX_PATH_CHARS } from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
 import { SetPicker } from "../../documents/shared";
 import { NUMERIC_TYPES, typeOf } from "../../documents/values";
+import { errorMessage } from "../../features/dashboards/ui/errors";
 import { useI18n } from "../../i18n/i18n";
 import { dateTimeFormat } from "../frame";
 import { EmptyPanel } from "../shared";
@@ -90,13 +93,17 @@ function Histogram({
 
 /**
  * How the values of one field path are spread: counts, minimum and maximum, a histogram for
- * numbers and dates, and the most common values. Inside arrays every element counts.
+ * numbers and dates, and the most common values. Inside arrays every element counts. Sources
+ * that can (MongoDB) count the whole result in the database; otherwise the loaded documents are
+ * counted, and the panel says which.
  */
 function DistributionPanel({
   documents = [],
   options,
   title,
   onFilter,
+  distribution: source,
+  revision,
 }: PanelProps<DistributionOptions>) {
   const { t, language, timeZone } = useI18n();
   const pathId = useId();
@@ -104,10 +111,7 @@ function DistributionPanel({
   const [chosen, setChosen] = useState<string | null>(null);
   const position = Math.min(index, documents.length - 1);
   const set = documents[position];
-  if (set === undefined) {
-    return <EmptyPanel reason="noData" />;
-  }
-  const schema = valuePaths(schemaOf(set));
+  const schema = set === undefined ? [] : valuePaths(schemaOf(set));
   const known = (path: string) => schema.some((field) => field.path === path);
   const path =
     chosen !== null && known(chosen)
@@ -115,11 +119,34 @@ function DistributionPanel({
       : known(options.path)
         ? options.path
         : defaultPath(schema);
-  if (path === "") {
+  const steps = set === undefined || path === "" ? null : stepsOf(set.documents, path);
+  const { whole, retry } = useWholeDistribution(
+    set?.distributable === true ? source : undefined,
+    position,
+    steps,
+    revision,
+  );
+  if (set === undefined) {
+    return <EmptyPanel reason="noData" />;
+  }
+  if (path === "" || steps === null) {
     return <EmptyPanel reason="noValues" />;
   }
-  const result = distribution(set.documents, path);
+  const result =
+    whole?.status === "done" ? fromServer(whole.answer) : distribution(set.documents, steps);
+  const overAll = whole?.status === "done";
+  // How old the numbers are, once that is worth saying.
+  const minutes = whole?.status === "done" ? Math.floor((Date.now() - whole.at) / 60_000) : 0;
   const number = new Intl.NumberFormat(language, { maximumFractionDigits: 4 });
+  const scopeCount = overAll ? result.total : set.documents.length;
+  const count = number.format(scopeCount);
+  const scope = overAll
+    ? scopeCount === 1
+      ? t("documents.distribution.scope.allOne")
+      : t("documents.distribution.scope.all", { count })
+    : scopeCount === 1
+      ? t("documents.distribution.scope.loadedOne")
+      : t("documents.distribution.scope.loaded", { count });
   const percent = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 1 });
   const format = (value: number) =>
     result.scale === "date"
@@ -127,9 +154,15 @@ function DistributionPanel({
       : number.format(value);
   const show = (value: unknown) =>
     typeof value === "number" ? format(value) : valueSummary(t, value, language);
-  const filterPathOf = path.replaceAll("[]", "");
-  // A path with an operator-like key ($...) cannot be filtered by.
-  const pathFilterable = filterablePath(path.replaceAll("[]", "").split("."));
+  // A filter path names the keys without array steps; a key with a dot or an operator-like key
+  // ($...) cannot be named in one.
+  const keys = steps.filter((step): step is string => step !== null);
+  const filterPathOf = keys.join(".");
+  const pathFilterable = filterablePath(keys);
+  const share = (n: number) => (result.values === 0 ? 0 : n / result.values);
+  // A long text counted by its beginning shows that it goes on.
+  const label = (entry: TopValue) =>
+    `${valueSummary(t, entry.value, language)}${entry.truncated === true ? "…" : ""}`;
 
   return (
     <div className="doc-panel">
@@ -151,7 +184,34 @@ function DistributionPanel({
           </select>
         </div>
       </div>
-      <section className="dist" aria-label={title}>
+      <section
+        className="dist"
+        aria-label={title}
+        aria-busy={whole?.status === "loading" || (whole?.status === "done" && whole.refreshing)}
+      >
+        <p className="dist__scope" aria-live="polite">
+          <span>{scope}</span>
+          {minutes >= 1 ? (
+            <span>
+              {t("documents.distribution.scope.age", { minutes: number.format(minutes) })}
+            </span>
+          ) : null}
+          {whole?.status === "loading" || (whole?.status === "done" && whole.refreshing) ? (
+            <span>{t("documents.distribution.scope.loading")}</span>
+          ) : null}
+        </p>
+        {whole?.status === "failed" ? (
+          <p className="dist__scope dist__scope--failed" role="alert">
+            <span>
+              {t("documents.distribution.scope.failed", {
+                message: errorMessage(t, whole.error),
+              })}
+            </span>
+            <button type="button" className="button button--ghost button--small" onClick={retry}>
+              {t("common.retry")}
+            </button>
+          </p>
+        ) : null}
         <dl className="dist__stats">
           <div>
             <dt>{t("documents.distribution.values")}</dt>
@@ -166,8 +226,18 @@ function DistributionPanel({
             <dd>{number.format(result.missing)}</dd>
           </div>
           <div>
+            <dt>{t("documents.distribution.nulls")}</dt>
+            <dd>{number.format(result.nulls)}</dd>
+          </div>
+          <div>
             <dt>{t("documents.distribution.distinct")}</dt>
-            <dd>{number.format(result.distinct)}</dd>
+            <dd>
+              {result.distinctCapped
+                ? t("documents.distribution.distinctCapped", {
+                    count: number.format(result.distinct),
+                  })
+                : number.format(result.distinct)}
+            </dd>
           </div>
           {result.min === undefined ? null : (
             <div>
@@ -201,15 +271,18 @@ function DistributionPanel({
               key={`${typeOf(entry.value)}:${JSON.stringify(entry.value)}`}
               className="dist__entry"
             >
-              <span className="dist__value truncate" title={valueSummary(t, entry.value, language)}>
-                {valueSummary(t, entry.value, language)}
+              <span className="dist__value truncate" title={label(entry)}>
+                {label(entry)}
               </span>
               <span className="doc-tree__type">{typeLabel(t, typeOf(entry.value))}</span>
-              <Share share={result.values === 0 ? 0 : entry.count / result.values} />
+              <Share share={share(entry.count)} />
               <span className="dist__count">
-                {number.format(entry.count)} ({percent.format(entry.count / result.values)})
+                {number.format(entry.count)} ({percent.format(share(entry.count))})
               </span>
-              {onFilter !== undefined && pathFilterable && filterable(entry.value) ? (
+              {onFilter !== undefined &&
+              pathFilterable &&
+              entry.truncated !== true &&
+              filterable(entry.value) ? (
                 <button
                   type="button"
                   className="button button--ghost button--small"

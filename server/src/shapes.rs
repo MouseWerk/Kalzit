@@ -198,6 +198,11 @@ pub struct DocumentSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub executed_query: Option<String>,
+    /// The source computes field distributions over the whole result in the database
+    /// (`POST /query/distribution`); without it, they count the loaded documents.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub distributable: bool,
 }
 
 /// One JSON value kept as its text, so the key order survives (`serde_json::Map` sorts keys).
@@ -407,6 +412,125 @@ pub struct PanelQueryRequest {
     pub variables: BTreeMap<String, Value>,
 }
 
+/// Live updates (`GET /api/orgs/{orgId}/live`, a WebSocket; docs/api/live.md): subscribes to a
+/// panel's stored queries (`panel`) or to free queries (`queries`), exactly one of them, over a
+/// fixed `timeRange` or the last `lastMs` before each run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LiveSubscribe {
+    #[serde(rename = "type")]
+    pub kind: LiveSubscribeType,
+    /// The client's name for the subscription, 1 to 64 characters; messages about it carry it.
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub panel: Option<LivePanel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub queries: Option<Vec<QueryItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub time_range: Option<TimeRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub last_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub max_data_points: Option<u32>,
+    /// The panel's row limit (free queries carry their own `limit`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// How often to run the queries when the source cannot report changes; the server's
+    /// minimum applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub refresh_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum LiveSubscribeType {
+    Subscribe,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LivePanel {
+    pub dashboard_id: String,
+    pub panel_id: String,
+}
+
+/// Ends a subscription; an unknown `id` is ignored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LiveUnsubscribe {
+    #[serde(rename = "type")]
+    pub kind: LiveUnsubscribeType,
+    pub id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum LiveUnsubscribeType {
+    Unsubscribe,
+}
+
+/// How a subscription learns of new data: the source reports changes, or the server runs the
+/// queries every `refreshMs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum LiveMode {
+    Changes,
+    Poll,
+}
+
+/// What the server sends on a live connection.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum LiveMessage {
+    /// The subscription `id` follows the feed `feed`: its `status` and `result` messages are the
+    /// subscription's. Sent after subscribing and when the subscription moves to another feed (its
+    /// panel was edited); subscriptions with the same queries share a feed.
+    Subscribed { id: String, feed: String },
+    /// The feed's mode, when it starts or changes. `reason` says why a feed polls although it
+    /// wanted changes (`live.source_unsupported`, ...).
+    Status {
+        feed: String,
+        mode: LiveMode,
+        refresh_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        reason: Option<String>,
+    },
+    /// New results, as `POST /query` answers them; sent first after subscribing and then
+    /// whenever they differ. `at` is when the queries ran (Unix milliseconds).
+    Result { feed: String, at: i64, results: BTreeMap<String, QueryOutcome> },
+    /// A refused subscription, or one that ended (access revoked). Without `id`, a message that
+    /// was not understood.
+    Error {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        id: Option<String>,
+        error: ErrorBody,
+    },
+    /// The server closes the connection right after this; `error.reason` says why.
+    Closing { error: ErrorBody },
+}
+
 /// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/variables/{name}/options`: runs the stored
 /// query of a query-type variable (same access as the panel route).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -434,6 +558,135 @@ pub struct VariableOptionsResponse {
     pub options: Vec<VariableOption>,
     /// True when the list was cut at the option limit or the query's row limit.
     pub truncated: bool,
+}
+
+/// `POST /api/orgs/{orgId}/query/distribution`: how the values of one field path are spread
+/// over the whole result of a free query, computed in the database. Needs `datasources:query` on
+/// the data source, as running the query does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DistributionRequest {
+    pub datasource_id: String,
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub query: Value,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// The field path as its keys, unescaped (a key may hold dots, `$` or any character); `null`
+    /// stands for "every element of the array here", as `[]` in a schema path: `items[].price` is
+    /// `["items", null, "price"]`.
+    pub path: Vec<Option<String>>,
+    /// Most common values to answer, 1 to 100 (10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub top: Option<u32>,
+    /// Histogram bins for numbers and dates, 1 to 100 (20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub bins: Option<u32>,
+}
+
+/// `POST /api/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution`: the same for
+/// a stored target of a panel, for whoever may read the dashboard.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PanelDistributionRequest {
+    pub ref_id: String,
+    pub time_range: TimeRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub interval_ms: Option<u64>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub variables: BTreeMap<String, Value>,
+    /// As in `DistributionRequest`.
+    pub path: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub top: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub bins: Option<u32>,
+}
+
+/// How the values of one field path are spread over all documents of a result.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FieldDistribution {
+    /// Documents in the result.
+    pub total: u64,
+    /// Documents that contain the path.
+    pub documents: u64,
+    /// Documents without it.
+    pub missing: u64,
+    /// Values at the path, array elements one by one; objects and arrays are not counted.
+    pub values: u64,
+    /// Values that are `null`.
+    pub nulls: u64,
+    /// Distinct values, counted up to 100,000; `distinctCapped` says there are more.
+    pub distinct: u64,
+    pub distinct_capped: bool,
+    /// Every value found at the path by its type (objects and arrays included), most common first.
+    pub types: Vec<TypeCount>,
+    /// The most common values, typed as in documents.
+    pub top: Vec<ValueCount>,
+    /// Whether the histogram is of numbers or of dates (Unix milliseconds); none for other values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub scale: Option<DistributionScale>,
+    /// Smallest and largest value (numbers, dates or else texts), typed as in documents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
+    pub min: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
+    pub max: Option<Value>,
+    /// Equal-width bins from the smallest to the largest value of the scale.
+    pub bins: Vec<DistributionBin>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum DistributionScale {
+    Number,
+    Date,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct TypeCount {
+    /// The type's name, as in the schema (`int`, `string`, `date`, ...).
+    pub name: String,
+    pub count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ValueCount {
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub value: Value,
+    pub count: u64,
+    /// A text longer than `TEXT_CUT` characters, counted by its beginning: `value` is that
+    /// beginning, so it cannot be filtered by.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DistributionBin {
+    pub from: f64,
+    pub to: f64,
+    pub count: u64,
 }
 
 /// Export file formats (docs/api/datasources.md, "Export"). Frames export as CSV, JSON or Excel; documents
@@ -698,6 +951,13 @@ mod tests {
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
             PanelQueryRequest::decl(&cfg),
+            LiveSubscribe::decl(&cfg),
+            LiveSubscribeType::decl(&cfg),
+            LivePanel::decl(&cfg),
+            LiveUnsubscribe::decl(&cfg),
+            LiveUnsubscribeType::decl(&cfg),
+            LiveMode::decl(&cfg),
+            LiveMessage::decl(&cfg),
             VariableOptionsRequest::decl(&cfg),
             VariableOption::decl(&cfg),
             VariableOptionsResponse::decl(&cfg),
@@ -712,6 +972,13 @@ mod tests {
             ExportLanguage::decl(&cfg),
             ExportRequest::decl(&cfg),
             PanelExportRequest::decl(&cfg),
+            DistributionRequest::decl(&cfg),
+            PanelDistributionRequest::decl(&cfg),
+            FieldDistribution::decl(&cfg),
+            DistributionScale::decl(&cfg),
+            TypeCount::decl(&cfg),
+            ValueCount::decl(&cfg),
+            DistributionBin::decl(&cfg),
         ];
         let mut out = String::from(
             "// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.\n\n",

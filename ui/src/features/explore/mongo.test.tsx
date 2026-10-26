@@ -522,3 +522,35 @@ describe("Explore after the delta review", () => {
     );
   });
 });
+
+describe("field distribution in Explore", () => {
+  it("counts the whole result in the database and filters by a top value as a visible stage", async () => {
+    const { server, user } = await open();
+    await addStage(user, "$limit", '{"$limit": 10}');
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText(/^\d+ documents?\.$/);
+    fireEvent.change(screen.getByLabelText("Visualization"), {
+      target: { value: "distribution" },
+    });
+    fireEvent.change(await screen.findByLabelText("Field path"), { target: { value: "status" } });
+    expect(await screen.findByText(/^Across all \d+ documents? of the result$/)).toBeTruthy();
+    // The run's own query and time range, and the path as its keys.
+    const asked = server.areas.datasources.distributions.at(-1) as Record<string, unknown>;
+    const ran = sent(server);
+    expect(asked).toMatchObject({
+      datasourceId: MONGO_ID,
+      query: ran.queries[0]?.query,
+      timeRange: ran.timeRange,
+      variables: {},
+      path: ["status"],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Filter by paid" }));
+    // The filter is a visible stage of the query, after the one there was.
+    expect(await screen.findByRole("heading", { name: "Stage 2: $match" })).toBeTruthy();
+    expect(screen.getByLabelText("Stage 2")).toHaveProperty(
+      "value",
+      '{"$match": {"status": "paid"}}',
+    );
+  });
+});

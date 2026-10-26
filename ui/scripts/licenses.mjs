@@ -5,7 +5,7 @@
 // production dependency tree. `npm run build` runs it, so both land in the bundle the server
 // embeds.
 //
-// Rust: `cargo metadata --locked --filter-platform <host>`, following only normal dependencies
+// Rust: `cargo metadata --locked --filter-platform <host or KALZIT_LICENSES_TARGET>`, following only normal dependencies
 // from the `kalzit` package (build and dev dependencies are not part of the binary, and crates of
 // other platforms are left out). The license files come from the crates' sources in the cargo
 // registry. npm: package-lock.json, entries that are not dev-only, license files from
@@ -200,9 +200,11 @@ function hostTriple() {
 
 function cargoMetadata() {
   const args = ["metadata", "--format-version", "1", "--locked"];
-  const host = hostTriple();
-  if (host !== undefined) {
-    args.push("--filter-platform", host);
+  // A cross build (the arm64 container image built on amd64) names the platform the binary is
+  // for in KALZIT_LICENSES_TARGET.
+  const target = process.env.KALZIT_LICENSES_TARGET || hostTriple();
+  if (target !== undefined) {
+    args.push("--filter-platform", target);
   }
   args.push("--manifest-path", resolve(repoRoot, "Cargo.toml"));
   const text = execFileSync("cargo", args, {

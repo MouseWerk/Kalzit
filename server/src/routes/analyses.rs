@@ -42,7 +42,7 @@ use crate::folders::{self, Tree};
 use crate::net::RequestInfo;
 use crate::saved_analyses::{self, AnalysisModel};
 use crate::settings;
-use crate::shapes::{Page, PanelQueryRequest, QueryResponse};
+use crate::shapes::{FieldDistribution, Page, PanelDistributionRequest, PanelQueryRequest, QueryResponse};
 
 pub fn routes() -> Vec<RouteDef> {
     use Access::OrgMember;
@@ -66,6 +66,7 @@ pub fn routes() -> Vec<RouteDef> {
         ),
         // `analyses:read` on the analysis decides, checked in the handler.
         route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/query", OrgMember, run),
+        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/distribution", OrgMember, distribution),
     ]
 }
 
@@ -1172,4 +1173,28 @@ async fn run(
     let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     Ok(Json(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
+}
+
+/// The field distribution of one of the analysis's stored queries (`refId`) over its whole
+/// result, for whoever may run them: the same rights, time range and (absent) variables as the
+/// query route above. A hidden query no step reads is not run there, and is `not_found` here.
+async fn distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, id)): Path<(String, String)>,
+    JsonBody(req): JsonBody<PanelDistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    let row = load(&state, &ctx, &id, Permission::AnalysesRead).await?;
+    if row.deleted_at.is_some() {
+        return Err(ApiError::not_found());
+    }
+    let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
+    let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
+    crate::datasources::check_range(req.time_range)?;
+    crate::datasources::check_interval(req.interval_ms)?;
+    let spec = crate::datasources::distribution::DistributionSpec::new(&req.path, req.top, req.bins)?;
+    let run = super::query::stored_items(&model, panel, &req.variables, None, &Default::default())?;
+    let d = super::query::stored_distribution(&state, &ctx, run, &req.ref_id, req.time_range, req.interval_ms, &spec)
+        .await?;
+    Ok(Json(d))
 }

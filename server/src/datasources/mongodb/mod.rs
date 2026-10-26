@@ -10,11 +10,12 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod distribution;
 pub mod documents;
 pub mod pipeline;
 pub mod relay;
 #[cfg(test)]
-mod test_server;
+pub(crate) mod test_server;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +23,8 @@ use std::time::Duration;
 
 use bson::{Bson, Document, RawDocumentBuf, doc};
 use futures_util::TryStreamExt;
+use mongodb::change_stream::ChangeStream;
+use mongodb::change_stream::event::ResumeToken;
 use mongodb::event::EventHandler;
 use mongodb::event::sdam::SdamEvent;
 use mongodb::options::{ClientOptions, Credential, SelectionCriteria, ServerAddress, Socks5Proxy, Tls, TlsOptions};
@@ -213,6 +216,61 @@ struct Shared {
     socket_member: Arc<AtomicBool>,
     /// Whether the source has a login (then its privileges must be readable).
     has_user: bool,
+    watcher: Watcher,
+}
+
+/// At most this many change streams are open per source; more subscriptions are polled.
+const MAX_STREAMS: usize = 8;
+
+/// The client of a source's change streams, through the same relay and with the same login as
+/// the queries' client, but with its own pool of `MAX_STREAMS` connections.
+struct Watcher {
+    options: ClientOptions,
+    /// The CA certificate, written to a file again while the client is built.
+    ca_pem: Option<String>,
+    ca_dir: std::path::PathBuf,
+    client: tokio::sync::OnceCell<Client>,
+    /// One permit per open stream of the source (`stream_permits`).
+    streams: Arc<tokio::sync::Semaphore>,
+}
+
+/// The stream permits of a data source, shared by every client built for it: after a settings
+/// change, streams of the old client still open (until their feeds reopen them) count against
+/// the same `MAX_STREAMS` as the new client's.
+fn stream_permits(datasource_id: &str) -> Arc<tokio::sync::Semaphore> {
+    static PERMITS: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let mut permits = PERMITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Forget sources without a client, so the map does not grow with every source ever seen.
+    permits.retain(|_, s| Arc::strong_count(s) > 1 || s.available_permits() < MAX_STREAMS);
+    permits
+        .entry(datasource_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(MAX_STREAMS)))
+        .clone()
+}
+
+impl Watcher {
+    async fn client(&self) -> Result<&Client, SourceError> {
+        self.client
+            .get_or_try_init(|| async {
+                let mut options = self.options.clone();
+                let ca = match &self.ca_pem {
+                    Some(pem) => {
+                        let file = write_ca(&self.ca_dir, pem)?;
+                        let mut tls = TlsOptions::default();
+                        tls.ca_file_path = Some(file.0.clone());
+                        options.tls = Some(Tls::Enabled(tls));
+                        Some(file)
+                    }
+                    None => None,
+                };
+                let client = Client::with_options(options).map_err(|e| failed(&e, None, SERVER_SELECTION_TIMEOUT));
+                drop(ca);
+                client
+            })
+            .await
+    }
 }
 
 impl Shared {
@@ -441,11 +499,23 @@ async fn build(conn: &Connection, selection_timeout: Duration) -> Result<Shared,
             .authentication((user, password))
             .build(),
     );
+    // Change streams get their own client, built when the first one opens: each open stream
+    // holds a connection in a waiting getMore, which must not take the queries' pool.
+    let mut watch_options = options.clone();
+    watch_options.max_pool_size = Some(MAX_STREAMS as u32);
     let client = Client::with_options(options).map_err(|e| failed(&e, relay.refusal_since(mark), selection_timeout))?;
     // The driver has read the certificate into its TLS configuration.
     drop(ca);
     let has_user = Settings::non_empty(&s.user).is_some();
-    let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user };
+    let ca_pem = Settings::non_empty(&s.ca_cert).filter(|_| s.tls()).map(str::to_string);
+    let watcher = Watcher {
+        options: watch_options,
+        ca_pem,
+        ca_dir: conn.policy().data_dir().to_path_buf(),
+        client: tokio::sync::OnceCell::new(),
+        streams: stream_permits(conn.datasource_id()),
+    };
+    let shared = Shared { client, relay, database: s.database.clone(), selection, socket_member, has_user, watcher };
     check_read_only(&shared, selection_timeout).await?;
     shared.guard()?;
     Ok(shared)
@@ -556,6 +626,152 @@ struct FindPlan {
     sort: Option<Document>,
     limit: Option<u64>,
     skip: u64,
+}
+
+/// The query bound and checked: a pipeline, or a find. `max` is the document limit.
+fn plan(req: &SourceQuery, q: &Query, max: u64) -> Result<Plan, SourceError> {
+    let binder =
+        Binder { range: req.range, interval_ms: req.interval_ms, variables: &req.variables, max_documents: max };
+    Ok(match &q.pipeline {
+        Some(text) => {
+            if q.filter.is_some() || q.projection.is_some() || q.sort.is_some() || q.limit.is_some() || q.skip.is_some()
+            {
+                return Err(SourceError::rejected(
+                    "mongodb.pipeline_and_find",
+                    "a query is either a pipeline or a find with filter, projection, sort, limit and skip",
+                ));
+            }
+            Plan::Aggregate(binder.pipeline(text)?)
+        }
+        None => {
+            let filter = pipeline::parse_document("filter", q.filter.as_deref())?.unwrap_or_default();
+            let projection = pipeline::parse_document("projection", q.projection.as_deref())?;
+            let sort = pipeline::parse_document("sort", q.sort.as_deref())?;
+            Plan::Find(Box::new(FindPlan {
+                filter: binder.query_document(filter)?,
+                projection: projection.map(|p| binder.projection(p)).transpose()?,
+                sort: sort.map(|s| binder.query_document(s)).transpose()?,
+                // As in MongoDB, a limit of 0 is no limit (the document limit still holds).
+                limit: q.limit.filter(|l| *l > 0),
+                skip: q.skip.unwrap_or(0),
+            }))
+        }
+    })
+}
+
+impl Plan {
+    /// The query as pipeline stages, for stages appended after it: a `find` becomes `$match`,
+    /// `$sort`, `$skip`, `$limit` and `$project`, in the order the server applies them.
+    fn into_stages(self) -> Vec<Document> {
+        match self {
+            Plan::Aggregate(stages) => stages,
+            Plan::Find(find) => {
+                let FindPlan { filter, projection, sort, limit, skip } = *find;
+                let mut stages = vec![doc! { "$match": filter }];
+                if let Some(s) = sort {
+                    stages.push(doc! { "$sort": s });
+                }
+                if skip > 0 {
+                    stages.push(doc! { "$skip": skip.min(i64::MAX as u64) as i64 });
+                }
+                if let Some(l) = limit {
+                    stages.push(doc! { "$limit": l.min(i64::MAX as u64) as i64 });
+                }
+                if let Some(p) = projection {
+                    stages.push(doc! { "$project": p });
+                }
+                stages
+            }
+        }
+    }
+}
+
+/// How long the server holds a change stream's `getMore` open when nothing changed.
+const CHANGE_AWAIT: Duration = Duration::from_secs(10);
+
+/// Stages that read other collections: their changes are not in the watched collection's
+/// stream, so such a pipeline is polled.
+const OTHER_COLLECTION_STAGES: &[&str] = &["$lookup", "$graphLookup", "$unionWith"];
+
+/// An open change stream of a live feed.
+struct WatchState {
+    stream: ChangeStream<Document>,
+    shared: Arc<Shared>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    /// The opening position was reported.
+    opened: bool,
+}
+
+/// Server answers that a resume token cannot continue: its history is gone (286), the stream
+/// cannot go on from there (280), or the token is not valid (260).
+fn history_lost(e: &mongodb::error::Error) -> bool {
+    matches!(&*e.kind, mongodb::error::ErrorKind::Command(c) if matches!(c.code, 286 | 280 | 260))
+}
+
+/// Server answers that mean "no change streams here":a standalone server (40573), a view (166),
+/// a server without the stage (40324), or without the command (115, 59).
+fn changes_unsupported(e: &mongodb::error::Error) -> bool {
+    matches!(&*e.kind, mongodb::error::ErrorKind::Command(c) if matches!(c.code, 40573 | 166 | 40324 | 115 | 59))
+}
+
+/// The change stream stages for a query, or `None` when its changes cannot be watched (it reads
+/// other collections). Inserts count only when the new document passes the query's filter (a
+/// find's, or a pipeline's leading `$match`) where that filter can be applied to the event;
+/// updates, replacements and deletes always count, since the document may leave the result.
+/// Events carry only what the driver needs to resume, never the documents.
+fn change_pipeline(plan: &Plan) -> Option<Vec<Document>> {
+    let filter = match plan {
+        Plan::Find(f) => Some(f.filter.clone()),
+        Plan::Aggregate(stages) => {
+            if stages.iter().any(|s| names_any_key(&Bson::Document(s.clone()), OTHER_COLLECTION_STAGES)) {
+                return None;
+            }
+            stages.first().and_then(|s| s.get_document("$match").ok()).cloned()
+        }
+    };
+    let mut stages = Vec::new();
+    if let Some(inserted) = filter.as_ref().and_then(on_full_document).filter(|d| !d.is_empty()) {
+        stages.push(doc! { "$match": { "$or": [
+            { "operationType": { "$ne": "insert" } },
+            { "$and": [{ "operationType": "insert" }, inserted] },
+        ] } });
+    }
+    stages.push(doc! { "$project": { "operationType": 1, "ns": 1 } });
+    Some(stages)
+}
+
+/// Whether `value` holds one of `keys` as a key at any depth.
+fn names_any_key(value: &Bson, keys: &[&str]) -> bool {
+    match value {
+        Bson::Document(d) => d.iter().any(|(k, v)| keys.contains(&k.as_str()) || names_any_key(v, keys)),
+        Bson::Array(items) => items.iter().any(|v| names_any_key(v, keys)),
+        _ => false,
+    }
+}
+
+/// A query filter applied to a change event's `fullDocument`: field paths get the prefix,
+/// `$and`, `$or` and `$nor` are followed. `None` for anything else at the top (`$expr`, `$text`,
+/// `$jsonSchema`, ...), which then does not narrow the events.
+fn on_full_document(filter: &Document) -> Option<Document> {
+    let mut out = Document::new();
+    for (key, value) in filter {
+        match key.as_str() {
+            "$and" | "$or" | "$nor" => {
+                let Bson::Array(items) = value else { return None };
+                let mut mapped = Vec::with_capacity(items.len());
+                for item in items {
+                    let Bson::Document(d) = item else { return None };
+                    mapped.push(Bson::Document(on_full_document(d)?));
+                }
+                out.insert(key, mapped);
+            }
+            k if k.starts_with('$') => return None,
+            k => {
+                out.insert(format!("fullDocument.{k}"), value.clone());
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Ordered Extended JSON (relaxed) for the executed query.
@@ -806,43 +1022,86 @@ impl DataSourcePlugin for MongoDb {
         Ok(SourceSchema::Collections { database: shared.database.clone(), collections })
     }
 
+    async fn watch(
+        &self,
+        conn: &Connection,
+        req: SourceQuery,
+        resume: Option<super::ResumeToken>,
+    ) -> Result<Option<super::ChangeFeed>, SourceError> {
+        let q: Query = req.parse()?;
+        pipeline::check_collection(&q.collection)?;
+        let plan = plan(&req, &q, req.limits.max_rows.max(1) as u64)?;
+        let Some(stages) = change_pipeline(&plan) else { return Ok(None) };
+        let shared = shared(conn).await?;
+        shared.guard()?;
+        let Ok(permit) = shared.watcher.streams.clone().try_acquire_owned() else {
+            return Err(SourceError::failed(
+                "mongodb.streams_limit",
+                format!("{MAX_STREAMS} change streams of this source are open already; the query is polled"),
+            )
+            .with("max", MAX_STREAMS));
+        };
+        let client = shared.watcher.client().await?;
+        let coll = client.database(&shared.database).collection::<Document>(&q.collection);
+        let token = resume.and_then(|t| t.0.downcast_ref::<ResumeToken>().cloned());
+        let timeout = req.limits.timeout;
+        let open = |token: Option<ResumeToken>| {
+            let mut watch = coll
+                .watch()
+                .pipeline(stages.clone())
+                .selection_criteria(shared.selection.clone())
+                .max_await_time(CHANGE_AWAIT);
+            if let Some(token) = token {
+                watch = watch.start_after(token);
+            }
+            watch
+        };
+        let mark = shared.relay.mark();
+        let opened = match open(token.clone()).await {
+            // The token's history is gone (the oplog moved on): start from now. The caller runs the
+            // query after every open, so nothing in between is missed.
+            Err(e) if token.is_some() && history_lost(&e) => open(None).await,
+            other => other,
+        };
+        let stream = match opened {
+            Ok(stream) => stream.with_type::<Document>(),
+            Err(e) if changes_unsupported(&e) => return Ok(None),
+            Err(e) => return Err(shared.fail(&e, mark, timeout)),
+        };
+        // The client, its relay and the stream's permit stay as long as the feed. The first report
+        // is the position the stream opened at; waits without changes report newer positions.
+        let state = WatchState { stream, shared, _permit: permit, opened: false };
+        let feed = futures_util::stream::unfold(Some(state), move |state| async move {
+            let mut state = state?;
+            let token = |s: &WatchState| s.stream.resume_token().map(|t| super::ResumeToken(Arc::new(t)));
+            if !state.opened {
+                state.opened = true;
+                let change = super::Change { changed: false, token: token(&state) };
+                return Some((Ok(change), Some(state)));
+            }
+            if !state.stream.is_alive() {
+                return None;
+            }
+            let mark = state.shared.relay.mark();
+            match state.stream.next_if_any().await {
+                Ok(Some(event)) if event.get_str("operationType").ok() == Some("invalidate") => None,
+                Ok(event) => {
+                    let change = super::Change { changed: event.is_some(), token: token(&state) };
+                    Some((Ok(change), Some(state)))
+                }
+                Err(e) => Some((Err(state.shared.fail(&e, mark, timeout)), None)),
+            }
+        });
+        Ok(Some(Box::pin(feed)))
+    }
+
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
         let q: Query = req.parse()?;
         pipeline::check_collection(&q.collection)?;
         let max = req.limits.max_rows.max(1) as u64;
-        let binder =
-            Binder { range: req.range, interval_ms: req.interval_ms, variables: &req.variables, max_documents: max };
         let fp = fingerprint(&req);
         let offset = cursor_offset(req.cursor.as_deref(), &fp)?;
-        let plan = match &q.pipeline {
-            Some(text) => {
-                if q.filter.is_some()
-                    || q.projection.is_some()
-                    || q.sort.is_some()
-                    || q.limit.is_some()
-                    || q.skip.is_some()
-                {
-                    return Err(SourceError::rejected(
-                        "mongodb.pipeline_and_find",
-                        "a query is either a pipeline or a find with filter, projection, sort, limit and skip",
-                    ));
-                }
-                Plan::Aggregate(binder.pipeline(text)?)
-            }
-            None => {
-                let filter = pipeline::parse_document("filter", q.filter.as_deref())?.unwrap_or_default();
-                let projection = pipeline::parse_document("projection", q.projection.as_deref())?;
-                let sort = pipeline::parse_document("sort", q.sort.as_deref())?;
-                Plan::Find(Box::new(FindPlan {
-                    filter: binder.query_document(filter)?,
-                    projection: projection.map(|p| binder.projection(p)).transpose()?,
-                    sort: sort.map(|s| binder.query_document(s)).transpose()?,
-                    // As in MongoDB, a limit of 0 is no limit (the document limit still holds).
-                    limit: q.limit.filter(|l| *l > 0),
-                    skip: q.skip.unwrap_or(0),
-                }))
-            }
-        };
+        let plan = plan(&req, &q, max)?;
         // Everything is checked before Kalzit connects.
         let s: Settings = conn.settings_as()?;
         let shared = shared(conn).await?;
@@ -876,7 +1135,12 @@ impl DataSourcePlugin for MongoDb {
                 let FindPlan { filter, projection, sort, limit, skip } = *find_plan;
                 if limit.is_some_and(|l| offset >= l) {
                     // Past the query's own limit: an empty page.
-                    let set = DocumentSet { documents: Vec::new(), schema: Vec::new(), ..Default::default() };
+                    let set = DocumentSet {
+                        documents: Vec::new(),
+                        schema: Vec::new(),
+                        distributable: true,
+                        ..Default::default()
+                    };
                     return Ok(QueryResult::Documents { documents: set });
                 }
                 let fetch = limit.map_or(max + 1, |l| (l - offset).min(max + 1));
@@ -950,8 +1214,60 @@ impl DataSourcePlugin for MongoDb {
             truncated: cut.map(|r| Truncated { limit: count.min(u64::from(u32::MAX)) as u32, reason: Some(r.into()) }),
             notices,
             executed_query: Some(executed),
+            distributable: true,
         };
         Ok(QueryResult::Documents { documents: set })
+    }
+
+    async fn distribution(
+        &self,
+        conn: &Connection,
+        req: SourceQuery,
+        spec: &crate::datasources::distribution::DistributionSpec,
+    ) -> Result<crate::shapes::FieldDistribution, SourceError> {
+        let q: Query = req.parse()?;
+        pipeline::check_collection(&q.collection)?;
+        let max = req.limits.max_rows.max(1) as u64;
+        let base = plan(&req, &q, max)?.into_stages();
+        let summary_stages = distribution::summary_stages(spec);
+        pipeline::check_built(&summary_stages)?;
+        // Everything is checked before Kalzit connects.
+        let shared = shared(conn).await?;
+        let timeout = req.limits.timeout;
+        let started = std::time::Instant::now();
+        let coll = shared.client.database(&shared.database).collection::<Document>(&q.collection);
+        // Both aggregations share the query's time limit.
+        let run = |appended: Vec<Document>| {
+            let mut stages = base.clone();
+            stages.extend(appended);
+            let left = timeout.saturating_sub(started.elapsed()).max(Duration::from_millis(1));
+            let coll = coll.clone();
+            let shared = shared.clone();
+            async move {
+                shared.guard()?;
+                let mark = shared.relay.mark();
+                let fail = |e: mongodb::error::Error| shared.fail(&e, mark, timeout);
+                // Grouping a path with many distinct values may need more than the 100 MB a stage
+                // holds in memory; the server spills to disk then instead of failing.
+                let cursor = coll.aggregate(stages).max_time(left).allow_disk_use(true).await.map_err(fail)?;
+                let rows: Vec<Document> = cursor.try_collect().await.map_err(fail)?;
+                Ok::<_, SourceError>(rows)
+            }
+        };
+        let answer = run(summary_stages).await?;
+        let (mut out, range) =
+            distribution::read_summary(answer.first().unwrap_or(&Document::new()), &req.limits.budget);
+        if let Some(range) = range {
+            let rows = if range.lo < range.hi {
+                let stages = distribution::histogram_stages(spec, range.scale, range.lo, range.hi);
+                pipeline::check_built(&stages)?;
+                run(stages).await?
+            } else {
+                Vec::new()
+            };
+            out.bins = distribution::bins(range, spec.bins, &rows);
+        }
+        Ok(out)
     }
 }
 
@@ -1089,6 +1405,34 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn change_streams_narrow_inserts_where_the_filter_allows() {
+        let find = |filter: Document| {
+            Plan::Find(Box::new(FindPlan { filter, projection: None, sort: None, limit: None, skip: 0 }))
+        };
+        let stages =
+            change_pipeline(&find(doc! { "land": "AT", "$or": [{ "n": { "$gt": 1 } }, { "x": null }] })).unwrap();
+        assert_eq!(
+            stages[0],
+            doc! { "$match": { "$or": [
+                { "operationType": { "$ne": "insert" } },
+                { "$and": [{ "operationType": "insert" }, {
+                    "fullDocument.land": "AT",
+                    "$or": [{ "fullDocument.n": { "$gt": 1 } }, { "fullDocument.x": null }]
+                }] },
+            ] } }
+        );
+        assert_eq!(stages[1], doc! { "$project": { "operationType": 1, "ns": 1 } });
+        // No filter, or one that cannot apply to the event: every change counts.
+        assert_eq!(change_pipeline(&find(Document::new())).unwrap().len(), 1);
+        assert_eq!(change_pipeline(&find(doc! { "$expr": { "$gt": ["$a", "$b"] } })).unwrap().len(), 1);
+        // A pipeline: its leading $match; one reading other collections is not watched.
+        let aggregate = Plan::Aggregate(vec![doc! { "$match": { "land": "AT" } }, doc! { "$sort": { "n": 1 } }]);
+        assert!(format!("{:?}", change_pipeline(&aggregate).unwrap()[0]).contains("fullDocument.land"));
+        let lookup = Plan::Aggregate(vec![doc! { "$facet": { "a": [{ "$lookup": { "from": "k", "as": "k" } }] } }]);
+        assert!(change_pipeline(&lookup).is_none());
     }
 
     #[test]

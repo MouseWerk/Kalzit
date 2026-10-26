@@ -23,6 +23,16 @@ for Explore; macros below pick it up. Variables and macros reach the database as
 never as text in the query. Writing queries are always refused, see
 [Data sources](data-sources.md#read-only).
 
+## Live
+
+**Live** beside **Run query** keeps the query you ran current: the server runs it again whenever
+its data changes (MongoDB with change streams) or at an interval (every other source, and every
+range that ends now), and the result updates by itself. A line above the result says how it
+stays current and, if the server refused or ended it, why. Press **Live** again to stop. Live in
+Explore needs the right to query the data source, as running the query does; the server checks
+it. Pages loaded with **Load more** are dropped when a new result arrives. API:
+[live updates](../api/live.md).
+
 ## Queries per source kind
 
 | Kind | Query | Result shape |
@@ -96,7 +106,9 @@ Pick a table, time series, stat, bar chart or any other [frame panel](panels.md)
 
 A `documents` result stays a set of documents. Use the document explorer, schema, field
 distribution or document card ([panels](panels.md#documents-panels)). Selecting a value in the
-tree can add a filter on that path to the query. For a table, use the explicit projection step:
+tree, or **Filter by value** next to a common value of the field distribution, adds a filter on
+that path to the query as a visible `$match` stage. For MongoDB the field distribution counts the
+whole result in the database, not only the loaded documents. For a table, use the explicit projection step:
 **Add projection step** names columns by field path (`items.0.price` for an element of an array),
 with optional names and types. Remove the step and you get the documents back. A result shows at
 most a limited number of documents (**Cut off at N documents**) and **Load more documents** fetches

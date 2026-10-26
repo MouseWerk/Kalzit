@@ -11,6 +11,7 @@ import { PanelBody } from "../dashboards/PanelCard";
 import { outcomesOf } from "../dashboards/results";
 import { intervalFor, MAX_DATA_POINTS } from "../dashboards/timeRange";
 import { errorMessage } from "../dashboards/ui/errors";
+import { panelDistribution } from "../dashboards/usePanelResults";
 import { datasourcesQuery } from "../datasources/api";
 import { KindMark } from "../datasources/kindMarks";
 import { ANALYSES_KEY, type Analysis, analysisQuery, fetchAnalyses, runAnalysis } from "./api";
@@ -262,6 +263,7 @@ function PickerPreview({
     fieldConfig: model.visualization.fieldConfig ?? {},
   };
   const steps = asSteps(model.steps).length;
+  const kindOf = (datasourceId: string) => sources.data?.find((s) => s.id === datasourceId)?.kind;
   return (
     <div className="analysis-picker__preview">
       <header className="analysis-picker__head">
@@ -312,6 +314,21 @@ function PickerPreview({
             error={result.error}
             outcomes={result.data ?? []}
             revision={String(result.dataUpdatedAt)}
+            kindOf={kindOf}
+            // Counted by the analysis's own route, which its readers may use.
+            distribution={panelDistribution(
+              {
+                orgId,
+                dashboardId: "",
+                panel,
+                range,
+                variables: {},
+                source: "stored",
+                manual: 0,
+                route: { kind: "analysis", analysisId: analysis.id },
+              },
+              kindOf,
+            )}
           />
         </PanelHostContext>
       </div>

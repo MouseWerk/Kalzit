@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import type { DocumentSet, FieldSchema } from "../api/generated/shapes";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DocumentSet, FieldDistribution, FieldSchema } from "../api/generated/shapes";
 import { PanelBody } from "../features/dashboards/PanelCard";
 import { fakeOrders } from "../features/datasources/test/fakeMongo";
 import { getPanel } from "../panels/registry";
-import type { AnyPanelPlugin, DocumentFilter } from "../panels/types";
+import type { AnyPanelPlugin, DistributionRunner, DocumentFilter } from "../panels/types";
+import { forgetDistributions } from "./distributionCache";
 import { sampleSchema } from "./schema";
 
 const RANGE = { from: 0, to: 100_000 };
@@ -234,6 +235,153 @@ describe("field distribution", () => {
       "value",
       "createdAt",
     );
+    // A source that cannot count in the database: the loaded documents, and it says so.
+    expect(screen.getByText("Across the 3 loaded documents")).toBeTruthy();
+  });
+
+  it("reads a key with a dot as that key", () => {
+    const documents = [{ "preis.netto": 10 }, { preis: { netto: 99 } }, { "preis.netto": 20 }];
+    const set: DocumentSet = { documents, schema: sampleSchema(documents), notices: [] };
+    renderPanel("distribution", [set], { path: "preis.netto" });
+    const value = (name: string) => screen.getByText(name).nextElementSibling?.textContent;
+    expect(value("Values")).toBe("2");
+    expect(value("Maximum")).toBe("20");
+  });
+});
+
+describe("field distribution over the whole result", () => {
+  const answer = (over: Partial<FieldDistribution> = {}): FieldDistribution => ({
+    total: 1200,
+    documents: 1150,
+    missing: 50,
+    values: 1300,
+    nulls: 4,
+    distinct: 100_000,
+    distinctCapped: true,
+    types: [{ name: "string", count: 1300 }],
+    top: [{ value: "paid", count: 900 }],
+    bins: [],
+    ...over,
+  });
+
+  beforeEach(() => forgetDistributions());
+  afterEach(() => vi.useRealTimers());
+
+  /** A panel over a distributable set; `rerun` draws it again for a new result, `manual` too. */
+  function renderWhole(run: DistributionRunner, identity = "q1") {
+    const plugin = getPanel("distribution") as AnyPanelPlugin;
+    const { Panel } = plugin;
+    const set = { ...orders(), distributable: true };
+    const props = {
+      frames: [],
+      documents: [set],
+      options: plugin.options({ path: "status" }),
+      timeRange: RANGE,
+      title: "Orders",
+    };
+    const draw = (revision: number, manual: number) => (
+      <Panel {...props} revision={revision} distribution={{ identity, manual, run }} />
+    );
+    const view = render(draw(1, 0));
+    return {
+      ...view,
+      rerun: (revision: number, manual = 0) => view.rerender(draw(revision, manual)),
+    };
+  }
+
+  it("counts in the database and says over how many documents", async () => {
+    const run = vi.fn(async () => answer());
+    renderWhole(run);
+    expect(screen.getByText("Counting all documents of the result in the database…")).toBeTruthy();
+    expect(await screen.findByText("Across all 1,200 documents of the result")).toBeTruthy();
+    expect(run).toHaveBeenCalledWith(0, { path: ["status"] }, expect.any(AbortSignal));
+    const value = (name: string) => screen.getByText(name).nextElementSibling?.textContent;
+    expect(value("Values")).toBe("1,300");
+    expect(value("Null values")).toBe("4");
+    expect(value("Distinct values")).toBe("more than 100,000");
+    expect(screen.getByText("900 (69.2%)")).toBeTruthy();
+  });
+
+  it("cancels the request of the field it leaves and shows the new one only", async () => {
+    const user = userEvent.setup();
+    const signals: AbortSignal[] = [];
+    const held: ((d: FieldDistribution) => void)[] = [];
+    const run = vi.fn(
+      (_index: number, _ask: unknown, signal: AbortSignal) =>
+        new Promise<FieldDistribution>((resolve) => {
+          signals.push(signal);
+          held.push(resolve);
+        }),
+    );
+    renderWhole(run);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Field path" }), "rating");
+    expect(run).toHaveBeenLastCalledWith(0, { path: ["rating"] }, expect.any(AbortSignal));
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals.at(-1)?.aborted).toBe(false);
+    // The answer for the old field comes too late and is not shown.
+    await act(async () => held[0]?.(answer({ total: 7 })));
+    expect(screen.queryByText("Across all 7 documents of the result")).toBeNull();
+    await act(async () => held.at(-1)?.(answer({ total: 8 })));
+    expect(screen.getByText("Across all 8 documents of the result")).toBeTruthy();
+  });
+
+  it("falls back to the loaded documents when counting fails, and tries again", async () => {
+    const user = userEvent.setup();
+    const run = vi.fn<DistributionRunner>().mockRejectedValueOnce(new Error("down"));
+    run.mockResolvedValue(answer());
+    renderWhole(run);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(
+      /^Counting all documents failed: .+ The numbers are of the loaded documents\./,
+    );
+    expect(screen.getByText("Across the 3 loaded documents")).toBeTruthy();
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Across all 1,200 documents of the result")).toBeTruthy();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the count for refreshes and more pages, and asks again when it is old or asked to", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const run = vi.fn(async () => answer());
+    const { rerun } = renderWhole(run);
+    await screen.findByText("Across all 1,200 documents of the result");
+    expect(run).toHaveBeenCalledTimes(1);
+    // An automatic refresh or another page of the same question: the kept count.
+    vi.setSystemTime(Date.now() + 3 * 60_000);
+    rerun(2);
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("As of 3 min ago")).toBeTruthy();
+    // Five minutes on, a refresh asks again; the old numbers stay until the new ones are there.
+    vi.setSystemTime(Date.now() + 3 * 60_000);
+    rerun(3);
+    expect(screen.getByText("Across all 1,200 documents of the result")).toBeTruthy();
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/^As of/)).toBeNull();
+    // An explicit refresh asks at once.
+    rerun(3, 1);
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks once while a count is on its way, whatever arrives meanwhile", async () => {
+    let finish: (d: FieldDistribution) => void = () => {};
+    const run = vi.fn(
+      () =>
+        new Promise<FieldDistribution>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { rerun } = renderWhole(run);
+    rerun(2);
+    rerun(3);
+    // Another panel with the same question waits for the same request.
+    renderWhole(run);
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(1);
+    await act(async () => finish(answer()));
+    expect(screen.getAllByText("Across all 1,200 documents of the result")).toHaveLength(2);
   });
 });
 

@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
-import type { DocumentSet, Frame, GraphSet, Shape } from "../api/generated/shapes";
+import type {
+  DocumentSet,
+  FieldDistribution,
+  Frame,
+  GraphSet,
+  Shape,
+} from "../api/generated/shapes";
+import type { PathStep } from "../documents/paths";
 import type { MessageKey } from "../i18n/i18n";
 import type { FieldConfig } from "./fieldConfig/fieldConfig";
 
@@ -75,6 +82,12 @@ export interface PanelProps<Options> {
    */
   onFilter?: ((filter: DocumentFilter) => void) | undefined;
   /**
+   * The field distribution of document set `index` over its whole result, computed by the
+   * source (docs/api/datasources.md, "Field distribution"). Panels use it for sets marked
+   * `distributable`; without it they count the loaded documents.
+   */
+  distribution?: DistributionSource<number> | undefined;
+  /**
    * Changes when another result arrives (a run, a page loaded after it); panels that keep a place
    * in the result, such as a drilldown, start over then.
    */
@@ -86,6 +99,33 @@ export interface PanelGraph {
   refId: string;
   datasourceId: string;
   graph: GraphSet;
+}
+
+/** What a panel asks for: the field path as its keys (`null`: every array element) and sizes. */
+export interface DistributionAsk {
+  path: PathStep[];
+  top?: number;
+  bins?: number;
+}
+
+export type DistributionRunner<Of = number> = (
+  of: Of,
+  ask: DistributionAsk,
+  signal: AbortSignal,
+) => Promise<FieldDistribution>;
+
+/**
+ * Where a panel asks for field distributions, and what the answer is of. Counting a whole result
+ * in the database is expensive, so an answer is kept for its `identity` (the query, variables and
+ * time window as asked, not the moment a relative range resolved to): refreshing and loading
+ * more pages reuse it, a refresh asks again once it is five minutes old, and `manual` (bumped by
+ * an explicit refresh or run) asks again at once.
+ */
+export interface DistributionSource<Of = number> {
+  identity: string;
+  manual: number;
+  /** `of`: the document set's index for a panel, the target's `refId` for the page. */
+  run: DistributionRunner<Of>;
 }
 
 export interface DocumentFilter {

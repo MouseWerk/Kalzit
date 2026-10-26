@@ -79,7 +79,8 @@
   /* Panel header additions */
 
   .panel-card__badge,
-  .panel-card__note {
+  .panel-card__note,
+  .panel-card__live {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;

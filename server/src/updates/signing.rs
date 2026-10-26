@@ -25,9 +25,17 @@ use super::UpdateError;
 /// build time.
 pub const RELEASE_KEY_PLACEHOLDER: &str = "PLACEHOLDER-SET-THE-KALZIT-RELEASE-PUBLIC-KEY";
 
+/// The 2026 release key (key id ad39cc7bdcca1649); its private half signs releases in the
+/// `release` environment.
+pub const RELEASE_KEY_2026: &str = "/9zXPgaQYKE0f6Gui9i+Lhneg9a8nJMcm40Ud5KZm+g=";
+
+/// The 2026 backup key (key id eb97403429a2907a), kept offline only; it signs the release that
+/// revokes the first key if that one leaks.
+pub const RELEASE_KEY_2026_OFFLINE: &str = "rYhsRUAkyhIhwVAEkEtCKKExi8bc9ypf8Zcoz3xKBOw=";
+
 /// The trusted release keys, newest first. During a rotation both the new and the old key are
 /// listed; a second key kept offline makes revoking a leaked one possible (operator guide).
-pub const COMPILED_KEYS: &[&str] = &[RELEASE_KEY_PLACEHOLDER];
+pub const COMPILED_KEYS: &[&str] = &[RELEASE_KEY_2026, RELEASE_KEY_2026_OFFLINE];
 
 /// Extra trusted keys given when Kalzit was built (`KALZIT_UPDATE_PUBLIC_KEYS`, comma-separated
 /// base64). Cargo rebuilds when the variable changes.

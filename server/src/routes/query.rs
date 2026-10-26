@@ -20,12 +20,14 @@ use super::table::{RouteDef, route};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model::{self, DashboardModel, VariableType};
+use crate::datasources::distribution::DistributionSpec;
 use crate::datasources::{check_interval, check_items, check_range, run_queries, run_queries_with};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
-    ErrorBody, FieldType, PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult,
-    VariableOption, VariableOptionsRequest, VariableOptionsResponse,
+    DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest, PanelQueryRequest,
+    QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption, VariableOptionsRequest,
+    VariableOptionsResponse,
 };
 
 pub fn routes() -> Vec<RouteDef> {
@@ -45,7 +47,84 @@ pub fn routes() -> Vec<RouteDef> {
             Access::OrgMember,
             variable_options,
         ),
+        // Field distributions: the same rights as running the query they describe.
+        route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution",
+            Access::OrgMember,
+            panel_distribution,
+        ),
     ]
+}
+
+/// How the values of a field path are spread over the whole result of a free query; needs
+/// `datasources:query` on the source (role or grant), as running it does.
+async fn distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    JsonBody(req): JsonBody<DistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
+    check_variables(&req.variables)?;
+    let spec = DistributionSpec::new(&req.path, req.top, req.bins)?;
+    check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(&req.datasource_id)).await?;
+    let d = crate::datasources::distribution::run(
+        &state,
+        &ctx,
+        &req.datasource_id,
+        req.query,
+        req.time_range,
+        req.interval_ms,
+        &req.variables,
+        None,
+        &spec,
+    )
+    .await?;
+    Ok(Json(d))
+}
+
+/// The same for a stored target of a panel, for whoever may read the dashboard (as its queries).
+async fn panel_distribution(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, dashboard_id, panel_id)): Path<(String, String, String)>,
+    JsonBody(req): JsonBody<PanelDistributionRequest>,
+) -> ApiResult<Json<FieldDistribution>> {
+    check_range(req.time_range)?;
+    check_interval(req.interval_ms)?;
+    let spec = DistributionSpec::new(&req.path, req.top, req.bins)?;
+    // The queries the panel route runs, resolved and authorized the same way (`panel_run`).
+    let run = panel_run(&state, &ctx, &dashboard_id, &panel_id, &req.variables, None).await?;
+    Ok(Json(stored_distribution(&state, &ctx, run, &req.ref_id, req.time_range, req.interval_ms, &spec).await?))
+}
+
+/// The distribution of the stored query `ref_id` among `run`'s items (a query the panel does
+/// not run, such as a hidden one, is `not_found`), with the variable values `run` checked.
+pub(crate) async fn stored_distribution(
+    state: &AppState,
+    ctx: &OrgCtx,
+    run: PanelRun,
+    ref_id: &str,
+    range: crate::shapes::TimeRange,
+    interval_ms: Option<u64>,
+    spec: &DistributionSpec,
+) -> ApiResult<FieldDistribution> {
+    let PanelRun { items, variables, identifiers } = run;
+    let item = items.into_iter().find(|i| i.ref_id == ref_id).ok_or_else(ApiError::not_found)?;
+    crate::datasources::distribution::run(
+        state,
+        ctx,
+        &item.datasource_id,
+        item.query,
+        range,
+        interval_ms,
+        &variables,
+        Some(&identifiers),
+        spec,
+    )
+    .await
 }
 
 /// Variables in one request, and the size of all their values together.
@@ -292,6 +371,61 @@ async fn panel_query(
     Ok(Json(run_stored_panel(&state, &ctx, &model, panel, req).await?))
 }
 
+/// The stored queries of a panel, ready to run, with the variable values checked against what
+/// holds them.
+pub(crate) struct PanelRun {
+    pub items: Vec<QueryItem>,
+    pub variables: BTreeMap<String, Value>,
+    pub identifiers: BTreeSet<String>,
+}
+
+/// The queries `panel` of `model` runs, with `variables` checked (`resolve_variables`). Hidden
+/// targets stay with the panel but are not run, unless an analysis step reads them. `cursors`
+/// continue document results by `refId`.
+pub(crate) fn stored_items(
+    model: &DashboardModel,
+    panel: &model::Panel,
+    variables: &BTreeMap<String, Value>,
+    limit: Option<u32>,
+    cursors: &BTreeMap<String, String>,
+) -> ApiResult<PanelRun> {
+    check_variables(variables)?;
+    let (variables, identifiers) = resolve_variables(model, variables)?;
+    let read = frames_read(&panel.transformations);
+    let items = panel
+        .targets
+        .iter()
+        .filter(|t| !t.hide || read.contains(&t.ref_id))
+        .map(|t| QueryItem {
+            ref_id: t.ref_id.clone(),
+            datasource_id: t.datasource_id.clone(),
+            query: t.query.clone(),
+            cursor: cursors.get(&t.ref_id).cloned(),
+            limit,
+        })
+        .collect();
+    Ok(PanelRun { items, variables, identifiers })
+}
+
+/// The queries a panel of a readable dashboard runs, as `panel_query` resolves them: the
+/// dashboard must be readable (`readable_model`; unknown panels are `not_found`), and a linked
+/// library panel or saved analysis brings its own queries (`dashboards::linked_content`), which
+/// the dashboard authorizes like its own. For live updates.
+pub(crate) async fn panel_run(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboard_id: &str,
+    panel_id: &str,
+    variables: &BTreeMap<String, Value>,
+    limit: Option<u32>,
+) -> ApiResult<PanelRun> {
+    let model = readable_model(state, ctx, dashboard_id).await?;
+    let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
+    let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
+    let panel = linked.as_ref().unwrap_or(panel);
+    stored_items(&model, panel, variables, limit, &BTreeMap::new())
+}
+
 /// Runs the stored queries of `panel` in `model` (a dashboard's, or a saved analysis as a
 /// dashboard of one panel) with the request's time range, limits and variable values. The caller
 /// has decided that the caller may read what holds them.
@@ -304,22 +438,8 @@ pub(crate) async fn run_stored_panel(
 ) -> ApiResult<QueryResponse> {
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    check_variables(&req.variables)?;
-    let (variables, identifiers) = resolve_variables(model, &req.variables)?;
-    // Hidden targets stay with the panel but are not run, unless an analysis step reads them.
-    let read = frames_read(&panel.transformations);
-    let items: Vec<QueryItem> = panel
-        .targets
-        .iter()
-        .filter(|t| !t.hide || read.contains(&t.ref_id))
-        .map(|t| QueryItem {
-            ref_id: t.ref_id.clone(),
-            datasource_id: t.datasource_id.clone(),
-            query: t.query.clone(),
-            cursor: req.cursors.get(&t.ref_id).cloned(),
-            limit: req.limit,
-        })
-        .collect();
+    let PanelRun { items, variables, identifiers } =
+        stored_items(model, panel, &req.variables, req.limit, &req.cursors)?;
     if items.is_empty() {
         return Ok(QueryResponse { results: BTreeMap::new() });
     }
