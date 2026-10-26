@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueryOutcome } from "../api/generated/shapes";
 import { FakeSocket } from "../test/fakeLive";
 import {
+  FAILED_OPENS_BEFORE_CHECK,
   HIDDEN_GRACE_MS,
   LINGER_MS,
   LiveClient,
   type LiveListener,
   RETRY_BASE_MS,
   RETRY_MAX_MS,
+  type SessionCheck,
   STABLE_MS,
 } from "./client";
 
@@ -34,8 +36,12 @@ describe("LiveClient", () => {
   let sockets: FakeSocket[];
   let now: number;
   let client: LiveClient;
+  let session: SessionCheck;
+  let checks: number;
 
   beforeEach(() => {
+    session = "ok";
+    checks = 0;
     vi.useFakeTimers();
     visibility = "visible";
     vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
@@ -47,7 +53,11 @@ describe("LiveClient", () => {
         sockets.push(socket);
         return socket;
       },
-      // The middle of the jitter: every wait is three quarters of the grown one.
+      checkSession: () => {
+        checks += 1;
+        return Promise.resolve(session);
+      },
+      // The middle of the full jitter: every wait is half the grown one.
       random: () => 0.5,
       now: () => now,
     });
@@ -203,14 +213,14 @@ describe("LiveClient", () => {
         state: "retrying",
         reason: reason === "" ? undefined : reason,
       });
-      // First wait: half the base plus half of a random half (0.5): 0.75 of the base.
-      vi.advanceTimersByTime(RETRY_BASE_MS * 0.75 - 1);
+      // First wait: a random part (0.5) of the base.
+      vi.advanceTimersByTime(RETRY_BASE_MS * 0.5 - 1);
       expect(sockets).toHaveLength(1);
       vi.advanceTimersByTime(1);
       expect(sockets).toHaveLength(2);
       // The attempt fails without opening: the next wait is twice as long.
       last().drop(1006);
-      vi.advanceTimersByTime(RETRY_BASE_MS * 1.5 - 1);
+      vi.advanceTimersByTime(RETRY_BASE_MS - 1);
       expect(sockets).toHaveLength(2);
       vi.advanceTimersByTime(1);
       expect(sockets).toHaveLength(3);
@@ -220,23 +230,90 @@ describe("LiveClient", () => {
     },
   );
 
-  it("caps the wait and starts small again after a connection that held", () => {
+  it("caps the wait and starts small again after a connection that held", async () => {
     client.subscribe({ queries: [], lastMs: 1000, variables: {} }, listener());
     for (let i = 0; i < 10; i += 1) {
       last().drop(1006);
-      vi.advanceTimersByTime(RETRY_MAX_MS);
+      await vi.advanceTimersByTimeAsync(RETRY_MAX_MS);
     }
     const before = sockets.length;
     last().drop(1006);
-    vi.advanceTimersByTime(RETRY_MAX_MS * 0.75 - 1);
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS * 0.5 - 1);
     expect(sockets).toHaveLength(before);
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(sockets).toHaveLength(before + 1);
     last().open();
     now += STABLE_MS;
     last().drop(1001, "live.shutting_down");
-    vi.advanceTimersByTime(RETRY_BASE_MS * 0.75);
+    vi.advanceTimersByTime(RETRY_BASE_MS * 0.5);
     expect(sockets).toHaveLength(before + 2);
+  });
+
+  it("asks about the session after handshakes that keep failing, and stops when it ended", async () => {
+    const a = listener();
+    client.subscribe({ queries: [], lastMs: 1000, variables: {} }, a);
+    // Two failed handshakes in a row only wait.
+    for (let i = 1; i < FAILED_OPENS_BEFORE_CHECK; i += 1) {
+      last().drop(1006);
+      await vi.advanceTimersByTimeAsync(RETRY_MAX_MS);
+    }
+    expect(checks).toBe(0);
+    // The third is checked: the session still holds, so it keeps waiting and trying.
+    last().drop(1006);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(checks).toBe(1);
+    expect(client.state.state).toBe("retrying");
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS);
+    expect(sockets).toHaveLength(FAILED_OPENS_BEFORE_CHECK + 1);
+    // Once the session has ended, live stops and says why.
+    session = "live.unauthenticated";
+    last().drop(1006);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.state).toEqual({ state: "stopped", reason: "live.unauthenticated" });
+    expect(a.onError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "unauthenticated", reason: "live.unauthenticated" }),
+    );
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS * 2);
+    expect(sockets).toHaveLength(FAILED_OPENS_BEFORE_CHECK + 1);
+  });
+
+  it("does not check the session again after a handshake that opened", async () => {
+    client.subscribe({ queries: [], lastMs: 1000, variables: {} }, listener());
+    for (let i = 1; i < FAILED_OPENS_BEFORE_CHECK; i += 1) {
+      last().drop(1006);
+      await vi.advanceTimersByTimeAsync(RETRY_MAX_MS);
+    }
+    last().open();
+    last().drop(1006);
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_MS);
+    last().drop(1006);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(checks).toBe(0);
+  });
+
+  it("gives a place freed on the connection to a subscription refused for the limit", () => {
+    const a = listener();
+    const b = listener();
+    const end = client.subscribe({ queries: [], lastMs: 1000, variables: {} }, a);
+    client.subscribe({ queries: [], lastMs: 2000, variables: {} }, b);
+    last().open();
+    last().receive({
+      type: "error",
+      id: "s2",
+      error: { code: "validation", message: "full", reason: "live.too_many_subscriptions" },
+    });
+    expect(b.onError).toHaveBeenCalled();
+    end();
+    expect(last().sent.slice(-2)).toEqual([
+      { type: "unsubscribe", id: "s1" },
+      { type: "subscribe", id: "s2", queries: [], lastMs: 2000, variables: {} },
+    ]);
+    last().receive({ type: "subscribed", id: "s2", feed: "f2" });
+    last().receive({ type: "result", feed: "f2", at: 5, results: OUTCOME });
+    expect(b.onResult).toHaveBeenCalledWith(OUTCOME, 5);
+    // The socket stays: one subscription runs.
+    vi.advanceTimersByTime(LINGER_MS);
+    expect(last().closedWith).toBeUndefined();
   });
 
   it.each([

@@ -1,4 +1,4 @@
-import { openSocket } from "../api/client";
+import { isApiError, openSocket, request } from "../api/client";
 import type {
   ErrorBody,
   LiveMessage,
@@ -56,15 +56,20 @@ export interface LiveSocket {
   close(code?: number, reason?: string): void;
 }
 
+/** What asking the REST API about the session says: still signed in, or why not. */
+export type SessionCheck = "ok" | "live.unauthenticated" | "live.forbidden";
+
 export interface LiveClientOptions {
   open?: (path: string) => LiveSocket;
+  /** Asks whether the session still holds, after handshakes kept failing. */
+  checkSession?: () => Promise<SessionCheck>;
   /** 0 to 1, for the jitter. */
   random?: () => number;
   now?: () => number;
 }
 
 const OPEN = 1;
-/** The first wait before reconnecting, doubled per failed attempt up to the longest. */
+/** The longest wait before reconnecting grows from this, doubled per failed attempt. */
 export const RETRY_BASE_MS = 1_000;
 export const RETRY_MAX_MS = 30_000;
 /** A connection that stayed open this long counts as working: the next wait starts small again. */
@@ -73,17 +78,40 @@ export const STABLE_MS = 15_000;
 export const LINGER_MS = 2_000;
 /** How long a tab may stay hidden before live pauses, so a quick look elsewhere costs nothing. */
 export const HIDDEN_GRACE_MS = 5_000;
+/**
+ * Handshakes in a row that never opened before the session is checked: a browser sees a refused
+ * handshake (401, 404) only as a failed connection, like a network error.
+ */
+export const FAILED_OPENS_BEFORE_CHECK = 3;
 
 /** Close codes and reasons after which the client does not reconnect by itself. */
 const STOP_CODES = new Set([4001, 4003]);
 const STOP_REASONS = new Set(["live.unauthenticated", "live.forbidden"]);
+/** A refusal that lifts once fewer subscriptions run on the connection. */
+const CAPACITY_REASON = "live.too_many_subscriptions";
 
 interface Subscription {
   spec: LiveSpec;
   listener: LiveListener;
   feed: string | undefined;
-  /** The server ended it (an `error` with its id): not subscribed again on reconnect. */
-  ended: boolean;
+  /**
+   * `server`: the server ended it (an `error` with its id), not subscribed again on reconnect;
+   * `capacity`: refused for the connection's subscription limit, tried again when one ends.
+   */
+  ended: false | "server" | "capacity";
+}
+
+/** The session check the app uses: the current user, as the REST API answers it. */
+async function checkSessionOverRest(): Promise<SessionCheck> {
+  try {
+    await request("GET", "/api/me");
+    return "ok";
+  } catch (error) {
+    if (isApiError(error, "unauthenticated")) return "live.unauthenticated";
+    if (isApiError(error, "forbidden")) return "live.forbidden";
+    // The server is not reachable either: keep waiting for it.
+    return "ok";
+  }
 }
 
 export class LiveClient {
@@ -94,12 +122,17 @@ export class LiveClient {
   private nextId = 0;
   private attempts = 0;
   private openedAt = 0;
+  /** Connection attempts in a row that closed before they opened. */
+  private failedOpens = 0;
+  /** Bumped by every connect and stop, so a session check that comes back late is ignored. */
+  private generation = 0;
   /** The reason of a `closing` message, for the close that follows it. */
   private closingReason: string | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private lingerTimer: ReturnType<typeof setTimeout> | undefined;
   private hiddenTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly open: (path: string) => LiveSocket;
+  private readonly checkSession: () => Promise<SessionCheck>;
   private readonly random: () => number;
   private readonly now: () => number;
 
@@ -108,6 +141,7 @@ export class LiveClient {
     options: LiveClientOptions = {},
   ) {
     this.open = options.open ?? openSocket;
+    this.checkSession = options.checkSession ?? checkSessionOverRest;
     this.random = options.random ?? Math.random;
     this.now = options.now ?? Date.now;
     if (typeof document !== "undefined") {
@@ -138,9 +172,9 @@ export class LiveClient {
     this.subs.set(id, sub);
     clearTimeout(this.lingerTimer);
     if (this.connection.state === "stopped") {
-      sub.ended = true;
+      sub.ended = "server";
       listener.onError(stopError(this.connection.reason));
-    } else if (this.socket !== null && this.socket.readyState === OPEN) {
+    } else if (this.isOpen()) {
       this.send({ type: "subscribe", id, ...spec });
     } else if (this.connection.state === "idle") {
       this.connect();
@@ -157,6 +191,7 @@ export class LiveClient {
       sub.ended = false;
     }
     this.attempts = 0;
+    this.failedOpens = 0;
     this.setState({ state: "idle" });
     if (this.active() > 0) {
       this.connect();
@@ -167,6 +202,7 @@ export class LiveClient {
   dispose(): void {
     this.subs.clear();
     this.clearTimers();
+    this.generation += 1;
     this.closeSocket();
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.onVisibility);
@@ -177,14 +213,26 @@ export class LiveClient {
     this.setState({ state: "idle" });
   }
 
+  private isOpen(): boolean {
+    return this.socket !== null && this.socket.readyState === OPEN;
+  }
+
   private unsubscribe(id: string) {
     const sub = this.subs.get(id);
     if (sub === undefined) {
       return;
     }
     this.subs.delete(id);
-    if (!sub.ended && this.socket !== null && this.socket.readyState === OPEN) {
+    if (sub.ended === false && this.isOpen()) {
       this.send({ type: "unsubscribe", id });
+      // A place became free: one refused for the limit gets it.
+      for (const [waitingId, waiting] of this.subs) {
+        if (waiting.ended === "capacity") {
+          waiting.ended = false;
+          this.send({ type: "subscribe", id: waitingId, ...waiting.spec });
+          break;
+        }
+      }
     }
     if (this.active() === 0) {
       clearTimeout(this.lingerTimer);
@@ -192,11 +240,11 @@ export class LiveClient {
     }
   }
 
-  /** Subscriptions still running (not ended by the server). */
+  /** Subscriptions still running, or waiting for a place on the connection. */
   private active(): number {
     let count = 0;
     for (const sub of this.subs.values()) {
-      if (!sub.ended) count += 1;
+      if (sub.ended !== "server") count += 1;
     }
     return count;
   }
@@ -207,6 +255,7 @@ export class LiveClient {
     }
     clearTimeout(this.retryTimer);
     clearTimeout(this.hiddenTimer);
+    this.generation += 1;
     this.closeSocket();
     if (this.connection.state !== "stopped") {
       this.setState({ state: "idle" });
@@ -215,6 +264,7 @@ export class LiveClient {
 
   private connect() {
     clearTimeout(this.retryTimer);
+    this.generation += 1;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       this.setState({ state: "paused" });
       return;
@@ -225,16 +275,19 @@ export class LiveClient {
     try {
       socket = this.open(this.path);
     } catch {
-      this.scheduleRetry(undefined);
+      this.failedOpens += 1;
+      this.afterFailure(undefined);
       return;
     }
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket) return;
       this.openedAt = this.now();
+      this.failedOpens = 0;
       this.setState({ state: "open" });
       for (const [id, sub] of this.subs) {
-        if (!sub.ended) {
+        if (sub.ended !== "server") {
+          sub.ended = false;
           sub.feed = undefined;
           this.send({ type: "subscribe", id, ...sub.spec });
         }
@@ -287,7 +340,7 @@ export class LiveClient {
         // Without an id the server did not understand a message; nothing ended.
         const sub = message.id === undefined ? undefined : this.subs.get(message.id);
         if (sub !== undefined) {
-          sub.ended = true;
+          sub.ended = message.error.reason === CAPACITY_REASON ? "capacity" : "server";
           sub.feed = undefined;
           sub.listener.onError(message.error);
         }
@@ -300,25 +353,19 @@ export class LiveClient {
   }
 
   private following(feed: string): Subscription[] {
-    return [...this.subs.values()].filter((sub) => !sub.ended && sub.feed === feed);
+    return [...this.subs.values()].filter((sub) => sub.ended === false && sub.feed === feed);
   }
 
   private onClose(code: number, reason: string | undefined) {
     this.socket = null;
-    const wasStable = this.openedAt > 0 && this.now() - this.openedAt >= STABLE_MS;
+    const opened = this.openedAt > 0;
+    const wasStable = opened && this.now() - this.openedAt >= STABLE_MS;
     this.openedAt = 0;
     if (wasStable) {
       this.attempts = 0;
     }
     if (STOP_CODES.has(code) || (reason !== undefined && STOP_REASONS.has(reason))) {
-      const stopReason = reason ?? (code === 4001 ? "live.unauthenticated" : "live.forbidden");
-      this.setState({ state: "stopped", reason: stopReason });
-      for (const sub of this.subs.values()) {
-        if (!sub.ended) {
-          sub.ended = true;
-          sub.listener.onError(stopError(stopReason));
-        }
-      }
+      this.stop(reason ?? (code === 4001 ? "live.unauthenticated" : "live.forbidden"));
       return;
     }
     if (this.connection.state === "paused") {
@@ -328,14 +375,53 @@ export class LiveClient {
       this.setState({ state: "idle" });
       return;
     }
-    this.scheduleRetry(reason);
+    if (!opened) {
+      this.failedOpens += 1;
+    }
+    this.afterFailure(reason);
+  }
+
+  /**
+   * Waits and tries again. After several handshakes in a row that never opened, the REST API is
+   * asked about the session first: an ended session stops live instead of retrying forever.
+   */
+  private afterFailure(reason: string | undefined) {
+    if (this.failedOpens < FAILED_OPENS_BEFORE_CHECK) {
+      this.scheduleRetry(reason);
+      return;
+    }
+    this.setState({ state: "retrying", reason });
+    const generation = this.generation;
+    void this.checkSession().then((check) => {
+      if (generation !== this.generation || this.connection.state !== "retrying") {
+        return;
+      }
+      if (check === "ok") {
+        this.scheduleRetry(reason);
+      } else {
+        this.stop(check);
+      }
+    });
+  }
+
+  private stop(reason: string) {
+    clearTimeout(this.retryTimer);
+    this.generation += 1;
+    this.closeSocket();
+    this.setState({ state: "stopped", reason });
+    for (const sub of this.subs.values()) {
+      if (sub.ended !== "server") {
+        sub.ended = "server";
+        sub.listener.onError(stopError(reason));
+      }
+    }
   }
 
   private scheduleRetry(reason: string | undefined) {
-    // Half the grown wait plus a random part of the other half, so tabs that lost the server at
+    // Full jitter: anywhere between nothing and the grown wait, so tabs that lost the server at
     // the same moment do not all come back at the same moment.
     const grown = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** this.attempts);
-    const wait = Math.round(grown / 2 + (this.random() * grown) / 2);
+    const wait = Math.round(this.random() * grown);
     this.attempts += 1;
     this.setState({ state: "retrying", reason });
     clearTimeout(this.retryTimer);
@@ -371,6 +457,7 @@ export class LiveClient {
       return;
     }
     clearTimeout(this.retryTimer);
+    this.generation += 1;
     this.setState({ state: "paused" });
     this.closeSocket();
   }
@@ -429,13 +516,18 @@ export function liveClient(orgId: string): LiveClient {
   return client;
 }
 
+/** Closes every live connection of the tab and forgets them (signing out). */
+export function resetLiveClients(): void {
+  for (const client of clients.values()) {
+    client.dispose();
+  }
+  clients.clear();
+}
+
 let clientOptions: LiveClientOptions = {};
 
 /** Tests: the socket factory (and clock, jitter) for clients made from now on; drops the others. */
 export function setLiveClientOptions(options: LiveClientOptions): void {
   clientOptions = options;
-  for (const client of clients.values()) {
-    client.dispose();
-  }
-  clients.clear();
+  resetLiveClients();
 }

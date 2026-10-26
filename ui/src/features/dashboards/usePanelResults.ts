@@ -44,6 +44,8 @@ export interface PanelLiveOptions {
   moving: boolean;
   /** How often polled sources run again, in ms; the server's default when unset. */
   refreshMs?: number | undefined;
+  /** Paused by the person: nothing is followed, the panels keep their last results. */
+  paused?: boolean | undefined;
 }
 
 /**

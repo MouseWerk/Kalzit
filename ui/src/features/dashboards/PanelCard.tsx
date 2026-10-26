@@ -2,6 +2,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   startTransition,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -143,9 +144,20 @@ export function PanelCard({
   });
   const results = usePanelResults({ ...query, panel });
   // While the dashboard is live, the panels on screen follow their results.
-  const inView = useInView(ref, query.live !== undefined);
+  const [inView, observe] = useInView(query.live !== undefined);
+  const cardRef = useCallback(
+    (element: HTMLElement | null) => {
+      ref.current = element;
+      observe(element);
+    },
+    [observe],
+  );
   const live = usePanelLive({ ...query, panel }, inView);
-  const liveText = liveNote(t, live);
+  // Paused by the person: the panel keeps its last result and says so.
+  const liveText =
+    query.live?.paused === true
+      ? { label: t("live.paused"), detail: t("live.detail.paused") }
+      : liveNote(t, live);
   // A moving range ends at the last live run, unless a refresh since then ran later.
   const range =
     live.range !== undefined && live.range.to > query.range.to ? live.range : query.range;
@@ -394,7 +406,7 @@ export function PanelCard({
       )}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Enter or Space on the arrange handle selects the panel from the keyboard */}
       <article
-        ref={ref}
+        ref={cardRef}
         className={className}
         data-panel-id={panel.id}
         aria-labelledby={titleId}

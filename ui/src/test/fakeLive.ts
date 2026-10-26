@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import type { LiveMessage } from "../api/generated/shapes";
 import { type LiveClientOptions, type LiveSocket, setLiveClientOptions } from "../live/client";
 
@@ -69,5 +70,47 @@ export function installFakeLive(options: Omit<LiveClientOptions, "open"> = {}) {
       return socket;
     },
     reset: () => setLiveClientOptions({}),
+  };
+}
+
+/**
+ * An IntersectionObserver stand-in (stubbed as a global; `unstubGlobals` removes it after the
+ * test): `show` reports an element in or out of view to every observer watching it.
+ */
+export function installFakeIntersection() {
+  const observers = new Set<{ callback: IntersectionObserverCallback; watched: Set<Element> }>();
+  class FakeIntersectionObserver {
+    private readonly entry: { callback: IntersectionObserverCallback; watched: Set<Element> };
+    constructor(callback: IntersectionObserverCallback) {
+      this.entry = { callback, watched: new Set() };
+      observers.add(this.entry);
+    }
+    observe(element: Element) {
+      this.entry.watched.add(element);
+    }
+    unobserve(element: Element) {
+      this.entry.watched.delete(element);
+    }
+    disconnect() {
+      observers.delete(this.entry);
+    }
+    takeRecords() {
+      return [];
+    }
+  }
+  vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+  return {
+    show(element: Element, visible: boolean) {
+      for (const { callback, watched } of [...observers]) {
+        if (watched.has(element)) {
+          const entry = { target: element, isIntersecting: visible } as IntersectionObserverEntry;
+          callback([entry], this as unknown as IntersectionObserver);
+        }
+      }
+    },
+    /** Elements some observer watches now. */
+    watched(): Element[] {
+      return [...observers].flatMap(({ watched }) => [...watched]);
+    },
   };
 }

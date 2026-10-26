@@ -652,15 +652,16 @@ function DashboardView({
   );
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
   // A range that ends now moves with each live run; polled sources run at the refresh interval
-  // chosen (the server's default without one).
+  // chosen (the server's default without one). Paused, the panels say so and follow nothing.
   const liveOptions: PanelLiveOptions | undefined = useMemo(
     () =>
-      live === "on"
-        ? {
+      live === "off"
+        ? undefined
+        : {
             moving: textRange.to.trim() === "now",
             refreshMs: refresh > 0 ? Math.max(refresh, MIN_REFRESH_SECONDS) * 1000 : undefined,
-          }
-        : undefined,
+            paused: live === "paused",
+          },
     [live, textRange.to, refresh],
   );
 

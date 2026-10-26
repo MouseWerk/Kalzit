@@ -175,8 +175,11 @@ automatic refresh rests while live is on. API: [live updates](../api/live.md).
   for example because you lost access to the data; the tooltip says why. Turn live off and on to
   try again.
 - **Pause live updates** (German: **Live-Aktualisierung pausieren**) in the same menu holds the
-  panels on their last results; **Resume live updates** goes on. Live also pauses by itself while
-  the browser tab stays in the background and resumes when you come back.
+  panels on their last results, each saying **Live paused**; the automatic refresh stays off too.
+  **Resume live updates** goes on. Live also pauses by itself while the browser tab stays in the
+  background and resumes when you come back.
+- A panel scrolled out of view keeps its live updates for a moment, so scrolling past does not
+  stop and restart them.
 - When the server restarts or the connection drops, Kalzit reconnects by itself, waiting a little
   longer after each failed attempt. When your session ends, live stops until you sign in again.
 

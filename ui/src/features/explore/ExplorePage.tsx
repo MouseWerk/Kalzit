@@ -45,6 +45,7 @@ import {
 } from "../dashboards/timeRange";
 import { errorBodyMessage, errorMessage } from "../dashboards/ui/errors";
 import { Inspect } from "../dashboards/ui/Inspect";
+import { writeLiveResult } from "../dashboards/usePanelLive";
 import {
   type DatasourceSummary,
   datasourcesQuery,
@@ -206,11 +207,17 @@ function Explore({ orgId }: { orgId: string }) {
           intervalMs: intervalFor({ from: submitted.from, to: submitted.to }),
           variables: {},
         };
-  const live = useLiveSubscription(orgId, liveSpec, (results) => {
-    // The pushed result replaces the run's answer; pages loaded after it belonged to the old one.
-    client.setQueryData([EXPLORE_KEY, orgId, submitted], outcomesOf({ results }, [REF_ID]));
-    setMore({ of: null, pages: [], loading: false, error: null });
-  });
+  // Results go to the run the subscription was started for; a new run starts a new one.
+  const live = useLiveSubscription(
+    orgId,
+    liveSpec,
+    [EXPLORE_KEY, orgId, submitted],
+    (results, _at, key) => {
+      // The pushed result replaces the run's answer; pages loaded after it belonged to the old one.
+      void writeLiveResult(client, key, results, [REF_ID]);
+      setMore({ of: null, pages: [], loading: false, error: null });
+    },
+  );
   const liveText = liveNote(t, live);
 
   function run(
@@ -417,7 +424,7 @@ function Explore({ orgId }: { orgId: string }) {
             type="button"
             className="button button--secondary"
             aria-pressed={liveOn}
-            title={t("live.explore.hint")}
+            aria-describedby={`${tabsId}-live-hint`}
             onClick={() => {
               if (!liveOn) {
                 liveClient(orgId).restart();
@@ -427,6 +434,9 @@ function Explore({ orgId }: { orgId: string }) {
           >
             {t("live.explore.toggle")}
           </button>
+          <span className="visually-hidden" id={`${tabsId}-live-hint`}>
+            {t("live.explore.hint")}
+          </span>
           <button
             type="button"
             className="button button--primary"

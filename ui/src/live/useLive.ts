@@ -7,7 +7,7 @@ export interface LiveView {
   /** Whether a subscription runs (a spec was given). */
   on: boolean;
   status?: LiveStatus | undefined;
-  /** Why the subscription was refused or ended; it does not come back by itself. */
+  /** Why the subscription was refused or ended; a later status or result clears it. */
   error?: ErrorBody | undefined;
   /** When the queries of the last result ran (Unix ms). */
   at?: number | undefined;
@@ -22,22 +22,28 @@ export function useLiveConnection(orgId: string): LiveConnectionState {
   );
 }
 
+interface Followed {
+  /** The subscription the state belongs to; every start of one makes a new token. */
+  token: object | null;
+  status?: LiveStatus | undefined;
+  error?: ErrorBody | undefined;
+  at?: number | undefined;
+}
+
 /**
- * Follows one live subscription while `spec` is set; `onResult` gets every result. A spec with
- * the same content keeps the subscription, so callers may build it on every render.
+ * Follows one live subscription while `spec` is set; `onResult` gets every result together with
+ * the `target` the subscription was started for (a cache key), never a later render's. A spec
+ * and target with the same content keep the subscription, so callers may build them on every
+ * render; another target starts a new subscription.
  */
-export function useLiveSubscription(
+export function useLiveSubscription<T>(
   orgId: string,
   spec: LiveSpec | null,
-  onResult: (results: Record<string, QueryOutcome>, at: number) => void,
+  target: T,
+  onResult: (results: Record<string, QueryOutcome>, at: number, target: T) => void,
 ): LiveView {
-  const key = spec === null ? null : JSON.stringify(spec);
-  const [state, setState] = useState<{
-    key: string | null;
-    status?: LiveStatus;
-    error?: ErrorBody;
-    at?: number;
-  }>({ key: null });
+  const key = spec === null ? null : JSON.stringify([spec, target]);
+  const [state, setState] = useState<Followed>({ token: null });
   const deliver = useEffectEvent(onResult);
   const connection = useLiveConnection(orgId);
 
@@ -45,19 +51,26 @@ export function useLiveSubscription(
     if (key === null) {
       return;
     }
-    // Updates of an earlier spec never land on this one.
-    const update = (change: { status?: LiveStatus; error?: ErrorBody; at?: number }) =>
-      setState((current) => (current.key === key ? { ...current, ...change } : { key, ...change }));
-    return liveClient(orgId).subscribe(JSON.parse(key) as LiveSpec, {
+    const [liveSpec, captured] = JSON.parse(key) as [LiveSpec, T];
+    // A new start forgets what an earlier one (also with the same spec) said.
+    const token = {};
+    setState({ token });
+    const update = (change: Omit<Followed, "token">) =>
+      setState((current) => (current.token === token ? { ...current, ...change } : current));
+    const end = liveClient(orgId).subscribe(liveSpec, {
       onResult: (results, at) => {
-        deliver(results, at);
-        update({ at });
+        deliver(results, at, captured);
+        update({ at, error: undefined });
       },
-      onStatus: (status) => update({ status }),
+      onStatus: (status) => update({ status, error: undefined }),
       onError: (error) => update({ error }),
     });
+    return () => {
+      end();
+      setState({ token: null });
+    };
   }, [orgId, key]);
 
-  const own = state.key === key ? state : { key };
+  const own: Followed = key === null ? { token: null } : state;
   return { on: key !== null, status: own.status, error: own.error, at: own.at, connection };
 }

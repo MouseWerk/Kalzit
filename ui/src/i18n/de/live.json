@@ -8,7 +8,7 @@
   "live.detail.changes": "Aktualisiert sich, sobald sich die Daten ändern.",
   "live.detail.poll": "Die Abfragen laufen alle {interval} erneut.",
   "live.detail.hidden": "Pausiert, solange dieser Tab im Hintergrund ist. Läuft weiter, wenn du zurückkommst.",
-  "live.detail.paused": "Pausiert. Im Menü zum Aktualisieren setzt du es fort.",
+  "live.detail.paused": "Pausiert, und auch das automatische Aktualisieren ruht. Im Menü zum Aktualisieren setzt du es fort.",
   "live.menu.live": "Live",
   "live.menu.pause": "Live-Aktualisierung pausieren",
   "live.menu.resume": "Live-Aktualisierung fortsetzen",
