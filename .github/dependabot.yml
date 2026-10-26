@@ -18,3 +18,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Base image digests in the Dockerfile and the Compose examples.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker-compose
+    directory: /deploy/docker
+    schedule:
+      interval: weekly

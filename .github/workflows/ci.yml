@@ -35,6 +35,7 @@ jobs:
       ui: ${{ steps.areas.outputs.ui }}
       e2e: ${{ steps.areas.outputs.e2e }}
       audit: ${{ steps.areas.outputs.audit }}
+      docker: ${{ steps.areas.outputs.docker }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@v7
@@ -465,6 +466,34 @@ jobs:
           # .output starts with a dot; without this the traces and screenshots are left out.
           include-hidden-files: true
           retention-days: 14
+
+  # The container image (Dockerfile): built for linux/amd64 with the faster e2e profile, then run
+  # on its own and from deploy/docker/compose.postgres.yaml (.github/scripts/docker-smoke.sh).
+  # Version tags build and push linux/amd64 and linux/arm64 (release.yml).
+  docker:
+    name: docker
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Commit
+        id: commit
+        run: echo "short=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: kalzit:ci
+          build-args: |
+            CARGO_PROFILE=e2e
+            KALZIT_BUILD_COMMIT=${{ steps.commit.outputs.short }}
+          cache-from: type=gha,scope=kalzit-image-amd64
+          cache-to: ${{ github.event_name != 'merge_group' && 'type=gha,scope=kalzit-image-amd64,mode=max' || '' }}
+      - run: .github/scripts/docker-smoke.sh kalzit:ci
 
   audit:
     name: audit

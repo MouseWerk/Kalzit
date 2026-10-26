@@ -15,6 +15,7 @@ const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database",
 /// `KALZIT_*` variables that are not settings. Any other `KALZIT_*` name is a typo and an error.
 const OTHER_VARIABLES: &[&str] = &[
     "CONFIG",
+    "DATABASE_URL_FILE",
     "SETUP_TOKEN",
     "SECRETS_KEY",
     "SECRETS_NEW_KEY",
@@ -26,6 +27,10 @@ const OTHER_VARIABLES: &[&str] = &[
     "TEST_MSSQL_URL",
     "TEST_PROMETHEUS_URL",
 ];
+/// The credential (systemd `LoadCredential=`, a Docker secret under `/run/secrets` with
+/// `CREDENTIALS_DIRECTORY` set) that holds the URL of Kalzit's own database, so its password is
+/// in no environment variable.
+pub const DATABASE_URL_CREDENTIAL: &str = "kalzit-database-url";
 /// `KALZIT_SETTING_<KEY>`: runtime settings from `settings::REGISTRY`, not configuration sections.
 const SETTING_PREFIX: &str = "SETTING_";
 /// Settings without a default value; they do not appear in the serialized defaults.
@@ -57,6 +62,10 @@ pub struct Config {
     /// read it.
     #[serde(skip)]
     pub config_file: Option<PathBuf>,
+    /// The file the database URL was read from (`KALZIT_DATABASE_URL_FILE` or the credential
+    /// `kalzit-database-url`), if any. Data sources may never read it.
+    #[serde(skip)]
+    pub database_url_file: Option<PathBuf>,
 }
 
 /// The layer a configuration value came from.
@@ -238,6 +247,8 @@ impl Config {
             let value = value.into_string().map_err(|_| anyhow::anyhow!("{name} is not valid UTF-8"))?;
             env.push((name.to_string(), value));
         }
+        let credentials = std::env::var_os("CREDENTIALS_DIRECTORY").filter(|d| !d.is_empty()).map(PathBuf::from);
+        let url_file = database_url_from_file(&mut env, credentials.as_deref())?;
         // The system file decides where the data lives and which certificate is served, so a
         // non-admin must not be able to change it.
         #[cfg(windows)]
@@ -247,7 +258,9 @@ impl Config {
             crate::data_dir::check_admin_only(&folder)?;
             crate::data_dir::check_admin_only(f)?;
         }
-        Self::from_file(file.as_deref(), env)
+        let mut config = Self::from_file(file.as_deref(), env)?;
+        config.database_url_file = url_file;
+        Ok(config)
     }
 
     /// The data directory, read as leniently as possible, for when the configuration as a whole
@@ -541,6 +554,36 @@ fn env_value(name: &str, raw: &str, default: Option<&toml::Value>, key: &str) ->
     })
 }
 
+/// Takes the database URL from a file when `KALZIT_DATABASE_URL` does not set one: the file
+/// `KALZIT_DATABASE_URL_FILE` names, else the credential `kalzit-database-url` in
+/// `credentials_dir`. The URL is added to `env` as `KALZIT_DATABASE_URL` (so it wins over
+/// `kalzit.toml` and shows as set by the environment); the file it came from is returned.
+/// Errors name the file, never its content.
+fn database_url_from_file(env: &mut Vec<(String, String)>, credentials_dir: Option<&Path>) -> Result<Option<PathBuf>> {
+    let get = |env: &[(String, String)], name: &str| {
+        env.iter().find(|(n, _)| n == name).map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty())
+    };
+    if get(env, "KALZIT_DATABASE_URL").is_some() {
+        return Ok(None);
+    }
+    let path = match get(env, "KALZIT_DATABASE_URL_FILE") {
+        Some(p) => PathBuf::from(p),
+        None => match credentials_dir.map(|d| d.join(DATABASE_URL_CREDENTIAL)).filter(|p| p.is_file()) {
+            Some(p) => p,
+            None => return Ok(None),
+        },
+    };
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading the database URL from {}", path.display()))?;
+    let url = text.trim();
+    if url.is_empty() {
+        bail!("the database URL file {} is empty", path.display());
+    }
+    env.retain(|(n, _)| n != "KALZIT_DATABASE_URL");
+    env.push(("KALZIT_DATABASE_URL".into(), url.to_string()));
+    Ok(Some(path))
+}
+
 fn default_config_paths() -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::from("kalzit.toml")];
     #[cfg(windows)]
@@ -572,6 +615,65 @@ mod tests {
 
     fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn the_database_url_comes_from_a_file_or_credential_unless_the_variable_sets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds = dir.path().join("creds");
+        std::fs::create_dir(&creds).unwrap();
+        std::fs::write(creds.join(DATABASE_URL_CREDENTIAL), "postgres://k:cred@db/k\n").unwrap();
+        let file = dir.path().join("url");
+        std::fs::write(&file, "postgres://k:p%2Fw@db/k\n").unwrap();
+        let file_var = ("KALZIT_DATABASE_URL_FILE".to_string(), file.display().to_string());
+        let url_of =
+            |env: &[(String, String)]| env.iter().find(|(n, _)| n == "KALZIT_DATABASE_URL").map(|(_, v)| v.clone());
+
+        // The variable wins over the file and the credential.
+        let mut e = env(&[("KALZIT_DATABASE_URL", "postgres://k:env@db/k")]);
+        e.push(file_var.clone());
+        assert_eq!(database_url_from_file(&mut e, Some(&creds)).unwrap(), None);
+        assert_eq!(url_of(&e).as_deref(), Some("postgres://k:env@db/k"));
+
+        // The file wins over the credential; an empty variable counts as unset.
+        let mut e = env(&[("KALZIT_DATABASE_URL", "")]);
+        e.push(file_var);
+        assert_eq!(database_url_from_file(&mut e, Some(&creds)).unwrap(), Some(file.clone()));
+        assert_eq!(url_of(&e).as_deref(), Some("postgres://k:p%2Fw@db/k"));
+        assert_eq!(e.iter().filter(|(n, _)| n == "KALZIT_DATABASE_URL").count(), 1);
+
+        // Then the credential, which wins over kalzit.toml and counts as set by the environment.
+        let mut e = env(&[]);
+        assert!(database_url_from_file(&mut e, Some(&creds)).unwrap().is_some());
+        let c = Config::from_sources("[database]\nurl = 'sqlite:x.db'\n", e).unwrap();
+        assert_eq!(c.database.url.as_deref(), Some("postgres://k:cred@db/k"));
+        assert_eq!(c.source("database.url"), Source::Environment);
+
+        // Nothing configured: the environment stays as it is.
+        let mut e = env(&[]);
+        assert_eq!(database_url_from_file(&mut e, Some(dir.path())).unwrap(), None);
+        assert_eq!(database_url_from_file(&mut e, None).unwrap(), None);
+        assert!(e.is_empty());
+    }
+
+    #[test]
+    fn a_database_url_file_never_shows_its_content_in_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let mut e = env(&[("KALZIT_DATABASE_URL_FILE", missing.to_str().unwrap())]);
+        let err = format!("{:#}", database_url_from_file(&mut e, None).unwrap_err());
+        assert!(err.contains("missing"), "{err}");
+        let blank = dir.path().join("blank");
+        std::fs::write(&blank, " \n").unwrap();
+        let mut e = env(&[("KALZIT_DATABASE_URL_FILE", blank.to_str().unwrap())]);
+        assert!(database_url_from_file(&mut e, None).is_err());
+        // A URL that is not valid is refused without repeating it.
+        let bad = dir.path().join("bad");
+        std::fs::write(&bad, "mysql://k:secret-pw@db/k").unwrap();
+        let mut e = env(&[("KALZIT_DATABASE_URL_FILE", bad.to_str().unwrap())]);
+        database_url_from_file(&mut e, None).unwrap();
+        let err = format!("{:#}", Config::from_sources("", e).unwrap_err());
+        assert!(!err.contains("secret-pw"), "{err}");
     }
 
     #[test]
