@@ -545,7 +545,7 @@ async fn create(
     library::recheck_added(&mut tx, &ctx.org_id, &model.library_panel_ids()).await?;
     library::recheck_space_links(&mut tx, &ctx, body.folder_id.as_deref(), &model.library_panel_ids()).await?;
     saved_analyses::recheck_added(&mut tx, &ctx.org_id, &model.analysis_ids()).await?;
-    saved_analyses::recheck_space_links(&mut tx, &ctx, body.folder_id.as_deref(), &model.analysis_ids()).await?;
+    saved_analyses::recheck_audience(&mut tx, &ctx, body.folder_id.as_deref(), &model.analysis_ids()).await?;
     let new = NewVersion {
         model: &model,
         message: &message,
@@ -665,7 +665,7 @@ async fn write_version(
     library::recheck_space_links(&mut tx, ctx, folder_id, &linked).await?;
     saved_analyses::recheck_added(&mut tx, &ctx.org_id, &new.added_analyses).await?;
     let linked = if moved { new.model.analysis_ids() } else { new.added_analyses.clone() };
-    saved_analyses::recheck_space_links(&mut tx, ctx, folder_id, &linked).await?;
+    saved_analyses::recheck_audience(&mut tx, ctx, folder_id, &linked).await?;
     insert_version(&mut tx, &row.id, next, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &row.id, new.model).await?;
     saved_analyses::sync_uses(&mut tx, &ctx.org_id, &row.id, new.model).await?;

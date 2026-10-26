@@ -125,26 +125,35 @@ struct Extras {
 }
 
 impl Extras {
-    /// For `only` one analysis, or all of the organization (`None`), read through `conn`.
-    async fn load(
-        conn: &mut sqlx::AnyConnection,
-        ctx: &OrgCtx,
-        index: &AccessIndex,
-        only: Option<&str>,
-    ) -> ApiResult<Self> {
+    /// For the analyses `ids` (one answer, or one page of a list), read through `conn`.
+    async fn load(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, index: &AccessIndex, ids: &[&str]) -> ApiResult<Self> {
         let mut out = Extras::default();
-        let sources: Vec<(String, String)> = sqlx::query_as(
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        // `$2` onwards, one per id: numbers only, so nothing from the request reaches the SQL.
+        let list = (0..ids.len()).map(|i| format!("${}", i + 2)).collect::<Vec<_>>().join(", ");
+        let sql = format!(
             "SELECT analysis_id, datasource_id FROM analysis_sources WHERE org_id = $1 \
-             AND (CAST($2 AS TEXT) IS NULL OR analysis_id = $2) ORDER BY analysis_id, datasource_id",
-        )
-        .bind(&ctx.org_id)
-        .bind(only)
-        .fetch_all(&mut *conn)
-        .await?;
-        for (analysis, source) in sources {
+             AND analysis_id IN ({list}) ORDER BY analysis_id, datasource_id"
+        );
+        let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        for (analysis, source) in query.fetch_all(&mut *conn).await? {
             out.sources.entry(analysis).or_default().push(source);
         }
-        for (analysis, dashboard, folder) in using_dashboards(conn, &ctx.org_id, only).await? {
+        let sql = format!(
+            "SELECT u.analysis_id, d.id, d.folder_id FROM analysis_uses u JOIN dashboards d ON d.id = u.dashboard_id \
+             WHERE d.org_id = $1 AND u.analysis_id IN ({list})"
+        );
+        let mut query =
+            sqlx::query_as::<_, (String, String, Option<String>)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        for (analysis, dashboard, folder) in query.fetch_all(&mut *conn).await? {
             if index.dashboard(&dashboard, folder.as_deref()).is_some_and(|p| p.contains(&Permission::DashboardsRead)) {
                 *out.uses.entry(analysis).or_insert(0) += 1;
             }
@@ -153,18 +162,19 @@ impl Extras {
     }
 }
 
-/// (analysis, dashboard, the dashboard's folder) for every link, of `only` one analysis or all.
+/// (analysis, dashboard, the dashboard's folder) for every dashboard linking the analysis,
+/// trashed ones included.
 async fn using_dashboards(
     conn: &mut sqlx::AnyConnection,
     org_id: &str,
-    only: Option<&str>,
+    id: &str,
 ) -> ApiResult<Vec<(String, String, Option<String>)>> {
     Ok(sqlx::query_as(
         "SELECT u.analysis_id, d.id, d.folder_id FROM analysis_uses u JOIN dashboards d ON d.id = u.dashboard_id \
-         WHERE d.org_id = $1 AND (CAST($2 AS TEXT) IS NULL OR u.analysis_id = $2)",
+         WHERE d.org_id = $1 AND u.analysis_id = $2",
     )
     .bind(org_id)
-    .bind(only)
+    .bind(id)
     .fetch_all(&mut *conn)
     .await?)
 }
@@ -279,7 +289,7 @@ fn model_text(model: &AnalysisModel) -> ApiResult<String> {
 /// before its commit, so a failing read can still be answered as "nothing changed".
 async fn view(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, row: AnalysisRow) -> ApiResult<Analysis> {
     let index = AccessIndex::load(conn, ctx).await?;
-    let extras = Extras::load(conn, ctx, &index, Some(&row.id)).await?;
+    let extras = Extras::load(conn, ctx, &index, &[row.id.as_str()]).await?;
     let model = stored_value(&row.body)?;
     Ok(Analysis { summary: AnalysisSummary::new(&row, &index, &extras), model })
 }
@@ -296,24 +306,25 @@ fn in_use(message: &str, visible: i64) -> ApiError {
 }
 
 /// Inside a transaction that holds the organization's lock: refuses with `analysis.in_use` while
-/// any dashboard links the analysis, or with `outside_space` set, any dashboard outside that team
-/// space.
+/// any dashboard links the analysis (trashed dashboards included), or with `placed` set (the
+/// analysis's folder and team-only flag after the change), any dashboard whose audience it would
+/// no longer fit (`saved_analyses::audience_fits`).
 async fn check_unused(
     conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
     id: &str,
-    outside_space: Option<&str>,
+    placed: Option<(Option<&str>, bool)>,
     message: &str,
 ) -> ApiResult<()> {
-    let users = using_dashboards(&mut *conn, &ctx.org_id, Some(id)).await?;
-    let blocking: Vec<&(String, String, Option<String>)> = match outside_space {
+    let users = using_dashboards(&mut *conn, &ctx.org_id, id).await?;
+    let blocking: Vec<&(String, String, Option<String>)> = match placed {
         None => users.iter().collect(),
-        Some(space) => {
+        Some((folder, team_only)) => {
             let tree = Tree::load(&mut *conn, ctx).await?;
             users
                 .iter()
-                .filter(|(_, _, folder)| {
-                    folder.as_deref().and_then(|f| tree.space_of(f)).map(|(s, _)| s) != Some(space)
+                .filter(|(_, _, dashboard_folder)| {
+                    !saved_analyses::audience_fits(&tree, folder, team_only, dashboard_folder.as_deref())
                 })
                 .collect()
         }
@@ -553,10 +564,11 @@ async fn list(
         .bind(q.owner_team_id.as_deref())
         .fetch_all(&mut *conn)
         .await?;
-    let extras = Extras::load(&mut conn, &ctx, &index, None).await?;
-    let mut items: Vec<AnalysisSummary> = rows.iter().map(|r| AnalysisSummary::new(r, &index, &extras)).collect();
-    let more = items.len() > limit;
-    items.truncate(limit);
+    let more = rows.len() > limit;
+    let rows = &rows[..rows.len().min(limit)];
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let extras = Extras::load(&mut conn, &ctx, &index, &ids).await?;
+    let items: Vec<AnalysisSummary> = rows.iter().map(|r| AnalysisSummary::new(r, &index, &extras)).collect();
     let next_cursor = match items.last() {
         Some(last) if more => Some(match q.sort {
             Sort::Title => encode_cursor(&(&last.title, &last.id)),
@@ -716,14 +728,11 @@ async fn write_version(
         moved_out =
             check_space_move(&mut tx, ctx, row.folder_id.as_deref(), row.owner_team_id.as_deref(), new.folder_id)
                 .await?;
-        // Into a team space only while no dashboard outside it links the analysis: those would
-        // show content their viewers may no longer see.
-        let tree = Tree::load(&mut tx, ctx).await?;
-        if let Some((space, _)) = new.folder_id.and_then(|f| tree.space_of(f)) {
-            let space = space.to_string();
-            let message = "dashboards outside the team space show this analysis; remove it from them first";
-            check_unused(&mut tx, ctx, &row.id, Some(&space), message).await?;
-        }
+        // Into a restricted folder or team space only while every dashboard that links the
+        // analysis lies under the same restricted folder: the others would show it to readers
+        // who may no longer see it.
+        let message = "dashboards outside the restricted folder show this analysis; remove it from them first";
+        check_unused(&mut tx, ctx, &row.id, Some((new.folder_id, row.team_only != 0)), message).await?;
         // Leaving a restricted folder is remembered, so the purge still hides its old events.
         if let Some(old) = row.folder_id.as_deref()
             && folders::restricted_in(&mut tx, &ctx.org_id, old).await?
@@ -862,6 +871,9 @@ async fn purge(
 ) -> ApiResult<StatusCode> {
     let not_trashed = || conflict("only analyses in the trash can be purged; move it to the trash first");
     let row = load(&state, &ctx, &id, Permission::AnalysesWrite).await?;
+    // Gone for good is the admin level's, as for data sources: `dashboards:share` on the analysis
+    // (an admin grant, or the org-wide right where it applies) on top of `analyses:write`.
+    authz::check_resource(&state.db, &ctx, Permission::DashboardsShare, Resource::Analysis(&id)).await?;
     if row.deleted_at.is_none() {
         return Err(not_trashed());
     }
@@ -883,6 +895,10 @@ async fn purge(
         Some((_, None, _)) => return Err(not_trashed()),
         Some((folder, Some(_), ever_restricted)) => (folder, ever_restricted),
     };
+    // A dashboard that links it may still come back from the trash (its folder's trash may have
+    // taken both along): the link would be left pointing at nothing.
+    let message = "dashboards, also in the trash, still show this analysis; remove it from them or purge them first";
+    check_unused(&mut tx, &ctx, &id, None, message).await?;
     let restricted_now = match folder.as_deref() {
         Some(folder) => folders::restricted_in(&mut tx, &ctx.org_id, folder).await?,
         None => false,

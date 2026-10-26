@@ -193,6 +193,7 @@ struct LinkRow {
     body: String,
     version: i64,
     deleted_at: Option<i64>,
+    team_only: i64,
 }
 
 async fn fetch_link<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
@@ -201,7 +202,7 @@ async fn fetch_link<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
     id: &str,
 ) -> ApiResult<Option<LinkRow>> {
     Ok(sqlx::query_as(
-        "SELECT id, folder_id, title, body, version, deleted_at FROM analyses WHERE org_id = $1 AND id = $2",
+        "SELECT id, folder_id, title, body, version, deleted_at, team_only FROM analyses WHERE org_id = $1 AND id = $2",
     )
     .bind(org_id)
     .bind(id)
@@ -310,31 +311,44 @@ pub async fn recheck_added(conn: &mut sqlx::AnyConnection, org_id: &str, ids: &B
     Ok(())
 }
 
-/// A dashboard at `place` may link an analysis kept in a team space only when it lies in that
-/// space too, or the caller maintains the space's team or is an org admin, as for library panels
-/// (`library::recheck_space_links`). Inside the save's transaction after the organization's lock.
-pub async fn recheck_space_links(
+/// The audience rule of links: a dashboard shows an analysis to everyone who reads the dashboard,
+/// so it may link only an analysis whose audience is not narrower than the dashboard's. A team-only
+/// analysis is never linked; one that a restricted folder (a team space included) governs is
+/// linked only by dashboards that the same restricted folder governs. Open analyses go anywhere.
+pub fn audience_fits(
+    tree: &crate::folders::Tree,
+    analysis_folder: Option<&str>,
+    analysis_team_only: bool,
+    dashboard_folder: Option<&str>,
+) -> bool {
+    if analysis_team_only {
+        return false;
+    }
+    match analysis_folder.and_then(|f| tree.governing(f)) {
+        None => true,
+        Some(governing) => dashboard_folder.and_then(|f| tree.governing(f)) == Some(governing),
+    }
+}
+
+/// Inside the save's transaction after the organization's lock: every analysis in `ids` fits the
+/// audience of a dashboard at `place` (`audience_fits`), for everyone, org admins included, since
+/// the dashboard's readers would see what the analysis's audience rule keeps from them (`403`).
+pub async fn recheck_audience(
     conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
     place: Option<&str>,
     ids: &BTreeSet<&str>,
 ) -> ApiResult<()> {
-    if ids.is_empty() || authz::role_sees_restricted(&ctx.permissions) {
+    if ids.is_empty() {
         return Ok(());
     }
     let tree = crate::folders::Tree::load(&mut *conn, ctx).await?;
-    let here = place.and_then(|p| tree.space_of(p)).map(|(space, _)| space.to_string());
     for id in ids {
         let Some(row) = fetch_link(&mut *conn, &ctx.org_id, id).await? else { continue };
-        let Some((space, team)) = row.folder_id.as_deref().and_then(|f| tree.space_of(f)) else { continue };
-        if here.as_deref() == Some(space) {
-            continue;
-        }
-        let team = team.to_string();
-        if authz::team_membership(&mut *conn, ctx, &team).await?.as_deref() != Some("maintainer") {
+        if !audience_fits(&tree, row.folder_id.as_deref(), row.team_only != 0, place) {
             return Err(ApiError::forbidden(format!(
-                "analysis {id} belongs to a team space; only that team's maintainers and org admins show it \
-                 outside the space"
+                "analysis {id} is team only or lies in a restricted folder or team space; a dashboard links it \
+                 only inside that folder, where its readers may see it"
             )));
         }
     }

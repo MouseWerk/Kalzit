@@ -35,6 +35,8 @@ struct TestApp {
 struct Reply {
     status: StatusCode,
     body: Value,
+    /// The answer as text, for files.
+    text: String,
 }
 
 impl Reply {
@@ -90,7 +92,8 @@ impl TestApp {
         let res = self.app.clone().oneshot(req).await.unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        Reply { status, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null) }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        Reply { status, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null), text }
     }
 
     /// `~` stands for `/api/orgs/<the org>`.
@@ -293,6 +296,13 @@ on_both_databases! {
     dashboards_link_analyses,
     links_keep_analyses_in_place,
     lists_filter_sort_and_tell_what_the_caller_may_do,
+    folder_changes_keep_linked_analyses_visible,
+    links_respect_the_analysis_audience,
+    purging_needs_the_admin_level_and_no_link,
+    linked_queries_change_only_with_the_query_right,
+    linked_panels_export,
+    trash_and_link_race,
+    purge_and_restore_race,
 }
 
 async fn create_read_save_and_list(t: TestApp) {
@@ -1008,4 +1018,199 @@ async fn lists_filter_sort_and_tell_what_the_caller_may_do(t: TestApp) {
     assert_eq!(row(&as_viewer, "Bestand")["mayQuery"], true);
     assert_eq!(row(&as_viewer, "Anfang")["mayQuery"], false);
     assert_eq!(row(&as_viewer, "Anfang")["uses"], 0);
+}
+
+/// A folder's version as the tree answers it.
+async fn folder_version(t: &TestApp, id: &str) -> Value {
+    let tree = t.get("~/folders", &t.owner).await;
+    fn find(nodes: &[Value], id: &str) -> Option<Value> {
+        nodes.iter().find_map(|n| if n["id"] == id { Some(n.clone()) } else { find(n["children"].as_array()?, id) })
+    }
+    find(tree.body["items"].as_array().unwrap(), id).unwrap()["version"].clone()
+}
+
+async fn folder_changes_keep_linked_analyses_visible(t: TestApp) {
+    let source = t.source("shop").await;
+    let folder = t.folder("Vertrieb", false).await;
+    let id = id_of(t.create("Umsatz", &source, Some(&folder), &t.owner).await);
+    let outside = id_of(t.post("~/dashboards", json!({ "model": linking("Außen", &id) }), &t.owner).await);
+    let in_use = |r: &Reply| {
+        assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+        assert_eq!(r.body["error"]["reason"], "analysis.in_use", "{}", r.body);
+    };
+    let path = t.path(&format!("~/folders/{folder}"));
+    let patch = |body: Value| t.send(Method::PATCH, &path, Some(body), Some(&t.owner));
+    // Restricting the folder would hide the analysis from the readers of the dashboard outside.
+    let v = folder_version(&t, &folder).await;
+    in_use(&patch(json!({ "restricted": true, "version": v })).await);
+    // So would making it team only, or moving it into a team space or under a restricted folder.
+    let team = t.team("Betrieb").await;
+    let r = t
+        .put(&format!("~/folders/{folder}/owner"), json!({ "ownerTeamId": team, "visibility": "team" }), &t.owner)
+        .await;
+    in_use(&r);
+    let space = id_of(t.post("~/folders", json!({ "name": "Betrieb", "ownerTeamId": team }), &t.owner).await);
+    in_use(&patch(json!({ "parentId": space, "version": v })).await);
+    let secret = t.folder("Vorstand", true).await;
+    in_use(&patch(json!({ "parentId": secret, "version": v })).await);
+    // Moving under an open folder, or renaming, changes nobody's view.
+    let open = t.folder("Offen", false).await;
+    let r = patch(json!({ "parentId": open, "name": "Vertrieb neu", "version": v })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // A linking dashboard inside the folder goes along, so the folder may be restricted.
+    let unlinked = json!({ "schemaVersion": 2, "title": "Außen", "timeRange": { "from": "now-6h", "to": "now" } });
+    let r = t.put(&format!("~/dashboards/{outside}"), json!({ "model": unlinked, "version": 1 }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.post("~/dashboards", json!({ "folderId": folder, "model": linking("Innen", &id) }), &t.owner).await;
+    let v = folder_version(&t, &folder).await;
+    let r = patch(json!({ "restricted": true, "version": v })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+async fn links_respect_the_analysis_audience(t: TestApp) {
+    let source = t.source("shop").await;
+    let secret = t.folder("Vorstand", true).await;
+    let inner = id_of(t.create("Margen", &source, Some(&secret), &t.owner).await);
+    let forbidden = |r: Reply| assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    // An analysis in a restricted folder is linked only by dashboards that folder governs; org
+    // admins are held to it as well.
+    forbidden(t.post("~/dashboards", json!({ "model": linking("Offen", &inner) }), &t.owner).await);
+    let d = id_of(
+        t.post("~/dashboards", json!({ "folderId": secret, "model": linking("Intern", &inner) }), &t.owner).await,
+    );
+    // Moving that dashboard out of the folder would show the analysis to its new readers.
+    let r = t
+        .put(
+            &format!("~/dashboards/{d}"),
+            json!({ "model": linking("Intern", &inner), "version": 1, "folderId": null }),
+            &t.owner,
+        )
+        .await;
+    forbidden(r);
+    // A team-only analysis is never linked.
+    let team = t.team("Betrieb").await;
+    let only = id_of(t.create("Nur Team", &source, None, &t.owner).await);
+    let r = t
+        .put(&format!("~/analyses/{only}/owner"), json!({ "ownerTeamId": team, "visibility": "team" }), &t.owner)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    forbidden(t.post("~/dashboards", json!({ "model": linking("Team", &only) }), &t.owner).await);
+    // A linked open analysis does not move into a restricted folder the dashboard is outside of.
+    let open = id_of(t.create("Offen", &source, None, &t.owner).await);
+    t.post("~/dashboards", json!({ "model": linking("Überall", &open) }), &t.owner).await;
+    let current = t.get(&format!("~/analyses/{open}"), &t.owner).await;
+    let body = json!({ "model": current.body["model"], "version": current.body["version"], "folderId": secret });
+    let r = t.put(&format!("~/analyses/{open}"), body, &t.owner).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].clone()),
+        (StatusCode::CONFLICT, json!("analysis.in_use")),
+        "{}",
+        r.body
+    );
+}
+
+async fn purging_needs_the_admin_level_and_no_link(t: TestApp) {
+    let source = t.source("shop").await;
+    // A viewer with an edit grant may trash, not purge.
+    let id = id_of(t.create("Umsatz", &source, None, &t.owner).await);
+    let (vera_id, vera) = t.member("Vera", "viewer").await;
+    t.grant("user", &vera_id, "analysis", &id, "edit").await;
+    assert_eq!(t.delete(&format!("~/analyses/{id}"), &vera).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.delete(&format!("~/analyses/{id}/purge"), &vera).await.status, StatusCode::FORBIDDEN);
+    t.grant("user", &vera_id, "analysis", &id, "admin").await;
+    assert_eq!(t.delete(&format!("~/analyses/{id}/purge"), &vera).await.status, StatusCode::NO_CONTENT);
+
+    // A folder's trash takes an analysis and the dashboard linking it along; the analysis alone
+    // is not purged while the dashboard may come back.
+    let folder = t.folder("Vertrieb", false).await;
+    let linked = id_of(t.create("Verknüpft", &source, Some(&folder), &t.owner).await);
+    t.post("~/dashboards", json!({ "folderId": folder, "model": linking("Innen", &linked) }), &t.owner).await;
+    assert_eq!(t.delete(&format!("~/folders/{folder}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let r = t.delete(&format!("~/analyses/{linked}/purge"), &t.owner).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].clone()),
+        (StatusCode::CONFLICT, json!("analysis.in_use")),
+        "{}",
+        r.body
+    );
+    // Purging the folder takes both.
+    assert_eq!(t.delete(&format!("~/folders/{folder}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.get(&format!("~/analyses/{linked}"), &t.owner).await.status, StatusCode::NOT_FOUND);
+    let (uses,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM analysis_uses").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(uses, 0);
+}
+
+async fn linked_queries_change_only_with_the_query_right(t: TestApp) {
+    let source = t.source("shop").await;
+    let id = id_of(t.create("Umsatz", &source, None, &t.owner).await);
+    let d = id_of(t.post("~/dashboards", json!({ "model": linking("Wochenrunde", &id) }), &t.owner).await);
+    let (vera_id, vera) = t.member("Vera", "viewer").await;
+    t.grant("user", &vera_id, "analysis", &id, "edit").await;
+    // Vera may write the analysis but not query its source: a new query is refused.
+    let r = t.save(&id, model("Umsatz", &source, "SELECT country FROM orders"), &vera).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    // The dashboard's readers keep what the authorized query answers.
+    let body = json!({ "timeRange": { "from": T0 - DAY, "to": T0 } });
+    let r = t.post(&format!("~/dashboards/{d}/panels/p1/query"), body, &vera).await;
+    let fields = &r.body["results"]["A"]["result"]["frame"]["fields"];
+    assert_eq!(fields[0]["values"], json!(["AT", "DE"]), "{}", r.body);
+    assert_eq!(fields.as_array().unwrap().len(), 2);
+}
+
+async fn linked_panels_export(t: TestApp) {
+    let source = t.source("shop").await;
+    let mut m = model("Umsatz", &source, SQL);
+    m["steps"] = json!([]);
+    let id = id_of(t.post("~/analyses", json!({ "model": m }), &t.owner).await);
+    let d = id_of(t.post("~/dashboards", json!({ "model": linking("Wochenrunde", &id) }), &t.owner).await);
+    let body = json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "format": "csv", "language": "en" });
+    let r = t.post(&format!("~/dashboards/{d}/panels/p1/export"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert!(r.text.contains("AT") && r.text.contains("DE"), "{}", r.text);
+}
+
+async fn trash_and_link_race(t: TestApp) {
+    let source = t.source("shop").await;
+    for round in 0..4 {
+        let id = id_of(t.create(&format!("Rennen {round}"), &source, None, &t.owner).await);
+        let path = format!("~/analyses/{id}");
+        let trash = t.delete(&path, &t.owner);
+        let link = t.post("~/dashboards", json!({ "model": linking("Rennen", &id) }), &t.owner);
+        let (trashed, linked) = tokio::join!(trash, link);
+        let trashed = trashed.status == StatusCode::NO_CONTENT;
+        let linked = linked.status == StatusCode::CREATED;
+        // Never both: a link to a trashed analysis, or a trash under a link.
+        assert!(!(trashed && linked), "round {round}: both went through");
+        let stored = t.get(&format!("~/analyses/{id}"), &t.owner).await;
+        let (uses,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM analysis_uses WHERE analysis_id = $1")
+            .bind(&id)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+        assert!(!(stored.body["deletedAt"].is_number() && uses > 0), "round {round}: a trashed analysis is linked");
+    }
+}
+
+async fn purge_and_restore_race(t: TestApp) {
+    let source = t.source("shop").await;
+    for round in 0..4 {
+        let id = id_of(t.create(&format!("Rennen {round}"), &source, None, &t.owner).await);
+        assert_eq!(t.delete(&format!("~/analyses/{id}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+        let (purge_path, restore_path) = (format!("~/analyses/{id}/purge"), format!("~/analyses/{id}/restore"));
+        let purge = t.delete(&purge_path, &t.owner);
+        let restore = t.post(&restore_path, json!(null), &t.owner);
+        let (purged, restored) = tokio::join!(purge, restore);
+        let purged = purged.status == StatusCode::NO_CONTENT;
+        let restored = restored.status == StatusCode::OK;
+        assert!(!(purged && restored), "round {round}: both went through");
+        let stored = t.get(&format!("~/analyses/{id}"), &t.owner).await;
+        if purged {
+            assert_eq!(stored.status, StatusCode::NOT_FOUND);
+        } else {
+            assert_eq!(stored.status, StatusCode::OK);
+        }
+        if restored {
+            assert_eq!(stored.body["deletedAt"], Value::Null);
+        }
+    }
 }

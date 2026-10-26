@@ -772,6 +772,13 @@ pub async fn check_leaving_space(
     ))
 }
 
+/// The folder and every folder below it.
+fn subtree_ids(tree: &Tree, folder_id: &str) -> BTreeSet<String> {
+    std::iter::once(folder_id.to_string())
+        .chain(tree.descendants(folder_id).into_iter().map(|r| r.id.clone()))
+        .collect()
+}
+
 /// The restricted folder that would govern `folder` under `parent`: the folder itself when it is
 /// restricted, else the nearest restricted folder above the new place.
 fn governing_after_move(tree: &Tree, folder: &FolderRow, parent: Option<&str>) -> Option<String> {
@@ -882,6 +889,16 @@ async fn update(
         next.restricted = restricted as i64;
         changed.push("restricted");
     }
+    // Restricting the folder, or moving it under another restricted folder or into a team space,
+    // narrows who sees the analyses inside: dashboards outside that link one would show it to
+    // readers who may no longer see it (`409`, reason `analysis.in_use`).
+    let narrowed = (next.restricted != 0 && current.restricted == 0)
+        || (next.parent_id != current.parent_id
+            && governing_after_move(&tree, &next, next.parent_id.as_deref())
+                .is_some_and(|after| tree.governing(&folder_id) != Some(after.as_str())));
+    if narrowed {
+        super::analyses::check_subtree_unused(&mut tx, &ctx, &subtree_ids(&tree, &folder_id)).await?;
+    }
     if !changed.is_empty() {
         let now = state.clock.now_ms();
         sqlx::query(
@@ -938,6 +955,11 @@ async fn set_owner(
     }
     let held = check_owner_change(&mut tx, &ctx, OwnedItem::Folder(&current), &body).await?;
     let unchanged = current.owner_team_id == body.owner_team_id && (current.restricted != 0) == restricted;
+    // Restricting the folder (a team space or team only) narrows who sees the analyses inside, as
+    // in `update`.
+    if restricted && current.restricted == 0 {
+        super::analyses::check_subtree_unused(&mut tx, &ctx, &subtree_ids(&tree, &folder_id)).await?;
+    }
     if !unchanged {
         let now = state.clock.now_ms();
         sqlx::query(
@@ -988,10 +1010,7 @@ async fn trash(
     let subtree = Subtree::of(&mut tx, &ctx, &tree, &folder_id, &Part::Live).await?;
     subtree.check_unchanged(&checked)?;
     // Dashboards elsewhere that link an analysis inside would be left showing nothing.
-    let whole: BTreeSet<String> = std::iter::once(folder_id.clone())
-        .chain(tree.descendants(&folder_id).into_iter().map(|r| r.id.clone()))
-        .collect();
-    super::analyses::check_subtree_unused(&mut tx, &ctx, &whole).await?;
+    super::analyses::check_subtree_unused(&mut tx, &ctx, &subtree_ids(&tree, &folder_id)).await?;
     let now = state.clock.now_ms();
     let batch = new_id();
     let mut dashboards = 0;

@@ -40,7 +40,8 @@ Analyses follow the dashboards' rules (docs/api/access.md):
 | Action | Needs, on the analysis |
 |---|---|
 | list, read, run, read the history and the uses | `analyses:read` |
-| create (in the folder, or org-wide at the top level), save, move, restore a version, trash, restore, purge | `analyses:write` |
+| create (in the folder, or org-wide at the top level), save, move, restore a version, trash, restore | `analyses:write` |
+| purge (gone for good, as for data sources the admin level) | `analyses:write` and `dashboards:share`: an `admin` grant on the analysis or its folder, or the org-wide right where it applies |
 | change the owner team, manage grants | `dashboards:share` (and `analyses:write` for the owner) |
 
 - Folder grants carry `analyses:read` (`view`) and `analyses:write` (`edit`) to the analyses inside,
@@ -89,10 +90,10 @@ interface Analysis {
 | `GET /analyses?folderId=&q=&trashed=&team=&datasourceId=&createdBy=&ownerTeamId=&sort=&limit=&cursor=` | `200 Page<Analysis>` without `model`. `q` matches part of the title in any case; `team` is a team context as for dashboards; `sort` is `title` (default, then id) or `updated` (newest change first, then id). Needs `analyses:read` org-wide |
 | `POST /analyses` | `{"model", "folderId"?}`: `201` the analysis, version 1 |
 | `GET /analyses/{analysisId}` | the analysis; one in the trash too |
-| `PUT /analyses/{analysisId}` | `{"model", "version", "folderId"?}`: `200` the analysis with the next version. `version` is the one the caller started from; a newer stored one is `409 version_conflict` with the stored analysis as `current`. To overwrite, send again with `current.version`: that needs only the right to save, and the overwritten version stays in the history. `folderId` moves it (`null`: the top level); a folder hidden from the caller reads as `null`, and sending that back is no move. `409 conflict` while in the trash |
+| `PUT /analyses/{analysisId}` | `{"model", "version", "folderId"?}`: `200` the analysis with the next version. `version` is the one the caller started from; a newer stored one is `409 version_conflict` with the stored analysis as `current`. To overwrite, send again with `current.version`: that needs only the right to save, and the overwritten version stays in the history. `folderId` moves it (`null`: the top level); a folder hidden from the caller reads as `null`, and sending that back is no move. `409 conflict` while in the trash; `409`, reason `analysis.in_use`, for a move that a linking dashboard's audience does not allow (see "Linked panels") |
 | `DELETE /analyses/{analysisId}` | `204`: to the trash. `409 conflict`, reason `analysis.in_use`, while a dashboard links it |
 | `POST /analyses/{analysisId}/restore` | `200` the analysis; `409 conflict` while its folder is in the trash |
-| `DELETE /analyses/{analysisId}/purge` | `204`: gone for good, with its history and grants; `409 conflict` unless it is in the trash |
+| `DELETE /analyses/{analysisId}/purge` | `204`: gone for good, with its history and grants; needs the admin level (see Access). `409 conflict` unless it is in the trash, and `409`, reason `analysis.in_use`, while a dashboard links it, also one in the trash (a folder's trash may have taken both along) |
 | `PUT /analyses/{analysisId}/owner` | `{"ownerTeamId", "visibility": "shared" \| "team", "version"?}`, rules as for a dashboard's owner. Team only is refused (`409`, `analysis.in_use`) while dashboards link it |
 | `GET /analyses/{analysisId}/uses` | `{"items": [{"id", "title", "deletedAt"}]}`: the dashboards linking it that the caller may read |
 | `GET /analyses/{analysisId}/versions?limit=&cursor=` | `Page<{version, authorId, authorName, restoredFrom, createdAt}>`, newest first |
@@ -115,19 +116,28 @@ analysis, a panel stays linked unless it is added as a copy (then it holds the q
   dashboard that links it.
 - A new link (one the stored version did not have) needs `analyses:read` on the analysis, which
   must exist and be outside the trash (`422 validation` on `model`, "analysis ... does not
-  exist"), and `datasources:query` on its sources: its queries count as the dashboard's own. An
-  analysis in a team space is shown outside that space only by maintainers of the team and org
-  admins (`403`).
+  exist"), and `datasources:query` on its sources: its queries count as the dashboard's own.
+- **Audience.** A dashboard shows the analysis to all its readers, so it may link only an
+  analysis whose audience is not narrower than its own: never a team-only analysis, and one in a
+  restricted folder or team space only from a dashboard that the same restricted folder governs.
+  Open analyses can be linked anywhere. Otherwise `403 forbidden`, for everyone, org admins
+  included. The rule is checked for new links, and for all links when the dashboard moves.
 - Viewers of the dashboard run the linked queries under the dashboard's stored-query rule
-  (`POST /dashboards/{dashboardId}/panels/{panelId}/query`, and the panel export), with the
-  dashboard's time range and variables; they need no access to the analysis itself. The
-  dashboard's answer carries the linked analyses: `analyses: Record<string, {id, title, version,
-  model}>`.
-- While any dashboard links an analysis (dashboards in the trash count, they can come back), the
-  analysis cannot go to the trash, become team only or move into a team space other than the
-  dashboards', and a folder holding it cannot be trashed or purged while a dashboard outside that
-  folder links it: `409 conflict`, reason `analysis.in_use`, with `dashboards` the number of those
-  dashboards the caller may read. Removing the link from the dashboards, or purging them, frees it.
+  (`POST /dashboards/{dashboardId}/panels/{panelId}/query`, and the panel export); they need no
+  access to the analysis itself. The queries run with the dashboard's time range and the
+  dashboard's variables, as the dashboard's own queries do; the analysis's own time range is not
+  used there. Since variables shape what a query reads, the query right on the analysis's sources
+  is checked when the dashboard is saved with a new link or with changed variables, as for its own
+  queries, and when the analysis's queries change. The dashboard's answer carries the linked
+  analyses: `analyses: Record<string, {id, title, version, model}>`.
+- While any dashboard links an analysis (dashboards in the trash count, they can come back):
+  `409 conflict`, reason `analysis.in_use`, with `dashboards` the number of those dashboards the
+  caller may read, when the analysis would go to the trash or be purged, become team only, or move
+  where the audience rule no longer holds for a linking dashboard (into a restricted folder or
+  team space that does not govern it); and when a folder holding it would be trashed, purged,
+  restricted (also made a team space or team only) or moved under another restricted folder or
+  into a team space while a dashboard outside that folder links it. Removing the link from the
+  dashboards, or purging them, frees it.
 
 ## Audit
 

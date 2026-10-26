@@ -32,6 +32,8 @@ CREATE TABLE analyses (
 );
 
 CREATE INDEX analyses_org_title ON analyses (org_id, title, id);
+-- The list sorted by the last change.
+CREATE INDEX analyses_org_updated ON analyses (org_id, updated_at, id);
 CREATE INDEX analyses_folder ON analyses (folder_id);
 CREATE INDEX analyses_owner_team ON analyses (owner_team_id);
 
@@ -60,6 +62,12 @@ CREATE INDEX analysis_sources_datasource ON analysis_sources (org_id, datasource
 
 -- Which dashboards show an analysis as a linked panel, from each dashboard's current version
 -- (trashed dashboards included, they can come back). An analysis in use cannot go to the trash.
+-- `analysis_id` has no foreign key, as `library_panel_uses.library_panel_id` has none: the rows
+-- mirror the dashboard's model, which names the analysis by id in its JSON, and a key could not
+-- keep that JSON in step anyway. The server keeps both true instead: a link is added only to an
+-- existing analysis outside the trash, and an analysis is purged only while nothing links it (a
+-- folder purge takes the linking dashboards inside along, deleting their rows in the same
+-- transaction).
 CREATE TABLE analysis_uses (
     org_id        TEXT NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
     analysis_id   TEXT NOT NULL,
