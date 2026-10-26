@@ -788,7 +788,7 @@
   "datasources.reason.live.unauthenticated": "Deine Sitzung ist abgelaufen, darum wurden die Live-Updates beendet. Melde dich wieder an.",
   "datasources.reason.live.too_many": "Du hast schon {max} Live-Verbindungen offen. Schließ einen Tab und versuche es noch einmal.",
   "datasources.reason.live.server_busy": "Der Server hat so viele Live-Verbindungen offen, wie er zulässt ({max}). Versuche es gleich noch einmal.",
-  "datasources.reason.live.slow_client": "Die Live-Updates wurden beendet, weil dieser Browser nicht mitkam. Sie laufen weiter, sobald du neu verbindest.",
+  "datasources.reason.live.slow_client": "Die Live-Updates wurden beendet, weil dieser Browser nicht mitkam. Verbinde neu, dann laufen sie weiter.",
   "datasources.reason.live.idle_timeout": "Die Live-Updates pausieren nach einer Weile ohne Aktivität.",
   "datasources.reason.live.shutting_down": "Der Server startet neu. Die Live-Updates laufen weiter, sobald er wieder da ist.",
   "datasources.reason.live.source_unsupported": "Diese Quelle kann keine Änderungen melden, darum laufen ihre Abfragen in einem festen Abstand neu.",

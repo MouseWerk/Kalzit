@@ -57,7 +57,8 @@ async fn live(
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     crate::net::check_origin(&state, &headers, info.as_ref().map(|i| &i.0))?;
-    let token = session::read_cookie(&headers).ok_or_else(ApiError::unauthenticated)?;
+    let token =
+        session::read_cookie(&headers, info.as_ref().is_some_and(|i| i.https)).ok_or_else(ApiError::unauthenticated)?;
     // Refusals are sent over the socket: a browser does not show a failed handshake's answer.
     let admitted = state.live.admit(&ctx.user.id);
     Ok(ws.max_message_size(MAX_MESSAGE_BYTES).on_upgrade(move |socket| async move {
