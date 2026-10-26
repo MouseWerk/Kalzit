@@ -289,6 +289,7 @@ on_both_databases! {
     team_spaces_and_team_ownership,
     saving_rechecks_the_query_right,
     readers_run_the_stored_queries_only,
+    distributions_follow_the_stored_query_rule,
     folder_trash_takes_analyses_along,
     other_organizations_see_nothing,
     the_time_range_is_optional,
@@ -730,6 +731,40 @@ async fn readers_run_the_stored_queries_only(t: TestApp) {
     // Running records nothing in the Explore history.
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM explore_history").fetch_one(&t.state.db).await.unwrap();
     assert_eq!(n, 0);
+}
+
+/// Field distributions of an analysis follow its query route: readers ask for the stored
+/// queries it runs, nothing else.
+async fn distributions_follow_the_stored_query_rule(t: TestApp) {
+    let source = t.source("shop").await;
+    let mut m = model("Umsatz", &source, SQL);
+    m["targets"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "refId": "H", "datasourceId": source, "query": { "sql": SQL }, "hide": true }));
+    let id = id_of(t.post("~/analyses", json!({ "model": m }), &t.owner).await);
+    let (_, vera) = t.member("Vera", "viewer").await;
+    let ask = |ref_id: &str| json!({ "refId": ref_id, "timeRange": { "from": T0 - DAY, "to": T0 }, "path": ["land"] });
+    let path = format!("~/analyses/{id}/distribution");
+    // The stored query is theirs to ask about; a SQL source counts in the browser and says so.
+    let r = t.post(&path, ask("A"), &vera).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(r.body["error"]["reason"], "distribution.unsupported", "{}", r.body);
+    // A hidden query no step reads is not run, and an unknown one does not exist.
+    for ref_id in ["H", "Z"] {
+        assert_eq!(t.post(&path, ask(ref_id), &vera).await.status, StatusCode::NOT_FOUND, "{ref_id}");
+    }
+    // No variables, and the same query as a free distribution is not theirs.
+    let mut with_variables = ask("A");
+    with_variables["variables"] = json!({ "land": "AT" });
+    let r = t.post(&path, with_variables, &vera).await;
+    assert_eq!((r.status, r.body["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("variables")));
+    let free = json!({ "datasourceId": source, "query": { "sql": SQL }, "path": ["land"],
+                       "timeRange": { "from": T0 - DAY, "to": T0 } });
+    assert_eq!(t.post("~/query/distribution", free, &vera).await.status, StatusCode::NOT_FOUND);
+    // A trashed analysis answers nothing.
+    assert_eq!(t.delete(&format!("~/analyses/{id}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(t.post(&path, ask("A"), &vera).await.status, StatusCode::NOT_FOUND);
 }
 
 async fn folder_trash_takes_analyses_along(t: TestApp) {

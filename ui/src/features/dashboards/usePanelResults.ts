@@ -8,7 +8,7 @@ import type { DistributionAsk, DistributionSource } from "../../panels/types";
 import { fetchDistribution, runQuery } from "../datasources/api";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
-import { fetchPanelDistribution, runPanelQuery } from "./api";
+import { fetchAnalysisDistribution, fetchPanelDistribution, runPanelQuery } from "./api";
 import {
   type PanelModel,
   storedQueryVariables,
@@ -171,22 +171,30 @@ export function windowIdentity(range: TimeRange, now = Date.now()): string {
 }
 
 /**
+ * Which route answers a stored panel's distributions: the dashboard's panel route, or a saved
+ * analysis's own (`analysisId`; an analysis shown alone has no dashboard, and no variables).
+ */
+export type DistributionRoute = { kind: "panel" } | { kind: "analysis"; analysisId: string };
+
+/**
  * Asks for field distributions the way the panel's queries run: a stored panel through the panel
- * route (all a viewer may), a draft through the free route with the target being edited.
- * `manual` counts explicit refreshes (the Refresh button, a run in the editor).
+ * route (all a viewer may) or, for a saved analysis, the analysis route; a draft through the free
+ * route with the target being edited. `manual` counts explicit refreshes (the Refresh button, a
+ * run in the editor).
  */
 export function panelDistribution(
-  input: Omit<PanelQueryInput, "run"> & { manual: number },
+  input: Omit<PanelQueryInput, "run"> & { manual: number; route?: DistributionRoute },
   kindOf: (datasourceId: string) => string | undefined,
 ): TargetDistribution {
   const { orgId, dashboardId, panel, range, source } = input;
+  const route = input.route ?? { kind: "panel" };
   const variables =
     source === "stored"
       ? storedQueryVariables(input.variables, input.saved ?? [])
       : input.variables;
   const identity = JSON.stringify([
     orgId,
-    dashboardId,
+    route.kind === "analysis" ? `analysis:${route.analysisId}` : dashboardId,
     panel.id,
     source,
     panel.targets,
@@ -197,6 +205,11 @@ export function panelDistribution(
 
   function runPanelDistribution(refId: string, ask: DistributionAsk, signal: AbortSignal) {
     const common = { timeRange: range, intervalMs: intervalFor(range), variables, ...ask };
+    if (source === "stored" && route.kind === "analysis") {
+      // An analysis has no variables; sending any is refused.
+      const body = { refId, ...common, variables: {} };
+      return fetchAnalysisDistribution(orgId, route.analysisId, body, signal);
+    }
     if (source === "stored") {
       return fetchPanelDistribution(orgId, dashboardId, panel.id, { refId, ...common }, signal);
     }

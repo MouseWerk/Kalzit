@@ -500,6 +500,24 @@ export async function fetchPanelDistribution(
   );
 }
 
+/**
+ * The field distribution of a saved analysis's stored query `refId`, with the rights of running
+ * the analysis (docs/api/analyses.md). Aborting the signal cancels the request.
+ */
+export async function fetchAnalysisDistribution(
+  orgId: string,
+  analysisId: string,
+  body: PanelDistributionRequest,
+  signal?: AbortSignal,
+): Promise<FieldDistribution> {
+  const path = orgPath(orgId, "analyses", analysisId, "distribution");
+  return expectShape(
+    await send("POST", path, body, signal),
+    isFieldDistribution,
+    "analysis field distribution",
+  );
+}
+
 function isVariableOptions(value: unknown): value is VariableOptionsResponse {
   return (
     isRecord(value) &&
