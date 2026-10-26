@@ -237,8 +237,11 @@ fn list_sql<'a>(viewer: &Viewer<'a>, q: &'a AuditQuery, paging: &'a Paging) -> (
             "NOT ((COALESCE(e.resource_type, '') = 'folder' \
                AND COALESCE(e.resource_id, '') IN (SELECT id FROM hidden_folders)) \
              OR (COALESCE(e.resource_type, '') = 'dashboard' AND COALESCE(e.resource_id, '') IN \
-               (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND NOT {})))",
+               (SELECT d.id FROM dashboards d WHERE d.org_id = $1 AND NOT {})) \
+             OR (COALESCE(e.resource_type, '') = 'analysis' AND COALESCE(e.resource_id, '') IN \
+               (SELECT a.id FROM analyses a WHERE a.org_id = $1 AND NOT {})))",
             folders::dashboard_visible("d"),
+            folders::analysis_visible("a"),
         ));
         conditions.push(
             "NOT EXISTS (SELECT 1 FROM restricted_tombstones t WHERE t.org_id = e.org_id \

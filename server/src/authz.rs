@@ -185,6 +185,7 @@ pub enum ResourceType {
     Folder,
     Dashboard,
     Datasource,
+    Analysis,
 }
 
 impl ResourceType {
@@ -193,6 +194,7 @@ impl ResourceType {
             "folder" => Some(Self::Folder),
             "dashboard" => Some(Self::Dashboard),
             "datasource" => Some(Self::Datasource),
+            "analysis" => Some(Self::Analysis),
             _ => None,
         }
     }
@@ -202,39 +204,42 @@ impl ResourceType {
             Self::Folder => "folder",
             Self::Dashboard => "dashboard",
             Self::Datasource => "datasource",
+            Self::Analysis => "analysis",
         }
     }
 
     /// The grant levels of this type, weakest first; each includes the ones before it.
     pub fn levels(self) -> [&'static str; 3] {
         match self {
-            Self::Folder | Self::Dashboard => ["view", "edit", "admin"],
+            Self::Folder | Self::Dashboard | Self::Analysis => ["view", "edit", "admin"],
             Self::Datasource => ["query", "edit", "admin"],
         }
     }
 
-    /// The permission that manages grants on resources of this type.
+    /// The permission that manages grants on resources of this type. Saved analyses are shared
+    /// like dashboards, with `dashboards:share`: the catalog has no sharing permission of their own.
     pub fn manage_permission(self) -> Permission {
         match self {
             Self::Folder => Permission::FoldersPermissions,
-            Self::Dashboard => Permission::DashboardsShare,
+            Self::Dashboard | Self::Analysis => Permission::DashboardsShare,
             Self::Datasource => Permission::DatasourcesPermissions,
         }
     }
 }
 
 /// What a grant of `level` on a resource of type `resource_type` allows, or `None` when the type
-/// has no such level. Folder grants carry dashboard permissions, since they inherit to the
-/// dashboards inside.
+/// has no such level. Folder grants carry dashboard and analysis permissions, since they inherit
+/// to the dashboards and saved analyses inside.
 pub fn level_permissions(resource_type: ResourceType, level: &str) -> Option<BTreeSet<Permission>> {
     use Permission::*;
     let tiers: [&[Permission]; 3] = match resource_type {
         ResourceType::Folder => [
-            &[FoldersRead, DashboardsRead],
-            &[FoldersWrite, DashboardsWrite, DashboardsDelete],
+            &[FoldersRead, DashboardsRead, AnalysesRead],
+            &[FoldersWrite, DashboardsWrite, DashboardsDelete, AnalysesWrite],
             &[FoldersPermissions, DashboardsShare],
         ],
         ResourceType::Dashboard => [&[DashboardsRead], &[DashboardsWrite, DashboardsDelete], &[DashboardsShare]],
+        ResourceType::Analysis => [&[AnalysesRead], &[AnalysesWrite], &[DashboardsShare]],
         // Querying needs the source's name and type in pickers, so it includes reading them.
         ResourceType::Datasource => {
             [&[DatasourcesQuery, DatasourcesRead], &[DatasourcesWrite], &[DatasourcesPermissions]]
@@ -251,6 +256,7 @@ pub enum Resource<'a> {
     Folder(&'a str),
     Dashboard(&'a str),
     Datasource(&'a str),
+    Analysis(&'a str),
 }
 
 impl<'a> Resource<'a> {
@@ -259,6 +265,7 @@ impl<'a> Resource<'a> {
             ResourceType::Folder => Self::Folder(id),
             ResourceType::Dashboard => Self::Dashboard(id),
             ResourceType::Datasource => Self::Datasource(id),
+            ResourceType::Analysis => Self::Analysis(id),
         }
     }
 
@@ -267,18 +274,19 @@ impl<'a> Resource<'a> {
             Self::Folder(_) => ResourceType::Folder,
             Self::Dashboard(_) => ResourceType::Dashboard,
             Self::Datasource(_) => ResourceType::Datasource,
+            Self::Analysis(_) => ResourceType::Analysis,
         }
     }
 
     pub fn id(self) -> &'a str {
         match self {
-            Self::Folder(id) | Self::Dashboard(id) | Self::Datasource(id) => id,
+            Self::Folder(id) | Self::Dashboard(id) | Self::Datasource(id) | Self::Analysis(id) => id,
         }
     }
 }
 
-/// Whether `resource` exists in `org_id` (trashed folders and dashboards count: grants on them
-/// stay until they are purged). Works on the pool or inside a transaction (`&mut *tx`); a
+/// Whether `resource` exists in `org_id` (trashed folders, dashboards and analyses count: grants
+/// on them stay until they are purged). Works on the pool or inside a transaction (`&mut *tx`); a
 /// transaction holding `lock_org` must use its own connection.
 pub async fn resource_exists<'c, E>(db: E, org_id: &str, resource: Resource<'_>) -> ApiResult<bool>
 where
@@ -288,6 +296,7 @@ where
         Resource::Folder(_) => "SELECT COUNT(*) FROM folders WHERE org_id = $1 AND id = $2",
         Resource::Dashboard(_) => "SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND id = $2",
         Resource::Datasource(_) => "SELECT COUNT(*) FROM datasources WHERE org_id = $1 AND id = $2",
+        Resource::Analysis(_) => "SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND id = $2",
     };
     let (n,): (i64,) = sqlx::query_as(sql).bind(org_id).bind(resource.id()).fetch_one(db).await?;
     Ok(n > 0)
@@ -439,15 +448,16 @@ impl GrantRow {
 }
 
 /// The permissions anyone outside a resource's owner team loses on it through their role: a
-/// team-owned folder or dashboard is edited only by its team and by grants (docs/api/access.md,
-/// "Team ownership").
-const OWNER_EDIT: [Permission; 6] = [
+/// team-owned folder, dashboard or saved analysis is edited only by its team and by grants
+/// (docs/api/access.md, "Team ownership").
+const OWNER_EDIT: [Permission; 7] = [
     Permission::AnnotationsWrite,
     Permission::FoldersWrite,
     Permission::FoldersPermissions,
     Permission::DashboardsWrite,
     Permission::DashboardsDelete,
     Permission::DashboardsShare,
+    Permission::AnalysesWrite,
 ];
 
 /// Who the caller is for grants and team ownership: their teams, every role they hold, and what
@@ -618,6 +628,18 @@ async fn resource_facts(db: &sqlx::AnyPool, ctx: &OrgCtx, resource: Resource<'_>
             chain.push(link(ResourceType::Dashboard, id, team_only != 0, owner));
             folder
         }
+        Resource::Analysis(id) => {
+            let row: Option<(Option<String>, Option<String>, i64)> = sqlx::query_as(
+                "SELECT folder_id, owner_team_id, team_only FROM analyses WHERE org_id = $1 AND id = $2",
+            )
+            .bind(org_id)
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
+            let (folder, owner, team_only) = row.ok_or_else(ApiError::not_found)?;
+            chain.push(link(ResourceType::Analysis, id, team_only != 0, owner));
+            folder
+        }
         Resource::Datasource(id) => {
             chain.push(link(ResourceType::Datasource, id, false, None));
             None
@@ -655,6 +677,8 @@ pub struct AccessIndex {
     folders: std::collections::HashMap<String, (Option<String>, bool, Option<String>)>,
     /// Team-owned or team-only dashboards: id to (owner team, team only). Others are in neither.
     dashboards: std::collections::HashMap<String, (Option<String>, bool)>,
+    /// Team-owned or team-only saved analyses, as `dashboards`.
+    analyses: std::collections::HashMap<String, (Option<String>, bool)>,
     grants: Vec<GrantRow>,
     subjects: Subjects,
     /// Team id to name, for naming the owner of folders and dashboards in answers.
@@ -676,10 +700,17 @@ impl AccessIndex {
         .bind(&ctx.org_id)
         .fetch_all(&mut *conn)
         .await?;
+        let analyses: Vec<(String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT id, owner_team_id, team_only FROM analyses WHERE org_id = $1 \
+             AND (owner_team_id IS NOT NULL OR team_only = 1)",
+        )
+        .bind(&ctx.org_id)
+        .fetch_all(&mut *conn)
+        .await?;
         let subjects = Subjects::load(conn, ctx).await?;
         let grants: Vec<GrantRow> = sqlx::query_as(
             "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
-             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard', 'datasource') ORDER BY id",
+             WHERE org_id = $1 AND resource_type IN ('folder', 'dashboard', 'datasource', 'analysis') ORDER BY id",
         )
         .bind(&ctx.org_id)
         .fetch_all(&mut *conn)
@@ -694,6 +725,7 @@ impl AccessIndex {
             org: ctx.permissions.clone(),
             folders: folders.into_iter().map(|(id, parent, r, owner)| (id, (parent, r != 0, owner))).collect(),
             dashboards: dashboards.into_iter().map(|(id, owner, team_only)| (id, (owner, team_only != 0))).collect(),
+            analyses: analyses.into_iter().map(|(id, owner, team_only)| (id, (owner, team_only != 0))).collect(),
             grants,
             subjects,
         })
@@ -756,17 +788,30 @@ impl AccessIndex {
 
     /// What the caller may do on a dashboard in `folder_id`, or `None` when they may not see it.
     pub fn dashboard(&self, dashboard_id: &str, folder_id: Option<&str>) -> Option<BTreeSet<Permission>> {
-        let (owner_team, team_only) = self.dashboards.get(dashboard_id).cloned().unwrap_or_default();
-        let mut chain = vec![ChainLink {
-            resource_type: ResourceType::Dashboard,
-            id: dashboard_id.to_string(),
-            restricted: team_only,
-            owner_team,
-        }];
+        let chain = self.item_chain(ResourceType::Dashboard, dashboard_id, folder_id);
+        self.decide(ResourceType::Dashboard, &chain)
+    }
+
+    /// What the caller may do on a saved analysis in `folder_id`, or `None` when they may not see
+    /// it.
+    pub fn analysis(&self, analysis_id: &str, folder_id: Option<&str>) -> Option<BTreeSet<Permission>> {
+        let chain = self.item_chain(ResourceType::Analysis, analysis_id, folder_id);
+        self.decide(ResourceType::Analysis, &chain)
+    }
+
+    /// The chain of a dashboard or saved analysis: the item itself (restricted when team only),
+    /// then its folders.
+    fn item_chain(&self, resource_type: ResourceType, id: &str, folder_id: Option<&str>) -> Vec<ChainLink> {
+        let owned = match resource_type {
+            ResourceType::Analysis => &self.analyses,
+            _ => &self.dashboards,
+        };
+        let (owner_team, team_only) = owned.get(id).cloned().unwrap_or_default();
+        let mut chain = vec![ChainLink { resource_type, id: id.to_string(), restricted: team_only, owner_team }];
         if let Some(folder) = folder_id {
             self.folder_links(folder, &mut chain);
         }
-        self.decide(ResourceType::Dashboard, &chain)
+        chain
     }
 
     fn decide(&self, resource_type: ResourceType, chain: &[ChainLink]) -> Option<BTreeSet<Permission>> {
@@ -800,17 +845,12 @@ impl AccessIndex {
 
     /// Who owns the dashboard in `folder_id` (see `Ownership`).
     pub fn dashboard_ownership(&self, dashboard_id: &str, folder_id: Option<&str>) -> Ownership {
-        let (owner_team, team_only) = self.dashboards.get(dashboard_id).cloned().unwrap_or_default();
-        let mut chain = vec![ChainLink {
-            resource_type: ResourceType::Dashboard,
-            id: dashboard_id.to_string(),
-            restricted: team_only,
-            owner_team,
-        }];
-        if let Some(folder) = folder_id {
-            self.folder_links(folder, &mut chain);
-        }
-        self.ownership(&chain)
+        self.ownership(&self.item_chain(ResourceType::Dashboard, dashboard_id, folder_id))
+    }
+
+    /// Who owns the saved analysis in `folder_id` (see `Ownership`).
+    pub fn analysis_ownership(&self, analysis_id: &str, folder_id: Option<&str>) -> Ownership {
+        self.ownership(&self.item_chain(ResourceType::Analysis, analysis_id, folder_id))
     }
 
     /// Whether the caller maintains the team.
@@ -864,6 +904,7 @@ fn permissions_with(
         && match resource_type {
             ResourceType::Folder => org.contains(&Permission::FoldersRead),
             ResourceType::Dashboard => org.contains(&Permission::DashboardsRead),
+            ResourceType::Analysis => org.contains(&Permission::AnalysesRead),
             // Viewers use data sources only through dashboards, so they need not see them.
             ResourceType::Datasource => {
                 org.contains(&Permission::DatasourcesRead) || org.contains(&Permission::DatasourcesQuery)
@@ -1353,7 +1394,7 @@ mod resource_tests {
     #[test]
     fn levels_nest_and_differ_per_type() {
         use Permission::*;
-        for t in [ResourceType::Folder, ResourceType::Dashboard, ResourceType::Datasource] {
+        for t in [ResourceType::Folder, ResourceType::Dashboard, ResourceType::Datasource, ResourceType::Analysis] {
             let [low, mid, high] = t.levels().map(|l| level_permissions(t, l).unwrap());
             assert!(low.is_subset(&mid) && mid.is_subset(&high) && low != mid && mid != high, "{t:?}");
             assert!(high.contains(&t.manage_permission()), "{t:?}: admin level manages grants");
@@ -1366,6 +1407,11 @@ mod resource_tests {
             [DatasourcesQuery, DatasourcesRead].into()
         );
         assert!(level_permissions(ResourceType::Folder, "edit").unwrap().contains(&DashboardsWrite));
+        // Folder grants reach the saved analyses inside as they reach dashboards.
+        assert!(level_permissions(ResourceType::Folder, "view").unwrap().contains(&AnalysesRead));
+        assert!(level_permissions(ResourceType::Folder, "edit").unwrap().contains(&AnalysesWrite));
+        assert_eq!(level_permissions(ResourceType::Analysis, "view").unwrap(), [AnalysesRead].into());
+        assert_eq!(level_permissions(ResourceType::Analysis, "edit").unwrap(), [AnalysesRead, AnalysesWrite].into());
         // Levels are per type: data sources have no "view", folders no "query".
         assert!(level_permissions(ResourceType::Datasource, "view").is_none());
         assert!(level_permissions(ResourceType::Folder, "query").is_none());

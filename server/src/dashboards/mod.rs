@@ -50,7 +50,7 @@ fn variables_for_queries(model: &DashboardModel) -> Vec<QueryRelevant<'_>> {
 }
 
 /// Every stored query of the dashboard as (data source, query text), with those of the library
-/// panels it links. A library panel that does not exist (any more) has none here; the reference
+/// panels and saved analyses it links. A library panel that does not exist (any more) has none here; the reference
 /// check reports it.
 async fn queries_with_library(
     db: &AnyPool,
@@ -71,6 +71,8 @@ async fn queries_with_library(
             Err(e) => tracing::warn!("library panel {id} cannot be read, its queries are left out: {}", e.message),
         }
     }
+    // Linked saved analyses run with the dashboard's variables too.
+    queries.extend(crate::saved_analyses::linked_queries(db, org_id, &model.analysis_ids()).await?);
     Ok(queries)
 }
 
@@ -107,6 +109,22 @@ pub async fn check_dashboard_sources(
         }
     }
     Ok(())
+}
+
+/// What a panel slot shows when it links content: a library panel's or a saved analysis's
+/// queries, steps and options (`None`: the slot's own). Reading the dashboard authorizes them, as
+/// for its own stored queries; the caller checked that. A link to something gone is `not_found`.
+pub async fn linked_content(db: &AnyPool, org_id: &str, panel: &model::Panel) -> ApiResult<Option<model::Panel>> {
+    if let Some(id) = &panel.library_panel_id {
+        let row = library::fetch(db, org_id, id).await?.ok_or_else(ApiError::not_found)?;
+        let content = library::stored_content(&row.model)?;
+        let linked = model::library_panel_as_panel(&content).map_err(|e| ApiError::internal("library panels", e))?;
+        return Ok(Some(linked));
+    }
+    if panel.analysis_id.is_some() {
+        return Ok(Some(crate::saved_analyses::linked_panel(db, org_id, panel).await?));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

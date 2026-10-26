@@ -3,7 +3,8 @@
 //!
 //! Access is decided per folder (`authz::check_resource`), so grants extend a member's rights
 //! beyond their role; the routes only require membership. Actions on a whole subtree check every
-//! part of it that another restricted folder governs, and its dashboards per folder.
+//! part of it that another restricted folder governs, and its dashboards and saved analyses per
+//! folder.
 //!
 //! Every change of the structure runs in a transaction that starts with `authz::lock_org` and
 //! reads the tree through it, so two concurrent moves cannot build a cycle and nothing lands in a
@@ -80,10 +81,11 @@ pub struct OwnerRequest {
     pub version: Option<i64>,
 }
 
-/// A folder or dashboard whose owner changes.
+/// A folder, dashboard or saved analysis whose owner changes.
 pub enum OwnedItem<'a> {
     Folder(&'a FolderRow),
     Dashboard { id: &'a str, folder: Option<&'a str> },
+    Analysis { id: &'a str, folder: Option<&'a str> },
 }
 
 /// The rules of an owner change (docs/api/access.md, "Team ownership"), read through the
@@ -91,7 +93,8 @@ pub enum OwnedItem<'a> {
 /// before, which bounds what they may keep (`keep_access`).
 ///
 /// - The caller may edit the item and manage its access: `folders:write` and
-///   `folders:permissions` on a folder, `dashboards:write` and `dashboards:share` on a dashboard.
+///   `folders:permissions` on a folder, `dashboards:write` and `dashboards:share` on a dashboard,
+///   `analyses:write` and `dashboards:share` on a saved analysis.
 /// - Content their own team does not own (open content, another team's) needs
 ///   `folders:permissions` on its folder: an org admin or an admin grant. Team editors change
 ///   owner and visibility only of what their team owns.
@@ -125,6 +128,13 @@ pub async fn check_owner_change(
             index.dashboard(id, folder),
             index.dashboard_ownership(id, folder),
             [Permission::DashboardsWrite, Permission::DashboardsShare],
+            false,
+            manages_place(folder),
+        ),
+        OwnedItem::Analysis { id, folder } => (
+            index.analysis(id, folder),
+            index.analysis_ownership(id, folder),
+            [Permission::AnalysesWrite, Permission::DashboardsShare],
             false,
             manages_place(folder),
         ),
@@ -207,6 +217,17 @@ impl ResourceAccess {
         Self {
             write: held.contains(&Permission::DashboardsWrite),
             delete: held.contains(&Permission::DashboardsDelete),
+            permissions: held.contains(&Permission::DashboardsShare),
+        }
+    }
+
+    /// A saved analysis: `analyses:write` covers saving and the trash; sharing is
+    /// `dashboards:share`, as for dashboards.
+    pub fn analysis(held: Option<BTreeSet<Permission>>) -> Self {
+        let held = held.unwrap_or_default();
+        Self {
+            write: held.contains(&Permission::AnalysesWrite),
+            delete: held.contains(&Permission::AnalysesWrite),
             permissions: held.contains(&Permission::DashboardsShare),
         }
     }
@@ -340,13 +361,14 @@ enum Part {
     All,
 }
 
-/// The folders, and the folders holding dashboards, that an action on the subtree of a folder
-/// touches. Computed before the lock to check rights and again under it to check that nothing
-/// joined in between.
+/// The folders, and the folders holding dashboards and saved analyses, that an action on the
+/// subtree of a folder touches. Computed before the lock to check rights and again under it to
+/// check that nothing joined in between.
 #[derive(Debug, PartialEq, Eq)]
 struct Subtree {
     folders: BTreeSet<String>,
     dashboard_folders: BTreeSet<String>,
+    analysis_folders: BTreeSet<String>,
 }
 
 impl Subtree {
@@ -369,10 +391,13 @@ impl Subtree {
             _ => None,
         };
         let mut dashboard_folders = BTreeSet::new();
+        let mut analysis_folders = BTreeSet::new();
         for folder in &folders {
-            let (n,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND folder_id = $2 \
-                 AND (CAST($3 AS BIGINT) = 0 OR deleted_at IS NULL) AND (CAST($4 AS TEXT) IS NULL OR trash_batch = $4)",
+            let (dashboards, analyses): (i64, i64) = sqlx::query_as(
+                "SELECT (SELECT COUNT(*) FROM dashboards WHERE org_id = $1 AND folder_id = $2 \
+                 AND (CAST($3 AS BIGINT) = 0 OR deleted_at IS NULL) AND (CAST($4 AS TEXT) IS NULL OR trash_batch = $4)), \
+                 (SELECT COUNT(*) FROM analyses WHERE org_id = $1 AND folder_id = $2 \
+                 AND (CAST($3 AS BIGINT) = 0 OR deleted_at IS NULL) AND (CAST($4 AS TEXT) IS NULL OR trash_batch = $4))",
             )
             .bind(&ctx.org_id)
             .bind(folder)
@@ -380,16 +405,20 @@ impl Subtree {
             .bind(batch)
             .fetch_one(&mut *conn)
             .await?;
-            if n > 0 {
+            if dashboards > 0 {
                 dashboard_folders.insert(folder.clone());
             }
+            if analyses > 0 {
+                analysis_folders.insert(folder.clone());
+            }
         }
-        Ok(Self { folders, dashboard_folders })
+        Ok(Self { folders, dashboard_folders, analysis_folders })
     }
 
     /// The caller may change every part: `folders:write` on each folder that another restricted
     /// folder governs (the rest follows from the top folder), `dashboards:delete` on each folder
-    /// whose dashboards go along. Hidden content is `forbidden` (`Tree::check_subtree_visible`).
+    /// whose dashboards go along, `analyses:write` on each folder whose saved analyses go along.
+    /// Hidden content is `forbidden` (`Tree::check_subtree_visible`).
     async fn authorize(&self, state: &AppState, ctx: &OrgCtx, tree: &Tree, folder_id: &str) -> ApiResult<()> {
         tree.check_subtree_visible(folder_id)?;
         let top = tree.governing(folder_id);
@@ -401,12 +430,18 @@ impl Subtree {
         for folder in &self.dashboard_folders {
             authorize(state, ctx, folder, Permission::DashboardsDelete).await.map_err(as_forbidden)?;
         }
+        for folder in &self.analysis_folders {
+            authorize(state, ctx, folder, Permission::AnalysesWrite).await.map_err(as_forbidden)?;
+        }
         Ok(())
     }
 
     /// Under the lock: nothing joined the subtree since `checked` was authorized.
     fn check_unchanged(&self, checked: &Subtree) -> ApiResult<()> {
-        if self.folders == checked.folders && self.dashboard_folders.is_subset(&checked.dashboard_folders) {
+        if self.folders == checked.folders
+            && self.dashboard_folders.is_subset(&checked.dashboard_folders)
+            && self.analysis_folders.is_subset(&checked.analysis_folders)
+        {
             Ok(())
         } else {
             Err(changed_meanwhile())
@@ -711,7 +746,8 @@ pub async fn check_leaving_space(
         folders.iter().filter_map(|f| tree.rows.get(f)).filter_map(|r| r.owner_team_id.clone()).collect();
     for folder in &folders {
         let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT DISTINCT owner_team_id FROM dashboards WHERE org_id = $1 AND folder_id = $2 \
+            "SELECT owner_team_id FROM dashboards WHERE org_id = $1 AND folder_id = $2 AND owner_team_id IS NOT NULL \
+             UNION SELECT owner_team_id FROM analyses WHERE org_id = $1 AND folder_id = $2 \
              AND owner_team_id IS NOT NULL",
         )
         .bind(&ctx.org_id)
@@ -951,9 +987,15 @@ async fn trash(
     tree.check_subtree_visible(&folder_id)?;
     let subtree = Subtree::of(&mut tx, &ctx, &tree, &folder_id, &Part::Live).await?;
     subtree.check_unchanged(&checked)?;
+    // Dashboards elsewhere that link an analysis inside would be left showing nothing.
+    let whole: BTreeSet<String> = std::iter::once(folder_id.clone())
+        .chain(tree.descendants(&folder_id).into_iter().map(|r| r.id.clone()))
+        .collect();
+    super::analyses::check_subtree_unused(&mut tx, &ctx, &whole).await?;
     let now = state.clock.now_ms();
     let batch = new_id();
     let mut dashboards = 0;
+    let mut analyses = 0;
     for folder in &subtree.folders {
         sqlx::query(
             "UPDATE folders SET deleted_at = $1, trash_batch = $2 WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL",
@@ -975,8 +1017,19 @@ async fn trash(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        analyses += sqlx::query(
+            "UPDATE analyses SET deleted_at = $1, trash_batch = $2 \
+             WHERE org_id = $3 AND folder_id = $4 AND deleted_at IS NULL",
+        )
+        .bind(now)
+        .bind(&batch)
+        .bind(&ctx.org_id)
+        .bind(folder)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     }
-    let summary = json!({ "folders": subtree.folders.len(), "dashboards": dashboards });
+    let summary = json!({ "folders": subtree.folders.len(), "dashboards": dashboards, "analyses": analyses });
     audit::record(&mut tx, &event(&ctx, &info, "folder.trashed", &folder_id, summary, now)).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1022,8 +1075,15 @@ async fn restore(
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    let analyses =
+        sqlx::query("UPDATE analyses SET deleted_at = NULL, trash_batch = NULL WHERE org_id = $1 AND trash_batch = $2")
+            .bind(&ctx.org_id)
+            .bind(&batch)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
     let now = state.clock.now_ms();
-    let summary = json!({ "folders": folders, "dashboards": dashboards });
+    let summary = json!({ "folders": folders, "dashboards": dashboards, "analyses": analyses });
     audit::record(&mut tx, &event(&ctx, &info, "folder.restored", &folder_id, summary, now)).await?;
     let restored = answer(&mut tx, &ctx, &folder_id).await?;
     crate::db::commit(tx).await?;
@@ -1050,13 +1110,17 @@ async fn purge(
     // Everything below goes, whatever its own state: nothing may be left without its folder.
     let mut ordered: Vec<&str> = vec![&folder_id];
     ordered.extend(tree.descendants(&folder_id).into_iter().map(|r| r.id.as_str()));
+    let whole: BTreeSet<String> = ordered.iter().map(|f| f.to_string()).collect();
+    super::analyses::check_subtree_unused(&mut tx, &ctx, &whole).await?;
     let mut dashboards = 0;
+    let mut analyses = 0;
     for folder in &ordered {
         // Restricted content keeps its audit events hidden once it is gone.
         if tree.governing(folder).is_some() {
             folders::tombstone_folder(&mut tx, &ctx.org_id, folder).await?;
         }
         dashboards += super::dashboards::purge_in_folder(&mut tx, &ctx.org_id, folder).await?;
+        analyses += super::analyses::purge_in_folder(&mut tx, &ctx.org_id, folder).await?;
     }
     // Children before parents, so no folder is left pointing at a deleted one. Grants point at
     // resources without a foreign key, so they go in the same transaction.
@@ -1073,7 +1137,7 @@ async fn purge(
             .await?;
     }
     let now = state.clock.now_ms();
-    let summary = json!({ "folders": ordered.len(), "dashboards": dashboards });
+    let summary = json!({ "folders": ordered.len(), "dashboards": dashboards, "analyses": analyses });
     audit::record(&mut tx, &event(&ctx, &info, "folder.purged", &folder_id, summary, now)).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)

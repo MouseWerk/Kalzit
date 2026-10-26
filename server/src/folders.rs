@@ -107,11 +107,20 @@ pub const VISIBILITY_CTE: &str = "WITH RECURSIVE \
 /// governs itself (only grants on it and membership in its owner team count); any other one is
 /// seen where its folder is seen, or through a grant on it or membership in its owner team.
 pub fn dashboard_visible(alias: &str) -> String {
+    item_visible(alias, "dashboard")
+}
+
+/// `dashboard_visible` for a row of `analyses` named `alias`: saved analyses follow the same rule.
+pub fn analysis_visible(alias: &str) -> String {
+    item_visible(alias, "analysis")
+}
+
+fn item_visible(alias: &str, resource_type: &str) -> String {
     let a = alias;
     format!(
         "(CAST($4 AS BIGINT) = 1 \
          OR ({a}.team_only = 0 AND ({a}.folder_id IS NULL OR {a}.folder_id NOT IN (SELECT id FROM hidden_folders))) \
-         OR {a}.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = 'dashboard') \
+         OR {a}.id IN (SELECT resource_id FROM caller_grants WHERE resource_type = '{resource_type}') \
          OR {a}.owner_team_id IN (SELECT id FROM caller_teams))"
     )
 }
@@ -160,9 +169,9 @@ pub async fn restricted_in(conn: &mut sqlx::AnyConnection, org_id: &str, folder_
     Ok(false)
 }
 
-/// Records that a purged folder (and the dashboards in it) was restricted content, so its audit
-/// events stay hidden from members without access to restricted folders once nothing is left to
-/// decide by. Runs in the purge's transaction, before the rows go.
+/// Records that a purged folder (and the dashboards and saved analyses in it) was restricted
+/// content, so its audit events stay hidden from members without access to restricted folders once
+/// nothing is left to decide by. Runs in the purge's transaction, before the rows go.
 pub async fn tombstone_folder(conn: &mut sqlx::AnyConnection, org_id: &str, folder_id: &str) -> ApiResult<()> {
     sqlx::query("INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) VALUES ($1, 'folder', $2)")
         .bind(org_id)
@@ -177,6 +186,14 @@ pub async fn tombstone_folder(conn: &mut sqlx::AnyConnection, org_id: &str, fold
     .bind(folder_id)
     .execute(&mut *conn)
     .await?;
+    sqlx::query(
+        "INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) \
+         SELECT org_id, 'analysis', id FROM analyses WHERE org_id = $1 AND folder_id = $2",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -185,6 +202,16 @@ pub async fn tombstone_dashboard(conn: &mut sqlx::AnyConnection, org_id: &str, d
     sqlx::query("INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) VALUES ($1, 'dashboard', $2)")
         .bind(org_id)
         .bind(dashboard_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// See `tombstone_folder`, for one saved analysis.
+pub async fn tombstone_analysis(conn: &mut sqlx::AnyConnection, org_id: &str, analysis_id: &str) -> ApiResult<()> {
+    sqlx::query("INSERT INTO restricted_tombstones (org_id, resource_type, resource_id) VALUES ($1, 'analysis', $2)")
+        .bind(org_id)
+        .bind(analysis_id)
         .execute(&mut *conn)
         .await?;
     Ok(())
@@ -659,9 +686,14 @@ mod tests {
              ('d5', 'o', 'open', 'D', 'd', 1, 0, 0, 'a', 1), ('d6', 'o', 'deep', 'D', 'd', 1, 0, 0, NULL, 0), \
              ('d7', 'o', 'only_b', 'D', 'd', 1, 0, 0, 'a', 0), ('d8', 'o', 'x', 'D', 'd', 1, 0, 0, 'a', 0), \
              ('d9', 'o', 'gone', 'D', 'd', 1, 0, 0, NULL, 0), ('d10', 'o', NULL, 'D', 'd', 1, 0, 0, 'b', 1)",
+            // Saved analyses in the same places, with the same owners: the same rule decides.
+            "INSERT INTO analyses (id, org_id, folder_id, title, search_title, body, version, created_at, updated_at, \
+             owner_team_id, team_only) SELECT 'a' || SUBSTR(id, 2), org_id, folder_id, title, search_title, '{}', \
+             version, created_at, updated_at, owner_team_id, team_only FROM dashboards",
             "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, \
              created_at) VALUES ('g1', 'o', 'team', 'a', 'folder', 'shared_b', 'view', 0), \
-             ('g2', 'o', 'user', 'u', 'dashboard', 'd4', 'view', 0)",
+             ('g2', 'o', 'user', 'u', 'dashboard', 'd4', 'view', 0), \
+             ('g3', 'o', 'user', 'u', 'analysis', 'a4', 'view', 0)",
         ] {
             sqlx::query(sql).execute(&db).await.unwrap();
         }
@@ -701,6 +733,27 @@ mod tests {
                 let held = resource_permissions(&db, &ctx, Resource::Dashboard(id)).await.unwrap();
                 assert_eq!(visible.iter().any(|(v,)| v == id), held.is_some(), "{role:?} dashboard {id}");
                 assert_eq!(index.dashboard(id, folder), held, "{role:?} dashboard {id}");
+            }
+            let visible: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "{VISIBILITY_CTE} SELECT a.id FROM analyses a WHERE a.org_id = $1 AND {}",
+                analysis_visible("a")
+            )))
+            .bind(&ctx.org_id)
+            .bind(&ctx.user.id)
+            .bind(&ctx.role)
+            .bind(sees_every_folder(&ctx))
+            .fetch_all(&db)
+            .await
+            .unwrap();
+            for (dashboard, folder) in dashboards {
+                let id = format!("a{}", &dashboard[1..]);
+                let held = resource_permissions(&db, &ctx, Resource::Analysis(&id)).await.unwrap();
+                assert_eq!(visible.iter().any(|(v,)| *v == id), held.is_some(), "{role:?} analysis {id}");
+                assert_eq!(index.analysis(&id, folder), held, "{role:?} analysis {id}");
+                // The analysis is seen exactly where the dashboard in its place is, the grants
+                // aside (a4 and d4 each have their own).
+                let dashboard_seen = resource_permissions(&db, &ctx, Resource::Dashboard(dashboard)).await.unwrap();
+                assert_eq!(held.is_some(), dashboard_seen.is_some(), "{role:?} analysis {id}");
             }
             // The team context in SQL leaves out what `TeamScope` leaves out.
             for team in ["a", "b"] {

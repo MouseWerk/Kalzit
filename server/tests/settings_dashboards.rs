@@ -1024,7 +1024,10 @@ async fn subtrees_with_hidden_content_stay_out_of_reach(t: TestApp) {
         .fetch_one(&t.state.db)
         .await
         .unwrap();
-    assert_eq!(serde_json::from_str::<Value>(&summary).unwrap(), json!({ "folders": 2, "dashboards": 2 }));
+    assert_eq!(
+        serde_json::from_str::<Value>(&summary).unwrap(),
+        json!({ "folders": 2, "dashboards": 2, "analyses": 0 })
+    );
 }
 
 async fn separate_trashes_restore_separately(t: TestApp) {

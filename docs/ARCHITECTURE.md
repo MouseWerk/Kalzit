@@ -14,6 +14,7 @@ everything else is M1.
 | `server/src/shapes.rs` | Result envelope and API wire types; the UI's TypeScript types are generated from it. |
 | `server/src/authz.rs` | Permission catalog, built-in roles, access and resource checks. |
 | `server/src/analysis/`, `ui/src/analysis/` | Analysis steps, expression language and export; the same engine on both sides. |
+| `server/src/saved_analyses.rs` | Saved analyses: the versioned model, its checks and dashboard links (routes in `routes/analyses.rs`, docs/api/analyses.md). |
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `server/src/updates/`, `release/` | Updates: signed releases, staging, installation, trial and return; the release format and the signing tool `kalzit-sign` (see "Updates"). |
@@ -119,11 +120,17 @@ Guards that keep this airtight:
   resources (with `folders::folder_chain`); lists filter in SQL with `folders::VISIBILITY_CTE`,
   which applies the same rule and is tested against `check_resource`.
 - **Grants**: a member's org role, plus the roles of their teams, plus resource grants
-  (`resource_grants`: subject user/team/role, resource folder/dashboard/datasource, level
-  `view|edit|admin` for folders and dashboards, `query|edit|admin` for data sources). Effective
-  permission = union. Folder grants inherit to subfolders and dashboards. `resource_grants` has no
-  foreign keys (it points at three tables); purging a resource deletes its grants in the same
-  transaction.
+  (`resource_grants`: subject user/team/role, resource folder/dashboard/analysis/datasource, level
+  `view|edit|admin` for folders, dashboards and saved analyses, `query|edit|admin` for data
+  sources). Effective permission = union. Folder grants inherit to subfolders, dashboards and
+  saved analyses. `resource_grants` has no foreign keys (it points at four tables); purging a
+  resource deletes its grants in the same transaction.
+- **Saved analyses** follow the dashboards' rules in every respect (folders, restricted folders,
+  team spaces, team ownership, grants; `Resource::Analysis`), with `analyses:read|write` in place
+  of the dashboard permissions and `dashboards:share` for sharing. Reading an analysis authorizes
+  running its stored queries, as reading a dashboard does; saving checks `datasources:query` on
+  new or changed queries. A dashboard panel may link one (`analysisId`); its queries then count as
+  the dashboard's own (docs/api/analyses.md).
 - `ctx.check(permission)`; `authz::check_resource(&db, &ctx, permission, resource)` answers
   `not_found` when the caller cannot see the resource and `forbidden` when they see it but may not
   do this; `authz::explain(&ctx, permission, Option<Resource>)` lists the grants that allow it

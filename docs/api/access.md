@@ -313,17 +313,20 @@ org role; give them another role first). Audit `role.deleted`.
 
 ## Grants
 
-A grant gives a subject a level on one folder, dashboard or data source. One grant per subject and
-resource. Levels include the ones before them:
+A grant gives a subject a level on one folder, dashboard, saved analysis or data source. One grant
+per subject and resource. Levels include the ones before them:
 
 | Resource | Level | Permissions on the resource |
 |---|---|---|
-| folder | `view` | `folders:read`, `dashboards:read` |
-| folder | `edit` | + `folders:write`, `dashboards:write`, `dashboards:delete` |
+| folder | `view` | `folders:read`, `dashboards:read`, `analyses:read` |
+| folder | `edit` | + `folders:write`, `dashboards:write`, `dashboards:delete`, `analyses:write` |
 | folder | `admin` | + `folders:permissions`, `dashboards:share` |
 | dashboard | `view` | `dashboards:read` |
 | dashboard | `edit` | + `dashboards:write`, `dashboards:delete` |
 | dashboard | `admin` | + `dashboards:share` |
+| analysis | `view` | `analyses:read` |
+| analysis | `edit` | + `analyses:write` |
+| analysis | `admin` | + `dashboards:share` (sharing an analysis is managed like a dashboard's; docs/api/analyses.md) |
 | datasource | `query` | `datasources:query`, `datasources:read` |
 | datasource | `edit` | + `datasources:write` |
 | datasource | `admin` | + `datasources:permissions` |
@@ -352,7 +355,7 @@ interface Grant {
   subjectType: "user" | "team" | "role";
   subjectId: string;
   subjectName: string;     // user name, team name, custom role name, or the built-in key
-  resourceType: "folder" | "dashboard" | "datasource";
+  resourceType: "folder" | "dashboard" | "analysis" | "datasource";
   resourceId: string;
   level: string;
   createdAt: number;
