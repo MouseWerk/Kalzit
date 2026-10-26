@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Saved analyses</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141416}
+a{color:#c9c9cf;text-decoration:none}a:hover{color:#ffffff}
+button{font:inherit;cursor:pointer}
+:focus{outline:none}:focus-visible{outline:2px solid #6f6f77;outline-offset:1px}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #ececef; background: #141416; min-height: 4720px; font-size: 13px; padding: 32px 40px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 40px">
+
+<!-- Board intro -->
+<header style="display: flex; flex-direction: column; gap: 8px; max-width: 980px">
+<h1 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em">Gespeicherte Auswertungen (M2)</h1>
+<p style="margin: 0; color: #a6a6ae; line-height: 1.6">Eine gespeicherte Auswertung ist eine Explore-Abfrage mit Datenquelle, Abfrage, Analyseschritten und Darstellung. Sie liegt wie ein Dashboard in einem Ordner der persönlichen Ablage oder eines Team-Bereichs und folgt dessen Rechten.</p>
+<p style="margin: 0; color: #8f8f97; line-height: 1.6">Navigation: Die Liste ist ein eigener Eintrag „Gespeichert“ unter Explore in der Seitenleiste, eingerückt und nur sichtbar, solange Explore offen ist oder angeheftet wurde. Explore bleibt ein Arbeitsplatz ohne Tabs; so entspricht die Liste dem Muster Dashboards und Datenquellen (eine Liste je Bereich). In Explore führt „Öffnen“ zur gleichen Liste als Schnellauswahl (Strg O).</p>
+</header>
+
+<!-- ============ 1A Explore with save dialog ============ -->
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px"><span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">1A</span><h2 style="margin: 0; font-size: 15px; font-weight: 600">Explore: Speichern und Speichern-Dialog</h2><span style="color: #8f8f97">Neue, noch nicht gespeicherte Abfrage. „Speichern“ (Strg S) öffnet den Dialog.</span></div>
+<section aria-label="Explore mit Speichern-Dialog" style="position: relative; border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; background: #141416; height: 720px; display: flex; flex-direction: column">
+
+<header style="height: 52px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 10px; padding: 0 16px; box-sizing: border-box">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600">Explore</h1>
+<span style="color: #6f6f77">Unbenannte Abfrage</span>
+<select aria-label="Datenquelle" style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; font: inherit; padding: 0 10px"><option>Bestellungen (MongoDB)</option></select>
+<div style="flex: 1"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf; display: flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>Öffnen</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Verlauf</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Teilen</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Letzte 7 Tage</button>
+<button aria-haspopup="dialog" aria-expanded="true" style="height: 32px; padding: 0 12px; border-radius: 8px; background: #232327; border: 1px solid #2a2a2e; color: #ffffff; font-weight: 500; display: flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><path d="M8 4v5h7V4M8 20v-6h8v6"></path></svg>Speichern</button>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Ausführen</button>
+</header>
+
+<div style="display: flex; flex: 1; gap: 12px; padding: 16px; min-height: 0">
+<section aria-label="Abfrage" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">Pipeline · Collection „orders“</span></header>
+<pre style="margin: 0; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #d6d6db; background: #141416">[
+  { "$match": { "createdAt": "$__timeFilter" } },
+  { "$group": { "_id": "$status", "n": { "$sum": 1 } } }
+]</pre>
+</article>
+<div role="tablist" style="display: flex; gap: 4px; border-bottom: 1px solid #2a2a2e">
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Dokumente</button>
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Schema</button>
+<button role="tab" aria-selected="true" style="padding: 8px 12px; background: transparent; border: 0; border-bottom: 2px solid #ececef; color: #ffffff">Tabelle (Projektion)</button>
+<div style="flex: 1"></div><span style="color: #8f8f97; padding: 8px 0">5 Zeilen · 18 ms</span>
+</div>
+<div style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; height: 220px"></div>
+</section>
+<aside aria-label="Analyseschritte" style="flex: 1 1 300px; max-width: 340px; background: #111113; border: 1px solid #222226; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Schritte</h2>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">1 · In Tabelle projizieren</strong><p style="margin: 6px 0 0; color: #8f8f97">status, total, createdAt</p></div>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">2 · Gruppieren</strong><p style="margin: 6px 0 0; color: #8f8f97">nach Tag und status · Anzahl</p></div>
+<button style="height: 32px; border-radius: 8px; background: transparent; border: 1px dashed #333338; color: #a6a6ae">+ Schritt hinzufügen</button>
+<div style="flex: 1"></div>
+<button style="height: 34px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Zum Dashboard hinzufügen</button>
+<button style="height: 34px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Exportieren (CSV, JSON, Excel)</button>
+</aside>
+</div>
+
+<!-- Scrim + dialog -->
+<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.5); display: grid; place-items: center">
+<form role="dialog" aria-modal="true" aria-labelledby="save-title" style="width: 500px; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.45); display: flex; flex-direction: column">
+<header style="display: flex; align-items: flex-start; gap: 12px; padding: 16px 16px 4px 20px">
+<div style="flex: 1"><h2 id="save-title" style="margin: 0; font-size: 15px; font-weight: 600">Auswertung speichern</h2><p style="margin: 4px 0 0; color: #a6a6ae">Speichere die Abfrage, um sie wiederzufinden, zu teilen und als Panel zu nutzen.</p></div>
+<button type="button" aria-label="Dialog schließen" style="width: 28px; height: 28px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</header>
+<div style="padding: 12px 20px 16px; display: flex; flex-direction: column; gap: 14px">
+<label style="display: flex; flex-direction: column; gap: 6px; color: #a6a6ae">Name<input value="Bestellstatus je Tag" style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; padding: 0 10px; font: inherit"></label>
+<label style="display: flex; flex-direction: column; gap: 6px; color: #a6a6ae">Ablage
+<select style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; font: inherit; padding: 0 8px">
+<optgroup label="Persönlich"><option>Meine Auswertungen</option></optgroup>
+<optgroup label="Team Vertrieb"><option>Vertrieb / Allgemein</option><option selected>Vertrieb / Bestellungen</option></optgroup>
+<optgroup label="Team Betrieb"><option>Betrieb / Allgemein</option></optgroup>
+</select>
+<span style="color: #8f8f97; font-size: 12px">Sichtbar für alle im Team Vertrieb. Ausführen dürfen nur Personen mit Zugriff auf „Bestellungen“.</span></label>
+<label style="display: flex; flex-direction: column; gap: 6px; color: #a6a6ae"><span>Beschreibung <span style="color: #6f6f77">(optional)</span></span><textarea rows="2" placeholder="Wofür ist diese Auswertung gedacht?" style="background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; padding: 8px 10px; font: inherit; resize: vertical">Offene, versendete und stornierte Bestellungen pro Tag.</textarea></label>
+<div style="background: #141416; border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px">
+<span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">WIRD GESPEICHERT</span>
+<span style="display: flex; flex-wrap: wrap; gap: 6px 14px; color: #c9c9cf; font-size: 12px"><span style="display: inline-flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 5px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #5fb85f; font-weight: 700; font-size: 8.5px">Mo</span>Bestellungen</span><span>Abfrage A</span><span>2 Schritte</span><span>Darstellung Tabelle</span></span>
+<label style="display: flex; align-items: center; gap: 8px; color: #c9c9cf; margin-top: 2px"><input type="checkbox" checked style="width: 14px; height: 14px; margin: 0; accent-color: #c9c9cf">Zeitraum mitspeichern <span style="color: #8f8f97">(Letzte 7 Tage, relativ)</span></label>
+</div>
+</div>
+<footer style="display: flex; align-items: center; gap: 10px; padding: 12px 20px 16px; border-top: 1px solid #222226">
+<span style="color: #8f8f97; font-size: 12px">Strg S</span>
+<div style="flex: 1"></div>
+<button type="button" style="height: 34px; padding: 0 14px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Abbrechen</button>
+<button type="submit" style="height: 34px; padding: 0 20px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Speichern</button>
+</footer>
+</form>
+</div>
+</section>
+</div>
+
+<!-- ============ 1B Explore after saving ============ -->
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px"><span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">1B</span><h2 style="margin: 0; font-size: 15px; font-weight: 600">Explore nach dem Speichern, mit ungespeicherten Änderungen</h2><span style="color: #8f8f97">Titel und Ablage im Kopf, Hinweis „Geändert“, Menü am Speichern-Knopf geöffnet.</span></div>
+<section aria-label="Explore mit gespeicherter Auswertung" style="position: relative; border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; background: #141416; height: 600px; display: flex; flex-direction: column">
+
+<header style="height: 52px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 10px; padding: 0 16px; box-sizing: border-box">
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8f8f97">
+<a href="#" style="color: #ececef; font-weight: 600; font-size: 15px">Explore</a><span aria-hidden="true">/</span><a href="#">Vertrieb</a><span aria-hidden="true">/</span><a href="#">Bestellungen</a><span aria-hidden="true">/</span>
+<h1 style="margin: 0; font-size: 15px; font-weight: 600; color: #ececef">Bestellstatus je Tag</h1>
+<span title="Nicht gespeicherte Änderungen" style="display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; padding: 2px 8px; border-radius: 999px; background: #232327; color: #c9c9cf; font-size: 11px"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #c9c9cf"></span>Geändert</span>
+</nav>
+<select aria-label="Datenquelle" style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; font: inherit; padding: 0 10px; margin-left: 6px"><option>Bestellungen (MongoDB)</option></select>
+<div style="flex: 1"></div>
+<span style="color: #8f8f97; font-size: 12px">Gespeichert vor 6 Min. von dir</span>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Teilen</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Letzte 7 Tage</button>
+<div style="position: relative; display: flex; align-items: center; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; background: #18181b; box-sizing: border-box">
+<button style="height: 100%; padding: 0 12px; background: transparent; border: 0; color: #ececef; font-weight: 500; display: flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><path d="M8 4v5h7V4M8 20v-6h8v6"></path></svg>Speichern</button>
+<button aria-label="Weitere Speicheroptionen" aria-haspopup="menu" aria-expanded="true" style="width: 30px; height: 100%; background: #232327; border: 0; border-left: 1px solid #2a2a2e; border-radius: 0 7px 7px 0; color: #ececef; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<div role="menu" aria-label="Speicheroptionen" style="position: absolute; right: 0; top: 38px; width: 236px; background: #1d1d21; border: 1px solid #333338; border-radius: 10px; padding: 5px; display: flex; flex-direction: column; box-shadow: 0 12px 32px rgba(0,0,0,0.45); z-index: 2">
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><path d="M8 4v5h7V4M8 20v-6h8v6"></path></svg></span>Speichern<span style="margin-left: auto; color: #6f6f77; font-size: 11px">Strg S</span></button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: #232327; border: 0; color: #ffffff; border-radius: 6px; font-size: 12.5px"><span style="color: #a6a6ae; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"></path></svg></span>Speichern unter …<span style="margin-left: auto; color: #6f6f77; font-size: 11px">Strg Umschalt S</span></button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 00-4-4L4 16z"></path></svg></span>Umbenennen und Beschreibung</button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path><path d="M10 13h6M13 10l3 3-3 3"></path></svg></span>Verschieben …</button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 7v5l3 2M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"></path></svg></span>Versionen und Verlauf</button>
+<div style="height: 1px; background: #2a2a2e; margin: 4px 2px"></div>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 12a8 8 0 11-2.3-5.7M20 4v5h-5"></path></svg></span>Änderungen verwerfen</button>
+</div>
+</div>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Ausführen</button>
+</header>
+
+<div style="display: flex; flex: 1; gap: 12px; padding: 16px; min-height: 0">
+<section aria-label="Abfrage" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<p style="margin: 0; color: #a6a6ae">Offene, versendete und stornierte Bestellungen pro Tag.</p>
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">Pipeline · Collection „orders“</span><div style="flex: 1"></div><span style="color: #8f8f97; font-size: 12px">geändert</span></header>
+<pre style="margin: 0; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #d6d6db; background: #141416">[
+  { "$match": { "createdAt": "$__timeFilter", "channel": "online" } },
+  { "$group": { "_id": "$status", "n": { "$sum": 1 } } }
+]</pre>
+</article>
+<div style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; flex: 1"></div>
+</section>
+<aside aria-label="Analyseschritte" style="flex: 1 1 300px; max-width: 340px; background: #111113; border: 1px solid #222226; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Schritte</h2>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">1 · In Tabelle projizieren</strong><p style="margin: 6px 0 0; color: #8f8f97">status, total, createdAt</p></div>
+<div style="border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; background: #18181b"><strong style="font-weight: 500">2 · Gruppieren</strong><p style="margin: 6px 0 0; color: #8f8f97">nach Tag und status · Anzahl</p></div>
+<div style="flex: 1"></div>
+<button style="height: 34px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Zum Dashboard hinzufügen</button>
+</aside>
+</div>
+
+<!-- Toast after first save -->
+<div role="status" style="position: absolute; left: 16px; bottom: 16px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px; background: #232327; border: 1px solid #333338">Gespeichert in Vertrieb / Bestellungen<a href="#" style="color: #ececef; text-decoration: underline">In der Liste zeigen</a></div>
+</section>
+</div>
+
+<!-- ============ 2A List of saved analyses ============ -->
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px"><span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">2A</span><h2 style="margin: 0; font-size: 15px; font-weight: 600">Liste der gespeicherten Auswertungen</h2><span style="color: #8f8f97">Ablagen links (persönlich und Team-Bereiche), Suche und Filter oben, Zeilenmenü geöffnet.</span></div>
+<section aria-label="Gespeicherte Auswertungen" style="border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; background: #141416; height: 760px; display: flex">
+
+<!-- Sidebar -->
+<nav aria-label="Main" style="flex: 0 0 232px; background: #0e0e10; border-right: 1px solid #222226; padding: 12px 10px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px">
+<button style="display: flex; align-items: center; gap: 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 10px; padding: 8px 10px; color: #ececef; text-align: left">
+<span style="width: 28px; height: 28px; border-radius: 7px; background: #232327; display: grid; place-items: center" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ececef" stroke-width="1.6"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"></path></svg></span>
+<span style="flex: 1; display: flex; flex-direction: column"><span style="font-weight: 600">MouseWerk</span><span style="color: #8f8f97; font-size: 11px">Admin</span></span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8f8f97" stroke-width="1.6" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"></path></svg>
+</button>
+<div style="height: 1px; background: #222226; margin: 10px 2px"></div>
+<a href="Start.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 11l8-7 8 7v9H4z"></path></svg>Start</a>
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg>Dashboards</a>
+<a href="Explore.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #ececef"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M15 9l-2 5-4 1 2-5z"></path></svg>Explore</a>
+<a href="#" aria-current="page" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 36px; border-radius: 7px; color: #ffffff; background: #1d1d21; border: 1px solid #2c2c31; font-weight: 500"><span style="flex: 1">Gespeichert</span><span style="color: #8f8f97; font-size: 11px; font-weight: 400">14</span></a>
+<a href="DataChat.dc.html" aria-label="Fragen (Beta)" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 12.5a7.5 7.5 0 01-11 6.6L4 20l1-4.2A7.5 7.5 0 1120 12.5z"></path><path d="M12 9l.9 2.1 2.1.9-2.1.9L12 15l-.9-2.1-2.1-.9 2.1-.9z"></path></svg><span style="flex: 1">Fragen</span><span style="padding: 1px 7px; border-radius: 999px; background: #1b1b1e; border: 1px solid #2a2a2e; color: #8f8f97; font-size: 10px; font-weight: 500; letter-spacing: 0.02em">Beta</span></a>
+<a href="DataSources.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg>Datenquellen</a>
+<div style="height: 1px; background: #222226; margin: 10px 2px"></div>
+<span style="padding: 4px 10px; color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">ORGANISATION</span>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"></path><path d="M16 4.5a3.5 3.5 0 010 7M21 20c0-2.6-1.6-4.8-4-5.6"></path></svg>Mitglieder</a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: #a6a6ae"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"></path></svg>Einstellungen</a>
+<div style="flex: 1"></div>
+<button style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: transparent; border: 0; color: #ececef; text-align: left; border-radius: 8px">
+<span style="width: 26px; height: 26px; border-radius: 50%; background: #2a2a2f; display: grid; place-items: center; font-size: 11px; font-weight: 600">LH</span>
+<span style="display: flex; flex-direction: column"><span style="font-weight: 500">Lea Hoffmann</span><span style="color: #8f8f97; font-size: 11px">lea@kalzit.test</span></span>
+</button>
+</nav>
+
+<!-- Main column -->
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<header style="height: 48px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 12px; padding: 0 16px; box-sizing: border-box">
+<button aria-label="Seitenleiste einklappen (Strg+B)" style="width: 30px; height: 30px; border-radius: 7px; background: transparent; border: 1px solid transparent; color: #a6a6ae; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8f8f97"><a href="#">Explore</a><span aria-hidden="true">/</span><span style="color: #ececef; font-weight: 500">Gespeicherte Auswertungen</span></nav>
+<div style="flex: 1"></div>
+<label style="display: flex; align-items: center; gap: 8px; width: 320px; height: 32px; padding: 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; box-sizing: border-box">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input type="search" placeholder="Suchen" aria-label="Suche" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; outline: none">
+<span style="border: 1px solid #333338; border-radius: 5px; padding: 1px 6px; font-size: 11px; color: #8f8f97">Strg K</span></label>
+</header>
+<main style="padding: 20px 16px 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0">
+<header style="display: flex; align-items: flex-end; gap: 12px">
+<div style="flex: 1; min-width: 0"><h1 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em">Gespeicherte Auswertungen</h1>
+<p style="margin: 4px 0 0; color: #a6a6ae">Abfragen aus Explore mit Schritten und Darstellung. Du siehst alles aus deiner Ablage und deinen Teams.</p></div>
+<a href="#" style="height: 34px; padding: 0 10px; display: flex; align-items: center; gap: 6px; color: #a6a6ae"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg>Papierkorb<span style="color: #6f6f77">1</span></a>
+<a href="Explore.dc.html" style="height: 34px; padding: 0 14px 0 12px; border-radius: 8px; background: #d79a6b; color: #1a1209; font-weight: 600; display: flex; align-items: center; gap: 6px; box-sizing: border-box"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Neue Abfrage in Explore</a>
+</header>
+
+<div style="display: flex; gap: 12px; align-items: flex-start; min-height: 0">
+<!-- Folder / team tree -->
+<nav aria-label="Ablagen" style="flex: 0 0 220px; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px">
+<a href="#" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; color: #a6a6ae"><span style="flex: 1">Alle Auswertungen</span><span style="color: #6f6f77; font-size: 11.5px">14</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; color: #a6a6ae"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg><span style="flex: 1">Meine Auswertungen</span><span style="color: #6f6f77; font-size: 11.5px">3</span></a>
+<div style="height: 1px; background: #2a2a2e; margin: 6px 2px"></div>
+<span style="padding: 4px 8px; color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">TEAM-BEREICHE</span>
+<a href="#" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; color: #c9c9cf"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg><span style="flex: 1">Vertrieb</span><span style="color: #6f6f77; font-size: 11.5px">6</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 28px; border-radius: 7px; color: #a6a6ae"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg><span style="flex: 1">Allgemein</span><span style="color: #6f6f77; font-size: 11.5px">2</span></a>
+<a href="#" aria-current="true" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 28px; border-radius: 7px; color: #ffffff; background: #232327; font-weight: 500"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg><span style="flex: 1">Bestellungen</span><span style="color: #a6a6ae; font-size: 11.5px; font-weight: 400">4</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; color: #c9c9cf"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="flex: 1">Betrieb</span><span style="color: #6f6f77; font-size: 11.5px">3</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; color: #c9c9cf"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span style="flex: 1">Analyse</span><span style="color: #6f6f77; font-size: 11.5px">2</span></a>
+<div style="height: 1px; background: #2a2a2e; margin: 6px 2px"></div>
+<button style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; background: transparent; border: 1px dashed #333338; color: #a6a6ae; text-align: left">+ Ordner anlegen</button>
+</nav>
+
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+<label style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; width: 300px; box-sizing: border-box">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input type="search" placeholder="Name, Beschreibung oder Abfrage suchen" aria-label="Auswertungen durchsuchen" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; outline: none">
+<kbd style="border: 1px solid #333338; border-radius: 5px; padding: 0 6px; font: inherit; font-size: 11px; color: #8f8f97">/</kbd></label>
+<label style="display: flex; align-items: center; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden; box-sizing: border-box"><span style="padding: 0 9px; color: #8f8f97; border-right: 1px solid #2a2a2e; height: 100%; display: flex; align-items: center">Datenquelle</span><select aria-label="Datenquelle" style="background: transparent; color: #ececef; border: 0; height: 100%; padding: 0 8px; font: inherit"><option selected>Alle</option><option>Bestellungen</option><option>Shop</option></select></label>
+<label style="display: flex; align-items: center; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden; box-sizing: border-box"><span style="padding: 0 9px; color: #8f8f97; border-right: 1px solid #2a2a2e; height: 100%; display: flex; align-items: center">Besitzer</span><select aria-label="Besitzer" style="background: transparent; color: #ececef; border: 0; height: 100%; padding: 0 8px; font: inherit"><option selected>Alle</option><option>Ich</option><option>Ben Thal</option></select></label>
+<div style="flex: 1"></div>
+<label style="display: flex; align-items: center; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; overflow: hidden; box-sizing: border-box"><span style="padding: 0 9px; color: #8f8f97; border-right: 1px solid #2a2a2e; height: 100%; display: flex; align-items: center; gap: 6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3"></path></svg>Sortieren</span><select aria-label="Sortieren" style="background: transparent; color: #ececef; border: 0; height: 100%; padding: 0 8px; font: inherit"><option selected>Zuletzt geändert</option><option>Name A–Z</option><option>Zuletzt geöffnet</option></select></label>
+</div>
+
+<section aria-label="Auswertungen in Vertrieb / Bestellungen" style="position: relative; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px">
+<table style="width: 100%; border-collapse: collapse; table-layout: fixed">
+<colgroup><col style="width: 34%"><col style="width: 20%"><col style="width: 15%"><col style="width: 12%"><col style="width: 13%"><col style="width: 112px"></colgroup>
+<thead><tr>
+<th scope="col" style="padding: 0 8px 0 14px; height: 34px; font-weight: 500; font-size: 12px; color: #8f8f97; text-align: left; border-bottom: 1px solid #2a2a2e; background: #18181b; white-space: nowrap; border-radius: 12px 0 0 0">Name</th>
+<th scope="col" style="padding: 0 8px; height: 34px; font-weight: 500; font-size: 12px; color: #8f8f97; text-align: left; border-bottom: 1px solid #2a2a2e; background: #18181b; white-space: nowrap">Datenquelle</th>
+<th scope="col" style="padding: 0 8px; height: 34px; font-weight: 500; font-size: 12px; color: #8f8f97; text-align: left; border-bottom: 1px solid #2a2a2e; background: #18181b; white-space: nowrap">Besitzer</th>
+<th scope="col" style="padding: 0 8px; height: 34px; font-weight: 500; font-size: 12px; color: #8f8f97; text-align: left; border-bottom: 1px solid #2a2a2e; background: #18181b; white-space: nowrap">Genutzt in</th>
+<th scope="col" aria-sort="descending" style="padding: 0 8px; height: 34px; font-weight: 500; font-size: 12px; color: #c9c9cf; text-align: left; border-bottom: 1px solid #2a2a2e; background: #18181b; white-space: nowrap">Geändert <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align: -1px"><path d="M6 9l6 6 6-6"></path></svg></th>
+<th scope="col" style="padding: 0 8px; height: 34px; border-bottom: 1px solid #2a2a2e; background: #18181b; border-radius: 0 12px 0 0"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden">Aktionen</span></th>
+</tr></thead>
+<tbody>
+
+<tr style="background: transparent">
+<td style="padding: 9px 8px 9px 14px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><a href="#" style="color: #ececef; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Bestellstatus je Tag</a><span style="color: #8f8f97; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Offene, versendete und stornierte Bestellungen pro Tag</span></div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; align-items: center; gap: 10px; min-width: 0"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #5fb85f; font-weight: 700; font-size: 11px">Mo</span><span style="min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ececef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Bestellungen</span><span style="color: #8f8f97; font-size: 11.5px">MongoDB · Tabelle</span></span></div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><span style="display: flex; align-items: center; gap: 8px; white-space: nowrap"><span style="width: 22px; height: 22px; border-radius: 50%; background: #2a2a2f; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #c9c9cf">LH</span>Du</span></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><a href="#" style="color: #c9c9cf; white-space: nowrap">2 Panels</a></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 3px; white-space: nowrap"><span style="color: #c9c9cf; font-size: 12px">vor 6 Min.</span><span style="color: #8f8f97; font-size: 11.5px">von dir</span></div></td>
+<td style="padding: 9px 10px 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle; text-align: right"><div style="display: flex; align-items: center; justify-content: flex-end; gap: 4px"><a href="#" style="height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid #2a2a2e; color: #ececef; display: inline-flex; align-items: center; font-size: 12.5px; box-sizing: border-box">Öffnen</a><button aria-label="Aktionen für Bestellstatus je Tag" aria-haspopup="menu" style="width: 28px; height: 28px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button></div></td>
+</tr>
+
+<tr style="background: #1f1f23">
+<td style="padding: 9px 8px 9px 14px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><a href="#" style="color: #ececef; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Retouren nach Grund</a><span style="color: #8f8f97; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Rücksendungen der letzten 30 Tage, gruppiert</span></div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; align-items: center; gap: 10px; min-width: 0"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #6e9fd0; font-weight: 700; font-size: 11px">Pg</span><span style="min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ececef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Shop</span><span style="color: #8f8f97; font-size: 11.5px">PostgreSQL · Balken</span></span></div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><span style="display: flex; align-items: center; gap: 8px; white-space: nowrap"><span style="width: 22px; height: 22px; border-radius: 50%; background: #2a2a2f; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #c9c9cf">BT</span>Ben Thal</span></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><span style="color: #8f8f97">nirgends</span></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 3px; white-space: nowrap"><span style="color: #c9c9cf; font-size: 12px">gestern, 16:20</span><span style="color: #8f8f97; font-size: 11.5px">von BT</span></div></td>
+<td style="padding: 9px 10px 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle; text-align: right; position: relative"><div style="display: flex; align-items: center; justify-content: flex-end; gap: 4px"><a href="#" style="height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid #2a2a2e; color: #ececef; display: inline-flex; align-items: center; font-size: 12.5px; box-sizing: border-box">Öffnen</a><button aria-label="Aktionen für Retouren nach Grund" aria-haspopup="menu" aria-expanded="true" style="width: 28px; height: 28px; border-radius: 7px; background: #232327; border: 0; color: #ececef; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button></div>
+<div role="menu" aria-label="Aktionen für Retouren nach Grund" style="position: absolute; right: 6px; top: calc(50% + 18px); text-align: left; width: 236px; background: #1d1d21; border: 1px solid #333338; border-radius: 10px; padding: 5px; display: flex; flex-direction: column; box-shadow: 0 12px 32px rgba(0,0,0,0.45); z-index: 2">
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M15 9l-2 5-4 1 2-5z"></path></svg></span>In Explore öffnen<span style="margin-left: auto; color: #6f6f77; font-size: 11px">Eingabe</span></button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><path d="M16.5 13v7M13 16.5h7"></path></svg></span>Zu Dashboard hinzufügen …</button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"></path></svg></span>Duplizieren</button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path><path d="M10 13h6M13 10l3 3-3 3"></path></svg></span>Verschieben …</button>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #ececef; border-radius: 6px; font-size: 12.5px"><span style="color: #8f8f97; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>Link kopieren</button>
+<div style="height: 1px; background: #2a2a2e; margin: 4px 2px"></div>
+<button role="menuitem" style="display: flex; align-items: center; gap: 9px; text-align: left; height: 30px; padding: 0 9px; background: transparent; border: 0; color: #f08a8a; border-radius: 6px; font-size: 12.5px"><span style="color: #f08a8a; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path></svg></span>In den Papierkorb</button>
+</div></td>
+</tr>
+
+<tr style="background: transparent">
+<td style="padding: 9px 8px 9px 14px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><a href="#" style="color: #ececef; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Kunden mit gemeinsamen Käufen</a><span style="color: #8f8f97; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Graph: Kunde, Produkt, gekauft mit</span></div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; align-items: center; gap: 10px; min-width: 0"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #4c9cf5; font-weight: 700; font-size: 11px">N4</span><span style="min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ececef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Kunden-Graph</span><span style="color: #8f8f97; font-size: 11.5px">Neo4j · Graph</span></span></div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><span style="display: flex; align-items: center; gap: 8px; white-space: nowrap"><span style="width: 22px; height: 22px; border-radius: 50%; background: #2a2a2f; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #c9c9cf">AN</span>Anna Neumann</span></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><a href="#" style="color: #c9c9cf; white-space: nowrap">1 Panel</a></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 3px; white-space: nowrap"><span style="color: #c9c9cf; font-size: 12px">vor 3 Tagen</span><span style="color: #8f8f97; font-size: 11.5px">von AN</span></div></td>
+<td style="padding: 9px 10px 9px 8px; border-bottom: 1px solid #232327; vertical-align: middle; text-align: right"><div style="display: flex; align-items: center; justify-content: flex-end; gap: 4px"><a href="#" style="height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid #2a2a2e; color: #ececef; display: inline-flex; align-items: center; font-size: 12.5px; box-sizing: border-box">Öffnen</a><button aria-label="Aktionen für Kunden mit gemeinsamen Käufen" aria-haspopup="menu" style="width: 28px; height: 28px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button></div></td>
+</tr>
+
+<tr style="background: transparent">
+<td style="padding: 9px 8px 9px 14px; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><a href="#" style="color: #ececef; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Zahlungsfehler im Checkout</a><span style="color: #8f8f97; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Fehlermeldungen aus den Checkout-Logs</span></div></td>
+<td style="padding: 9px 8px; vertical-align: middle"><div style="display: flex; align-items: center; gap: 10px; min-width: 0"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #3fc0b5; font-weight: 700; font-size: 11px">Es</span><span style="min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ececef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Logs</span><span style="display: flex; align-items: center; gap: 6px; color: #8f8f97; font-size: 11.5px; white-space: nowrap"><span style="width: 7px; height: 7px; border-radius: 50%; background: #f08a8a; flex: none"></span>kein Zugriff für dich</span></span></div></td>
+<td style="padding: 9px 8px; vertical-align: middle"><span style="display: flex; align-items: center; gap: 8px; white-space: nowrap"><span style="width: 22px; height: 22px; border-radius: 50%; background: #2a2a2f; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #c9c9cf">LW</span>Lukas Wagner</span></td>
+<td style="padding: 9px 8px; vertical-align: middle"><a href="#" style="color: #c9c9cf; white-space: nowrap">1 Dashboard</a></td>
+<td style="padding: 9px 8px; vertical-align: middle"><div style="display: flex; flex-direction: column; gap: 3px; white-space: nowrap"><span style="color: #c9c9cf; font-size: 12px">12. Okt.</span><span style="color: #8f8f97; font-size: 11.5px">von LW</span></div></td>
+<td style="padding: 9px 10px 9px 8px; vertical-align: middle; text-align: right"><div style="display: flex; align-items: center; justify-content: flex-end; gap: 4px"><span title="Du darfst die Datenquelle „Logs“ nicht abfragen" style="height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid #2a2a2e; color: #6f6f77; display: inline-flex; align-items: center; font-size: 12.5px; box-sizing: border-box">Öffnen</span><button aria-label="Aktionen für Zahlungsfehler im Checkout" aria-haspopup="menu" style="width: 28px; height: 28px; border-radius: 7px; background: transparent; border: 0; color: #8f8f97; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></button></div></td>
+</tr>
+</tbody></table>
+<div style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; border-top: 1px solid #2a2a2e; background: #18181b; color: #8f8f97; font-size: 12px; border-radius: 0 0 12px 12px">
+<span>4 Auswertungen in Vertrieb / Bestellungen</span><div style="flex: 1"></div>
+<span><kbd style="border: 1px solid #333338; border-radius: 4px; padding: 0 5px; font: inherit; font-size: 11px">J</kbd> <kbd style="border: 1px solid #333338; border-radius: 4px; padding: 0 5px; font: inherit; font-size: 11px">K</kbd> wechseln · <kbd style="border: 1px solid #333338; border-radius: 4px; padding: 0 5px; font: inherit; font-size: 11px">Eingabe</kbd> öffnen</span>
+</div>
+</section>
+
+<p style="margin: 0; color: #8f8f97; font-size: 12px; line-height: 1.6">„Öffnen“ ist gesperrt, wenn du die Datenquelle nicht abfragen darfst (Viewer, oder Quelle nicht für dein Team freigegeben). „Verschieben …“ öffnet dieselbe Ablage-Auswahl wie der Speichern-Dialog. „In den Papierkorb“ nennt vorher die Panels, die die Auswertung nutzen.</p>
+</div>
+</div>
+</main>
+</div>
+</section>
+</div>
+
+<!-- ============ 2B Empty state ============ -->
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px"><span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">2B</span><h2 style="margin: 0; font-size: 15px; font-weight: 600">Leerer Zustand</h2><span style="color: #8f8f97">Ausschnitt der Liste: Ablage ohne Auswertungen, und Suche ohne Treffer.</span></div>
+<section aria-label="Leere Liste" style="border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; background: #141416; padding: 20px 16px; display: flex; gap: 12px">
+<div style="flex: 1; min-width: 0; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 48px 24px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px">
+<span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 10px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #a6a6ae"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M15 9l-2 5-4 1 2-5z"></path></svg></span>
+<h3 style="margin: 4px 0 0; font-size: 15px; font-weight: 600">Noch keine Auswertungen in Vertrieb / Allgemein</h3>
+<p style="margin: 0; color: #a6a6ae; max-width: 420px; line-height: 1.6">Öffne Explore, stelle eine Abfrage zusammen und speichere sie hier. Dein Team findet sie dann wieder und kann sie als Panel nutzen.</p>
+<div style="display: flex; gap: 8px; margin-top: 8px">
+<a href="Explore.dc.html" style="height: 34px; padding: 0 14px; border-radius: 8px; background: #d79a6b; color: #1a1209; font-weight: 600; display: flex; align-items: center; box-sizing: border-box">Explore öffnen</a>
+<button style="height: 34px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Aus anderer Ablage verschieben</button>
+</div>
+</div>
+<div style="flex: 1; min-width: 0; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; padding: 48px 24px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px">
+<span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 10px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #a6a6ae"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg></span>
+<h3 style="margin: 4px 0 0; font-size: 15px; font-weight: 600">Keine Treffer für „lagerbestand“</h3>
+<p style="margin: 0; color: #a6a6ae; max-width: 420px; line-height: 1.6">Gesucht in Vertrieb / Bestellungen. In allen Ablagen gibt es 2 Treffer.</p>
+<div style="display: flex; gap: 8px; margin-top: 8px">
+<button style="height: 34px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">In allen Ablagen suchen</button>
+<button style="height: 34px; padding: 0 8px; background: transparent; border: 0; color: #a6a6ae">Filter zurücksetzen</button>
+</div>
+</div>
+</section>
+</div>
+
+<!-- ============ 3 Panel editor: from saved analysis ============ -->
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px"><span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">3</span><h2 style="margin: 0; font-size: 15px; font-weight: 600">Panel-Editor: Aus gespeicherter Auswertung</h2><span style="color: #8f8f97">Neues Panel. Auswahl mit Vorschau, danach als verknüpfte Abfrage (unten).</span></div>
+<section aria-label="Panel-Editor mit Auswahl einer gespeicherten Auswertung" style="border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; background: #141416; height: 940px; display: flex; flex-direction: column">
+
+<header style="height: 52px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 10px; padding: 0 16px; box-sizing: border-box">
+<a href="Main.dc.html" style="height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid #2a2a2e; display: flex; align-items: center; gap: 6px; box-sizing: border-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>Zum Dashboard</a>
+<h1 style="margin: 0 0 0 6px; font-size: 15px; font-weight: 600">Panel bearbeiten</h1>
+<span style="color: #8f8f97">Neues Panel</span>
+<div style="flex: 1"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Letzte 24 Stunden</button>
+<div style="width: 1px; height: 22px; background: #2a2a2e"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Verwerfen</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Übernehmen</button>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Dashboard speichern</button>
+</header>
+
+<div style="display: flex; flex: 1; min-height: 0">
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px; gap: 12px">
+<div role="tablist" style="display: flex; gap: 4px; border-bottom: 1px solid #2a2a2e">
+<button role="tab" aria-selected="true" style="padding: 8px 12px; background: transparent; border: 0; border-bottom: 2px solid #ececef; color: #ffffff; font-weight: 500">Abfragen</button>
+<button role="tab" aria-selected="false" style="padding: 8px 12px; background: transparent; border: 0; color: #a6a6ae">Schritte</button>
+</div>
+
+<div role="radiogroup" aria-label="Wie soll das Panel beginnen?" style="display: flex; gap: 10px">
+<button role="radio" aria-checked="false" style="flex: 1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #2a2a2e; border-radius: 10px; background: transparent; color: #c9c9cf; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg><span style="flex: 1"><span style="display: block">Neue Abfrage</span><span style="display: block; color: #8f8f97; font-size: 11.5px">Datenquelle wählen und selbst schreiben</span></span></button>
+<button role="radio" aria-checked="true" style="flex: 1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #2a2a2e; border-radius: 10px; background: #1f1f23; color: #ffffff; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"></path></svg><span style="flex: 1"><span style="display: block; font-weight: 600">Aus gespeicherter Auswertung</span><span style="display: block; color: #a6a6ae; font-size: 11.5px">Abfrage, Schritte und Darstellung übernehmen</span></span></button>
+<button role="radio" aria-checked="false" style="flex: 1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #2a2a2e; border-radius: 10px; background: transparent; color: #c9c9cf; text-align: left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect></svg><span style="flex: 1"><span style="display: block">Aus anderem Panel</span><span style="display: block; color: #8f8f97; font-size: 11.5px">Kopie eines vorhandenen Panels</span></span></button>
+</div>
+
+<!-- Picker -->
+<section aria-label="Gespeicherte Auswertung wählen" style="display: flex; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; height: 470px">
+<div style="flex: 0 0 420px; border-right: 1px solid #2a2a2e; display: flex; flex-direction: column">
+<div style="padding: 10px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #2a2a2e">
+<label style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #8f8f97; box-sizing: border-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input type="search" value="best" aria-label="Auswertungen durchsuchen" style="flex: 1; min-width: 0; background: transparent; border: 0; color: #ececef; font: inherit; outline: none"></label>
+<div role="tablist" aria-label="Ablage" style="display: flex; align-items: center; gap: 2px; padding: 2px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; box-sizing: border-box"><button role="tab" aria-selected="false" style="height: 26px; padding: 0 10px; border-radius: 6px; border: 0; background: transparent; color: #a6a6ae">Alle</button><button role="tab" aria-selected="true" style="height: 26px; padding: 0 10px; border-radius: 6px; border: 0; background: #232327; color: #ffffff; font-weight: 500">Team dieses Dashboards</button><button role="tab" aria-selected="false" style="height: 26px; padding: 0 10px; border-radius: 6px; border: 0; background: transparent; color: #a6a6ae">Meine</button></div>
+</div>
+<ul role="listbox" aria-label="Auswertungen" style="list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 2px; overflow: auto">
+<li role="option" aria-selected="true" style="display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; background: #232327"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #5fb85f; font-weight: 700; font-size: 11px">Mo</span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ffffff; font-weight: 500">Bestellstatus je Tag</span><span style="color: #8f8f97; font-size: 11.5px">Vertrieb / Bestellungen · Tabelle</span></span><span style="color: #8f8f97; font-size: 11.5px">vor 6 Min.</span></li>
+<li role="option" aria-selected="false" style="display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #6e9fd0; font-weight: 700; font-size: 11px">Pg</span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ececef">Bestellwert nach Region</span><span style="color: #8f8f97; font-size: 11.5px">Vertrieb / Allgemein · Balken</span></span><span style="color: #8f8f97; font-size: 11.5px">vor 2 Tagen</span></li>
+<li role="option" aria-selected="false" style="display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #e4cf5c; font-weight: 700; font-size: 11px">CH</span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="color: #ececef">Bestellungen je Kampagne</span><span style="color: #8f8f97; font-size: 11.5px">Vertrieb / Bestellungen · Zeitreihe</span></span><span style="color: #8f8f97; font-size: 11.5px">8. Okt.</span></li>
+<li role="option" aria-disabled="true" style="display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; color: #6f6f77"><span aria-hidden="true" style="width: 30px; height: 30px; flex: none; border-radius: 7px; background: #141416; border: 1px solid #2a2a2e; box-sizing: border-box; display: grid; place-items: center; color: #6f6f77; font-weight: 700; font-size: 11px">Es</span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span>Stornierte Bestellungen (Logs)</span><span style="font-size: 11.5px">Datenquelle in diesem Dashboard nicht erlaubt</span></span></li>
+</ul>
+<div style="flex: 1"></div>
+<div style="padding: 8px 12px; border-top: 1px solid #2a2a2e; color: #8f8f97; font-size: 12px">3 von 14 Auswertungen</div>
+</div>
+
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 16px; gap: 12px">
+<header style="display: flex; align-items: flex-start; gap: 10px"><div style="flex: 1; min-width: 0"><h3 style="margin: 0; font-size: 13px; font-weight: 600">Bestellstatus je Tag</h3><p style="margin: 4px 0 0; color: #8f8f97">Offene, versendete und stornierte Bestellungen pro Tag. Von Lea Hoffmann, Version 3.</p></div><a href="#" style="font-size: 12px; color: #a6a6ae">In Explore ansehen</a></header>
+<div style="display: flex; flex-wrap: wrap; gap: 6px 14px; color: #c9c9cf; font-size: 12px"><span>Bestellungen (MongoDB)</span><span>Abfrage A</span><span>2 Schritte</span><span>Darstellung Tabelle</span><span style="color: #8f8f97">Zeitraum folgt dem Dashboard</span></div>
+<div style="background: #141416; border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<table style="width: 100%; border-collapse: collapse; font-size: 12px">
+<thead><tr style="color: #8f8f97"><th scope="col" style="text-align: left; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #2a2a2e">Tag</th><th scope="col" style="text-align: left; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #2a2a2e">status</th><th scope="col" style="text-align: right; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #2a2a2e">Anzahl</th></tr></thead>
+<tbody style="color: #ececef">
+<tr><td style="padding: 6px 10px; border-bottom: 1px solid #232327">26.10.</td><td style="padding: 6px 10px; border-bottom: 1px solid #232327">shipped</td><td style="padding: 6px 10px; border-bottom: 1px solid #232327; text-align: right">212</td></tr>
+<tr><td style="padding: 6px 10px; border-bottom: 1px solid #232327">26.10.</td><td style="padding: 6px 10px; border-bottom: 1px solid #232327">open</td><td style="padding: 6px 10px; border-bottom: 1px solid #232327; text-align: right">74</td></tr>
+<tr><td style="padding: 6px 10px">26.10.</td><td style="padding: 6px 10px">cancelled</td><td style="padding: 6px 10px; text-align: right">9</td></tr>
+</tbody></table>
+</div>
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+<legend style="padding: 0 0 6px; color: #a6a6ae">Übernehmen als</legend>
+<label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid #2a2a2e; border-radius: 10px; background: #1f1f23"><input type="radio" name="mode" checked style="margin: 2px 0 0; accent-color: #c9c9cf"><span><span style="display: block; font-weight: 600">Verknüpft</span><span style="display: block; color: #a6a6ae; font-size: 12px">Das Panel folgt gespeicherten Änderungen der Auswertung. Darstellung und Titel kannst du im Panel anpassen.</span></span></label>
+<label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid #2a2a2e; border-radius: 10px"><input type="radio" name="mode" style="margin: 2px 0 0; accent-color: #c9c9cf"><span><span style="display: block; color: #c9c9cf">Als Kopie</span><span style="display: block; color: #8f8f97; font-size: 12px">Abfrage und Schritte werden ins Panel kopiert und danach unabhängig bearbeitet.</span></span></label>
+</fieldset>
+<div style="flex: 1"></div>
+<div style="display: flex; align-items: center; gap: 10px"><span style="color: #8f8f97; font-size: 12px">Viewer sehen nur das Ergebnis, nicht die Auswertung.</span><div style="flex: 1"></div><button style="height: 34px; padding: 0 16px; border-radius: 8px; background: #232327; border: 1px solid #2a2a2e; color: #ececef; font-weight: 500">Auswertung übernehmen</button></div>
+</div>
+</section>
+
+<!-- After applying: linked query header -->
+<span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">NACH DEM ÜBERNEHMEN</span>
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e">
+<span style="font-weight: 600">A</span><span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px; background: #232327; color: #c9c9cf; font-size: 12px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Bestellstatus je Tag</span><span style="color: #8f8f97">Bestellungen (MongoDB) · Version 3</span>
+<div style="flex: 1"></div>
+<button style="background: transparent; border: 0; color: #8f8f97">In Explore bearbeiten</button>
+<button style="background: transparent; border: 0; color: #8f8f97">Verknüpfung lösen</button>
+<button style="background: transparent; border: 0; color: #8f8f97">Entfernen</button>
+</header>
+<div style="padding: 10px 14px; color: #8f8f97; font-size: 12px; background: #141416">Abfrage und Schritte sind schreibgeschützt, solange das Panel verknüpft ist. Zum Ändern „In Explore bearbeiten“ oder „Verknüpfung lösen“.</div>
+</article>
+</div>
+
+<aside aria-label="Panel-Optionen" style="flex: 0 0 340px; border-left: 1px solid #222226; background: #111113; padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px">
+<button style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid #2a2a2e; border-radius: 10px; background: #18181b; color: #ececef; text-align: left">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5"></rect><path d="M4 10h16M10 10v9"></path></svg>
+<span style="flex: 1"><span style="display: block; font-weight: 500">Tabelle</span><span style="display: block; color: #8f8f97; font-size: 11px">aus der Auswertung übernommen</span></span>
+<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+<label style="display: flex; flex-direction: column; gap: 6px; color: #a6a6ae">Titel<input value="Bestellstatus je Tag" style="height: 32px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; padding: 0 10px; font: inherit"></label>
+<label style="display: flex; flex-direction: column; gap: 6px; color: #a6a6ae">Beschreibung<textarea rows="2" style="background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; color: #ececef; padding: 8px 10px; font: inherit">Offene, versendete und stornierte Bestellungen pro Tag.</textarea></label>
+<p style="margin: 0; color: #8f8f97; font-size: 12px">Titel und Beschreibung starten mit den Werten der Auswertung und gehören danach dem Panel.</p>
+</aside>
+</div>
+</section>
+</div>
+
+<!-- ============ 4 Conflict ============ -->
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px"><span style="color: #6f6f77; font-size: 11px; letter-spacing: 0.04em">4</span><h2 style="margin: 0; font-size: 15px; font-weight: 600">Konflikt: jemand hat eine neuere Version gespeichert</h2><span style="color: #8f8f97">Hinweis sofort beim Eintreffen; beim Speichern der Dialog. Nichts wird still überschrieben.</span></div>
+<section aria-label="Explore mit Konflikt" style="position: relative; border: 1px solid #2a2a2e; border-radius: 12px; overflow: hidden; background: #141416; height: 680px; display: flex; flex-direction: column">
+
+<header style="height: 52px; border-bottom: 1px solid #222226; display: flex; align-items: center; gap: 10px; padding: 0 16px; box-sizing: border-box">
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8f8f97">
+<a href="#" style="color: #ececef; font-weight: 600; font-size: 15px">Explore</a><span aria-hidden="true">/</span><a href="#">Vertrieb</a><span aria-hidden="true">/</span><a href="#">Bestellungen</a><span aria-hidden="true">/</span>
+<h1 style="margin: 0; font-size: 15px; font-weight: 600; color: #ececef">Bestellstatus je Tag</h1>
+<span style="display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; padding: 2px 8px; border-radius: 999px; background: #232327; color: #c9c9cf; font-size: 11px"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #c9c9cf"></span>Geändert</span>
+</nav>
+<div style="flex: 1"></div>
+<button style="height: 32px; padding: 0 12px; border-radius: 8px; background: #18181b; border: 1px solid #2a2a2e; color: #ececef">Letzte 7 Tage</button>
+<div style="display: flex; align-items: center; border: 1px solid #2a2a2e; border-radius: 8px; height: 32px; background: #18181b; box-sizing: border-box">
+<button style="height: 100%; padding: 0 12px; background: transparent; border: 0; color: #ececef; font-weight: 500; display: flex; align-items: center; gap: 6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"></path><path d="M8 4v5h7V4M8 20v-6h8v6"></path></svg>Speichern</button>
+<button aria-label="Weitere Speicheroptionen" style="width: 30px; height: 100%; background: transparent; border: 0; border-left: 1px solid #2a2a2e; color: #c9c9cf; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+</div>
+<button style="height: 32px; padding: 0 14px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Ausführen</button>
+</header>
+
+<div role="status" style="margin: 12px 16px 0; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #1b1b1e; border: 1px solid #2a2a2e">
+<span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #d9b45b; flex: none"></span>
+<span style="flex: 1"><b style="font-weight: 500">Anna Neumann hat eine neuere Version gespeichert</b> <span style="color: #a6a6ae">um 10:42. Du arbeitest auf Version 3, aktuell ist Version 4.</span></span>
+<button style="height: 28px; padding: 0 10px; border-radius: 7px; background: transparent; border: 1px solid #2a2a2e; color: #ececef; font-size: 12.5px">Unterschiede ansehen</button>
+<button style="height: 28px; padding: 0 10px; border-radius: 7px; background: transparent; border: 1px solid #2a2a2e; color: #ececef; font-size: 12.5px">Neue Version laden</button>
+</div>
+
+<div style="display: flex; flex: 1; gap: 12px; padding: 12px 16px 16px; min-height: 0">
+<section aria-label="Abfrage" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<article style="border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden">
+<header style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-bottom: 1px solid #2a2a2e"><span style="font-weight: 600">A</span><span style="color: #8f8f97">Pipeline · Collection „orders“</span></header>
+<pre style="margin: 0; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #d6d6db; background: #141416">[
+  { "$match": { "createdAt": "$__timeFilter", "channel": "online" } },
+  { "$group": { "_id": "$status", "n": { "$sum": 1 } } }
+]</pre>
+</article>
+<div style="background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; flex: 1"></div>
+</section>
+<aside aria-label="Analyseschritte" style="flex: 1 1 300px; max-width: 340px; background: #111113; border: 1px solid #222226; border-radius: 12px"></aside>
+</div>
+
+<!-- Scrim + conflict dialog -->
+<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.5); display: grid; place-items: center">
+<div role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-desc" style="width: 560px; background: #1b1b1e; border: 1px solid #2a2a2e; border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.45); display: flex; flex-direction: column">
+<header style="padding: 16px 20px 4px">
+<h2 id="conflict-title" style="margin: 0; font-size: 15px; font-weight: 600">Neuere Version vorhanden</h2>
+<p id="conflict-desc" style="margin: 6px 0 0; color: #a6a6ae; line-height: 1.6">Anna Neumann hat „Bestellstatus je Tag“ um 10:42 gespeichert, nachdem du sie um 10:31 geöffnet hast. Wenn du jetzt speicherst, gehen ihre Änderungen verloren.</p>
+</header>
+<div style="padding: 12px 20px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+<div style="background: #141416; border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 22px; height: 22px; border-radius: 50%; background: #2a2a2f; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #c9c9cf">AN</span><b style="font-weight: 500">Version 4</b><span style="color: #8f8f97; font-size: 12px">10:42</span></span>
+<ul style="margin: 0; padding-left: 16px; color: #c9c9cf; font-size: 12px; line-height: 1.7"><li>Schritt 3 „Filtern“ hinzugefügt</li><li>Darstellung: Balken statt Tabelle</li></ul>
+</div>
+<div style="background: #141416; border: 1px solid #2a2a2e; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 22px; height: 22px; border-radius: 50%; background: #2a2a2f; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #c9c9cf">LH</span><b style="font-weight: 500">Deine Änderungen</b><span style="color: #8f8f97; font-size: 12px">nicht gespeichert</span></span>
+<ul style="margin: 0; padding-left: 16px; color: #c9c9cf; font-size: 12px; line-height: 1.7"><li>Abfrage A: Filter channel = online</li></ul>
+</div>
+<a href="#" style="grid-column: 1 / -1; font-size: 12px; color: #a6a6ae">Unterschiede im Detail ansehen</a>
+</div>
+<footer style="display: flex; align-items: center; gap: 10px; padding: 12px 20px 16px; border-top: 1px solid #222226">
+<button style="height: 34px; padding: 0 8px; background: transparent; border: 0; color: #f08a8a">Trotzdem überschreiben</button>
+<div style="flex: 1"></div>
+<button style="height: 34px; padding: 0 14px; border-radius: 8px; background: transparent; border: 1px solid #2a2a2e; color: #c9c9cf">Version 4 laden</button>
+<button style="height: 34px; padding: 0 20px; border-radius: 8px; background: #d79a6b; border: 0; color: #1a1209; font-weight: 600">Als Kopie speichern …</button>
+</footer>
+</div>
+</div>
+</section>
+<p style="margin: 0; color: #8f8f97; font-size: 12px; line-height: 1.6; max-width: 980px">„Version 4 laden“ verwirft deine Änderungen erst nach Rückfrage, sie bleiben im Explore-Verlauf. „Trotzdem überschreiben“ braucht Bearbeitungsrecht in der Ablage und legt Version 4 im Verlauf ab, sodass sie wiederherstellbar bleibt. Der Server prüft die Versionsnummer bei jedem Speichern.</p>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":4720}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

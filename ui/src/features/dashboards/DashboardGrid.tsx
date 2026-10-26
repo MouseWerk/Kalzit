@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { useI18n } from "../../i18n/i18n";
-import type { LinkedPanel } from "./api";
+import type { LinkedAnalysis, LinkedPanel } from "./api";
 import { layoutSections, type PlacedPanel, panelValues, type Section } from "./layout";
 import {
   clampGrid,
@@ -46,6 +46,8 @@ interface DashboardGridProps {
   rows: readonly RowModel[];
   /** The library panels the dashboard shows, by id. */
   libraryPanels: Record<string, LinkedPanel>;
+  /** The saved analyses its panels link, by id. */
+  analyses?: Record<string, LinkedAnalysis> | undefined;
   query: Omit<PanelQueryInput, "panel" | "variables"> & { variables: VariableValues };
   /** When the range was resolved: a panel's own relative range ends then. */
   now: number;
@@ -64,8 +66,34 @@ interface DashboardGridProps {
 /** Resolved library panels per slot and library version, so an unchanged slot keeps its object. */
 const resolved = new WeakMap<PanelModel, { linked: LinkedPanel; panel: PanelModel }>();
 
-/** A panel showing a library panel draws the library panel's content in its own place. */
-export function resolvePanel(panel: PanelModel, library: Record<string, LinkedPanel>): PanelModel {
+/** Resolved analysis links per slot and analysis version, for the same reason. */
+const resolvedAnalyses = new WeakMap<PanelModel, { linked: LinkedAnalysis; panel: PanelModel }>();
+
+const NO_ANALYSES: Record<string, LinkedAnalysis> = {};
+
+/**
+ * A panel showing a library panel draws the library panel's content in its own place; one
+ * linking a saved analysis runs the analysis's queries and steps with its own look and title.
+ */
+export function resolvePanel(
+  panel: PanelModel,
+  library: Record<string, LinkedPanel>,
+  analyses: Record<string, LinkedAnalysis> = NO_ANALYSES,
+): PanelModel {
+  const analysis = panel.analysisId === undefined ? undefined : analyses[panel.analysisId];
+  if (analysis !== undefined) {
+    const known = resolvedAnalyses.get(panel);
+    if (known !== undefined && known.linked === analysis) {
+      return known.panel;
+    }
+    const result = {
+      ...panel,
+      targets: analysis.model.targets,
+      transformations: analysis.model.steps,
+    };
+    resolvedAnalyses.set(panel, { linked: analysis, panel: result });
+    return result;
+  }
   const linked = panel.libraryPanelId === undefined ? undefined : library[panel.libraryPanelId];
   if (linked === undefined) {
     return panel;
@@ -93,6 +121,7 @@ export function DashboardGrid({
   panels,
   rows,
   libraryPanels,
+  analyses = NO_ANALYSES,
   query,
   now,
   storedPanels = [],
@@ -103,10 +132,10 @@ export function DashboardGrid({
 }: DashboardGridProps) {
   const { t } = useI18n();
   const [announcement, setAnnouncement] = useState("");
-  const drawn = panels.map((p) => resolvePanel(p, libraryPanels));
+  const drawn = panels.map((p) => resolvePanel(p, libraryPanels, analyses));
   // Panels whose queries differ from the saved ones (or are new), worked out once per change of
   // the panels instead of per card and render.
-  const changed = changedPanels(drawn, storedPanels, libraryPanels);
+  const changed = changedPanels(drawn, storedPanels, libraryPanels, analyses);
   const sections = layoutSections(drawn, rows, query.variables, edit === undefined);
   const [focusRow, setFocusRow] = useState<string | null>(null);
 
@@ -200,9 +229,10 @@ function changedPanels(
   drawn: readonly PanelModel[],
   storedPanels: readonly PanelModel[],
   library: Record<string, LinkedPanel>,
+  analyses: Record<string, LinkedAnalysis>,
 ): ReadonlySet<string> {
   const stored = new Map(
-    storedPanels.map((p) => [p.id, targetsText(resolvePanel(p, library).targets)]),
+    storedPanels.map((p) => [p.id, targetsText(resolvePanel(p, library, analyses).targets)]),
   );
   return new Set(drawn.filter((p) => stored.get(p.id) !== targetsText(p.targets)).map((p) => p.id));
 }

@@ -27,6 +27,7 @@
   "shell.palette.kind.dashboard": "Dashboard",
   "shell.palette.kind.folder": "Ordner",
   "shell.palette.kind.datasource": "Datenquelle",
+  "shell.palette.kind.analysis": "Auswertung",
   "shell.palette.action.newDashboard": "Neues Dashboard",
   "shell.palette.action.explore": "Explore öffnen",
   "shell.palette.action.newDatasource": "Datenquelle hinzufügen",

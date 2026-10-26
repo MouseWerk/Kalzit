@@ -180,7 +180,27 @@ function detail(d: StoredDashboard, areas?: FakeAreaStates) {
       };
     }
   }
-  return { ...summary(d), model: latest(d).model, createdBy: d.createdBy, libraryPanels };
+  // The saved analyses the model links (docs/api/analyses.md, "Linked panels").
+  const analyses: Record<string, unknown> = {};
+  for (const panel of latest(d).model.panels) {
+    const linked = areas?.analyses.analyses.find((a) => a.id === panel.analysisId);
+    if (linked !== undefined) {
+      const last = linked.versions.at(-1);
+      analyses[linked.id] = {
+        id: linked.id,
+        title: last?.model.title,
+        version: last?.version,
+        model: last?.model,
+      };
+    }
+  }
+  return {
+    ...summary(d),
+    model: latest(d).model,
+    createdBy: d.createdBy,
+    libraryPanels,
+    analyses,
+  };
 }
 
 function folderView(f: StoredFolder) {
@@ -230,6 +250,7 @@ const PANEL_FIELDS = [
   "timeShift",
   "links",
   "libraryPanelId",
+  "analysisId",
   "description",
   "transparent",
 ];
@@ -286,6 +307,13 @@ export function modelProblem(model: unknown): string | null {
     }
     if (ids.has(String(panel.id))) return `model.panels[${i}].id: not unique`;
     ids.add(String(panel.id));
+    if (
+      panel.analysisId !== undefined &&
+      (((panel.targets ?? []) as unknown[]).length > 0 ||
+        ((panel.transformations ?? []) as unknown[]).length > 0)
+    ) {
+      return `model.panels[${i}].targets must be empty: the analysis holds the queries`;
+    }
     if (panel.libraryPanelId !== undefined && ((panel.targets ?? []) as unknown[]).length > 0) {
       return `model.panels[${i}].targets must be empty: the library panel holds the queries`;
     }
@@ -861,8 +889,13 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     const results: Record<string, QueryOutcome> = {};
     // A library panel's queries are its own (docs/api/dashboard-features.md).
     const linked = areas.dashboardFeatures.libraryPanels.find((l) => l.id === panel.libraryPanelId);
+    const analysis = areas.analyses.analyses.find((a) => a.id === panel.analysisId);
     const targets =
-      linked === undefined ? panel.targets : ((linked.model.targets ?? []) as typeof panel.targets);
+      analysis !== undefined
+        ? ((analysis.versions.at(-1)?.model.targets ?? []) as typeof panel.targets)
+        : linked === undefined
+          ? panel.targets
+          : ((linked.model.targets ?? []) as typeof panel.targets);
     for (const target of targets) {
       results[target.refId] = await answerQuery(
         areas.datasources,

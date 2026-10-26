@@ -1,5 +1,5 @@
 import { isRecord } from "../../api/client";
-import type { LinkedPanel } from "./api";
+import type { LinkedAnalysis, LinkedPanel } from "./api";
 import type { DashboardModel } from "./model";
 
 /**
@@ -57,12 +57,36 @@ export function inlineLibraryPanels(
   };
 }
 
+/**
+ * The model with linked saved analyses written in as plain panels: their current queries and
+ * steps, so the file runs where the analysis does not exist.
+ */
+export function inlineAnalyses(
+  model: DashboardModel,
+  analyses: Record<string, LinkedAnalysis>,
+): DashboardModel {
+  return {
+    ...model,
+    panels: model.panels.map((panel) => {
+      if (panel.analysisId === undefined) {
+        return panel;
+      }
+      const { analysisId: _id, ...rest } = panel;
+      const linked = analyses[panel.analysisId];
+      return linked === undefined
+        ? rest
+        : { ...rest, targets: linked.model.targets, transformations: linked.model.steps };
+    }),
+  };
+}
+
 export function buildExport(
   model: DashboardModel,
   library: Record<string, LinkedPanel>,
   sources: readonly { id: string; kind: string; name: string }[],
+  analyses: Record<string, LinkedAnalysis> = {},
 ): DashboardExport {
-  const inlined = inlineLibraryPanels(model, library);
+  const inlined = inlineAnalyses(inlineLibraryPanels(model, library), analyses);
   return {
     kalzit: "dashboard",
     exportVersion: 1,

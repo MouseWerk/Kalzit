@@ -718,7 +718,7 @@ function DashboardView({
     // shows the annotations of the period it draws.
     ranges: resolved.ok
       ? annotationRanges(
-          model.panels.map((p) => resolvePanel(p, library)),
+          model.panels.map((p) => resolvePanel(p, library, dashboard.analyses)),
           rows,
           (row) => (openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]),
           resolved.range,
@@ -1134,7 +1134,7 @@ function DashboardView({
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
-    downloadJson(model.title, buildExport(model, library, sources));
+    downloadJson(model.title, buildExport(model, library, sources, dashboard.analyses));
   }
 
   // Panels may set a variable the dashboard defines (a node click setting $customerId).
@@ -1254,9 +1254,9 @@ function DashboardView({
           panel={
             keptEditor !== undefined && keptEditor.key === editing
               ? keptEditor.panel
-              : resolvePanel(edited, library)
+              : resolvePanel(edited, library, dashboard.analyses)
           }
-          original={isNewPanel ? undefined : resolvePanel(edited, library)}
+          original={isNewPanel ? undefined : resolvePanel(edited, library, dashboard.analyses)}
           refresh={clock.run}
           toolbar={
             <>
@@ -1276,7 +1276,9 @@ function DashboardView({
           variables={editorValues(edited, rows, values)}
           stored={(() => {
             const saved = dashboard.model.panels.find((p) => p.id === edited.id);
-            return saved === undefined ? undefined : resolvePanel(saved, dashboard.libraryPanels);
+            return saved === undefined
+              ? undefined
+              : resolvePanel(saved, dashboard.libraryPanels, dashboard.analyses);
           })()}
           savedVariables={dashboard.model.variables}
           crumbs={editorTrail}
@@ -1294,6 +1296,11 @@ function DashboardView({
               : (library[edited.libraryPanelId]?.name ?? t("libraryPanels.missing"))
           }
           onMakeLibrary={(panel) => setDialog({ kind: "makeLibrary", panel })}
+          analyses={dashboard.analyses}
+          otherPanels={model.panels
+            .filter((p) => p.id !== edited.id)
+            .map((p) => resolvePanel(p, library, dashboard.analyses))}
+          dashboardTeam={dashboard.ownerTeam}
           onApply={() => leaveEditor("apply")}
           onDiscard={() => {
             if (snapshot.current?.changed() === true) {
@@ -1567,7 +1574,7 @@ function DashboardView({
                 {/* Alone too, a panel may set variables (a node click) and explore. */}
                 <PanelHostContext value={host}>
                   <PanelCard
-                    panel={resolvePanel(alone, library)}
+                    panel={resolvePanel(alone, library, dashboard.analyses)}
                     alone
                     query={{
                       orgId,
@@ -1617,6 +1624,7 @@ function DashboardView({
                         panels={model.panels}
                         rows={rows}
                         libraryPanels={library}
+                        analyses={dashboard.analyses}
                         now={now}
                         query={gridQuery}
                         storedPanels={dashboard.model.panels}

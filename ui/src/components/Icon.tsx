@@ -85,6 +85,8 @@ const PATHS = {
   settings: "M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5v4M9 10v4M17 15v4",
   // Updates: download and upload a package, look again, plan for later, a verified signature.
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  // A floppy disk: saving, as in every editor.
+  save: "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6",
   upload: "M12 15V4M7 9l5-5 5 5M5 20h14",
   refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
   clock: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16zM12 8v4l3 2",

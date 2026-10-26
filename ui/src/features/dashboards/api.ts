@@ -7,6 +7,7 @@ import type {
   VariableOptionsRequest,
   VariableOptionsResponse,
 } from "../../api/generated/shapes";
+import { type AnalysisModel, parseAnalysisModel } from "../analyses/api";
 import { orgPath, send } from "../datasources/api";
 import { type DashboardModel, type PanelModel, parseModel } from "./model";
 
@@ -91,10 +92,54 @@ export interface LinkedPanel {
   model: PanelModel;
 }
 
+/** A saved analysis as a dashboard shows it (docs/api/analyses.md, "Linked panels"). */
+export interface LinkedAnalysis {
+  id: string;
+  title: string;
+  version: number;
+  model: AnalysisModel;
+}
+
 export interface Dashboard extends DashboardSummary {
   model: DashboardModel;
   /** The library panels the model references, by id; a deleted one is missing. */
   libraryPanels: Record<string, LinkedPanel>;
+  /** The saved analyses the model links, by id; a purged one is missing. */
+  analyses: Record<string, LinkedAnalysis>;
+}
+
+function parseLinkedAnalyses(value: unknown): Record<string, LinkedAnalysis> {
+  const out: Record<string, LinkedAnalysis> = {};
+  if (!isRecord(value)) {
+    return out;
+  }
+  for (const [id, entry] of Object.entries(value)) {
+    if (isRecord(entry)) {
+      out[id] = {
+        id,
+        title: str(entry.title),
+        version: num(entry.version),
+        model: parseAnalysisModel(entry.model),
+      };
+    }
+  }
+  return out;
+}
+
+/**
+ * The model as the server stores it: a panel linking a saved analysis is a slot without queries
+ * or steps of its own (the editor and the grid fill them in from the analysis to draw it).
+ */
+export function storedModel(model: DashboardModel): DashboardModel {
+  if (!model.panels.some((panel) => panel.analysisId !== undefined)) {
+    return model;
+  }
+  return {
+    ...model,
+    panels: model.panels.map((panel) =>
+      panel.analysisId === undefined ? panel : { ...panel, targets: [], transformations: [] },
+    ),
+  };
 }
 
 /** Library panel content (no place) as a panel, for drawing and editing. */
@@ -221,6 +266,7 @@ function parseDashboard(value: unknown): Dashboard {
     ...summary,
     model: parseModel(value.model, summary.title),
     libraryPanels: parseLinkedPanels(value.libraryPanels),
+    analyses: parseLinkedAnalyses(value.analyses),
   };
 }
 
@@ -371,8 +417,8 @@ export async function createDashboard(
     defaultTimeRange?: boolean;
   },
 ): Promise<{ id: string }> {
-  const { timeRange: _timeRange, ...rest } = input.model;
-  const model = input.defaultTimeRange === true ? rest : input.model;
+  const { timeRange: _timeRange, ...rest } = storedModel(input.model);
+  const model = input.defaultTimeRange === true ? rest : storedModel(input.model);
   return parseDashboard(
     await send("POST", orgPath(orgId, "dashboards"), { folderId: input.folderId, model }),
   );
@@ -384,7 +430,11 @@ export async function saveDashboard(
   id: string,
   input: { model: DashboardModel; version: number; message: string },
 ): Promise<void> {
-  const body = input.message === "" ? { model: input.model, version: input.version } : input;
+  const model = storedModel(input.model);
+  const body =
+    input.message === ""
+      ? { model, version: input.version }
+      : { model, version: input.version, message: input.message };
   await send("PUT", orgPath(orgId, "dashboards", id), body);
 }
 
