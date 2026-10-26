@@ -347,6 +347,7 @@ export function PanelEditor({
   // Field distributions ask as the preview's queries run; kept while those stay the same, so
   // typing elsewhere leaves the preview alone.
   const distributionSource = unchanged ? "stored" : "draft";
+  const distributionRuns = preview.run + refresh;
   const previewDistribution = useMemo(
     () =>
       panelDistribution(
@@ -358,6 +359,8 @@ export function PanelEditor({
           variables,
           saved: savedVariables,
           source: distributionSource,
+          // A run in the editor, or its Refresh, asks again.
+          manual: distributionRuns,
         },
         sourceKindOf,
       ),
@@ -369,6 +372,7 @@ export function PanelEditor({
       variables,
       savedVariables,
       distributionSource,
+      distributionRuns,
       sourceKindOf,
     ],
   );

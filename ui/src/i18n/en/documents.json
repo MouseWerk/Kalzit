@@ -50,6 +50,7 @@
   "documents.distribution.scope.allOne": "Across the one document of the result",
   "documents.distribution.scope.loaded": "Across the {count} loaded documents",
   "documents.distribution.scope.loadedOne": "Across the one loaded document",
+  "documents.distribution.scope.age": "As of {minutes} min ago",
   "documents.distribution.scope.loading": "Counting all documents of the result in the database…",
   "documents.distribution.scope.failed": "Counting all documents failed: {message} The numbers are of the loaded documents.",
   "documents.card.previous": "Previous",

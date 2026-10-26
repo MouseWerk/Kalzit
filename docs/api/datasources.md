@@ -1084,7 +1084,11 @@ Answer `FieldDistribution`:
   values. `types` uses the schema's type names, most common first.
 - `distinct` is counted up to 100,000; `distinctCapped` says there are more.
 - `top` values are typed as in documents, so a value can be filtered by as it came; values that
-  no longer fit the response size limit end the list.
+  no longer fit the response size limit end the list. A text longer than 256 characters is
+  counted by its first 256 (texts that begin alike count together) and answered cut, with
+  `truncated: true`, so it cannot be filtered by; binary data, which is never shown, counts as
+  one entry. `min` and `max` of texts are compared in full and answered cut to 256 characters
+  with an ellipsis. This keeps the answer far below MongoDB's 16 MB document limit.
 - `scale` follows the most common kind of value: `number` (`double`, `int`, `long`, `decimal`;
   `NaN` and infinities left out) or `date` (bins in Unix milliseconds); without either, `min` and
   `max` are of the texts and there are no bins. `bins` are equal-width from the smallest to the
@@ -1097,15 +1101,27 @@ Answer `FieldDistribution`:
 `$limit` and `$project` first): a `$project` that gathers the values per document with `$getField`
 (MongoDB 5.0 or later), an `$unwind`, and a `$facet` that counts types, top and distinct values
 and the ranges in one pass; the histogram is a second aggregation over the same query with a
-`$group` by bin, since equal-width bins need the range first. The appended stages pass the same
-read-only check as a query's (`mongodb.stage_not_allowed` and the others).
+`$group` by bin, since equal-width bins need the range first. As two reads of the query, the bins
+may differ slightly from the counts and the range when the data changes in between (a value
+outside the first range is not binned). Both aggregations set `allowDiskUse`, so grouping a path
+with many distinct values spills to disk instead of failing at the 100 MB a stage may hold in
+memory. The appended stages pass the same read-only check as a query's
+(`mongodb.stage_not_allowed` and the others).
+
+**In the UI** an answer is kept per question (query, variables, field, result set and time
+window as asked, a relative window by its length): an automatic refresh or loading more
+documents reuses it, a refresh asks the database again once it is five minutes old (the panel
+shows the age, "As of 3 min ago"), and the Refresh button or running the query again asks at once.
+A request is never sent twice at once, and a change of field cancels the one on its way.
 
 ### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/distribution`
 
 The same for a stored target of a panel (`refId`), for whoever may read the dashboard, with the
-rules of the panel route below for variables and dashboards the caller cannot read. Body
+rules of the panel route below for variables and dashboards the caller cannot read. A panel that
+links a library panel or a saved analysis answers for the linked queries. Body
 `PanelDistributionRequest`: `refId`, `timeRange`, optional `intervalMs`, `variables`, `path`,
-`top`, `bins`. An unknown panel or `refId` is `404 not_found`.
+`top`, `bins`. An unknown panel or `refId`, and a hidden target that no analysis step reads (the
+panel route does not run it either), is `404 not_found`.
 
 ## A dashboard's stored queries
 

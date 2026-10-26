@@ -1416,6 +1416,78 @@ async fn distributions_need_the_rights_of_their_query() {
     t.finish().await;
 }
 
+/// The panel distribution route reads what the panel shows: a linked library panel's or saved
+/// analysis's queries, and not hidden targets (unless a step reads them), as the panel route.
+#[tokio::test]
+async fn distributions_of_linked_panels_use_the_linked_queries() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let ds = t.create_sqlite("Umsätze", &file).await;
+    let sql = |s: &str| json!({ "sql": s });
+    let library = t
+        .post(
+            "/library-panels",
+            json!({ "name": "Länder", "model": {
+                "schemaVersion": 2, "type": "table", "title": "Länder",
+                "targets": [
+                    { "refId": "L", "datasourceId": ds, "query": sql("SELECT land FROM verkauf") },
+                    { "refId": "H", "datasourceId": ds, "query": sql("SELECT id FROM verkauf"), "hide": true }
+                ]
+            } }),
+        )
+        .await;
+    assert_eq!(library.status, StatusCode::CREATED, "{}", library.text);
+    let analysis = t
+        .post(
+            "/analyses",
+            json!({ "model": {
+                "schemaVersion": 1, "title": "Umsatz", "timeRange": { "from": "now-7d", "to": "now" },
+                "targets": [{ "refId": "Q", "datasourceId": ds, "query": sql("SELECT land FROM verkauf") }],
+                "steps": [], "visualization": { "type": "table", "options": {} }
+            } }),
+        )
+        .await;
+    assert_eq!(analysis.status, StatusCode::CREATED, "{}", analysis.text);
+    let grid = json!({ "x": 0, "y": 0, "w": 12, "h": 8 });
+    let model = json!({
+        "schemaVersion": 2, "title": "Verknüpft", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "lib", "type": "table", "grid": grid, "libraryPanelId": library.body["id"] },
+            { "id": "ana", "type": "table", "grid": grid, "analysisId": analysis.body["id"] },
+            { "id": "own", "type": "table", "title": "Eigen", "grid": grid,
+              "targets": [
+                  { "refId": "V", "datasourceId": ds, "query": sql("SELECT id FROM verkauf"), "hide": true },
+                  { "refId": "R", "datasourceId": ds, "query": sql("SELECT id FROM verkauf"), "hide": true }
+              ],
+              "transformations": [{ "id": "s1", "type": "reduce", "frame": "R", "fields": ["id"], "stats": ["sum"] }],
+              "options": {}, "fieldConfig": {} }
+        ]
+    });
+    let created = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+    let dashboard = created.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    // Found (a SQL source then answers that it computes none) or not found.
+    for (panel, ref_id, found) in [
+        ("lib", "L", true),
+        ("lib", "H", false),
+        ("ana", "Q", true),
+        ("ana", "A", false),
+        ("own", "V", false),
+        ("own", "R", true),
+    ] {
+        let path = t.path(&format!("/dashboards/{dashboard}/panels/{panel}/distribution"));
+        let body = json!({ "refId": ref_id, "timeRange": range(), "path": ["land"] });
+        let r = t.send(Method::POST, &path, Some(body), Some(&viewer)).await;
+        if found {
+            assert_eq!(r.body["error"]["reason"], "distribution.unsupported", "{panel} {ref_id}: {}", r.text);
+        } else {
+            assert_eq!(r.status, StatusCode::NOT_FOUND, "{panel} {ref_id}: {}", r.text);
+        }
+    }
+    t.finish().await;
+}
+
 /// A dashboard stored before a panel option rule existed keeps working: its queries run, it saves
 /// while that panel stays as it is, and older versions restore. Changing the panel means fixing it.
 #[tokio::test]

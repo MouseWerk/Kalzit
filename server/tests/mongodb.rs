@@ -489,6 +489,26 @@ async fn mongodb_distributes_fields_over_the_whole_result() {
     assert_eq!(d["max"], json!({ "$type": "date", "value": "1750000003000" }));
     assert_eq!(d["bins"][0]["from"], json!(1_750_000_001_000.0_f64));
 
+    // Three texts of 6 MB each: in full they would not fit one 16 MB answer; cut to their
+    // beginning they do, and say so.
+    let big = |end: char| format!("{}{end}", "x".repeat(6 * 1024 * 1024));
+    f.admin
+        .database(&f.db)
+        .collection::<Document>("lang")
+        .insert_many([doc! { "t": big('a') }, doc! { "t": big('b') }, doc! { "t": big('c') }, doc! { "t": "kurz" }])
+        .await
+        .unwrap();
+    let d = distribution(json!({ "collection": "lang", "pipeline": "[]" }), json!(["t"])).await;
+    assert_eq!((d["values"].as_u64(), d["distinct"].as_u64()), (Some(4), Some(4)), "{}", &d.to_string()[..300]);
+    let top = d["top"].as_array().unwrap();
+    // The long ones share their beginning, so they count as one cut entry.
+    assert_eq!(top[0]["count"], 3);
+    assert_eq!(top[0]["truncated"], true);
+    assert_eq!(top[0]["value"].as_str().map(|s| s.chars().count()), Some(256));
+    assert_eq!(top[1], json!({ "value": "kurz", "count": 1 }));
+    assert_eq!(d["min"], json!("kurz"));
+    assert_eq!(d["max"].as_str().map(|s| s.chars().count()), Some(257), "256 characters and an ellipsis");
+
     f.cleanup().await;
     t.finish().await;
 }

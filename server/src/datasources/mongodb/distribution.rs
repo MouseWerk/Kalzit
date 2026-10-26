@@ -23,6 +23,8 @@ use crate::shapes::{DistributionBin, DistributionScale, FieldDistribution, TypeC
 /// The `$type` names of numbers.
 const NUMBERS: [&str; 4] = ["double", "int", "long", "decimal"];
 const CONTAINERS: [&str; 2] = ["object", "array"];
+/// Characters of a text that top values and the text range answer; longer ones are cut there.
+pub const TEXT_CUT: i32 = 256;
 
 /// An expression for the values at `path` in the current document, as an array: the document
 /// itself, then per key the field of every object so far that has it, per `[]` the elements of
@@ -111,12 +113,33 @@ pub fn summary_stages(spec: &DistributionSpec) -> Vec<Document> {
             doc! { "$sort": { "n": -1, "_id": 1 } },
         ]),
     );
+    // Values are grouped by their type and a bounded form, so a few huge texts or binaries cannot
+    // push the answer towards MongoDB's 16 MB document limit: a text by its first `TEXT_CUT`
+    // characters (`cut` marks that it went on), binary data (never shown) as one entry.
+    let is_text = doc! { "$eq": [{ "$type": "$a" }, "string"] };
     facets.insert(
         "top",
         stages(vec![
             leaf(),
-            doc! { "$group": { "_id": "$a", "n": { "$sum": 1 } } },
-            doc! { "$sort": { "n": -1, "_id": 1 } },
+            doc! { "$group": {
+                "_id": {
+                    "t": { "$type": "$a" },
+                    "v": { "$switch": {
+                        "branches": [
+                            { "case": is_text.clone(), "then": { "$substrCP": ["$a", 0, TEXT_CUT] } },
+                            { "case": { "$eq": [{ "$type": "$a" }, "binData"] }, "then": null },
+                        ],
+                        "default": "$a",
+                    } },
+                },
+                "n": { "$sum": 1 },
+                "cut": { "$max": { "$cond": [
+                    is_text.clone(),
+                    { "$gt": [{ "$strLenCP": "$a" }, TEXT_CUT] },
+                    false,
+                ] } },
+            } },
+            doc! { "$sort": { "n": -1, "_id.v": 1, "_id.t": 1 } },
             doc! { "$limit": spec.top as i64 },
         ]),
     );
@@ -136,6 +159,13 @@ pub fn summary_stages(spec: &DistributionSpec) -> Vec<Document> {
         stages(vec![
             a_value(type_in(&["string"])),
             doc! { "$group": { "_id": null, "min": { "$min": "$a" }, "max": { "$max": "$a" } } },
+            // Compared in full, answered by their beginning.
+            doc! { "$project": {
+                "min": { "$substrCP": ["$min", 0, TEXT_CUT] },
+                "max": { "$substrCP": ["$max", 0, TEXT_CUT] },
+                "minCut": { "$gt": [{ "$strLenCP": "$min" }, TEXT_CUT] },
+                "maxCut": { "$gt": [{ "$strLenCP": "$max" }, TEXT_CUT] },
+            } },
         ]),
     );
     vec![
@@ -233,8 +263,15 @@ pub fn read_summary(answer: &Document, budget: &ResponseBudget) -> (FieldDistrib
         budget.take(value.to_string().len() + 16).then_some(value)
     };
     for row in rows(answer, "top") {
-        let Some(value) = row.get("_id").and_then(&mut typed) else { break };
-        out.top.push(ValueCount { value, count: count(row, "n") });
+        let key = row.get_document("_id").ok();
+        let value = match key.and_then(|k| k.get_str("t").ok()) {
+            // Binary data is never shown: one hidden entry for all of it.
+            Some("binData") => Some(serde_json::json!({ "$type": "binary", "value": null })),
+            _ => key.and_then(|k| k.get("v")).and_then(&mut typed),
+        };
+        let Some(value) = value else { break };
+        let truncated = row.get_bool("cut").unwrap_or(false);
+        out.top.push(ValueCount { value, count: count(row, "n"), truncated });
     }
     // The scale follows the most common kind of value, so a few stray texts in a number field
     // still give the numbers' range (as the UI does for loaded documents).
@@ -251,8 +288,15 @@ pub fn read_summary(answer: &Document, budget: &ResponseBudget) -> (FieldDistrib
     };
     out.scale = scale;
     if let Some(b) = bounds {
-        out.min = b.get("min").and_then(&mut typed);
-        out.max = b.get("max").and_then(&mut typed);
+        // A text cut to its beginning says so with an ellipsis (min and max are not filtered by).
+        let mut end = |value: &str, cut: &str| {
+            b.get(value).and_then(&mut typed).map(|v| match (v, b.get_bool(cut).unwrap_or(false)) {
+                (Value::String(s), true) => Value::String(format!("{s}…")),
+                (v, _) => v,
+            })
+        };
+        out.min = end("min", "minCut");
+        out.max = end("max", "maxCut");
     }
     let range = match (scale, bounds) {
         (Some(scale), Some(b)) => match (number(b, "lo"), number(b, "hi")) {
@@ -356,7 +400,12 @@ mod tests {
         let answer = doc! {
             "docs": [{ "_id": null, "total": 5_i64, "present": 4 }],
             "types": [{ "_id": "int", "n": 3 }, { "_id": "null", "n": 1 }, { "_id": "object", "n": 2 }],
-            "top": [{ "_id": 2_i64, "n": 2 }, { "_id": null, "n": 1 }],
+            "top": [
+                { "_id": { "t": "long", "v": 2_i64 }, "n": 2, "cut": false },
+                { "_id": { "t": "null", "v": null }, "n": 1, "cut": false },
+                { "_id": { "t": "string", "v": "Anfang" }, "n": 1, "cut": true },
+                { "_id": { "t": "binData", "v": null }, "n": 1, "cut": false },
+            ],
             "distinct": [{ "n": 3 }],
             "numbers": [{ "_id": null, "n": 3, "min": 1, "max": 9_007_199_254_740_993_i64, "lo": 1.0, "hi": 9.0 }],
             "dates": [],
@@ -369,6 +418,9 @@ mod tests {
         assert_eq!(d.types.len(), 3);
         assert_eq!(d.top[0].value, serde_json::json!({ "$type": "int64", "value": "2" }));
         assert_eq!(d.top[1].value, Value::Null);
+        assert_eq!((&d.top[2].value, d.top[2].truncated), (&serde_json::json!("Anfang"), true));
+        assert_eq!(d.top[3].value, serde_json::json!({ "$type": "binary", "value": null }));
+        assert!(!d.top[0].truncated);
         assert_eq!(d.scale, Some(DistributionScale::Number));
         assert_eq!(d.min, Some(serde_json::json!(1)));
         assert_eq!(d.max, Some(serde_json::json!({ "$type": "int64", "value": "9007199254740993" })));
@@ -387,10 +439,15 @@ mod tests {
         assert_eq!((d.total, d.values, d.scale, range), (0, 0, None, None));
 
         // Texts only: their range, no histogram.
-        let texts =
-            doc! { "texts": [{ "_id": null, "min": "Apfel", "max": "Zitrone" }], "distinct": [{ "n": 100_001 }] };
+        let texts = doc! {
+            "texts": [{ "min": "Apfel", "max": "Zitrone", "minCut": false, "maxCut": true }],
+            "distinct": [{ "n": 100_001 }],
+        };
         let (d, range) = read_summary(&texts, &budget);
-        assert_eq!((d.min, d.max, range), (Some(serde_json::json!("Apfel")), Some(serde_json::json!("Zitrone")), None));
+        assert_eq!(
+            (d.min, d.max, range),
+            (Some(serde_json::json!("Apfel")), Some(serde_json::json!("Zitrone…")), None)
+        );
         assert_eq!((d.distinct, d.distinct_capped), (DISTINCT_CAP, true));
     }
 }

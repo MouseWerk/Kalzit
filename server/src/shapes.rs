@@ -555,6 +555,11 @@ pub struct ValueCount {
     #[cfg_attr(test, ts(type = "unknown"))]
     pub value: Value,
     pub count: u64,
+    /// A text longer than `TEXT_CUT` characters, counted by its beginning: `value` is that
+    /// beginning, so it cannot be filtered by.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -1019,7 +1019,9 @@ impl DataSourcePlugin for MongoDb {
                 shared.guard()?;
                 let mark = shared.relay.mark();
                 let fail = |e: mongodb::error::Error| shared.fail(&e, mark, timeout);
-                let cursor = coll.aggregate(stages).max_time(left).await.map_err(fail)?;
+                // Grouping a path with many distinct values may need more than the 100 MB a stage
+                // holds in memory; the server spills to disk then instead of failing.
+                let cursor = coll.aggregate(stages).max_time(left).allow_disk_use(true).await.map_err(fail)?;
                 let rows: Vec<Document> = cursor.try_collect().await.map_err(fail)?;
                 Ok::<_, SourceError>(rows)
             }

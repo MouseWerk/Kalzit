@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DocumentSet, FieldDistribution, FieldSchema } from "../api/generated/shapes";
 import { PanelBody } from "../features/dashboards/PanelCard";
 import { fakeOrders } from "../features/datasources/test/fakeMongo";
 import { getPanel } from "../panels/registry";
 import type { AnyPanelPlugin, DistributionRunner, DocumentFilter } from "../panels/types";
+import { forgetDistributions } from "./distributionCache";
 import { sampleSchema } from "./schema";
 
 const RANGE = { from: 0, to: 100_000 };
@@ -263,7 +264,11 @@ describe("field distribution over the whole result", () => {
     ...over,
   });
 
-  function renderWhole(run: DistributionRunner, revision: string | number = 1) {
+  beforeEach(() => forgetDistributions());
+  afterEach(() => vi.useRealTimers());
+
+  /** A panel over a distributable set; `rerun` draws it again for a new result, `manual` too. */
+  function renderWhole(run: DistributionRunner, identity = "q1") {
     const plugin = getPanel("distribution") as AnyPanelPlugin;
     const { Panel } = plugin;
     const set = { ...orders(), distributable: true };
@@ -273,12 +278,14 @@ describe("field distribution over the whole result", () => {
       options: plugin.options({ path: "status" }),
       timeRange: RANGE,
       title: "Orders",
-      distribution: run,
     };
-    const view = render(<Panel {...props} revision={revision} />);
+    const draw = (revision: number, manual: number) => (
+      <Panel {...props} revision={revision} distribution={{ identity, manual, run }} />
+    );
+    const view = render(draw(1, 0));
     return {
       ...view,
-      rerun: (next: string | number) => view.rerender(<Panel {...props} revision={next} />),
+      rerun: (revision: number, manual = 0) => view.rerender(draw(revision, manual)),
     };
   }
 
@@ -333,13 +340,48 @@ describe("field distribution over the whole result", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("asks again for a new result", async () => {
+  it("keeps the count for refreshes and more pages, and asks again when it is old or asked to", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const run = vi.fn(async () => answer());
-    const { rerun } = renderWhole(run, 1);
+    const { rerun } = renderWhole(run);
     await screen.findByText("Across all 1,200 documents of the result");
+    expect(run).toHaveBeenCalledTimes(1);
+    // An automatic refresh or another page of the same question: the kept count.
+    vi.setSystemTime(Date.now() + 3 * 60_000);
     rerun(2);
-    await screen.findByText("Across all 1,200 documents of the result");
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("As of 3 min ago")).toBeTruthy();
+    // Five minutes on, a refresh asks again; the old numbers stay until the new ones are there.
+    vi.setSystemTime(Date.now() + 3 * 60_000);
+    rerun(3);
+    expect(screen.getByText("Across all 1,200 documents of the result")).toBeTruthy();
+    await act(async () => {});
     expect(run).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/^As of/)).toBeNull();
+    // An explicit refresh asks at once.
+    rerun(3, 1);
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks once while a count is on its way, whatever arrives meanwhile", async () => {
+    let finish: (d: FieldDistribution) => void = () => {};
+    const run = vi.fn(
+      () =>
+        new Promise<FieldDistribution>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { rerun } = renderWhole(run);
+    rerun(2);
+    rerun(3);
+    // Another panel with the same question waits for the same request.
+    renderWhole(run);
+    await act(async () => {});
+    expect(run).toHaveBeenCalledTimes(1);
+    await act(async () => finish(answer()));
+    expect(screen.getAllByText("Across all 1,200 documents of the result")).toHaveLength(2);
   });
 });
 

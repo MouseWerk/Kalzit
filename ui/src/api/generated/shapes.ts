@@ -305,6 +305,11 @@ export type TypeCount = {
  */
 name: string, count: number, };
 
-export type ValueCount = { value: unknown, count: number, };
+export type ValueCount = { value: unknown, count: number, 
+/**
+ * A text longer than `TEXT_CUT` characters, counted by its beginning: `value` is that
+ * beginning, so it cannot be filtered by.
+ */
+truncated?: boolean, };
 
 export type DistributionBin = { from: number, to: number, count: number, };

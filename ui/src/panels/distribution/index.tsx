@@ -1,15 +1,11 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { isRecord } from "../../api/client";
 import type { FieldSchema } from "../../api/generated/shapes";
-import {
-  type Bin,
-  type Distribution,
-  distribution,
-  fromServer,
-} from "../../documents/distribution";
+import { type Bin, distribution, fromServer, type TopValue } from "../../documents/distribution";
+import { useWholeDistribution } from "../../documents/distributionCache";
 import { filterable, filterablePath } from "../../documents/filter";
 import { typeLabel, valueSummary } from "../../documents/labels";
-import { type PathStep, stepsOf } from "../../documents/paths";
+import { stepsOf } from "../../documents/paths";
 import { MAX_PATH_CHARS } from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
 import { SetPicker } from "../../documents/shared";
@@ -19,7 +15,7 @@ import { useI18n } from "../../i18n/i18n";
 import { dateTimeFormat } from "../frame";
 import { EmptyPanel } from "../shared";
 import { useStyleVars } from "../styleVars";
-import type { DistributionRunner, PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
 import { DistributionPreview } from "../picker/previews";
 
@@ -95,56 +91,6 @@ function Histogram({
   );
 }
 
-/** The distribution over the whole result, as the server computes it. */
-type Whole =
-  | { status: "loading" }
-  | { status: "done"; result: Distribution }
-  | { status: "failed"; message: string };
-
-/**
- * Asks the server for the distribution of `steps` in set `index` whenever the field, the set or
- * the result changes; the request before is cancelled then (and when the panel goes away).
- * `null` when the server is not asked: the source cannot, or the page offers no way to ask.
- */
-function useWholeDistribution(
-  run: DistributionRunner | undefined,
-  index: number,
-  steps: PathStep[] | null,
-  revision: string | number | undefined,
-): { whole: Whole | null; retry: () => void } {
-  const { t } = useI18n();
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ key: string; whole: Whole } | null>(null);
-  const key =
-    run === undefined || steps === null
-      ? null
-      : JSON.stringify([index, steps, revision ?? null, attempt]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the key holds everything the request depends on; the runner is a new function on every render
-  useEffect(() => {
-    if (key === null || run === undefined || steps === null) {
-      return;
-    }
-    const controller = new AbortController();
-    setState({ key, whole: { status: "loading" } });
-    run(index, { path: steps }, controller.signal).then(
-      (answer) => {
-        if (!controller.signal.aborted) {
-          setState({ key, whole: { status: "done", result: fromServer(answer) } });
-        }
-      },
-      (problem: unknown) => {
-        if (!controller.signal.aborted) {
-          setState({ key, whole: { status: "failed", message: errorMessage(t, problem) } });
-        }
-      },
-    );
-    return () => controller.abort();
-  }, [key]);
-  const whole: Whole | null =
-    key === null ? null : state?.key === key ? state.whole : { status: "loading" };
-  return { whole, retry: () => setAttempt((n) => n + 1) };
-}
-
 /**
  * How the values of one field path are spread: counts, minimum and maximum, a histogram for
  * numbers and dates, and the most common values. Inside arrays every element counts. Sources
@@ -156,7 +102,7 @@ function DistributionPanel({
   options,
   title,
   onFilter,
-  distribution: runner,
+  distribution: source,
   revision,
 }: PanelProps<DistributionOptions>) {
   const { t, language, timeZone } = useI18n();
@@ -175,7 +121,7 @@ function DistributionPanel({
         : defaultPath(schema);
   const steps = set === undefined || path === "" ? null : stepsOf(set.documents, path);
   const { whole, retry } = useWholeDistribution(
-    set?.distributable === true ? runner : undefined,
+    set?.distributable === true ? source : undefined,
     position,
     steps,
     revision,
@@ -186,8 +132,11 @@ function DistributionPanel({
   if (path === "" || steps === null) {
     return <EmptyPanel reason="noValues" />;
   }
-  const result = whole?.status === "done" ? whole.result : distribution(set.documents, steps);
+  const result =
+    whole?.status === "done" ? fromServer(whole.answer) : distribution(set.documents, steps);
   const overAll = whole?.status === "done";
+  // How old the numbers are, once that is worth saying.
+  const minutes = whole?.status === "done" ? Math.floor((Date.now() - whole.at) / 60_000) : 0;
   const number = new Intl.NumberFormat(language, { maximumFractionDigits: 4 });
   const scopeCount = overAll ? result.total : set.documents.length;
   const count = number.format(scopeCount);
@@ -211,6 +160,9 @@ function DistributionPanel({
   const filterPathOf = keys.join(".");
   const pathFilterable = filterablePath(keys);
   const share = (n: number) => (result.values === 0 ? 0 : n / result.values);
+  // A long text counted by its beginning shows that it goes on.
+  const label = (entry: TopValue) =>
+    `${valueSummary(t, entry.value, language)}${entry.truncated === true ? "…" : ""}`;
 
   return (
     <div className="doc-panel">
@@ -232,16 +184,29 @@ function DistributionPanel({
           </select>
         </div>
       </div>
-      <section className="dist" aria-label={title} aria-busy={whole?.status === "loading"}>
+      <section
+        className="dist"
+        aria-label={title}
+        aria-busy={whole?.status === "loading" || (whole?.status === "done" && whole.refreshing)}
+      >
         <p className="dist__scope" aria-live="polite">
           <span>{scope}</span>
-          {whole?.status === "loading" ? (
+          {minutes >= 1 ? (
+            <span>
+              {t("documents.distribution.scope.age", { minutes: number.format(minutes) })}
+            </span>
+          ) : null}
+          {whole?.status === "loading" || (whole?.status === "done" && whole.refreshing) ? (
             <span>{t("documents.distribution.scope.loading")}</span>
           ) : null}
         </p>
         {whole?.status === "failed" ? (
           <p className="dist__scope dist__scope--failed" role="alert">
-            <span>{t("documents.distribution.scope.failed", { message: whole.message })}</span>
+            <span>
+              {t("documents.distribution.scope.failed", {
+                message: errorMessage(t, whole.error),
+              })}
+            </span>
             <button type="button" className="button button--ghost button--small" onClick={retry}>
               {t("common.retry")}
             </button>
@@ -306,15 +271,18 @@ function DistributionPanel({
               key={`${typeOf(entry.value)}:${JSON.stringify(entry.value)}`}
               className="dist__entry"
             >
-              <span className="dist__value truncate" title={valueSummary(t, entry.value, language)}>
-                {valueSummary(t, entry.value, language)}
+              <span className="dist__value truncate" title={label(entry)}>
+                {label(entry)}
               </span>
               <span className="doc-tree__type">{typeLabel(t, typeOf(entry.value))}</span>
               <Share share={share(entry.count)} />
               <span className="dist__count">
                 {number.format(entry.count)} ({percent.format(share(entry.count))})
               </span>
-              {onFilter !== undefined && pathFilterable && filterable(entry.value) ? (
+              {onFilter !== undefined &&
+              pathFilterable &&
+              entry.truncated !== true &&
+              filterable(entry.value) ? (
                 <button
                   type="button"
                   className="button button--ghost button--small"

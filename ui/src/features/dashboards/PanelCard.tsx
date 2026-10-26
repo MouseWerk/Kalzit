@@ -466,7 +466,10 @@ export function PanelCard({
               revision={results.dataUpdatedAt}
               variables={variableTexts(query.variables)}
               kindOf={kindOf}
-              distribution={panelDistribution({ ...query, panel }, kindOf)}
+              distribution={panelDistribution(
+                { ...query, panel, manual: query.manual ?? query.run },
+                kindOf,
+              )}
             />
           </PanelAnnotationsContext.Provider>
         </div>
@@ -782,11 +785,19 @@ export function PanelBody({
               distribution={
                 distribution === undefined
                   ? undefined
-                  : (index, ask, signal) => {
-                      const refId = documents[index]?.refId;
-                      return refId === undefined
-                        ? Promise.reject(new Error(`no document set ${index}`))
-                        : distribution(refId, ask, signal);
+                  : {
+                      // The set's target belongs to the question: sets keep their order.
+                      identity: JSON.stringify([
+                        distribution.identity,
+                        documents.map((d) => d.refId),
+                      ]),
+                      manual: distribution.manual,
+                      run: (index, ask, signal) => {
+                        const refId = documents[index]?.refId;
+                        return refId === undefined
+                          ? Promise.reject(new Error(`no document set ${index}`))
+                          : distribution.run(refId, ask, signal);
+                      },
                     }
               }
               options={options}

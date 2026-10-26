@@ -572,7 +572,7 @@ async fn distributions_append_reading_stages_to_the_query() {
     fake.behaviour.lock().unwrap().documents = vec![doc! {
         "docs": [{ "_id": null, "total": 5, "present": 4 }],
         "types": [{ "_id": "int", "n": 4 }, { "_id": "null", "n": 1 }],
-        "top": [{ "_id": 3, "n": 2 }],
+        "top": [{ "_id": { "t": "int", "v": 3 }, "n": 2, "cut": false }],
         "distinct": [{ "n": 3 }],
         "numbers": [{ "_id": null, "n": 4, "min": 1, "max": 9, "lo": 1.0, "hi": 9.0 }],
         "dates": [],
@@ -605,6 +605,7 @@ async fn distributions_append_reading_stages_to_the_query() {
     assert_eq!(stage_names(&histogram).last().map(String::as_str), Some("$group"), "{histogram}");
     for c in [&summary, &histogram] {
         assert!(c.get_i64("maxTimeMS").is_ok() || c.get_i32("maxTimeMS").is_ok(), "{c}");
+        assert_eq!(c.get_bool("allowDiskUse").ok(), Some(true), "{c}");
     }
     for name in fake.command_names() {
         assert!(!WRITE_COMMANDS.contains(&name.as_str()), "{name}");

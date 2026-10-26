@@ -86,7 +86,7 @@ export interface PanelProps<Options> {
    * source (docs/api/datasources.md, "Field distribution"). Panels use it for sets marked
    * `distributable`; without it they count the loaded documents.
    */
-  distribution?: DistributionRunner | undefined;
+  distribution?: DistributionSource<number> | undefined;
   /**
    * Changes when another result arrives (a run, a page loaded after it); panels that keep a place
    * in the result, such as a drilldown, start over then.
@@ -108,11 +108,25 @@ export interface DistributionAsk {
   bins?: number;
 }
 
-export type DistributionRunner = (
-  index: number,
+export type DistributionRunner<Of = number> = (
+  of: Of,
   ask: DistributionAsk,
   signal: AbortSignal,
 ) => Promise<FieldDistribution>;
+
+/**
+ * Where a panel asks for field distributions, and what the answer is of. Counting a whole result
+ * in the database is expensive, so an answer is kept for its `identity` (the query, variables and
+ * time window as asked, not the moment a relative range resolved to): refreshing and loading
+ * more pages reuse it, a refresh asks again once it is five minutes old, and `manual` (bumped by
+ * an explicit refresh or run) asks again at once.
+ */
+export interface DistributionSource<Of = number> {
+  identity: string;
+  manual: number;
+  /** `of`: the document set's index for a panel, the target's `refId` for the page. */
+  run: DistributionRunner<Of>;
+}
 
 export interface DocumentFilter {
   /** Index into `documents`. */

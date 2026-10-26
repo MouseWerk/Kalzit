@@ -14,6 +14,8 @@ export interface TopValue {
   /** The value as it came, for filtering by it. */
   value: unknown;
   count: number;
+  /** A long text the server counted by its beginning: shown cut, not filterable. */
+  truncated?: boolean;
 }
 
 export interface Bin {
@@ -54,7 +56,11 @@ export function fromServer(d: FieldDistribution): Distribution {
     nulls: d.nulls,
     distinct: d.distinct,
     distinctCapped: d.distinctCapped,
-    top: d.top,
+    top: d.top.map((entry) => ({
+      value: entry.value,
+      count: entry.count,
+      ...(entry.truncated === true ? { truncated: true } : {}),
+    })),
     scale: d.scale ?? null,
     ...(d.min === undefined ? {} : { min: d.min }),
     ...(d.max === undefined ? {} : { max: d.max }),
