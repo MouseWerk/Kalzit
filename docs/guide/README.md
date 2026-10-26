@@ -12,6 +12,7 @@ written as the English interface shows them, with the German label in parenthese
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables, time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options; colours, thresholds, units, value mappings, overrides |
 | [Explore](explore.md) | Free queries per source kind, the three result shapes, steps, add to dashboard |
+| [Saved analyses](saved-analyses.md) | Saving Explore queries, the list under Explore, linked dashboard panels, versions and conflicts |
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour, testing, access, trash |
@@ -20,7 +21,8 @@ written as the English interface shows them, with the German label in parenthese
 The HTTP API behind every function is described in [docs/api](../api): [access](../api/access.md),
 [data sources and queries](../api/datasources.md),
 [settings and dashboards](../api/settings-dashboards.md),
-[dashboard features](../api/dashboard-features.md), [shell](../api/shell.md) and
+[dashboard features](../api/dashboard-features.md), [saved analyses](../api/analyses.md),
+[shell](../api/shell.md) and
 [updates](../api/updates.md). Words used in the interface are explained in the
 [glossary](../glossary.md); how to install and run a server is in the
 [README](../../README.md#quick-start) and [ARCHITECTURE](../ARCHITECTURE.md).

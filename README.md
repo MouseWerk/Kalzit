@@ -383,7 +383,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 |---|---|---|
 | M0 Foundation | Server with HTTP and HTTPS, own database with migrations, first-run setup, local sign-in, design tokens, i18n, CI on Windows and Linux | Done |
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
-| M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON | Largely done; change streams and saved analyses are open |
+| M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON | Largely done; change streams are open |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels, explorer mode | Largely done |
 | M4 Plugins | External plugin processes, manifest, signatures, catalog, Rust SDK | Planned |
 | M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, Docker, InfluxDB, Loki, ClickHouse | Planned |

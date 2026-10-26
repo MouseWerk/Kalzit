@@ -121,6 +121,11 @@ the previous period, group, pivot and the documents projection. The queries stay
 panel: choose **An existing dashboard** (you may change) or **A new dashboard**, then **Add panel**.
 The dashboard's history records the save as "Panel added from Explore".
 
+## Saving
+
+**Save** (Ctrl+S) keeps the query with its steps and visualization as a saved analysis, **Open**
+(Ctrl+O) brings one back. See [Saved analyses](saved-analyses.md).
+
 ## Export
 
 **Export...** downloads the result with all active steps applied; see [Export](export.md).

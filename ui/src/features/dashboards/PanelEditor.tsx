@@ -125,6 +125,8 @@ interface PanelEditorProps {
   otherPanels?: readonly PanelModel[] | undefined;
   /** The dashboard's owner team, offered as a scope in the analysis picker. */
   dashboardTeam?: { id: string; name: string } | null | undefined;
+  /** A saved analysis was linked here; the dashboard draws the panel from it until saved. */
+  onLinkAnalysis?: ((linked: LinkedAnalysis) => void) | undefined;
 }
 
 /** The panel without the link to a saved analysis. */
@@ -169,6 +171,7 @@ export function PanelEditor({
   analyses,
   otherPanels = [],
   dashboardTeam,
+  onLinkAnalysis,
 }: PanelEditorProps) {
   const { t } = useI18n();
   const titleId = useId();
@@ -557,6 +560,14 @@ export function PanelEditor({
         ? { id: analysis.id, title: analysis.title, version: analysis.version }
         : null,
     );
+    if (mode === "linked") {
+      onLinkAnalysis?.({
+        id: analysis.id,
+        title: analysis.title,
+        version: analysis.version,
+        model,
+      });
+    }
   }
 
   const linkedId = look.analysisId;

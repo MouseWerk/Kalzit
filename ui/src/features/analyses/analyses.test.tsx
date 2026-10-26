@@ -333,7 +333,9 @@ describe("a panel from a saved analysis", () => {
     expect(blocked.id).not.toBe(analysis.id);
     // The first one that can be used is chosen and runs as viewers would see it.
     expect(
-      within(options).getByRole("option", { name: /Customers/ }).getAttribute("aria-selected"),
+      within(options)
+        .getByRole("option", { name: /Customers/ })
+        .getAttribute("aria-selected"),
     ).toBe("true");
     expect(await within(picker).findByText("Grace")).toBeTruthy();
     expect(server.areas.analyses.runs.at(-1)?.id).toBe(analysis.id);
