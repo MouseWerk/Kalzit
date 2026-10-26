@@ -791,6 +791,14 @@ through `settings::get`; new registry entries are requested from the orchestrato
   while CodeMirror's is the page's only `<style>` element. axe (`@axe-core/playwright`) allows
   no serious or critical finding on the main pages (light theme in English, dark theme in
   German), and at 360 px nothing sticks out of the viewport or of an open dialog.
+  Document and search sources run against real servers: on Linux the job starts MongoDB and
+  OpenSearch as containers (`.github/scripts/e2e-services.sh`, MongoDB seeded from
+  `ui/e2e/fixtures/mongo-orders.js` with a read-only login) and names them in
+  `KALZIT_E2E_MONGODB` (`host:port`) and `KALZIT_E2E_OPENSEARCH` (a base URL). Windows runners
+  have no Linux containers, so there `documents.spec.ts` and `opensearch.spec.ts` skip with that
+  reason and the release's Windows checklist covers them; on Linux in CI a missing service
+  fails. The HTTP JSON spec serves its fixture from a small server inside the test, on a free
+  loopback port.
   Run locally from `ui/`:
 
   ```

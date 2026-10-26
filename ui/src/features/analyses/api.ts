@@ -44,9 +44,13 @@ export interface Analysis {
   title: string;
   version: number;
   createdBy: string | null;
+  /** The creator's name; `null` when the account no longer exists. */
+  createdByName: string | null;
   createdAt: number;
   updatedAt: number;
   updatedBy: string | null;
+  /** The name of who saved last; `null` when the account no longer exists. */
+  updatedByName: string | null;
   deletedAt: number | null;
   access: AnalysisAccess;
   ownerTeam: { id: string; name: string } | null;
@@ -153,9 +157,11 @@ function parseAnalysis(value: unknown): Analysis | null {
     title: str(value.title),
     version: num(value.version),
     createdBy: nullableStr(value.createdBy),
+    createdByName: nullableStr(value.createdByName),
     createdAt: num(value.createdAt),
     updatedAt: num(value.updatedAt),
     updatedBy: nullableStr(value.updatedBy),
+    updatedByName: nullableStr(value.updatedByName),
     deletedAt: nullableNum(value.deletedAt),
     access: {
       write: access.write === true,

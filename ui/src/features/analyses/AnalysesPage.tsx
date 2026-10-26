@@ -20,7 +20,6 @@ import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useTeamContext } from "../../org/teamContext";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { relativeTime } from "../../shell/startData";
-import { listMembers } from "../admin/api";
 import { type Folder, foldersQuery } from "../dashboards/api";
 import { FolderTree } from "../dashboards/FolderTree";
 import { newPanelId, type PanelModel } from "../dashboards/model";
@@ -346,13 +345,6 @@ export function AnalysisList({
     placeholderData: keepPreviousData,
   });
   const sources = useQuery(datasourcesQuery(orgId));
-  // Names for "Created by"; the member list may be closed to the caller, then names stay out.
-  const members = useQuery({
-    queryKey: ["members", orgId, "names"],
-    queryFn: ({ signal }) => listMembers(orgId, undefined, 200, signal),
-    retry: false,
-    staleTime: 60_000,
-  });
   const refresh = () => queryClient.invalidateQueries({ queryKey: [ANALYSES_KEY, orgId] });
   const restore = useMutation({
     mutationFn: (id: string) => restoreAnalysis(orgId, id),
@@ -424,14 +416,11 @@ export function AnalysisList({
 
   const relative = new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" });
   const now = Date.now();
-  const nameOf = (id: string | null) => {
+  // The list names who created and who saved; a removed account has no name any more.
+  const nameOf = (id: string | null, name: string | null) => {
     if (id === null) return "";
     if (id === meId) return t("analyses.list.you");
-    // The list answers ids only; without the member list the name stays unknown.
-    return (
-      members.data?.items.find((member) => member.userId === id)?.name ??
-      t("analyses.list.unknownPerson")
-    );
+    return name ?? t("analyses.list.unknownPerson");
   };
 
   if (list.isPending) {
@@ -636,7 +625,7 @@ export function AnalysisList({
         <tbody {...STACK_ROLES.rowgroup}>
           {items.map((item) => {
             const datasource = sourceOf(item);
-            const updatedBy = nameOf(item.updatedBy);
+            const updatedBy = nameOf(item.updatedBy, item.updatedByName);
             return (
               <tr key={item.id} {...STACK_ROLES.row}>
                 <td {...STACK_ROLES.cell}>
@@ -686,11 +675,13 @@ export function AnalysisList({
                   )}
                 </td>
                 <td {...STACK_ROLES.cell} data-label={t("analyses.column.creator")}>
-                  {nameOf(item.createdBy)}
+                  {nameOf(item.createdBy, item.createdByName)}
                 </td>
                 <td {...STACK_ROLES.cell} data-label={t("analyses.column.uses")}>
                   {item.uses === 0 ? (
-                    <span className="data-table__muted">{t("analyses.list.unused")}</span>
+                    <span className="data-table__muted analysis-row__nowrap">
+                      {t("analyses.list.unused")}
+                    </span>
                   ) : (
                     <button
                       type="button"

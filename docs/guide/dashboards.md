@@ -186,6 +186,8 @@ automatic refresh rests while live is on. API: [live updates](../api/live.md).
 A range that ends now (like the last 6 hours) moves with every run; a fixed range stays as it is.
 Live is a choice of this view of the dashboard and is not saved with it.
 
+![A dashboard with live on: the refresh button reads Live and each panel says how it stays current](../screenshots/dashboard-live-dark.png)
+
 ## Annotations
 
 Annotations mark points or spans in time on every time chart.

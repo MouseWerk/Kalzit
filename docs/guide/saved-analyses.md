@@ -46,8 +46,11 @@ Explore and runs them. Analyses also appear in the command palette (Ctrl+K) by n
 **Saved** (Gespeichert) sits under **Explore** in the sidebar. It shows the folders and team spaces
 on the left, a search, filters for **Data source** and **Created by** (everyone or you) and the
 sort (**Last changed** or **Name A to Z**). Each row shows the name and location, the data source,
-who created it, the dashboards that use it (**Used in**) and when it was last changed. J and K move
-between rows, Enter opens.
+who created it (**Created by**, Erstellt von: **You** for your own, **Unknown** once the account
+was removed), the dashboards that use it (**Used in**) and when and by whom it was last changed.
+J and K move between rows, Enter opens.
+
+![The list of saved analyses with their data source, creator, use in dashboards and last change](../screenshots/analyses.png)
 
 **Open** and the name open the analysis in Explore when you may query its data source. Without
 that right (viewers, or a source not shared with you) they open it **to view and run**: the page
@@ -56,6 +59,8 @@ another), runs the stored queries as saved and draws the result with its steps a
 visualization; **Run again** runs it once more, **Versions and history** lists its saves. Only
 people who may query the source see **Edit in Explore**. Viewers find the list as **Analyses**
 in the sidebar, since they have no Explore.
+
+![A saved analysis opened by a viewer to view and run: description, location, time range and result](../screenshots/analysis-view.png)
 
 The row menu offers **Open in Explore** (or **View and run**), **Add to dashboard...** (as a linked panel), **Duplicate**,
 **Move...**, **Copy link**, **Versions** and **Move to trash**. An analysis that dashboards still

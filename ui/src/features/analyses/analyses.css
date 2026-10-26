@@ -196,6 +196,11 @@
     font-size: var(--font-size-xs);
   }
 
+  /* One word ("nowhere", "nirgends"): never broken inside it. */
+  .analysis-row__nowrap {
+    white-space: nowrap;
+  }
+
   .analysis-row__source {
     display: inline-flex;
     align-items: center;

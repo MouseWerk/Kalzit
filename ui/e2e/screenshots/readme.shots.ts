@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { Api, baseUrl } from "../support/api";
 import { t } from "../support/i18n";
+import { MONGO_FIXTURE } from "../support/services";
 import { addPanel, fillQuery, panelAction, startEditing } from "../support/ui";
 import { DEMO_OWNER, type Demo, GALLERY_TITLE, SCREENSHOT_NOW, seedDemo } from "./demo";
 
@@ -51,7 +52,9 @@ async function openPage(
   // pictures show them at the screenshot moment instead.
   for (const pattern of [
     /\/api\/me\/sessions(\?|$)/,
-    /\/api\/orgs\/[^/]+\/(members|dashboards|audit)(\?|$)/,
+    /\/api\/orgs\/[^/]+\/(members|dashboards|audit|analyses)(\?|$)/,
+    // One saved analysis (not its runs, versions or uses).
+    /\/api\/orgs\/[^/]+\/analyses\/[^/?]+(\?|$)/,
   ]) {
     await context.route(pattern, async (route) => {
       const response = await route.fetch();
@@ -84,10 +87,13 @@ function atScreenshotTime(value: unknown, realNow: number): unknown {
   return isTimestamp ? SCREENSHOT_NOW + Math.round((value - realNow) / DAY_MS) * DAY_MS : value;
 }
 
-async function signIn(page: Page): Promise<void> {
+async function signIn(
+  page: Page,
+  account: { email: string; password: string } = DEMO_OWNER,
+): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel(t("login.email")).fill(DEMO_OWNER.email);
-  await page.getByLabel(t("login.password"), { exact: true }).fill(DEMO_OWNER.password);
+  await page.getByLabel(t("login.email")).fill(account.email);
+  await page.getByLabel(t("login.password"), { exact: true }).fill(account.password);
   await page.getByRole("button", { name: t("login.submit") }).click();
   await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
 }
@@ -97,7 +103,9 @@ async function shoot(page: Page, name: string): Promise<void> {
   const nav = page.getByRole("navigation", { name: t("nav.label") });
   if ((await nav.count()) > 0) {
     // Explore appears once the data source list has loaded; the owner sees all five entries.
-    await expect(nav.getByRole("link", { name: t("explore.nav") })).toBeVisible();
+    // A viewer has the saved analyses there instead.
+    const entry = new RegExp(`^(${t("explore.nav")}|${t("analyses.navReaders")})$`);
+    await expect(nav.getByRole("link", { name: entry }).first()).toBeVisible();
   }
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
@@ -680,3 +688,207 @@ for (const scheme of ["light", "dark", "contrast"] as const) {
     await page.context().close();
   });
 }
+
+/** A saved analysis on the demo's sales source: a query, no steps, a visualization. */
+function analysisModel(title: string, sql: string, type: string, description?: string) {
+  return {
+    schemaVersion: 1,
+    title,
+    ...(description === undefined ? {} : { description }),
+    timeRange: { from: "now-6h", to: "now" },
+    targets: [{ refId: "A", datasourceId: demo.sourceId, query: { sql } }],
+    steps: [],
+    visualization: { type, options: {} },
+  };
+}
+
+let analyses: { west: string; regions: string } | undefined;
+
+/** A few saved analyses by the owner and by Lea, seeded once for the pictures that show them. */
+async function seedAnalyses(): Promise<{ west: string; regions: string }> {
+  if (analyses !== undefined) return analyses;
+  // The account picture signs out every other session, the seeding one included.
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  const lea = await Api.signIn(demo.lea.email, demo.lea.password);
+  try {
+    const west = await owner.createAnalysis(
+      analysisModel(
+        "Sales West, last six hours",
+        "SELECT ts AS time, amount FROM sales WHERE region = 'West' AND $__timeFilter(ts) ORDER BY ts",
+        "timeseries",
+        "For the weekly review of the western region.",
+      ),
+    );
+    const regions = await owner.createAnalysis(
+      analysisModel(
+        "Total per region",
+        "SELECT region, ROUND(SUM(amount)) AS total FROM sales WHERE $__timeFilter(ts) GROUP BY region ORDER BY region",
+        "table",
+        "Sales summed per region over the chosen range.",
+      ),
+    );
+    await lea.createAnalysis(
+      analysisModel(
+        "Average order per region",
+        "SELECT region, ROUND(AVG(amount), 1) AS average FROM sales WHERE $__timeFilter(ts) GROUP BY region ORDER BY region",
+        "bar",
+      ),
+    );
+    await lea.createAnalysis(
+      analysisModel(
+        "Highest readings North",
+        "SELECT ts AS time, amount FROM sales WHERE region = 'Nord' AND $__timeFilter(ts) ORDER BY amount DESC LIMIT 20",
+        "table",
+      ),
+    );
+    analyses = { west, regions };
+    return analyses;
+  } finally {
+    await owner.dispose();
+    await lea.dispose();
+  }
+}
+
+test("explore, saved analysis", async ({ browser }) => {
+  const { west } = await seedAnalyses();
+  const page = await openPage(browser);
+  await signIn(page);
+  await page.goto(`/explore?analysis=${west}`);
+  await expect(page.getByRole("heading", { name: "Sales West, last six hours" })).toBeVisible();
+  const result = page.getByRole("region", { name: t("explore.result") });
+  await expect(result.locator(".uplot")).toBeVisible();
+  await expect(result).toHaveAttribute("aria-busy", "false");
+  await shoot(page, "explore-saved");
+  await page.context().close();
+});
+
+test("saved analyses", async ({ browser }) => {
+  await seedAnalyses();
+  const page = await openPage(browser);
+  await signIn(page);
+  await page.goto("/explore/saved");
+  await expect(page.getByRole("heading", { name: t("analyses.list.title") })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Average order per region", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Lea Hoffmann").first()).toBeVisible();
+  await shoot(page, "analyses");
+  await page.context().close();
+});
+
+test("saved analysis, read-only for a viewer", async ({ browser }) => {
+  const { regions } = await seedAnalyses();
+  const page = await openPage(browser);
+  await signIn(page, demo.sofia);
+  await page.goto(`/explore/saved/${regions}`);
+  await expect(page.getByRole("heading", { name: "Total per region" })).toBeVisible();
+  await expect(page.getByText(t("analyses.view.readOnly"))).toBeVisible();
+  const result = page.getByRole("region", { name: t("explore.result") });
+  await expect(result.getByRole("table")).toBeVisible();
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await shoot(page, "analysis-view");
+  await page.context().close();
+});
+
+test("dashboard, live, dark", async ({ browser }) => {
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  const sql =
+    "SELECT ts AS time, amount FROM sales WHERE region = 'Nord' AND $__timeFilter(ts) ORDER BY ts";
+  const target = [{ refId: "A", datasourceId: demo.sourceId, query: { sql } }];
+  const dashboardId = await owner.createDashboard({
+    schemaVersion: 1,
+    title: "Sales, live",
+    // Live runs on the server, whose clock is not the pictures' fixed one: a fixed range around
+    // the screenshot moment, where the fixture data lies.
+    timeRange: {
+      from: new Date(SCREENSHOT_NOW - 6 * 3_600_000).toISOString(),
+      to: new Date(SCREENSHOT_NOW).toISOString(),
+    },
+    // The interval live runs the queries at: SQLite cannot report changes.
+    refreshSeconds: 30,
+    variables: [],
+    panels: [
+      {
+        id: "trend",
+        type: "timeseries",
+        title: "Sales North",
+        grid: { x: 0, y: 0, w: 16, h: 10 },
+        targets: target,
+        options: { unit: "EUR" },
+      },
+      {
+        id: "latest",
+        type: "stat",
+        title: "Latest value",
+        grid: { x: 16, y: 0, w: 8, h: 10 },
+        targets: target,
+        options: { unit: "EUR", reducer: "last" },
+      },
+    ],
+  });
+  await owner.dispose();
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${dashboardId}`);
+  await expect(page.getByRole("heading", { name: "Sales, live" })).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: t("toolbar.refresh.menuRunning", {
+        interval: t("toolbar.refresh.everySeconds", { n: 30 }),
+      }),
+      exact: true,
+    })
+    .click();
+  await page.getByRole("menuitemradio", { name: t("live.menu.live"), exact: true }).click();
+  await expect(page.getByRole("button", { name: t("live.menu.label") })).toBeVisible();
+  await expect(
+    page.getByRole("article", { name: "Sales North", exact: true }).locator(".panel-card__live"),
+  ).toContainText(t("live.every", { interval: "30s" }));
+  await expect(page.locator(".uplot")).toHaveCount(1);
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await shoot(page, "dashboard-live-dark");
+  await page.context().close();
+});
+
+/**
+ * The field distribution of a MongoDB result in Explore, counted in the database. Needs the
+ * MongoDB of the document spec (KALZIT_E2E_MONGODB, seeded with e2e/fixtures/mongo-orders.js);
+ * without it this picture is skipped and the one in the repository stays.
+ */
+test("explore, field distribution, dark", async ({ browser }) => {
+  const hosts = process.env.KALZIT_E2E_MONGODB ?? "";
+  test.skip(hosts === "", "KALZIT_E2E_MONGODB is not set; the picture needs the MongoDB fixture");
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  const name = "Shop orders (MongoDB)";
+  await owner.createSource(
+    name,
+    "mongodb",
+    { hosts, database: MONGO_FIXTURE.database, user: MONGO_FIXTURE.user },
+    { password: MONGO_FIXTURE.password },
+  );
+  await owner.dispose();
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto("/explore");
+  await page.getByLabel(t("explore.datasource")).selectOption({ label: name });
+  await page
+    .getByLabel(t("documents.pipeline.collection"), { exact: true })
+    .fill(MONGO_FIXTURE.collection);
+  await page.getByRole("button", { name: t("explore.run") }).click();
+  const result = page.getByRole("region", { name: t("explore.result") });
+  await expect(result).toContainText(
+    t("documents.summary.countMany", { count: MONGO_FIXTURE.documents }),
+  );
+  await page.getByLabel(t("explore.visualization"), { exact: true }).selectOption("distribution");
+  await page
+    .getByLabel(t("documents.distribution.path"), { exact: true })
+    .selectOption("customer.city");
+  await expect(
+    result.getByText(t("documents.distribution.scope.all", { count: MONGO_FIXTURE.documents }), {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await shoot(page, "explore-distribution-dark");
+  await page.context().close();
+});

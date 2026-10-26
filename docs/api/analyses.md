@@ -69,9 +69,11 @@ interface Analysis {
   title: string;
   version: number;               // counts saves
   createdBy: string | null;
+  createdByName: string | null;  // the creator's display name now; null once the account is gone
   createdAt: number;
   updatedAt: number;
   updatedBy: string | null;
+  updatedByName: string | null;  // who saved last, by name; null once the account is gone
   deletedAt: number | null;      // set while in the trash
   access: { write: boolean; delete: boolean; permissions: boolean };
   ownerTeam: { id: string; name: string } | null;

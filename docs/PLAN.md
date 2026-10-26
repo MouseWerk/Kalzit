@@ -352,6 +352,12 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Elasticsearch/OpenSearch, CSV/JSON/HTTP-JSON; gespeicherte Auswertungen; Docker-Image
    (linux/amd64 und linux/arm64 auf ghcr.io, Compose-Beispiele mit SQLite und PostgreSQL; auf
    Wunsch des Owners aus M5 vorgezogen).
+   **Stand: abgeschlossen (Oktober 2026, Version 0.2.0).** Dazu kamen Live-Aktualisierung über
+   eine WebSocket-Verbindung (Change Streams bei MongoDB, sonst Abfrage im Intervall) und die
+   Feldverteilung über das ganze Ergebnis in der Datenbank. Das Docker-Image ist aus M5 in M2
+   gewandert. Die E2E-Tests in CI prüfen HTTP-JSON auf beiden Plattformen, MongoDB und
+   OpenSearch unter Linux; unter Windows deckt diese die Checkliste der Release Notes ab, da
+   Windows-Runner keine Linux-Container ausführen.
 4. **M3 Graph nativ**: Neo4j und Memgraph über Bolt mit Cypher-Editor, TigerGraph über GSQL mit
    GSQL-Editor und Auswahl installierter Abfragen (Knoten- und Kantenmengen aus `PRINT`-Blöcken
    werden zum `graph`, Knoten-ID ist Typ plus ID, Kanten-IDs werden abgeleitet; Kanten erscheinen

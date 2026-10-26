@@ -361,6 +361,13 @@ jobs:
         run: echo "No server or UI change in this pull request; the end-to-end tests are skipped."
       - uses: actions/checkout@v7
         if: env.RUN_JOB == 'true'
+      # MongoDB and OpenSearch for the document and search specs, started first so they are up
+      # once the build is done. Linux only: Windows runners have no Linux containers, so those
+      # specs skip there with a reason, and the release's Windows checklist covers them.
+      - name: Start MongoDB and OpenSearch
+        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        timeout-minutes: 5
+        run: .github/scripts/e2e-services.sh start
       - uses: actions/setup-node@v7
         if: env.RUN_JOB == 'true'
         with:
@@ -453,6 +460,11 @@ jobs:
         with:
           path: ~/.cache/kalzit-browser-debs
           key: ${{ steps.debs.outputs.cache-primary-key }}
+      # Seeds MongoDB (ui/e2e/fixtures/mongo-orders.js) and names both services for the specs.
+      - name: Wait for MongoDB and OpenSearch
+        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        timeout-minutes: 5
+        run: .github/scripts/e2e-services.sh ready
       - run: npm run e2e
         if: env.RUN_JOB == 'true'
         timeout-minutes: 15

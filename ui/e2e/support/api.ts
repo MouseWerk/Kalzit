@@ -181,6 +181,31 @@ export class Api {
     return source.id;
   }
 
+  /** A data source of any kind, with its settings and secrets as the API takes them. */
+  async createSource(
+    name: string,
+    kind: string,
+    settings: Record<string, unknown>,
+    secrets: Record<string, string> = {},
+  ): Promise<string> {
+    const source = await json<{ id: string }>(
+      await this.context.post(this.org("/datasources"), {
+        data: { name, kind, settings, secrets },
+      }),
+      `create ${kind} source`,
+    );
+    return source.id;
+  }
+
+  /** A saved analysis at the top level of the organization (docs/api/analyses.md). */
+  async createAnalysis(model: Record<string, unknown>): Promise<string> {
+    const analysis = await json<{ id: string }>(
+      await this.context.post(this.org("/analyses"), { data: { model } }),
+      "create analysis",
+    );
+    return analysis.id;
+  }
+
   async grantQuery(userId: string, datasourceId: string): Promise<void> {
     await json(
       await this.context.post(this.org("/grants"), {

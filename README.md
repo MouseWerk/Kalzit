@@ -77,7 +77,10 @@ off, never a hidden conversion in the backend.
 Write a query without a dashboard, see the result in a matching visualization or as documents or
 a graph, inspect it and add it to a dashboard. Query editors (CodeMirror) for SQL, PromQL,
 MongoDB pipelines and `find`, Cypher, GSQL, Elasticsearch Lucene and Query DSL, files and HTTP
-JSON, with suggestions from the source's schema.
+JSON, with suggestions from the source's schema. Save a query as an analysis in folders and team
+spaces with a version history, link it into dashboard panels, and let viewers open and run it.
+Turn on **Live** and results update by themselves: MongoDB reports changes, other sources run
+again at an interval.
 
 ### Analysis steps and export
 
@@ -183,7 +186,9 @@ The images come from the real application with demo data (`npm run screenshots` 
 | Panel editor on a phone | Sign in |
 | ![The time picker with quick ranges, an absolute range and a calendar](docs/screenshots/time-picker-dark.png) | ![A dashboard in edit mode with the rail and its Add pane](docs/screenshots/dashboard-edit-dark.png) |
 | Time picker, dark theme | Dashboard in edit mode, dark theme |
-| ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | |
+| ![A dashboard on a phone with the top bar and the toolbar in two rows](docs/screenshots/dashboard-phone.png) | ![A dashboard with live updates on: each panel says how it stays current](docs/screenshots/dashboard-live-dark.png) |
+| ![Explore with a saved analysis open, its name above the toolbar](docs/screenshots/explore-saved.png) | ![The list of saved analyses with data source, creator and use in dashboards](docs/screenshots/analyses.png) |
+| ![A saved analysis opened by a viewer to view and run](docs/screenshots/analysis-view.png) | ![Explore on a MongoDB collection with the field distribution counted over all documents of the result](docs/screenshots/explore-distribution-dark.png) |
 | Dashboard on a phone | |
 | ![Settings: appearance and brand with the preview, dark theme](docs/screenshots/settings-dark.png) | ![Settings: appearance and brand, light theme](docs/screenshots/settings-light.png) |
 | Settings, dark theme | Settings, light theme |
@@ -400,7 +405,7 @@ The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (Germa
 |---|---|---|
 | M0 Foundation | Server with HTTP and HTTPS, own database with migrations, first-run setup, local sign-in, design tokens, i18n, CI on Windows and Linux | Done |
 | M1 Core | Organizations, teams, roles and permissions, administration, audit log, dashboards, SQL and Prometheus sources, Explore, analysis steps, export | Done |
-| M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, Docker image | Largely done; change streams are open |
+| M2 Documents | MongoDB with pipeline editor, document views, schema and distribution, projections, Elasticsearch and OpenSearch, files and HTTP JSON, saved analyses, live updates with change streams, Docker image | Done |
 | M3 Graphs | Neo4j, Memgraph and TigerGraph with Cypher and GSQL editors, network, hierarchy and path panels, explorer mode | Largely done |
 | M4 Plugins | External plugin processes, manifest, signatures, catalog, Rust SDK | Planned |
 | M5 Operations | OIDC, LDAP and Active Directory, two-factor sign-in, mail and invitations, ACME, service accounts, Windows service installer, deb and rpm packages, InfluxDB, Loki, ClickHouse | Planned |

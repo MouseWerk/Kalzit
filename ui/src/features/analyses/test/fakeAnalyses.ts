@@ -28,6 +28,8 @@ export interface StoredAnalysis {
   id: string;
   folderId: string | null;
   createdBy: string;
+  /** The creator's name as the server answers it; `null` once the account is gone. */
+  createdByName: string | null;
   createdAt: number;
   deletedAt: number | null;
   teamOnly: boolean;
@@ -68,6 +70,7 @@ export function addAnalysis(
     type?: string;
     description?: string;
     createdBy?: string;
+    createdByName?: string | null;
     updatedAt?: number;
     teamOnly?: boolean;
   },
@@ -89,6 +92,7 @@ export function addAnalysis(
     id,
     folderId: input.folderId ?? null,
     createdBy: input.createdBy ?? "u1",
+    createdByName: input.createdByName === undefined ? "Ada Lovelace" : input.createdByName,
     createdAt: at,
     deletedAt: null,
     teamOnly: input.teamOnly ?? false,
@@ -168,9 +172,11 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
       title: model.title,
       version: last.version,
       createdBy: analysis.createdBy,
+      createdByName: analysis.createdByName,
       createdAt: analysis.createdAt,
       updatedAt: last.createdAt,
       updatedBy: last.authorId,
+      updatedByName: last.authorName,
       deletedAt: analysis.deletedAt,
       access: {
         write: permissions.has("analyses:write"),
