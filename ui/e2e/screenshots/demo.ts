@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Api, fixturesDir } from "../support/api";
+import { Api, fixturesDir, type Member } from "../support/api";
 
 /** The moment the screenshots show; the fixture data covers the six hours before it. */
 export const SCREENSHOT_NOW = Date.UTC(2026, 9, 20, 14, 0, 0);
@@ -19,6 +19,9 @@ export interface Demo {
   dashboardTitle: string;
   /** The dashboard of bar chart, bar gauge, pie and text panels. */
   galleryId: string;
+  /** An editor and a viewer of the organization, for pictures from their point of view. */
+  lea: Member;
+  sofia: Member;
 }
 
 const SALES_BY_REGION =
@@ -34,7 +37,7 @@ export async function seedDemo(setupToken: string): Promise<Demo> {
   const jonas = await owner.createMember("Jonas Becker", "admin");
   const lea = await owner.createMember("Lea Hoffmann", "editor");
   const tim = await owner.createMember("Tim Schulz", "editor");
-  await owner.createMember("Sofia Wagner", "viewer");
+  const sofia = await owner.createMember("Sofia Wagner", "viewer");
   await owner.createMember("Paul Richter", "viewer");
   await owner.createTeam("Vertrieb", [jonas.id, lea.id]);
   await owner.createTeam("Controlling", [tim.id]);
@@ -118,7 +121,7 @@ export async function seedDemo(setupToken: string): Promise<Demo> {
       ],
     });
   }
-  return { owner, sourceId, sourceName, dashboardId, dashboardTitle, galleryId };
+  return { owner, sourceId, sourceName, dashboardId, dashboardTitle, galleryId, lea, sofia };
 }
 
 export const GALLERY_TITLE = "Sales overview";

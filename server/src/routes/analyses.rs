@@ -78,15 +78,20 @@ struct AnalysisRow {
     body: String,
     version: i64,
     created_by: Option<String>,
+    created_by_name: Option<String>,
     created_at: i64,
     updated_by: Option<String>,
+    updated_by_name: Option<String>,
     updated_at: i64,
     deleted_at: Option<i64>,
     owner_team_id: Option<String>,
     team_only: i64,
 }
 
-const COLUMNS: &str = "id, folder_id, title, body, version, created_by, created_at, updated_by, updated_at, \
+/// The names are read from the accounts as they are now: `NULL` once an account is gone.
+const COLUMNS: &str = "id, folder_id, title, body, version, created_by, \
+     (SELECT u.name FROM users u WHERE u.id = analyses.created_by) AS created_by_name, created_at, updated_by, \
+     (SELECT u.name FROM users u WHERE u.id = analyses.updated_by) AS updated_by_name, updated_at, \
      deleted_at, owner_team_id, team_only";
 
 #[derive(Serialize)]
@@ -99,9 +104,13 @@ pub struct AnalysisSummary {
     title: String,
     version: i64,
     created_by: Option<String>,
+    /// The creator's display name; `null` when the account no longer exists.
+    created_by_name: Option<String>,
     created_at: i64,
     updated_at: i64,
     updated_by: Option<String>,
+    /// The display name of who saved last; `null` when the account no longer exists.
+    updated_by_name: Option<String>,
     deleted_at: Option<i64>,
     access: ResourceAccess,
     /// The team that owns the analysis; `null` when it belongs to the organization.
@@ -192,9 +201,11 @@ impl AnalysisSummary {
             title: r.title.clone(),
             version: r.version,
             created_by: r.created_by.clone(),
+            created_by_name: r.created_by_name.clone(),
             created_at: r.created_at,
             updated_at: r.updated_at,
             updated_by: r.updated_by.clone(),
+            updated_by_name: r.updated_by_name.clone(),
             deleted_at: r.deleted_at,
             access: ResourceAccess::analysis(index.analysis(&r.id, r.folder_id.as_deref())),
             owner_team: OwnerTeam::of(r.owner_team_id.as_deref(), index),

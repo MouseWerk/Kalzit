@@ -297,6 +297,7 @@ on_both_databases! {
     dashboards_link_analyses,
     links_keep_analyses_in_place,
     lists_filter_sort_and_tell_what_the_caller_may_do,
+    answers_name_who_created_and_saved,
     folder_changes_keep_linked_analyses_visible,
     links_respect_the_analysis_audience,
     purging_needs_the_admin_level_and_no_link,
@@ -1056,6 +1057,28 @@ async fn lists_filter_sort_and_tell_what_the_caller_may_do(t: TestApp) {
 }
 
 /// A folder's version as the tree answers it.
+async fn answers_name_who_created_and_saved(t: TestApp) {
+    let source = t.source("shop").await;
+    let (eva_id, eva) = t.member("Eva", "editor").await;
+    let id = id_of(t.create("Von Eva", &source, None, &eva).await);
+    let r = t.put(&format!("~/analyses/{id}"), json!({ "model": model("Von Eva", &source, SQL), "version": 1 }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["createdByName"].clone(), r.body["updatedByName"].clone()), (json!("Eva"), json!("Jörg Müller")));
+    let names = |reply: &Reply| {
+        let item = reply.body["items"].as_array().unwrap().iter().find(|i| i["id"] == json!(id)).unwrap().clone();
+        (item["createdBy"].clone(), item["createdByName"].clone(), item["updatedByName"].clone())
+    };
+    let list = t.get("~/analyses", &t.owner).await;
+    assert_eq!(names(&list), (json!(eva_id), json!("Eva"), json!("Jörg Müller")));
+
+    // A removed account leaves its id and no name.
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(&eva_id).execute(&t.state.db).await.unwrap();
+    let list = t.get("~/analyses", &t.owner).await;
+    assert_eq!(names(&list), (json!(eva_id), Value::Null, json!("Jörg Müller")));
+    let one = t.get(&format!("~/analyses/{id}"), &t.owner).await;
+    assert_eq!(one.body["createdByName"], Value::Null);
+}
+
 async fn folder_version(t: &TestApp, id: &str) -> Value {
     let tree = t.get("~/folders", &t.owner).await;
     fn find(nodes: &[Value], id: &str) -> Option<Value> {

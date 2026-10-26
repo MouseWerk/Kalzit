@@ -82,6 +82,14 @@ Every kind ends with the query time limit and row limit. A file's decimal comma 
 be set or left on automatic; a `.csv`, `.tsv` or `.txt` file reads as CSV, `.json` as JSON and
 `.ndjson` or `.jsonl` as NDJSON.
 
+MongoDB does more than return documents. The **Field distribution** panel is counted by the
+database over the whole result, not only the loaded page, with the same read-only login. **Live**
+on a dashboard or in Explore follows a MongoDB query as its data changes when the deployment has
+change streams (a replica set or a sharded cluster) and the time range is fixed; a standalone
+server, a view or a range that ends now runs the query again at the dashboard's interval instead,
+like every other kind. See [Explore](explore.md#documents) and
+[Dashboards](dashboards.md#live-updates).
+
 InfluxDB, Loki and ClickHouse (M5) and Graphite, Redis, Oracle, Tempo and Jaeger (M6) are planned.
 
 ## Read-only

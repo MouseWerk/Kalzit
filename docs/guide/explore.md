@@ -7,7 +7,8 @@ you inspect it and add it to a dashboard. API: [data sources and queries](../api
 
 Explore needs the `datasources:query` permission (editors, admins and owners have it, and anyone
 with query access to a data source). Viewers still see the dashboards shared with them, which run
-their stored queries.
+their stored queries, and open saved analyses to view and run them under **Analyses**
+(Auswertungen) in the sidebar ([Saved analyses](saved-analyses.md#the-list)).
 
 ## Running a query
 
@@ -74,8 +75,6 @@ range** with a **Time field**. **Start from a template**: latest documents, coun
 (terms), count over time (date histogram), count per value over time. Aggregations answer a table
 with one row per bucket.
 
-![The Elasticsearch Lucene editor](../screenshots/query-editor-elasticsearch-lucene-dark.png)
-
 ### MongoDB
 
 Choose **Collection** and **Query type**. In the pipeline view each stage is JSON, for example
@@ -86,12 +85,8 @@ stage is not saved with the query.
 
 ### Files and HTTP JSON
 
-![A file query](../screenshots/query-editor-file-dark.png)
-
 A file source shows the file, how it is read and its columns. An HTTP JSON source sends only `GET`
 requests; its preview shows the request.
-
-![An HTTP JSON query](../screenshots/query-editor-http-json-dark.png)
 
 ## Result shapes
 
@@ -108,7 +103,12 @@ A `documents` result stays a set of documents. Use the document explorer, schema
 distribution or document card ([panels](panels.md#documents-panels)). Selecting a value in the
 tree, or **Filter by value** next to a common value of the field distribution, adds a filter on
 that path to the query as a visible `$match` stage. For MongoDB the field distribution counts the
-whole result in the database, not only the loaded documents. For a table, use the explicit projection step:
+whole result in the database, not only the loaded documents, and says so: **Across all N
+documents of the result** (Über alle N Dokumente des Ergebnisses).
+
+![Explore on a MongoDB collection: the field distribution of the customers' cities, counted over all documents of the result](../screenshots/explore-distribution-dark.png)
+
+For a table, use the explicit projection step:
 **Add projection step** names columns by field path (`items.0.price` for an element of an array),
 with optional names and types. Remove the step and you get the documents back. A result shows at
 most a limited number of documents (**Cut off at N documents**) and **Load more documents** fetches
@@ -137,6 +137,8 @@ The dashboard's history records the save as "Panel added from Explore".
 
 **Save** (Ctrl+S) keeps the query with its steps and visualization as a saved analysis, **Open**
 (Ctrl+O) brings one back. See [Saved analyses](saved-analyses.md).
+
+![Explore with a saved analysis open: its name above the toolbar, Save and Open, and the result](../screenshots/explore-saved.png)
 
 ## Export
 

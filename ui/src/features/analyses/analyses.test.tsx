@@ -221,6 +221,36 @@ describe("the list of saved analyses", () => {
     expect(screen.getByText("2 analyses in All analyses")).toBeTruthy();
   });
 
+  it("names who created and saved each analysis, as the server answers", async () => {
+    const server = setup();
+    addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT 1" },
+      createdBy: "u7",
+      createdByName: "Grace Hopper",
+    });
+    addAnalysis(server.areas.analyses, {
+      title: "Payments",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT 2" },
+      createdBy: "u8",
+      createdByName: null,
+    });
+    renderApp("/explore/saved");
+    const table = await screen.findByRole("table");
+    const row = (title: string) =>
+      within(table)
+        .getAllByRole("row")
+        .find((r) => within(r).queryByRole("link", { name: title }) !== null);
+    const customers = row("Customers");
+    const payments = row("Payments");
+    if (customers === undefined || payments === undefined) throw new Error("rows missing");
+    expect(within(customers).getByText("Grace Hopper")).toBeTruthy();
+    // A removed account keeps its place in the list without a name.
+    expect(within(payments).getByText("Unknown")).toBeTruthy();
+  });
+
   it("shows an empty location with a way to Explore", async () => {
     setup();
     renderApp("/explore/saved");
